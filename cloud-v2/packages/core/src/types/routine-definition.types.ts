@@ -1,3 +1,4 @@
+import {routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
 import {glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
@@ -18,6 +19,7 @@ export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
 /** Serialized source definition; executable functions remain in the harness repository. */
 export const publishedRoutineDefinitionSchema = z.object({
   id,
+  minimumRoutineApiVersion: z.number().int().positive().safe(),
   title: text,
   purpose: text,
   platforms: z.array(routinePlatformSchema).min(1).max(2),
@@ -57,11 +59,14 @@ export const publishedRoutineDefinitionSchema = z.object({
 export const routineEnrollmentSchema = z.object({
   routineId: id, platform: routinePlatformSchema, definitionRevision: z.string().regex(/^[a-f0-9]{40}$/),
   definitionSha256: z.string().regex(/^[a-f0-9]{64}$/), definition: publishedRoutineDefinitionSchema,
+  routineSource: routineSourceRefSchema,
   verification: candidateVerificationSchema.optional(),
 }).strict().superRefine((row, ctx) => {
   if (row.routineId !== row.definition.id || row.definitionRevision !== row.definition.source.revision
     || !row.definition.platforms.includes(row.platform))
     ctx.addIssue({code: "custom", message: "Enrollment identity contradicts its definition"});
+  if (row.routineSource.commit !== row.definitionRevision || row.routineSource.minimumRoutineApiVersion !== row.definition.minimumRoutineApiVersion)
+    ctx.addIssue({code: 'custom', message: 'Routine bundle contradicts its definition/API requirement'});
   if (row.verification && row.verification.sourceRevision !== row.definitionRevision)
     ctx.addIssue({code: 'custom', message: 'Candidate verification source differs from its definition'});
 });

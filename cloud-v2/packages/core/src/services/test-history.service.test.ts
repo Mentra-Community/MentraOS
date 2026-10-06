@@ -1,3 +1,4 @@
+import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {afterAll, beforeAll, describe, expect, spyOn, test} from "bun:test";
 import {randomUUID} from "node:crypto";
 import mongoose from "mongoose";
@@ -91,12 +92,25 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
   afterAll(async () => {
     if (connected) {await mongoose.connection.dropDatabase(); await mongoose.disconnect();}
   });
-  const run = (requestId: string, buildSha = sha): FrameworkRun => frameworkRunSchema.parse({schemaVersion: 1,
-    hostId: "mini", requestId, routineId: "notes", definitionRevision: "b".repeat(40), platform: "ios-on-mac", laneId: "mac",
-    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: buildSha}, startedAt: at, finishedAt: "2026-10-03T19:01:00Z", assets: [],
-    result: {runId: requestId, finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed"}, test: "passed",
+  const run = (requestId: string, buildSha = sha): FrameworkRun =>
+    frameworkRunSchema.parse({
+      schemaVersion: 1,
+      routineSource: testRoutineSource(),
+      frameworkBinding: testFrameworkBinding(),
+      hostId: "mini",
+      requestId,
+      routineId: "notes",
+      definitionRevision: "b".repeat(40),
+      platform: "ios-on-mac",
+      laneId: "mac",
+      build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: buildSha},
+      startedAt: at,
+      finishedAt: "2026-10-03T19:01:00Z",
+      assets: [],
+      result: {runId: requestId, finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed"}, test: "passed",
       steps: [{id: "required", status: "passed", durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
-      failures: [], evidence: [], timing: {startedAt: at, setupMs: 1, testMs: 1, teardownMs: 1}}});
+      failures: [], evidence: [], timing: {startedAt: at, setupMs: 1, testMs: 1, teardownMs: 1}},
+    })
   const plan = (suiteId: string, members: TestSuite["members"]): TestSuite => ({suiteId, channel: "dev", trigger: "nightly",
     startedAt: at, build: {headSha: sha}, members});
   const member = (requestId: string) => ({memberId: requestId, requestId, routineId: "notes", platform: "ios-on-mac" as const});
@@ -178,27 +192,45 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
   });
 
   test("nightly terminal authority groups only its exact frozen runs and leaves late publication visible", async () => {
-    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    await TestRunModel.deleteMany({});
+    await TestSuiteModel.deleteMany({});
     const suite = plan("suite:nightly-authority", [member("on-time"), member("late")]);
-    const expected = suite.members.map(selected => ({...selected, requestId: selected.requestId!, definitionRevision: "b".repeat(40),
-      definitionSha256: "c".repeat(64), hostId: "mini", input: {routineId: selected.routineId, platform: selected.platform,
-        definitionRevision: "b".repeat(40), laneId: "mac", resources: [], build: run(selected.requestId!).build}}));
+    const expected = suite.members.map((selected) => ({
+      ...selected,
+      requestId: selected.requestId!,
+      definitionRevision: "b".repeat(40),
+      definitionSha256: "c".repeat(64),
+      hostId: "mini",
+      input: {
+        routineSource: testRoutineSource(),
+        routineId: selected.routineId,
+        platform: selected.platform,
+        definitionRevision: "b".repeat(40),
+        laneId: "mac",
+        resources: [],
+        build: run(selected.requestId!).build,
+      },
+    }))
     const nightlyPlan = {suiteId: suite.suiteId, occurrenceId: "history-nightly", startedAt: suite.startedAt, trigger: "nightly", suite, members: expected};
     const nightlyResult = {...nightlyPlan, expectedCount: 2, passed: 1, status: "incomplete", finishedAt: "2026-10-03T19:02:00Z",
       members: expected.map((selected, index) => ({...selected, status: index === 0 ? "pass" : "incomplete", publicationComplete: index === 0,
         ...(index === 0 ? {runId: selected.requestId, runStartedAt: at, runFinishedAt: "2026-10-03T19:01:00Z"} : {})}))};
     await TestSuiteModel.collection.insertOne({suiteId: suite.suiteId, payload: suite, startedAt: new Date(suite.startedAt), nightlyPlan, nightlyResult});
-    await saveRun(run("on-time")); await saveRun(run("late"));
+    await saveRun(run("on-time"));
+    await saveRun(run("late"));
     const entries = (await new TestHistoryService().list()).entries;
-    expect(entries.map(entry => entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : entry.id)).toEqual([suite.suiteId, "late"]);
+    expect(
+      entries.map((entry) => (entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : entry.id)),
+    ).toEqual([suite.suiteId, "late"])
     expect(entries[0]).toMatchObject({kind: "suite", passed: 1, outcome: "failed", finishedAt: nightlyResult.finishedAt});
     const row = await TestSuiteModel.collection.findOne({suiteId: suite.suiteId});
     expect(row!.completedResult).toBeUndefined();
     expect(await new TestSuiteService().detail(suite.suiteId)).toMatchObject({passed: 1, outcome: "failed"});
-  });
+  })
 
   test("raw batches advance past a newer large suite to older standalone results without a total cap", async () => {
-    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    await TestRunModel.deleteMany({});
+    await TestSuiteModel.deleteMany({});
     const ids = Array.from({length: 100}, (_, index) => `grouped-${index.toString().padStart(3, "0")}`);
     await Promise.all(ids.map(id => saveRun(run(id))));
     await saveSuite(plan("suite:newest", ids.map(member)));
@@ -213,10 +245,9 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     expect(first.entries.map(entry => entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : entry.id))
       .toEqual(["suite:newest", "older-e", "older-d"]);
     const second = await service.list({limit: "3", cursor: first.nextCursor!});
-    expect(second.entries.map(entry => entry.kind === "run" ? entry.runId : "unexpected"))
-      .toEqual(["older-c", "older-b", "older-a"]);
+    expect(second.entries.map((entry) => (entry.kind === "run" ? entry.runId : "unexpected"))).toEqual(["older-c", "older-b", "older-a"])
     expect(second.nextCursor).toBeNull();
-  });
+  })
 
   test("suite timestamp backfill preserves frozen payloads and accepts offset timestamps", async () => {
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
@@ -230,7 +261,8 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
   });
 
   test("each read repairs old-writer missing and null projections and paginates their real dates", async () => {
-    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    await TestRunModel.deleteMany({});
+    await TestSuiteModel.deleteMany({});
     await backfillTestSuiteStartedAt();
     for (const [index, id] of ["old-writer-newest", "old-writer-middle", "old-writer-oldest"].entries()) {
       const payload = {...plan(id, [member(`${id}-a`), member(`${id}-b`)]),
@@ -239,24 +271,23 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     }
     const service = new TestHistoryService();
     const first = await service.list({limit: "2"});
-    expect(first.entries.map(entry => entry.kind === "suite" ? entry.suiteId : "unexpected"))
-      .toEqual(["old-writer-newest", "old-writer-middle"]);
+    expect(first.entries.map((entry) => (entry.kind === "suite" ? entry.suiteId : "unexpected"))).toEqual(["old-writer-newest", "old-writer-middle"])
     expect(JSON.parse(Buffer.from(first.nextCursor!, "base64url").toString()).startedAt).toBe("2026-10-03T18:59:59.000Z");
     const second = await service.list({limit: "2", cursor: first.nextCursor!});
-    expect(second.entries.map(entry => entry.kind === "suite" ? entry.suiteId : "unexpected"))
-      .toEqual(["old-writer-oldest"]);
+    expect(second.entries.map((entry) => (entry.kind === "suite" ? entry.suiteId : "unexpected"))).toEqual(["old-writer-oldest"])
     expect(second.nextCursor).toBeNull();
-  });
+  })
 
   test("an older writer racing read normalization becomes visible on the next refresh without a broken cursor", async () => {
-    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    await TestRunModel.deleteMany({});
+    await TestSuiteModel.deleteMany({});
     await saveSuite(plan("existing", [member("a"), member("b")]));
     await saveRun(run("c"));
     const payload = {...plan("racing-old-writer", [member("c"), member("d")]), startedAt: "2026-10-03T19:01:00Z"};
     const originalAggregate = TestRunModel.aggregate.bind(TestRunModel);
     let inserted = false;
     const aggregate = spyOn(TestRunModel, "aggregate").mockImplementation(((...args: any[]) => {
-      const query = originalAggregate(...args as Parameters<typeof TestRunModel.aggregate>);
+      const query = originalAggregate(...(args as Parameters<typeof TestRunModel.aggregate>))
       const exec = query.exec.bind(query);
       query.exec = (async () => {
         if (!inserted) {
@@ -266,15 +297,16 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
         return exec();
       }) as typeof query.exec;
       return query;
-    }) as any);
+    }) as any)
     try {
       const service = new TestHistoryService();
       expect((await service.list()).entries.map(entry => entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : "unexpected"))
         .toEqual(["existing", "c"]);
-      expect((await service.list()).entries.map(entry => entry.kind === "suite" ? entry.suiteId : "unexpected"))
-        .toEqual(["racing-old-writer", "existing"]);
+      expect(
+        (await service.list()).entries.map((entry) => (entry.kind === "suite" ? entry.suiteId : "unexpected")),
+      ).toEqual(["racing-old-writer", "existing"])
     } finally {aggregate.mockRestore();}
-  });
+  })
 
   test("corrupt payload timestamps are logged and cannot break valid history rows", async () => {
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
@@ -324,13 +356,14 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
   });
 
   test("raw history scans share one query deadline and never return a truncated success", async () => {
-    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    await TestRunModel.deleteMany({});
+    await TestSuiteModel.deleteMany({});
     let now = Date.now();
     const clock = spyOn(Date, "now").mockImplementation(() => now);
     const budgets: number[] = [];
     const originalAggregate = TestRunModel.aggregate.bind(TestRunModel);
     const aggregate = spyOn(TestRunModel, "aggregate").mockImplementation(((...args: any[]) => {
-      const query = originalAggregate(...args as Parameters<typeof TestRunModel.aggregate>);
+      const query = originalAggregate(...(args as Parameters<typeof TestRunModel.aggregate>))
       query.exec = (async () => {
         budgets.push(query.options.maxTimeMS!);
         now += 6000;
@@ -338,15 +371,16 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
           historyStartedAt: new Date(at), historySuppressed: true}));
       }) as typeof query.exec;
       return query;
-    }) as any);
+    }) as any)
     try {
       await expect(new TestHistoryService().list()).rejects.toMatchObject({status: 503});
       expect(budgets).toEqual([10000, 4000]);
     } finally {aggregate.mockRestore(); clock.mockRestore();}
-  });
+  })
 
   test("native history exhausts a short page without scanning retained legacy results", async () => {
-    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    await TestRunModel.deleteMany({});
+    await TestSuiteModel.deleteMany({});
     const legacy = Array.from({length: 5000}, (_, index) => ({runId: `legacy-${index}`, requestId: `legacy-${index}`,
       startedAt: new Date(Date.parse(at) - index * 1000), payload: {schemaVersion: 0, data: "legacy"}}));
     await TestRunModel.collection.insertMany(legacy);
@@ -363,7 +397,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
         storedLegacyRuns: legacy.length, nativeRuns: 2, runsExamined: stats.executionStats.totalDocsExamined}));
     }
     const page = await new TestHistoryService().list();
-    expect(page.entries.map(entry => entry.kind === "run" ? entry.runId : "unexpected")).toEqual(["native-b", "native-a"]);
+    expect(page.entries.map((entry) => (entry.kind === "run" ? entry.runId : "unexpected"))).toEqual(["native-b", "native-a"])
     expect(page.nextCursor).toBeNull();
-  });
-});
+  })
+})

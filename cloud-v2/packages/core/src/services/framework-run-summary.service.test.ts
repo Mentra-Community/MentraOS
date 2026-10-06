@@ -1,3 +1,4 @@
+import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {afterAll, beforeAll, describe, expect, spyOn, test} from "bun:test";
 import {randomUUID} from "node:crypto";
 import mongoose from "mongoose";
@@ -11,13 +12,25 @@ import {FrameworkResultService} from "./framework-result.service";
 import {RoutineCatalogService} from "./routine-catalog.service";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 
-const fixture = () => frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "large-result", routineId: "notes",
-  definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac",
-  build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40), release: "dev.42"},
-  startedAt: "2026-10-05T15:00:00Z", finishedAt: "2026-10-05T15:01:00Z", assets: [],
-  result: {runId: "large-result", finishedAt: "2026-10-05T15:01:00Z", setup: {status: "passed"}, test: "passed",
+const fixture = () =>
+  frameworkRunSchema.parse({
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: "mini",
+    requestId: "large-result",
+    routineId: "notes",
+    definitionRevision: "a".repeat(40),
+    platform: "ios-on-mac",
+    laneId: "mac",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40), release: "dev.42"},
+    startedAt: "2026-10-05T15:00:00Z",
+    finishedAt: "2026-10-05T15:01:00Z",
+    assets: [],
+    result: {runId: "large-result", finishedAt: "2026-10-05T15:01:00Z", setup: {status: "passed"}, test: "passed",
     steps: [{id: "check", status: "passed", durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
-    failures: [], evidence: [], timing: {startedAt: "2026-10-05T15:00:00Z", setupMs: 1, testMs: 1, teardownMs: 1}}});
+    failures: [], evidence: [], timing: {startedAt: "2026-10-05T15:00:00Z", setupMs: 1, testMs: 1, teardownMs: 1}},
+  })
 
 test("summary projection retains the full validator and digest before deriving a verdict", () => {
   const run = fixture();
@@ -25,8 +38,10 @@ test("summary projection retains the full validator and digest before deriving a
   expect(() => createFrameworkRunSummaryProjection(run, "f".repeat(64))).toThrow("digest");
   const projection = createFrameworkRunSummaryProjection(run, requestInputDigest(run));
   const {uploadsComplete: _uploads, ...expected} = summarizeFrameworkRun(run, false);
-  expect(JSON.stringify(projection.summary)).toBe(JSON.stringify(expected));
-});
+  expect(projection.summary).toEqual({...expected, platform: run.platform})
+  expect(projection.summary.routineSource).toEqual(run.routineSource)
+  expect(projection.summary.frameworkBinding).toEqual(run.frameworkBinding)
+})
 
 test("compact summaries count passed and skipped test steps independently of the run verdict", () => {
   const run = fixture();
@@ -152,8 +167,15 @@ describe.skipIf(!uri)("Mongo frozen summary projection", () => {
     const definition = {routineId: run.routineId, platform: run.platform, definitionRevision: "e".repeat(40)} as RoutineEnrollment;
     const service = new RoutineCatalogService({async current() {return [definition];}, async getCurrent() {return definition;}}, undefined,
       {async list() {return [];}, async get() {return null;}, async set() {}});
-    const expected = {runId: run.requestId, startedAt: run.startedAt, finishedAt: run.finishedAt,
-      recordingAssetId: run.recordingAssetId, definitionRevision: run.definitionRevision, build: run.build};
+    const expected = {
+      runId: run.requestId,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      recordingAssetId: run.recordingAssetId,
+      definitionRevision: run.definitionRevision,
+      routineSource: run.routineSource,
+      build: run.build,
+    }
     const initial = await service.detail(run.routineId, run.platform);
     expect(initial.example).toEqual(expected);
     expect(initial.history.find(row => row.runId === run.requestId)?.definitionRevision).toBe(run.definitionRevision);
@@ -165,5 +187,5 @@ describe.skipIf(!uri)("Mongo frozen summary projection", () => {
     await expect(service.detail(run.routineId, run.platform)).rejects.toMatchObject({status: 503});
     await backfillFrameworkRunSummaries();
     expect((await TestRunModel.findOne({runId: run.requestId}).lean())!.summaryProjection).toBeUndefined();
-  });
-});
+  })
+})

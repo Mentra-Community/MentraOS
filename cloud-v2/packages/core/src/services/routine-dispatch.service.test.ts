@@ -1,3 +1,4 @@
+import {testRoutineSource} from "../testing/framework-fixtures";
 import {expect, test} from "bun:test";
 import {RoutineDispatchService} from "./routine-dispatch.service";
 import {routineEnrollmentSchema} from "../types/routine-definition.types";
@@ -20,10 +21,10 @@ function fixture(onResolve?: () => Promise<void>) {
     async cancel() {throw new Error("unused cancellation");}, async acknowledgeCancellation() {throw new Error("unused cancellation acknowledgement");},
     async queued() {throw new Error("unused queue read");}, async cancellations() {throw new Error("unused cancellation read");},
   } satisfies TestRequestRepository);
-  const definition = () => routineEnrollmentSchema.parse({routineId: selected.routineId, platform: selected.platform, definitionRevision: revision, definitionSha256: "b".repeat(64),
-    definition: {id: selected.routineId, title: "New routine", purpose: "Check", platforms: ["android"], entry: "home", account: "lane", requires: [], requirements: [], fixtures: [],
+  const definition = () => routineEnrollmentSchema.parse({routineId: selected.routineId, platform: selected.platform, definitionRevision: revision, definitionSha256: "b".repeat(64), routineSource: testRoutineSource(revision),
+    definition: {id: selected.routineId, minimumRoutineApiVersion: 1, title: "New routine", purpose: "Check", platforms: ["android"], entry: "home", account: "lane", requires: [], requirements: [], fixtures: [],
       steps: [{id: "check", instruction: "Check", expected: "Checked"}], execution: {resourceKinds: ["app"]}, source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision, path: `routines/${selected.routineId}/routine.ts`}}});
-  const service = new RoutineDispatchService({async current() {return [definition()];}, async getCurrent(id, platform) {return id === selected.routineId && platform === selected.platform ? definition() : null;}},
+  const service = new RoutineDispatchService({async current() {return [definition()];}, async getCurrent(id, platform) {return id === selected.routineId && platform === selected.platform ? definition() : null;}, async getExact(id, platform, commit) {return id === selected.routineId && platform === selected.platform && /^[a-f0-9]{40}$/.test(commit) ? {...definition(),definitionRevision:commit,routineSource:testRoutineSource(commit),definition:{...definition().definition,source:{...definition().definition.source,revision:commit}}} : null;}},
     {async resolve(value, platform) {resolves++; await onResolve?.(); return {source: value, platform, availability: "available", title: "Candidate", headSha: "c".repeat(40), createdAt: "2026-10-03T11:00:00Z", buildUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/55",
       archive: {name: "candidate.apk", size: 100, sha256: "d".repeat(64), url: "https://artifactscdn.mentraglass.com/candidate.apk"}, receipt: {size: 10, sha256: "e".repeat(64), url: "https://artifactscdn.mentraglass.com/receipt.json"}};}},
     {async get(hostId) {return {hostId, incarnation: "one", incarnationGeneration: 1, sequence: 1, observedAt: new Date().toISOString(), receivedAt: new Date().toISOString(),
@@ -48,7 +49,7 @@ test("exact-source caller discovers arbitrary routines and queues the native fro
 test("unknown routine/platform and missing explicit platform bindings cannot enter the queue", async () => {
   const state = fixture();
   await expect(state.service.submit({...selected, routineId: "unknown"})).rejects.toThrow("not enrolled");
-  const service = new RoutineDispatchService({async current() {return [];}, async getCurrent() {return {} as any;}}, undefined, undefined,
+  const service = new RoutineDispatchService({async current() {return [];}, async getCurrent() {return {} as any;}, async getExact() {return null;}}, undefined, undefined,
     {async get() {return null;}, async submit() {throw new Error("must not queue");}}, undefined, () => ({}));
   await expect(service.submit(selected)).rejects.toThrow("No configured host/lane binding");
 });
@@ -87,4 +88,15 @@ test("a concurrent changed source cannot borrow the winning request", async () =
   expect(results[1].status).toBe("rejected");
   if (results[1].status === "rejected") expect(results[1].reason).toMatchObject({status: 409, message: expect.stringContaining("changed")});
   expect((await state.requests.get(selected.requestId))?.input).toMatchObject({build: {source}});
+});
+
+test('explicit historical routine source and framework floor are independent immutable selections', async () => {
+  const state = fixture(), routineSource = testRoutineSource("d".repeat(40));
+  const request = await state.service.submit({...selected, routineSource, minimumFrameworkVersion: 42});
+  expect(request.input).toMatchObject({definitionRevision: routineSource.commit, routineSource, minimumFrameworkVersion: 42});
+  expect(request.input).not.toHaveProperty('frameworkBinding');
+  state.revision = "b".repeat(40);
+  expect(await state.service.submit({...selected, routineSource, minimumFrameworkVersion: 42})).toEqual(request);
+  await expect(state.service.submit({...selected, routineSource, minimumFrameworkVersion: 43})).rejects.toThrow("changed");
+  await expect(state.service.submit({...selected, routineSource: {...routineSource, bundle: {...routineSource.bundle, sha256: "c".repeat(64)}}, minimumFrameworkVersion: 42})).rejects.toThrow("changed");
 });

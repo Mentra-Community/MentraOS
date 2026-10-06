@@ -1,3 +1,4 @@
+import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {afterEach, beforeEach, expect, spyOn, test} from "bun:test";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
@@ -115,29 +116,49 @@ test("completion fences a concurrent binding and retries preserve the first verd
 });
 
 test("persisted suite completion lists passing members with incomplete publication", async () => {
- const payload = {suiteId: "pending-publish", channel: "dev", trigger: "nightly", startedAt: "2026-10-01T11:00:00Z",
+  const payload = {suiteId: "pending-publish", channel: "dev", trigger: "nightly", startedAt: "2026-10-01T11:00:00Z",
   build: {headSha: "a".repeat(40)}, members: [{memberId: "mac", requestId: "request", routineId: "notes", platform: "ios-on-mac"}]};
- const row: any = {payload};
- const query = {read() {return this;}, readConcern() {return this;}, lean: async () => row};
- mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue(query as any));
- const run = {schemaVersion: 1, hostId: "mini", requestId: "request", routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac",
-  build: {repository: "Mentra-Community/MentraOS", headSha: "a".repeat(40), channel: "dev"}, startedAt: payload.startedAt, finishedAt: "2026-10-01T11:01:00Z", assets: [],
-  result: {runId: "request", finishedAt: "2026-10-01T11:01:00Z", setup: {status: "passed"}, test: "passed", steps: [{id: "one", status: "passed", durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [], timing: {startedAt: payload.startedAt, setupMs: 1, testMs: 1, teardownMs: 1}}};
- const runs = {select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => [{payload: run, uploadsComplete: false}]};
- mocks.push(spyOn(TestRunModel, "find").mockReturnValue(runs as any));
- mocks.push(spyOn(TestSuiteModel, "updateOne").mockImplementation((async (_filter: any, update: any) => {
+  const row: any = {payload};
+  const query = {read() {return this;}, readConcern() {return this;}, lean: async () => row};
+  mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue(query as any));
+  const run = {
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: "mini",
+    requestId: "request",
+    routineId: "notes",
+    definitionRevision: "a".repeat(40),
+    platform: "ios-on-mac",
+    laneId: "mac",
+    build: {repository: "Mentra-Community/MentraOS", headSha: "a".repeat(40), channel: "dev"},
+    startedAt: payload.startedAt,
+    finishedAt: "2026-10-01T11:01:00Z",
+    assets: [],
+    result: {runId: "request", finishedAt: "2026-10-01T11:01:00Z", setup: {status: "passed"}, test: "passed", steps: [{id: "one", status: "passed", durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [], timing: {startedAt: payload.startedAt, setupMs: 1, testMs: 1, teardownMs: 1}},
+  }
+  const runs = {select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => [{payload: run, uploadsComplete: false}]};
+  mocks.push(spyOn(TestRunModel, "find").mockReturnValue(runs as any));
+  mocks.push(spyOn(TestSuiteModel, "updateOne").mockImplementation((async (_filter: any, update: any) => {
   Object.assign(row, update.$set);return {modifiedCount: 1};
  }) as any));
- const result = await new TestSuiteService().complete(payload.suiteId, {finishedAt: "2026-10-01T11:03:00Z"});
- expect(result.outcome).toBe("failed");
- expect(result.members[0]!.status).toBe("pass");
- expect(result.failedRoutines).toEqual(["notes"]);
- expect(row.completedResult).toEqual(result);
-});
+  const result = await new TestSuiteService().complete(payload.suiteId, {finishedAt: "2026-10-01T11:03:00Z"});
+  expect(result.outcome).toBe("failed");
+  expect(result.members[0]!.status).toBe("pass");
+  expect(result.failedRoutines).toEqual(["notes"]);
+  expect(row.completedResult).toEqual(result);
+})
 
 test("suite rejection projects the exact request reason without fabricating a run", async () => {
-  const input = {routineId: "another-product", platform: "android", definitionRevision: "a".repeat(40), laneId: "phone",
-    resources: [], build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
+  const input = {
+    routineSource: testRoutineSource(),
+    routineId: "another-product",
+    platform: "android",
+    definitionRevision: "a".repeat(40),
+    laneId: "phone",
+    resources: [],
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+  }
   const {requestInputDigest} = await import("./test-request.service"), inputSha256 = requestInputDigest(input);
   const payload = {suiteId: "rejected-suite", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T11:00:00Z", build: {headSha: input.build.headSha},
     members: [{memberId: "phone", requestId: "rejected-request", routineId: input.routineId, platform: input.platform, definitionRevision: input.definitionRevision},
@@ -157,7 +178,7 @@ test("suite rejection projects the exact request reason without fabricating a ru
   expect(result.passed).toBe(0);
   row.hostRejection.inputSha256 = "c".repeat(64);
   await expect(new TestSuiteService().detail(payload.suiteId)).rejects.toThrow("rejection identity");
-});
+})
 
 test("a live nightly keeps waiting members out of failed routines and its terminal receipt retains missing outcomes", async () => {
   const payload = testSuiteSchema.parse({suiteId: "live-nightly", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T11:00:00Z",

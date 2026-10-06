@@ -17,7 +17,7 @@ export function configuredRoutineLanes(): RoutineLaneBindings {
 /** Shared by catalog nightlies and exact-source callers. Platform bindings never depend on routine names. */
 export function routineAdmissionInput(definition: RoutineEnrollment, build: TestBuild | null | undefined,
   binding: RoutineLaneBindings[RoutineEnrollment["platform"]], host: ReceivedTestHostState | null | undefined, now = Date.now(),
-  options: {requireAutomatic?: boolean} = {}) {
+  options: {requireAutomatic?: boolean; minimumFrameworkVersion?: number} = {}) {
   if (!build || build.availability !== "available" || !build.archive || !build.receipt)
     throw new TestRunError(409, build?.reason ?? "No immutable artifact is available for this platform.");
   if (build.platform && build.platform !== definition.platform) throw new TestRunError(409, "Artifact platform differs from the routine definition.");
@@ -28,11 +28,6 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
   // The assigned host controller waits for lane repair/readiness; selection must retain this occurrence's request.
   if (!lane || options.requireAutomatic !== false && lane.dispatchMode !== "automatic")
     throw new TestRunError(409, `Configured ${definition.platform} automatic lane is unavailable.`);
-  if (lane.routineAvailability !== undefined) {
-    const availability = lane.routineAvailability.find(row => row.routineId === definition.routineId && row.definitionRevision === definition.definitionRevision);
-    if (!availability?.available) throw new TestRunError(409,
-      `Configured lane cannot prepare ${definition.routineId} at ${definition.definitionRevision}: ${availability?.reason ?? "No available capability was reported for this exact definition."}`);
-  }
   const execution = definition.definition.execution;
   if (!execution) throw new TestRunError(409, "The current definition has no execution resource metadata.");
   const glassesRequirement = definition.definition.glasses;
@@ -64,7 +59,8 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     return matches[0]!;
   });
   return frameworkRequestInputSchema.parse(JSON.parse(JSON.stringify({routineId: definition.routineId,
-    definitionRevision: definition.definitionRevision, platform: definition.platform, laneId: lane.id, resources,
+    definitionRevision: definition.definitionRevision, routineSource: definition.routineSource,
+    ...(options.minimumFrameworkVersion !== undefined ? {minimumFrameworkVersion: options.minimumFrameworkVersion} : {}), platform: definition.platform, laneId: lane.id, resources,
     ...(execution.policy ? {policy: execution.policy} : {}), build: {...selectedBuildInput(build, definition.platform),
       ...(software ? {manifest: software.manifest, manifestSha256: software.manifest.sha256} : {})},
     ...(software ? {glassesStart: startingSoftware, glassesReturn: software} : {})})));

@@ -12,6 +12,7 @@ import {frameworkBuildSchema} from "../types/framework-request.types";
 import {TestRunError} from "./test-result-error";
 import {TestAssetService, type TestAsset} from "./test-asset.service";
 import type {CandidateVerification} from '../types/candidate-verification.types';
+import type {RoutineSourceRef} from '../types/framework-version.types';
 
 export class FrameworkResultConflict extends Error {}
 const resultCursorSchema = z.object({startedAt: z.string().datetime({offset: true}), runId: z.string().min(1).max(240)}).strict();
@@ -39,7 +40,8 @@ export interface FrameworkUploadAcknowledgements {
 export {nativeRunFilter, summarizeFrameworkRun} from "./framework-run-summary.service";
 import {createFrameworkRunSummaryProjection, nativeRunFilter, readFrameworkRunSummary, verifiedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 export interface ResultRequestBinding {hostId: string; catalogEligible?: boolean;
-  input: {routineId: string; definitionRevision: string; platform: string; laneId: string; build: unknown; verification?: CandidateVerification}}
+  input: {routineId: string; definitionRevision: string; routineSource: RoutineSourceRef; minimumFrameworkVersion?: number;
+    platform: string; laneId: string; build: unknown; verification?: CandidateVerification}}
 const requestBinding = async (requestId: string): Promise<ResultRequestBinding | null> => {
   const row = await TestRequestModel.findOne({requestId, hostReceipt: {$exists: true}}).read("primary").readConcern("majority").lean();
   return row ? {hostId: row.hostId, input: row.input as ResultRequestBinding["input"],
@@ -116,7 +118,10 @@ export class FrameworkResultService {
     const run = parsed.data, payloadSha256 = requestInputDigest(run);
     const binding = await this.request(run.requestId);
     if (!binding || !buildDigest(binding.input?.build) || binding.hostId !== authenticatedHostId || run.hostId !== authenticatedHostId || binding.input.routineId !== run.routineId
-      || binding.input.definitionRevision !== run.definitionRevision || binding.input.platform !== run.platform
+      || binding.input.definitionRevision !== run.definitionRevision
+      || requestInputDigest(binding.input.routineSource) !== requestInputDigest(run.routineSource)
+      || run.frameworkBinding.routineApiVersion < run.routineSource.minimumRoutineApiVersion
+      || binding.input.minimumFrameworkVersion !== undefined && run.frameworkBinding.version < Number(binding.input.minimumFrameworkVersion) || binding.input.platform !== run.platform
       || binding.input.laneId !== run.laneId || buildDigest(binding.input.build) !== requestInputDigest(run.build))
       throw new FrameworkResultConflict("Result does not match this host's accepted request");
     const definition = await this.definition(run);

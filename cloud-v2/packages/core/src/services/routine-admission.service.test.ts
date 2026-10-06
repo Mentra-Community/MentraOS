@@ -1,3 +1,4 @@
+import {testRoutineSource} from "../testing/framework-fixtures"
 import {expect, test} from "bun:test";
 import {routineAdmissionInput} from "./routine-admission.service";
 import {hostStateSchema, type ReceivedTestHostState} from "./test-host-state.service";
@@ -11,11 +12,29 @@ const build: TestBuild = {source: {channel: "dev", buildRunId: 10, publicationAt
   headSha: revision, buildUrl: "https://github.com/example/run/10", createdAt: new Date(now).toISOString(), availability: "available",
   archive: {name: "app.apk", url: "https://artifactscdn.mentraglass.com/exact/app.apk", sha256, size: 100},
   receipt: {url: "https://artifactscdn.mentraglass.com/exact/receipt.json", sha256, size: 100}, manifest, manifestSha256: sha256};
-const enrollment = (glasses = true): RoutineEnrollment => ({routineId: "arbitrary-camera", platform: "android", definitionRevision: revision,
-  definitionSha256: sha256, definition: {id: "arbitrary-camera", title: "Camera", purpose: "Check camera", platforms: ["android"], entry: "sign-in", account: "none",
-    requires: glasses ? ["camera"] : [], requirements: [], fixtures: [], ...(glasses ? {glasses: {models: ["mentra-live"]}} : {}),
-    steps: [{id: "check", instruction: "Check", expected: "Observed"}], execution: {resourceKinds: glasses ? ["phone", "app", "glasses", "recorder"] : ["phone", "app", "recorder"]},
-    source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision, path: "routines/arbitrary-camera/routine.ts"}}});
+const enrollment = (glasses = true): RoutineEnrollment => ({
+  routineId: "arbitrary-camera",
+  platform: "android",
+  definitionRevision: revision,
+  definitionSha256: sha256,
+  routineSource: testRoutineSource(revision),
+  definition: {
+    minimumRoutineApiVersion: 1,
+    id: "arbitrary-camera",
+    title: "Camera",
+    purpose: "Check camera",
+    platforms: ["android"],
+    entry: "sign-in",
+    account: "none",
+    requires: glasses ? ["camera"] : [],
+    requirements: [],
+    fixtures: [],
+    ...(glasses ? {glasses: {models: ["mentra-live"]}} : {}),
+    steps: [{id: "check", instruction: "Check", expected: "Observed"}],
+    execution: {resourceKinds: glasses ? ["phone", "app", "glasses", "recorder"] : ["phone", "app", "recorder"]},
+    source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision, path: "routines/arbitrary-camera/routine.ts"},
+  },
+})
 const host = (glasses = true): ReceivedTestHostState => ({hostId: "mini", incarnation: "boot", incarnationGeneration: 1, sequence: 1,
   receivedAt: new Date(now).toISOString(), observedAt: new Date(now).toISOString(), lanes: [{id: "phone-lane", platform: "android", dispatchMode: "automatic", state: "idle",
     resources: [{id: "phone", kind: "phone"}, {id: "app", kind: "app"}, {id: "recorder", kind: "recorder"}, ...(glasses ? [{id: "physical-live", kind: "glasses" as const}] : [])],
@@ -76,14 +95,20 @@ test("physical inventory maps one product to one resource across lanes while cap
   const {receivedAt, ...base} = host();
   const snapshot = {...base, lanes: [first, {...first, id: "mac-lane", platform: "ios-on-mac", glasses: [{...first.glasses![0]!, capabilities: []}]}]};
   expect(hostStateSchema.parse(snapshot).lanes).toHaveLength(2);
-  for (const second of [{...first, id: "mac-lane", glasses: [{...first.glasses![0]!, deviceId: "other-device"}]},
-    {...first, id: "mac-lane", resources: first.resources.map(ref => ref.kind === "glasses" ? {...ref, id: "other-resource"} : ref), glasses: [{...first.glasses![0]!, resourceId: "other-resource"}]}])
+  for (const second of [
+    {...first, id: "mac-lane", glasses: [{...first.glasses![0]!, deviceId: "other-device"}]},
+    {
+      ...first,
+      id: "mac-lane",
+      resources: first.resources.map((ref) => (ref.kind === "glasses" ? {...ref, id: "other-resource"} : ref)),
+      glasses: [{...first.glasses![0]!, resourceId: "other-resource"}],
+    },
+  ])
     expect(() => hostStateSchema.parse({...base, lanes: [first, second]})).toThrow("Shared physical glasses");
   for (const lane of [{...first, glasses: undefined}, {...first, glasses: []}, {...first, glasses: [first.glasses![0]!, first.glasses![0]!]},
     {...first, glasses: [{...first.glasses![0]!, capabilities: ["camera", "camera"]}]}])
     expect(() => hostStateSchema.parse({...base, lanes: [lane]})).toThrow();
-});
-
+})
 
 test("enrollment and dispatch bind routine-declared starting software while preserving the selected build return", () => {
   const startSoftware = {model: "mentra-live" as const, manifest: {...manifest, url: "https://artifactscdn.mentraglass.com/reset/manifest.json", sha256: "c".repeat(64)}};
@@ -101,14 +126,16 @@ test("enrollment and dispatch bind routine-declared starting software while pres
     glasses: {models: ["mentra-live"], startSoftware: {...startSoftware, manifest: {...manifest, url: "file:///private/reset.json"}}}}})).toThrow();
 });
 
-
 test("host fixture requirements do not become physical glasses capabilities on either platform", () => {
   for (const platform of ["android", "ios-on-mac"] as const) {
-    const definition = enrollment(); definition.platform = platform; definition.definition.platforms = [platform];
+    const definition = enrollment();
+    definition.platform = platform;
+    definition.definition.platforms = [platform];
     definition.definition.requires = ["camera", "fixture-data"];
     definition.definition.fixtures = [{provider: "recorded-media", description: "Owned recorded media fixture"}];
     definition.definition.execution!.resourceKinds.push("fixture-data");
-    const observed = host(), lane = observed.lanes[0]!; lane.platform = platform;
+    const observed = host(), lane = observed.lanes[0]!;
+    lane.platform = platform;
     lane.resources.push({id: "recorded-media", kind: "fixture-data"});
     lane.routineAvailability = [{routineId: definition.routineId, definitionRevision: revision, available: true}];
     const input = select(definition, {...build, platform}, observed);
@@ -121,9 +148,10 @@ test("host fixture requirements do not become physical glasses capabilities on e
     expect(() => select(definition, {...build, platform}, observed)).toThrow("exactly one fixture-data resource");
     lane.resources.push({id: "recorded-media", kind: "fixture-data"});
     lane.routineAvailability[0]!.available = false;
-    expect(() => select(definition, {...build, platform}, observed)).toThrow("cannot prepare");
+    // Waiting jobs keep their selected immutable source while start preparation refreshes actual availability.
+    expect(select(definition, {...build, platform}, observed).routineSource).toEqual(definition.routineSource)
   }
-});
+})
 
 test("mixed host audio and external-window requirements retain their exact resource bindings", () => {
   const definition = enrollment(); definition.definition.requires = ["camera", "audio", "external-window"];

@@ -155,6 +155,8 @@ function RequestCard({request, observing, refreshing, onRefresh}: {request: Fram
     <p className="mt-2"><BuildIdentity build={request.build} label="Requested build" /></p>
     <p className="mt-2">Computer: {request.hostId} · Lane: {request.laneId} · {request.platform}</p>
     <p className="mt-2 text-sm">Routine revision: <code>{request.definitionRevision}</code></p>
+    {request.minimumFrameworkVersion !== undefined && <p className="mt-2 text-sm">Requires framework version {request.minimumFrameworkVersion} or later.</p>}
+    {request.routineSource && <p className="mt-2 text-sm">Requires routine API {request.routineSource.minimumRoutineApiVersion} or later. The installed framework is recorded when execution starts.</p>}
     {request.createdAt && <p className="mt-2 text-sm">Requested {new Date(request.createdAt).toLocaleString()}</p>}
     {request.acceptedAt && <p className="mt-2 text-sm">Host accepted {new Date(request.acceptedAt).toLocaleString()}</p>}
     {request.reason && <p className="mt-3">{request.reason}</p>}
@@ -231,6 +233,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       <p className="mt-2"><BuildIdentity build={run.build} /></p>
       {definition?.source && <p className="mt-2 text-sm"><a className="underline" href={definitionSourceHref(definition.source)} target="_blank" rel="noreferrer">Routine source at {definition.source.revision.slice(0, 10)}</a></p>}
       <p className="mt-2">Computer: {run.hostId} · Lane: {run.laneId} · {run.platform}</p>
+      <p className="mt-2 text-sm">Framework {run.frameworkBinding.version} · <code>{run.frameworkBinding.revision.slice(0, 10)}</code> · Routine API {run.frameworkBinding.routineApiVersion}</p>
       <p className="mt-2">Setup {seconds(run.result.timing.setupMs)} · Test {seconds(run.result.timing.testMs)} · Teardown {seconds(run.result.timing.teardownMs)}</p>
       {evidenceStatus === "failed" && <p role="alert" className="mt-2">Evidence failed; the execution verdict is unchanged.</p>}
       {!uploadsComplete && <p role="status" className="mt-2">Evidence upload pending.</p>}

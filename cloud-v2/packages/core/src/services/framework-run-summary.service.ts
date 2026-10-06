@@ -18,6 +18,7 @@ export function summarizeFrameworkRun(run: FrameworkRun, uploadsComplete: boolea
     : Number.isSafeInteger(source?.buildRunId) && Number(source?.buildRunId) > 0
       ? `https://github.com/${run.build.repository}/actions/runs/${source!.buildRunId}` : undefined;
   return {runId: run.result.runId, requestId: run.requestId, hostId: run.hostId, routineId: run.routineId,
+    routineSource: run.routineSource, frameworkBinding: run.frameworkBinding,
     platform: run.platform, laneId: run.laneId, startedAt: run.startedAt, finishedAt: run.finishedAt,
     outcome: frameworkRunOutcome(run), uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed",
     stepCounts: {passed: run.result.steps.filter(step => step.status === "passed").length,

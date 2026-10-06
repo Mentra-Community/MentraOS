@@ -53,6 +53,8 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     const input = parsed.data;
     const request: FrameworkRequestDisplay = {requestId: row.requestId, hostId: row.hostId, inputSha256: row.inputSha256,
       routineId: input.routineId, platform: input.platform, definitionRevision: input.definitionRevision,
+      routineSource: input.routineSource,
+      ...(input.minimumFrameworkVersion !== undefined ? {minimumFrameworkVersion: input.minimumFrameworkVersion} : {}),
       laneId: input.laneId, build: input.build, state: row.state, terminalStatus: row.terminalStatus,
       createdAt: row.createdAt?.toISOString(), acceptedAt: row.hostReceipt?.acceptedAt,
       reason: rejection ? `${rejection.code}: ${rejection.reason}` : cancellation?.reason,

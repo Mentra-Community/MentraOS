@@ -1,3 +1,4 @@
+import {frameworkBindingSchema, routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
 import {frameworkIdentitySchema} from "./framework-request.types";
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
@@ -9,6 +10,7 @@ export const frameworkRunSummaryProjectionSchema = z.object({
   version: z.literal(1), payloadSha256: digest, summarySha256: digest, definitionRevision: sha, recordingAssetId: z.string().optional(),
   summary: z.object({runId: frameworkIdentitySchema, requestId: frameworkIdentitySchema,
     hostId: frameworkIdentitySchema, routineId: routineIdentitySchema, platform: routinePlatformSchema, laneId: frameworkIdentitySchema,
+    routineSource: routineSourceRefSchema, frameworkBinding: frameworkBindingSchema,
     startedAt: z.string().datetime({offset: true}), finishedAt: z.string().datetime({offset: true}),
     outcome: z.enum(["setup-failed", "failed", "cancelled", "teardown-failed", "pass", "not-run"]),
     evidenceStatus: z.enum(["complete", "failed"]),

@@ -1,3 +1,4 @@
+import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {expect, test, spyOn} from "bun:test";
 import {FrameworkResultConflict, FrameworkResultService, frameworkResultCursorFilter, type FrameworkResultRepository} from "./framework-result.service";
@@ -7,23 +8,47 @@ import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import type {FrameworkRun} from "../types/framework-run.types";
 
 test('candidate result metadata remains outside immutable result and host reader requires original accepted host', async () => {
-  const {frameworkRunSchema} = await import('../types/framework-run.types')
+  const {frameworkRunSchema} = await import('../types/framework-run.types');
   const verification = {workId: 'work:one', attemptId: 3, sourceRevision: 'a'.repeat(40)}
-  const run = frameworkRunSchema.parse({schemaVersion: 1, hostId: 'mini', requestId: 'candidate-result', routineId: 'notes',
-    definitionRevision: verification.sourceRevision, platform: 'android', laneId: 'android',
+  const run = frameworkRunSchema.parse({
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: 'mini',
+    requestId: 'candidate-result',
+    routineId: "notes",
+    definitionRevision: verification.sourceRevision,
+    platform: 'android',
+    laneId: 'android',
     build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
-    startedAt: '2026-10-05T10:00:00Z', finishedAt: '2026-10-05T10:01:00Z', assets: [],
+    startedAt: '2026-10-05T10:00:00Z',
+    finishedAt: '2026-10-05T10:01:00Z',
+    assets: [],
     result: {runId: 'candidate-result', finishedAt: '2026-10-05T10:01:00Z', setup: {status: 'passed'}, test: 'passed',
       steps: [{id: 'required', status: 'passed', durationMs: 10}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
-      failures: [], evidence: [], timing: {startedAt: '2026-10-05T10:00:00Z', setupMs: 0, testMs: 10, teardownMs: 0}}})
+      failures: [], evidence: [], timing: {startedAt: '2026-10-05T10:00:00Z', setupMs: 0, testMs: 10, teardownMs: 0}},
+  })
   let metadata: unknown
-  const service = new FrameworkResultService({async insert(payload, hash, selected) {
+  const service = new FrameworkResultService(
+    {async insert(payload, hash, selected) {
     expect(payload).toEqual(run); expect(hash).toBe(requestInputDigest(run)); metadata = selected
   }, async getByRequest() {return {payload: run, payloadSha256: requestInputDigest(run), uploadsComplete: true}},
   async getByRun() {return null}, async getAsset() {return null}},
-  async () => ({hostId: 'mini', input: {routineId: run.routineId, definitionRevision: run.definitionRevision, platform: run.platform,
-    laneId: run.laneId, build: run.build, verification}}), async () => {},
-  async () => ({definition: {steps: [{id: 'required'}]}} as unknown as RoutineEnrollment))
+    async () => ({
+      hostId: 'mini',
+      input: {
+        routineId: run.routineId,
+        definitionRevision: run.definitionRevision,
+        routineSource: run.routineSource,
+        platform: run.platform,
+        laneId: run.laneId,
+        build: run.build,
+        verification,
+      },
+    }),
+    async () => {},
+    async () => ({definition: {steps: [{id: "required"}]}}) as unknown as RoutineEnrollment,
+  )
   await service.ingest(run, 'mini')
   expect(metadata).toEqual({verification, catalogEligible: false})
   expect((await service.detailForHost(run.requestId, 'mini')).verification).toEqual(verification)
@@ -43,21 +68,60 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
     async getByRequest() {return stored;},
     async getByRun() {return stored;}, async getAsset() {return null;},
   };
-  const run = {schemaVersion: 1, hostId: "mini", requestId: "r1", routineId: "notes", definitionRevision: "a".repeat(40),
-    platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}, startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z",
-    assets: [], result: {runId: "r1", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "failed", actionId: "install"}, test: "not-run", steps: [{id: "required", status: "not-run", durationMs: 0, causedBy: "install"}],
+  const run = {
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: 'mini',
+    requestId: "r1",
+    routineId: "notes",
+    definitionRevision: 'a'.repeat(40),
+    platform: "ios-on-mac",
+    laneId: "mac",
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: "2026-10-02T19:00:00Z",
+    finishedAt: "2026-10-02T19:01:00Z",
+    assets: [],
+    result: {runId: "r1", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "failed", actionId: "install"}, test: "not-run", steps: [{id: "required", status: "not-run", durationMs: 0, causedBy: "install"}],
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
       failures: [{phase: "setup", actionId: "install", message: "install failed"}], evidence: [],
-      timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 100, testMs: 0, teardownMs: 100}}};
+      timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 100, testMs: 0, teardownMs: 100}},
+  }
   let projectionAttempts = 0;
-  const source = async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment);
-  const service = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
-    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}}), async () => {projectionAttempts++;}, source, undefined,
-    {async list() {return [];}, async complete() {throw new FrameworkResultConflict('not acknowledged');}});
+  const source = async () => ({definition: {steps: [{id: "required"}]}}) as unknown as RoutineEnrollment
+  const service = new FrameworkResultService(
+    repository,
+    async () => ({
+      hostId: 'mini',
+      input: {
+        routineSource: testRoutineSource(),
+        routineId: "notes",
+        definitionRevision: 'a'.repeat(40),
+        platform: "ios-on-mac",
+        laneId: "mac",
+        build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+      },
+    }),
+    async () => {projectionAttempts++;},
+    source,
+    undefined,
+    {async list() {return [];}, async complete() {throw new FrameworkResultConflict('not acknowledged');}},
+  )
   const first = await service.ingest(run, "mini"), duplicate = await service.ingest(run, "mini");
   expect(projectionAttempts).toBe(2);
   expect(first.created).toBe(true);
   expect(duplicate).toEqual({...first, created: false});
+  expect((await service.detail("r1")).run.frameworkBinding).toEqual(testFrameworkBinding())
+  expect((await service.detail("r1")).run.routineSource).toEqual(testRoutineSource())
+  await expect(
+    service.ingest(
+      {...run, frameworkBinding: {...testFrameworkBinding(), revision: "9".repeat(40), version: 41}},
+      'mini',
+    ),
+  ).rejects.toThrow('different terminal result')
+  await expect(
+    service.ingest({...run, routineSource: {...testRoutineSource(), commit: "9".repeat(40)}}, 'mini'),
+  ).rejects.toThrow()
   expect(await service.complete("r1", "mini")).toEqual({entityId: first.entityId,
     payloadSha256: first.payloadSha256, manifestSha256: (await import("./test-request.service")).requestInputDigest([])});
   await expect(service.complete("r1", "other")).rejects.toThrow("not acknowledged");
@@ -70,15 +134,41 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   await expect(service.ingest(withoutHost, "mini")).rejects.toThrow("Invalid frozen");
   await expect(service.ingest({...run, build: {...run.build, different: true}}, "mini")).rejects.toThrow("accepted request");
   let attempts = 0;
-  const retrying = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
-    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}}),
-    async () => {if (++attempts === 1) throw new Error("request projection unavailable");}, source);
+  const retrying = new FrameworkResultService(
+    repository,
+    async () => ({
+      hostId: 'mini',
+      input: {
+        routineSource: testRoutineSource(),
+        routineId: "notes",
+        definitionRevision: 'a'.repeat(40),
+        platform: "ios-on-mac",
+        laneId: "mac",
+        build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+      },
+    }),
+    async () => {if (++attempts === 1) throw new Error("request projection unavailable");},
+    source,
+  )
   await expect(retrying.ingest(run, "mini")).rejects.toThrow("projection unavailable");
   expect(await retrying.ingest(run, "mini")).toEqual({...first, created: false});
   expect(attempts).toBe(2);
-  const incomplete = new FrameworkResultService(repository, async () => ({hostId: "mini", input: {
-    routineId: "notes", definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}}),
-    async () => {}, async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment));
+  const incomplete = new FrameworkResultService(
+    repository,
+    async () => ({
+      hostId: 'mini',
+      input: {
+        routineSource: testRoutineSource(),
+        routineId: "notes",
+        definitionRevision: 'a'.repeat(40),
+        platform: "ios-on-mac",
+        laneId: "mac",
+        build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+      },
+    }),
+    async () => {},
+    async () => ({definition: {steps: [{id: "required"}]}}) as unknown as RoutineEnrollment,
+  )
   expect((await incomplete.ingest(run, "mini")).created).toBe(false);
   await expect(incomplete.ingest({...run, result: {...run.result, steps: []}}, "mini"))
     .rejects.toThrow("complete ordered source step list");
@@ -87,33 +177,53 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
   // Cloud custody of the declared diagnostics still permits disposal after capture failed.
   expect((await service.complete("r1", "mini")).entityId).toBe(first.entityId);
   expect((await service.detail("r1")).evidenceStatus).toBe("failed");
-
-});
-
+})
 
 test("a completed test can publish a teardown failure without becoming a catalog pass", async () => {
   const {frameworkRunSchema, frameworkRunOutcome} = await import("../types/framework-run.types");
   let stored: FrameworkRun | undefined;
   const failure = {phase: "teardown" as const, actionId: "uninstall", message: "App removal failed"};
-  const run = frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "local:teardown", routineId: "notes",
-    definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac",
-    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
-    startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z", assets: [],
+  const run = frameworkRunSchema.parse({
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: 'mini',
+    requestId: "local:teardown",
+    routineId: "notes",
+    definitionRevision: 'a'.repeat(40),
+    platform: "ios-on-mac",
+    laneId: "mac",
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: "2026-10-02T19:00:00Z",
+    finishedAt: "2026-10-02T19:01:00Z",
+    assets: [],
     result: {runId: "local:teardown", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "passed"}, test: "passed",
       steps: [{id: "required", status: "passed", durationMs: 10}],
       teardown: {ready: false, outcomes: [{state: "failed", resourceId: "app", failure}], errors: [failure], unavailableResources: []},
-      failures: [failure], evidence: [], timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
-  const service = new FrameworkResultService({async insert(payload) {stored = payload;}, async getByRequest() {return null;}, async getByRun() {return null;}, async getAsset() {return null;}},
-    async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
-      platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
-    async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment));
+      failures: [failure], evidence: [], timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}},
+  })
+  const service = new FrameworkResultService(
+    {async insert(payload) {stored = payload;}, async getByRequest() {return null;}, async getByRun() {return null;}, async getAsset() {return null;}},
+    async () => ({
+      hostId: 'mini',
+      input: {
+        routineId: run.routineId,
+        definitionRevision: run.definitionRevision,
+        routineSource: run.routineSource,
+        platform: run.platform,
+        laneId: run.laneId,
+        build: run.build,
+      },
+    }),
+    async () => {},
+    async () => ({definition: {steps: [{id: "required"}]}}) as unknown as RoutineEnrollment,
+  )
   expect((await service.ingest(run, "mini")).created).toBe(true);
   expect(stored?.result.failures).toEqual([failure]);
   expect(frameworkRunOutcome(stored!)).toBe("teardown-failed");
   await expect(service.ingest({...run, result: {...run.result, steps: []}}, "mini")).rejects.toThrow("Invalid frozen");
   await expect(service.ingest({...run, result: {...run.result, failures: [{...failure, phase: "test"}]}}, "mini")).rejects.toThrow("Invalid frozen");
-});
-
+})
 
 test("native result list scopes the archive digest and excludes retained old payloads", async () => {
   let filter: Record<string, unknown> | null = null;
@@ -125,41 +235,84 @@ test("native result list scopes the archive digest and excludes retained old pay
   try {
     const service = new FrameworkResultService();
     expect(await service.list({routineId: "walkthrough", platform: "ios-on-mac", archiveSha256: "a".repeat(64), prNumber: "12", channel: "pr"})).toEqual({runs: [], nextCursor: null});
-    expect(filter as Record<string, unknown> | null).toEqual({"payload.schemaVersion": 1, routineId: "walkthrough", platform: "ios-on-mac", "payload.build.archive.sha256": "a".repeat(64), "payload.build.prNumber": 12, "payload.build.channel": "pr"});
+    expect(filter as Record<string, unknown> | null).toEqual({
+      "payload.schemaVersion": 1,
+      "routineId": "walkthrough",
+      "platform": "ios-on-mac",
+      "payload.build.archive.sha256": "a".repeat(64),
+      "payload.build.prNumber": 12,
+      "payload.build.channel": "pr",
+    })
   } finally {find.mockRestore();}
-});
+})
 
 test("exact-request summary verifies the existing projection and frozen build without loading evidence or a definition", async () => {
-  const {frameworkRunSchema} = await import("../types/framework-run.types");
-  const run = frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "summary:one", routineId: "notes",
-    definitionRevision: "a".repeat(40), platform: "android", laneId: "android",
+  const {frameworkRunSchema} = await import('../types/framework-run.types');
+  const run = frameworkRunSchema.parse({
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: 'mini',
+    requestId: "summary:one",
+    routineId: "notes",
+    definitionRevision: 'a'.repeat(40),
+    platform: 'android',
+    laneId: 'android',
     build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40),
       archive: {sha256: "c".repeat(64)}, source: {channel: "dev", buildRunId: 21, publicationAttempt: 2}},
-    startedAt: "2026-10-06T10:00:00Z", finishedAt: "2026-10-06T10:01:00Z",
+    startedAt: "2026-10-06T10:00:00Z",
+    finishedAt: "2026-10-06T10:01:00Z",
     assets: Array.from({length: 2371}, (_, index) => ({id: `diagnostic-${index}`, kind: "diagnostic", path: `private/${index}.json`,
       sha256: "d".repeat(64), size: 1, mimeType: "application/json"})),
     result: {runId: "summary:one", finishedAt: "2026-10-06T10:01:00Z", setup: {status: "passed"}, test: "passed",
       steps: [{id: "required", status: "passed", durationMs: 10}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
       failures: [{phase: "evidence", actionId: "recording", message: "private-evidence-detail"}], evidence: [],
-      timing: {startedAt: "2026-10-06T10:00:00Z", setupMs: 0, testMs: 10, teardownMs: 0}}});
+      timing: {startedAt: "2026-10-06T10:00:00Z", setupMs: 0, testMs: 10, teardownMs: 0}},
+  })
   const projection = createFrameworkRunSummaryProjection(run, requestInputDigest(run));
   let row: any = {runId: run.requestId, requestId: run.requestId, payloadSha256: projection.payloadSha256,
     summaryProjection: projection, uploadsComplete: false, payload: {build: run.build}};
   let queries = 0;
   const find = spyOn(TestRunModel, "findOne").mockImplementation(((filter: unknown) => {
     queries++;
-    expect(filter).toEqual({"payload.schemaVersion": 1, requestId: run.requestId});
-    return {select(fields: unknown) {
-      expect(fields).toEqual({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, "payload.build": 1}); return this;
-    }, read(value: string) {expect(value).toBe("primary"); return this;}, readConcern(value: string) {expect(value).toBe("majority"); return this;},
-    setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 10_000}); return this;}, lean: async () => row};
-  }) as any);
+    expect(filter).toEqual({"payload.schemaVersion": 1, "requestId": run.requestId})
+    return {
+      select(fields: unknown) {
+        expect(fields).toEqual({
+          "runId": 1,
+          "requestId": 1,
+          "payloadSha256": 1,
+          "summaryProjection": 1,
+          "uploadsComplete": 1,
+          "payload.build": 1,
+        })
+        return this;
+      },
+      read(value: string) {expect(value).toBe("primary"); return this;},
+      readConcern(value: string) {expect(value).toBe("majority"); return this;},
+      setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 10_000}); return this;},
+      lean: async () => row,
+    }
+  }) as any)
   try {
     const service = new FrameworkResultService(undefined, undefined, undefined, async () => {throw Error("Must not fetch a definition");});
     const summary = await service.summary(run.requestId);
-    expect(summary).toMatchObject({runId: run.requestId, requestId: run.requestId, hostId: run.hostId, routineId: run.routineId,
-      definitionRevision: run.definitionRevision, platform: run.platform, laneId: run.laneId, startedAt: run.startedAt, finishedAt: run.finishedAt,
-      outcome: "pass", evidenceStatus: "failed", uploadsComplete: false, build: run.build});
+    expect(summary).toMatchObject({
+      runId: run.requestId,
+      requestId: run.requestId,
+      hostId: run.hostId,
+      routineId: run.routineId,
+      definitionRevision: run.definitionRevision,
+      routineSource: run.routineSource,
+      platform: run.platform,
+      laneId: run.laneId,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      outcome: 'pass',
+      evidenceStatus: 'failed',
+      uploadsComplete: false,
+      build: run.build,
+    })
     expect(JSON.stringify(summary)).not.toContain("private-evidence-detail");
     expect(JSON.stringify(summary)).not.toContain("private/0.json");
     expect(Buffer.byteLength(JSON.stringify(summary))).toBeLessThan(2000);
@@ -183,18 +336,30 @@ test("exact-request summary verifies the existing projection and frozen build wi
     row = null;
     await expect(service.summary(run.requestId)).rejects.toMatchObject({status: 404});
   } finally {find.mockRestore();}
-});
+})
 
 test("native run summaries retain build identity and distinct execution and evidence outcomes", async () => {
   const build = {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40),
     releaseIdentity: "2.1.0-dev.42", source: {buildRunId: 1234}};
-  const run = {schemaVersion: 1, hostId: "mini", requestId: "request:mac.v2", routineId: "notes.search_v2",
-    definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac", build,
-    startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z", assets: [],
+  const run = {
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: 'mini',
+    requestId: "request:mac.v2",
+    routineId: "notes.search_v2",
+    definitionRevision: 'a'.repeat(40),
+    platform: "ios-on-mac",
+    laneId: "mac",
+    build,
+    startedAt: "2026-10-03T19:00:00Z",
+    finishedAt: "2026-10-03T19:01:00Z",
+    assets: [],
     result: {runId: "request:mac.v2", finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed"}, test: "passed",
       steps: [{id: "required", status: "passed", durationMs: 10}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
       failures: [{phase: "evidence", actionId: "capture", message: "Recording unavailable"}], evidence: [],
-      timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}};
+      timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}},
+  }
   const find = spyOn(TestRunModel, "find").mockImplementation((() => {
     return {sort() {return this;}, limit() {return this;}, select() {return this;}, read() {return this;}, readConcern() {return this;},
       lean: async () => [{runId: run.requestId, requestId: run.requestId, payloadSha256: requestInputDigest(run), summaryProjection: createFrameworkRunSummaryProjection(run, requestInputDigest(run)), uploadsComplete: false}]};
@@ -216,10 +381,15 @@ test("native run summaries retain build identity and distinct execution and evid
     const filters: Record<string, unknown>[] = [];
     find.mockImplementation(((filter: Record<string, unknown>) => {
       filters.push(filter);
-      return {sort(value: unknown) {expect(value).toEqual({startedAt: -1, runId: -1}); return this;},
-        limit(value: number) {expect(value).toBe(101); return this;}, select() {return this;}, read() {return this;}, readConcern() {return this;},
-        lean: async () => filters.length === 1 ? rows : rows.slice(100)};
-    }) as any);
+      return {
+        sort(value: unknown) {expect(value).toEqual({startedAt: -1, runId: -1}); return this;},
+        limit(value: number) {expect(value).toBe(101); return this;},
+        select() {return this;},
+        read() {return this;},
+        readConcern() {return this;},
+        lean: async () => (filters.length === 1 ? rows : rows.slice(100)),
+      }
+    }) as any)
     const service = new FrameworkResultService();
     const scope = {headSha: build.headSha, channel: "dev"};
     const first = await service.list(scope);
@@ -228,11 +398,14 @@ test("native run summaries retain build identity and distinct execution and evid
     const second = await service.list({...scope, cursor: first.nextCursor!});
     expect(second.runs.map(row => row.runId)).toEqual(["run-100"]);
     expect(second.nextCursor).toBeNull();
-    expect(filters[1]).toEqual({"payload.schemaVersion": 1, "payload.build.headSha": build.headSha, "payload.build.channel": "dev",
-      $or: [{startedAt: {$lt: new Date(run.startedAt)}}, {startedAt: new Date(run.startedAt), runId: {$lt: "run-101"}}]});
-
+    expect(filters[1]).toEqual({
+      "payload.schemaVersion": 1,
+      "payload.build.headSha": build.headSha,
+      "payload.build.channel": "dev",
+      "$or": [{startedAt: {$lt: new Date(run.startedAt)}}, {startedAt: new Date(run.startedAt), runId: {$lt: "run-101"}}],
+    })
   } finally {find.mockRestore();}
-});
+})
 
 test("invalid frozen result reports bounded issue codes and paths without payload values", async () => {
   const service = new FrameworkResultService();
@@ -249,46 +422,90 @@ test("invalid frozen result reports bounded issue codes and paths without payloa
 });
 
 test("result ingestion binds every routine lifecycle action to the complete ordered declaration before writing", async () => {
-  const {frameworkRunSchema} = await import("../types/framework-run.types");
+  const {frameworkRunSchema} = await import('../types/framework-run.types');
   const {requestInputDigest} = await import("./test-request.service");
   const setup = [
     {id: "create-fixture", instruction: "Create the fixture note", expected: "The fixture note is saved"},
     {id: "prepare-search", instruction: "Prepare the fixture search", expected: "The fixture is searchable"},
   ];
   const teardown = [{id: "remove-fixture", instruction: "Remove the fixture note", expected: "The fixture note is absent"}];
-  const definition: RoutineEnrollment["definition"] = {id: "notes", title: "Notes search", purpose: "Check Notes search",
-    platforms: ["ios-on-mac"], entry: "home", account: "lane", requires: [], requirements: [], fixtures: [], setup, teardown,
+  const definition: RoutineEnrollment["definition"] = {
+    id: "notes",
+    minimumRoutineApiVersion: 1,
+    title: "Notes search",
+    purpose: "Check Notes search",
+    platforms: ["ios-on-mac"],
+    entry: "home",
+    account: "lane",
+    requires: [],
+    requirements: [],
+    fixtures: [],
+    setup,
+    teardown,
     steps: [{id: "required", instruction: "Search for the fixture", expected: "The fixture note appears"}],
-    source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: "a".repeat(40), path: "routines/notes/routine.ts"}};
-  const report = (action: typeof setup[number]) => ({...action, scope: "routine" as const, status: "passed" as const, durationMs: 10});
+    source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: "a".repeat(40), path: "routines/notes/routine.ts"},
+  }
+  const report = (action: (typeof setup)[number]) => ({...action, scope: "routine" as const, status: "passed" as const, durationMs: 10})
   const shared = {id: "shared:app", instruction: "Install the selected Mentra App", expected: "The selected build is installed",
     scope: "shared" as const, status: "passed" as const, durationMs: 10};
-  const run = frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "lifecycle", routineId: "notes",
-    definitionRevision: definition.source.revision, platform: "ios-on-mac", laneId: "mac",
-    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
-    startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z", assets: [],
+  const run = frameworkRunSchema.parse({
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: 'mini',
+    requestId: "lifecycle",
+    routineId: "notes",
+    definitionRevision: definition.source.revision,
+    platform: "ios-on-mac",
+    laneId: "mac",
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: "2026-10-03T19:00:00Z",
+    finishedAt: "2026-10-03T19:01:00Z",
+    assets: [],
     result: {runId: "lifecycle", finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed", actions: [shared, ...setup.map(report)]},
       test: "passed", steps: [{id: "required", status: "passed", durationMs: 10}],
       teardown: {ready: true, actions: [...teardown.map(report), shared], outcomes: [], errors: [], unavailableResources: []},
-      failures: [], evidence: [], timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
+      failures: [], evidence: [], timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}},
+  })
   let writes = 0, stored: FrameworkRun | undefined;
   const source = {...definition};
-  const service = new FrameworkResultService({async insert(payload) {writes++; stored = payload;},
+  const service = new FrameworkResultService(
+    {async insert(payload) {writes++; stored = payload;},
     async getByRequest() {return null;}, async getByRun() {return null;}, async getAsset() {return null;}},
-    async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
-      platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
-    async () => ({routineId: run.routineId, platform: run.platform, definitionRevision: run.definitionRevision,
-      definitionSha256: requestInputDigest(source), definition: source}));
+    async () => ({
+      hostId: 'mini',
+      input: {
+        routineId: run.routineId,
+        definitionRevision: run.definitionRevision,
+        routineSource: run.routineSource,
+        platform: run.platform,
+        laneId: run.laneId,
+        build: run.build,
+      },
+    }),
+    async () => {},
+    async () => ({
+      routineId: run.routineId,
+      platform: run.platform,
+      definitionRevision: run.definitionRevision,
+      routineSource: run.routineSource,
+      definitionSha256: requestInputDigest(source),
+      definition: source,
+    }),
+  )
   for (const phase of ["setup", "teardown"] as const) {
     const actions = run.result[phase].actions!;
     const {actions: omitted, ...aggregate} = run.result[phase];
     const routine = actions.filter(action => action.scope === "routine");
     for (const invalid of [
-      undefined, [shared], [...actions, {...routine[0]!, id: "undeclared"}],
+      undefined,
+      [shared],
+      [...actions, {...routine[0]!, id: "undeclared"}],
       actions.map(action => action.scope === "routine" ? {...action, instruction: `${action.instruction} differently`} : action),
       actions.map(action => action.scope === "routine" ? {...action, expected: `${action.expected} differently`} : action),
-      actions.map(action => action.scope === "routine" ? {...action, scope: "shared" as const} : action),
-    ]) await expect(service.ingest({...run, result: {...run.result, [phase]: {...aggregate, ...(invalid ? {actions: invalid} : {})}}}, "mini"))
+      actions.map((action) => (action.scope === "routine" ? {...action, scope: "shared" as const} : action)),
+    ])
+      await expect(service.ingest({...run, result: {...run.result, [phase]: {...aggregate, ...(invalid ? {actions: invalid} : {})}}}, "mini"))
       .rejects.toThrow(`complete ordered source ${phase} action list`);
   }
   await expect(service.ingest({...run, result: {...run.result, setup: {...run.result.setup,
@@ -302,7 +519,7 @@ test("result ingestion binds every routine lifecycle action to the complete orde
   expect(writes).toBe(1);
 
   // Shared entry may fail before any routine hook starts; normal shared disposal still establishes readiness.
-  const skipped = (action: typeof setup[number]) => ({...report(action), status: "not-run" as const, durationMs: 0, causedBy: shared.id});
+  const skipped = (action: (typeof setup)[number]) => ({...report(action), status: "not-run" as const, durationMs: 0, causedBy: shared.id})
   const setupStopped = {...run, result: {...run.result,
     setup: {status: "failed" as const, actionId: shared.id, actions: [{...shared, status: "failed" as const}, ...setup.map(skipped)]},
     test: "not-run" as const, steps: [{id: "required", status: "not-run" as const, durationMs: 0, causedBy: shared.id}],
@@ -313,7 +530,8 @@ test("result ingestion binds every routine lifecycle action to the complete orde
   expect(stored?.result.teardown.actions?.[0]?.status).toBe("not-run");
 
   // Missing metadata means no routine hooks; explicit arrays from a new producer still work.
-  delete source.setup; delete source.teardown;
+  delete source.setup;
+  delete source.teardown;
   const {actions: omittedTeardown, ...legacyTeardown} = run.result.teardown;
   const legacy = {...run, result: {...run.result, setup: {status: "passed" as const},
     teardown: legacyTeardown}};
@@ -321,22 +539,34 @@ test("result ingestion binds every routine lifecycle action to the complete orde
   await service.ingest({...legacy, result: {...legacy.result, setup: {...legacy.result.setup, actions: [shared]},
     teardown: {...legacy.result.teardown, actions: []}}}, "mini");
   await expect(service.ingest(run, "mini")).rejects.toThrow("complete ordered source setup action list");
-  source.setup = []; source.teardown = [];
+  source.setup = [];
+  source.teardown = [];
   await expect(service.ingest(legacy, "mini")).rejects.toThrow("complete ordered source setup action list");
   await service.ingest({...legacy, result: {...legacy.result, setup: {...legacy.result.setup, actions: []},
     teardown: {...legacy.result.teardown, actions: []}}}, "mini");
-});
+})
 
 test("old saved lifecycle omissions remain readable without invented action reports", async () => {
-  const {frameworkRunSchema} = await import("../types/framework-run.types");
-  const old = frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "old-run", routineId: "notes",
-    definitionRevision: "a".repeat(40), platform: "ios-on-mac", laneId: "mac",
-    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
-    startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z", assets: [],
+  const {frameworkRunSchema} = await import('../types/framework-run.types');
+  const old = frameworkRunSchema.parse({
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: 'mini',
+    requestId: "old-run",
+    routineId: "notes",
+    definitionRevision: 'a'.repeat(40),
+    platform: "ios-on-mac",
+    laneId: "mac",
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: "2026-10-03T19:00:00Z",
+    finishedAt: "2026-10-03T19:01:00Z",
+    assets: [],
     result: {runId: "old-run", finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed"}, test: "passed",
       steps: [{id: "required", status: "passed", durationMs: 10}],
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [],
-      timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
+      timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}},
+  })
   const service = new FrameworkResultService({async insert() {},
     async getByRequest() {return {payload: old, payloadSha256: "f".repeat(64), uploadsComplete: true};},
     async getByRun() {return null;}, async getAsset() {return null;}}, async () => null, async () => {}, async () => null);
@@ -345,7 +575,7 @@ test("old saved lifecycle omissions remain readable without invented action repo
   expect(detail.outcome).toBe("pass");
   expect(detail.run.result.setup).not.toHaveProperty("actions");
   expect(detail.run.result.teardown).not.toHaveProperty("actions");
-});
+})
 
 test("asset reads project one immutable declaration and preserve missing and unauthorized outcomes", async () => {
   const {TestAssetService} = await import("./test-asset.service");
@@ -375,7 +605,10 @@ test("asset reads project one immutable declaration and preserve missing and una
     return new Response(null, {status: 206, headers: {"content-range": "bytes 0-1/100", "content-length": "2"}});
   });
   let owner = "mini";
-  const service = new FrameworkResultService(undefined, async () => ({hostId: owner, input: {} as any}));
+  const service = new FrameworkResultService(undefined, async () => ({
+    hostId: owner,
+    input: {routineSource: testRoutineSource()} as any,
+  }))
   const headers = new Headers({"content-type": declaration.mimeType});
   const mediaRequest = new Request("http://localhost/asset", {method: "HEAD"});
   try {
@@ -394,20 +627,24 @@ test("asset reads project one immutable declaration and preserve missing and una
     for (const [index, call] of calls.entries()) {
       expect(call.pipeline[0].$match).toMatchObject({"payload.schemaVersion": 1});
       expect(call.pipeline[1]).toEqual({$limit: 1});
-      expect(call.pipeline[2].$project).toEqual({"payload.result.runId": 1,
+      expect(call.pipeline[2].$project).toEqual({
+        "payload.result.runId": 1,
         "payload.assets": {$filter: {input: "$payload.assets", as: "asset",
-          cond: {$eq: ["$$asset.id", {$literal: [3, 5].includes(index) ? "undeclared" : declaration.id}]}}}, _id: 0});
-      expect(call.options.readPreference.mode).toBe("primary"); expect(call.options.readConcern).toEqual({level: "majority"});
+          cond: {$eq: ["$$asset.id", {$literal: [3, 5].includes(index) ? "undeclared" : declaration.id}]}}},
+        "_id": 0,
+      })
+      expect(call.options.readPreference.mode).toBe("primary");
+      expect(call.options.readConcern).toEqual({level: "majority"});
     }
-    expect(calls[0].pipeline[0].$match).toEqual({"payload.schemaVersion": 1, requestId: "request"});
-    expect(calls[5].pipeline[0].$match).toEqual({"payload.schemaVersion": 1, runId: "frozen-run"});
+    expect(calls[0].pipeline[0].$match).toEqual({"payload.schemaVersion": 1, "requestId": "request"})
+    expect(calls[5].pipeline[0].$match).toEqual({"payload.schemaVersion": 1, "runId": "frozen-run"})
     acknowledged = true;
     const response = await service.mediaByRun("frozen-run", declaration.id, mediaRequest);
-    expect(response.status).toBe(206); expect(response.headers.get("content-length")).toBe("2");
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-length")).toBe("2");
     expect(media).toHaveBeenCalledTimes(1);
   } finally {aggregate.mockRestore(); custody.mockRestore(); upload.mockRestore(); media.mockRestore();}
-});
-
+})
 
 test("4096 streamed assets acknowledge once at complete with immutable metadata and concurrent retry custody", async () => {
   const {createHash} = await import("node:crypto");
@@ -423,14 +660,25 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const declared = Array.from({length: FRAMEWORK_RUN_ASSET_LIMIT}, (_, index) => ({id: `report:${index}`, kind: "report",
     path: `report-${index}.json`, size: bytes.length, sha256, mimeType: "application/json"}));
-  const run = frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "large", routineId: "notes",
-    definitionRevision: "a".repeat(40), platform: "android", laneId: "android",
-    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
-    startedAt: "2026-10-05T15:00:00Z", finishedAt: "2026-10-05T15:01:00Z", assets: declared,
+  const run = frameworkRunSchema.parse({
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: 'mini',
+    requestId: "large",
+    routineId: "notes",
+    definitionRevision: 'a'.repeat(40),
+    platform: 'android',
+    laneId: 'android',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: "2026-10-05T15:00:00Z",
+    finishedAt: "2026-10-05T15:01:00Z",
+    assets: declared,
     result: {runId: "large", finishedAt: "2026-10-05T15:01:00Z", setup: {status: "passed"}, test: "failed",
       steps: [{id: "required", status: "failed", durationMs: 10}], failures: [{phase: "test", actionId: "required", message: "Original failure"}],
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, evidence: declared.map(asset => asset.id),
-      timing: {startedAt: "2026-10-05T15:00:00Z", setupMs: 0, testMs: 10, teardownMs: 0}}});
+      timing: {startedAt: "2026-10-05T15:00:00Z", setupMs: 0, testMs: 10, teardownMs: 0}},
+  })
   const stored = {payload: run, payloadSha256: requestInputDigest(run), uploadsComplete: false};
   const rows = new Map<string, import("./test-asset.service").StoredTestAsset>();
   let inventoryReads = 0, duplicateLookups = 0, completionWrites = 0;
@@ -446,10 +694,23 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
     }
     rows.set(row.assetId, row); return row;
   }}, () => storage);
-  const service = new FrameworkResultService({async insert() {}, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset(_identity, assetId) {return {runId: stored.payload.result.runId, asset: stored.payload.assets.find(asset => asset.id === assetId) ?? null};}},
-    async () => ({hostId: "mini", input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
-      platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {},
-    async () => ({definition: {steps: [{id: "required"}]}} as unknown as RoutineEnrollment), assets, {
+  const service = new FrameworkResultService(
+    {async insert() {}, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset(_identity, assetId) {return {runId: stored.payload.result.runId, asset: stored.payload.assets.find(asset => asset.id === assetId) ?? null};}},
+    async () => ({
+      hostId: 'mini',
+      input: {
+        routineId: run.routineId,
+        definitionRevision: run.definitionRevision,
+        routineSource: run.routineSource,
+        platform: run.platform,
+        laneId: run.laneId,
+        build: run.build,
+      },
+    }),
+    async () => {},
+    async () => ({definition: {steps: [{id: "required"}]}}) as unknown as RoutineEnrollment,
+    assets,
+    {
       async list() {
         inventoryReads++; const all = [...rows.values()];
         if (corrupt === "duplicate") all[1] = {...all[0]!};
@@ -457,7 +718,8 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
         if (corrupt === "size") all[0] = {...all[0]!, sizeBytes: bytes.length + 1};
         return all;
       }, async complete(value) {expect(value.payloadSha256).toBe(stored.payloadSha256); completionWrites++; stored.uploadsComplete = true;},
-    });
+    },
+  )
   const headers = new Headers({"content-type": "application/json", "content-length": String(bytes.length)});
   const body = () => new ReadableStream<Uint8Array>({start(controller) {controller.enqueue(bytes); controller.close();}});
   const upload = (assetId: string) => service.upload(run.requestId, assetId, "mini", body(), headers);
@@ -492,7 +754,7 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
     await expect(service.upload(run.requestId, final.id, "mini", bad, headers)).rejects.toThrow("SHA256");
     expect((await service.detail(run.requestId)).outcome).toBe("failed");
   } finally {await rm(directory, {recursive: true, force: true});}
-});
+})
 
 test("results cursor validates before querying and handles equal timestamps by run identity", () => {
   expect(frameworkResultCursorFilter()).toEqual({});
@@ -503,10 +765,20 @@ test("results cursor validates before querying and handles equal timestamps by r
 test('failed recording publication preserves immutable step offsets and settled evidence failure on retry', async () => {
   const {frameworkRunSchema} = await import('../types/framework-run.types');
   const diagnostic = {phase: 'evidence' as const, actionId: 'finalize-recording', message: 'Public recording could not be finalized'};
-  const frozen: FrameworkRun = {schemaVersion: 1, hostId: 'mini', requestId: 'recording-result', routineId: 'wifi-connect-android',
-    definitionRevision: 'a'.repeat(40), platform: 'android', laneId: 'android',
+  const frozen: FrameworkRun = {
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: 'mini',
+    requestId: 'recording-result',
+    routineId: 'wifi-connect-android',
+    definitionRevision: 'a'.repeat(40),
+    platform: 'android',
+    laneId: 'android',
     build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
-    startedAt: '2026-10-06T18:00:00Z', finishedAt: '2026-10-06T18:02:00Z', assets: [],
+    startedAt: '2026-10-06T18:00:00Z',
+    finishedAt: '2026-10-06T18:02:00Z',
+    assets: [],
     result: {runId: 'recording-result', finishedAt: '2026-10-06T18:02:00Z', setup: {status: 'passed'}, test: 'passed',
       steps: Array.from({length: 5}, (_, index) => ({id: `step-${index}`, status: 'passed', durationMs: 1000,
         recordingLocation: {assetId: 'recording', startOffsetMs: index * 1000}})),
@@ -514,7 +786,8 @@ test('failed recording publication preserves immutable step offsets and settled 
         expected: 'The recorder is settled', scope: 'shared', status: 'failed', durationMs: 1000}],
         outcomes: [{state: 'cleaned', resourceId: 'recorder', evidence: [], errors: [diagnostic]}],
         errors: [diagnostic], unavailableResources: []}, failures: [diagnostic], evidence: [],
-      timing: {startedAt: '2026-10-06T18:00:00Z', setupMs: 1000, testMs: 5000, teardownMs: 1000}}};
+      timing: {startedAt: '2026-10-06T18:00:00Z', setupMs: 1000, testMs: 5000, teardownMs: 1000}},
+  }
   let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
   let writes = 0;
   const repository: FrameworkResultRepository = {
@@ -525,11 +798,25 @@ test('failed recording publication preserves immutable step offsets and settled 
     },
     async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset() {return null;},
   };
-  const service = new FrameworkResultService(repository, async () => ({hostId: frozen.hostId, input: {
-    routineId: frozen.routineId, definitionRevision: frozen.definitionRevision, platform: frozen.platform,
-    laneId: frozen.laneId, build: frozen.build}}), async () => {},
-    async () => ({definition: {steps: frozen.result.steps.map(step => ({id: step.id}))}} as unknown as RoutineEnrollment),
-    undefined, {async list() {return [];}, async complete() {}});
+  const service = new FrameworkResultService(
+    repository,
+    async () => ({
+      hostId: frozen.hostId,
+      input: {
+        routineId: frozen.routineId,
+        definitionRevision: frozen.definitionRevision,
+        routineSource: frozen.routineSource,
+        platform: frozen.platform,
+        laneId: frozen.laneId,
+        build: frozen.build,
+      },
+    }),
+    async () => {},
+    async () =>
+      ({definition: {steps: frozen.result.steps.map(step => ({id: step.id}))}}) as unknown as RoutineEnrollment,
+    undefined,
+    {async list() {return [];}, async complete() {}},
+  )
   const originalDigest = requestInputDigest(frozen);
   const first = await service.ingest(frozen, frozen.hostId);
   expect(first).toMatchObject({payloadSha256: originalDigest, created: true});
@@ -537,7 +824,7 @@ test('failed recording publication preserves immutable step offsets and settled 
   expect(writes).toBe(1);
   expect(stored!.payload).toEqual(frozen);
   expect(requestInputDigest(frozen)).toBe(originalDigest);
-  expect((await service.detail(frozen.requestId))).toMatchObject({outcome: 'pass', uploadsComplete: true, evidenceStatus: 'failed'});
+  expect(await service.detail(frozen.requestId)).toMatchObject({outcome: 'pass', uploadsComplete: true, evidenceStatus: 'failed'})
   expect((await service.detail(frozen.requestId)).run.recordingAssetId).toBeUndefined();
   expect(await service.complete(frozen.requestId, frozen.hostId)).toMatchObject({entityId: frozen.requestId, payloadSha256: originalDigest});
   const refused = {...frozen, result: {...frozen.result, steps: frozen.result.steps.map(step => ({...step,
@@ -547,4 +834,4 @@ test('failed recording publication preserves immutable step offsets and settled 
   await expect(service.ingest({...frozen, result: {...frozen.result, steps: frozen.result.steps.map(step => ({...step,
     recordingLocation: {...step.recordingLocation, startOffsetMs: step.recordingLocation!.startOffsetMs + 1}}))}}, frozen.hostId))
     .rejects.toThrow('different terminal result');
-});
+})

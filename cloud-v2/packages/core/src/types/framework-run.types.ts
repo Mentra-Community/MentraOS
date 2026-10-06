@@ -1,3 +1,4 @@
+import {frameworkBindingSchema, routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
 import {frameworkBuildSchema, frameworkIdentitySchema} from "./framework-request.types";
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
@@ -26,6 +27,7 @@ const cleanupOutcome = z.discriminatedUnion("state", [
 export const frameworkRunSchema = z.object({
   schemaVersion: z.literal(1), requestId: id, hostId: id, routineId: routineIdentitySchema,
   definitionRevision: z.string().regex(/^[a-f0-9]{40}$/), platform: routinePlatformSchema,
+  routineSource: routineSourceRefSchema, frameworkBinding: frameworkBindingSchema,
   laneId: id, build: frameworkBuildSchema, startedAt: z.string().datetime({offset: true}), finishedAt: z.string().datetime({offset: true}),
   recordingAssetId: frameworkAssetIdSchema.optional(),
   assets: z.array(z.object({id: frameworkAssetIdSchema, kind: z.enum(["recording", "screenshot", "diagnostic", "report"]), path: z.string().min(1).max(500), sha256: z.string().regex(/^[a-f0-9]{64}$/),

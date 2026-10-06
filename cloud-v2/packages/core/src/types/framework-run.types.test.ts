@@ -1,14 +1,27 @@
+import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {expect, test} from "bun:test";
 import {FRAMEWORK_RUN_ASSET_LIMIT, frameworkAssetIdSchema, frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema} from "./framework-run.types";
 
 function run() {
-  return {schemaVersion: 1, hostId: "mini", requestId: "run-1", routineId: "no-glasses", definitionRevision: "a".repeat(40),
-    platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
-    startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:02:00Z", assets: [],
+  return {
+    schemaVersion: 1,
+    routineSource: testRoutineSource(),
+    frameworkBinding: testFrameworkBinding(),
+    hostId: "mini",
+    requestId: "run-1",
+    routineId: "no-glasses",
+    definitionRevision: "a".repeat(40),
+    platform: "ios-on-mac",
+    laneId: "mac",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-02T19:00:00Z",
+    finishedAt: "2026-10-02T19:02:00Z",
+    assets: [],
     result: {runId: "run-1", finishedAt: "2026-10-02T19:02:00Z", setup: {status: "passed"}, test: "passed",
       steps: [{id: "settings", status: "passed", durationMs: 1000}],
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [],
-      timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 1000, testMs: 1000, teardownMs: 1000}}};
+      timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 1000, testMs: 1000, teardownMs: 1000}},
+  }
 }
 
 test("large manifests preserve all evidence and retain a bounded cardinality", () => {
@@ -43,7 +56,7 @@ test("contradictory steps, foreign recording and unsafe asset paths cannot be pu
     sha256: "a".repeat(64), mimeType: "text/plain"}]}).success).toBe(false);
 });
 
- test("export finish time and recording purpose must match frozen evidence", () => {
+test("export finish time and recording purpose must match frozen evidence", () => {
   const good = run();
   expect(frameworkRunSchema.safeParse(good).success).toBe(true);
   const asset = {id: "capture", kind: "recording", path: "capture.mp4", size: 20,
@@ -62,7 +75,7 @@ test("empty steps and recorded failures cannot qualify a passing test", () => {
   expect(frameworkEvidenceComplete(evidenceFailure)).toBe(false);
 });
 
- test("ready teardown cannot conceal an explicit teardown failure", () => {
+test("ready teardown cannot conceal an explicit teardown failure", () => {
   const good = run();
   expect(frameworkRunSchema.safeParse({...good, result: {...good.result,
     failures: [{phase: "teardown", actionId: "uninstall", message: "failed"}]}}).success).toBe(false);
@@ -231,7 +244,6 @@ test("ready shared cleanup failures are allowed only for flattened evidence diag
   }
 });
 
-
 test("Android frozen exports preserve 373 asset identities including nested diagnostic journals", () => {
   const base = run();
   const rootIds = ["recording", "recording.json", "recorder-process.json", "framework-result.json", "recorder-readiness.json"];
@@ -247,10 +259,14 @@ test("Android frozen exports preserve 373 asset identities including nested diag
   expect(parsed.assets.map(asset => asset.id)).toEqual(ids);
   expect(parsed.result.evidence).toEqual(ids);
   expect(frameworkRunSchema.safeParse({...frozen, requestId: "run/nested"}).success).toBe(false);
-  expect(frameworkRunSchema.safeParse({...frozen, assets: frozen.assets.map((asset, index) =>
-    index === 5 ? {...asset, path: "../outside.json"} : asset)}).success).toBe(false);
+  expect(
+    frameworkRunSchema.safeParse({
+      ...frozen,
+      assets: frozen.assets.map((asset, index) => (index === 5 ? {...asset, path: "../outside.json"} : asset)),
+    }).success,
+  ).toBe(false)
   expect(frameworkRunSchema.safeParse({...frozen, result: {...frozen.result, evidence: [...ids, "missing/asset"]}}).success).toBe(false);
-});
+})
 
 test("asset identities allow bounded safe segments without entity or path grammar changes", () => {
   for (const id of ["recording", "asset:" + "a".repeat(64), "setup-evidence/commands/0.json", "a".repeat(500)])

@@ -1,3 +1,4 @@
+import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {expect, spyOn, test} from "bun:test";
 import {NightlyRoutineService, nightlyPlanRepository, type NightlyPlan, type NightlyResult, type NightlyPlanRepository} from "./nightly-routine.service";
 import {TestSuiteModel} from "../models/test-suite.model";
@@ -14,11 +15,32 @@ import {TestDispatchError} from "./test-builds.service";
 const startedAt = "2026-10-03T11:00:00Z", now = Date.parse(startedAt);
 const occurrence = {occurrenceId: "schedule:2026-10-03", startedAt, trigger: "nightly" as const};
 function row(id: string, platform: "android" | "ios-on-mac", nightlyEnabled = true) {
-  return {...routineEnrollmentSchema.parse({routineId: id, platform, definitionRevision: "a".repeat(40), definitionSha256: "b".repeat(64),
-    definition: {id, title: id, purpose: "Check the saved routine", platforms: [platform], entry: "home", account: "lane", requires: [], requirements: [], fixtures: [],
-      steps: [{id: "check", instruction: "Check", expected: "Checked"}], execution: {resourceKinds: ["app"]},
-      source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: "a".repeat(40), path: `routines/${id}/routine.ts`}}}), nightlyEnabled,
-    example: {runId: `example-${id}`, startedAt, finishedAt: startedAt, recordingAssetId: "video", definitionRevision: "c".repeat(40), build: {repository: "Mentra-Community/MentraOS", channel: "dev" as const, headSha: "d".repeat(40)}}};
+  return {
+    ...routineEnrollmentSchema.parse({
+      routineId: id,
+      platform,
+      definitionRevision: "a".repeat(40),
+      definitionSha256: "b".repeat(64),
+      routineSource: testRoutineSource(),
+      definition: {
+        minimumRoutineApiVersion: 1,
+        id,
+        title: id,
+        purpose: "Check the saved routine",
+        platforms: [platform],
+        entry: "home",
+        account: "lane",
+        requires: [],
+        requirements: [],
+        fixtures: [],
+        steps: [{id: "check", instruction: "Check", expected: "Checked"}],
+        execution: {resourceKinds: ["app"]},
+        source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: "a".repeat(40), path: `routines/${id}/routine.ts`},
+      },
+    }),
+    nightlyEnabled,
+    example: {runId: `example-${id}`, startedAt, finishedAt: startedAt, recordingAssetId: "video", definitionRevision: "c".repeat(40), build: {repository: "Mentra-Community/MentraOS", channel: "dev" as const, headSha: "d".repeat(40)}},
+  }
 }
 const build = (platform: "android" | "ios-on-mac"): TestBuild => ({source: {channel: "dev", buildRunId: 21, publicationAttempt: 2}, platform,
   title: "dev", headSha: "e".repeat(40), buildUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/21", createdAt: startedAt,
@@ -27,7 +49,10 @@ const build = (platform: "android" | "ios-on-mac"): TestBuild => ({source: {chan
 const host: ReceivedTestHostState = {hostId: "mini", incarnation: "one", incarnationGeneration: 1, sequence: 1, observedAt: startedAt, receivedAt: startedAt,
   lanes: ["android", "ios-on-mac"].map(platform => ({id: platform, platform: platform as "android" | "ios-on-mac", dispatchMode: "automatic", state: "running",
     resources: [{id: `app:${platform}`, kind: "app"}]}))};
-function fixture(initial = [row("a-new-routine", "android"), row("different.routine", "ios-on-mac"), row("disabled-routine", "android", false)], repository?: NightlyPlanRepository) {
+function fixture(
+  initial = [row("a-new-routine", "android"), row("different.routine", "ios-on-mac"), row("disabled-routine", "android", false)],
+  repository?: NightlyPlanRepository,
+) {
   let catalog = initial, plan: NightlyPlan | null = null, finished: NightlyResult | null = null, reads = 0;
   let failId: string | undefined, cancelFailId: string | undefined, clock = now;
   const admitted: {requestId: string; hostId: string; input: any}[] = [];
@@ -36,15 +61,17 @@ function fixture(initial = [row("a-new-routine", "android"), row("different.rout
   const resultRows = new Map<string, any>();
   const requestRows = new Map<string, any>();
   const requestErrors = new Map<string, Error>();
-  const service = new NightlyRoutineService({async list() {reads++; return catalog;}} as Pick<RoutineCatalogService, "list">,
+  const service = new NightlyRoutineService(
+    {async list() {reads++; return catalog;}} as Pick<RoutineCatalogService, "list">,
     {async latestDev(platform, before) {buildReads.push("latest:" + platform); expect(before).toBe(startedAt); return build(platform);},
       async resolve(source, platform) {buildReads.push("resolve:" + platform); expect(source).toEqual(build(platform).source); return build(platform);}},
     {async get(id) {expect(id).toBe("mini"); return host;}},
     {async cancelSubmission(id) {completionEvents.push("cancel:" + id); cancelled.push(id); if (id === cancelFailId) throw new TestRunError(503, "Cancellation storage unavailable."); return {} as any;}, async get(id) {if (requestErrors.has(id)) throw requestErrors.get(id)!; return requestRows.get(id) ?? null;}, async submit(requestId, hostId, input) {if (requestId === failId) throw new Error("queue unavailable"); admitted.push({requestId, hostId, input}); requestRows.set(requestId, {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}); return {} as any;}},
     repository ?? {async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return finished;}, async finish(_id, result) {finished ??= result; return finished;}},
-    () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
+    () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
     {async summary(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (typeof result === "function") return result(); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
-    () => clock);
+    () => clock,
+  )
   return {service, admitted, cancelled, completionEvents, buildReads, resultRows, requestRows, requestErrors, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}, set cancelFailId(value: string | undefined) {cancelFailId = value;}};
 }
 test("nightly freezes the entire enabled catalog, arbitrary IDs and exact current definitions/artifacts", async () => {
@@ -385,15 +412,20 @@ test("a mismatched platform publication remains expected and missing anchor plat
   for (const variant of ["head", "source", "platform", "release", "missing"] as const) {
     const mismatch = variant !== "missing";
     let saved: NightlyPlan | null = null;
-    const service = new NightlyRoutineService({async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
+    const service = new NightlyRoutineService(
+      {async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
       {async latestDev(platform) {return mismatch ? {...build(platform), ...(variant === "release" ? {release: "dev.20"} : {})}
           : {...build(platform), availability: "unavailable", archive: undefined, receipt: undefined, reason: "APK missing"};},
         async resolve(source, platform) {return {...build(platform), source,
           ...(variant === "head" ? {headSha: "9".repeat(40)} : variant === "source" ? {source: {...source, publicationAttempt: 3}}
             : variant === "platform" ? {platform: "android" as const} : variant === "release" ? {release: "dev.21"} : {})};}},
-      {async get() {return host;}}, {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit() {return {} as any;}},
+      {async get() {return host;}},
+      {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit() {return {} as any;}},
       {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
-      () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}), undefined, () => now);
+      () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
+      undefined,
+      () => now,
+    )
     const {plan} = await service.start(occurrence);
     expect(plan.members).toHaveLength(2);
     expect(plan.members[mismatch ? 1 : 0]!.input).toBeUndefined();
@@ -406,7 +438,7 @@ test("a mismatched platform publication remains expected and missing anchor plat
       expect(plan.publication!.headSha).toBe(build("android").headSha);
     }
   }
-});
+})
 
 function publishedResult(member: NightlyPlan["members"][number], uploadsComplete: boolean) {
   return {routineId: member.routineId, platform: member.platform, definitionRevision: member.definitionRevision,
@@ -467,17 +499,26 @@ test("selection retains independently resolved artifacts and safe original typed
     let saved: NightlyPlan | null = null;
     const logged: unknown[] = [];
     const unknown = new Error("private upstream detail");
-    const service = new NightlyRoutineService({async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
+    const service = new NightlyRoutineService(
+      {async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
       {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {
         if (stage === "build") throw new TestDispatchError(502, "Immutable receipt SHA does not match publication 21.");
         return {...build(platform), source};
-      }}, {async get(id) {
+      }},
+      {async get(id) {
         if (id === "desktop-host") throw stage === "unknown" ? unknown : new TestRunError(503, "Host observation storage is unavailable.");
         return host;
-      }}, {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit() {return {} as any;}},
+      }},
+      {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit() {return {} as any;}},
       {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
-      () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "desktop-host", laneId: "ios-on-mac"}}), undefined, () => now,
-      (error, context) => logged.push({error, context}));
+      () => ({
+        "android": {hostId: "mini", laneId: "android"},
+        "ios-on-mac": {hostId: "desktop-host", laneId: "ios-on-mac"},
+      }),
+      undefined,
+      () => now,
+      (error, context) => logged.push({error, context}),
+    )
     const {plan} = await service.start(occurrence), desktop = plan.members[1]!;
     expect(plan.members[0]!.input).toBeDefined();
     expect(desktop.input).toBeUndefined();
@@ -497,7 +538,7 @@ test("selection retains independently resolved artifacts and safe original typed
       expect(JSON.stringify(plan)).not.toContain(unknown.message);
     } else expect(logged).toEqual([]);
   }
-});
+})
 
 test("known automatic lanes queue through repair/offline states while invalid mode or resource metadata remains rejected", async () => {
   for (const laneState of ["in-repair", "out-of-service", "offline", "running"] as const) {
@@ -507,11 +548,16 @@ test("known automatic lanes queue through repair/offline states while invalid mo
       if (invalid === "mode") observed.lanes[0]!.dispatchMode = "paused";
       if (invalid === "resources") observed.lanes[0]!.resources = [];
       let saved: NightlyPlan | null = null;
-      const service = new NightlyRoutineService({async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
+      const service = new NightlyRoutineService(
+        {async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
         {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
-        {async get() {return observed;}}, {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit(id) {submitted.push(id); return {} as any;}},
+        {async get() {return observed;}},
+        {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit(id) {submitted.push(id); return {} as any;}},
         {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
-        () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}), undefined, () => now);
+        () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
+        undefined,
+        () => now,
+      )
       const {plan} = await service.start(occurrence);
       expect(plan.members).toHaveLength(2);
       expect(plan.members[1]!.input).toBeDefined();
@@ -520,7 +566,7 @@ test("known automatic lanes queue through repair/offline states while invalid mo
       else expect(plan.members[0]!.input).toBeDefined();
     }
   }
-});
+})
 
 test("lane-specific exact-definition availability never disables the healthy sibling or global catalog", async () => {
   for (const unavailable of ["false", "missing", "stale"] as const) {
@@ -529,21 +575,27 @@ test("lane-specific exact-definition availability never disables the healthy sib
       definitionRevision: unavailable === "stale" ? "c".repeat(40) : "a".repeat(40), available: false, reason: "Phone cannot prepare the selected source."}];
     observed.lanes[1]!.routineAvailability = [{routineId: "desktop-product", definitionRevision: "a".repeat(40), available: true}];
     let saved: NightlyPlan | null = null;
-    const service = new NightlyRoutineService({async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
+    const service = new NightlyRoutineService(
+      {async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
       {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
-      {async get() {return observed;}}, {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit(id) {submitted.push(id); return {} as any;}},
+      {async get() {return observed;}},
+      {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit(id) {submitted.push(id); return {} as any;}},
       {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
-      () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}), undefined, () => now);
+      () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
+      undefined,
+      () => now,
+    )
     const {plan} = await service.start(occurrence);
     expect(plan.members).toHaveLength(2);
-    expect(submitted).toEqual([plan.members[1]!.requestId]);
-    expect(plan.members[0]!.unavailableReason).toContain(unavailable === "false" ? "Phone cannot prepare the selected source." : "this exact definition");
+    expect(submitted).toEqual(plan.members.map(member => member.requestId))
+    expect(plan.members[0]!.input?.routineSource).toEqual(testRoutineSource())
+    expect(plan.members[0]!.unavailableReason).toBeUndefined()
     expect(plan.members[1]!.input).toBeDefined();
     observed.lanes[0]!.routineAvailability = [{routineId: "phone-product", definitionRevision: "a".repeat(40), available: true}];
     const retry = await service.start(occurrence);
     expect(retry.plan).toEqual(plan); // Capability changes cannot silently replace the frozen expected member.
   }
-});
+})
 
 test("an unpersisted single admission exposes no dead result link until its stable retry creates the request", async () => {
   const catalog = [row("single-product", "android")];

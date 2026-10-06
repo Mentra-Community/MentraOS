@@ -1,3 +1,4 @@
+import {frameworkVersionSchema, routineSourceRefSchema} from '../types/framework-version.types';
 import {z} from "zod";
 import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
 import {routineIdentitySchema, routinePlatformSchema} from "../types/routine-definition.types";
@@ -11,10 +12,10 @@ import {configuredRoutineLanes, routineAdmissionInput, type RoutineLaneBindings}
 import {TestRunError} from "./test-result-error";
 
 export const routineDispatchSchema = z.object({requestId: frameworkIdentitySchema, routineId: routineIdentitySchema,
-  platform: routinePlatformSchema, source: testBuildSourceSchema}).strict();
+  platform: routinePlatformSchema, minimumFrameworkVersion: frameworkVersionSchema.optional(), routineSource: routineSourceRefSchema.optional(), source: testBuildSourceSchema}).strict();
 /** Exact-source callers use the same native queue and input construction as catalog nightlies. */
 export class RoutineDispatchService {
-  constructor(private readonly definitions: Pick<RoutineDefinitionService, "current" | "getCurrent"> = new RoutineDefinitionService(),
+  constructor(private readonly definitions: Pick<RoutineDefinitionService, "current" | "getCurrent" | "getExact"> = new RoutineDefinitionService(),
     private readonly builds: Pick<TestBuildGateway, "resolve"> = new GithubTestBuildGateway(),
     private readonly hosts: Pick<TestHostStateService, "get"> = new TestHostStateService(),
     private readonly requests: Pick<TestRequestService, "get" | "submit"> = new TestRequestService(),
@@ -27,6 +28,8 @@ export class RoutineDispatchService {
     if (!input.success || !source?.success || request.requestId !== selected.requestId || requestInputDigest(input.data) !== request.inputSha256)
       throw new TestRunError(503, "Stored request identity is unavailable");
     if (input.data.routineId !== selected.routineId || input.data.platform !== selected.platform
+      || input.data.minimumFrameworkVersion !== selected.minimumFrameworkVersion
+      || selected.routineSource && requestInputDigest(input.data.routineSource) !== requestInputDigest(selected.routineSource)
       || requestInputDigest(source.data) !== requestInputDigest(selected.source))
       throw new TestRunError(409, "Request retry changed its original routine/platform or exact build source");
     return request;
@@ -37,12 +40,18 @@ export class RoutineDispatchService {
     const selected = parsed.data, existing = await this.requests.get(selected.requestId);
     if (existing) return this.originalRequest(selected, existing);
     try {
-      const definition = await this.definitions.getCurrent(selected.routineId, selected.platform);
+      const definition = selected.routineSource
+        ? await this.definitions.getExact(selected.routineId, selected.platform, selected.routineSource.commit)
+        : await this.definitions.getCurrent(selected.routineId, selected.platform);
       if (!definition) throw new TestRunError(409, "Routine is not enrolled for this platform");
+      if (selected.routineSource) {
+        if (definition.verification || requestInputDigest(selected.routineSource) !== requestInputDigest(definition.routineSource))
+          throw new TestRunError(409, 'Explicit routine source must identify an enrolled exact definition');
+      }
       const binding = this.bindings()[selected.platform];
       if (!binding) throw new TestRunError(409, `No configured host/lane binding for ${selected.platform}.`);
       const [build, host] = await Promise.all([this.builds.resolve(selected.source, selected.platform), this.hosts.get(binding.hostId)]);
-      return await this.requests.submit(selected.requestId, binding.hostId, routineAdmissionInput(definition, build, binding, host));
+      return await this.requests.submit(selected.requestId, binding.hostId, routineAdmissionInput(definition, build, binding, host, Date.now(), {minimumFrameworkVersion: selected.minimumFrameworkVersion}));
     } catch (error) {
       // A concurrent caller may have frozen the original request while this caller resolved newer configuration.
       const winner = await this.requests.get(selected.requestId);

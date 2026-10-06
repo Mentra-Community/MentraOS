@@ -1,3 +1,4 @@
+import {frameworkVersionSchema, routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
 import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./glasses-software.types";
@@ -16,6 +17,8 @@ export const frameworkBuildSchema = z.object({
 });
 export const frameworkRequestInputSchema = z.object({
   routineId: routineIdentitySchema,
+  routineSource: routineSourceRefSchema,
+  minimumFrameworkVersion: frameworkVersionSchema.optional(),
   definitionRevision: z.string().regex(/^[a-f0-9]{40}$/),
   platform: routinePlatformSchema,
   laneId: frameworkIdentitySchema,
@@ -28,6 +31,8 @@ export const frameworkRequestInputSchema = z.object({
 }).passthrough().superRefine((input, ctx) => {
   if (input.verification && input.verification.sourceRevision !== input.definitionRevision)
     ctx.addIssue({code: 'custom', message: 'Candidate verification source differs from the request'});
+  if (input.routineSource.commit !== input.definitionRevision)
+    ctx.addIssue({code: 'custom', message: 'Routine source differs from its definition revision'});
   const glasses = input.resources.some(resource => resource.kind === "glasses");
   if (glasses !== (input.glassesStart !== undefined && input.glassesReturn !== undefined) ||
     (input.glassesStart === undefined) !== (input.glassesReturn === undefined))
@@ -44,7 +49,8 @@ export const frameworkRequestInputSchema = z.object({
 /** Admin delivery projection; it describes a request without claiming execution evidence. */
 export interface FrameworkRequestDisplay {
   requestId: string; hostId: string; inputSha256: string; routineId: string; platform: string;
-  definitionRevision: string; laneId: string; build: z.infer<typeof frameworkBuildSchema>;
+  definitionRevision: string; routineSource?: z.infer<typeof routineSourceRefSchema>; minimumFrameworkVersion?: number;
+  laneId: string; build: z.infer<typeof frameworkBuildSchema>;
   state: "queued" | "accepted" | "running" | "terminal"; terminalStatus?: string;
   createdAt?: string; acceptedAt?: string; reason?: string; reasonAt?: string;
   cancellationRequested?: boolean; cancellationAcknowledged?: boolean;
