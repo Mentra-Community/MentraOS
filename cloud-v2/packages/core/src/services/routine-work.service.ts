@@ -262,11 +262,9 @@ export class RoutineWorkService {
     const receipt = updated.statusReceipts?.find((receipt) => receipt.eventId === event.eventId)
     if (!receipt || receipt.sequence !== event.sequence || receipt.sha256 !== requestInputDigest(event))
       throw new TestRequestConflict('Authoring status is stale or changed its original event')
-    try {
-      await this.notifications.publish(updated)
-    } catch {
-      throw new TestRunError(503, 'Authoring status is retained; retry this event to publish its PR update')
-    }
+    // The durable host receipt acknowledges state, not GitHub availability.
+    // The existing publisher retains and retries its own comment intent.
+    await this.notify(updated)
     return event
   }
 }
