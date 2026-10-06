@@ -3,6 +3,7 @@ import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query"
 import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
 import type {FrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
+import {RoutineSearch, useRoutineSearch, matchesRoutineSearch, hasRoutineFilters, type RoutineSearchFilters, type SearchableRoutine} from "../components/routine-search";
 import {RecordingVideo} from "../components/recording-video";
 import {testRunLocation} from "../lib/test-run-links";
 import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
@@ -23,41 +24,36 @@ export function RoutineCatalogPage() {
   return id && platform ? <RoutineDetailPage id={id} platform={platform} /> : <RoutineCatalogList />;
 }
 
-export function matchesCatalogSearch(routine: RoutineEnrollment, search: string, platform: string, glasses: string) {
-  const text = search.trim().toLowerCase();
-  return (!text || routine.definition.title.toLowerCase().includes(text) || routine.definition.purpose.toLowerCase().includes(text))
-    && (!platform || routine.platform === platform)
-    && (!glasses || (glasses === "no-glasses" ? !routine.definition.glasses : routine.definition.glasses?.models.includes(glasses)));
+function searchableRoutine(routine: RoutineEnrollment): SearchableRoutine {
+  return {title: routine.definition.title, purpose: routine.definition.purpose, platform: routine.platform, glassesModels: routine.definition.glasses?.models ?? []};
 }
-
+export function matchesCatalogSearch(routine: RoutineEnrollment, search: string, platform: string, glasses: string) {
+  return matchesRoutineSearch(searchableRoutine(routine), {search, platform, glasses});
+}
+function useSearchCatalog() {
+  return useQuery({queryKey: ["routine-catalog"], queryFn: () => api<{routines: CatalogRow[]}>("/api/admin/routine-catalog"), refetchInterval: 15000});
+}
+function runSearchMetadata(run: {routineId: string; platform: string}, routines: RoutineEnrollment[]): SearchableRoutine {
+  const routine = routines.find(row => row.routineId === run.routineId && row.platform === run.platform);
+  return routine ? searchableRoutine(routine) : {title: run.routineId, platform: run.platform};
+}
+export function matchesHistorySearch(entry: TestHistoryEntry, routines: RoutineEnrollment[], filters: RoutineSearchFilters) {
+  if (!hasRoutineFilters(filters)) return true;
+  if (entry.kind === "unavailable") return false;
+  const members = entry.kind === "suite" ? entry.members ?? [] : [entry];
+  return members.some(member => matchesRoutineSearch(runSearchMetadata(member, routines), filters));
+}
 export function RoutineCatalogList() {
-  const [search, setSearch] = useState(""), [platform, setPlatform] = useState(""), [glasses, setGlasses] = useState("");
-  const catalog = useQuery({queryKey: ["routine-catalog"],
-    queryFn: () => api<{routines: CatalogRow[]}>("/api/admin/routine-catalog"), refetchInterval: 15000});
+  const [filters, setFilters] = useRoutineSearch();
+  const catalog = useSearchCatalog();
   if (catalog.isPending) return <p role="status">Loading routines…</p>;
   if (catalog.error && !catalog.data) return <p role="alert">Could not load routines: {catalog.error.message}</p>;
   const routines = catalog.data.routines;
-  const platforms = [...new Set(routines.map(row => row.platform))].sort();
-  const glassesModels = [...new Set(routines.flatMap(row => row.definition.glasses?.models ?? []))].sort();
-  const filtered = routines.filter(row => matchesCatalogSearch(row, search, platform, glasses));
-  const hasFilters = Boolean(search || platform || glasses);
-  const field = "mt-1 block w-full rounded-lg border border-[#cbd3c8] bg-white p-2 text-sm";
+  const filtered = routines.filter(row => matchesRoutineSearch(searchableRoutine(row), filters));
   return <div className="space-y-5">
     <section className={PANEL}><h2 className="text-lg font-semibold">Routine catalog</h2>
       <p className="mt-2">Routines with a published passing example, their requirements and run history.</p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]" role="search" aria-label="Search routines">
-        <label className="text-sm">Search routines<input type="search" className={field} value={search} onChange={event => setSearch(event.target.value)} placeholder="Name or description" /></label>
-        <label className="text-sm">Platform<select className={field} value={platform} onChange={event => setPlatform(event.target.value)}>
-          <option value="">All platforms</option>{platforms.map(value => <option key={value} value={value}>{value === "android" ? "Android" : "iOS on Mac"}</option>)}
-        </select></label>
-        <label className="text-sm">Glasses<select className={field} value={glasses} onChange={event => setGlasses(event.target.value)}>
-          <option value="">All glasses</option><option value="no-glasses">No glasses required</option>{glassesModels.map(value => <option key={value} value={value}>{value === "mentra-live" ? "Mentra Live" : value}</option>)}
-        </select></label>
-      </div>
-      <div className="mt-3 flex items-center justify-between gap-3 text-sm">
-        <p role="status" aria-live="polite">Showing {filtered.length} of {routines.length} routines</p>
-        {hasFilters && <button className="underline" onClick={() => {setSearch(""); setPlatform(""); setGlasses("");}}>Clear filters</button>}
-      </div>
+      <RoutineSearch filters={filters} onChange={setFilters} routines={routines.map(searchableRoutine)} countLabel={`Showing ${filtered.length} of ${routines.length} routines`} />
     </section>
     {catalog.error && <p role="alert">Routines could not refresh: {catalog.error.message}</p>}
     {!routines.length ? <p>No routine has a published passing example on the new framework yet.</p>
@@ -319,6 +315,8 @@ export function FrameworkRunsPage({scope}: {scope?: Record<string, string>}) {
   return scope ? <FilteredFrameworkRunsPage scope={scope}/> : <TestHistoryList/>;
 }
 function TestHistoryList() {
+  const [filters, setFilters] = useRoutineSearch();
+  const catalog = useSearchCatalog();
   const history = useInfiniteQuery({queryKey: ["test-history"], initialPageParam: undefined as string | undefined,
     queryFn: ({pageParam, signal}) => api<TestHistoryPage>(`/api/admin/test-runs/history/list?limit=25${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, {signal, timeoutMs: 30000}),
     getNextPageParam: page => page.nextCursor ?? undefined, retry: false, retryOnMount: false,
@@ -327,11 +325,20 @@ function TestHistoryList() {
   if (history.error && !history.data) return <section className={PANEL} role="alert"><p>Could not load test history: {history.error.message}</p>
     <button className="mt-3 underline" onClick={() => history.refetch()}>Retry</button></section>;
   const entries = history.data.pages.flatMap(page => page.entries);
+  const routines = catalog.data?.routines ?? [];
+  const filtered = entries.filter(entry => matchesHistorySearch(entry, routines, filters));
+  const members = entries.flatMap<{routineId: string; platform: string}>(entry => entry.kind === "suite" ? entry.members ?? [] : entry.kind === "run" ? [entry] : []);
+  const options = [...routines.map(searchableRoutine), ...members.map(member => runSearchMetadata(member, routines))];
   return <section className={PANEL}><h2 className="text-xl font-semibold">Test history</h2>
     <p className="mt-2 text-sm text-[#68746d]">Dispatched test suites and standalone routine runs, newest first.</p>
+    <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${entries.length} loaded entries`} />
+    <p className="mt-2 text-sm text-[#68746d]">Filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p>
+    {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
+    {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <button className="underline" onClick={() => catalog.refetch()}>Retry routine metadata</button></p>}
     {history.error && <p role="alert" className="mt-3">History could not refresh: {history.error.message} <button className="underline" onClick={() => history.refetch()}>Retry</button></p>}
     {!entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
-    <ul className="mt-4 space-y-3">{entries.map(entry => <TestHistoryItem key={entry.kind === "unavailable" ? `${entry.sourceKind}:${entry.id}` : `${entry.kind}:${entry.kind === "suite" ? entry.suiteId : entry.runId}`} entry={entry}/>)}</ul>
+    {!!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches your filters.</p>}
+    <ul className="mt-4 space-y-3">{filtered.map(entry => <TestHistoryItem key={entry.kind === "unavailable" ? `${entry.sourceKind}:${entry.id}` : `${entry.kind}:${entry.kind === "suite" ? entry.suiteId : entry.runId}`} entry={entry}/>)}</ul>
     {history.hasNextPage && <button className="mt-4 underline" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? "Loading…" : "More history"}</button>}
   </section>;
 }
@@ -348,14 +355,23 @@ function TestHistoryItem({entry}: {entry: TestHistoryEntry}) {
   </li>;
 }
 function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
+  const [filters, setFilters] = useRoutineSearch();
+  const catalog = useSearchCatalog();
   const params = new URLSearchParams(scope);
   const query = useQuery({queryKey: ["framework-runs", params.toString()], queryFn: () => api<{runs: FrameworkRunSummary[]}>(`/api/admin/routine-catalog/results?${params}`), refetchInterval: 15000});
   if (query.isPending) return <p role="status">Loading runs…</p>;
   if (query.error && !query.data) return <p role="alert">Could not load runs: {query.error.message}</p>;
+  const routines = catalog.data?.routines ?? [];
+  const options = query.data.runs.map(run => runSearchMetadata(run, routines));
+  const filtered = query.data.runs.filter(run => matchesRoutineSearch(runSearchMetadata(run, routines), filters));
   return <section className={PANEL}><h2 className="text-xl font-semibold">Filtered routine runs</h2>
+    <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${query.data.runs.length} runs`} />
+    {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
+    {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <button className="underline" onClick={() => catalog.refetch()}>Retry routine metadata</button></p>}
     {query.error && <p role="alert" className="mt-3">Runs could not refresh: {query.error.message}</p>}
     {!query.data.runs.length && <p className="mt-3">No routine runs match this build.</p>}
-    <ul className="mt-4 space-y-3">{query.data.runs.map(run => <FrameworkRunListItem key={run.requestId} run={run}/>)}</ul>
+    {!!query.data.runs.length && !filtered.length && <p className="mt-3">No routine runs match your filters for this build.</p>}
+    <ul className="mt-4 space-y-3">{filtered.map(run => <FrameworkRunListItem key={run.requestId} run={run}/>)}</ul>
   </section>;
 }
 function FrameworkRunListItem({run}: {run: FrameworkRunSummary}) {

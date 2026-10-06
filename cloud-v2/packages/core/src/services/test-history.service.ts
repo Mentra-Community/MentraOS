@@ -124,7 +124,8 @@ export class TestHistoryService {
         const suite = await this.suites.detail(row.historyId);
         return {kind: "suite", suiteId: suite.suiteId, channel: suite.channel, trigger: suite.trigger,
           startedAt: suite.startedAt, ...(suite.finishedAt ? {finishedAt: suite.finishedAt} : {}),
-          outcome: suite.outcome, expectedCount: suite.members.length, passed: suite.passed, build: suite.build};
+          outcome: suite.outcome, expectedCount: suite.members.length, passed: suite.passed, build: suite.build,
+          members: suite.members.map(({routineId, platform}) => ({routineId, platform}))};
       } catch (error) {
         logger.warn({err: error, sourceKind: row.historyKind, id: row.historyId}, "History entry details unavailable");
         return {kind: "unavailable", sourceKind: row.historyKind, id: row.historyId,
