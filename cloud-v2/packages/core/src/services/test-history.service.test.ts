@@ -51,7 +51,7 @@ test("history suite summaries retain the reader's frozen failed outcome and decl
   const rows: StoredHistoryRow[] = [{historyKind: "suite", historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt)}];
   const service = new TestHistoryService({detail: async () => suite}, async () => [[], rows]);
   expect(await service.list()).toEqual({entries: [{kind: "suite", suiteId: suite.suiteId, channel: "dev", trigger: "nightly",
-    startedAt: suite.startedAt, finishedAt: suite.finishedAt, outcome: "failed", passed: 1, expectedCount: 2, build: suite.build, members: [{routineId: "notes-phone", platform: "ios-on-mac"}, {routineId: "camera", platform: "android"}]}], nextCursor: null});
+    startedAt: suite.startedAt, finishedAt: suite.finishedAt, outcome: "failed", passed: 1, skipped: 1, expectedCount: 2, build: suite.build, members: [{routineId: "notes-phone", platform: "ios-on-mac"}, {routineId: "camera", platform: "android"}]}], nextCursor: null});
 });
 
 test("one unavailable row preserves its page slot and cursor without failing neighboring entries", async () => {

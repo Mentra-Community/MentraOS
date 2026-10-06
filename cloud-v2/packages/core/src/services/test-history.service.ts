@@ -125,6 +125,7 @@ export class TestHistoryService {
         return {kind: "suite", suiteId: suite.suiteId, channel: suite.channel, trigger: suite.trigger,
           startedAt: suite.startedAt, ...(suite.finishedAt ? {finishedAt: suite.finishedAt} : {}),
           outcome: suite.outcome, expectedCount: suite.members.length, passed: suite.passed, build: suite.build,
+          skipped: suite.members.filter(member => member.status === "not-run").length,
           members: suite.members.map(({routineId, platform}) => ({routineId, platform}))};
       } catch (error) {
         logger.warn({err: error, sourceKind: row.historyKind, id: row.historyId}, "History entry details unavailable");

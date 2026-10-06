@@ -349,7 +349,7 @@ function TestHistoryItem({entry}: {entry: TestHistoryEntry}) {
   </li>;
   if (entry.kind === "run") return <FrameworkRunListItem run={entry}/>;
   return <li className="rounded-lg border border-[#e0e4de] p-4">
-    <a className="font-semibold underline" href={`/?testSuite=${encodeURIComponent(entry.suiteId)}`}>{entry.channel} {entry.trigger} suite · {new Date(entry.startedAt).toLocaleString()}</a> · {entry.outcome} · {entry.passed}/{entry.expectedCount} passed
+    <a className="font-semibold underline" href={`/?testSuite=${encodeURIComponent(entry.suiteId)}`}>{entry.channel} {entry.trigger} suite · {new Date(entry.startedAt).toLocaleString()}</a> · {entry.outcome} · {`${entry.passed}/${entry.expectedCount} passed${entry.skipped === undefined ? "" : `, ${entry.skipped} skipped`}`}
     <p className="mt-1 text-sm">Suite <code>{entry.suiteId}</code>{entry.finishedAt ? ` · Finished ${new Date(entry.finishedAt).toLocaleString()}` : " · In progress"}</p>
     <p className="mt-1 text-sm"><BuildIdentity build={{...entry.build, channel: entry.channel}}/></p>
   </li>;
@@ -382,6 +382,7 @@ function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
 function FrameworkRunListItem({run}: {run: FrameworkRunSummary}) {
   return <li className="rounded-lg border border-[#e0e4de] p-4">
     <a className="font-semibold underline" href={frameworkRunHref(run.runId)}>{run.routineId} · {run.platform} · {new Date(run.startedAt).toLocaleString()}</a> · {run.outcome} · {((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000).toFixed(1)} seconds
+    {run.stepCounts && <p className="mt-1 text-sm">{`${run.stepCounts.passed}/${run.stepCounts.total} passed, ${run.stepCounts.skipped} skipped`}</p>}
     <p className="mt-1 text-sm">Run <code>{run.runId}</code> · {run.hostId}/{run.laneId}</p><p className="mt-1 text-sm"><BuildIdentity build={run.build}/></p>
     {run.evidenceStatus === "failed" && <p className="mt-1">Evidence failed</p>}{!run.uploadsComplete && <p className="mt-1">Evidence upload pending</p>}
   </li>;
