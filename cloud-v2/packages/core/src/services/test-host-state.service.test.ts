@@ -397,15 +397,21 @@ test('startup winning the shared CAS forces stop retry, which preserves the same
     expect(f.row().frameworkStopReceipts).toEqual([stopped])
   } finally {f.stop()}
 })
-for (const stopFirst of [false, true]) {
-  test(`stop reconciles the latest applicable incarnation of a shared framework process (${stopFirst ? 'stop' : 'startup'} first)`, async () => {
+for (const stopFirst of [false, true]) for (const withHistory of [false, true]) {
+  test(`stop reconciles the latest applicable incarnation of a shared framework process (${stopFirst ? 'stop' : 'startup'} first, history=${withHistory})`, async () => {
     const f = fixture()
     try {
       await f.service.report(accepted(1, 1), 'mini')
       const shared = {...accepted(2, 1), frameworkBinding: binding(1), frameworkProcess: accepted(1, 1).frameworkProcess}
       const stopped = {installationId: 'release-1', process: shared.frameworkProcess, observedAt: '2026-10-03T01:00:03Z'}
       if (stopFirst) await f.service.reportDeployment(observation(1, {stopped}), 'mini')
-      await f.service.report(shared, 'mini')
+      await f.service.report({...shared, ...(withHistory ? {frameworkHistory: [
+        {binding: binding(1), incarnation: 'boot-1', incarnationGeneration: 1, process: shared.frameworkProcess,
+          effectiveAt: accepted(1, 1).frameworkAcceptedAt, observedAt: accepted(1, 1).observedAt,
+          endedAt: shared.frameworkAcceptedAt, endReason: 'accepted-replacement'},
+        {binding: binding(1), incarnation: 'boot-2', incarnationGeneration: 2, process: shared.frameworkProcess,
+          effectiveAt: shared.frameworkAcceptedAt, observedAt: shared.observedAt},
+      ]} : {})}, 'mini')
       if (!stopFirst) await f.service.reportDeployment(observation(1, {stopped}), 'mini')
       const history = (await f.service.get('mini'))!.frameworkHistory!
       expect(history[0]).toMatchObject({incarnation: 'boot-1', endedAt: shared.frameworkAcceptedAt, endReason: 'accepted-replacement'})
