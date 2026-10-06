@@ -194,6 +194,31 @@ export async function planRoutineWork({github, context, number, source}) {
   return {status: 'ready', request: authoringDispatch(selected, buildSource)}
 }
 
+/** Preserve Core's public refusal reason, without logging arbitrary response bodies. */
+async function intakeFailureReason(response) {
+  if (!response.body) return ''
+  const reader = response.body.getReader(), chunks = []
+  let size = 0
+  try {
+    while (true) {
+      const {done, value} = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > 4096) return ''
+      chunks.push(value)
+    }
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    if (!['routine_work_error', 'routine_work_conflict'].includes(body?.error) ||
+      typeof body.message !== 'string' || !body.message.trim() || body.message.length > 500 ||
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(body.message)) return ''
+    return `: ${body.message.replace(/[\r\n\t]/g, ' ').trim()}`
+  } catch {
+    return ''
+  } finally {
+    await reader.cancel().catch(() => {})
+  }
+}
+
 /** One POST; reconcile a lost reply by workId without changing source, build or brief. */
 export async function routineWorkApi({token, operation, request, workId = request?.workId, fetchImpl = fetch}) {
   ensure(
@@ -215,7 +240,7 @@ export async function routineWorkApi({token, operation, request, workId = reques
     throw error
   }
   if (!response.ok) {
-    const error = new Error(`Authoring intake ${operation} failed (${response.status})`)
+    const error = new Error(`Authoring intake ${operation} failed (${response.status})${await intakeFailureReason(response)}`)
     error.retryable = response.status >= 500 || response.status === 429
     error.httpStatus = response.status
     throw error
