@@ -105,7 +105,7 @@ test("an invalid manual bundle restores the previously running miniapp", async (
   expect(active).toBe("1.0.0")
 })
 
-test("workspace manual installs are rejected before stopping or downloading a miniapp", async () => {
+test("organization manual installs are rejected before stopping or downloading a miniapp", async () => {
   configure({auth: {}, config: {localMiniappPolicy: {systemPackageNames: null, managed: []}}})
   expect((await installMiniappFromJsonUrl("https://manual.example")).is_error()).toBe(true)
   expect(events).toEqual([])

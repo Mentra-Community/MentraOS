@@ -17,7 +17,7 @@ describe("deployment feature policy", () => {
     expect(isFeatureEnabled("navigation")).toBe(true)
   })
 
-  test("fails closed for explicitly disabled workspace capabilities", () => {
+  test("fails closed for explicitly disabled organization capabilities", () => {
     configure({
       auth: {},
       config: {
@@ -96,10 +96,10 @@ describe("deployment feature policy", () => {
   })
 })
 
-describe("workspace Store release visibility", () => {
+describe("organization Store release visibility", () => {
   afterEach(resetForTests)
   const identity = {source: "system_store", storePackageName: "com.mentra.store"}
-  function configureWorkspace(approved: string[] | null, managed: boolean = false) {
+  function configureOrganization(approved: string[] | null, managed: boolean = false) {
     configure({
       auth: {},
       config: {
@@ -124,17 +124,17 @@ describe("workspace Store release visibility", () => {
     })
   }
   test.each([null, ["com.mentra.notes"]])("keeps an approved Store-updated release visible (%j)", (approved) => {
-    configureWorkspace(approved)
+    configureOrganization(approved)
     expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(true)
     expect(
       isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {...identity, storePackageName: "com.other.store"}),
     ).toBe(false)
     expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {source: "direct_download"})).toBe(false)
   })
-  test("does not bypass an excluded package or workspace pin", () => {
-    configureWorkspace([])
+  test("does not bypass an excluded package or organization pin", () => {
+    configureOrganization([])
     expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(false)
-    configureWorkspace(null, true)
+    configureOrganization(null, true)
     expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(false)
   })
 })

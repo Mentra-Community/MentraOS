@@ -17,14 +17,14 @@ export function recoverBackgroundRuntime(): Promise<void> {
 }
 
 async function recover(): Promise<void> {
-  if (!deploymentStore.isResolved() || deploymentStore.isSelectingWorkspace()) {
+  if (!deploymentStore.isResolved() || deploymentStore.isSelectingOrganization()) {
     console.warn("RECOVERY: deployment selection is unresolved; waiting for the Activity")
     return
   }
   const deployment = deploymentStore.getActive()
-  if (deployment.kind === "workspace") {
+  if (deployment.kind === "organization") {
     if (!(await createDeploymentAuthProvider(deployment).getSession())?.accessToken) {
-      console.warn("RECOVERY: workspace sign-in required")
+      console.warn("RECOVERY: organization sign-in required")
       return
     }
   } else {

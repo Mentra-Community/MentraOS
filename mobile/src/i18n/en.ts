@@ -17,7 +17,8 @@ const en = {
     recommended: "Recommended",
     autoBrightness: "Auto brightness",
     autoPowerOff: "Turn off automatically",
-    autoPowerOffSubtitle: "Powers down about 20 minutes after you take the glasses off. Charging or a call holds the shutdown.",
+    autoPowerOffSubtitle:
+      "Powers down about 20 minutes after you take the glasses off. Charging or a call holds the shutdown.",
     brightness: "Brightness",
     display: "Display",
     disconnectGlasses: "Disconnect glasses",
@@ -82,7 +83,8 @@ const en = {
       "ADC codec_adc_vol index. Default 15 is +32 dB. Lower if it clips. Changing gain rescales every threshold below to match.",
     tuningThresholds: "Loudness gate",
     tuningOpen: "Open threshold",
-    tuningOpenSubtitle: "RMS loudness that opens the gate. Measured after gain. Raising it past the speaker open lifts that too.",
+    tuningOpenSubtitle:
+      "RMS loudness that opens the gate. Measured after gain. Raising it past the speaker open lifts that too.",
     tuningClose: "Close threshold",
     tuningCloseSubtitle: "Percent of open. Firmware refuses close ≥ open, so this stays a ratio.",
     tuningAttack: "Attack (ms)",
@@ -93,7 +95,8 @@ const en = {
     tuningSpeakerOpen: "Open threshold",
     tuningSpeakerOpenSubtitle: "RMS that opens the gate while the speaker is playing.",
     tuningSpeakerClose: "Close threshold",
-    tuningSpeakerCloseSubtitle: "Percent of the speaker open threshold. Kept as a ratio so the firmware never rewrites it.",
+    tuningSpeakerCloseSubtitle:
+      "Percent of the speaker open threshold. Kept as a ratio so the firmware never rewrites it.",
     tuningSpeakerHold: "Hold-off (ms)",
     tuningSpeakerHoldSubtitle: "Keep using these elevated thresholds after the speaker stops (10 ms frames).",
     tuningApplied: "On glasses",
@@ -415,7 +418,8 @@ const en = {
     enterNetworkManually: "Enter network manually",
     enterNetworkDetails: "Enter network details",
     addNetwork: "Add your Wi-Fi network",
-    addNetworkDescription: "Add your Wi-Fi network to sync photos and videos and install software updates on your Mentra Live.",
+    addNetworkDescription:
+      "Add your Wi-Fi network to sync photos and videos and install software updates on your Mentra Live.",
     rememberPassword: "Remember password",
     rememberPasswordDescription: "",
     wifiPassword: "Wi-Fi password",
@@ -851,7 +855,7 @@ const en = {
   debugSettings: {
     showMentraCallIos: "Show Mentra Call (experimental)",
     showMentraCallIosSubtitle: "Show Mentra Call on this device for testing.",
-    mentraCallWorkspacePolicy: "Mentra Call availability is managed by your workspace.",
+    mentraCallOrganizationPolicy: "Mentra Call availability is managed by your organization.",
     mentraCallBuildOverride: "Enabled by this build's EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS override.",
     showNotifyIos: "Show Notify (experimental)",
     showNotifyIosSubtitle: "Show Notify on this device for testing.",
@@ -923,9 +927,8 @@ const en = {
   },
   profileSettings: {
     title: "Profile Settings",
-    workspaceName: "Name",
-    workspaceUrl: "Workspace URL",
-    mentraWorkspace: "Mentra",
+    organizationName: "Name",
+    organizationUrl: "Organization URL",
     noProfilePicture: "No profile picture available.",
     name: "Name",
     email: "Email",
@@ -1119,7 +1122,7 @@ const en = {
       resentSuccess: "Verification email sent!",
     },
   },
-  workspace: {
+  organization: {
     or: "or",
     title: "Organization sign-in",
     heading: "Connect to your organization",
@@ -1128,16 +1131,16 @@ const en = {
     urlLabel: "Organization address",
     urlPlaceholder: "company.example.com",
     urlHelper: "Example: company.example.com",
-    unknownResolutionError: "We couldn't load this workspace. Try again.",
+    unknownResolutionError: "We couldn't load this organization. Try again.",
     notFoundError:
-      "We couldn't find a Mentra workspace at that address. Check the address or ask your IT administrator.",
-    configurationError: "This workspace couldn't be verified. Ask your IT administrator to check its configuration.",
+      "We couldn't find a Mentra organization at that address. Check the address or ask your IT administrator.",
+    configurationError: "This organization couldn't be verified. Ask your IT administrator to check its configuration.",
     confirmTitle: "Confirm organization",
     candidateExpired: "This confirmation expired. Enter your organization address again.",
     enterAnotherUrl: "Enter organization address",
     connectTo: "Connect to {{name}}",
     continueTo: "Continue to {{name}}",
-    workspaceLabel: "Workspace",
+    organizationLabel: "Organization",
     cloudOverridesDescription:
       "Override cloud URLs for {{name}}. Reset restores its defaults. Overrides are cleared when you log out or switch organizations.",
     cloudDefault: "Default: {{url}}",
@@ -1147,13 +1150,13 @@ const en = {
     mentraAccount: "Mentra account",
     confirmDescription:
       "Continuing makes this organization your active Mentra deployment. Its services and policies apply before sign-in.",
-    signInDescription: "Continue with the organization account configured for this workspace.",
+    signInDescription: "Continue with the account configured for this organization.",
     continueWithMicrosoft: "Continue with Microsoft",
     returnToMentra: "Return to Mentra",
     change: "Change",
-    noActiveWorkspace: "No organization workspace is active.",
+    noActiveOrganization: "No organization is active.",
     signInFailedTitle: "Sign-in failed",
-    signInFailedDescription: "Microsoft could not sign you in to this workspace. Try again or contact your IT team.",
+    signInFailedDescription: "Microsoft could not sign you in to this organization. Try again or contact your IT team.",
   },
   warning: {
     nonProdBackend: "You are using a non-production backend.",
@@ -1196,8 +1199,7 @@ const en = {
     stillOffTitle: "Wi-Fi is still off",
     stillOffAndroid:
       "Wi-Fi is still off. Tap Turn on Wi-Fi again to open the panel, turn the switch on, tap Done, and return to Mentra.",
-    stillOffIos:
-      "Wi-Fi is still off. Tap Open Settings again, go to Wi-Fi, turn it on, then return to Mentra.",
+    stillOffIos: "Wi-Fi is still off. Tap Open Settings again, go to Wi-Fi, turn it on, then return to Mentra.",
     onTitle: "Wi-Fi is on",
     onMessage: "Continuing the call.",
   },

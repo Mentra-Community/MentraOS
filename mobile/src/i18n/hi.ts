@@ -156,9 +156,8 @@ const hi = {
   },
   profileSettings: {
     ...en.profileSettings,
-    workspaceName: "नाम",
-    workspaceUrl: "वर्कस्पेस URL",
-    mentraWorkspace: "Mentra",
+    organizationName: "नाम",
+    organizationUrl: "संगठन URL",
   },
   versionCheck: {
     ...en.versionCheck,
@@ -166,7 +165,7 @@ const hi = {
       "Mentra ऐप का यह संस्करण अब {{name}} द्वारा समर्थित नहीं है। अपडेट आपके संगठन के डिवाइस प्रबंधन द्वारा दिए जाते हैं। अपडेट करने के लिए अपने IT व्यवस्थापक से संपर्क करें।",
     contactSupport: "सहायता से संपर्क करें",
   },
-  workspace: {
+  organization: {
     or: "या",
     title: "संगठन साइन-इन",
     heading: "अपने संगठन से जुड़ें",
@@ -175,29 +174,28 @@ const hi = {
     urlLabel: "संगठन का पता",
     urlPlaceholder: "company.example.com",
     urlHelper: "उदाहरण: company.example.com",
-    unknownResolutionError: "यह वर्कस्पेस लोड नहीं हो सका। फिर से कोशिश करें।",
-    notFoundError: "उस पते पर कोई Mentra वर्कस्पेस नहीं मिला। पता जांचें या अपने IT व्यवस्थापक से पूछें।",
-    configurationError:
-      "इस वर्कस्पेस की पुष्टि नहीं हो सकी। अपने IT व्यवस्थापक से इसकी कॉन्फ़िगरेशन जांचने के लिए कहें।",
+    unknownResolutionError: "यह संगठन लोड नहीं हो सका। फिर से कोशिश करें।",
+    notFoundError: "उस पते पर कोई Mentra संगठन नहीं मिला। पता जांचें या अपने IT व्यवस्थापक से पूछें।",
+    configurationError: "इस संगठन की पुष्टि नहीं हो सकी। अपने IT व्यवस्थापक से इसकी कॉन्फ़िगरेशन जांचने के लिए कहें।",
     confirmTitle: "संगठन की पुष्टि करें",
     candidateExpired: "यह पुष्टि समाप्त हो गई। अपने संगठन का पता फिर से दर्ज करें।",
     enterAnotherUrl: "संगठन का पता दर्ज करें",
     connectTo: "{{name}} से जुड़ें",
     continueTo: "{{name}} पर जारी रखें",
-    workspaceLabel: "वर्कस्पेस",
+    organizationLabel: "संगठन",
     signInLabel: "साइन-इन",
     microsoftOrganizationAccount: "Microsoft संगठन खाता",
     mentraAccount: "Mentra खाता",
     confirmDescription:
       "जारी रखने पर यह संगठन आपका सक्रिय Mentra डिप्लॉयमेंट बन जाता है। साइन-इन से पहले ही इसकी सेवाएँ और नीतियाँ लागू होती हैं।",
-    signInDescription: "इस वर्कस्पेस के लिए कॉन्फ़िगर किए गए संगठन खाते से जारी रखें।",
+    signInDescription: "इस संगठन के लिए कॉन्फ़िगर किए गए खाते से जारी रखें।",
     continueWithMicrosoft: "Microsoft के साथ जारी रखें",
     returnToMentra: "Mentra पर वापस जाएँ",
     change: "बदलें",
-    noActiveWorkspace: "कोई संगठन वर्कस्पेस सक्रिय नहीं है।",
+    noActiveOrganization: "कोई संगठन सक्रिय नहीं है।",
     signInFailedTitle: "साइन-इन विफल",
     signInFailedDescription:
-      "Microsoft आपको इस वर्कस्पेस में साइन इन नहीं कर सका। फिर से कोशिश करें या अपनी IT टीम से संपर्क करें।",
+      "Microsoft आपको इस संगठन में साइन इन नहीं कर सका। फिर से कोशिश करें या अपनी IT टीम से संपर्क करें।",
   },
 } satisfies TranslationResource
 

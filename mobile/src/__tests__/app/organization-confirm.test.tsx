@@ -1,6 +1,6 @@
 import {act, fireEvent, render} from "@testing-library/react-native"
 
-import WorkspaceConfirmScreen from "@/app/auth/workspace-confirm"
+import OrganizationConfirmScreen from "@/app/auth/organization-confirm"
 
 type RemoveEvent = {data: {action: {type: string}}; preventDefault: jest.Mock}
 const mockListeners = new Set<(event: RemoveEvent) => void>()
@@ -23,7 +23,7 @@ const mockNavigationState = {
   setAndroidBackFn: jest.fn(),
 }
 const mockCandidate = {
-  workspaceOrigin: "https://workspace.example",
+  organizationOrigin: "https://organization.example",
   manifest: {displayName: "Example", auth: {mode: "microsoft-entra"}},
 }
 const mockDeployment = {
@@ -56,7 +56,7 @@ jest.mock("@/contexts/ThemeContext", () => ({
   useAppTheme: () => ({theme: {colors: {background: "white"}}}),
 }))
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))
-jest.mock("@/components/auth/WorkspaceBrand", () => ({WorkspaceBrand: () => null}))
+jest.mock("@/components/auth/OrganizationBrand", () => ({OrganizationBrand: () => null}))
 jest.mock("@/components/ignite", () => {
   const {Text, View, Pressable} = require("react-native")
   return {
@@ -80,7 +80,7 @@ beforeEach(() => {
 
 it("stays on confirmation after a persistence failure and allows retry", async () => {
   mockDeployment.store.activate.mockRejectedValueOnce(new Error("Cannot persist settings"))
-  const screen = render(<WorkspaceConfirmScreen />)
+  const screen = render(<OrganizationConfirmScreen />)
   await act(async () => fireEvent.press(screen.getByText("common:continue")))
   expect(mockShowAlert).toHaveBeenCalledWith("common:error", "Cannot persist settings", [{text: "common:ok"}])
   expect(mockNavigationState.replace).not.toHaveBeenCalled()
@@ -88,7 +88,7 @@ it("stays on confirmation after a persistence failure and allows retry", async (
 
   await act(async () => fireEvent.press(screen.getByText("common:continue")))
   expect(mockDeployment.store.activate).toHaveBeenCalledTimes(2)
-  expect(mockNavigationState.replace).toHaveBeenCalledWith("/auth/workspace-signin")
+  expect(mockNavigationState.replace).toHaveBeenCalledWith("/auth/organization-signin")
 })
 
 it.each(["immediate", "deferred"])("does not cancel the %s iOS replacement after confirmation", async (timing) => {
@@ -96,7 +96,7 @@ it.each(["immediate", "deferred"])("does not cancel the %s iOS replacement after
   mockNavigationState.replace.mockImplementation(() => {
     if (timing === "immediate") replacement = mockEmitRemove("REPLACE")
   })
-  const screen = render(<WorkspaceConfirmScreen />)
+  const screen = render(<OrganizationConfirmScreen />)
   await act(async () => fireEvent.press(screen.getByText("common:continue")))
   if (timing === "deferred") {
     act(() => {
@@ -106,7 +106,7 @@ it.each(["immediate", "deferred"])("does not cancel the %s iOS replacement after
 
   expect(mockLogout).toHaveBeenCalledWith({skipAuthSignOut: true})
   expect(mockDeployment.store.activate).toHaveBeenCalledWith(mockCandidate)
-  expect(mockNavigationState.replace).toHaveBeenCalledWith("/auth/workspace-signin")
+  expect(mockNavigationState.replace).toHaveBeenCalledWith("/auth/organization-signin")
   expect(replacement?.preventDefault).not.toHaveBeenCalled()
   expect(mockNavigationState.goBack).not.toHaveBeenCalled()
 })
@@ -114,7 +114,7 @@ it.each(["immediate", "deferred"])("does not cancel the %s iOS replacement after
 it("blocks back during teardown and allows back before activation", async () => {
   let finishLogout!: () => void
   mockLogout.mockImplementation(() => new Promise<void>((resolve) => (finishLogout = resolve)))
-  const screen = render(<WorkspaceConfirmScreen />)
+  const screen = render(<OrganizationConfirmScreen />)
   act(() => mockEmitRemove("GO_BACK"))
   expect(mockNavigationState.goBack).toHaveBeenCalledTimes(1)
   mockNavigationState.goBack.mockClear()

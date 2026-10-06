@@ -2,7 +2,7 @@ import {useFocusEffect, useNavigation} from "expo-router"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {ActivityIndicator, ScrollView, View} from "react-native"
 
-import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
+import {OrganizationBrand} from "@/components/auth/OrganizationBrand"
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {focusEffectPreventBack, type PreventBackEvent} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -12,7 +12,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import showAlert from "@/utils/AlertUtils"
 
-export default function WorkspaceConfirmScreen() {
+export default function OrganizationConfirmScreen() {
   const {candidate, clearCandidate, store} = useDeployment()
   const {goBack, replace} = useNavigationStore.getState()
   const navigation = useNavigation()
@@ -64,14 +64,14 @@ export default function WorkspaceConfirmScreen() {
     return (
       <Screen preset="fixed">
         <Header
-          title={translate("workspace:title")}
+          title={translate("organization:title")}
           leftIcon="chevron-left"
           leftIconAccessibilityLabel={translate("common:back")}
           onLeftPress={goBack}
         />
         <View className="flex-1 items-center justify-center p-6">
-          <Text className="text-center text-muted-foreground mb-6">{translate("workspace:candidateExpired")}</Text>
-          <Button text={translate("workspace:enterAnotherUrl")} onPress={() => replace("/auth/workspace")} />
+          <Text className="text-center text-muted-foreground mb-6">{translate("organization:candidateExpired")}</Text>
+          <Button text={translate("organization:enterAnotherUrl")} onPress={() => replace("/auth/organization")} />
         </View>
       </Screen>
     )
@@ -79,18 +79,18 @@ export default function WorkspaceConfirmScreen() {
 
   const authLabel =
     candidate.manifest.auth.mode === "microsoft-entra"
-      ? translate("workspace:microsoftOrganizationAccount")
-      : translate("workspace:mentraAccount")
+      ? translate("organization:microsoftOrganizationAccount")
+      : translate("organization:mentraAccount")
 
   const activate = async () => {
     if (activatingRef.current) return
     activatingRef.current = true
     setActivating(true)
     try {
-      // Workspace activation is a hard local identity boundary. Clear any
+      // Organization activation is a hard local identity boundary. Clear any
       // consumer settings, cached miniapp data, and connected device before
       // persisting the customer deployment. Do not call Mentra sign-out: a
-      // fresh workspace enrollment must not contact Mentra infrastructure.
+      // fresh organization enrollment must not contact Mentra infrastructure.
       await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
       if (!mounted.current) return
       await store.activate(candidate)
@@ -98,7 +98,7 @@ export default function WorkspaceConfirmScreen() {
       // Teardown is complete: allow our own replacement through the iOS
       // removal guard, whether navigation dispatches immediately or later.
       activatingRef.current = false
-      replace("/auth/workspace-signin")
+      replace("/auth/organization-signin")
     } catch (error) {
       showAlert(translate("common:error"), error instanceof Error ? error.message : String(error), [
         {text: translate("common:ok")},
@@ -112,7 +112,7 @@ export default function WorkspaceConfirmScreen() {
   return (
     <Screen preset="fixed">
       <Header
-        title={translate("workspace:confirmTitle")}
+        title={translate("organization:confirmTitle")}
         leftIcon="chevron-left"
         leftIconAccessibilityLabel={translate("common:back")}
         onLeftPress={cancel}
@@ -120,27 +120,27 @@ export default function WorkspaceConfirmScreen() {
       <ScrollView contentContainerClassName="flex-grow" showsVerticalScrollIndicator={false}>
         <View className="flex-1 p-4">
           <View className="items-center pt-6 pb-8">
-            <WorkspaceBrand
+            <OrganizationBrand
               displayName={candidate.manifest.displayName}
               logoUrls={candidate.manifest.branding?.logoUrls}
             />
             <Text preset="heading" className="text-2xl font-bold text-foreground text-center mt-5">
-              {translate("workspace:connectTo", {name: candidate.manifest.displayName})}
+              {translate("organization:connectTo", {name: candidate.manifest.displayName})}
             </Text>
           </View>
 
           <View className="bg-primary-foreground rounded-2xl p-4 gap-4">
             <View>
-              <Text className="text-xs text-muted-foreground">{translate("workspace:workspaceLabel")}</Text>
+              <Text className="text-xs text-muted-foreground">{translate("organization:organizationLabel")}</Text>
               <Text className="text-base text-foreground mt-1">{candidate.manifest.displayName}</Text>
             </View>
             <View>
-              <Text className="text-xs text-muted-foreground">{translate("workspace:signInLabel")}</Text>
+              <Text className="text-xs text-muted-foreground">{translate("organization:signInLabel")}</Text>
               <Text className="text-base text-foreground mt-1">{authLabel}</Text>
             </View>
           </View>
 
-          <Text className="text-sm text-muted-foreground mt-4">{translate("workspace:confirmDescription")}</Text>
+          <Text className="text-sm text-muted-foreground mt-4">{translate("organization:confirmDescription")}</Text>
           <Button
             className="mt-6"
             preset="primary"

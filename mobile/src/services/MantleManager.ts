@@ -57,6 +57,7 @@ import type {GlassesMenuItem} from "@/utils/glassesMenu"
 import {translate} from "@/i18n"
 import {Buffer} from "@craftzdog/react-native-buffer"
 import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployment"
+import {PERSISTED_USER_ID_PREFIX} from "@/services/deployment/legacyPersistedNames"
 
 // Build-time Store trust table. OEM builds may add Store packages here and
 // assign SYSTEM bundle ownership below; the same list configures install
@@ -430,39 +431,39 @@ class MantleManager {
     // start the runtime. The remaining work below is Mentra-app UI/v1-cloud
     // startup, not an island configuration seam.
     const deployment = deploymentStore.getActive()
-    const workspaceAuth = deployment.kind === "workspace" ? createDeploymentAuthProvider(deployment) : null
+    const organizationAuth = deployment.kind === "organization" ? createDeploymentAuthProvider(deployment) : null
     engine.configure({
-      auth: workspaceAuth
+      auth: organizationAuth
         ? {
             getMeetingAccount: async () => {
-              const session = await workspaceAuth.getSession()
-              if (!session) throw new Error("Sign in to your workspace to use Teams")
+              const session = await organizationAuth.getSession()
+              if (!session) throw new Error("Sign in to your organization to use Teams")
               const {displayName, email} = session.identity
               return {displayName, email}
             },
             getTeamsToken: async () => {
               if (deployment.manifest.auth.mode !== "microsoft-entra") {
-                throw new Error("This workspace does not have a Microsoft Entra identity")
+                throw new Error("This organization does not have a Microsoft Entra identity")
               }
-              return workspaceAuth.getAccessToken({scopes: deployment.manifest.auth.teamsScopes})
+              return organizationAuth.getAccessToken({scopes: deployment.manifest.auth.teamsScopes})
             },
             getSubjectToken: async () => ({
-              token: await workspaceAuth.getAccessToken({
+              token: await organizationAuth.getAccessToken({
                 scopes:
-                  deployment.kind === "workspace" && deployment.manifest.auth.mode === "microsoft-entra"
+                  deployment.kind === "organization" && deployment.manifest.auth.mode === "microsoft-entra"
                     ? deployment.manifest.auth.sessionScopes
                     : [],
               }),
               type: "oidc",
             }),
             getUserId: async () => {
-              const current = await workspaceAuth.getSession()
-              if (!current) throw new Error("engine.configure: no workspace identity available")
+              const current = await organizationAuth.getSession()
+              if (!current) throw new Error("engine.configure: no organization identity available")
               const {identity} = current
-              return `workspace:${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
+              return `${PERSISTED_USER_ID_PREFIX}${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
             },
             onStateChange: (callback) => ({
-              unsubscribe: workspaceAuth.onStateChange((session) =>
+              unsubscribe: organizationAuth.onStateChange((session) =>
                 callback(session ? "SIGNED_IN" : "SIGNED_OUT", session ? {token: session.accessToken ?? null} : null),
               ),
             }),
@@ -740,8 +741,8 @@ class MantleManager {
     const deployment = deploymentStore.getActive()
     const isCurrent = () => generation === this.miniappGeneration && deploymentStore.getActive() === deployment
 
-    // Remove previous workspace releases before restoring consumer bundles,
-    // including an identical bundled release adopted by a workspace.
+    // Remove previous organization releases before restoring consumer bundles,
+    // including an identical bundled release adopted by an organization.
     if (!background) await deploymentManagedMiniappSync.sync(deployment)
     if (!isCurrent()) return
 
@@ -833,7 +834,7 @@ class MantleManager {
       try {
         const asset = Asset.fromModule(module)
         const parsed = parseBundledMiniappName(asset.name)
-        // iOS Call uses its visibility controller (consumer) or managed sync (workspace).
+        // iOS Call uses its visibility controller (consumer) or managed sync (organization).
         if (Platform.OS === "ios" && parsed?.packageName === mentraCallPackageName) continue
         await this.installBundledMiniapp(asset)
       } catch (error) {
@@ -844,13 +845,13 @@ class MantleManager {
 
   private async prepareIosCall() {
     const deployment = deploymentStore.getActive()
-    if (deployment.kind === "workspace") {
+    if (deployment.kind === "organization") {
       // Managed releases must retain manifest ownership and digest verification;
-      // the consumer binary's ZIP is outside the workspace system-app allowlist.
+      // the consumer binary's ZIP is outside the organization system-app allowlist.
       // initMiniapps owns managed synchronization; never start an independent
       // retry that could install a bundle without publishing its visibility.
       if (shouldHideMiniapp(mentraCallPackageName)) {
-        throw new Error("The workspace Call bundle could not be installed and verified")
+        throw new Error("The organization Call bundle could not be installed and verified")
       }
       return
     }
@@ -868,15 +869,15 @@ class MantleManager {
     if (!parsed) throw new Error(`Bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
     const {packageName, version} = parsed
     const deployment = deploymentStore.getActive()
-    // A workspace pin owns this package even when the system-app allowlist is
+    // An organization pin owns this package even when the system-app allowlist is
     // unrestricted. A newer consumer ZIP must not replace its active version.
     if (
-      deployment.kind === "workspace" &&
+      deployment.kind === "organization" &&
       deployment.manifest.miniapps.managed.some((app) => app.packageName === packageName)
     )
       return
     const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
-    // Bundled consumer assets excluded by the workspace are expected skips.
+    // Bundled consumer assets excluded by the organization are expected skips.
     if (approved !== null && !approved.includes(packageName)) return
     if (shouldHideMiniapp(packageName)) return
 
@@ -1006,9 +1007,12 @@ class MantleManager {
     if (this.calendarSyncTimer) BgTimer.clearInterval(this.calendarSyncTimer)
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(() => {
-      this.sendCalendarEvents()
-    }, 60 * 60 * 1000) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(
+      () => {
+        this.sendCalendarEvents()
+      },
+      60 * 60 * 1000,
+    ) // 1 hour
 
     try {
       // only start location updates if we have the location permission (host UI gate);

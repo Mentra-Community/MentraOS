@@ -4,7 +4,7 @@ import {Image, View} from "react-native"
 import {Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 
-interface WorkspaceBrandProps {
+interface OrganizationBrandProps {
   displayName: string
   logoUrls?: {
     light: string
@@ -13,7 +13,7 @@ interface WorkspaceBrandProps {
   showFallbackName?: boolean
 }
 
-export function WorkspaceBrand({displayName, logoUrls, showFallbackName = false}: WorkspaceBrandProps) {
+export function OrganizationBrand({displayName, logoUrls, showFallbackName = false}: OrganizationBrandProps) {
   const {theme} = useAppTheme()
   const [logoFailed, setLogoFailed] = useState(false)
   const logoUrl = theme.isDark ? logoUrls?.dark : logoUrls?.light

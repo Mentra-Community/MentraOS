@@ -30,7 +30,7 @@ export interface IslandAuth {
 }
 
 export interface IslandConfigValues {
-  /** Workspace calls use Runtime credentials and cannot access the public Call backend. */
+  /** Organization calls use Runtime credentials and cannot access the public Call backend. */
   privateMeetings?: boolean
   /** cloud-v2 core service base URL (defaults resolved by the cloud client). */
   coreUrl?: string | null
@@ -44,7 +44,7 @@ export interface IslandConfigValues {
   runtimeRealtimeSession?: boolean
   /** Complete allowlist for bundled/local miniapps; null or omitted allows all. */
   localMiniappAllowlist?: readonly string[] | null
-  /** Provenance-aware policy for workspace SYSTEM and managed miniapps. */
+  /** Provenance-aware policy for organization SYSTEM and managed miniapps. */
   localMiniappPolicy?: LocalMiniappPolicy
   /** Host availability for user-facing discovery/launch or transient background execution. */
   isMiniappAvailable?: (packageName: string, mode: "interactive" | "background") => boolean
@@ -177,8 +177,8 @@ export function isInstalledMiniappAllowed(
   if (!policy) return isLocalMiniappPackageAllowed(packageName)
 
   const systemApproved = policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
-  const workspaceManaged = policy.managed.some((entry) => entry.packageName === packageName)
-  if (systemApproved && !workspaceManaged && releaseIdentity?.source === "bundled_asset") return true
+  const organizationManaged = policy.managed.some((entry) => entry.packageName === packageName)
+  if (systemApproved && !organizationManaged && releaseIdentity?.source === "bundled_asset") return true
   if (isTrustedSystemMiniappRelease(options?.config ?? {}, packageName, releaseIdentity)) return true
   if (!version || releaseIdentity?.source !== "deployment_manifest") return false
 

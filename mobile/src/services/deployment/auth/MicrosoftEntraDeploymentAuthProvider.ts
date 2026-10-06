@@ -1,11 +1,11 @@
 import EntraAuth, {type EntraAccount, type EntraConfiguration, type EntraTokenResult} from "@mentra/entra-auth"
 
-import type {MicrosoftEntraAuthConfig, WorkspaceDeployment} from "@/services/deployment/types"
+import type {MicrosoftEntraAuthConfig, OrganizationDeployment} from "@/services/deployment/types"
 import type {
   DeploymentAuthProvider,
   DeploymentAuthSession,
-  WorkspaceIdentity,
-  WorkspaceTokenRequest,
+  OrganizationIdentity,
+  OrganizationTokenRequest,
 } from "./DeploymentAuthProvider"
 
 interface NativeEntraAuth {
@@ -21,7 +21,7 @@ export class MicrosoftEntraDeploymentAuthProvider implements DeploymentAuthProvi
   private readonly native: NativeEntraAuth
 
   constructor(
-    private readonly deployment: WorkspaceDeployment,
+    private readonly deployment: OrganizationDeployment,
     native: NativeEntraAuth | null = EntraAuth,
   ) {
     if (deployment.manifest.auth.mode !== "microsoft-entra") {
@@ -39,7 +39,7 @@ export class MicrosoftEntraDeploymentAuthProvider implements DeploymentAuthProvi
       const token = await this.native.acquireToken(this.configuration(), this.auth.sessionScopes, false)
       return this.session(token, token.accessToken)
     } catch {
-      // The cached account is still useful for showing the correct workspace
+      // The cached account is still useful for showing the correct organization
       // sign-in screen. An interactive request will satisfy MFA or Conditional
       // Access when silent acquisition cannot.
       return this.session(account)
@@ -54,14 +54,14 @@ export class MicrosoftEntraDeploymentAuthProvider implements DeploymentAuthProvi
   }
 
   /**
-   * Mint a workspace access token for one declared scope set.
+   * Mint an organization access token for one declared scope set.
    *
    * The ACS Teams scope set is the only native-meeting capability the app can
    * exercise today, so it is the enforcement point for
-   * `features.nativeMeetings`: a workspace that turns the feature off cannot
+   * `features.nativeMeetings`: an organization that turns the feature off cannot
    * obtain a Teams token even though its manifest still declares the scopes.
    */
-  async getAccessToken(request: WorkspaceTokenRequest): Promise<string> {
+  async getAccessToken(request: OrganizationTokenRequest): Promise<string> {
     const scopes = request.scopes.length > 0 ? request.scopes : this.auth.sessionScopes
     const uniqueScopes = new Set(scopes)
     const matches = (declared: string[]) =>
@@ -70,7 +70,7 @@ export class MicrosoftEntraDeploymentAuthProvider implements DeploymentAuthProvi
       throw new Error("Native meetings are disabled by this deployment")
     }
     if (!matches(this.auth.sessionScopes) && !matches(this.auth.teamsScopes)) {
-      throw new Error("Requested Microsoft scopes are not declared by this workspace")
+      throw new Error("Requested Microsoft scopes are not declared by this organization")
     }
     const result = await this.native.acquireToken(this.configuration(), scopes, request.forceRefresh)
     return result.accessToken
@@ -97,7 +97,7 @@ export class MicrosoftEntraDeploymentAuthProvider implements DeploymentAuthProvi
     }
   }
 
-  private identity(account: EntraAccount): WorkspaceIdentity {
+  private identity(account: EntraAccount): OrganizationIdentity {
     return {
       deploymentId: this.deployment.manifest.deploymentId,
       issuer: this.auth.authorityUrl.replace(/\/$/, ""),

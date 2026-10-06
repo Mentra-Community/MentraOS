@@ -131,7 +131,7 @@ describe("SYSTEM miniapp policy", () => {
   })
 })
 
-describe("workspace-owned preinstalled package policy", () => {
+describe("organization-owned preinstalled package policy", () => {
   const hash = "a".repeat(64)
   const identity = {
     source: "deployment_manifest",
@@ -163,7 +163,7 @@ describe("workspace-owned preinstalled package policy", () => {
   )
   afterAll(resetForTests)
 
-  test("accepts only the host-verified workspace version, hash and owner", () => {
+  test("accepts only the host-verified organization version, hash and owner", () => {
     const candidate = {version: "2.1.31", verifiedBundleSha256: hash}
     expect(canInstallMiniappRelease("com.mentra.call", identity, true, candidate)).toBe(true)
     expect(canInstallMiniappRelease("com.mentra.call", identity, false, candidate)).toBe(false)
@@ -176,7 +176,7 @@ describe("workspace-owned preinstalled package policy", () => {
     )
   })
 
-  test("does not grant SYSTEM or Store ownership to a workspace pin", () => {
+  test("does not grant SYSTEM or Store ownership to an organization pin", () => {
     expect(canUseManualMiniappRelease("com.mentra.call")).toBe(false)
     expect(canInstallMiniappRelease("com.mentra.call", {source: "direct_download"}, false)).toBe(false)
     expect(canInstallMiniappRelease("com.mentra.call", {source: "dev_snapshot"}, false)).toBe(false)

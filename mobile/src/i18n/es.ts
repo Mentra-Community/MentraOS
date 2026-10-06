@@ -160,9 +160,8 @@ const es = {
   },
   profileSettings: {
     ...en.profileSettings,
-    workspaceName: "Nombre",
-    workspaceUrl: "URL del espacio de trabajo",
-    mentraWorkspace: "Mentra",
+    organizationName: "Nombre",
+    organizationUrl: "URL de la organización",
   },
   versionCheck: {
     ...en.versionCheck,
@@ -170,7 +169,7 @@ const es = {
       "Esta versión de la app Mentra ya no es compatible con {{name}}. Las actualizaciones las distribuye la gestión de dispositivos de tu organización. Contacta con tu administrador de TI para actualizar.",
     contactSupport: "Contactar con soporte",
   },
-  workspace: {
+  organization: {
     or: "o",
     title: "Inicio de sesión de la organización",
     heading: "Conéctate a tu organización",
@@ -179,30 +178,30 @@ const es = {
     urlLabel: "Dirección de la organización",
     urlPlaceholder: "empresa.ejemplo.com",
     urlHelper: "Ejemplo: empresa.ejemplo.com",
-    unknownResolutionError: "No pudimos cargar este espacio de trabajo. Inténtalo de nuevo.",
+    unknownResolutionError: "No pudimos cargar esta organización. Inténtalo de nuevo.",
     notFoundError:
-      "No encontramos un espacio de trabajo de Mentra en esa dirección. Revisa la dirección o consulta a tu administrador de TI.",
+      "No encontramos una organización de Mentra en esa dirección. Revisa la dirección o consulta a tu administrador de TI.",
     configurationError:
-      "No se pudo verificar este espacio de trabajo. Pide a tu administrador de TI que revise su configuración.",
+      "No se pudo verificar esta organización. Pide a tu administrador de TI que revise su configuración.",
     confirmTitle: "Confirmar organización",
     candidateExpired: "Esta confirmación caducó. Vuelve a introducir la dirección de tu organización.",
     enterAnotherUrl: "Introducir dirección de la organización",
     connectTo: "Conectar con {{name}}",
     continueTo: "Continuar con {{name}}",
-    workspaceLabel: "Espacio de trabajo",
+    organizationLabel: "Organización",
     signInLabel: "Inicio de sesión",
     microsoftOrganizationAccount: "Cuenta de organización de Microsoft",
     mentraAccount: "Cuenta de Mentra",
     confirmDescription:
       "Al continuar, esta organización se convierte en tu despliegue activo de Mentra. Sus servicios y políticas se aplican antes de iniciar sesión.",
-    signInDescription: "Continúa con la cuenta de la organización configurada para este espacio de trabajo.",
+    signInDescription: "Continúa con la cuenta configurada para esta organización.",
     continueWithMicrosoft: "Continuar con Microsoft",
     returnToMentra: "Volver a Mentra",
     change: "Cambiar",
-    noActiveWorkspace: "No hay ningún espacio de trabajo de organización activo.",
+    noActiveOrganization: "No hay ninguna organización activa.",
     signInFailedTitle: "Error al iniciar sesión",
     signInFailedDescription:
-      "Microsoft no pudo iniciar tu sesión en este espacio de trabajo. Inténtalo de nuevo o contacta con tu equipo de TI.",
+      "Microsoft no pudo iniciar tu sesión en esta organización. Inténtalo de nuevo o contacta con tu equipo de TI.",
   },
 } satisfies TranslationResource
 

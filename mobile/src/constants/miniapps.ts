@@ -12,7 +12,7 @@ export const notifyPackageName = "cloud.augmentos.notify"
 export const navigationPackageName = "com.mentra.navigation" // "Mentra Map"
 export const mentraCallPackageName = "com.mentra.call"
 
-// Build-selected Stores cannot be replaced by workspace-managed userland.
+// Build-selected Stores cannot be replaced by organization-managed userland.
 // Shared by deployment validation and the host's install-authority setup.
 export const BUNDLED_STORE_MINIAPP_PACKAGES = ["com.mentra.store"] as const
 

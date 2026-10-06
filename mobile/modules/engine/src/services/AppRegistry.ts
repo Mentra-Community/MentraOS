@@ -2,8 +2,8 @@
  * AppRegistry — on-disk install/uninstall registry for local miniapps.
  *
  * Owns the consumer `Documents/lmas/<packageName>/<version>/` and isolated
- * workspace `Documents/lmas-workspace/<packageName>/<version>/` layouts, the
- * download/unzip pipeline, and consumer/workspace active-version pointers in MMKV. It does
+ * organization `Documents/<PERSISTED_BUNDLE_DIR>/<packageName>/<version>/` layouts, the
+ * download/unzip pipeline, and consumer/organization active-version pointers in MMKV. It does
  * NOT touch the apps store directly — instead it notifies subscribers when
  * the install set changes, so the host (mobile manager, OEM app) can refresh
  * its own state.
@@ -65,6 +65,7 @@ import {
 } from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {sameMiniappBundle} from "./sameMiniappBundle"
+import {PERSISTED_BUNDLE_DIR, PERSISTED_JOURNAL_SELECTION_FIELD, PERSISTED_STORAGE_SCOPE} from "./legacyPersistedNames"
 import {
   canInstallMiniappRelease,
   canUseManualMiniappRelease,
@@ -154,7 +155,7 @@ export interface MiniappReleaseIdentity {
   bundleSha256?: string
   channel?: string
   storePackageName?: string
-  /** Workspace/private deployment that owns this release, when one does. */
+  /** Organization/private deployment that owns this release, when one does. */
   deploymentId?: string
   deploymentOrigin?: string
   /** Verified Ed25519 publisher identity embedded in the production ZIP. */
@@ -230,19 +231,19 @@ function assertInstallAuthority(
   }
 }
 
-export type MiniappStorageScope = "consumer" | "workspace"
+export type MiniappStorageScope = "consumer" | "organization"
 type InstalledBundle = {packageName: string; version: string; storageScope: MiniappStorageScope}
 
 function currentStorageScope(): MiniappStorageScope {
-  return getConfigValues().localMiniappPolicy ? "workspace" : "consumer"
+  return getConfigValues().localMiniappPolicy ? "organization" : "consumer"
 }
 
 function bundleRoot(scope: MiniappStorageScope): Directory {
-  return new Directory(Paths.document, scope === "workspace" ? "lmas-workspace" : "lmas")
+  return new Directory(Paths.document, scope === "organization" ? PERSISTED_BUNDLE_DIR : "lmas")
 }
 
 function releaseIdentityKey(packageName: string, version: string, scope: MiniappStorageScope = "consumer"): string {
-  return `miniapp_release_identity:${scope === "workspace" ? "workspace:" : ""}${packageName}:${version}`
+  return `miniapp_release_identity:${scope === "organization" ? `${PERSISTED_STORAGE_SCOPE}:` : ""}${packageName}:${version}`
 }
 
 function userUninstalledKey(packageName: string): string {
@@ -253,8 +254,8 @@ function publisherIdentityKey(packageName: string): string {
   return `miniapp_publisher_identity:${packageName}`
 }
 
-function activeVersionKey(packageName: string, workspace = Boolean(getConfigValues().localMiniappPolicy)): string {
-  return `${packageName}_${workspace ? "workspace_" : ""}active_version`
+function activeVersionKey(packageName: string, organization = Boolean(getConfigValues().localMiniappPolicy)): string {
+  return `${packageName}_${organization ? `${PERSISTED_STORAGE_SCOPE}_` : ""}active_version`
 }
 
 interface StorageSnapshot<T> {
@@ -273,10 +274,23 @@ interface InstallMetadataRollbackJournal {
   release: StorageSnapshot<MiniappReleaseIdentity>
   active: StorageSnapshot<string>
   /** Older journals always targeted the consumer selection. */
-  workspaceSelection?: boolean
+  organizationSelection?: boolean
   storageScope?: MiniappStorageScope
   /** Consumer live-dev routing removed atomically by a release installation. */
   devRouting?: DevRoutingSnapshot
+}
+
+type PersistedStorageScope = "consumer" | typeof PERSISTED_STORAGE_SCOPE
+
+/** On-disk shape of the journal. Builds that already shipped wrote these names. */
+interface PersistedInstallMetadataRollbackJournal
+  extends Omit<InstallMetadataRollbackJournal, "organizationSelection" | "storageScope"> {
+  [PERSISTED_JOURNAL_SELECTION_FIELD]?: boolean
+  storageScope?: PersistedStorageScope
+}
+
+function toPersistedStorageScope(scope: MiniappStorageScope): PersistedStorageScope {
+  return scope === "organization" ? PERSISTED_STORAGE_SCOPE : scope
 }
 
 const INSTALL_METADATA_ROLLBACK_FILE = "metadata-rollback.json"
@@ -314,7 +328,7 @@ function readMetadataRollbackJournal(
   try {
     const file = new File(pendingDir, INSTALL_METADATA_ROLLBACK_FILE)
     if (!file.exists) return null
-    const parsed = JSON.parse(file.textSync()) as Partial<InstallMetadataRollbackJournal>
+    const parsed = JSON.parse(file.textSync()) as Partial<PersistedInstallMetadataRollbackJournal>
     if (
       parsed.schemaVersion !== 1 ||
       parsed.packageName !== packageName ||
@@ -322,10 +336,11 @@ function readMetadataRollbackJournal(
       !isStorageSnapshot(parsed.publisher, "string") ||
       !isStorageSnapshot(parsed.release, "object") ||
       !isStorageSnapshot(parsed.active, "string") ||
-      (parsed.workspaceSelection !== undefined && typeof parsed.workspaceSelection !== "boolean") ||
+      (parsed[PERSISTED_JOURNAL_SELECTION_FIELD] !== undefined &&
+        typeof parsed[PERSISTED_JOURNAL_SELECTION_FIELD] !== "boolean") ||
       (parsed.storageScope !== undefined &&
         parsed.storageScope !== "consumer" &&
-        parsed.storageScope !== "workspace") ||
+        parsed.storageScope !== PERSISTED_STORAGE_SCOPE) ||
       (parsed.devRouting !== undefined &&
         (!parsed.devRouting ||
           DEV_ROUTING_FIELDS.some((field) => !isStorageSnapshot(parsed.devRouting?.[field], "any"))))
@@ -333,7 +348,12 @@ function readMetadataRollbackJournal(
       console.warn(`APP_REGISTRY: ignoring invalid metadata rollback journal for ${packageName}@${version}`)
       return null
     }
-    return parsed as InstallMetadataRollbackJournal
+    const {[PERSISTED_JOURNAL_SELECTION_FIELD]: organizationSelection, storageScope, ...journal} = parsed
+    return {
+      ...journal,
+      organizationSelection,
+      storageScope: storageScope === PERSISTED_STORAGE_SCOPE ? "organization" : storageScope,
+    } as InstallMetadataRollbackJournal
   } catch (error) {
     // Metadata writes start only after this file has been written successfully,
     // so a missing/corrupt journal means there is no partial metadata commit to
@@ -373,7 +393,7 @@ function restoreDevRouting(packageName: string, snapshot: DevRoutingSnapshot): v
 
 function restoreInstallMetadata(journal: InstallMetadataRollbackJournal, metadata: MMKV): void {
   if (journal.devRouting) restoreDevRouting(journal.packageName, journal.devRouting)
-  restoreStorage(activeVersionKey(journal.packageName, journal.workspaceSelection ?? false), journal.active)
+  restoreStorage(activeVersionKey(journal.packageName, journal.organizationSelection ?? false), journal.active)
   restoreInstallationMetadata(
     metadata,
     releaseIdentityKey(journal.packageName, journal.version, journal.storageScope),
@@ -803,7 +823,7 @@ async function downloadAndInstallMiniApp(
           activation,
         ),
       () => {
-        // Workspace selection can change while native extraction is awaiting.
+        // Organization selection can change while native extraction is awaiting.
         // Recheck before any installed files move, then reserve idle activation.
         validateTrust()
         opts?.beforeActivate?.()
@@ -877,7 +897,7 @@ class AppRegistry {
    */
   private recoverInterruptedActivations(): void {
     try {
-      for (const scope of ["consumer", "workspace"] as const) {
+      for (const scope of ["consumer", "organization"] as const) {
         const lmasDir = bundleRoot(scope)
         if (!lmasDir.exists) continue
         for (const packageDir of lmasDir.list()) {
@@ -1068,9 +1088,9 @@ class AppRegistry {
   }
 
   public assertCanInstallVersion(packageName: string, version: string): void {
-    // Files retained for a different workspace policy are not installations in
+    // Files retained for a different organization policy are not installations in
     // this environment. Compare only releases that this environment can use,
-    // including an approved consumer release visible inside a workspace.
+    // including an approved consumer release visible inside an organization.
     const installed = this.getInstalledVersions(packageName).filter((installedVersion) =>
       isInstalledMiniappAllowed(packageName, installedVersion, this.getReleaseIdentity(packageName, installedVersion)),
     )
@@ -1199,8 +1219,8 @@ class AppRegistry {
   ): InstallFinalization {
     const publisherKey = publisherIdentityKey(packageName)
     const releaseKey = releaseIdentityKey(packageName, version, storageScope)
-    const workspaceSelection = storageScope === "workspace"
-    const activeKey = activeVersionKey(packageName, workspaceSelection)
+    const organizationSelection = storageScope === "organization"
+    const activeKey = activeVersionKey(packageName, organizationSelection)
     const publisherBefore = snapshotInstallationMetadata<string>(publisherKey)
     const previousRelease = this.getReleaseIdentity(packageName, version, storageScope)
     const releaseBefore: StorageSnapshot<MiniappReleaseIdentity> = previousRelease
@@ -1208,21 +1228,21 @@ class AppRegistry {
       : {present: false}
     const activeBefore = snapshotStorage<string>(activeKey)
     const devRoutingBefore =
-      !workspaceSelection && !version.startsWith("dev-")
+      !organizationSelection && !version.startsWith("dev-")
         ? (Object.fromEntries(
             DEV_ROUTING_FIELDS.map((field) => [field, snapshotStorage(`${packageName}_dev_${field}`)]),
           ) as DevRoutingSnapshot)
         : undefined
 
-    const rollbackJournal: InstallMetadataRollbackJournal = {
+    const rollbackJournal: PersistedInstallMetadataRollbackJournal = {
       schemaVersion: 1,
       packageName,
       version,
       publisher: publisherBefore,
       release: releaseBefore,
       active: activeBefore,
-      workspaceSelection,
-      storageScope,
+      [PERSISTED_JOURNAL_SELECTION_FIELD]: organizationSelection,
+      storageScope: toPersistedStorageScope(storageScope),
       ...(devRoutingBefore ? {devRouting: devRoutingBefore} : {}),
     }
     recordRecoveryState(JSON.stringify(rollbackJournal))
@@ -1280,7 +1300,7 @@ class AppRegistry {
         // getActiveVersion's dev-precedence rule and the just-installed
         // release wouldn't run.
         const isDevInstall = version.startsWith("dev-")
-        if (!isDevInstall && !workspaceSelection) {
+        if (!isDevInstall && !organizationSelection) {
           // Routing already committed with the active release. Only disposable
           // files/index entries remain, so interruption cannot select old dev code.
           try {
@@ -1303,17 +1323,17 @@ class AppRegistry {
 
   private releaseScope(packageName: string, version: string): MiniappStorageScope {
     if (
-      currentStorageScope() === "workspace" &&
-      this.getInstalledVersions(packageName, "workspace").includes(version)
+      currentStorageScope() === "organization" &&
+      this.getInstalledVersions(packageName, "organization").includes(version)
     ) {
-      const workspaceIdentity = this.getReleaseIdentity(packageName, version, "workspace")
-      if (isInstalledMiniappAllowed(packageName, version, workspaceIdentity)) return "workspace"
+      const organizationIdentity = this.getReleaseIdentity(packageName, version, "organization")
+      if (isInstalledMiniappAllowed(packageName, version, organizationIdentity)) return "organization"
       const consumerIdentity = this.getReleaseIdentity(packageName, version, "consumer")
       if (
         !this.getInstalledVersions(packageName, "consumer").includes(version) ||
         !isInstalledMiniappAllowed(packageName, version, consumerIdentity)
       )
-        return "workspace"
+        return "organization"
     }
     return "consumer"
   }
@@ -1339,7 +1359,7 @@ class AppRegistry {
     return snapshot.present ? snapshot.value! : null
   }
 
-  /** Enumerate both storage domains, including legacy workspace releases in consumer storage. */
+  /** Enumerate both storage domains, including legacy organization releases in consumer storage. */
   public getDeploymentOwnedReleases(): Array<{
     packageName: string
     version: string
@@ -1352,7 +1372,7 @@ class AppRegistry {
       identity: MiniappReleaseIdentity
       storageScope: MiniappStorageScope
     }> = []
-    for (const storageScope of ["consumer", "workspace"] as const) {
+    for (const storageScope of ["consumer", "organization"] as const) {
       for (const packageName of this.getPackageNames(storageScope)) {
         for (const version of this.getInstalledVersions(packageName, storageScope)) {
           const identity = this.getReleaseIdentity(packageName, version, storageScope)
@@ -1434,9 +1454,9 @@ class AppRegistry {
   public gcReleaseVersions(packageName: string, keepVersions: readonly string[]): void {
     const scope = currentStorageScope()
     const keep = new Set(keepVersions.filter(Boolean))
-    // Workspace updates must not garbage-collect the consumer's selected build.
-    for (const workspace of [false, true]) {
-      const selected = storage.load<string>(activeVersionKey(packageName, workspace))
+    // Organization updates must not garbage-collect the consumer's selected build.
+    for (const organization of [false, true]) {
+      const selected = storage.load<string>(activeVersionKey(packageName, organization))
       if (selected.is_ok()) keep.add(selected.value)
     }
     try {
@@ -1478,9 +1498,9 @@ class AppRegistry {
       // miniapp initiated the uninstall. Users may still hide a SYSTEM app
       // from Home through setHiddenStatus; only its installed bundle is
       // protected here.
-      // Workspace-owned versions remain userland even when the same package
+      // Organization-owned versions remain userland even when the same package
       // ships as SYSTEM for consumers. The host must be able to remove that
-      // exact version on workspace exit without deleting a consumer bundle.
+      // exact version on organization exit without deleting a consumer bundle.
       const managedVersion =
         version &&
         !isStoreMiniappPackage(packageName) &&
@@ -1515,11 +1535,11 @@ class AppRegistry {
       // Consumer removal clears dev artifacts: for HTTP-direct miniapps the tile is
       // backed by storage records (_dev_meta + dev_apps_index), not the disk
       // dir, so without this the projected tile reappears on the next refresh.
-      // Removing a workspace-owned release must preserve the consumer's dev selection.
+      // Removing an organization-owned release must preserve the consumer's dev selection.
       if (scope === "consumer" && !managedVersion) this.clearDevArtifacts(packageName)
       if (
         this.getInstalledVersions(packageName, "consumer").length === 0 &&
-        this.getInstalledVersions(packageName, "workspace").length === 0
+        this.getInstalledVersions(packageName, "organization").length === 0
       ) {
         restoreInstallationMetadata(this.releaseIdentities, publisherIdentityKey(packageName), {present: false})
       }
@@ -1542,8 +1562,8 @@ class AppRegistry {
     if (!scope)
       return [
         ...new Set(
-          (currentStorageScope() === "workspace"
-            ? (["consumer", "workspace"] as const)
+          (currentStorageScope() === "organization"
+            ? (["consumer", "organization"] as const)
             : (["consumer"] as const)
           ).flatMap((domain) => this.getPackageNames(domain)),
         ),
@@ -1573,8 +1593,8 @@ class AppRegistry {
     if (!scope)
       return [
         ...new Set(
-          (currentStorageScope() === "workspace"
-            ? (["consumer", "workspace"] as const)
+          (currentStorageScope() === "organization"
+            ? (["consumer", "organization"] as const)
             : (["consumer"] as const)
           ).flatMap((domain) => this.getInstalledVersions(packageName, domain)),
         ),
@@ -1599,21 +1619,21 @@ class AppRegistry {
 
   public async getActiveVersion(packageName: string): Promise<string> {
     let versions = this.getInstalledVersions(packageName)
-    const workspace = Boolean(getConfigValues().localMiniappPolicy)
-    if (workspace) {
+    const organization = Boolean(getConfigValues().localMiniappPolicy)
+    if (organization) {
       versions = versions.filter((version) =>
         isInstalledMiniappAllowed(packageName, version, this.getReleaseIdentity(packageName, version)),
       )
     }
     // Treat MMKV as a hint, not authority. A stored version may have been
     // GC'd off disk without this pointer being updated.
-    const res = storage.load<string>(activeVersionKey(packageName, workspace))
-    const consumer = workspace ? storage.load<string>(activeVersionKey(packageName, false)) : res
-    // Carry an eligible newer consumer release into a workspace, but never its
-    // manual/dev override. Workspace installs keep their own selection so an
-    // approving workspace cannot erase the consumer's preference.
+    const res = storage.load<string>(activeVersionKey(packageName, organization))
+    const consumer = organization ? storage.load<string>(activeVersionKey(packageName, false)) : res
+    // Carry an eligible newer consumer release into an organization, but never its
+    // manual/dev override. Organization installs keep their own selection so an
+    // approving organization cannot erase the consumer's preference.
     if (
-      workspace &&
+      organization &&
       consumer.is_ok() &&
       versions.includes(consumer.value) &&
       (res.is_error() ||
@@ -1631,7 +1651,7 @@ class AppRegistry {
     // Only a current dev session may recover its offline snapshot in that case.
     const devUrl = storage.load<string>(`${packageName}_dev_url`)
     const hasDevSession =
-      !workspace && Boolean(readDevAppRecord(packageName)?.devUrl || (devUrl.is_ok() && devUrl.value))
+      !organization && Boolean(readDevAppRecord(packageName)?.devUrl || (devUrl.is_ok() && devUrl.value))
     const devVersions = hasDevSession
       ? versions
           .filter((v) => v.startsWith("dev-"))
@@ -1653,7 +1673,7 @@ class AppRegistry {
     const previous = storage.load<string>(key)
     const result = storage.save(key, version)
     if (result.is_ok() && (previous.is_error() || previous.value !== version)) {
-      // Selecting an already-installed workspace pin must update cached app
+      // Selecting an already-installed organization pin must update cached app
       // metadata and subscribers just like a new installation does.
       this.refreshNeeded = true
       this.notify()
@@ -1745,7 +1765,7 @@ class AppRegistry {
   public async getInstalledMiniapps({includeBackgroundOnly = false}: {includeBackgroundOnly?: boolean} = {}): Promise<
     ClientApp[]
   > {
-    // The same on-disk package may select a different release in a workspace.
+    // The same on-disk package may select a different release in an organization.
     // A policy transition must re-derive metadata, not just filter cached tiles.
     const selectionPolicy = getConfigValues().localMiniappPolicy
     if (this.cachedSelectionPolicy !== selectionPolicy) {
@@ -2193,7 +2213,7 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
   const packageName = record.packageName.trim()
   if (!packageName) throw new Error("Dev miniapp manifest is missing packageName")
   if (!canUseManualMiniappRelease(packageName)) {
-    throw new Error(`Miniapp ${packageName} cannot use a developer override in this workspace`)
+    throw new Error(`Miniapp ${packageName} cannot use a developer override in this organization`)
   }
 
   const iconUrl = await cacheDevAppIcon(packageName, record.iconUrl)
@@ -2264,7 +2284,7 @@ export function getDevAppRecords(): DevAppRecord[] {
   migrateLegacyDevSlot()
   const out: DevAppRecord[] = []
   const index = getDevAppIndex()
-  // Keep consumer dev records intact while a workspace hides them.
+  // Keep consumer dev records intact while an organization hides them.
   const allowedPackages = index.filter(canUseManualMiniappRelease)
   for (const pkg of allowedPackages) {
     const res = storage.load<string>(`${pkg}_dev_meta`)

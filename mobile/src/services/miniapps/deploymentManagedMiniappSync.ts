@@ -3,6 +3,7 @@ import {Directory, File, Paths} from "expo-file-system"
 
 import {shouldSkipMiniappInstall} from "./miniappVisibility"
 import type {ActiveDeployment, DeploymentManagedMiniapp} from "@/services/deployment"
+import {PERSISTED_ORIGIN_FIELD, PERSISTED_STORAGE_SCOPE} from "@/services/deployment/legacyPersistedNames"
 import {deploymentStore} from "@/services/deployment/store"
 
 import {preflightMiniappZip} from "./miniappZipPreflight"
@@ -26,7 +27,7 @@ let activeSync: AbortController | undefined
 let reconciliation = Promise.resolve()
 
 // Downloads may outlive cancellation in Expo. Stop waiting for them so a new
-// workspace can proceed, but keep every registry/state mutation serialized.
+// organization can proceed, but keep every registry/state mutation serialized.
 async function waitForDownload<T>(download: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const cancel = () => reject(new SupersededSync())
@@ -45,7 +46,7 @@ async function waitForDownload<T>(download: Promise<T>, signal: AbortSignal): Pr
   })
 }
 
-type StorageScope = "consumer" | "workspace"
+type StorageScope = "consumer" | "organization"
 
 interface ManagedInstallRecord {
   storageScope?: StorageScope
@@ -57,8 +58,38 @@ interface ManagedInstallRecord {
 interface ManagedInstallState {
   schemaVersion: 1
   deploymentId: string
-  workspaceOrigin: string
+  organizationOrigin: string
   entries: ManagedInstallRecord[]
+}
+
+type PersistedStorageScope = "consumer" | typeof PERSISTED_STORAGE_SCOPE
+type PersistedManagedInstallRecord = Omit<ManagedInstallRecord, "storageScope"> & {
+  storageScope?: PersistedStorageScope
+}
+
+/** On-disk shape of the ownership file. Builds that already shipped wrote these names. */
+interface PersistedManagedInstallState {
+  schemaVersion: 1
+  deploymentId: string
+  [PERSISTED_ORIGIN_FIELD]: string
+  entries: PersistedManagedInstallRecord[]
+}
+
+function fromPersistedRecord(entry: PersistedManagedInstallRecord): ManagedInstallRecord {
+  if (entry.storageScope === undefined) {
+    const {storageScope: _absent, ...record} = entry
+    return record
+  }
+  // Spreading first keeps the key in its original position in the file.
+  return {...entry, storageScope: entry.storageScope === PERSISTED_STORAGE_SCOPE ? "organization" : entry.storageScope}
+}
+
+function toPersistedRecord(entry: ManagedInstallRecord): PersistedManagedInstallRecord {
+  if (entry.storageScope === undefined) {
+    const {storageScope: _absent, ...record} = entry
+    return record
+  }
+  return {...entry, storageScope: entry.storageScope === "organization" ? PERSISTED_STORAGE_SCOPE : entry.storageScope}
 }
 
 function stateFile(): File {
@@ -69,11 +100,12 @@ function readState(): ManagedInstallState | null {
   const file = stateFile()
   if (!file.exists) return null
   try {
-    const raw = JSON.parse(file.textSync()) as Partial<ManagedInstallState>
+    const raw = JSON.parse(file.textSync()) as Partial<PersistedManagedInstallState>
+    const organizationOrigin = raw[PERSISTED_ORIGIN_FIELD]
     if (
       raw.schemaVersion !== 1 ||
       typeof raw.deploymentId !== "string" ||
-      typeof raw.workspaceOrigin !== "string" ||
+      typeof organizationOrigin !== "string" ||
       !Array.isArray(raw.entries)
     ) {
       return null
@@ -85,12 +117,19 @@ function readState(): ManagedInstallState | null {
           typeof entry.packageName !== "string" ||
           typeof entry.version !== "string" ||
           typeof entry.sha256 !== "string" ||
-          (entry.storageScope !== undefined && entry.storageScope !== "consumer" && entry.storageScope !== "workspace"),
+          (entry.storageScope !== undefined &&
+            entry.storageScope !== "consumer" &&
+            entry.storageScope !== PERSISTED_STORAGE_SCOPE),
       )
     ) {
       return null
     }
-    return raw as ManagedInstallState
+    return {
+      schemaVersion: raw.schemaVersion,
+      deploymentId: raw.deploymentId,
+      organizationOrigin,
+      entries: raw.entries.map(fromPersistedRecord),
+    }
   } catch (error) {
     console.warn(`${LOG_TAG}: ignoring unreadable ownership state`, error)
     return null
@@ -103,24 +142,30 @@ function writeState(state: ManagedInstallState | null): void {
     if (file.exists) file.delete()
     return
   }
-  file.write(JSON.stringify(state))
+  const persisted: PersistedManagedInstallState = {
+    schemaVersion: state.schemaVersion,
+    deploymentId: state.deploymentId,
+    [PERSISTED_ORIGIN_FIELD]: state.organizationOrigin,
+    entries: state.entries.map(toPersistedRecord),
+  }
+  file.write(JSON.stringify(persisted))
 }
 
 function recordKey(entry: ManagedInstallRecord): string {
-  return `${entry.packageName}\0${entry.version}\0${entry.storageScope ?? "workspace"}`
+  return `${entry.packageName}\0${entry.version}\0${entry.storageScope ?? "organization"}`
 }
 
 function ownedStorageScope(
   deploymentId: string,
-  workspaceOrigin: string,
+  organizationOrigin: string,
   entry: ManagedInstallRecord,
 ): StorageScope | null {
-  for (const scope of entry.storageScope ? [entry.storageScope] : (["workspace", "consumer"] as const)) {
+  for (const scope of entry.storageScope ? [entry.storageScope] : (["organization", "consumer"] as const)) {
     const identity = appRegistry.getReleaseIdentity(entry.packageName, entry.version, scope)
     if (
       identity?.source === "deployment_manifest" &&
       identity.deploymentId === deploymentId &&
-      identity.deploymentOrigin === workspaceOrigin &&
+      identity.deploymentOrigin === organizationOrigin &&
       identity.bundleSha256 === entry.sha256.toLowerCase()
     )
       return scope
@@ -128,14 +173,14 @@ function ownedStorageScope(
   return null
 }
 
-function hasExactOwnership(deploymentId: string, workspaceOrigin: string, entry: ManagedInstallRecord): boolean {
-  return ownedStorageScope(deploymentId, workspaceOrigin, entry) !== null
+function hasExactOwnership(deploymentId: string, organizationOrigin: string, entry: ManagedInstallRecord): boolean {
+  return ownedStorageScope(deploymentId, organizationOrigin, entry) !== null
 }
 
-function discoverOwnedEntries(deploymentId: string, workspaceOrigin: string): ManagedInstallRecord[] {
+function discoverOwnedEntries(deploymentId: string, organizationOrigin: string): ManagedInstallRecord[] {
   return appRegistry
     .getDeploymentOwnedReleases()
-    .filter(({identity}) => identity.deploymentId === deploymentId && identity.deploymentOrigin === workspaceOrigin)
+    .filter(({identity}) => identity.deploymentId === deploymentId && identity.deploymentOrigin === organizationOrigin)
     .flatMap(({packageName, version, identity, storageScope}) =>
       identity.bundleSha256 ? [{packageName, version, storageScope, sha256: identity.bundleSha256.toLowerCase()}] : [],
     )
@@ -143,17 +188,17 @@ function discoverOwnedEntries(deploymentId: string, workspaceOrigin: string): Ma
 
 async function uninstallOwnedEntries(state: ManagedInstallState, context: SyncContext): Promise<boolean> {
   const entries = new Map<string, ManagedInstallRecord>()
-  for (const entry of [...state.entries, ...discoverOwnedEntries(state.deploymentId, state.workspaceOrigin)]) {
+  for (const entry of [...state.entries, ...discoverOwnedEntries(state.deploymentId, state.organizationOrigin)]) {
     entries.set(recordKey(entry), entry)
   }
   for (const entry of entries.values()) {
     context.assertCurrent()
-    if (!hasExactOwnership(state.deploymentId, state.workspaceOrigin, entry)) {
+    if (!hasExactOwnership(state.deploymentId, state.organizationOrigin, entry)) {
       console.warn(`${LOG_TAG}: refusing to remove unowned ${entry.packageName}@${entry.version}`)
       continue
     }
     const result = await appRegistry.uninstall(entry.packageName, entry.version, {
-      storageScope: ownedStorageScope(state.deploymentId, state.workspaceOrigin, entry)!,
+      storageScope: ownedStorageScope(state.deploymentId, state.organizationOrigin, entry)!,
     })
     if (result.is_error()) {
       console.warn(`${LOG_TAG}: failed to remove ${entry.packageName}@${entry.version}`, result.error)
@@ -200,19 +245,19 @@ async function downloadVerifiedBundle(entry: DeploymentManagedMiniapp, context: 
 
 async function installEntry(
   deploymentId: string,
-  workspaceOrigin: string,
+  organizationOrigin: string,
   entry: DeploymentManagedMiniapp,
   previous: ManagedInstallRecord | undefined,
   context: SyncContext,
 ): Promise<boolean> {
   context.assertCurrent()
-  const installedVersions = appRegistry.getInstalledVersions(entry.packageName, "workspace")
-  const desiredIdentity = appRegistry.getReleaseIdentity(entry.packageName, entry.version, "workspace")
+  const installedVersions = appRegistry.getInstalledVersions(entry.packageName, "organization")
+  const desiredIdentity = appRegistry.getReleaseIdentity(entry.packageName, entry.version, "organization")
   const desiredOwnedByDeployment =
     installedVersions.includes(entry.version) &&
     desiredIdentity?.source === "deployment_manifest" &&
     desiredIdentity.deploymentId === deploymentId &&
-    desiredIdentity.deploymentOrigin === workspaceOrigin &&
+    desiredIdentity.deploymentOrigin === organizationOrigin &&
     desiredIdentity.bundleSha256 === entry.sha256.toLowerCase()
   if (previous?.version === entry.version) {
     if (previous.sha256.toLowerCase() !== entry.sha256.toLowerCase()) {
@@ -256,7 +301,7 @@ async function installEntry(
       releaseIdentity: {
         source: "deployment_manifest",
         deploymentId,
-        deploymentOrigin: workspaceOrigin,
+        deploymentOrigin: organizationOrigin,
         bundleSha256: entry.sha256.toLowerCase(),
       },
     })
@@ -275,14 +320,15 @@ async function installEntry(
   }
 }
 
-async function syncWorkspace(
-  deployment: Extract<ActiveDeployment, {kind: "workspace"}>,
+async function syncOrganization(
+  deployment: Extract<ActiveDeployment, {kind: "organization"}>,
   context: SyncContext,
 ): Promise<void> {
   let state = readState()
   if (
     state &&
-    (state.deploymentId !== deployment.manifest.deploymentId || state.workspaceOrigin !== deployment.workspaceOrigin)
+    (state.deploymentId !== deployment.manifest.deploymentId ||
+      state.organizationOrigin !== deployment.organizationOrigin)
   ) {
     if (!(await uninstallOwnedEntries(state, context))) return
     context.assertCurrent()
@@ -290,7 +336,7 @@ async function syncWorkspace(
     writeState(null)
   }
 
-  const recoveredEntries = discoverOwnedEntries(deployment.manifest.deploymentId, deployment.workspaceOrigin)
+  const recoveredEntries = discoverOwnedEntries(deployment.manifest.deploymentId, deployment.organizationOrigin)
   const currentEntries = new Map<string, ManagedInstallRecord>()
   for (const entry of [...(state?.entries ?? []), ...recoveredEntries]) currentEntries.set(recordKey(entry), entry)
   const nextEntries = new Map(currentEntries)
@@ -309,14 +355,16 @@ async function syncWorkspace(
     const previous = [...currentEntries.values()].find(
       (candidate) => candidate.packageName === entry.packageName && candidate.version === entry.version,
     )
-    if (!(await installEntry(deployment.manifest.deploymentId, deployment.workspaceOrigin, entry, previous, context)))
+    if (
+      !(await installEntry(deployment.manifest.deploymentId, deployment.organizationOrigin, entry, previous, context))
+    )
       continue
 
     const next: ManagedInstallRecord = {
       packageName: entry.packageName,
       version: entry.version,
       sha256: entry.sha256.toLowerCase(),
-      storageScope: "workspace",
+      storageScope: "organization",
     }
     nextEntries.set(recordKey(next), next)
     // Persist the new ownership before cleaning older versions. If cleanup
@@ -324,26 +372,26 @@ async function syncWorkspace(
     writeState({
       schemaVersion: 1,
       deploymentId: deployment.manifest.deploymentId,
-      workspaceOrigin: deployment.workspaceOrigin,
+      organizationOrigin: deployment.organizationOrigin,
       entries: [...nextEntries.values()],
     })
     // An unzip already committing when cancelled must finish before the next
     // reconciliation. Record its ownership so that reconciliation can remove
-    // it; no newer workspace can have written state while we hold the queue.
+    // it; no newer organization can have written state while we hold the queue.
     context.assertCurrent()
     for (const old of [...nextEntries.values()]) {
       context.assertCurrent()
       if (
         old.packageName !== entry.packageName ||
-        (old.version === entry.version && (old.storageScope ?? "workspace") === "workspace")
+        (old.version === entry.version && (old.storageScope ?? "organization") === "organization")
       )
         continue
-      if (!hasExactOwnership(deployment.manifest.deploymentId, deployment.workspaceOrigin, old)) {
+      if (!hasExactOwnership(deployment.manifest.deploymentId, deployment.organizationOrigin, old)) {
         nextEntries.delete(recordKey(old))
         continue
       }
       const uninstall = await appRegistry.uninstall(old.packageName, old.version, {
-        storageScope: ownedStorageScope(deployment.manifest.deploymentId, deployment.workspaceOrigin, old)!,
+        storageScope: ownedStorageScope(deployment.manifest.deploymentId, deployment.organizationOrigin, old)!,
       })
       if (uninstall.is_error()) {
         console.warn(`${LOG_TAG}: installed update but could not remove ${old.packageName}@${old.version}`)
@@ -355,7 +403,7 @@ async function syncWorkspace(
     writeState({
       schemaVersion: 1,
       deploymentId: deployment.manifest.deploymentId,
-      workspaceOrigin: deployment.workspaceOrigin,
+      organizationOrigin: deployment.organizationOrigin,
       entries: [...nextEntries.values()],
     })
   }
@@ -363,12 +411,12 @@ async function syncWorkspace(
   for (const previous of [...nextEntries.values()]) {
     context.assertCurrent()
     if (desiredNames.has(previous.packageName)) continue
-    if (!hasExactOwnership(deployment.manifest.deploymentId, deployment.workspaceOrigin, previous)) {
+    if (!hasExactOwnership(deployment.manifest.deploymentId, deployment.organizationOrigin, previous)) {
       nextEntries.delete(recordKey(previous))
       continue
     }
     const uninstall = await appRegistry.uninstall(previous.packageName, previous.version, {
-      storageScope: ownedStorageScope(deployment.manifest.deploymentId, deployment.workspaceOrigin, previous)!,
+      storageScope: ownedStorageScope(deployment.manifest.deploymentId, deployment.organizationOrigin, previous)!,
     })
     if (uninstall.is_error()) {
       console.warn(`${LOG_TAG}: failed to remove ${previous.packageName}@${previous.version}`, uninstall.error)
@@ -379,7 +427,7 @@ async function syncWorkspace(
     writeState({
       schemaVersion: 1,
       deploymentId: deployment.manifest.deploymentId,
-      workspaceOrigin: deployment.workspaceOrigin,
+      organizationOrigin: deployment.organizationOrigin,
       entries: [...nextEntries.values()],
     })
   }
@@ -388,7 +436,7 @@ async function syncWorkspace(
   writeState({
     schemaVersion: 1,
     deploymentId: deployment.manifest.deploymentId,
-    workspaceOrigin: deployment.workspaceOrigin,
+    organizationOrigin: deployment.organizationOrigin,
     entries: [...nextEntries.values()],
   })
 }
@@ -417,8 +465,8 @@ export const deploymentManagedMiniappSync = {
     reconciliation = reconciliation.then(async () => {
       try {
         context.assertCurrent()
-        if (deployment.kind === "workspace") {
-          await syncWorkspace(deployment, context)
+        if (deployment.kind === "organization") {
+          await syncOrganization(deployment, context)
           return
         }
 
@@ -442,7 +490,7 @@ export const deploymentManagedMiniappSync = {
           const recovered = orphanedStates.get(key) ?? {
             schemaVersion: 1,
             deploymentId,
-            workspaceOrigin: deploymentOrigin,
+            organizationOrigin: deploymentOrigin,
             entries: [],
           }
           recovered.entries.push({packageName, version, sha256: bundleSha256, storageScope})

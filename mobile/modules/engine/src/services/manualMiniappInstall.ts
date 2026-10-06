@@ -18,7 +18,7 @@ export function installMiniappFromJsonUrl(
     if (!version) throw new Error("miniapp.json missing version")
     const name = typeof manifest.name === "string" ? manifest.name : packageName
     if (!canUseManualMiniappRelease(packageName)) {
-      throw new Error(`Miniapp ${packageName} cannot be manually updated in this workspace`)
+      throw new Error(`Miniapp ${packageName} cannot be manually updated in this organization`)
     }
     await installMiniappRelease(`${trimmed}/bundle.zip`, {
       expectedPackageName: packageName,

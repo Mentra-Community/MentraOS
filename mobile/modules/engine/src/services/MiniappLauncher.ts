@@ -170,7 +170,7 @@ class MiniappLauncher {
       return null
     }
     // QR-selected local code can override a bundled identity, but receives no
-    // SYSTEM privileges. Workspace pins never follow consumer dev URLs.
+    // SYSTEM privileges. Organization pins never follow consumer dev URLs.
     const devUrl = canUseManualMiniappRelease(packageName)
       ? (hints?.devUrl ?? this.storedDevUrl(packageName))
       : undefined

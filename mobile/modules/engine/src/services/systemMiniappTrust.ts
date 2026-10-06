@@ -1,6 +1,6 @@
 import type {IslandConfigValues} from "../runtime/bootstrap"
 
-/** Shared by install authorization, workspace visibility and runtime privileges. */
+/** Shared by install authorization, organization visibility and runtime privileges. */
 export function isTrustedSystemMiniappRelease(
   config: IslandConfigValues,
   packageName: string,

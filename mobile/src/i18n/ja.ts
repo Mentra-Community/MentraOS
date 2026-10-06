@@ -157,9 +157,8 @@ const ja = {
   },
   profileSettings: {
     ...en.profileSettings,
-    workspaceName: "名前",
-    workspaceUrl: "ワークスペースURL",
-    mentraWorkspace: "Mentra",
+    organizationName: "名前",
+    organizationUrl: "組織URL",
   },
   versionCheck: {
     ...en.versionCheck,
@@ -167,7 +166,7 @@ const ja = {
       "このバージョンのMentraアプリは{{name}}ではサポートされなくなりました。アップデートは組織のデバイス管理から配信されます。アップデートするにはIT管理者に連絡してください。",
     contactSupport: "サポートに連絡",
   },
-  workspace: {
+  organization: {
     or: "または",
     title: "組織サインイン",
     heading: "組織に接続",
@@ -176,29 +175,29 @@ const ja = {
     urlLabel: "組織のアドレス",
     urlPlaceholder: "company.example.com",
     urlHelper: "例: company.example.com",
-    unknownResolutionError: "このワークスペースを読み込めませんでした。もう一度お試しください。",
+    unknownResolutionError: "この組織を読み込めませんでした。もう一度お試しください。",
     notFoundError:
-      "そのアドレスにMentraワークスペースが見つかりませんでした。アドレスを確認するか、IT管理者にお問い合わせください。",
-    configurationError: "このワークスペースを検証できませんでした。IT管理者に設定の確認を依頼してください。",
+      "そのアドレスにMentra組織が見つかりませんでした。アドレスを確認するか、IT管理者にお問い合わせください。",
+    configurationError: "この組織を検証できませんでした。IT管理者に設定の確認を依頼してください。",
     confirmTitle: "組織の確認",
     candidateExpired: "この確認は期限切れです。組織のアドレスをもう一度入力してください。",
     enterAnotherUrl: "組織のアドレスを入力",
     connectTo: "{{name}}に接続",
     continueTo: "{{name}}へ進む",
-    workspaceLabel: "ワークスペース",
+    organizationLabel: "組織",
     signInLabel: "サインイン",
     microsoftOrganizationAccount: "Microsoft組織アカウント",
     mentraAccount: "Mentraアカウント",
     confirmDescription:
       "続行すると、この組織がアクティブなMentraデプロイメントになります。サインイン前からそのサービスとポリシーが適用されます。",
-    signInDescription: "このワークスペースに設定された組織アカウントで続行してください。",
+    signInDescription: "この組織に設定されたアカウントで続行してください。",
     continueWithMicrosoft: "Microsoftで続行",
     returnToMentra: "Mentraに戻る",
     change: "変更",
-    noActiveWorkspace: "アクティブな組織ワークスペースはありません。",
+    noActiveOrganization: "アクティブな組織はありません。",
     signInFailedTitle: "サインインに失敗しました",
     signInFailedDescription:
-      "Microsoftでこのワークスペースにサインインできませんでした。もう一度試すか、ITチームにお問い合わせください。",
+      "Microsoftでこの組織にサインインできませんでした。もう一度試すか、ITチームにお問い合わせください。",
   },
 } satisfies TranslationResource
 

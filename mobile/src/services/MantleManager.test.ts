@@ -12,7 +12,7 @@ import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
 import {deploymentStore} from "@/services/deployment/store"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
-import type {WorkspaceDeployment} from "@/services/deployment/types"
+import type {OrganizationDeployment} from "@/services/deployment/types"
 import {storage} from "@/utils/storage"
 import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
@@ -110,6 +110,19 @@ jest.mock("expo-location", () => ({
 jest.mock("expo-task-manager", () => ({
   defineTask: jest.fn(),
 }))
+
+jest.mock("@mentra/entra-auth", () => {
+  const account = {subject: "subject-1", username: "person@example.com", accessToken: "token"}
+  return {
+    __esModule: true,
+    default: {
+      getAccount: jest.fn(async () => account),
+      signIn: jest.fn(async () => account),
+      acquireToken: jest.fn(async () => account),
+      signOut: jest.fn(async () => {}),
+    },
+  }
+})
 
 function resetMantleTestState() {
   useAppStatusStore.setState({apps: []})
@@ -840,20 +853,60 @@ describe("MantleManager", () => {
     }
   })
 
-  it("skips excluded bundled miniapps without logging startup errors", async () => {
+  // Local miniapp data is partitioned by this id, so the persisted prefix of a
+  // separately deployed cloud's users must not change when code is renamed.
+  it("derives the engine user id with the persisted prefix for a separately deployed cloud", async () => {
     const consumer = createConsumerDeployment()
-    const workspace: WorkspaceDeployment = {
-      kind: "workspace",
+    const organization: OrganizationDeployment = {
+      kind: "organization",
       source: "manual",
       activatedAt: "2026-09-22T00:00:00Z",
-      workspaceOrigin: "https://enterprise.example",
+      organizationOrigin: "https://enterprise.example",
+      manifestUrl: "https://enterprise.example/.well-known/mentra-deployment.json",
+      manifest: {
+        ...consumer.manifest,
+        deploymentId: "enterprise",
+        auth: {
+          mode: "microsoft-entra",
+          authorityUrl: "https://login.microsoftonline.com/2e7662c0-e826-4928-95b2-60bdd48d5d95/",
+          clientId: "c84a504c-6caa-4a00-a6a3-9206cad41218",
+          sessionScopes: ["api://11111111-2222-4333-8444-555555555555/mentra.session"],
+          teamsScopes: [],
+        },
+      },
+    }
+    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(organization)
+    // Startup reports mocked bundled assets it cannot parse; that is not under test.
+    const errors = jest.spyOn(console, "error").mockImplementation(() => {})
+    const instance = new (mantle.constructor as new () => {
+      initialize: (options: {background?: boolean}) => Promise<void>
+    })()
+    try {
+      await instance.initialize({background: true})
+      const {auth} = (engine.configure as jest.Mock).mock.calls.at(-1)![0]
+      await expect(auth.getUserId()).resolves.toBe(
+        "workspace:enterprise:https%3A%2F%2Flogin.microsoftonline.com%2F2e7662c0-e826-4928-95b2-60bdd48d5d95:subject-1",
+      )
+    } finally {
+      active.mockRestore()
+      errors.mockRestore()
+    }
+  })
+
+  it("skips excluded bundled miniapps without logging startup errors", async () => {
+    const consumer = createConsumerDeployment()
+    const organization: OrganizationDeployment = {
+      kind: "organization",
+      source: "manual",
+      activatedAt: "2026-09-22T00:00:00Z",
+      organizationOrigin: "https://enterprise.example",
       manifestUrl: "https://enterprise.example/.well-known/mentra-deployment.json",
       manifest: {
         ...consumer.manifest,
         systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings", "com.mentra.feedback"]},
       },
     }
-    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(workspace)
+    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(organization)
     const asset = {
       name: "com.mentra.ai-1.0.0.zip",
       downloadAsync: jest.fn(),
@@ -877,20 +930,20 @@ describe("MantleManager", () => {
     }
   })
 
-  it.each(["ios", "android"])("restores consumer bundles after workspace cleanup on %s", async (platform) => {
+  it.each(["ios", "android"])("restores consumer bundles after organization cleanup on %s", async (platform) => {
     const originalPlatform = Platform.OS
     Object.defineProperty(Platform, "OS", {configurable: true, value: platform})
     const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(createConsumerDeployment())
-    let workspaceCopyPresent = true
+    let organizationCopyPresent = true
     const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockImplementation(async () => {
-      workspaceCopyPresent = false
+      organizationCopyPresent = false
     })
     const instance = new (mantle.constructor as new () => {
       initMiniapps: () => Promise<void>
       installBundledMiniapps: () => Promise<void>
     })()
     instance.installBundledMiniapps = jest.fn(async () => {
-      expect(workspaceCopyPresent).toBe(false)
+      expect(organizationCopyPresent).toBe(false)
     })
     try {
       await instance.initMiniapps()
@@ -955,11 +1008,11 @@ describe("MantleManager", () => {
         bundleUrl: "https://enterprise.example/miniapps/call.zip",
         sha256: "a".repeat(64),
       }
-      const workspace: WorkspaceDeployment = {
-        kind: "workspace",
+      const organization: OrganizationDeployment = {
+        kind: "organization",
         source: "manual",
         activatedAt: "2026-09-22T00:00:00Z",
-        workspaceOrigin: "https://enterprise.example",
+        organizationOrigin: "https://enterprise.example",
         manifestUrl: "https://enterprise.example/.well-known/mentra-deployment.json",
         manifest: {
           ...consumer.manifest,
@@ -973,7 +1026,7 @@ describe("MantleManager", () => {
       const originalIdentity = appRegistry.getReleaseIdentity
       const originalVersions = appRegistry.getInstalledVersions
       let verified = false
-      const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(workspace)
+      const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(organization)
       const sync = jest
         .spyOn(deploymentManagedMiniappSync, "sync")
         .mockResolvedValueOnce(undefined)
@@ -986,7 +1039,7 @@ describe("MantleManager", () => {
           ? {
               source: "deployment_manifest",
               deploymentId: "enterprise",
-              deploymentOrigin: workspace.workspaceOrigin,
+              deploymentOrigin: organization.organizationOrigin,
               bundleSha256: entry.sha256,
             }
           : null,
@@ -1017,13 +1070,13 @@ describe("MantleManager", () => {
         // hidden flag before it finishes, without an independent second sync.
         await instance.initMiniapps()
         expect(sync).toHaveBeenCalledTimes(2)
-        expect(sync).toHaveBeenLastCalledWith(workspace)
+        expect(sync).toHaveBeenLastCalledWith(organization)
         expect(shouldHideMiniapp(mentraCallPackageName, entry.version)).toBe(false)
         expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, false)
         expect(storage.load("mentra_call_ios_last_enabled")).toMatchObject({value: true})
         // Android's general bundle loop must also honor the pin, including a
-        // valid workspace with an unrestricted system-miniapp allowlist.
-        workspace.manifest.systemMiniapps.approvedPackageNamesOverride = null
+        // valid organization with an unrestricted system-miniapp allowlist.
+        organization.manifest.systemMiniapps.approvedPackageNamesOverride = null
         Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
         const newerConsumerBundle = {
           name: "com.mentra.call-2.1.30.zip",

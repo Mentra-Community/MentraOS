@@ -3,7 +3,7 @@ import {ActivityIndicator, TouchableOpacity, View} from "react-native"
 
 import MicrosoftIcon from "assets/icons/component/MicrosoftIcon"
 
-import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
+import {OrganizationBrand} from "@/components/auth/OrganizationBrand"
 import {Button, Screen, Text} from "@/components/ignite"
 import {useAuth} from "@/contexts/AuthContext"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
@@ -13,19 +13,19 @@ import {useDeployment} from "@/services/deployment"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
 
-export default function WorkspaceSignInScreen() {
+export default function OrganizationSignInScreen() {
   const {activeDeployment} = useDeployment()
   const {replaceAll} = useNavigationStore.getState()
-  const {signInWorkspace, leaveWorkspace} = useAuth()
+  const {signInOrganization, leaveOrganization} = useAuth()
   const {theme} = useAppTheme()
   const [loading, setLoading] = useState(false)
 
-  const cancelWorkspace = async () => {
+  const cancelOrganization = async () => {
     if (loading) return
     setLoading(true)
     try {
       // Await durable local selection; native MSAL cleanup remains best effort.
-      await leaveWorkspace("consumer")
+      await leaveOrganization("consumer")
       replaceAll("/auth/start")
     } catch (error) {
       showAlert(translate("common:error"), error instanceof Error ? error.message : String(error), [
@@ -37,15 +37,17 @@ export default function WorkspaceSignInScreen() {
 
   focusEffectPreventBack((event) => {
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") return
-    cancelWorkspace()
+    cancelOrganization()
   })
 
-  if (activeDeployment.kind !== "workspace") {
+  if (activeDeployment.kind !== "organization") {
     return (
       <Screen preset="fixed">
         <View className="flex-1 items-center justify-center p-6">
-          <Text className="text-center text-muted-foreground mb-6">{translate("workspace:noActiveWorkspace")}</Text>
-          <Button text={translate("workspace:returnToMentra")} onPress={() => replaceAll("/auth/start")} />
+          <Text className="text-center text-muted-foreground mb-6">
+            {translate("organization:noActiveOrganization")}
+          </Text>
+          <Button text={translate("organization:returnToMentra")} onPress={() => replaceAll("/auth/start")} />
         </View>
       </Screen>
     )
@@ -54,11 +56,11 @@ export default function WorkspaceSignInScreen() {
   const signIn = async () => {
     setLoading(true)
     try {
-      await signInWorkspace()
+      await signInOrganization()
       replaceAll("/")
     } catch (error) {
-      console.warn("Workspace sign-in failed", error)
-      showAlert(translate("workspace:signInFailedTitle"), translate("workspace:signInFailedDescription"), [
+      console.warn("Organization sign-in failed", error)
+      showAlert(translate("organization:signInFailedTitle"), translate("organization:signInFailedDescription"), [
         {text: translate("common:ok")},
       ])
     } finally {
@@ -71,7 +73,7 @@ export default function WorkspaceSignInScreen() {
       <View className="flex-1">
         <View className="flex-1 justify-center p-4">
           <View className="items-center mb-6">
-            <WorkspaceBrand
+            <OrganizationBrand
               displayName={activeDeployment.manifest.displayName}
               logoUrls={activeDeployment.manifest.branding?.logoUrls}
               showFallbackName
@@ -79,12 +81,12 @@ export default function WorkspaceSignInScreen() {
           </View>
 
           <Text className="text-xl text-secondary-foreground text-center mb-8">
-            {translate("workspace:signInDescription")}
+            {translate("organization:signInDescription")}
           </Text>
 
           <Button
             preset="secondary"
-            text={translate("workspace:continueWithMicrosoft")}
+            text={translate("organization:continueWithMicrosoft")}
             onPress={() => void signIn()}
             disabled={loading}
             LeftAccessory={
@@ -92,10 +94,10 @@ export default function WorkspaceSignInScreen() {
             }
           />
 
-          <TouchableOpacity className="self-center mt-6 px-4 py-2" disabled={loading} onPress={cancelWorkspace}>
+          <TouchableOpacity className="self-center mt-6 px-4 py-2" disabled={loading} onPress={cancelOrganization}>
             <Text
               className="text-sm text-secondary-foreground font-semibold"
-              text={translate("workspace:returnToMentra")}
+              text={translate("organization:returnToMentra")}
             />
           </TouchableOpacity>
         </View>

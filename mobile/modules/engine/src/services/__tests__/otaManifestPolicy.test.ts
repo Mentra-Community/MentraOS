@@ -56,7 +56,7 @@ describe("OTA manifest policy", () => {
     ).toBeNull()
   })
 
-  test("applies an enabled developer override ahead of workspace OTA policy", () => {
+  test("applies an enabled developer override ahead of organization OTA policy", () => {
     for (const hostReleasePin of [null, "https://organization.example/ota.json"]) {
       expect(
         resolveDeploymentAwareOtaManifestPolicy({

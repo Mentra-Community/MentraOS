@@ -8,7 +8,7 @@ import {
 } from "../../../modules/engine/src/services/SystemMiniappPolicy"
 import {BUNDLED_SYSTEM_MINIAPP_PACKAGES, BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS} from "@/generated/bundledMiniapps"
 import {BUNDLED_STORE_MINIAPP_PACKAGES} from "@/constants/miniapps"
-import type {ActiveDeployment} from "@/services/deployment/types"
+import type {ActiveDeployment, OrganizationDeployment} from "@/services/deployment/types"
 import {createMMKV} from "react-native-mmkv"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import {storage} from "@/utils/storage"
@@ -19,7 +19,6 @@ import registry, {
 } from "../../../modules/engine/src/services/AppRegistry"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
 import {deploymentStore} from "@/services/deployment/store"
-import type {WorkspaceDeployment} from "@/services/deployment/types"
 import {deploymentManagedMiniappSync} from "./deploymentManagedMiniappSync"
 import {shouldHideMiniapp} from "./miniappVisibility"
 
@@ -196,11 +195,11 @@ jest.mock("./miniappZipPreflight", () => ({preflightMiniappZip: jest.fn()}))
 const pkg = "com.mentra.call"
 const version = "2.1.29"
 const consumer = createConsumerDeployment()
-const workspace: WorkspaceDeployment = {
-  kind: "workspace",
+const organization: OrganizationDeployment = {
+  kind: "organization",
   source: "manual",
   activatedAt: "2026-09-22T00:00:00Z",
-  workspaceOrigin: "https://enterprise.example",
+  organizationOrigin: "https://enterprise.example",
   manifestUrl: "https://enterprise.example/.well-known/mentra-deployment.json",
   manifest: {
     ...consumer.manifest,
@@ -227,7 +226,7 @@ function selectDeployment(deployment: ActiveDeployment) {
         BUNDLED_SYSTEM_MINIAPP_PACKAGES.map((name) => [name, "com.mentra.store"]),
       ),
       localMiniappPolicy:
-        deployment.kind === "workspace"
+        deployment.kind === "organization"
           ? {
               systemPackageNames: deployment.manifest.systemMiniapps.approvedPackageNamesOverride,
               managed: deployment.manifest.miniapps.managed.map((entry) => ({
@@ -235,7 +234,7 @@ function selectDeployment(deployment: ActiveDeployment) {
                 version: entry.version,
                 sha256: entry.sha256,
                 deploymentId: deployment.manifest.deploymentId,
-                deploymentOrigin: deployment.workspaceOrigin,
+                deploymentOrigin: deployment.organizationOrigin,
               })),
             }
           : undefined,
@@ -267,18 +266,18 @@ beforeEach(async () => {
   selectDeployment(consumer)
   expect((await registry.installFromLocalZip("consumer.zip")).is_ok()).toBe(true)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
-  selectDeployment(workspace)
+  selectDeployment(organization)
 })
 afterEach(() => jest.restoreAllMocks())
 afterAll(() => require("node:fs").rmSync(require("node:path").dirname(Paths.document), {recursive: true, force: true}))
 
-it("adopts an identical verified consumer release and restores consumer installation on workspace exit", async () => {
+it("adopts an identical verified consumer release and restores consumer installation on organization exit", async () => {
   storage.save("mentra.account.accessToken", "test-session")
   await LogoutUtils.performCompleteLogout()
   expect(storage.load("mentra.account.accessToken").is_error()).toBe(true)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
   expect(shouldHideMiniapp(pkg, version)).toBe(true)
-  await deploymentManagedMiniappSync.sync(workspace)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(mockDownload).toHaveBeenCalledTimes(1)
   expect(shouldHideMiniapp(pkg, version)).toBe(false)
   expect(registry.getReleaseIdentity(pkg, version)).toMatchObject({
@@ -286,7 +285,7 @@ it("adopts an identical verified consumer release and restores consumer installa
     deploymentId: "enterprise",
   })
   expect(installedScript()).toBe("verified call")
-  await deploymentManagedMiniappSync.sync(workspace)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(mockDownload).toHaveBeenCalledTimes(1)
   await LogoutUtils.performCompleteLogout()
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
@@ -298,13 +297,13 @@ it("adopts an identical verified consumer release and restores consumer installa
 })
 
 it.each(["digest", "contents", "extra file"])(
-  "isolates consumer files when workspace bundles differ by %s",
+  "isolates consumer files when organization bundles differ by %s",
   async (failure) => {
     if (failure === "digest") mockDigest = "b".repeat(64)
-    if (failure === "contents") mockScript = "different workspace call"
+    if (failure === "contents") mockScript = "different organization call"
     const extra = new File(Paths.document, "lmas", pkg, version, "extra.js")
     if (failure === "extra file") extra.write("unexpected code")
-    await deploymentManagedMiniappSync.sync(workspace)
+    await deploymentManagedMiniappSync.sync(organization)
     expect(shouldHideMiniapp(pkg, version)).toBe(failure === "digest")
     expect(registry.getReleaseIdentity(pkg, version, "consumer")?.source).toBe("bundled_asset")
     expect(installedScript()).toBe("verified call")
@@ -315,16 +314,16 @@ it.each(["digest", "contents", "extra file"])(
     mockDigest = "a".repeat(64)
     mockScript = "verified call"
     if (extra.exists) extra.delete()
-    await deploymentManagedMiniappSync.sync(workspace)
+    await deploymentManagedMiniappSync.sync(organization)
     expect(shouldHideMiniapp(pkg, version)).toBe(false)
   },
 )
 
-it("does not adopt a same-version release owned by another workspace", async () => {
+it("does not adopt a same-version release owned by another organization", async () => {
   selectDeployment({
-    ...workspace,
-    workspaceOrigin: "https://other.example",
-    manifest: {...workspace.manifest, deploymentId: "other"},
+    ...organization,
+    organizationOrigin: "https://other.example",
+    manifest: {...organization.manifest, deploymentId: "other"},
   })
   expect(
     (
@@ -341,28 +340,28 @@ it("does not adopt a same-version release owned by another workspace", async () 
       })
     ).is_ok(),
   ).toBe(true)
-  selectDeployment(workspace)
-  await deploymentManagedMiniappSync.sync(workspace)
+  selectDeployment(organization)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(mockDownload).not.toHaveBeenCalled()
   expect(shouldHideMiniapp(pkg, version)).toBe(true)
   expect(registry.getReleaseIdentity(pkg, version)?.deploymentId).toBe("other")
 })
 
-it.each(["consumer", "workspace"])(
+it.each(["consumer", "organization"])(
   "recovers legacy %s files whose ownership was erased by an older logout",
   async (source) => {
-    if (source === "workspace") await deploymentManagedMiniappSync.sync(workspace)
+    if (source === "organization") await deploymentManagedMiniappSync.sync(organization)
     createMMKV({id: "mentra-miniapp-installations"}).remove(
-      `miniapp_release_identity:${source === "workspace" ? "workspace:" : ""}${pkg}:${version}`,
+      `miniapp_release_identity:${source === "organization" ? "workspace:" : ""}${pkg}:${version}`,
     )
     await LogoutUtils.performCompleteLogout()
     expect(registry.getReleaseIdentity(pkg, version)).toBeNull()
     mockDigest = "b".repeat(64)
-    await deploymentManagedMiniappSync.sync(workspace)
+    await deploymentManagedMiniappSync.sync(organization)
     expect(registry.getReleaseIdentity(pkg, version)).toBeNull()
     expect(installedScript()).toBe("verified call")
     mockDigest = "a".repeat(64)
-    await deploymentManagedMiniappSync.sync(workspace)
+    await deploymentManagedMiniappSync.sync(organization)
     expect(shouldHideMiniapp(pkg, version)).toBe(false)
     await LogoutUtils.performCompleteLogout()
     selectDeployment(consumer)
@@ -386,20 +385,20 @@ it("adopts a byte-identical consumer registry release after logout", async () =>
   storage.save(key, {source: "preinstalled_registry", releaseId: "consumer-release"})
   registry.getReleaseIdentity(pkg, version)
   await LogoutUtils.performCompleteLogout()
-  await deploymentManagedMiniappSync.sync(workspace)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(shouldHideMiniapp(pkg, version)).toBe(false)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
 })
 
-it("refreshes cached app metadata when recovering the workspace pin over a newer installed consumer version", async () => {
-  await deploymentManagedMiniappSync.sync(workspace)
+it("refreshes cached app metadata when recovering the organization pin over a newer installed consumer version", async () => {
+  await deploymentManagedMiniappSync.sync(organization)
   mockVersion = "2.1.30"
   selectDeployment(consumer)
   expect((await registry.installFromLocalZip("newer-consumer.zip")).is_ok()).toBe(true)
   expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe("2.1.30")
   mockVersion = version
-  selectDeployment(workspace)
-  await deploymentManagedMiniappSync.sync(workspace)
+  selectDeployment(organization)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(await registry.getActiveVersion(pkg)).toBe(version)
   expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(version)
 })
@@ -412,7 +411,7 @@ function deferred() {
   return {promise, resolve}
 }
 
-it("keeps workspace B's verified Call when A's older download finishes later", async () => {
+it("keeps organization B's verified Call when A's older download finishes later", async () => {
   removeInstalledFixture()
   const started = deferred()
   const download = deferred()
@@ -420,12 +419,12 @@ it("keeps workspace B's verified Call when A's older download finishes later", a
     started.resolve()
     return download.promise
   })
-  const oldSync = deploymentManagedMiniappSync.sync(workspace)
+  const oldSync = deploymentManagedMiniappSync.sync(organization)
   await started.promise
-  const other: WorkspaceDeployment = {
-    ...workspace,
-    workspaceOrigin: "https://other.example",
-    manifest: {...workspace.manifest, deploymentId: "other"},
+  const other: OrganizationDeployment = {
+    ...organization,
+    organizationOrigin: "https://other.example",
+    manifest: {...organization.manifest, deploymentId: "other"},
   }
   selectDeployment(other)
   await deploymentManagedMiniappSync.sync(other)
@@ -440,7 +439,7 @@ it("keeps workspace B's verified Call when A's older download finishes later", a
   expect(JSON.parse(new File(Paths.document, "deployment-managed-miniapps.json").textSync()).deploymentId).toBe("other")
 })
 
-it.each(["workspace exit", "logout"])(
+it.each(["organization exit", "logout"])(
   "cancels a download on %s without changing the consumer bundle",
   async (reason) => {
     const started = deferred()
@@ -449,9 +448,9 @@ it.each(["workspace exit", "logout"])(
       started.resolve()
       return download.promise
     })
-    const oldSync = deploymentManagedMiniappSync.sync(workspace)
+    const oldSync = deploymentManagedMiniappSync.sync(organization)
     await started.promise
-    if (reason === "workspace exit") {
+    if (reason === "organization exit") {
       selectDeployment(consumer)
       await deploymentManagedMiniappSync.sync(consumer)
     } else {
@@ -466,7 +465,7 @@ it.each(["workspace exit", "logout"])(
   },
 )
 
-it("settles in-flight extraction before workspace exit reconciles ownership", async () => {
+it("settles in-flight extraction before organization exit reconciles ownership", async () => {
   removeInstalledFixture()
   const started = deferred()
   const unzip = deferred()
@@ -474,7 +473,7 @@ it("settles in-flight extraction before workspace exit reconciles ownership", as
     started.resolve()
     return unzip.promise
   })
-  const oldSync = deploymentManagedMiniappSync.sync(workspace)
+  const oldSync = deploymentManagedMiniappSync.sync(organization)
   await started.promise
   selectDeployment(consumer)
   const exit = deploymentManagedMiniappSync.sync(consumer)
@@ -489,9 +488,9 @@ it("rolls back only its own partially moved bundle and permits a retry", async (
   mockMove.mockImplementationOnce(() => {
     throw new Error("disk write failed")
   })
-  await deploymentManagedMiniappSync.sync(workspace)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(registry.getInstalledVersions(pkg)).toEqual([])
-  await deploymentManagedMiniappSync.sync(workspace)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(shouldHideMiniapp(pkg, version)).toBe(false)
 })
 
@@ -499,12 +498,12 @@ it("preserves adopted files and consumer ownership when activation metadata fail
   const directory = new Directory(Paths.document, "lmas", pkg, version)
   const inode = require("node:fs").statSync(directory.uri).ino
   mockFailNextActiveWrite = true
-  await deploymentManagedMiniappSync.sync(workspace)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(installedScript()).toBe("verified call")
   expect(require("node:fs").statSync(directory.uri).ino).toBe(inode)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
   expect(new Directory(Paths.document, "lmas", pkg).list().map((entry) => entry.name)).toEqual([version])
-  await deploymentManagedMiniappSync.sync(workspace)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
   expect(require("node:fs").statSync(directory.uri).ino).toBe(inode)
 })
@@ -530,9 +529,9 @@ it("recovers an interrupted adoption's durable metadata without removing its exi
   expect(pending.exists).toBe(false)
 })
 
-it("keeps a workspace-adopted first-party bundle unprivileged and rejects Store replacement", async () => {
+it("keeps an organization-adopted first-party bundle unprivileged and rejects Store replacement", async () => {
   expect(BUNDLED_SYSTEM_MINIAPP_PACKAGES).toContain(pkg)
-  await deploymentManagedMiniappSync.sync(workspace)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
   expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, version))).toBe(false)
   expect(canStoreUpdateSystemMiniapp("com.mentra.store", pkg)).toBe(false)
@@ -549,37 +548,40 @@ it("keeps a workspace-adopted first-party bundle unprivileged and rejects Store 
   expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, version))).toBe(true)
 })
 
-it.each(["Store", "bundled"])("rechecks workspace ownership after a %s install waits in the queue", async (source) => {
-  selectDeployment(consumer)
-  const entered = deferred()
-  const release = deferred()
-  const blocked = runInstallFilesystemTransaction(async () => {
-    entered.resolve()
-    await release.promise
-  })
-  await entered.promise
-  const install =
-    source === "bundled"
-      ? registry.installFromLocalZip("consumer.zip")
-      : registry.installFromUrl("https://store.example/call.zip", {
-          expectedPackageName: pkg,
-          expectedVersion: version,
-          expectedBundleSha256: "a".repeat(64),
-          releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
-        })
-  // Drain the mock download/validation, leaving activation behind the held queue.
-  await new Promise((resolve) => setImmediate(resolve))
-  selectDeployment(workspace)
-  release.resolve()
-  await blocked
-  expect((await install).is_error()).toBe(true)
-  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
-  await deploymentManagedMiniappSync.sync(workspace)
-  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
-})
+it.each(["Store", "bundled"])(
+  "rechecks organization ownership after a %s install waits in the queue",
+  async (source) => {
+    selectDeployment(consumer)
+    const entered = deferred()
+    const release = deferred()
+    const blocked = runInstallFilesystemTransaction(async () => {
+      entered.resolve()
+      await release.promise
+    })
+    await entered.promise
+    const install =
+      source === "bundled"
+        ? registry.installFromLocalZip("consumer.zip")
+        : registry.installFromUrl("https://store.example/call.zip", {
+            expectedPackageName: pkg,
+            expectedVersion: version,
+            expectedBundleSha256: "a".repeat(64),
+            releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
+          })
+    // Drain the mock download/validation, leaving activation behind the held queue.
+    await new Promise((resolve) => setImmediate(resolve))
+    selectDeployment(organization)
+    release.resolve()
+    await blocked
+    expect((await install).is_error()).toBe(true)
+    expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
+    await deploymentManagedMiniappSync.sync(organization)
+    expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
+  },
+)
 
 it.each(["Store", "bundled"])(
-  "preserves the consumer bundle when workspace selection changes during %s extraction",
+  "preserves the consumer bundle when organization selection changes during %s extraction",
   async (source) => {
     selectDeployment(consumer)
     const entered = deferred()
@@ -599,30 +601,30 @@ it.each(["Store", "bundled"])(
             releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
           })
     await entered.promise
-    selectDeployment(workspace)
+    selectDeployment(organization)
     release.resolve()
     expect((await install).is_error()).toBe(true)
     expect(installedScript()).toBe("verified call")
     mockScript = "verified call"
-    await deploymentManagedMiniappSync.sync(workspace)
+    await deploymentManagedMiniappSync.sync(organization)
     expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
   },
 )
 
-it.each(["inside workspace", "before entering workspace"])(
+it.each(["inside organization", "before entering organization"])(
   "keeps a Store update visible when installed %s and the package is approved without a pin",
   async (when) => {
-    const unpinned: WorkspaceDeployment = {
-      ...workspace,
+    const unpinned: OrganizationDeployment = {
+      ...organization,
       manifest: {
-        ...workspace.manifest,
+        ...organization.manifest,
         miniapps: {configuration: {}, managed: []},
         systemMiniapps: {approvedPackageNamesOverride: [pkg]},
       },
     }
     selectDeployment(unpinned)
     expect(await registry.getActiveVersion(pkg)).toBe(version)
-    selectDeployment(when === "inside workspace" ? unpinned : consumer)
+    selectDeployment(when === "inside organization" ? unpinned : consumer)
     mockVersion = "2.1.30"
     expect(
       (
@@ -635,10 +637,10 @@ it.each(["inside workspace", "before entering workspace"])(
     await deploymentManagedMiniappSync.sync(unpinned)
     expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe("2.1.30")
     expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, "2.1.30"))).toBe(true)
-    // A later workspace pin still takes precedence over the consumer update.
+    // A later organization pin still takes precedence over the consumer update.
     mockVersion = version
-    selectDeployment(workspace)
-    await deploymentManagedMiniappSync.sync(workspace)
+    selectDeployment(organization)
+    await deploymentManagedMiniappSync.sync(organization)
     expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(version)
   },
 )
@@ -661,11 +663,11 @@ it("allows QR dev overrides and snapshots of bundled packages without privileged
   ).toBe(true)
   expect(registry.hasDevSnapshot(pkg)).toBe(true)
   expect(isHostTrustedSystemMiniapp(pkg, registry.getReleaseIdentity(pkg, "dev-123"))).toBe(false)
-  selectDeployment(workspace)
+  selectDeployment(organization)
   expect(getDevAppRecords()).toEqual([])
   await expect(
     registerDevApp({packageName: pkg, name: "Local Call", devUrl: "http://localhost:8081", iconUrl: ""}),
-  ).rejects.toThrow("workspace")
+  ).rejects.toThrow("organization")
   selectDeployment(consumer)
   expect(getDevAppRecords().some((app) => app.packageName === pkg)).toBe(true)
   unregisterDevApp(pkg)
@@ -709,10 +711,10 @@ it.each([
   ).toBe(true)
   await registry.getInstalledMiniapps() // cache the consumer projection before switching
   if (reinstall) removeInstalledFixture()
-  const unpinned: WorkspaceDeployment = {
-    ...workspace,
+  const unpinned: OrganizationDeployment = {
+    ...organization,
     manifest: {
-      ...workspace.manifest,
+      ...organization.manifest,
       miniapps: {configuration: {}, managed: []},
       systemMiniapps: {approvedPackageNamesOverride: [pkg]},
     },
@@ -737,14 +739,14 @@ it.each([
   else expect(restored?.version).toBe(override)
 })
 
-it("preserves a consumer manual release through workspace Store updates and release cleanup", async () => {
+it("preserves a consumer manual release through organization Store updates and release cleanup", async () => {
   selectDeployment(consumer)
   mockVersion = "2.1.30"
   expect((await registry.installFromUrl("https://manual.example/bundle.zip")).is_ok()).toBe(true)
-  const unpinned: WorkspaceDeployment = {
-    ...workspace,
+  const unpinned: OrganizationDeployment = {
+    ...organization,
     manifest: {
-      ...workspace.manifest,
+      ...organization.manifest,
       miniapps: {configuration: {}, managed: []},
       systemMiniapps: {approvedPackageNamesOverride: [pkg]},
     },
@@ -777,8 +779,8 @@ it("preserves consumer dev routing when entering and leaving an exact managed pi
       })
     ).is_ok(),
   ).toBe(true)
-  selectDeployment(workspace)
-  await deploymentManagedMiniappSync.sync(workspace)
+  selectDeployment(organization)
+  await deploymentManagedMiniappSync.sync(organization)
   expect(await registry.getActiveVersion(pkg)).toBe(version)
   expect(getDevAppRecords()).toEqual([])
   selectDeployment(consumer)
@@ -787,7 +789,51 @@ it("preserves consumer dev routing when entering and leaving an exact managed pi
   expect(getDevAppRecords().find((app) => app.packageName === pkg)?.devUrl).toBe("http://localhost:8081")
 })
 
-it("recovers a workspace selection journal without changing the consumer selection", async () => {
+// Builds that already shipped persisted these names on devices. In-memory names
+// may change; the on-disk and MMKV names below must keep matching exactly.
+describe("shipped persisted names", () => {
+  const stateFile = () => new File(Paths.document, "deployment-managed-miniapps.json")
+  const shippedState = () =>
+    JSON.stringify({
+      schemaVersion: 1,
+      deploymentId: "enterprise",
+      workspaceOrigin: "https://enterprise.example",
+      entries: [{packageName: pkg, version, sha256: "a".repeat(64), storageScope: "workspace"}],
+    })
+
+  it("writes the ownership file, bundle directory and MMKV keys with the shipped names", async () => {
+    await deploymentManagedMiniappSync.sync(organization)
+    expect(stateFile().textSync()).toBe(shippedState())
+    expect(new Directory(Paths.document, "lmas-workspace", pkg, version).exists).toBe(true)
+    const installations = createMMKV({id: "mentra-miniapp-installations"})
+    expect(JSON.parse(installations.getString(`miniapp_release_identity:workspace:${pkg}:${version}`)!)).toMatchObject({
+      source: "deployment_manifest",
+      deploymentId: "enterprise",
+      deploymentOrigin: "https://enterprise.example",
+    })
+    const active = storage.load<string>(`${pkg}_workspace_active_version`)
+    expect(active.is_ok() && active.value).toBe(version)
+  })
+
+  it("round-trips an ownership file written by a shipped build", async () => {
+    await deploymentManagedMiniappSync.sync(organization)
+    stateFile().write(shippedState())
+    await deploymentManagedMiniappSync.sync(organization)
+    expect(mockDownload).toHaveBeenCalledTimes(1)
+    expect(stateFile().textSync()).toBe(shippedState())
+  })
+
+  it("reads workspaceOrigin and storageScope to remove an organization's releases on exit", async () => {
+    await deploymentManagedMiniappSync.sync(organization)
+    stateFile().write(shippedState())
+    selectDeployment(consumer)
+    await deploymentManagedMiniappSync.sync(consumer)
+    expect(stateFile().exists).toBe(false)
+    expect(registry.getInstalledVersions(pkg, "organization")).toEqual([])
+  })
+})
+
+it("recovers an organization selection journal without changing the consumer selection", async () => {
   storage.save(`${pkg}_active_version`, "2.1.30")
   storage.save(`${pkg}_workspace_active_version`, "2.1.31")
   const pending = new Directory(Paths.document, "lmas", pkg, `.pending-existing-${version}-1700000000000`)
@@ -806,34 +852,34 @@ it("recovers a workspace selection journal without changing the consumer selecti
   selectDeployment(consumer) // recovery can happen after switching environments
   registry["recoverInterruptedActivations"]()
   const consumerSelection = storage.load<string>(`${pkg}_active_version`)
-  const workspaceSelection = storage.load<string>(`${pkg}_workspace_active_version`)
+  const organizationSelection = storage.load<string>(`${pkg}_workspace_active_version`)
   expect(consumerSelection.is_ok() && consumerSelection.value).toBe("2.1.30")
-  expect(workspaceSelection.is_ok() && workspaceSelection.value).toBe(version)
+  expect(organizationSelection.is_ok() && organizationSelection.value).toBe(version)
 })
 
 it.each(["bundled", "managed", "Store"])(
-  "retains different consumer bytes when a workspace installs the same version from %s",
+  "retains different consumer bytes when an organization installs the same version from %s",
   async (source) => {
     selectDeployment(consumer)
     mockVersion = "2.1.30"
     mockScript = "consumer customized build"
     expect((await registry.installFromUrl("https://manual.example/bundle.zip")).is_ok()).toBe(true)
     const consumerPath = registry.getBundleDir(pkg, mockVersion)
-    const selectedWorkspace: WorkspaceDeployment = {
-      ...workspace,
+    const selectedOrganization: OrganizationDeployment = {
+      ...organization,
       manifest: {
-        ...workspace.manifest,
+        ...organization.manifest,
         systemMiniapps: {approvedPackageNamesOverride: [pkg]},
         miniapps: {
           configuration: {},
-          managed: source === "managed" ? [{...workspace.manifest.miniapps.managed[0], version: mockVersion}] : [],
+          managed: source === "managed" ? [{...organization.manifest.miniapps.managed[0], version: mockVersion}] : [],
         },
       },
     }
     // A later host update can ship the same semantic version as the manual build.
-    selectDeployment(selectedWorkspace)
-    mockScript = "workspace official build"
-    if (source === "managed") await deploymentManagedMiniappSync.sync(selectedWorkspace)
+    selectDeployment(selectedOrganization)
+    mockScript = "organization official build"
+    if (source === "managed") await deploymentManagedMiniappSync.sync(selectedOrganization)
     else if (source === "Store") {
       expect(
         (
@@ -844,19 +890,19 @@ it.each(["bundled", "managed", "Store"])(
       ).toBe(true)
     } else expect((await registry.installFromLocalZip("host-upgrade.zip")).is_ok()).toBe(true)
 
-    const workspacePath = registry.getBundleDir(pkg, mockVersion)
-    expect(workspacePath).not.toBe(consumerPath)
-    expect(new File(workspacePath, "call.js").textSync()).toBe("workspace official build")
+    const organizationPath = registry.getBundleDir(pkg, mockVersion)
+    expect(organizationPath).not.toBe(consumerPath)
+    expect(new File(organizationPath, "call.js").textSync()).toBe("organization official build")
     expect(new File(consumerPath, "call.js").textSync()).toBe("consumer customized build")
     expect(registry.getReleaseIdentity(pkg, mockVersion, "consumer")?.source).toBe("direct_download")
-    const workspaceIdentity = registry.getReleaseIdentity(pkg, mockVersion)
+    const organizationIdentity = registry.getReleaseIdentity(pkg, mockVersion)
     registry["recoverInterruptedActivations"]()
     registry.markRefreshNeeded()
-    selectDeployment(selectedWorkspace)
+    selectDeployment(selectedOrganization)
     expect(await registry.getActiveVersion(pkg)).toBe(mockVersion)
-    expect(registry.getBundleDir(pkg, mockVersion)).toBe(workspacePath)
+    expect(registry.getBundleDir(pkg, mockVersion)).toBe(organizationPath)
     expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(mockVersion)
-    expect(registry.getReleaseIdentity(pkg, mockVersion)).toEqual(workspaceIdentity)
+    expect(registry.getReleaseIdentity(pkg, mockVersion)).toEqual(organizationIdentity)
 
     selectDeployment(consumer)
     await deploymentManagedMiniappSync.sync(consumer)
@@ -869,25 +915,25 @@ it.each(["bundled", "managed", "Store"])(
   },
 )
 
-it("does not expose an uncommitted workspace copy through a consumer version with the same name", async () => {
-  selectDeployment(workspace)
-  await deploymentManagedMiniappSync.sync(workspace)
+it("does not expose an uncommitted organization copy through a consumer version with the same name", async () => {
+  selectDeployment(organization)
+  await deploymentManagedMiniappSync.sync(organization)
   const pending = new Directory(Paths.document, "lmas-workspace", pkg, `.pending-existing-${version}-1700000000000`)
   pending.create()
   registry.markRefreshNeeded()
-  expect(registry.getInstalledVersions(pkg, "workspace")).toEqual([])
+  expect(registry.getInstalledVersions(pkg, "organization")).toEqual([])
   expect((await registry.getInstalledMiniapps()).some((app) => app.packageName === pkg)).toBe(false)
   pending.delete()
   registry.markRefreshNeeded()
   expect((await registry.getInstalledMiniapps()).some((app) => app.packageName === pkg)).toBe(true)
 })
 
-it("does not fall back to an uncommitted consumer copy when a workspace copy is ineligible", async () => {
-  await deploymentManagedMiniappSync.sync(workspace)
+it("does not fall back to an uncommitted consumer copy when an organization copy is ineligible", async () => {
+  await deploymentManagedMiniappSync.sync(organization)
   selectDeployment({
-    ...workspace,
+    ...organization,
     manifest: {
-      ...workspace.manifest,
+      ...organization.manifest,
       miniapps: {configuration: {}, managed: []},
       systemMiniapps: {approvedPackageNamesOverride: [pkg]},
     },
@@ -902,21 +948,21 @@ it("does not fall back to an uncommitted consumer copy when a workspace copy is 
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
 })
 
-it("recovers workspace bytes and provenance after switching back to consumer mode", async () => {
+it("recovers organization bytes and provenance after switching back to consumer mode", async () => {
   selectDeployment(consumer)
   mockVersion = "2.1.30"
   mockScript = "consumer customized build"
   expect((await registry.installFromUrl("https://manual.example/bundle.zip")).is_ok()).toBe(true)
-  const unpinned: WorkspaceDeployment = {
-    ...workspace,
+  const unpinned: OrganizationDeployment = {
+    ...organization,
     manifest: {
-      ...workspace.manifest,
+      ...organization.manifest,
       miniapps: {configuration: {}, managed: []},
       systemMiniapps: {approvedPackageNamesOverride: [pkg]},
     },
   }
   selectDeployment(unpinned)
-  mockScript = "original workspace build"
+  mockScript = "original organization build"
   expect((await registry.installFromLocalZip("official.zip")).is_ok()).toBe(true)
   const packageDir = new Directory(Paths.document, "lmas-workspace", pkg)
   const installed = new Directory(packageDir, mockVersion)
@@ -943,20 +989,20 @@ it("recovers workspace bytes and provenance after switching back to consumer mod
   )
   selectDeployment(consumer)
   registry["recoverInterruptedActivations"]()
-  expect(new File(packageDir, mockVersion, "call.js").textSync()).toBe("original workspace build")
-  expect(registry.getReleaseIdentity(pkg, mockVersion, "workspace")?.source).toBe("bundled_asset")
+  expect(new File(packageDir, mockVersion, "call.js").textSync()).toBe("original organization build")
+  expect(registry.getReleaseIdentity(pkg, mockVersion, "organization")?.source).toBe("bundled_asset")
   expect(new File(registry.getBundleDir(pkg, mockVersion), "call.js").textSync()).toBe("consumer customized build")
   expect(registry.getReleaseIdentity(pkg, mockVersion)?.source).toBe("direct_download")
   expect(pending.exists).toBe(false)
 })
 
-it("migrates legacy workspace-owned files without removing an independent consumer override", async () => {
+it("migrates legacy organization-owned files without removing an independent consumer override", async () => {
   createMMKV({id: "mentra-miniapp-installations"}).set(
     `miniapp_release_identity:${pkg}:${version}`,
     JSON.stringify({
       source: "deployment_manifest",
-      deploymentId: workspace.manifest.deploymentId,
-      deploymentOrigin: workspace.workspaceOrigin,
+      deploymentId: organization.manifest.deploymentId,
+      deploymentOrigin: organization.organizationOrigin,
       bundleSha256: "a".repeat(64),
     }),
   )
@@ -964,12 +1010,12 @@ it("migrates legacy workspace-owned files without removing an independent consum
   mockVersion = "2.1.30"
   mockScript = "consumer customized build"
   expect((await registry.installFromUrl("https://manual.example/bundle.zip")).is_ok()).toBe(true)
-  selectDeployment(workspace)
+  selectDeployment(organization)
   mockVersion = version
-  mockScript = "workspace build"
-  await deploymentManagedMiniappSync.sync(workspace)
+  mockScript = "organization build"
+  await deploymentManagedMiniappSync.sync(organization)
   expect(new File(Paths.document, "lmas", pkg, version, "call.js").exists).toBe(false)
-  expect(new File(registry.getBundleDir(pkg, version), "call.js").textSync()).toBe("workspace build")
+  expect(new File(registry.getBundleDir(pkg, version), "call.js").textSync()).toBe("organization build")
   selectDeployment(consumer)
   await deploymentManagedMiniappSync.sync(consumer)
   expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
@@ -983,24 +1029,24 @@ it.each([
   ["missing", false],
   ["corrupt", false],
 ])(
-  "cleans orphan workspace storage with %s state while preserving a consumer copy (SYSTEM=%s)",
+  "cleans orphan organization storage with %s state while preserving a consumer copy (SYSTEM=%s)",
   async (state, system) => {
     selectDeployment(consumer)
     mockVersion = "2.1.30"
     mockScript = "consumer customized build"
     expect((await registry.installFromUrl("https://manual.example/bundle.zip")).is_ok()).toBe(true)
     const consumerPath = registry.getBundleDir(pkg, mockVersion)
-    const pinned: WorkspaceDeployment = {
-      ...workspace,
+    const pinned: OrganizationDeployment = {
+      ...organization,
       manifest: {
-        ...workspace.manifest,
-        miniapps: {configuration: {}, managed: [{...workspace.manifest.miniapps.managed[0], version: mockVersion}]},
+        ...organization.manifest,
+        miniapps: {configuration: {}, managed: [{...organization.manifest.miniapps.managed[0], version: mockVersion}]},
       },
     }
     selectDeployment(pinned)
-    mockScript = "workspace build"
+    mockScript = "organization build"
     await deploymentManagedMiniappSync.sync(pinned)
-    const workspacePath = registry.getBundleDir(pkg, mockVersion)
+    const organizationPath = registry.getBundleDir(pkg, mockVersion)
     const stateFile = new File(Paths.document, "deployment-managed-miniapps.json")
     if (state === "missing") stateFile.delete()
     else stateFile.write("{broken")
@@ -1016,7 +1062,7 @@ it.each([
     await deploymentManagedMiniappSync.sync(consumer)
     expect(new File(consumerPath, "call.js").textSync()).toBe("consumer customized build")
     expect(registry.getReleaseIdentity(pkg, mockVersion, "consumer")?.source).toBe("direct_download")
-    expect(new Directory(workspacePath).exists).toBe(false)
+    expect(new Directory(organizationPath).exists).toBe(false)
     expect(registry.getDeploymentOwnedReleases()).toEqual([])
     await deploymentManagedMiniappSync.sync(consumer)
     expect(new File(consumerPath, "call.js").textSync()).toBe("consumer customized build")
@@ -1030,8 +1076,8 @@ it.each(["missing", "corrupt"])(
       `miniapp_release_identity:${pkg}:${version}`,
       JSON.stringify({
         source: "deployment_manifest",
-        deploymentId: workspace.manifest.deploymentId,
-        deploymentOrigin: workspace.workspaceOrigin,
+        deploymentId: organization.manifest.deploymentId,
+        deploymentOrigin: organization.organizationOrigin,
         bundleSha256: "a".repeat(64),
       }),
     )
@@ -1215,17 +1261,17 @@ it("rejects a delayed download after a newer release installs", async () => {
   expect(new File(registry.getBundleDir(pkg, "2.1.31"), "call.js").textSync()).toBe("newer release")
 })
 
-it("rejects a workspace Store downgrade below an approved consumer release", async () => {
+it("rejects an organization Store downgrade below an approved consumer release", async () => {
   selectDeployment(consumer)
   mockVersion = "2.1.31"
   const options = {releaseIdentity: {source: "system_store" as const, storePackageName: "com.mentra.store"}}
   expect((await registry.installFromUrl("https://store.example/bundle.zip", options)).is_ok()).toBe(true)
-  selectDeployment({...workspace, manifest: {...workspace.manifest, miniapps: {configuration: {}, managed: []}}})
+  selectDeployment({...organization, manifest: {...organization.manifest, miniapps: {configuration: {}, managed: []}}})
   mockVersion = "2.1.30"
   const result = await registry.installFromUrl("https://store.example/bundle.zip", options)
   expect(result.is_error()).toBe(true)
   expect(await registry.getActiveVersion(pkg)).toBe("2.1.31")
-  expect(registry.getInstalledVersions(pkg, "workspace")).not.toContain("2.1.30")
+  expect(registry.getInstalledVersions(pkg, "organization")).not.toContain("2.1.30")
 })
 
 it.each(["after commit", "during cleanup"])("keeps committed release routing when interrupted %s", async (phase) => {

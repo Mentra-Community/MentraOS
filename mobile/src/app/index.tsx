@@ -112,7 +112,7 @@ export default function InitScreen() {
     console.log("INDEX: navigateToDestination()")
     if (!user?.id) {
       await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
-      replace(activeDeployment.kind === "workspace" ? "/auth/workspace-signin" : "/auth/start", {
+      replace(activeDeployment.kind === "organization" ? "/auth/organization-signin" : "/auth/start", {
         transition: "fade",
       })
       return
@@ -145,7 +145,7 @@ export default function InitScreen() {
 
   const checkLoggedIn = async (): Promise<void> => {
     if (!user) {
-      replaceAll(activeDeployment.kind === "workspace" ? "/auth/workspace-signin" : "/auth/start")
+      replaceAll(activeDeployment.kind === "organization" ? "/auth/organization-signin" : "/auth/start")
       return
     }
     await handleTokenExchange()
@@ -160,7 +160,7 @@ export default function InitScreen() {
     if (!token) {
       // A cached user alone cannot start Engine. Return to login instead of
       // leaving Continue Anyway and Retry looping on the auth-error screen.
-      replaceAll(activeDeployment.kind === "workspace" ? "/auth/workspace-signin" : "/auth/start")
+      replaceAll(activeDeployment.kind === "organization" ? "/auth/organization-signin" : "/auth/start")
       return
     }
 
@@ -297,10 +297,10 @@ export default function InitScreen() {
           description: translate(
             canSkipUpdate ? "versionCheck:updateAvailableDescription" : "versionCheck:updateRequiredDescription",
           ),
-          // A managed workspace distributes the app through its own device
+          // A managed organization distributes the app through its own device
           // management and has no store link. Tell the user where updates
           // come from instead of leaving them on a screen with no action.
-          ...(activeDeployment.kind === "workspace" && !updateUrl
+          ...(activeDeployment.kind === "organization" && !updateUrl
             ? {
                 description: translate("versionCheck:managedUpdateDescription", {
                   name: activeDeployment.manifest.displayName,
@@ -326,7 +326,7 @@ export default function InitScreen() {
     if (initStartedRef.current) return
     initStartedRef.current = true
 
-    // A fresh install has not selected Mentra or a customer workspace yet.
+    // A fresh install has not selected Mentra or a customer organization yet.
     // Render the local selector without performing Mentra's cloud version call.
     if (!selectionResolved) {
       replaceAll("/auth/start")

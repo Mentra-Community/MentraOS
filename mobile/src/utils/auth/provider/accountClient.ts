@@ -62,8 +62,8 @@ function saveCachedProfile(user: MentraAuthUser): void {
 }
 
 function core(path: string): string {
-  if (deploymentStore.getActive().kind === "workspace") {
-    throw new Error("Mentra account services are unavailable in an organization workspace")
+  if (deploymentStore.getActive().kind === "organization") {
+    throw new Error("Mentra account services are unavailable in an organization")
   }
   return `${resolvedEndpoints().core.replace(/\/+$/, "")}${path}`
 }
@@ -385,7 +385,7 @@ export class AccountAuthProvider extends AuthClient {
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/password/change"), {
         method: "POST",
-        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
         body: JSON.stringify({currentPassword, newPassword}),
       })
       if (!res.ok) await throwApiError(res)
@@ -398,7 +398,7 @@ export class AccountAuthProvider extends AuthClient {
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/email/change"), {
         method: "POST",
-        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
         body: JSON.stringify({newEmail, password}),
       })
       if (!res.ok && res.status !== 202) await throwApiError(res)
@@ -410,7 +410,7 @@ export class AccountAuthProvider extends AuthClient {
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/email/change/confirm"), {
         method: "POST",
-        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
         body: JSON.stringify({code}),
       })
       if (!res.ok) await throwApiError(res)
@@ -423,7 +423,7 @@ export class AccountAuthProvider extends AuthClient {
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/delete/request"), {
         method: "POST",
-        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
         body: JSON.stringify({}),
       })
       if (!res.ok && res.status !== 202) await throwApiError(res)
@@ -435,7 +435,7 @@ export class AccountAuthProvider extends AuthClient {
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/delete/confirm"), {
         method: "POST",
-        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
         body: JSON.stringify({code}),
       })
       if (!res.ok) await throwApiError(res)
@@ -519,7 +519,7 @@ export class AccountAuthProvider extends AuthClient {
         if (access) {
           await fetch(core("/api/account/logout"), {
             method: "POST",
-            headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+            headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
             body: JSON.stringify({}),
           }).catch(() => null)
         }

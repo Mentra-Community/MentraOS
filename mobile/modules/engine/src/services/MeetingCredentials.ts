@@ -1,10 +1,10 @@
 import type {AcsMeetingCredential} from "@mentra/cloud-client"
 import type {CreatedMeeting, MeetingConfiguration, MeetingCreateOptions, MeetingIdentity} from "@mentra/miniapp"
 
-export type {MeetingIdentity} from "@mentra/miniapp"
-
 import {getAuth, getConfigValues, isFeatureEnabled} from "../runtime/bootstrap"
 import {cloudClientService} from "./CloudClientService"
+
+export type {MeetingIdentity} from "@mentra/miniapp"
 
 export function meetingConfiguration(): MeetingConfiguration {
   const privateMeetings = getConfigValues().privateMeetings === true
@@ -98,7 +98,7 @@ export async function meetingCredential(
   // No identity is different from a failed identity acquisition. Consent, expiry and network
   // errors must propagate; only the Runtime can establish that a Teams license is absent.
   const teamsToken = auth?.getTeamsToken ? await auth.getTeamsToken() : undefined
-  // The acquisition can outlive a workspace switch. Check before a request can forward
+  // The acquisition can outlive an organization switch. Check before a request can forward
   // its subject token to the current client, as well as before accepting the response.
   assertCurrentDeployment()
   const value = await cloudClientService.getMeetingCredential(teamsToken)

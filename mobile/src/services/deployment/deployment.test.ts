@@ -1,10 +1,13 @@
+import {createMMKV} from "react-native-mmkv"
+
 import referenceManifest from "../../../../cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json"
-import {DeploymentResolutionError, normalizeWorkspaceOrigin, resolveDeploymentCandidate} from "./resolver"
-import {DeploymentStore, type DeploymentStorage} from "./store"
-import type {ActiveDeployment, DeploymentManifest, WorkspaceDeployment} from "./types"
+import {storage} from "@/utils/storage"
+import {DeploymentResolutionError, normalizeOrganizationOrigin, resolveDeploymentCandidate} from "./resolver"
+import {DeploymentStore, type DeploymentStorage, type PersistedDeploymentSelection} from "./store"
+import type {DeploymentManifest, OrganizationDeployment} from "./types"
 import {MicrosoftEntraDeploymentAuthProvider} from "./auth/MicrosoftEntraDeploymentAuthProvider"
 
-const WORKSPACE = "https://mentra.enterprise.example"
+const ORGANIZATION = "https://mentra.enterprise.example"
 
 function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManifest {
   return {
@@ -13,11 +16,11 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
     displayName: "Mentra Enterprise Dev",
     branding: {
       logoUrls: {
-        light: `${WORKSPACE}/branding/logo-light.png`,
-        dark: `${WORKSPACE}/branding/logo-dark.png`,
+        light: `${ORGANIZATION}/branding/logo-light.png`,
+        dark: `${ORGANIZATION}/branding/logo-dark.png`,
       },
     },
-    services: {coreUrl: WORKSPACE, runtimeUrl: WORKSPACE},
+    services: {coreUrl: ORGANIZATION, runtimeUrl: ORGANIZATION},
     auth: {
       mode: "microsoft-entra",
       authorityUrl: "https://login.microsoftonline.com/2e7662c0-e826-4928-95b2-60bdd48d5d95",
@@ -29,7 +32,7 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
       ],
     },
     artifacts: {
-      mentraLiveOtaManifestUrl: `${WORKSPACE}/artifacts/mentra-live/version.json`,
+      mentraLiveOtaManifestUrl: `${ORGANIZATION}/artifacts/mentra-live/version.json`,
       sttModelBaseUrl: null,
       ttsModelBaseUrl: null,
     },
@@ -40,10 +43,10 @@ function manifest(overrides: Partial<DeploymentManifest> = {}): DeploymentManife
     },
     content: {wallpaperUrls: []},
     links: {
-      privacyPolicyUrl: `${WORKSPACE}/privacy`,
-      termsOfServiceUrl: `${WORKSPACE}/terms`,
-      documentationUrl: `${WORKSPACE}/docs`,
-      supportUrl: `${WORKSPACE}/support`,
+      privacyPolicyUrl: `${ORGANIZATION}/privacy`,
+      termsOfServiceUrl: `${ORGANIZATION}/terms`,
+      documentationUrl: `${ORGANIZATION}/docs`,
+      supportUrl: `${ORGANIZATION}/support`,
     },
     systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
     miniapps: {managed: [], configuration: {}},
@@ -73,7 +76,7 @@ function response(
   return {
     ok: status >= 200 && status < 300,
     status,
-    url: options.url ?? `${WORKSPACE}/.well-known/mentra-deployment.json`,
+    url: options.url ?? `${ORGANIZATION}/.well-known/mentra-deployment.json`,
     headers,
     body:
       options.streamed === false
@@ -92,35 +95,35 @@ function response(
   } as Response
 }
 
-describe("normalizeWorkspaceOrigin", () => {
+describe("normalizeOrganizationOrigin", () => {
   it.each([
     "mentra.enterprise.example/",
     "https://mentra.enterprise.example/path/to/a/homepage",
     "https://mentra.enterprise.example/.well-known/mentra-deployment.json",
-    "https://mentra.enterprise.example?workspace=example#sign-in",
+    "https://mentra.enterprise.example?organization=example#sign-in",
   ])("normalizes a user-provided organization address %s", (input) => {
-    expect(normalizeWorkspaceOrigin(input)).toBe(WORKSPACE)
+    expect(normalizeOrganizationOrigin(input)).toBe(ORGANIZATION)
   })
 
   it.each([
     "http://mentra.enterprise.example",
     "https://user:password@mentra.enterprise.example",
     "ftp://mentra.enterprise.example",
-  ])("rejects unsafe workspace input %s", (input) => {
-    expect(() => normalizeWorkspaceOrigin(input)).toThrow(DeploymentResolutionError)
+  ])("rejects unsafe organization input %s", (input) => {
+    expect(() => normalizeOrganizationOrigin(input)).toThrow(DeploymentResolutionError)
   })
 })
 
 describe("resolveDeploymentCandidate", () => {
   it("resolves and validates a customer manifest", async () => {
     const fetch = jest.fn(async () => response(JSON.stringify(manifest())))
-    const candidate = await resolveDeploymentCandidate(WORKSPACE, {fetch})
+    const candidate = await resolveDeploymentCandidate(ORGANIZATION, {fetch})
 
-    expect(candidate.workspaceOrigin).toBe(WORKSPACE)
+    expect(candidate.organizationOrigin).toBe(ORGANIZATION)
     expect(candidate.manifest.auth.mode).toBe("microsoft-entra")
-    expect(candidate.manifest.branding?.logoUrls.light).toBe(`${WORKSPACE}/branding/logo-light.png`)
+    expect(candidate.manifest.branding?.logoUrls.light).toBe(`${ORGANIZATION}/branding/logo-light.png`)
     expect(fetch).toHaveBeenCalledWith(
-      `${WORKSPACE}/.well-known/mentra-deployment.json`,
+      `${ORGANIZATION}/.well-known/mentra-deployment.json`,
       expect.objectContaining({redirect: "manual"}),
     )
   })
@@ -129,7 +132,7 @@ describe("resolveDeploymentCandidate", () => {
     const {miniapps: _managedMiniapps, ...value} = manifest()
     const fetch = jest.fn(async () => response(JSON.stringify(value)))
 
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).resolves.toMatchObject({
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).resolves.toMatchObject({
       manifest: {miniapps: {managed: [], configuration: {}}},
     })
   })
@@ -137,20 +140,20 @@ describe("resolveDeploymentCandidate", () => {
   it("rejects cross-origin Runtime", async () => {
     const fetch = jest.fn(async () =>
       response(
-        JSON.stringify(manifest({services: {coreUrl: WORKSPACE, runtimeUrl: "https://runtime.attacker.example"}})),
+        JSON.stringify(manifest({services: {coreUrl: ORGANIZATION, runtimeUrl: "https://runtime.attacker.example"}})),
       ),
     )
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "origin-mismatch"})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).rejects.toMatchObject({code: "origin-mismatch"})
   })
 
-  it("rejects a workspace without Core", async () => {
+  it("rejects an organization without Core", async () => {
     const fetch = jest.fn(async () =>
-      response(JSON.stringify(manifest({services: {coreUrl: null, runtimeUrl: WORKSPACE}}))),
+      response(JSON.stringify(manifest({services: {coreUrl: null, runtimeUrl: ORGANIZATION}}))),
     )
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
-  it("rejects a cross-origin workspace logo", async () => {
+  it("rejects a cross-origin organization logo", async () => {
     const fetch = jest.fn(async () =>
       response(
         JSON.stringify(
@@ -158,14 +161,14 @@ describe("resolveDeploymentCandidate", () => {
             branding: {
               logoUrls: {
                 light: "https://images.attacker.example/logo.png",
-                dark: `${WORKSPACE}/branding/logo-dark.png`,
+                dark: `${ORGANIZATION}/branding/logo-dark.png`,
               },
             },
           }),
         ),
       ),
     )
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "origin-mismatch"})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).rejects.toMatchObject({code: "origin-mismatch"})
   })
 
   it("accepts same-origin manifest-managed userland miniapps", async () => {
@@ -175,7 +178,7 @@ describe("resolveDeploymentCandidate", () => {
           {
             packageName: "com.example.remoteassist",
             version: "1.2.0",
-            bundleUrl: `${WORKSPACE}/miniapps/remote-assist-1.2.0.zip`,
+            bundleUrl: `${ORGANIZATION}/miniapps/remote-assist-1.2.0.zip`,
             sha256: "a".repeat(64),
           },
         ],
@@ -184,7 +187,7 @@ describe("resolveDeploymentCandidate", () => {
     })
     const fetch = jest.fn(async () => response(JSON.stringify(value)))
 
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).resolves.toMatchObject({manifest: value})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).resolves.toMatchObject({manifest: value})
   })
 
   it("accepts package-scoped miniapp configuration for an approved package", async () => {
@@ -193,13 +196,13 @@ describe("resolveDeploymentCandidate", () => {
       miniapps: {
         managed: [],
         configuration: {
-          "com.mentra.settings": {backendUrl: `${WORKSPACE}/settings-api`},
+          "com.mentra.settings": {backendUrl: `${ORGANIZATION}/settings-api`},
         },
       },
     })
     const fetch = jest.fn(async () => response(JSON.stringify(value)))
 
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).resolves.toMatchObject({manifest: value})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).resolves.toMatchObject({manifest: value})
   })
 
   it("rejects miniapp configuration for a package the deployment does not approve", async () => {
@@ -211,7 +214,7 @@ describe("resolveDeploymentCandidate", () => {
             miniapps: {
               managed: [],
               configuration: {
-                "com.example.unapproved": {backendUrl: `${WORKSPACE}/unapproved-api`},
+                "com.example.unapproved": {backendUrl: `${ORGANIZATION}/unapproved-api`},
               },
             },
           }),
@@ -219,7 +222,7 @@ describe("resolveDeploymentCandidate", () => {
       ),
     )
 
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
   it("rejects oversized miniapp configuration values", async () => {
@@ -239,14 +242,14 @@ describe("resolveDeploymentCandidate", () => {
       ),
     )
 
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
   it("rejects cross-origin, duplicate, and SYSTEM-overlapping managed miniapps", async () => {
     const entry = {
       packageName: "com.example.remoteassist",
       version: "1.2.0",
-      bundleUrl: `${WORKSPACE}/miniapps/remote-assist-1.2.0.zip`,
+      bundleUrl: `${ORGANIZATION}/miniapps/remote-assist-1.2.0.zip`,
       sha256: "a".repeat(64),
     }
     const crossOriginFetch = jest.fn(async () =>
@@ -258,14 +261,14 @@ describe("resolveDeploymentCandidate", () => {
         ),
       ),
     )
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: crossOriginFetch})).rejects.toMatchObject({
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch: crossOriginFetch})).rejects.toMatchObject({
       code: "origin-mismatch",
     })
 
     const duplicateFetch = jest.fn(async () =>
       response(JSON.stringify(manifest({miniapps: {managed: [entry, {...entry}], configuration: {}}}))),
     )
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: duplicateFetch})).rejects.toMatchObject({
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch: duplicateFetch})).rejects.toMatchObject({
       code: "invalid-manifest",
     })
 
@@ -279,7 +282,7 @@ describe("resolveDeploymentCandidate", () => {
         ),
       ),
     )
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: overlapFetch})).rejects.toMatchObject({
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch: overlapFetch})).rejects.toMatchObject({
       code: "invalid-manifest",
     })
   })
@@ -295,7 +298,7 @@ describe("resolveDeploymentCandidate", () => {
                 {
                   packageName: "com.mentra.settings",
                   version: "1.2.0",
-                  bundleUrl: `${WORKSPACE}/miniapps/settings-1.2.0.zip`,
+                  bundleUrl: `${ORGANIZATION}/miniapps/settings-1.2.0.zip`,
                   sha256: "a".repeat(64),
                 },
               ],
@@ -305,7 +308,7 @@ describe("resolveDeploymentCandidate", () => {
         ),
       ),
     )
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
   it.each(["v1.2.3", "1.2", "1.2.3-01"])("rejects non-canonical managed version %s", async (version) => {
@@ -315,7 +318,7 @@ describe("resolveDeploymentCandidate", () => {
           {
             packageName: "com.example.remoteassist",
             version,
-            bundleUrl: `${WORKSPACE}/miniapps/remote-assist.zip`,
+            bundleUrl: `${ORGANIZATION}/miniapps/remote-assist.zip`,
             sha256: "a".repeat(64),
           },
         ],
@@ -323,16 +326,16 @@ describe("resolveDeploymentCandidate", () => {
       },
     })
     await expect(
-      resolveDeploymentCandidate(WORKSPACE, {fetch: async () => response(JSON.stringify(value))}),
+      resolveDeploymentCandidate(ORGANIZATION, {fetch: async () => response(JSON.stringify(value))}),
     ).rejects.toMatchObject({
       code: "invalid-manifest",
     })
   })
 
   it("rejects query-bearing Core and Runtime base URLs", async () => {
-    const value = manifest({services: {coreUrl: `${WORKSPACE}?core=1`, runtimeUrl: WORKSPACE}})
+    const value = manifest({services: {coreUrl: `${ORGANIZATION}?core=1`, runtimeUrl: ORGANIZATION}})
     await expect(
-      resolveDeploymentCandidate(WORKSPACE, {fetch: async () => response(JSON.stringify(value))}),
+      resolveDeploymentCandidate(ORGANIZATION, {fetch: async () => response(JSON.stringify(value))}),
     ).rejects.toMatchObject({
       code: "invalid-manifest",
     })
@@ -340,17 +343,17 @@ describe("resolveDeploymentCandidate", () => {
 
   it("rejects redirects and oversized responses", async () => {
     const redirectFetch = jest.fn(async () => response("", {status: 302}))
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: redirectFetch})).rejects.toMatchObject({
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch: redirectFetch})).rejects.toMatchObject({
       code: "redirect",
     })
 
     const largeFetch = jest.fn(async () => response("{}", {contentLength: 500_000}))
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: largeFetch})).rejects.toMatchObject({
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch: largeFetch})).rejects.toMatchObject({
       code: "response-too-large",
     })
 
     const streamedLargeFetch = jest.fn(async () => response("x".repeat(300_000)))
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: streamedLargeFetch})).rejects.toMatchObject({
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch: streamedLargeFetch})).rejects.toMatchObject({
       code: "response-too-large",
     })
   })
@@ -360,7 +363,7 @@ describe("resolveDeploymentCandidate", () => {
     unstreamed.text = jest.fn()
     const fetch = jest.fn(async () => unstreamed)
 
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).rejects.toMatchObject({
       code: "invalid-manifest",
     })
     expect(unstreamed.text).not.toHaveBeenCalled()
@@ -376,9 +379,9 @@ describe("resolveDeploymentCandidate", () => {
         },
       }),
     })
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: async () => malformed})).rejects.toMatchObject({
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch: async () => malformed})).rejects.toMatchObject({
       code: "invalid-manifest",
-      message: "Workspace manifest body is not valid UTF-8.",
+      message: "Organization manifest body is not valid UTF-8.",
     })
   })
 
@@ -398,12 +401,12 @@ describe("resolveDeploymentCandidate", () => {
         ),
       ),
     )
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
-  it("rejects workspace auth modes not implemented by this release", async () => {
+  it("rejects organization auth modes not implemented by this release", async () => {
     const fetch = jest.fn(async () => response(JSON.stringify(manifest({auth: {mode: "mentra-account"}}))))
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 
   it("requires the fixed ACS Teams scope pair for native meetings", async () => {
@@ -412,18 +415,18 @@ describe("resolveDeploymentCandidate", () => {
     value.auth.teamsScopes = ["https://auth.msft.communication.azure.com/Teams.ManageCalls"]
     const fetch = jest.fn(async () => response(JSON.stringify(value)))
 
-    await expect(resolveDeploymentCandidate(WORKSPACE, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
+    await expect(resolveDeploymentCandidate(ORGANIZATION, {fetch})).rejects.toMatchObject({code: "invalid-manifest"})
   })
 })
 
 class MemoryDeploymentStorage implements DeploymentStorage {
-  value: ActiveDeployment | null = null
+  value: PersistedDeploymentSelection | null = null
 
   load(): unknown | null {
     return this.value
   }
 
-  save(value: ActiveDeployment): void {
+  save(value: PersistedDeploymentSelection): void {
     this.value = value
   }
 
@@ -433,7 +436,7 @@ class MemoryDeploymentStorage implements DeploymentStorage {
 }
 
 describe("DeploymentStore", () => {
-  it("starts unresolved and persists an explicit Mentra or workspace selection", async () => {
+  it("starts unresolved and persists an explicit Mentra or organization selection", async () => {
     const persistence = new MemoryDeploymentStorage()
     const store = new DeploymentStore(persistence)
     expect(store.getActive()).toMatchObject({
@@ -445,13 +448,13 @@ describe("DeploymentStore", () => {
     expect(store.isTelemetryAllowed()).toBe(false)
 
     await store.activate({
-      workspaceOrigin: WORKSPACE,
-      manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
+      organizationOrigin: ORGANIZATION,
+      manifestUrl: `${ORGANIZATION}/.well-known/mentra-deployment.json`,
       manifest: manifest(),
     })
     expect(new DeploymentStore(persistence).getActive()).toMatchObject({
-      kind: "workspace",
-      workspaceOrigin: WORKSPACE,
+      kind: "organization",
+      organizationOrigin: ORGANIZATION,
     })
     expect(store.isTelemetryAllowed()).toBe(false)
 
@@ -472,7 +475,7 @@ describe("DeploymentStore", () => {
 
   it("fails closed to consumer for malformed persisted data", () => {
     const persistence = new MemoryDeploymentStorage()
-    persistence.value = {kind: "workspace"} as WorkspaceDeployment
+    persistence.value = {kind: "workspace"} as PersistedDeploymentSelection
     expect(new DeploymentStore(persistence).getActive()).toMatchObject({
       kind: "consumer",
       source: "embedded",
@@ -486,9 +489,9 @@ describe("DeploymentStore", () => {
     persistence.value = {
       kind: "workspace",
       source: "manual",
-      workspaceOrigin: WORKSPACE,
-      manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
-      manifest: manifest({services: {coreUrl: WORKSPACE, runtimeUrl: "https://attacker.example"}}),
+      workspaceOrigin: ORGANIZATION,
+      manifestUrl: `${ORGANIZATION}/.well-known/mentra-deployment.json`,
+      manifest: manifest({services: {coreUrl: ORGANIZATION, runtimeUrl: "https://attacker.example"}}),
       activatedAt: new Date().toISOString(),
     }
     const store = new DeploymentStore(persistence)
@@ -498,6 +501,80 @@ describe("DeploymentStore", () => {
       manifest: {deploymentId: "mentra-official"},
     })
     expect(store.isResolved()).toBe(false)
+  })
+})
+
+// Builds that already shipped wrote this exact JSON under this exact key. The
+// in-memory names may change; these persisted names and the key order may not.
+class RawDeploymentStorage implements DeploymentStorage {
+  value: unknown = null
+
+  load(): unknown | null {
+    return this.value
+  }
+
+  save(value: unknown): void {
+    this.value = value
+  }
+
+  remove(): void {
+    this.value = null
+  }
+}
+
+describe("shipped persisted deployment selection", () => {
+  const ACTIVATED_AT = "2026-09-22T00:00:00.000Z"
+  const SHIPPED = {
+    kind: "workspace",
+    source: "manual",
+    workspaceOrigin: ORGANIZATION,
+    manifestUrl: `${ORGANIZATION}/.well-known/mentra-deployment.json`,
+    manifest: manifest(),
+    activatedAt: ACTIVATED_AT,
+  }
+  // Re-activate exactly what was restored, so the saved JSON proves the restore.
+  const reactivate = (store: DeploymentStore) => {
+    const restored = store.getActive() as OrganizationDeployment
+    return store.activate({
+      organizationOrigin: restored.organizationOrigin,
+      manifestUrl: restored.manifestUrl,
+      manifest: restored.manifest,
+    })
+  }
+
+  afterEach(() => jest.useRealTimers())
+
+  it("restores a stored selection and re-saves identical JSON", async () => {
+    const persistence = new RawDeploymentStorage()
+    persistence.value = JSON.parse(JSON.stringify(SHIPPED))
+    const store = new DeploymentStore(persistence)
+    expect(store.isResolved()).toBe(true)
+    expect(store.getActive()).toMatchObject({kind: "organization", organizationOrigin: ORGANIZATION})
+
+    jest.useFakeTimers({now: new Date(ACTIVATED_AT)})
+    await reactivate(store)
+    expect(JSON.stringify(persistence.value)).toBe(JSON.stringify(SHIPPED))
+  })
+
+  it("round-trips through the MMKV key byte-for-byte", async () => {
+    const key = "mentra.deployment.active.v1"
+    storage.save(key, SHIPPED)
+    const store = new DeploymentStore()
+    expect(store.isResolved()).toBe(true)
+    expect(store.getActive()).toMatchObject({kind: "organization", organizationOrigin: ORGANIZATION})
+
+    jest.useFakeTimers({now: new Date(ACTIVATED_AT)})
+    await reactivate(store)
+    expect(createMMKV().getString(key)).toBe(JSON.stringify(SHIPPED))
+    storage.remove(key)
+  })
+
+  it("keeps the shipped consumer record", async () => {
+    const key = "mentra.deployment.active.v1"
+    const store = new DeploymentStore()
+    await store.returnToMentra()
+    expect(createMMKV().getString(key)).toBe(JSON.stringify({kind: "consumer", source: "embedded"}))
+    storage.remove(key)
   })
 })
 
@@ -523,11 +600,11 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
       })),
       signOut: jest.fn(async () => {}),
     }
-    const deployment: WorkspaceDeployment = {
-      kind: "workspace",
+    const deployment: OrganizationDeployment = {
+      kind: "organization",
       source: "manual",
-      workspaceOrigin: WORKSPACE,
-      manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
+      organizationOrigin: ORGANIZATION,
+      manifestUrl: `${ORGANIZATION}/.well-known/mentra-deployment.json`,
       manifest: manifest(),
       activatedAt: new Date().toISOString(),
     }
@@ -555,7 +632,7 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
     await expect(provider.getAccessToken({scopes: ["api://attacker.example/admin"]})).rejects.toThrow("not declared")
   })
 
-  it("refuses Teams tokens when the workspace disables native meetings", async () => {
+  it("refuses Teams tokens when the organization disables native meetings", async () => {
     const acquireToken = jest.fn(async () => {
       throw new Error("must not reach MSAL")
     })
@@ -567,11 +644,11 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
     } as unknown as ConstructorParameters<typeof MicrosoftEntraDeploymentAuthProvider>[1]
     const value = manifest()
     value.features = {...value.features, nativeMeetings: false}
-    const deployment: WorkspaceDeployment = {
-      kind: "workspace",
+    const deployment: OrganizationDeployment = {
+      kind: "organization",
       source: "manual",
-      workspaceOrigin: WORKSPACE,
-      manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
+      organizationOrigin: ORGANIZATION,
+      manifestUrl: `${ORGANIZATION}/.well-known/mentra-deployment.json`,
       manifest: value,
       activatedAt: new Date().toISOString(),
     }
@@ -596,7 +673,7 @@ it("resolves the actual Enterprise reference manifest with preinstalled Call man
   expect(candidate.manifest.miniapps.managed).toEqual(referenceManifest.miniapps.managed)
 })
 
-it("does not let a workspace replace the build-selected Store", async () => {
+it("does not let an organization replace the build-selected Store", async () => {
   const value = manifest({
     miniapps: {
       configuration: {},
@@ -604,13 +681,13 @@ it("does not let a workspace replace the build-selected Store", async () => {
         {
           packageName: "com.mentra.store",
           version: "1.0.0",
-          bundleUrl: `${WORKSPACE}/miniapps/store.zip`,
+          bundleUrl: `${ORGANIZATION}/miniapps/store.zip`,
           sha256: "a".repeat(64),
         },
       ],
     },
   })
   await expect(
-    resolveDeploymentCandidate(WORKSPACE, {fetch: async () => response(JSON.stringify(value))}),
+    resolveDeploymentCandidate(ORGANIZATION, {fetch: async () => response(JSON.stringify(value))}),
   ).rejects.toMatchObject({code: "invalid-manifest"})
 })

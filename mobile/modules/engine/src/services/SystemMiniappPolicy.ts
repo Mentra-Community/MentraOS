@@ -46,7 +46,7 @@ export function systemMiniappStoreOwner(packageName: string): string | undefined
  * A bundled provenance claim is accepted only on the local bundled-asset path;
  * remote/direct/dev callers cannot manufacture it. SYSTEM Store updates must
  * come from the exact Store selected by the host build.
- * Workspace pins instead require locally verified bytes and exact deployment
+ * Organization pins instead require locally verified bytes and exact deployment
  * provenance; they never acquire SYSTEM authority or Store ownership.
  */
 export function canInstallMiniappRelease(

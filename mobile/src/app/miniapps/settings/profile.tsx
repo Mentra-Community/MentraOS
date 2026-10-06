@@ -2,7 +2,7 @@ import {useState} from "react"
 import {View, Image, ActivityIndicator, ScrollView, ImageStyle, ViewStyle, Modal} from "react-native"
 import Svg, {Path} from "react-native-svg"
 
-import {WorkspaceBrand} from "@/components/auth/WorkspaceBrand"
+import {OrganizationBrand} from "@/components/auth/OrganizationBrand"
 import {Header, Screen, Text} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
@@ -48,7 +48,7 @@ export default function ProfileSettingsPage() {
       }
     : null
 
-  const workspaceName = activeDeployment.manifest.displayName
+  const organizationName = activeDeployment.manifest.displayName
 
   const handleRequestDataExport = () => {
     console.log("Profile: Navigating to data export screen")
@@ -226,8 +226,8 @@ export default function ProfileSettingsPage() {
         ) : userData ? (
           <>
             <View style={themed($profileSection)}>
-              {activeDeployment.kind === "workspace" ? (
-                <WorkspaceBrand
+              {activeDeployment.kind === "organization" ? (
+                <OrganizationBrand
                   displayName={activeDeployment.manifest.displayName}
                   logoUrls={activeDeployment.manifest.branding?.logoUrls}
                 />
@@ -287,10 +287,13 @@ export default function ProfileSettingsPage() {
 
         <Spacer height={theme.spacing.s6} />
 
-        <Group title={translate("workspace:workspaceLabel")}>
-          <RouteButton label={translate("profileSettings:workspaceName")} text={workspaceName} />
-          {activeDeployment.kind === "workspace" && (
-            <RouteButton label={translate("profileSettings:workspaceUrl")} text={activeDeployment.workspaceOrigin} />
+        <Group title={translate("organization:organizationLabel")}>
+          <RouteButton label={translate("profileSettings:organizationName")} text={organizationName} />
+          {activeDeployment.kind === "organization" && (
+            <RouteButton
+              label={translate("profileSettings:organizationUrl")}
+              text={activeDeployment.organizationOrigin}
+            />
           )}
         </Group>
       </ScrollView>

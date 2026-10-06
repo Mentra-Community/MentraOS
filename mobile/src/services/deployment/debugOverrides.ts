@@ -2,17 +2,18 @@ import {engine, SETTINGS} from "@mentra/engine"
 
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 
+import {PERSISTED_DEBUG_SCOPE_PREFIX} from "./legacyPersistedNames"
 import type {ActiveDeployment, DeploymentManifest} from "./types"
 
 export function deploymentDebugScope(deployment: ActiveDeployment): string {
   return deployment.kind === "consumer"
     ? "consumer"
-    : `workspace:${deployment.manifest.deploymentId}:${deployment.workspaceOrigin}`
+    : `${PERSISTED_DEBUG_SCOPE_PREFIX}${deployment.manifest.deploymentId}:${deployment.organizationOrigin}`
 }
 
 export function deploymentDebugOverrides(deployment: ActiveDeployment): {core?: string; runtime?: string} {
   const scope = engine.settings.get(SETTINGS.cloud_url_deployment.key)
-  // Existing consumer overrides predate scoping. Never apply these to a workspace.
+  // Existing consumer overrides predate scoping. Never apply these to an organization.
   if (scope !== deploymentDebugScope(deployment) && !(deployment.kind === "consumer" && !scope)) return {}
   const read = (key: string) => {
     const value = engine.settings.get(key)

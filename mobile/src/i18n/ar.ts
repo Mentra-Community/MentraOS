@@ -148,9 +148,8 @@ const ar = {
   },
   profileSettings: {
     ...en.profileSettings,
-    workspaceName: "الاسم",
-    workspaceUrl: "عنوان مساحة العمل",
-    mentraWorkspace: "Mentra",
+    organizationName: "الاسم",
+    organizationUrl: "عنوان المؤسسة",
   },
   versionCheck: {
     ...en.versionCheck,
@@ -158,7 +157,7 @@ const ar = {
       "لم يعد هذا الإصدار من تطبيق Mentra مدعومًا من {{name}}. يتم توزيع التحديثات عبر إدارة الأجهزة في مؤسستك. تواصل مع مسؤول تقنية المعلومات للتحديث.",
     contactSupport: "التواصل مع الدعم",
   },
-  workspace: {
+  organization: {
     or: "أو",
     title: "تسجيل دخول المؤسسة",
     heading: "الاتصال بمؤسستك",
@@ -167,28 +166,28 @@ const ar = {
     urlLabel: "عنوان المؤسسة",
     urlPlaceholder: "company.example.com",
     urlHelper: "مثال: company.example.com",
-    unknownResolutionError: "تعذّر تحميل مساحة العمل هذه. حاول مرة أخرى.",
-    notFoundError: "لم نعثر على مساحة عمل Mentra في هذا العنوان. تحقق من العنوان أو اسأل مسؤول تقنية المعلومات.",
-    configurationError: "تعذّر التحقق من مساحة العمل هذه. اطلب من مسؤول تقنية المعلومات مراجعة إعداداتها.",
+    unknownResolutionError: "تعذّر تحميل هذه المؤسسة. حاول مرة أخرى.",
+    notFoundError: "لم نعثر على مؤسسة Mentra في هذا العنوان. تحقق من العنوان أو اسأل مسؤول تقنية المعلومات.",
+    configurationError: "تعذّر التحقق من هذه المؤسسة. اطلب من مسؤول تقنية المعلومات مراجعة إعداداتها.",
     confirmTitle: "تأكيد المؤسسة",
     candidateExpired: "انتهت صلاحية هذا التأكيد. أدخل عنوان مؤسستك مرة أخرى.",
     enterAnotherUrl: "إدخال عنوان المؤسسة",
     connectTo: "الاتصال بـ {{name}}",
     continueTo: "المتابعة إلى {{name}}",
-    workspaceLabel: "مساحة العمل",
+    organizationLabel: "المؤسسة",
     signInLabel: "تسجيل الدخول",
     microsoftOrganizationAccount: "حساب مؤسسة Microsoft",
     mentraAccount: "حساب Mentra",
     confirmDescription:
       "بالمتابعة، تصبح هذه المؤسسة نشر Mentra النشط لديك. تُطبَّق خدماتها وسياساتها قبل تسجيل الدخول.",
-    signInDescription: "تابع باستخدام حساب المؤسسة المُعدّ لمساحة العمل هذه.",
+    signInDescription: "تابع باستخدام الحساب المُعدّ لهذه المؤسسة.",
     continueWithMicrosoft: "المتابعة باستخدام Microsoft",
     returnToMentra: "العودة إلى Mentra",
     change: "تغيير",
-    noActiveWorkspace: "لا توجد مساحة عمل مؤسسة نشطة.",
+    noActiveOrganization: "لا توجد مؤسسة نشطة.",
     signInFailedTitle: "فشل تسجيل الدخول",
     signInFailedDescription:
-      "تعذّر على Microsoft تسجيل دخولك إلى مساحة العمل هذه. حاول مرة أخرى أو تواصل مع فريق تقنية المعلومات.",
+      "تعذّر على Microsoft تسجيل دخولك إلى هذه المؤسسة. حاول مرة أخرى أو تواصل مع فريق تقنية المعلومات.",
   },
 } satisfies TranslationResource
 

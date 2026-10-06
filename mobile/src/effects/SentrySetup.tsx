@@ -113,7 +113,7 @@ export const SentrySetup = () => {
     deploymentSubscriptionInstalled = true
     // DeploymentStore notifies synchronously. This starts disabling Sentry at
     // the selection boundary rather than waiting for a React effect after the
-    // workspace screen has rendered or begun fetching its manifest.
+    // organization screen has rendered or begun fetching its manifest.
     deploymentStore.subscribe(updateSentryForActiveDeployment)
   }
   updateSentryForActiveDeployment()
