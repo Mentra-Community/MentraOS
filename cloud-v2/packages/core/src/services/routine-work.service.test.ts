@@ -294,6 +294,25 @@ test('PR notification failure cannot block durable acceptance or subsequent host
   await expect(f.service.report(f.rows.get(row.workId)!)).rejects.toMatchObject({status: 503})
 })
 
+test('cancelled status preserves the machine recorded cancellation summary as its cause', async () => {
+  const f = fixture(), row = await f.service.submit(input)
+  const receipt = {workId: row.workId, hostId: row.hostId, inputSha256: row.inputSha256,
+    acceptedAt: '2026-10-05T10:01:00Z'}
+  await f.service.accept(receipt, row.hostId)
+  const {acceptedAt: _, ...binding} = receipt
+  const cause = 'Operator cancelled the extra proof; preserve the unmerged source.'
+  const event = routineWorkStatusSchema.parse({...binding, eventId: 'cancel-one', sequence: 1, state: 'cancelled',
+    details: {...receipt, sequence: 1, state: 'cancelled', attemptId: 1, work: row.work,
+      details: {summary: cause}, events: []}})
+  expect(await f.service.status(event, row.hostId)).toEqual(event)
+  expect(await f.service.status(event, row.hostId)).toEqual(event)
+  expect(f.rows.get(row.workId)?.statusReceipts).toHaveLength(1)
+  await expect(f.service.status({...event, eventId: 'empty-cause',
+    details: {...event.details, details: {}}}, row.hostId)).rejects.toMatchObject({status: 400})
+  await expect(f.service.status({...event, details: {...event.details, details: {summary: 'Changed cause'}}},
+    row.hostId)).rejects.toThrow('Terminal')
+})
+
 test('terminal status requires exact reviewed source and recording links and cannot regress after restart', async () => {
   const f = fixture(),
     row = await f.service.submit(input)
