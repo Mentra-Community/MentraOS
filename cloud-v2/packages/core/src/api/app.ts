@@ -12,6 +12,8 @@
  *   /api/workspaces/*           — workspaces: members, invitations, credentials, audit
  *   /api/organization/*         — organization capabilities, workspace administration,
  *                                 operator keys
+ *   /api/internal/workspaces/*  — signed service API for the Store and the Fleet
+ *                                 integration (64 KiB body limit)
  *
  * Caller convention (auth/spec.md): /api/client/* is device-called and
  * /api/oem/* is reserved for the OEM's backend. The token exchange + refresh
@@ -24,6 +26,7 @@
  */
 
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { createHealthApp, createLogger, type ReadinessCheck } from "@mentra/cloud-shared";
 import type { AppEnv } from "../types/hono.types";
 import { OauthError } from "../types/oauth.types";
@@ -44,12 +47,16 @@ import clientSupportProfile from "./client/support-profile.api";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import internalIdentity from "./internal/identity.api";
+import internalWorkspaces from "./internal/workspaces.api";
 import portalEnterprise from "./portal/enterprise.api";
 import organizationApi from "./organization/organization.api";
 import workspacesApi from "./workspaces/workspaces.api";
 import wellKnown from "./well-known.api";
 
 const logger = createLogger("core").child({ service: "app" });
+
+/** The largest request body the internal workspace service API reads. */
+const INTERNAL_WORKSPACES_BODY_LIMIT_BYTES = 64 * 1024;
 
 export interface CreateAppOptions {
   readinessChecks: ReadinessCheck[];
@@ -102,6 +109,15 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/account", accountApi);
   app.route("/api/account/oauth", accountOauth);
   app.route("/api/internal/identity", internalIdentity);
+  // Service calls carry small JSON bodies; the limit applies before the signature check reads one.
+  app.use(
+    "/api/internal/workspaces/*",
+    bodyLimit({
+      maxSize: INTERNAL_WORKSPACES_BODY_LIMIT_BYTES,
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+  );
+  app.route("/api/internal/workspaces", internalWorkspaces);
   app.route("/api/portal", portalEnterprise);
   app.route("/api/workspaces", workspacesApi);
   app.route("/api/organization", organizationApi);

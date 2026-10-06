@@ -247,6 +247,19 @@ describe("operations", () => {
     expect(calls[0].method).toBe("GET")
   })
 
+  test("getWorkspace reads only a workspace_not_found 404 as absent: any other 404 is an error, not an answer", async () => {
+    // A proxy, a wrong base URL or a Core without this API answers 404 too; none of them knows the workspace is gone.
+    for (const response of [
+      () => json({error: "not_found"}, 404),
+      () => json({}, 404),
+      () => new Response("Not Found", {status: 404}),
+    ]) {
+      const {client} = clientFor(response)
+      const error = await expectClientError(client.getWorkspace("ws_1"), "bad_request")
+      expect(error.status).toBe(404)
+    }
+  })
+
   test("getWorkspace escapes the workspace id in the path", async () => {
     const {client, calls} = clientFor(() => json(workspace()))
     await client.getWorkspace("a/b?c")

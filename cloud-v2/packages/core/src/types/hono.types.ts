@@ -40,8 +40,14 @@ export interface AppVariables {
   /** The workspace decision `requireWorkspaceCapability` made for this request; set only when it allowed it. */
   workspaceAuthorization?: AuthorizeResponse
 
-  /** The trusted service (for example the Store) behind an internal service API call. */
-  service?: string
+  /**
+   * The trusted service behind an internal service API call, set by `serviceAuth` once the request's
+   * signature verified: the Store (`store`) or the Fleet integration (`fleet`).
+   */
+  service?: "store" | "fleet"
+
+  /** The raw request body `serviceAuth` read to verify the signature, which it covers. Parse this, not the stream. */
+  serviceBody?: string
 }
 
 export interface AppEnv {

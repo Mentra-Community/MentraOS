@@ -130,6 +130,17 @@ export async function listMembers(workspaceId: string): Promise<MembershipRow[]>
     .lean<MembershipRow[]>()
 }
 
+/**
+ * Every membership one person has had in a workspace, oldest first: ended rows are history, and the
+ * active one (if any) has no `endedAt`. Only claimed rows can match, so a migrated membership still
+ * waiting for its first sign-in belongs to nobody here.
+ */
+export async function listMembershipHistory(workspaceId: string, mentraUserId: string): Promise<MembershipRow[]> {
+  // A missing id must not become a `null` filter, which would match every unclaimed row.
+  if (!isId(workspaceId) || !isId(mentraUserId)) return []
+  return WorkspaceMembershipModel.find({workspaceId, mentraUserId}).sort({startedAt: 1, _id: 1}).lean<MembershipRow[]>()
+}
+
 export async function countActiveOwners(workspaceId: string, session?: ClientSession): Promise<number> {
   return WorkspaceMembershipModel.countDocuments({workspaceId, role: "owner", status: "active"}).session(
     session ?? null,

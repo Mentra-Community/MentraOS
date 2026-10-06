@@ -17,11 +17,11 @@ export type JsonObject = Record<string, unknown>
 const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 200
 
-/** The request body as a JSON object. A missing, malformed, array or scalar body is a 400. */
-export async function readJsonObject(c: AppContext): Promise<JsonObject> {
+/** `text` as a JSON object. Empty, malformed, array and scalar bodies are a 400. */
+export function parseJsonObject(text: string): JsonObject {
   let body: unknown
   try {
-    body = await c.req.json()
+    body = JSON.parse(text)
   } catch {
     throw new InvalidRequest("request body must be a JSON object")
   }
@@ -29,6 +29,17 @@ export async function readJsonObject(c: AppContext): Promise<JsonObject> {
     throw new InvalidRequest("request body must be a JSON object")
   }
   return body as JsonObject
+}
+
+/** The request body as a JSON object. A missing, malformed, array or scalar body is a 400. */
+export async function readJsonObject(c: AppContext): Promise<JsonObject> {
+  let text: string
+  try {
+    text = await c.req.text()
+  } catch {
+    throw new InvalidRequest("request body must be a JSON object")
+  }
+  return parseJsonObject(text)
 }
 
 /** A non-empty string field. */

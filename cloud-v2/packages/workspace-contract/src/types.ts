@@ -110,6 +110,13 @@ export interface WorkspaceChangeEvent {
 export const INVALID_TOKEN_ERROR = "invalid_token"
 export const SERVICE_UNAUTHORIZED_ERROR = "service_unauthorized"
 
+/**
+ * `error` value of the 404 that `GET /workspaces/:workspaceId` answers for an unknown workspace. The
+ * client reads only this 404 as "no such workspace": a 404 from anything else (a proxy, a wrong base URL,
+ * a Core without this API) says nothing about the workspace and is an error.
+ */
+export const WORKSPACE_NOT_FOUND_ERROR = "workspace_not_found"
+
 // --- Public workspace API --------------------------------------------------
 // The response bodies of Core's `/api/workspaces` and `/api/organization` routes. Every date is an ISO
 // 8601 string, so the same types serve the admin dashboard, the Store's console proxy and the CLI.

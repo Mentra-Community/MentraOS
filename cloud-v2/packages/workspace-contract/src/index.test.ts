@@ -19,6 +19,7 @@ describe("package entry points", () => {
     expect(root.WORKSPACE_ROLES).toContain("owner")
     expect(root.INVALID_TOKEN_ERROR).toBe("invalid_token")
     expect(root.SERVICE_UNAUTHORIZED_ERROR).toBe("service_unauthorized")
+    expect(root.WORKSPACE_NOT_FOUND_ERROR).toBe("workspace_not_found")
     expect(Object.keys(root)).not.toContain("signServiceRequest")
     expect(Object.keys(root)).not.toContain("createCoreWorkspaceClient")
   })

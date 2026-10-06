@@ -1,6 +1,6 @@
 /** Signed client for Core's internal workspace service API (`/api/internal/workspaces/*`). */
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
-import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR} from "./types"
+import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
 import type {
   AuthorizeRequest,
   AuthorizeResponse,
@@ -46,7 +46,7 @@ export interface CoreWorkspaceClient {
   /** Null only when Core says the token is invalid (HTTP 401 `invalid_token`); other 401s throw. */
   resolvePrincipal(bearerToken: string): Promise<PrincipalResponse | null>
   checkMemberships(mentraUserId: string, workspaceIds: string[]): Promise<Record<string, MembershipCheckEntry | null>>
-  /** Null when the workspace does not exist (HTTP 404). */
+  /** Null only when Core says the workspace does not exist (HTTP 404 `workspace_not_found`); any other 404 throws. */
   getWorkspace(workspaceId: string): Promise<WorkspaceSummary | null>
   /**
    * Events after the cursor in `seq` order. `after` is the last processed event's `seq` as a decimal
@@ -213,7 +213,12 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
 
     async getWorkspace(workspaceId) {
       const path = `${API_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}`
-      const raw = await call("GET", path, undefined, (status) => status === 404)
+      const raw = await call(
+        "GET",
+        path,
+        undefined,
+        (status, error) => status === 404 && error === WORKSPACE_NOT_FOUND_ERROR,
+      )
       if (raw === null) return null
       return checkOwned(path, raw, "the workspace") as unknown as WorkspaceSummary
     },
