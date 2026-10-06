@@ -1,133 +1,163 @@
 ---
 name: fix-nightly-failures
-description: Diagnose and fix Mentra nightly test-suite failures while independent members continue, choose targeted manual runs or held authoring for verification, and deliver the next full-catalog suite result. Use for recurring nightly failures or a red nightly suite; individual assigned failure cases use fix-routine-failure.
+description: Diagnose an ongoing or finished Mentra nightly suite, group demonstrated shared failures, implement fixes, and carry PRs through independent Codex review and merge. Use when a chat is pointed at a nightly suite; deployment and a new full suite are separate work.
 ---
 
 # Fix nightly failures
 
-**Keep tests independent and make each iteration informative.** Own the suite,
-failure diagnoses, reviewed fixes and final result. A green source check, repaired
-lane or passing individual routine is progress; none is an all-passing nightly.
+Own the source repair loop: evidence → diagnosis → fix → PR → independent review
+→ required checks → merge → final report. A standalone chat can start from an
+ongoing or finished suite. Do not require a continuously running coordinator.
+This skill ends at approved merged fixes and diagnostic conclusions; harness
+deployment, a new full-catalog suite and Slack delivery are separate tasks unless
+the user explicitly adds them. A merged fix does not make the original suite pass.
 
-Use the existing `fix-routine-failure`, `create-routine` and `codex-pr-review`
-skills for their respective work. Read [operations](references/operations.md)
-when fetching evidence, dispatching or submitting authoring work; use the
-current checked-out APIs rather than old temporary scripts or invented flags.
+## Start from the suite
 
-## Let the current suite finish
+Accept a suite URL, suite ID or occurrence/workflow ID, plus any branch, repository,
+verification or merge constraints. Resolve these to the canonical occurrence and
+stable result URL; ask only for an identifier or access genuinely needed to read
+it. Discover provisioned tools, APIs and authentication using
+[operations](references/operations.md#discover-access-and-read-evidence).
+Do not require this chat's history, a particular host, coordinator or source SHA.
 
-Record the occurrence, stable suite URL, complete selected member list, frozen
-harness/definition revisions and exact app/firmware publication. Check actual
-member results and executor/repair receipts. GitHub accepting a dispatch, an
-active chat or successful teardown does not prove a test ran or passed.
+Example launch:
 
-An ordinary setup, test or teardown failure must not cancel the other members.
-Let the controller clean the failed run, check the lane and invoke its state
-repair agent if necessary. Verify real invocation, the repair conclusion and
-accepted resume or out-of-service decision, then the next independent run.
-Keep the original verdict. State repair does not fix app/harness source.
+> $fix-nightly-failures <suite URL> — Diagnose failures while remaining
+> members run, fix their owning repositories, open PRs, run codex-pr-review,
+> address findings and merge after approval and required checks. Report conclusions
+> and verification. Do not deploy or start another full suite.
 
-Keep installed harness source and shared configuration unchanged while accepted
-work depends on them. Do not take resources from another owner or displace
-accepted suite work. Healthy lanes continue independently of a lane in repair.
-If a global framework fault prevents useful execution, diagnose that specific
-fault and coordinate a safe interruption through normal controller operations;
-do not cancel a whole suite merely because it is red. Respect the current
-cancellation authority and never force-release hardware or edit its database.
+Record the complete selected member list, status, frozen harness/definition
+revisions and exact app/firmware publication. GitHub accepting a dispatch, an
+active chat or successful teardown does not prove device execution or a pass.
+Keep unavailable observations unknown; do not substitute today's build or copy
+an old success forward.
 
-## Diagnose failures as they arrive
+## Preserve independent execution
 
-Keep one small durable failure ledger in the task's existing coordination state:
-routine/run, failing phase/step, original error, evidence links, exact provenance,
-classification, causal group and supporting evidence, named owner,
-PR/head/review, next action and verification result.
-Mark an unavailable observation unknown; do not copy an old success forward.
+Diagnose failures as they arrive and let other suite members continue. Ordinary
+setup, test or teardown failures do not justify cancelling the suite. Let the
+controller clean the failed run and repair its lane through normal operations;
+verify the actual repair invocation, conclusion and accepted resume or
+out-of-service decision. Healthy lanes continue independently.
 
-Fetch the original logs, screenshots, recording and setup/teardown diagnostics.
-Separate the original failure from subsequent cleanup and publication errors.
+Separate the original test outcome from later machine repair, cleanup and
+publication errors. Repairing machine state does not repair source or change the
+original verdict. If a global framework fault prevents useful execution,
+diagnose it and use normal operations within the current cancellation authority.
+Never force-release hardware, edit controller SQLite, change catalog toggles or
+weaken assertions to manufacture green. Keep live source/configuration unchanged
+while accepted work depends on them; this skill does not perform deployment.
+
+## Diagnose and group on evidence
+
+Keep one small durable ledger in existing task state: routine/run, failing
+phase/step, original error and evidence links, exact provenance, classification,
+causal group and supporting evidence, existing fix/job, PR/head/review, next action
+and verification result. Fetch the first useful framework result and setup/teardown
+journal before expanding into screenshots, recordings or command logs.
+
 Classify app, harness, machine/fixture state or unknown on evidence. Compare the
-failing source with current source before deciding it needs another fix.
+failing source with current source before fixing it. Reuse the relevant diagnosis
+mechanics in `fix-routine-failure`; this suite's completion boundary takes
+precedence over that skill's deployment/rerun loop.
 
-Group failures when evidence demonstrates the same cause in a shared provider
-or action at the recorded source/build, with compatible triggering conditions.
-Matching error text alone is insufficient. A suspected shared cause may use one
-owner to collect the missing observation, but keep the grouping provisional and
-split it when evidence differs. Keep every member's immutable original outcome,
-provenance and evidence; grouping never makes an unverified member pass.
+Group failures when evidence demonstrates the same cause in a shared provider or
+action at compatible source/build and triggering conditions. Matching wording
+alone is insufficient. A suspected shared cause can have one diagnosis owner,
+but keep it provisional and split when evidence differs. Preserve every member's
+original outcome; grouping never makes an unverified member pass.
 
-Use one diagnosis owner and coherent fix for a demonstrated causal group. Check
-existing PRs, merged fixes and authoring jobs before opening another; link them
-from the same ledger and reuse work that covers the cause and target. Avoid one
-fix or authoring job per failed routine when the same work resolves the group.
+Use one coherent fix for a demonstrated cause. Inspect existing PRs, merged fixes
+and compatible authoring jobs before creating more. Do not mechanically create
+one fix or job per failed routine. If the error lacks diagnostic information,
+fix the bounded, redacted observation gap first. Such a PR does not prove the
+original cause; do not spend hours repeating complete runs to rediscover it.
 
-If the saved error omits the information needed to diagnose it, fix that
-diagnostic gap first. Preserve the original cause, phase and action; add bounded,
-redacted context sufficient to explain the refusal or failure. A diagnostic PR
-does not establish the original cause or make its routine fixed. Do not spend
-hours repeating complete runs to rediscover an error that can be made visible.
+## Implement and finish the PR lifecycle
 
-Develop source-only fixes and meaningful regression checks in parallel while
-the suite runs. Give each owner an isolated workspace and clear file/subsystem
-scope. Keep routine behavior in `routines/`, shared mechanics in framework
-providers, and ownership/repair in orchestration. Reuse proven actions and the
-porting guide; avoid new compatibility paths, runners or arbitrary sleeps.
+Source-only investigation and fixes need no lane or activation receipt. Work in
+a clean isolated worktree from the current destination branch, retaining the
+failure's channel provenance: dev → dev, staging → staging, an open PR → its
+recorded repository/branch and base. Reuse existing relevant work. Keep routine
+behavior in `routines/`, shared mechanics in framework providers, and ownership
+or repair in orchestration. Follow repository guidance and proven actions;
+avoid new compatibility paths, runners or arbitrary sleeps.
 
-Fix the owning repository, retain the failure's source/channel provenance and
-use `bug:app` or `bug:harness` plus relevant routine labels. Every PR creation or
-push needs the independent `codex-pr-review` skill verdict on its exact head;
-address real findings and required checks before merging under the task's merge
-authority. Source tests and review remain separate from device verification.
+Run meaningful source checks, open a focused PR with diagnosis and validation,
+and use `select-pr-routines` for applicable coverage (`bug:app`/`bug:harness` and
+relevant routine labels). Documentation-only changes need no device coverage.
+Use the canonical independent `codex-pr-review` skill and its existing launcher
+on every opened or updated PR. Read its verdict and all relevant requested
+changes; address real findings, explain evidence-backed disagreements, and rerun
+review after changing the head. Do not substitute self-review or a bare reviewer
+agent. See [review and merge](references/operations.md#review-and-merge).
 
-## Choose the shortest useful verification
+Merge only with an approving canonical review on the exact current head and
+passing required checks, under the task's merge authority. Reconcile uncertain
+push/PR/review/merge outcomes before retrying. Continue this lifecycle without
+asking for authorization already supplied by the task. Keep credentials, private
+logs and recordings out of public PRs/comments.
 
-After the current suite finishes, verify at the relevant lane's normal ownership
-boundary. Harness activation through the existing path additionally requires
-every accepted request, executor and reservation depending on the replaced
-source/shared configuration to settle; an idle lane alone does not permit
-replacing live installed source. Publication custody and admission budgets remain
-enforced. Use reviewed merged harness code and the selected PR/channel artifact
-for app fixes. Do not silently substitute today's newest build for the failed build.
+## Choose useful verification
 
-Choose the smallest useful verification for each causal group, using judgment:
+Use the smallest verification that can distinguish the cause. Strong causal
+source evidence may need focused regression checks and ordinary targeted replay;
+source-only fixes do not need an authoring session. When device inspection or
+action iteration is genuinely necessary, reuse a compatible built-in
+`routine-work` create/edit job or submit one for a representative routine with
+the group's evidence and needed observation. Follow
+[authoring operations](references/operations.md#built-in-authoring).
 
-| Evidence and remaining work | Next action |
-| --- | --- |
-| Focused fix with strong causal evidence and a high likelihood of passing | Manually dispatch the smallest set of affected routines that exercises the shared cause through ordinary orchestration; no authoring session needed |
-| Available logs/source are insufficient and device inspection or action iteration is needed | Reuse a compatible built-in `routine-work` create/edit job, or submit one for a representative affected routine with the group's diagnosis and exact source/build |
-| Insufficient logs, missing artifact/capability or genuine access gap | Fix the observation/prerequisite or ask for the specific missing input; do not invent a pass or repeatedly retry |
+Each job names one routine and target. Distinct unresolved device work or
+incompatible platform/source/build targeting can require separate jobs. The
+supervisor owns its workspace, agent, scoped connection, reservation and held
+session; raw author commands are inner job operations. Keep the proven prefix,
+safe prerequisite state and saved action. Finish and return through the job
+normally. An authoring section is not an ordinary passing run.
 
-Keep separate device jobs when distinct unresolved device work or incompatible
-routine/platform/source/build targeting requires them. A grouped diagnosis does
-not change the job API: each job names one routine and target. Record which
-members a verification actually covers and what remains for the full catalog.
+If verification needs merged source not yet installed, record the exact pending
+deployment prerequisite and its actual owner. Continue independent diagnoses,
+source fixes and PR work. Do not take over deployment or make a general
+coordinator handoff a stopping gate. Required merge checks still apply; distinguish
+optional deferred device evidence from a check that actually blocks merging.
+A new failure returns to diagnosis, not an automatic full-suite retry loop.
 
-The built-in job supervisor owns the workspace, machine agent, reservation and
-held session. Follow the harness [job guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-WORK.md)
-and [assigned-agent skill](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/.agents/skills/prepare-routine-work/SKILL.md).
-The assigned agent inspects or executes the failing saved action from its safe
-prerequisite state, keeping the owner, recorder and proven prefix. Retry with a
-concrete reason instead of reinstalling and repeating the whole flow. Raw author
-commands are inner job operations, not an alternative coordinator runner. Use
-the same saved action replay will use. Finish and return through the job normally;
-authoring sections are not full-run results. A new failure returns to diagnosis,
-not an automatic full-suite retry loop.
+## Continue efficiently through long waits
 
-## Close with the whole catalog
+Keep a compact continuation record beside the ledger: phase, stable suite/job/PR
+identities, next action, prerequisite, owner, last receipt and resume trigger.
+When a prerequisite settles, perform the next authorized action in the same turn.
+“Ready,” idle lanes and queued handoffs are milestones, not completion.
 
-Consume every targeted run's exact-source result, cleanup and published evidence.
-When the fixes are ready, manually trigger a new dev nightly through the normal
-nightly path; do not wait for its scheduled time. Use all enabled catalog entries
-and frozen build selection. Do not exclude failures, weaken assertions or accept
-missing/not-run members to manufacture green.
+Do useful source work during a long suite or review, then use a supported long
+poll or genuinely verified durable wakeup. Read the
+[wait procedure](references/operations.md#wait-without-losing-the-task).
+Consume changed-state projections; avoid repeatedly loading complete results,
+logs or transcripts. Report useful changes: new diagnosis, fixed cause, review
+finding, merged PR or a specific blocker and next action. Stay quiet while nothing
+changes. Never claim a queued message or notification-only timer will resume this
+chat. If no resume mechanism exists, report that execution gap and the saved
+continuation instead of claiming autonomous completion is arranged. Use available
+bounded waiting while preserving work; do not introduce a queue/timer framework.
 
-Verify the terminal suite lists every selected member, their actual outcomes
-and required published evidence. The coordinator checks the hosted Admin page
-and useful recordings, and verifies the real final `#dev-builds` Slack send
-receipt. A notification failure retries notification delivery after reconciling
-its original send; it must not rerun tests or duplicate an uncertain message.
+## Report merged fixes and honest limits
 
-Deliver the stable suite link, tested build, member counts and Slack result.
-Report an incomplete/failed suite and remaining owners honestly. Preserve small
-receipts and necessary failure context, then let normal cleanup dispose of owned
-run payloads and remove retired review/fixer worktrees. Do not delete native
-Codex/Claude history or retain a parallel archive of old run downloads.
+Finish when each observed failure is reconciled to an approved merged fix,
+already merged equivalent, evidence-backed machine/fixture conclusion, or a
+specific unresolved dependency with next action and owner. Do not hide an
+unresolved failure to claim completion. If members are still running, report the
+observed coverage and continue via the verified resume path to consume remaining
+results. Preserve concise receipts and evidence links; clean disposable owned
+worktrees through normal operations. Flag any removed system without an improved
+replacement for a follow-up spec. Do not delete native chat history or keep a
+parallel archive of run downloads.
+
+Final report example:
+
+> Suite <stable link>: 28/28 members terminal; original verdict failed. Shared
+> download cause: fixed in <merged PR>, approved at <head>; focused tests passed.
+> Pairing: <conclusion and merged PR or unresolved dependency>. Device replay was
+> not performed because <exact source> awaits deployment by <owner>. No new suite
+> was started and no passing-suite claim is made. Remaining work: <specific item>.

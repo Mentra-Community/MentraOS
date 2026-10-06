@@ -1,4 +1,4 @@
 interface:
   display_name: "Fix nightly failures"
-  short_description: "Diagnose, fix and verify independent nightly runs"
-  default_prompt: "Use $fix-nightly-failures to investigate this nightly suite and deliver verified fixes and the next full-suite result."
+  short_description: "Diagnose nightly failures and merge reviewed fixes"
+  default_prompt: "Use $fix-nightly-failures on this ongoing or finished suite. Diagnose and group failures, implement fixes, run independent codex-pr-review, address findings and merge after approval and required checks. Report conclusions and verification limits; do not deploy or start another full suite."

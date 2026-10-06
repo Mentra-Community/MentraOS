@@ -24,7 +24,7 @@ type PlatformSelection = {build?: TestBuild; host?: ReceivedTestHostState | null
 const logger = createLogger("core").child({service: "nightly-routine"});
 export interface NightlyMember {
   memberId: string; routineId: string; platform: TestBuildPlatform; definitionRevision: string; definitionSha256: string;
-  build?: ReturnType<typeof selectedBuildInput>;
+  build?: ReturnType<typeof selectedBuildInput> & {manifest?: TestBuild["manifest"];manifestSha256?: string};
   requestId: string; hostId?: string; input?: RequestInput; unavailableReason?: string; selectionErrors?: NightlySelectionError[];
 }
 export interface NightlyPlan extends Occurrence {suiteId: string; members: NightlyMember[]; suite?: TestSuite;
@@ -173,7 +173,7 @@ export class NightlyRoutineService {
   private member(row: RoutineEnrollment, suiteId: string, binding: RoutineLaneBindings[TestBuildPlatform],
     selected: PlatformSelection): NightlyMember {
     const memberId = `member-${digestId([row.routineId, row.platform])}`, requestId = `${suiteId}-${memberId}`;
-    const buildInput = selected.build?.availability === "available" && selected.build.archive && selected.build.receipt ? selectedBuildInput(selected.build, row.platform) : undefined;
+    const buildInput = selected.build?.availability === "available" && selected.build.archive && selected.build.receipt ? {...selectedBuildInput(selected.build, row.platform), ...(selected.build.manifest ? {manifest:selected.build.manifest,manifestSha256:selected.build.manifestSha256} : {})} : undefined;
     const base = {memberId, requestId, routineId: row.routineId, platform: row.platform, definitionRevision: row.definitionRevision,
       definitionSha256: row.definitionSha256, ...(buildInput ? {build: buildInput} : {})};
     if (selected.errors.length) return {...base, selectionErrors: selected.errors,

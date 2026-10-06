@@ -1,3 +1,4 @@
+import {RunRerunLinks} from "./test-reruns";
 import {useEffect, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
 import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
@@ -228,6 +229,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     <section className={PANEL}><h2 className="text-xl font-semibold">{run.routineId}: {outcome}</h2>
       <p className="mt-2">Started {new Date(run.startedAt).toLocaleString()} · Finished {new Date(run.finishedAt).toLocaleString()}</p>
       <p className="mt-2 text-sm">Run <code>{actualRunId}</code> · Request <code>{run.requestId}</code></p>
+      <RunRerunLinks requestId={run.requestId}/>
       <p className="mt-2"><BuildIdentity build={run.build} /></p>
       {definition?.source && <p className="mt-2 text-sm"><a className="underline" href={definitionSourceHref(definition.source)} target="_blank" rel="noreferrer">Routine source at {definition.source.revision.slice(0, 10)}</a></p>}
       <p className="mt-2">Computer: {run.hostId} · Lane: {run.laneId} · {run.platform}</p>
