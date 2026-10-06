@@ -61,7 +61,8 @@ activation; a label does not authorize unmerged worker code.
 
 ## Held authoring and source activation
 
-Submit interactive work through the built-in machine authoring job. Read the
+After the current suite finishes, submit interactive verification through the
+built-in machine authoring job. Prepare its diagnosis brief while members run. Read the
 private harness [job guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-WORK.md),
 [assigned-agent skill](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/.agents/skills/prepare-routine-work/SKILL.md)
 and selected revision's `contracts/routine-work.ts`. Use the provisioned operator
@@ -76,8 +77,13 @@ bun run mentra-test routine-work inspect @work-id.json
 `routineId`, English `brief` (`goal`, `stepsOrChanges`, `expected`), exact harness
 `source`, published `build`, enrolled `target` and `requirements`. Local submissions
 omit `origin`; inspect with `{workId}`. Use `edit` for an existing routine and
-`create` for a new one; there is no diagnosis job type. Put the recorded failure,
-needed observation and any capability gap in the brief without inventing a patch.
+`create` for a new one; there is no diagnosis job type. For a causal group, name
+one representative routine and include the affected original runs, evidence for
+the shared cause, needed observation and any capability gap in its brief. Reuse
+an existing compatible job before submitting another. Grouping does not add a
+multi-routine target or authorize actions outside that job's source/build,
+target and reservation; separate jobs only when distinct unresolved device work
+or incompatible targeting requires them. Do not invent a patch.
 
 The supervisor creates the workspace and machine agent, supplies its scoped
 connection, and binds the job's reservation and held session. The assigned agent
@@ -92,8 +98,10 @@ remain separate and need no authoring job when the evidence supports that choice
 Use the host's existing installation/source-verification operations for merged
 harness activation. Do not rewrite live candidate/release files or mutate
 controller SQLite. Keep source preparation separate from activation; verify the
-old suite/executors, authoring reservations and owned resources have settled at
-the normal boundary, then record the exact new installed source. If no provisioned
+accepted requests/executors, authoring reservations and owned resources affected
+by the replaced source/shared configuration have settled at the normal boundary,
+then record the exact new installed source. An idle lane is insufficient when
+another lane's accepted work still depends on that installation. If no provisioned
 framework activation operation is available, report that capability gap and own
 its resolution. `source.enroll` registers definitions; an authoring-job candidate
 installer is not a generic framework-release activation command. Do not invent a
