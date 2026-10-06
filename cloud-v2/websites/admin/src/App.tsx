@@ -1,4 +1,4 @@
-import {NativeDispatchPanel, NativeActivityPanel} from "./pages/framework-dispatch";
+import {TestRunsTabs} from "./pages/test-runs-tabs";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
@@ -462,7 +462,7 @@ function AdminPage() {
       {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
       {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
       {page === "test-runs" && !suiteId ? (
-        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <>
+        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <TestRunsTabs>
           {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
             <h2 className="font-semibold">Results for the selected build</h2>
             <p className="mt-2">{testRunListScope.repository} · {testRunListScope.channel} · <code>{testRunListScope.headSha}</code> · {testRunListScope.routineId} · {testRunListScope.platform}</p>
@@ -473,8 +473,7 @@ function AdminPage() {
             <p className="mt-2">The link has missing or unsupported build details. Open a current result link, or choose all test runs.</p>
             <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
           </section> : <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />}
-          <NativeActivityPanel /><NativeDispatchPanel />
-        </>
+        </TestRunsTabs>
       ) : null}
 
       {detailRelease ? (
