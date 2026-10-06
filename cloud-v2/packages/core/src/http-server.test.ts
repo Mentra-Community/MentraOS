@@ -99,7 +99,7 @@ test('Core listener admits authenticated routine archives above ordinary limit a
       const size = CORE_ORDINARY_BODY_BYTES + 1
       const metadata = {commit: 'b'.repeat(40), routineId: 'fixture', minimumRoutineApiVersion: 1, definitionSha256: 'c'.repeat(64), size}
       const url = `http://127.0.0.1:${server.port}/api/internal/routine-definitions/bundles/${digest}?metadata=${encodeURIComponent(JSON.stringify(metadata))}`
-      const headers: Record<string, string> = {authorization: `Bearer ${token}`, 'content-type': 'application/gzip'}
+      const headers: Record<string, string> = {authorization: `Bearer ${token}`, 'content-type': 'application/gzip', 'x-forwarded-proto': 'https'}
       if (withLength) headers['content-length'] = String(size)
       const response = await fetch(url, {method: 'POST', headers, body: stream(size)})
       expect(response.status).toBe(200)

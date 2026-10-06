@@ -21,7 +21,13 @@ export function createRoutineDefinitionsApi(service = new RoutineDefinitionServi
     let metadata: unknown;
     try {metadata = routineBundleMetadataSchema.parse(JSON.parse(c.req.query('metadata') ?? ''));}
     catch {throw new TestRunError(400, 'Invalid routine bundle metadata');}
-    return c.json(await bundles.publish(c.req.param('sha256'), metadata, c.req.raw.body, c.req.url));
+    // ingress-nginx terminates TLS, overwrites x-forwarded-proto, and preserves Host,
+    // matching account OAuth's publicOrigin derivation without trusting the pod's http URL.
+    const url = new URL(c.req.url), proto = c.req.header('x-forwarded-proto') ?? url.protocol.replace(':', '');
+    const origin = new URL(`${proto}://${url.host}`);
+    if (origin.protocol !== 'https:' || origin.username || origin.password)
+      throw new TestRunError(400, 'Routine bundle publication requires an HTTPS public origin');
+    return c.json(await bundles.publish(c.req.param('sha256'), metadata, c.req.raw.body, origin.origin));
   });
   app.get('/bundles/:sha256', c => bundles.download(c.req.param('sha256')));
   app.post('/collection', frameworkBodyLimit(), async c => c.json(await service.publishCollection(await frameworkJson(c))));
