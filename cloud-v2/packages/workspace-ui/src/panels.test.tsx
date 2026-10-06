@@ -1,11 +1,13 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createWorkspaceApi } from "./api";
 import { WorkspaceApiError } from "./errors";
 import { InvitationAcceptCard, InvitationAcceptView, type InvitationLoad } from "./components/invitation-accept-view";
 import { WorkspaceAuditPanel } from "./components/audit-panel";
-import { WorkspaceInvitationsPanel } from "./components/invitations-panel";
+import { InvitationsScreen, WorkspaceInvitationsPanel } from "./components/invitations-panel";
+import { QueryGate } from "./components/common";
 import { WorkspaceMembersPanel } from "./components/members-panel";
 import { WorkspacePicker } from "./components/workspace-picker";
 import { WorkspaceSettingsPanel } from "./components/settings-panel";
@@ -19,6 +21,7 @@ import {
   OTHER_MEMBERS,
   organizationAdminDetail,
   detailFor,
+  renderAfterFailedRefetch,
   renderSeeded,
   selectOptions,
   WORKSPACE_ID,
@@ -195,6 +198,98 @@ describe("invitations panel", () => {
     expect(markup).toContain("Only workspace admins can manage invitations.");
     expect(markup).not.toContain("<form");
     expect(markup).not.toContain("newbie@acme.test");
+  });
+});
+
+describe("a failed background refetch keeps what was already loaded", () => {
+  test("the invitation link stays on screen, with the invitations that were loaded", async () => {
+    const { api } = offlineApi();
+    const markup = await renderAfterFailedRefetch(
+      api,
+      { detail: detailFor("admin"), invitations: INVITATIONS },
+      <InvitationsScreen
+        api={api}
+        workspaceId={WORKSPACE_ID}
+        initialLink={{ email: "friend@acme.test", role: "member", inviteUrl: "https://example.test/join#one-time" }}
+      />,
+      ["detail", "invitations"],
+    );
+    expect(markup).toContain("https://example.test/join#one-time");
+    expect(markup).toContain("newbie@acme.test");
+    expect(markup).not.toContain("Try again");
+  });
+
+  test("the invitation link shows even before anything has loaded", () => {
+    const { api } = offlineApi();
+    const markup = renderSeeded(
+      api,
+      {},
+      <InvitationsScreen
+        api={api}
+        workspaceId={WORKSPACE_ID}
+        initialLink={{ email: "friend@acme.test", role: "member", inviteUrl: "https://example.test/join#one-time" }}
+      />,
+    );
+    expect(markup).toContain("Loading");
+    expect(markup).toContain("https://example.test/join#one-time");
+  });
+
+  test("every panel keeps its content instead of swapping it for an error", async () => {
+    const { api } = offlineApi();
+    const admin = detailFor("admin");
+    const failed = (ui: ReactElement, seed: Parameters<typeof renderSeeded>[1], failing: Parameters<typeof renderAfterFailedRefetch>[3]) =>
+      renderAfterFailedRefetch(api, seed, ui, failing);
+
+    const members = await failed(
+      <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} />,
+      { detail: admin, members: membersFor(admin) },
+      ["detail", "members"],
+    );
+    expect(members).toContain("Dana Developer");
+
+    const audit = await failed(
+      <WorkspaceAuditPanel api={api} workspaceId={WORKSPACE_ID} />,
+      { detail: admin, audit: { items: AUDIT_EVENTS, next: null } },
+      ["detail", "audit"],
+    );
+    expect(audit).toContain("Role changed");
+
+    const settings = await failed(
+      <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />,
+      { detail: detailFor("owner") },
+      ["detail"],
+    );
+    expect(settings).toContain("Save name");
+
+    const picker = await failed(
+      <WorkspacePicker api={api} value={WORKSPACE_ID} onChange={() => {}} />,
+      { list: [detailFor("owner")] },
+      ["list"],
+    );
+    expect(picker).toContain(WORKSPACE_NAME);
+
+    for (const markup of [members, audit, settings, picker]) expect(markup).not.toContain("Try again");
+  });
+});
+
+describe("QueryGate", () => {
+  const retry = () => {};
+  const gate = (result: { data: string | undefined; isError: boolean; error: unknown }) =>
+    renderToStaticMarkup(
+      <QueryGate result={{ ...result, refetch: retry }}>{(data) => <p>loaded: {data}</p>}</QueryGate>,
+    );
+
+  test("shows data whenever there is any, even when the last refetch failed", () => {
+    expect(gate({ data: "old", isError: true, error: new WorkspaceApiError(0, "network_error", "offline") })).toContain("loaded: old");
+    expect(gate({ data: "fresh", isError: false, error: null })).toContain("loaded: fresh");
+  });
+
+  test("with no data, loading shows Loading and a failure shows the error with a retry", () => {
+    expect(gate({ data: undefined, isError: false, error: null })).toContain("Loading");
+    const failed = gate({ data: undefined, isError: true, error: new WorkspaceApiError(502, "http_502", "Bad Gateway") });
+    expect(failed).toContain("Bad Gateway");
+    expect(failed).toContain("Try again");
+    expect(failed).not.toContain("loaded:");
   });
 });
 

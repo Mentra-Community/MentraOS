@@ -9,15 +9,15 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { CredentialView } from "@mentra/workspace-contract";
-import { useId, useReducer, useState, type FormEvent } from "react";
+import { useEffect, useId, useReducer, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { CreateCredentialInput, WorkspaceApi } from "../api";
 import { formatDate, formatDateTime } from "../lib/format";
 import { credentialsQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
-import { can } from "../roles";
+import { can, canCreateCredentials } from "../roles";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ConfirmButton, CopyButton, ErrorNotice, Loading, LoadError, Panel, Restricted } from "./common";
+import { ConfirmButton, CopyButton, ErrorNotice, Panel, QueryGate, Restricted } from "./common";
 
 const TITLE = "Credentials";
 const DESCRIPTION = "Keys that let CI and tools publish miniapps for this workspace. A key acts as the person who created it.";
@@ -78,14 +78,31 @@ function tomorrow(): string {
 
 export function WorkspaceCredentialsPanel(props: { api: WorkspaceApi; workspaceId: string }) {
   // Keyed by workspace so a token shown for one workspace is never carried over to another.
-  return <CredentialsPanel key={props.workspaceId} {...props} />;
+  return <CredentialsScreen key={props.workspaceId} {...props} />;
 }
 
-function CredentialsPanel({ api, workspaceId }: { api: WorkspaceApi; workspaceId: string }) {
+/**
+ * The panel itself. `initialSecret` exists so a test can render the state after a credential was created;
+ * the public panel never sets it.
+ *
+ * The one-time dialog is rendered here, outside the loading and error states of the queries behind the
+ * list: it holds the only copy of the token, so a refetch that fails must not take it off the screen.
+ */
+export function CredentialsScreen({
+  api,
+  workspaceId,
+  initialSecret = { status: "hidden" },
+}: {
+  api: WorkspaceApi;
+  workspaceId: string;
+  initialSecret?: SecretState;
+}) {
   const detailResult = useQuery(workspaceDetailQuery(api, workspaceId));
-  const canUse = can(detailResult.data, "miniapps.credentials.create");
-  const listResult = useQuery({ ...credentialsQuery(api, workspaceId), enabled: canUse });
-  const [secret, dispatch] = useReducer(secretReducer, { status: "hidden" });
+  const listResult = useQuery({
+    ...credentialsQuery(api, workspaceId),
+    enabled: can(detailResult.data, "miniapps.credentials.create"),
+  });
+  const [secret, dispatch] = useReducer(secretReducer, initialSecret);
 
   const create = useWorkspaceMutation(api, workspaceId, (input: CreateCredentialInput) =>
     createCredentialAndReveal(api, workspaceId, input, (revealed) => dispatch({ type: "created", ...revealed })),
@@ -94,86 +111,59 @@ function CredentialsPanel({ api, workspaceId }: { api: WorkspaceApi; workspaceId
     api.revokeCredential(workspaceId, credentialId),
   );
 
-  if (detailResult.isPending) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <Loading />
-      </Panel>
-    );
-  }
-  if (detailResult.isError) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <LoadError error={detailResult.error} onRetry={() => void detailResult.refetch()} />
-      </Panel>
-    );
-  }
-  if (!canUse) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <Restricted>Credentials are available to developers, admins and owners.</Restricted>
-      </Panel>
-    );
-  }
-  if (listResult.isPending) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <Loading />
-      </Panel>
-    );
-  }
-  if (listResult.isError) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <LoadError error={listResult.error} onRetry={() => void listResult.refetch()} />
-      </Panel>
-    );
-  }
-
   return (
-    <CredentialsPanelView
-      credentials={listResult.data}
-      secret={secret}
-      busy={create.isPending || revoke.isPending}
-      error={create.error ?? revoke.error}
-      onCreate={(input, onCreated) => {
-        revoke.reset();
-        create.mutate(input, { onSuccess: onCreated });
-      }}
-      onRevoke={(credentialId) => {
-        create.reset();
-        revoke.mutate(credentialId);
-      }}
-      onDismissSecret={() => dispatch({ type: "dismissed" })}
-    />
+    <>
+      <Panel title={TITLE} description={DESCRIPTION}>
+        <QueryGate result={detailResult}>
+          {(detail) =>
+            !can(detail, "miniapps.credentials.create") ? (
+              <Restricted>Credentials are available to developers, admins and owners.</Restricted>
+            ) : (
+              <QueryGate result={listResult}>
+                {(credentials) => (
+                  <CredentialsContent
+                    credentials={credentials}
+                    canCreate={canCreateCredentials(detail)}
+                    busy={create.isPending || revoke.isPending}
+                    onCreate={(input, onCreated) => {
+                      revoke.reset();
+                      create.mutate(input, { onSuccess: onCreated });
+                    }}
+                    onRevoke={(credentialId) => {
+                      create.reset();
+                      revoke.mutate(credentialId);
+                    }}
+                  />
+                )}
+              </QueryGate>
+            )
+          }
+        </QueryGate>
+        <ErrorNotice error={create.error ?? revoke.error} />
+      </Panel>
+      {secret.status === "shown" ? (
+        <SecretDialog name={secret.name} token={secret.token} onDone={() => dispatch({ type: "dismissed" })} />
+      ) : null}
+    </>
   );
 }
 
-export interface CredentialsPanelViewProps {
+interface CredentialsContentProps {
   credentials: CredentialView[];
-  secret: SecretState;
+  /** Whether the viewer can create a credential (see `canCreateCredentials`). */
+  canCreate: boolean;
   busy: boolean;
-  error: unknown;
   /** `onCreated` runs when the server accepted the credential, so the form can clear itself. */
   onCreate(input: CreateCredentialInput, onCreated: () => void): void;
   onRevoke(credentialId: string): void;
-  onDismissSecret(): void;
 }
 
 /**
- * The credentials screen without its data fetching. Revoke is offered on every credential the viewer can
- * see: the server allows a credential's creator or an admin and says so when it refuses, and the listing
- * does not say who the viewer is, so a developer revoking their own key must not be hidden from them.
+ * The create form and the credential table. Revoke is offered on every credential the viewer can see: the
+ * server allows a credential's creator or an admin and says so when it refuses, and the listing does not
+ * say who the viewer is, so a developer revoking their own key must not be hidden from them.
  */
-export function CredentialsPanelView({
-  credentials,
-  secret,
-  busy,
-  error,
-  onCreate,
-  onRevoke,
-  onDismissSecret,
-}: CredentialsPanelViewProps) {
+function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }: CredentialsContentProps) {
   const [name, setName] = useState("");
   const [packages, setPackages] = useState("");
   const [expires, setExpires] = useState("");
@@ -198,47 +188,54 @@ export function CredentialsPanelView({
   }
 
   return (
-    <Panel title={TITLE} description={DESCRIPTION}>
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
-        <div className="grid gap-1.5">
-          <Label htmlFor={nameId}>Name</Label>
-          <Input
-            id={nameId}
-            required
-            maxLength={64}
-            autoComplete="off"
-            placeholder="CI publisher"
-            className="w-56"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={packagesId}>Packages (optional)</Label>
-          <Input
-            id={packagesId}
-            autoComplete="off"
-            placeholder="com.example.app, com.example.other"
-            className="w-72"
-            value={packages}
-            onChange={(event) => setPackages(event.target.value)}
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={expiresId}>Expires (optional)</Label>
-          <Input
-            id={expiresId}
-            type="date"
-            min={tomorrow()}
-            className="w-44"
-            value={expires}
-            onChange={(event) => setExpires(event.target.value)}
-          />
-        </div>
-        <Button type="submit" disabled={busy || name.trim() === ""}>
-          Create credential
-        </Button>
-      </form>
+    <>
+      {canCreate ? (
+        <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor={nameId}>Name</Label>
+            <Input
+              id={nameId}
+              required
+              maxLength={64}
+              autoComplete="off"
+              placeholder="CI publisher"
+              className="w-56"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={packagesId}>Packages (optional)</Label>
+            <Input
+              id={packagesId}
+              autoComplete="off"
+              placeholder="com.example.app, com.example.other"
+              className="w-72"
+              value={packages}
+              onChange={(event) => setPackages(event.target.value)}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={expiresId}>Expires (optional)</Label>
+            <Input
+              id={expiresId}
+              type="date"
+              min={tomorrow()}
+              className="w-44"
+              value={expires}
+              onChange={(event) => setExpires(event.target.value)}
+            />
+          </div>
+          <Button type="submit" disabled={busy || name.trim() === ""}>
+            Create credential
+          </Button>
+        </form>
+      ) : (
+        <Restricted>
+          Only members of this workspace with the developer role or above can create credentials, because a credential
+          acts as the member who created it.
+        </Restricted>
+      )}
 
       {credentials.length === 0 ? (
         <Restricted>No credentials yet.</Restricted>
@@ -293,27 +290,50 @@ export function CredentialsPanelView({
           </table>
         </div>
       )}
-      <ErrorNotice error={error} />
-
-      {secret.status === "shown" ? (
-        <SecretDialog name={secret.name} token={secret.token} onDone={onDismissSecret} />
-      ) : null}
-    </Panel>
+    </>
   );
 }
 
 /**
  * The creation dialog. Only Done closes it: no Escape, no click outside, so the one chance to copy the
- * token cannot be lost by accident.
+ * token cannot be lost by accident. Focus moves into it on open, stays inside it (Tab wraps between its
+ * buttons), and goes back to where it was when it closes.
  */
 export function SecretDialog({ name, token, onDone }: { name: string; token: string; onDone: () => void }) {
   const titleId = useId();
+  const dialog = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog.current?.querySelector<HTMLElement>("button")?.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
+
+  function keepFocusInside(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Tab") return;
+    const buttons = [...(dialog.current?.querySelectorAll<HTMLElement>("button:not([disabled])") ?? [])];
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div
+        ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        onKeyDown={keepFocusInside}
         className="bg-card text-card-foreground w-full max-w-lg space-y-4 rounded-xl border p-6 shadow-lg"
       >
         <h2 id={titleId} className="text-lg leading-none font-semibold">
@@ -325,7 +345,7 @@ export function SecretDialog({ name, token, onDone }: { name: string; token: str
         </p>
         <code className="bg-muted block rounded-md border p-3 text-xs break-all select-all">{token}</code>
         <div className="flex justify-end gap-2">
-          <CopyButton text={token} label="Copy credential" autoFocus />
+          <CopyButton text={token} label="Copy credential" />
           <Button type="button" onClick={onDone}>
             Done
           </Button>

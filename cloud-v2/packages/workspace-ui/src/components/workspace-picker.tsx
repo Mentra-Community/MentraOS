@@ -9,7 +9,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { NativeSelect } from "../ui/native-select";
-import { ErrorNotice, Loading, LoadError } from "./common";
+import { ErrorNotice, QueryGate } from "./common";
 
 export function WorkspacePicker({
   api,
@@ -52,47 +52,48 @@ export function WorkspacePicker({
     });
   }
 
-  if (listResult.isPending) return <Loading>Loading workspaces…</Loading>;
-  if (listResult.isError) return <LoadError error={listResult.error} onRetry={() => void listResult.refetch()} />;
-
-  const workspaces = listResult.data;
-  const known = workspaces.some((workspace) => workspace.workspaceId === value);
-
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
-        {workspaces.length > 0 ? (
-          <div className="flex items-center gap-2">
-            <Label htmlFor={selectId}>Workspace</Label>
-            <NativeSelect
-              id={selectId}
-              aria-label="Workspace"
-              value={known ? (value ?? "") : ""}
-              onChange={(event) => {
-                if (event.target.value) onChange(event.target.value);
-              }}
-            >
-              {known ? null : (
-                <option value="" disabled>
-                  Select a workspace
-                </option>
+      <QueryGate result={listResult} loadingLabel="Loading workspaces…">
+        {(workspaces) => {
+          const known = workspaces.some((workspace) => workspace.workspaceId === value);
+          return (
+            <div className="flex flex-wrap items-center gap-3">
+              {workspaces.length > 0 ? (
+                <div className="flex items-center gap-2">
+                  <Label htmlFor={selectId}>Workspace</Label>
+                  <NativeSelect
+                    id={selectId}
+                    aria-label="Workspace"
+                    value={known ? (value ?? "") : ""}
+                    onChange={(event) => {
+                      if (event.target.value) onChange(event.target.value);
+                    }}
+                  >
+                    {known ? null : (
+                      <option value="" disabled>
+                        Select a workspace
+                      </option>
+                    )}
+                    {workspaces.map((workspace) => (
+                      <option key={workspace.workspaceId} value={workspace.workspaceId}>
+                        {workspace.name}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">You are not in any workspace yet.</p>
               )}
-              {workspaces.map((workspace) => (
-                <option key={workspace.workspaceId} value={workspace.workspaceId}>
-                  {workspace.name}
-                </option>
-              ))}
-            </NativeSelect>
-          </div>
-        ) : (
-          <p className="text-muted-foreground text-sm">You are not in any workspace yet.</p>
-        )}
-        {allowCreate && !creating ? (
-          <Button type="button" variant="outline" size="sm" onClick={() => setCreating(true)}>
-            <PlusIcon /> New workspace
-          </Button>
-        ) : null}
-      </div>
+              {allowCreate && !creating ? (
+                <Button type="button" variant="outline" size="sm" onClick={() => setCreating(true)}>
+                  <PlusIcon /> New workspace
+                </Button>
+              ) : null}
+            </div>
+          );
+        }}
+      </QueryGate>
 
       {allowCreate && creating ? (
         <form onSubmit={submit} className="flex flex-wrap items-end gap-3">

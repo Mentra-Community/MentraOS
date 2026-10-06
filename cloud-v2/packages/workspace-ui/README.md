@@ -60,13 +60,18 @@ API's `basePath`, so two APIs can share one client without sharing data.
   workspace name).
 - **Secrets are shown once and never cached.** A credential's token and an invitation
   link live in the panel's state until dismissed. They are not in the query or mutation
-  cache and not in any URL (invitation tokens travel in POST bodies).
+  cache and not in any URL (invitation tokens travel in POST bodies). They stay on screen
+  even if a background refetch fails: a failed refetch keeps the data already loaded, and
+  only a query that has never loaded shows an error.
+- **Credentials need a member who can publish.** Core ties a credential to its creator's
+  membership, so the create form is shown only to members with the developer role or
+  above. An organization admin outside the workspace can list and revoke but not create.
 
 ## Styling
 
 The components are styled with Tailwind v4 utility classes and use the shadcn-style
 theme tokens (`background`, `foreground`, `card`, `primary`, `secondary`, `muted`,
-`accent`, `destructive`, `border`, `input`, `ring`, `popover`). Tailwind only generates
+`accent`, `destructive`, `border`, `input`, `ring`). Tailwind only generates
 the classes it finds, so the consuming app must scan this package's sources. In the
 stylesheet that imports Tailwind, add:
 
@@ -86,7 +91,7 @@ bun test packages/workspace-ui   # API client and panels (server-rendered with s
 bun run typecheck                # tsc -b, which includes this package
 ```
 
-`src/ui/` holds copies of the admin dashboard's `button`, `card`, `input`, `label` and
-`select` primitives (the Store cannot import the admin's own), plus a `native-select`.
-The panels use the native select because its options are real markup on the server and
-use each platform's own picker. The Radix `select` copy is not used by them today.
+`src/ui/` holds copies of the admin dashboard's `button`, `card`, `input` and `label`
+primitives (the Store cannot import the admin's own), plus a `native-select`. The panels
+use a native select because its options are real markup on the server and use each
+platform's own picker.

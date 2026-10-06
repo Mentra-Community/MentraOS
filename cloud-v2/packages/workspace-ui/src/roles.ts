@@ -51,3 +51,14 @@ export function roleOptions(viewer: WorkspaceRole | null, from: WorkspaceRole): 
 export function canRemoveRole(viewer: WorkspaceRole | null, from: WorkspaceRole): boolean {
   return viewer !== null && canChangeRole(viewer, from, null);
 }
+
+/**
+ * Whether the viewer can create a credential here. Core ties a credential to its creator's membership and
+ * refuses one whose creator is not a member whose own role can publish, so an organization admin acting
+ * from outside the workspace (or from a lower role) can list and revoke credentials but not create them.
+ */
+export function canCreateCredentials(detail: Pick<WorkspaceDetail, "capabilities" | "membership"> | undefined): boolean {
+  if (!detail?.membership || !can(detail, "miniapps.credentials.create")) return false;
+  const held = capabilitiesForRole(detail.membership.role);
+  return held.has("miniapps.credentials.create") && held.has("miniapps.publish");
+}

@@ -65,6 +65,27 @@ export function LoadError({ error, onRetry }: { error: unknown; onRetry: () => v
   );
 }
 
+/**
+ * The loading and failed-load states every panel shares. The data is shown whenever there is any: a
+ * background refetch that fails (the connection dropped, a 5xx) keeps what was already loaded rather
+ * than replacing the panel with an error. Only a query that has no data yet shows Loading, or, once it
+ * has failed, the error with a retry. Pass only queries that are enabled: a disabled one has no data and
+ * would read as loading for ever.
+ */
+export function QueryGate<T>({
+  result,
+  loadingLabel,
+  children,
+}: {
+  result: { data: T | undefined; isError: boolean; error: unknown; refetch: () => unknown };
+  loadingLabel?: string;
+  children: (data: T) => ReactNode;
+}) {
+  if (result.data !== undefined) return <>{children(result.data)}</>;
+  if (result.isError) return <LoadError error={result.error} onRetry={() => void result.refetch()} />;
+  return <Loading>{loadingLabel}</Loading>;
+}
+
 export function RoleBadge({ role, className }: { role: WorkspaceRole; className?: string }) {
   return (
     <span
@@ -93,7 +114,7 @@ export function Badge({ children, className }: { children: ReactNode; className?
 
 /**
  * A destructive action behind an inline confirm step: the first click only asks, the second does it.
- * Focus lands on Cancel so a stray Enter backs out.
+ * Focus lands on Cancel so a stray Enter backs out, and returns to the trigger when the prompt closes.
  */
 export function ConfirmButton({
   label,
@@ -111,9 +132,23 @@ export function ConfirmButton({
   onConfirm: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  // The trigger is swapped for the prompt while confirming, so focus would otherwise fall to the page.
+  useEffect(() => {
+    if (!confirming && restoreFocus.current) {
+      restoreFocus.current = false;
+      trigger.current?.focus();
+    }
+  }, [confirming]);
+  const close = () => {
+    restoreFocus.current = true;
+    setConfirming(false);
+  };
   if (!confirming) {
     return (
       <Button
+        ref={trigger}
         type="button"
         variant="ghost"
         size="sm"
@@ -135,13 +170,13 @@ export function ConfirmButton({
         size="sm"
         disabled={disabled}
         onClick={() => {
-          setConfirming(false);
+          close();
           onConfirm();
         }}
       >
         {confirmLabel}
       </Button>
-      <Button type="button" variant="outline" size="sm" autoFocus onClick={() => setConfirming(false)}>
+      <Button type="button" variant="outline" size="sm" autoFocus onClick={close}>
         Cancel
       </Button>
     </span>
@@ -149,7 +184,7 @@ export function ConfirmButton({
 }
 
 /** Copies `text` to the clipboard and says whether it worked. */
-export function CopyButton({ text, label = "Copy", autoFocus }: { text: string; label?: string; autoFocus?: boolean }) {
+export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -167,7 +202,7 @@ export function CopyButton({ text, label = "Copy", autoFocus }: { text: string; 
   }
 
   return (
-    <Button type="button" variant="outline" size="sm" autoFocus={autoFocus} onClick={copy}>
+    <Button type="button" variant="outline" size="sm" onClick={copy}>
       {state === "copied" ? (
         <>
           <CheckIcon /> Copied

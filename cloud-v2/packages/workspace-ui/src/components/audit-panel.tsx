@@ -7,7 +7,7 @@ import { formatDateTime } from "../lib/format";
 import { auditQuery, workspaceDetailQuery } from "../queries";
 import { can } from "../roles";
 import { Button } from "../ui/button";
-import { Loading, LoadError, Panel, Restricted } from "./common";
+import { LoadError, Panel, QueryGate, Restricted } from "./common";
 
 const TITLE = "Audit log";
 const DESCRIPTION = "Who changed what in this workspace, newest first.";
@@ -67,87 +67,73 @@ export function changeLines(event: Pick<AuditEventView, "before" | "after">): st
 
 export function WorkspaceAuditPanel({ api, workspaceId }: { api: WorkspaceApi; workspaceId: string }) {
   const detailResult = useQuery(workspaceDetailQuery(api, workspaceId));
-  const canRead = can(detailResult.data, "workspace.audit.read");
-  const auditResult = useInfiniteQuery({ ...auditQuery(api, workspaceId), enabled: canRead });
+  const auditResult = useInfiniteQuery({
+    ...auditQuery(api, workspaceId),
+    enabled: can(detailResult.data, "workspace.audit.read"),
+  });
 
-  if (detailResult.isPending) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <Loading />
-      </Panel>
-    );
-  }
-  if (detailResult.isError) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <LoadError error={detailResult.error} onRetry={() => void detailResult.refetch()} />
-      </Panel>
-    );
-  }
-  if (!canRead) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <Restricted>Only workspace admins can see the audit log.</Restricted>
-      </Panel>
-    );
-  }
-  if (auditResult.isPending) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <Loading />
-      </Panel>
-    );
-  }
-  if (auditResult.isError && !auditResult.data) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <LoadError error={auditResult.error} onRetry={() => void auditResult.refetch()} />
-      </Panel>
-    );
-  }
-
-  const events = (auditResult.data?.pages ?? []).flatMap((page) => page.items);
   return (
     <Panel title={TITLE} description={DESCRIPTION}>
-      {events.length === 0 ? (
-        <Restricted>No audit events yet.</Restricted>
-      ) : (
-        <ol className="divide-y">
-          {events.map((event) => {
-            const changes = changeLines(event);
-            return (
-              <li key={event.eventId} className="space-y-0.5 py-2 text-sm">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="font-medium">{actionLabel(event.action)}</span>
-                  <time dateTime={event.occurredAt} className="text-muted-foreground text-xs">
-                    {formatDateTime(event.occurredAt)}
-                  </time>
-                </div>
-                <div className="text-muted-foreground text-xs">by {actorLabel(event.actor)}</div>
-                {changes.map((line) => (
-                  <div key={line} className="font-mono text-xs">
-                    {line}
-                  </div>
-                ))}
-              </li>
-            );
-          })}
-        </ol>
-      )}
-      {auditResult.isFetchNextPageError ? (
-        <LoadError error={auditResult.error} onRetry={() => void auditResult.fetchNextPage()} />
-      ) : null}
-      {auditResult.hasNextPage && !auditResult.isFetchNextPageError ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={auditResult.isFetchingNextPage}
-          onClick={() => void auditResult.fetchNextPage()}
-        >
-          Load more
-        </Button>
-      ) : null}
+      <QueryGate result={detailResult}>
+        {(detail) =>
+          !can(detail, "workspace.audit.read") ? (
+            <Restricted>Only workspace admins can see the audit log.</Restricted>
+          ) : (
+            <QueryGate result={auditResult}>
+              {(data) => {
+                const events = data.pages.flatMap((page) => page.items);
+                return (
+                  <>
+                    {events.length === 0 ? (
+                      <Restricted>No audit events yet.</Restricted>
+                    ) : (
+                      <ol className="divide-y">
+                        {events.map((event) => (
+                          <AuditEntry key={event.eventId} event={event} />
+                        ))}
+                      </ol>
+                    )}
+                    {auditResult.isFetchNextPageError ? (
+                      <LoadError error={auditResult.error} onRetry={() => void auditResult.fetchNextPage()} />
+                    ) : null}
+                    {auditResult.hasNextPage && !auditResult.isFetchNextPageError ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={auditResult.isFetchingNextPage}
+                        onClick={() => void auditResult.fetchNextPage()}
+                      >
+                        Load more
+                      </Button>
+                    ) : null}
+                  </>
+                );
+              }}
+            </QueryGate>
+          )
+        }
+      </QueryGate>
     </Panel>
+  );
+}
+
+function AuditEntry({ event }: { event: AuditEventView }) {
+  const changes = changeLines(event);
+  return (
+    <li className="space-y-0.5 py-2 text-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="font-medium">{actionLabel(event.action)}</span>
+        <time dateTime={event.occurredAt} className="text-muted-foreground text-xs">
+          {formatDateTime(event.occurredAt)}
+        </time>
+      </div>
+      <div className="text-muted-foreground text-xs">by {actorLabel(event.actor)}</div>
+      {changes.map((line) => (
+        <div key={line} className="font-mono text-xs">
+          {line}
+        </div>
+      ))}
+    </li>
   );
 }

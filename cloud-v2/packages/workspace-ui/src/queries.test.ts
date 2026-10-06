@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import { WORKSPACE_CHANGED_MESSAGE, WorkspaceApiError, errorMessage } from "./errors";
-import { shouldRetry, workspaceKeys, workspaceMutationOptions } from "./queries";
+import { createWorkspaceApi } from "./api";
+import { invitationPreviewQuery, shouldRetry, workspaceKeys, workspaceMutationOptions } from "./queries";
 import { detailFor, membersFor, offlineApi, seedClient, WORKSPACE_ID } from "./test-fixtures";
 
 const OTHER_ID = "ws_other";
@@ -89,5 +90,35 @@ describe("shouldRetry", () => {
     expect(shouldRetry(0, new WorkspaceApiError(502, "http_502", "Bad Gateway"))).toBe(true);
     expect(shouldRetry(0, new WorkspaceApiError(0, "network_error", "offline"))).toBe(true);
     expect(shouldRetry(2, new WorkspaceApiError(502, "http_502", "Bad Gateway"))).toBe(false);
+  });
+});
+
+describe("invitationPreviewQuery", () => {
+  const { api } = offlineApi();
+
+  test("is dropped from the cache as soon as nothing shows it, and a refusal is not retried", () => {
+    const options = invitationPreviewQuery(api, "secret-token");
+    expect(options.gcTime).toBe(0);
+    const retry = options.retry as (count: number, error: unknown) => boolean;
+    for (const status of [401, 404, 410]) {
+      expect(retry(0, new WorkspaceApiError(status, "invitation_not_found", "invitation not found"))).toBe(false);
+    }
+  });
+
+  test("the token's query is gone from the cache after it settles with no observer", async () => {
+    const client = new QueryClient();
+    const live = createWorkspaceApi({ basePath: "/api/workspaces" });
+    const fetched = spyOn(globalThis, "fetch").mockImplementation((async () =>
+      Response.json({ error: "invitation_not_found", error_description: "invitation not found" }, { status: 404 })) as unknown as typeof fetch);
+    try {
+      await client.prefetchQuery(invitationPreviewQuery(live, "secret-token"));
+      expect(fetched).toHaveBeenCalledTimes(1);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(client.getQueryCache().getAll()).toEqual([]);
+      expect(JSON.stringify(client.getQueryCache().getAll().map((query) => query.queryKey))).not.toContain("secret-token");
+    } finally {
+      fetched.mockRestore();
+      client.clear();
+    }
   });
 });

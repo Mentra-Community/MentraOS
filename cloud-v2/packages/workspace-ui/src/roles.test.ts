@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { WORKSPACE_ROLES } from "@mentra/workspace-contract";
-import { assignableRoles, can, effectiveRole, roleOptions } from "./roles";
+import { assignableRoles, can, canCreateCredentials, effectiveRole, roleOptions } from "./roles";
 import { detailFor, organizationAdminDetail } from "./test-fixtures";
 
 describe("effectiveRole", () => {
@@ -53,5 +53,21 @@ describe("can", () => {
     expect(can(detailFor("admin"), "workspace.members.manage")).toBe(true);
     expect(can(detailFor("developer"), "workspace.members.manage")).toBe(false);
     expect(can(undefined, "workspace.read")).toBe(false);
+  });
+});
+
+describe("canCreateCredentials", () => {
+  test("needs a membership whose own role can publish, as Core does", () => {
+    expect(canCreateCredentials(detailFor("developer"))).toBe(true);
+    expect(canCreateCredentials(detailFor("admin"))).toBe(true);
+    expect(canCreateCredentials(detailFor("owner"))).toBe(true);
+    expect(canCreateCredentials(detailFor("member"))).toBe(false);
+  });
+
+  test("an organization admin outside the workspace, or in it as a plain member, cannot", () => {
+    expect(canCreateCredentials(organizationAdminDetail())).toBe(false);
+    expect(canCreateCredentials({ ...organizationAdminDetail(), membership: { membershipId: "wm_1", role: "member" } })).toBe(false);
+    expect(canCreateCredentials({ ...organizationAdminDetail(), membership: { membershipId: "wm_1", role: "developer" } })).toBe(true);
+    expect(canCreateCredentials(undefined)).toBe(false);
   });
 });

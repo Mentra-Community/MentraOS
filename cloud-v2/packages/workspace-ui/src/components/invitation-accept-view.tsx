@@ -38,11 +38,11 @@ export function InvitationAcceptView({
   return (
     <InvitationAcceptCard
       load={
-        preview.isPending
-          ? { status: "loading" }
+        preview.data !== undefined
+          ? { status: "ready", preview: preview.data }
           : preview.isError
             ? { status: "error", error: preview.error }
-            : { status: "ready", preview: preview.data }
+            : { status: "loading" }
       }
       onRetry={() => void preview.refetch()}
       onAccept={() => accept.mutate()}

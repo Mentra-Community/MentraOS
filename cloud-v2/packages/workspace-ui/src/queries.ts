@@ -86,11 +86,16 @@ export const auditQuery = (api: WorkspaceApi, workspaceId: string) =>
     retry: shouldRetry,
   });
 
+/**
+ * The key carries the invitation token, so the query is dropped from the cache as soon as nothing is
+ * showing it (`gcTime: 0`), and a refusal (4xx: unknown, expired, used, signed out) is not retried.
+ */
 export const invitationPreviewQuery = (api: WorkspaceApi, token: string) =>
   queryOptions({
     queryKey: workspaceKeys.invitationPreview(api, token),
     queryFn: () => api.peekInvitation(token),
     retry: shouldRetry,
+    gcTime: 0,
     refetchOnWindowFocus: false,
   });
 

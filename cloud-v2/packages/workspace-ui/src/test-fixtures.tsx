@@ -15,7 +15,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createWorkspaceApi, type WorkspaceApi } from "./api";
-import { workspaceKeys } from "./queries";
+import {
+  auditQuery,
+  credentialsQuery,
+  invitationsQuery,
+  membersQuery,
+  workspaceDetailQuery,
+  workspaceKeys,
+  workspaceListQuery,
+} from "./queries";
 
 export const WORKSPACE_ID = "ws_acme";
 export const WORKSPACE_NAME = "Acme Robotics";
@@ -148,6 +156,47 @@ export function seedClient(api: WorkspaceApi, seed: Seed, client = new QueryClie
 export function renderSeeded(api: WorkspaceApi, seed: Seed, ui: ReactElement): string {
   const client = seedClient(api, seed);
   try {
+    return renderToStaticMarkup(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  } finally {
+    client.clear();
+  }
+}
+
+const FAILING = {
+  list: (client: QueryClient, api: WorkspaceApi) => client.fetchQuery({ ...workspaceListQuery(api), retry: false }),
+  detail: (client: QueryClient, api: WorkspaceApi) =>
+    client.fetchQuery({ ...workspaceDetailQuery(api, WORKSPACE_ID), retry: false }),
+  members: (client: QueryClient, api: WorkspaceApi) =>
+    client.fetchQuery({ ...membersQuery(api, WORKSPACE_ID), retry: false }),
+  invitations: (client: QueryClient, api: WorkspaceApi) =>
+    client.fetchQuery({ ...invitationsQuery(api, WORKSPACE_ID), retry: false }),
+  credentials: (client: QueryClient, api: WorkspaceApi) =>
+    client.fetchQuery({ ...credentialsQuery(api, WORKSPACE_ID), retry: false }),
+  audit: (client: QueryClient, api: WorkspaceApi) =>
+    client.fetchInfiniteQuery({ ...auditQuery(api, WORKSPACE_ID), retry: false }),
+};
+
+/**
+ * Renders `ui` after the named, already-loaded queries failed a background refetch: they hold their old
+ * data and are in the error state, which is what a dropped connection leaves behind. `api` must be an
+ * `offlineApi()`, whose every request fails.
+ */
+export async function renderAfterFailedRefetch(
+  api: WorkspaceApi,
+  seed: Seed,
+  ui: ReactElement,
+  failing: Array<keyof typeof FAILING>,
+): Promise<string> {
+  const client = seedClient(api, seed);
+  try {
+    for (const name of failing) await FAILING[name](client, api).catch(() => undefined);
+    for (const name of failing) {
+      const key = name === "list" ? workspaceKeys.list(api) : workspaceKeys[name](api, WORKSPACE_ID);
+      const state = client.getQueryState(key);
+      if (state?.status !== "error" || state.data === undefined) {
+        throw new Error(`fixture: the ${name} query is not in the "failed refetch with old data" state`);
+      }
+    }
     return renderToStaticMarkup(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
   } finally {
     client.clear();

@@ -15,7 +15,7 @@ import { can } from "../roles";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ConfirmButton, ErrorNotice, Loading, LoadError, Panel } from "./common";
+import { ConfirmButton, ErrorNotice, Panel, QueryGate } from "./common";
 
 const TITLE = "Settings";
 const DESCRIPTION = "Name, membership and deletion for this workspace.";
@@ -32,22 +32,14 @@ interface SettingsPanelProps {
 export function WorkspaceSettingsPanel(props: SettingsPanelProps) {
   const { api, workspaceId } = props;
   const detailResult = useQuery(workspaceDetailQuery(api, workspaceId));
-  if (detailResult.isPending) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <Loading />
-      </Panel>
-    );
-  }
-  if (detailResult.isError) {
-    return (
-      <Panel title={TITLE} description={DESCRIPTION}>
-        <LoadError error={detailResult.error} onRetry={() => void detailResult.refetch()} />
-      </Panel>
-    );
-  }
-  // Keyed by workspace so one workspace's half-typed name or delete confirmation never carries to another.
-  return <SettingsForms key={workspaceId} {...props} detail={detailResult.data} />;
+  return (
+    <Panel title={TITLE} description={DESCRIPTION}>
+      <QueryGate result={detailResult}>
+        {/* Keyed by workspace so one workspace's half-typed name or delete confirmation never carries to another. */}
+        {(detail) => <SettingsForms key={workspaceId} {...props} detail={detail} />}
+      </QueryGate>
+    </Panel>
+  );
 }
 
 function SettingsForms({ api, workspaceId, onDeleted, onLeft, detail }: SettingsPanelProps & { detail: WorkspaceDetail }) {
@@ -89,7 +81,7 @@ function SettingsForms({ api, workspaceId, onDeleted, onLeft, detail }: Settings
   }
 
   return (
-    <Panel title={TITLE} description={DESCRIPTION}>
+    <>
       {canRename ? (
         <form onSubmit={submitRename} className="flex flex-wrap items-end gap-3">
           <div className="grid gap-1.5">
@@ -164,6 +156,6 @@ function SettingsForms({ api, workspaceId, onDeleted, onLeft, detail }: Settings
       ) : null}
 
       <ErrorNotice error={rename.error ?? leave.error ?? remove.error} />
-    </Panel>
+    </>
   );
 }

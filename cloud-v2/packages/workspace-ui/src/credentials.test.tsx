@@ -1,10 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
-import { renderToStaticMarkup } from "react-dom/server";
 import { createWorkspaceApi } from "./api";
 import {
   createCredentialAndReveal,
-  CredentialsPanelView,
+  CredentialsScreen,
   expiryFromDateInput,
   parsePackageNames,
   secretReducer,
@@ -12,25 +11,30 @@ import {
   type SecretState,
 } from "./components/credentials-panel";
 import { workspaceMutationOptions } from "./queries";
-import { CREDENTIALS, detailFor, offlineApi, renderSeeded, TOKEN, WORKSPACE_ID } from "./test-fixtures";
+import {
+  CREDENTIALS,
+  detailFor,
+  offlineApi,
+  organizationAdminDetail,
+  renderAfterFailedRefetch,
+  renderSeeded,
+  TOKEN,
+  WORKSPACE_ID,
+} from "./test-fixtures";
 
-const noop = () => {};
-const view = (secret: SecretState) =>
-  renderToStaticMarkup(
-    <CredentialsPanelView
-      credentials={CREDENTIALS}
-      secret={secret}
-      busy={false}
-      error={null}
-      onCreate={noop}
-      onRevoke={noop}
-      onDismissSecret={noop}
-    />,
+/** The credentials screen as a developer sees it, with the one-time dialog in the given state. */
+const screen = (secret: SecretState) => {
+  const { api } = offlineApi();
+  return renderSeeded(
+    api,
+    { detail: detailFor("developer"), credentials: CREDENTIALS },
+    <CredentialsScreen api={api} workspaceId={WORKSPACE_ID} initialSecret={secret} />,
   );
+};
 
 describe("credentials panel: the token is shown once", () => {
   test("the creation dialog shows the token with a copy button and says it will not be shown again", () => {
-    const markup = view({ status: "shown", name: "CI publisher", token: TOKEN });
+    const markup = screen({ status: "shown", name: "CI publisher", token: TOKEN });
     expect(markup).toContain(TOKEN);
     expect(markup).toMatch(/role="dialog"/);
     expect(markup).toContain("Copy credential");
@@ -40,7 +44,7 @@ describe("credentials panel: the token is shown once", () => {
 
   test("after the dialog closes the token is nowhere in the panel, though the credential is still listed", () => {
     const closed = secretReducer({ status: "shown", name: "CI publisher", token: TOKEN }, { type: "dismissed" });
-    const markup = view(closed);
+    const markup = screen(closed);
     expect(markup).not.toContain(TOKEN);
     expect(markup).not.toContain("abcdefghijklmnopqrstuvwxyz");
     expect(markup).not.toContain('role="dialog"');
@@ -99,6 +103,36 @@ describe("credentials panel: the token is shown once", () => {
   });
 });
 
+describe("credentials panel: the one-time dialog survives a failed refetch", () => {
+  const shown: SecretState = { status: "shown", name: "CI publisher", token: TOKEN };
+
+  test("when the detail and credential list fail a background refetch, the dialog and the list stay", async () => {
+    const { api } = offlineApi();
+    const markup = await renderAfterFailedRefetch(
+      api,
+      { detail: detailFor("developer"), credentials: CREDENTIALS },
+      <CredentialsScreen api={api} workspaceId={WORKSPACE_ID} initialSecret={shown} />,
+      ["detail", "credentials"],
+    );
+    expect(markup).toContain(TOKEN);
+    expect(markup).toMatch(/role="dialog"/);
+    expect(markup).toContain("CI publisher");
+    expect(markup).not.toContain("Try again");
+  });
+
+  test("when there is nothing loaded to show, the dialog still renders next to the error", () => {
+    const { api } = offlineApi();
+    // No detail at all: the panel is still loading, yet the token (from a creation that just succeeded) is shown.
+    const markup = renderSeeded(
+      api,
+      {},
+      <CredentialsScreen api={api} workspaceId={WORKSPACE_ID} initialSecret={shown} />,
+    );
+    expect(markup).toContain("Loading");
+    expect(markup).toContain(TOKEN);
+  });
+});
+
 describe("credentials panel: who sees what", () => {
   test("a member cannot see or create credentials", () => {
     const { api } = offlineApi();
@@ -110,6 +144,30 @@ describe("credentials panel: who sees what", () => {
     expect(markup).toContain("Credentials are available to developers, admins and owners.");
     expect(markup).not.toContain("CI publisher");
     expect(markup).not.toContain("<form");
+  });
+
+  test("only a member who can publish gets the create form; an organization admin outside the workspace gets a note", () => {
+    const { api } = offlineApi();
+    const render = (detail: ReturnType<typeof detailFor>) =>
+      renderSeeded(
+        api,
+        { detail, credentials: CREDENTIALS },
+        <WorkspaceCredentialsPanel api={api} workspaceId={WORKSPACE_ID} />,
+      );
+    for (const role of ["developer", "admin", "owner"] as const) {
+      expect(render(detailFor(role))).toContain("Create credential");
+    }
+    // Core ties a key to its creator's membership, so an org admin who is not a member cannot create one...
+    const outside = render(organizationAdminDetail());
+    expect(outside).not.toContain("Create credential");
+    expect(outside).not.toContain("<form");
+    expect(outside).toContain("Only members of this workspace with the developer role or above can create credentials");
+    // ...but still sees and can revoke the workspace's credentials.
+    expect(outside).toContain("CI publisher");
+    expect(outside).toContain('aria-label="Revoke CI publisher"');
+    // The same for an org admin whose own membership is a role that cannot publish.
+    const lowerMember = render({ ...organizationAdminDetail(), membership: { membershipId: "wm_self", role: "member" } });
+    expect(lowerMember).not.toContain("Create credential");
   });
 
   test("a developer can create and revoke from the same panel, behind a confirm step", () => {
