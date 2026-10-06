@@ -648,7 +648,7 @@ describe("admin reports read surface", () => {
         await res.arrayBuffer();
       }
 
-      // Ranges and HEAD do not bypass the admin gate.
+      // Ranges and HEAD do not bypass the capability gate.
       for (const method of ["GET", "HEAD"]) {
         const anonymous = await fetch(url, { method, headers: { range: "bytes=0-1" } });
         expect(anonymous.status).toBe(401);

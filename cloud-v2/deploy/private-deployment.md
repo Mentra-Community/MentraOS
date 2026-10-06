@@ -30,7 +30,7 @@ private keys or database credentials.
 | --- | --- | --- |
 | Service configuration | URLs, module selectors, issuer metadata, ports, version floors | Container environment |
 | Secrets | Mongo credentials, refresh pepper, signing private keys, ACS connection string | Secret manager/container secret references |
-| Mentra App policy | Workspace name, service URLs, auth, branding, legal links, miniapps, glasses, features, telemetry | Deployment manifest served by Runtime |
+| Mentra App policy | Organization name, service URLs, auth, branding, legal links, miniapps, glasses, features, telemetry | Deployment manifest served by Runtime |
 
 Never put secrets in the image, deployment manifest, command line, or source
 repository.
@@ -178,19 +178,19 @@ and provider errors do not trigger guest issuance.
 The Mentra App obtains credentials using its selected Runtime and Core-brokered
 Runtime bearer. Its Entra provider supplies the separate Teams subject token when
 available. `session.meeting.getConfiguration()` exposes the host's calling policy;
-workspace miniapps omit `token` from `session.meeting.join()`. Meeting state and
+organization miniapps omit `token` from `session.meeting.join()`. Meeting state and
 `onState` report `identityMode` (`guest` or `teams-user`) and, for guests,
 `guestReason` (`no-entra-identity` or `teams-license-unavailable`). Neither the Entra
 nor ACS credential is returned to miniapp JavaScript.
 
-Workspace Mentra Call supports joining work/school Teams links using direct
+Organization Mentra Call supports joining work/school Teams links using direct
 local glasses video. It does not contact the public Call backend for startup,
 restore, credentials, or meeting creation. Existing consumer token pass-through
 and Call backend routes remain supported; consumer joins still require the
 miniapp-supplied credential. Older clients need no backend change.
 A Mentra App native build containing Teams-user agent support is required for
 employee identity. Install the matching managed miniapp ZIP and re-select the
-workspace to refresh the cached manifest. The new Call bundle requires host
+organization to refresh the cached manifest. The new Call bundle requires host
 meeting-policy discovery even when the host version is otherwise compatible.
 Hosts without that API show an update message and cannot enable public-backend
 access. Existing installed Call bundles and legacy token joins are unchanged.
@@ -264,7 +264,7 @@ Important schema-v1 fields are:
 
 | Field | Contract |
 | --- | --- |
-| `deploymentId`, `displayName` | Stable local namespace and workspace name. |
+| `deploymentId`, `displayName` | Stable local namespace and organization name. |
 | `services.coreUrl`, `services.runtimeUrl` | Required by the first template. Null never falls back to Mentra services. |
 | `auth` | Exact Entra tenant, Mentra App public-client id, `mentra.session` scope, optional Teams scopes. |
 | `branding.logoUrls` | Optional light/dark PNGs. |
@@ -272,7 +272,7 @@ Important schema-v1 fields are:
 | `miniapps.managed` | Userland bundle package, version, URL, and SHA-256 descriptors. |
 | `miniapps.configuration` | Optional non-secret package-scoped string values. |
 | `features` | Explicit mobile/Runtime capability policy. |
-| `telemetry` | Whether the workspace permits Mentra telemetry. |
+| `telemetry` | Whether the organization permits Mentra telemetry. |
 
 Most miniapps ignore `miniapps.configuration`. A miniapp that explicitly
 supports a customer backend may read an optional `backendUrl` through
