@@ -26,16 +26,16 @@ A request is not a passing test result. Docs-only changes need no device coverag
 
 2. Read the private
    [Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing)
-   through `gh`. Resolve its latest default-branch commit once, then list routines
-   and read candidates at that SHA. This needs GitHub access to the repository,
+   through `gh`. Resolve its latest `main` commit once, then list routines
+   and read candidates at that exact SHA. If the user explicitly selects another
+   routine revision, use that authorized exact SHA for all source reads instead.
+   This needs GitHub access to the repository,
    not Core/Admin credentials, and does not depend on a local checkout's branch
    or modify it with `git pull`:
 
    ```bash
    harness_repository=Mentra-Community/Mentra-Automated-Testing
-   harness_branch=$(gh api "repos/$harness_repository" --jq .default_branch)
-   harness_sha=$(gh api "repos/$harness_repository/commits" --method GET \
-     -f sha="$harness_branch" -f per_page=1 --jq '.[0].sha')
+   harness_sha=$(gh api "repos/$harness_repository/commits/main" --jq .sha)
    gh api "repos/$harness_repository/git/trees/$harness_sha?recursive=1" \
      --jq 'if .truncated then error("Incomplete routine tree; inspect directories individually") else .tree[] | select(.type == "blob" and (.path | test("^routines/[^/]+/routine\\.ts$"))) | .path end'
    ```
@@ -71,12 +71,31 @@ A request is not a passing test result. Docs-only changes need no device coverag
 
 ## Request existing coverage
 
-Build each label as `routine:<id>` from the selected routine's declared ID. Source
-inspection establishes intended coverage; the trusted request workflow checks
-enrollment and supported platforms using its own configured Core credential.
-A source file is not proof that its latest revision is installed. If the workflow
-reports an unknown or unavailable definition, resolve enrollment with its owner;
-if it selects an earlier revision, compare that source before claiming coverage.
+Build each label as `routine:<id>` from the selected routine's declared ID. A
+real routine on Harness `main` is requestable without a published collection or
+existing Core enrollment. Required Harness PR checks validate source before merge;
+they do not prove the routine passes on devices.
+
+An ordinary new request resolves current Harness `main` once at submission and
+freezes that exact SHA with the selected PR app build. Labels contain the routine
+ID, not a source revision. If that SHA differs from the source inspected above,
+read the requested source before claiming it covers the PR. An explicitly selected
+authorized routine SHA overrides the default through the request workflow's
+optional `routine_revision` input. Leave it absent to select current `main`; to
+request the exact inspected source, supply `-f routine_revision="$harness_sha"`
+with the existing routine/platform and exact app-build selectors to
+`request-e2e-routine.yml` on `--ref dev`. Omitted overrides on reruns inherit the
+original member's exact routine and app selections. Never substitute an older
+published routine.
+
+Core durably records source preparation in the same test-request queue. The host
+obtains request-scoped verified Git inventory/blobs through Core, constructs the
+routine-owned source and runs bounded installed API/factory preflight before any
+device grants. Temporary source failures remain waiting with a reason; invalid or
+incompatible source reports its exact refusal/wait. Collection publication and
+framework activation at that routine commit are not prerequisites. The configured
+host/lane, artifact, capability and authority checks still apply.
+
 Do not claim the request ran or substitute another routine. When creating the PR,
 include its `--label` in the existing `gh pr create` command. For an existing PR,
 set `selected_label` to that exact discovered label:
@@ -172,20 +191,21 @@ hardware or implement another authoring workflow.
    build callback, or the same manual intake after publication, submits the work.
    Changing the brief, source, target or build creates a new work occurrence.
    Review corrections should continue the existing machine job rather than
-   redispatching by editing the brief. After source review and
-   installation, require the linked ordinary passing run and recording before
-   reporting coverage as verified. The machine owner installs and enrolls the
-   resulting definition; request its replay through the ordinary label/workflow
-   and report pending enrollment explicitly.
+   redispatching by editing the brief. After source review, require the linked
+   ordinary passing run and recording before
+   reporting coverage as verified. Request ordinary replay of the reviewed source
+   through the existing label/workflow; report pending source preparation or the
+   exact refusal explicitly rather than requiring eager collection publication.
 
 ## Keep request status honest
 
 - PR dispatch is off unless `DEVICE_ROUTINE_PR_DISPATCH_ENABLED` is explicitly
   enabled. Adding labels does not enable that gate. When enabled, the existing
-  request workflow discovers enrolled definitions and submits exact PR build
-  sources through `POST /api/internal/routine-dispatches`; Core resolves artifacts,
-  freezes the current definition and routes to explicitly configured host/lane
-  bindings. Check its request status and linked result. A queued, rejected,
+  request workflow submits routine IDs with exact PR build sources through
+  `POST /api/internal/routine-dispatches`; Core resolves current Harness `main` or
+  the optional exact override once, freezes app/routine inputs, and routes source
+  preparation to explicitly configured host/lane bindings. Check its request
+  status and linked result. A preparing, queued, rejected,
   unavailable or unrecorded request is not a pass. After artifact publication,
   use the normal request workflow/Admin path for an authorized retry; do not
   toggle labels or repeatedly dispatch to overcome an explicit denial.
@@ -199,8 +219,7 @@ hardware or implement another authoring workflow.
   fixture must be reported as pending/not-run rather than passed.
 - In the PR's validation section, explain the selected replay/edit/create request,
   the behavior it covers and any missing prerequisite. A recorded pass is required
-  for the passing-example catalog, not for requesting an enrolled executable
-  definition. Queued authoring, source ready for review and installed source are
-  progress states; they are not an ordinary test pass.
+  for the passing-example catalog, not for requesting valid main-source coverage.
+  Queued authoring, source ready for review and prepared source are progress states; they are not an ordinary test pass.
 - Public PRs contain coverage/status and approved result links, not credentials,
   account details, private logs, firmware assets or raw recordings.

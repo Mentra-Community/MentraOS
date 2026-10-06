@@ -8,7 +8,7 @@ const plain = value => String(value).replace(/[\\`*_|<>\r\n]/g, " ").trim()
 export function renderPrRoutineResult(detail) {
   const row = boundRoutineResult(detail)
   if (!row || row.source.channel !== "pr") return null
-  const {request, result} = detail, run = result?.run, build = request.input.build, report = run?.result
+  const {request, result} = detail, run = result?.run, selection = request.input ?? request.dispatchIntent, build = selection.build, report = run?.result
   ensure(build.repository === REPOSITORY && build.prNumber === row.source.prNumber && /^[a-f0-9]{40}$/.test(build.headSha), "Invalid PR build binding")
   const body = [resultMarker(row), `### ${plain(row.title)} — ${plain(row.status)}`, "",
     `Candidate PR head: [\`${build.headSha}\`](${PUBLIC}/commit/${build.headSha}). Platform: \`${row.platform}\`.`, "",
@@ -16,11 +16,12 @@ export function renderPrRoutineResult(detail) {
     `| Teardown ready | ${report.teardown.ready ? "Verified" : "Not verified"} |`, `| Evidence | ${result.evidenceStatus} |`,
     `| Uploads | ${result.uploadsComplete ? "Complete" : "Incomplete"} |`, "",
     `[Recording and full result](https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(row.resultRunId)})`, ""] :
-      [`Request ${row.status === "not-run" ? "was rejected" : "was cancelled"}: ${plain(row.reason)}.`, "",
+      [`Request ${row.status === "skipped" ? "does not apply to this platform" : row.status === "not-run" ? "was rejected" : "was cancelled"}: ${plain(row.reason)}.`, "",
         "No framework result has been published for this request.", "",
+        ...(row.status === "skipped" ? ["This is not passing or failing test coverage.", ""] : []),
         `[Request receipt](https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(row.requestId)})`, ""]),
     `[Build ${row.source.buildRunId}/${row.source.publicationAttempt}](${PUBLIC}/actions/runs/${row.source.buildRunId}/attempts/${row.source.publicationAttempt})`, "",
-    `Routine: \`${row.routineId}\`; definition revision: \`${request.input.definitionRevision}\`; request: \`${row.requestId}\`.`, "",
+    `Routine: \`${row.routineId}\`; definition revision: \`${selection.definitionRevision ?? selection.routineRevision}\`; request: \`${row.requestId}\`.`, "",
     report ? "This result covers the recorded candidate. Notification retries retain the same request comment." :
       "This receipt covers the requested candidate. Notification retries retain the same request comment.",
   ].join("\n")

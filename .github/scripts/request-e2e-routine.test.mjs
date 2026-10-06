@@ -1,30 +1,37 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {createRoutineRequests, assertRoutineRequestOutcomes, planForDefinition, successfulMacPublication, successfulAndroidPublication} from "./request-e2e-routine.mjs"
+import {createRoutineRequests, assertRoutineRequestOutcomes, planRoutineRequest, successfulMacPublication, successfulAndroidPublication} from "./request-e2e-routine.mjs"
+import {requestInputDigest} from "./routine-api.mjs"
 import {routineFixture} from "./routine-api-fixture.mjs"
-const context = {repo: {owner: "Mentra-Community", repo: "MentraOS"}, eventName: "workflow_dispatch", ref: "refs/heads/dev"}
+const context = {repo: {owner: "Mentra-Community", repo: "MentraOS"}, eventName: "workflow_dispatch", ref: "refs/heads/dev", runId: 100}
 
-test("manual exact-source requests admit an unfamiliar enrolled ID and use stable source identity", async () => {
+test("manual requests need no enrollment and bind workflow occurrence plus optional revision", async () => {
   const f = routineFixture({channel: "dev"})
-  const options = {context, token: "fixture", routine: f.definition.id, platform: "ios-on-mac", source: f.source, fetchImpl: f.fetchImpl}
-  const first = await createRoutineRequests(options), second = await createRoutineRequests({...options, context: {...context, runId: 200, runAttempt: 9}})
-  assert.equal(first.requests[0].requestId, second.requests[0].requestId)
-  assert.equal(first.requests[0].requestId, planForDefinition({routineId: f.definition.id, platform: "ios-on-mac"}, f.source).requestId)
-  await assert.rejects(createRoutineRequests({...options, routine: "unknown"}), /not enrolled/)
-  await assert.rejects(createRoutineRequests({...options, platform: "android"}), /not enrolled/)
+  const options = {context, token: "fixture", routine: "new.unpublished", platform: "ios-on-mac", source: f.source, fetchImpl: f.fetchImpl}
+  const first = await createRoutineRequests(options), retry = await createRoutineRequests({...options, context: {...context, runAttempt: 9}})
+  const next = await createRoutineRequests({...options, context: {...context, runId: 200}})
+  assert.equal(first.requests[0].requestId, retry.requests[0].requestId)
+  assert.notEqual(first.requests[0].requestId, next.requests[0].requestId)
+  assert.equal(first.requests[0].state, "preparing")
+  assert.equal(first.requests[0].input, undefined)
+  assert.ok(f.calls.every(call => !call.url.endsWith("/routine-catalog")))
+  const overridden = await createRoutineRequests({...options, routineRevision: "d".repeat(40)})
+  assert.equal(overridden.requests[0].dispatchIntent.routineRevision, "d".repeat(40))
+  assert.notEqual(first.requests[0].requestId, overridden.requests[0].requestId)
+  await assert.rejects(createRoutineRequests({...options, platform: "unsupported"}), /explicit request/)
+  await assert.rejects(createRoutineRequests({...options, routineRevision: "main"}), /exact commit/)
   await assert.rejects(createRoutineRequests({...options, source: undefined}), /exact published/)
 })
-test("all selected PR labels are resolved and pending publications make no dispatch", async () => {
-  const f = routineFixture(), another = {...f.enrollment, routineId: "second-check", definition: {...f.definition, id: "second-check"}}
+test("labels await each app publication without contacting the enrolled catalog", async () => {
+  const f = routineFixture()
   const pr = {number: 12, state: "open", base: {ref: "dev"}, head: {sha: "a".repeat(40), ref: "example", repo: {full_name: "Mentra-Community/MentraOS"}},
-    labels: [{name: `routine:${f.definition.id}`}, {name: "routine:second-check"}]}
+    labels: [{name: `routine:${f.definition.id}`}, {name: "routine:new.unpublished"}]}
   const github = {rest: {pulls: {get: async () => ({data: pr})}, actions: {listWorkflowRuns: () => {}}}, paginate: async () => []}
   const result = await createRoutineRequests({github, context: {...context, eventName: "pull_request_target"}, token: "fixture", number: 12,
-    fetchImpl: async () => Response.json({routines: [f.enrollment, another]})})
-  assert.equal(result.requests.length, 0); assert.deepEqual(result.pending.map(row => row.routineId), [f.definition.id, "second-check"])
-  pr.labels.push({name: "routine:not-enrolled"})
-  await assert.rejects(createRoutineRequests({github, context: {...context, eventName: "pull_request_target"}, token: "fixture", number: 12,
-    fetchImpl: async () => Response.json({routines: [f.enrollment, another]})}), /not enrolled/)
+    fetchImpl: async () => assert.fail("No published app means no Core request")})
+  assert.equal(result.requests.length, 0)
+  assert.deepEqual(result.pending.map(row => [row.routineId, row.platform]), [
+    [f.definition.id, "android"], [f.definition.id, "ios-on-mac"], ["new.unpublished", "android"], ["new.unpublished", "ios-on-mac"]])
 })
 test("retained successful producer jobs select their original publication attempt", () => {
   const base = {status: "completed", conclusion: "success", started_at: "a", completed_at: "b"}
@@ -43,7 +50,7 @@ test("later admission rejection preserves earlier selectors and attempts subsequ
   const run = {id: 10, run_attempt: 2, status: "completed", event: "pull_request", head_sha: pr.head.sha, head_branch: pr.head.ref,
     path: ".github/workflows/mentra-app-ios-build.yml", repository: {full_name: "Mentra-Community/MentraOS"}, head_repository: {full_name: "Mentra-Community/MentraOS"}}
   const github = {rest: {pulls: {get: async () => ({data: pr})}, actions: {listWorkflowRuns: "runs", listJobsForWorkflowRun: "jobs"}},
-    paginate: async method => method === "runs" ? [run] : ["build", "publish"].map((name, index) => ({id: index + 1, name, run_attempt: 2, status: "completed", conclusion: "success"}))}
+    paginate: async (method, options) => method === "runs" ? options.workflow_id === run.path ? [run] : [] : ["build", "publish"].map((name, index) => ({id: index + 1, name, run_attempt: 2, status: "completed", conclusion: "success"}))}
   const result = await createRoutineRequests({github, context: {...context, eventName: "pull_request_target"}, token: "fixture", number: 12,
     fetchImpl: async (url, init) => {
       if (url.endsWith("/routine-catalog")) return Response.json({routines: fixtures.map(f => f.enrollment)})
@@ -52,9 +59,9 @@ test("later admission rejection preserves earlier selectors and attempts subsequ
       return fixtures.find(f => f.definition.id === plan.routineId).fetchImpl(url, init)
     }})
   assert.deepEqual(attempts, fixtures.map(f => f.definition.id))
-  assert.deepEqual(result.outcomes.map(outcome => outcome.status), ["accepted", "failed", "accepted"])
+  assert.deepEqual(result.outcomes.map(outcome => outcome.status), ["pending", "accepted", "pending", "failed", "pending", "accepted"])
   const retained = JSON.parse(JSON.stringify({requestIds: result.requestIds, outcomes: result.outcomes}))
-  assert.equal(retained.requestIds.length, 2); assert.equal(retained.outcomes[1].retryable, false)
+  assert.equal(retained.requestIds.length, 2); assert.equal(retained.outcomes[3].retryable, false)
   assert.throws(() => assertRoutineRequestOutcomes(retained.outcomes), error => error instanceof AggregateError && /second.rejected.*Required recorder/.test(error.message))
   assert.doesNotThrow(() => assertRoutineRequestOutcomes(result.outcomes.filter(outcome => outcome.status !== "failed")))
 })
@@ -70,12 +77,12 @@ test("request workflow retains accepted selectors before reporting member failur
 
 test("manual response loss retains accepted acknowledgements or durable uncertain selectors before outcome failure", async () => {
   for (const lookupStatus of [200, 503, 404]) {
-    const f = routineFixture({channel: "dev"}), plan = planForDefinition({routineId: f.definition.id, platform: "ios-on-mac"}, f.source)
+    const f = routineFixture({channel: "dev"}), plan = planRoutineRequest({routineId: f.definition.id, platform: "ios-on-mac"}, f.source, {occurrenceId: "manual-100"})
     const result = await createRoutineRequests({context, token: "fixture", routine: f.definition.id, platform: "ios-on-mac", source: f.source,
       fetchImpl: async (url, init) => {
         if (url.endsWith("/routine-catalog")) return f.fetchImpl(url, init)
         if (init.method === "POST") throw new Error("lost after commit")
-        return lookupStatus === 200 ? Response.json({...f.detail, request: {...f.request, requestId: plan.requestId}})
+        return lookupStatus === 200 ? Response.json({...f.detail, request: {...f.request, requestId: plan.requestId, dispatchIntent: {...f.request.dispatchIntent, requestId: plan.requestId}, dispatchIntentSha256: requestInputDigest({...f.request.dispatchIntent, requestId: plan.requestId})}})
           : new Response(null, {status: lookupStatus})
       }})
     const retained = JSON.parse(JSON.stringify({requestIds: result.requestIds, outcomes: result.outcomes}))

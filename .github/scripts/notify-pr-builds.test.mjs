@@ -159,8 +159,6 @@ const job = (name, conclusion = "success", attempt = 1, id = attempt) => ({
   started_at: new Date(Date.UTC(2026, 8, 18, 0, attempt, 0)).toISOString(),
   completed_at: new Date(Date.UTC(2026, 8, 18, 0, attempt, 10)).toISOString(),
 })
-const catalogRow = (id, platform, title) => ({routineId: id, platform, definitionRevision: "f".repeat(40),
-  definition: {id, title, platforms: [platform], execution: {module: "routine.ts", export: "createRoutine"}}})
 function harness(options = {}) {
   const state = {
     android: androidRun,
@@ -180,9 +178,6 @@ function harness(options = {}) {
     corruptInstall: false,
     textArtifacts: {},
     jobs: {},
-    catalog: {routines: [catalogRow("selected-mac", "ios-on-mac", "Fresh Mac definition"),
-      catalogRow("selected-second", "ios-on-mac", "Second Mac definition"),
-      catalogRow("selected-android", "android", "Fresh Android definition")]},
     ...options,
   }
   const posts = [],
@@ -238,8 +233,7 @@ function harness(options = {}) {
   const fetchImpl = async (url, options) => {
     requests.push(url)
     if (url.endsWith("/api/internal/routine-catalog")) {
-      assert.equal(options.headers.Authorization, "Bearer synthetic-ingest-token")
-      return new Response(JSON.stringify(state.catalog), {status: state.catalogStatus ?? 200})
+      assert.fail("PR notification must not request the routine catalog")
     }
     if (options.method === "POST") {
       posts.push(JSON.parse(options.body))
@@ -640,10 +634,11 @@ test("requested tests link the exact Mac archive and generic request workflow wi
   const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: [{name: "routine:selected-mac"}]}})
   await notifyPrBuilds(h.args)
   const text = slack(h.posts[0])
-  assert.match(text, /Requested tests:\* Fresh Mac definition · iOS on Mac/)
+  assert.match(text, /Requested tests:\* selected-mac · iOS on Mac/)
   assert.match(text, /actions\/workflows\/request-e2e-routine.yml\|Request pipeline \(workflow\)/)
   assert.doesNotMatch(text, /Tests passed|Test running|Ready to run|localhost|127\.0\.0\.1/)
-  const results = new URL(text.match(/<(https:[^|]+)\|View results>/)[1])
+  const results = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]))
+    .find(url => url.searchParams.get("platform") === "ios-on-mac")
   assert.deepEqual(Object.fromEntries(results.searchParams), {testRuns: "1", channel: "pr", repository: "o/r", pr: "123", headSha: sha,
     archiveSha256: iosReceipt.artifacts.mac.sha256, routineId: "selected-mac", platform: "ios-on-mac"})
   assert.match(h.written[0].body, /\[View results\]\(https:\/\/admin\.dev\.mentraglass\.com/)
@@ -655,6 +650,7 @@ test("request workflow link remains useful when results are unavailable", async 
   for (const options of [{missingMac: true}, {files: []}]) {
     const h = harness({
       files: [{filename: "mobile/app.config.ts"}],
+      android: {...androidRun, conclusion: "failure"},
       currentPr: {...pr, labels: [{name: "routine:selected-mac"}]},
       ...options,
     })
@@ -674,58 +670,46 @@ test("result links require a complete build identity", () => {
     assert.equal(routineResultsUrl({...identity, ...patch}), null)
 })
 
-test("selected catalog IDs link exact build results without altering post deduplication", async () => {
+test("selected label IDs link each published app platform without altering post deduplication", async () => {
   for (const labels of [["routine:selected-second"], ["routine:selected-mac", "routine:selected-second"]]) {
     const h = harness({files: [{filename: "mobile/app.config.ts"}],
       currentPr: {...pr, labels: labels.map(name => ({name}))}})
     await notifyPrBuilds(h.args)
     const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
-    assert.match(text, /Requested tests:\* Second Mac definition · iOS on Mac/)
+    assert.match(text, /Requested tests:\* selected-second · iOS on Mac/)
     const links = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]))
     const actualIds = links.map(url => url.searchParams.get("routineId")), expectedIds = labels.map(label => label.slice("routine:".length))
     assert.equal(new Set(actualIds).size, expectedIds.length)
-    assert.deepEqual([...actualIds].sort(), [...expectedIds].sort())
+    assert.deepEqual([...new Set(actualIds)].sort(), [...expectedIds].sort())
+    assert.equal(links.length, expectedIds.length * 2)
     for (const url of links) {
       assert.equal(url.searchParams.get("headSha"), sha)
-      assert.equal(url.searchParams.get("archiveSha256"), iosReceipt.artifacts.mac.sha256)
+      assert.equal(url.searchParams.get("archiveSha256"), url.searchParams.get("platform") === "android"
+        ? "e".repeat(64) : iosReceipt.artifacts.mac.sha256)
       assert.equal(url.searchParams.get("pr"), String(pr.number))
     }
-    assert.match(h.written[0].body, /Second Mac definition/)
+    assert.match(h.written[0].body, /selected-second/)
     await notifyPrBuilds(h.args)
     assert.equal(h.posts.length, 1)
   }
 })
 
-test("catalog definitions supply arbitrary routine titles and both platform-specific archives", async () => {
-  const h = harness({files: [{filename: "mobile/app.config.ts"}],
-    currentPr: {...pr, labels: [{name: "routine:an-id-never-listed-in-notifications"}]},
-    catalog: {routines: [catalogRow("an-id-never-listed-in-notifications", "android", "Fresh coverage"),
-      catalogRow("an-id-never-listed-in-notifications", "ios-on-mac", "Fresh coverage")]}})
-  await notifyPrBuilds(h.args)
-  const text = slack(h.posts[0]), urls = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]).searchParams)
-  assert.deepEqual(urls.map(params => params.get("routineId")), ["an-id-never-listed-in-notifications", "an-id-never-listed-in-notifications"])
-  assert.deepEqual(urls.map(params => params.get("platform")), ["android", "ios-on-mac"])
-  assert.deepEqual(urls.map(params => params.get("archiveSha256")), ["e".repeat(64), iosReceipt.artifacts.mac.sha256])
-  assert.match(text, /Fresh coverage · Android/)
-  assert.match(text, /Fresh coverage · iOS on Mac/)
-  await notifyPrBuilds(h.args)
-  assert.equal(h.posts.length, 1)
-})
-
-test("an unenrolled selection is explicit and a recovered catalog enriches the delivered post once", async () => {
-  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: [{name: "routine:enroll-later"}]}})
-  await notifyPrBuilds(h.args)
-  assert.match(slack(h.posts[0]), /current routine catalog could not resolve this selection/)
-  assert.doesNotMatch(slack(h.posts[0]), /\|View results>/)
-  await notifyPrBuilds(h.args)
-  assert.equal(h.posts.length, 1)
-  h.state.catalog = {routines: [catalogRow("enroll-later", "android", "Enrolled title")]}
-  await notifyPrBuilds(h.args)
-  assert.equal(h.posts.length, 2)
-  assert.match(slack(h.posts[1]), /Enrolled title · Android/)
-  assert.match(slack(h.posts[1]), /\|View results>/)
-  await notifyPrBuilds(h.args)
-  assert.equal(h.posts.length, 2)
+test("arbitrary requested IDs use actual published app archives without a catalog or ingest credential", async () => {
+  const credential = process.env.TEST_RUN_INGEST_TOKEN
+  delete process.env.TEST_RUN_INGEST_TOKEN
+  try {
+    const h = harness({files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:an-id-never-listed-in-notifications"}]}})
+    await notifyPrBuilds(h.args)
+    const text = slack(h.posts[0]), urls = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]).searchParams)
+    assert.deepEqual(urls.map(params => params.get("routineId")), ["an-id-never-listed-in-notifications", "an-id-never-listed-in-notifications"])
+    assert.deepEqual(urls.map(params => params.get("platform")), ["android", "ios-on-mac"])
+    assert.deepEqual(urls.map(params => params.get("archiveSha256")), ["e".repeat(64), iosReceipt.artifacts.mac.sha256])
+    assert.doesNotMatch(text, /Test running|Tests passed|Ready to run|enrolled|current routine catalog/)
+    assert.ok(!h.requests.some(url => url.includes("/routine-catalog")))
+    await notifyPrBuilds(h.args)
+    assert.equal(h.posts.length, 1)
+  } finally {process.env.TEST_RUN_INGEST_TOKEN = credential}
 })
 
 test("Android opt-in links the APK receipt hash and Android result platform, independently of Mac", async () => {
@@ -740,7 +724,7 @@ test("Android opt-in links the APK receipt hash and Android result platform, ind
   })) : original(url, options)
   await notifyPrBuilds(h.args)
   const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
-  assert.match(text, /Fresh Android definition · Android/)
+  assert.match(text, /selected-android · Android/)
   const result = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
   assert.equal(result.searchParams.get("archiveSha256"), digest)
   assert.equal(result.searchParams.get("platform"), "android")
@@ -758,12 +742,12 @@ test("an Android routine label added to already delivered publications posts its
   assert.equal(h.posts.length, 2)
   assert.equal(h.written.length, 2)
   const text = h.posts[1].blocks.flatMap(block => block.text?.text ?? []).join("\n")
-  assert.match(text, /Requested tests:\* Fresh Android definition · Android/)
+  assert.match(text, /Requested tests:\* selected-android · Android/)
   const result = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
   assert.equal(result.searchParams.get("archiveSha256"), "e".repeat(64))
   assert.equal(result.searchParams.get("platform"), "android")
   assert.equal(result.searchParams.get("routineId"), "selected-android")
-  assert.match(h.written[1].body, /Fresh Android definition/)
+  assert.match(h.written[1].body, /selected-android/)
   assert.ok(h.written[1].body.includes(`archiveSha256=${"e".repeat(64)}`))
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 2)

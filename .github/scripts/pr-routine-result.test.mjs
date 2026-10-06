@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {renderPrRoutineResult, resolvePrRoutineResults, publishPrRoutineResult} from "./pr-routine-result.mjs"
-import {routineFixture, terminalRoutineFixture} from "./routine-api-fixture.mjs"
+import {routineFixture, terminalRoutineFixture, preparingRoutineFixture} from "./routine-api-fixture.mjs"
 const context = {repo: {owner: "Mentra-Community", repo: "MentraOS"}, eventName: "workflow_run", ref: "refs/heads/dev"}
 
 test("PR comment uses unknown-to-client frozen title/platform and actual lifecycle outcome", () => {
@@ -32,5 +32,16 @@ test("terminal PR request comment shows truthful receipt and no recording or fra
     assert.match(plan.body, /\[Request receipt\].*testRun=example-request/)
     assert.doesNotMatch(plan.body, /Recording and full result|\| Setup \||recorded candidate/)
     assert.match(plan.body, new RegExp(f.request.input.definitionRevision))
+  }
+})
+
+
+test("preparation dispositions post truthful PR receipts and unsupported platforms are not coverage", () => {
+  for (const status of ["cancelled", "not-run", "skipped"]) {
+    const f = preparingRoutineFixture({status}), plan = renderPrRoutineResult(f.detail)
+    assert.match(plan.body, new RegExp(status)); assert.match(plan.body, /No framework result has been published/)
+    assert.doesNotMatch(plan.body, /Recording and full result|\| Setup \|/)
+    assert.match(plan.body, new RegExp(f.request.dispatchIntent.routineRevision))
+    if (status === "skipped") assert.match(plan.body, /not passing or failing test coverage/)
   }
 })

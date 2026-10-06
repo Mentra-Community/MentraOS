@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import {planDeviceDispatches, dispatchRoutinePlan} from "./dispatch-device-routine.mjs"
+import {requestInputDigest} from "./routine-api.mjs"
 import {routineFixture} from "./routine-api-fixture.mjs"
 const repository = "Mentra-Community/MentraOS"
 function fixture() {
@@ -27,7 +28,7 @@ test("callback dispatch uses bound stable-ID reconciliation and keeps uncertain 
     const outcome = await dispatchRoutinePlan({token: "fixture", plan, fetchImpl: async (url, init) => {
       calls.push(init.method)
       if (init.method === "POST") throw new Error("lost after commit")
-      return lookupStatus === 200 ? Response.json({...f.detail, request: {...f.request, requestId: plan.requestId}})
+      return lookupStatus === 200 ? Response.json({...f.detail, request: {...f.request, requestId: plan.requestId, dispatchIntent: {...f.request.dispatchIntent, requestId: plan.requestId}, dispatchIntentSha256: requestInputDigest({...f.request.dispatchIntent, requestId: plan.requestId})}})
         : new Response(null, {status: lookupStatus})
     }})
     assert.equal(outcome.requestId, plan.requestId); assert.equal(outcome.status, lookupStatus === 200 ? "accepted" : "uncertain")
@@ -44,11 +45,11 @@ test("callback workflow writes intent before dispatch and uploads before reporti
   assert.equal((workflow.match(/if: always\(\) && steps\.queue\.outputs\.persisted == 'true'/g) ?? []).length, 2)
   assert.ok(workflow.indexOf("actions/upload-artifact@v4") < workflow.indexOf("Report admission outcome after retaining selectors"))
 })
-test("coordinated publication alone requests no coverage; unknown selected label refuses", async () => {
+test("coordinated publication alone requests no coverage; newly added labels need no enrollment", async () => {
   const f = fixture(), options = {...f, token: "fixture"}
   f.run.path = ".github/workflows/coordinated-release.yml"; assert.deepEqual(await planDeviceDispatches(options), [])
   f.run.path = ".github/workflows/mentra-app-ios-build.yml"; f.pr.labels.push("routine:unknown")
-  await assert.rejects(planDeviceDispatches(options), /not enrolled/)
+  assert.deepEqual((await planDeviceDispatches(options)).map(plan => plan.routineId), [f.definition.id, "unknown"])
 })
 test("callback refuses untrusted or ambiguous publication metadata", async () => {
   const f = fixture(), options = {...f, token: "fixture"}
