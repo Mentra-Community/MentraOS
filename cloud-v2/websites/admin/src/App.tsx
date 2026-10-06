@@ -12,6 +12,7 @@ import {
 } from "./lib/test-run-links";
 import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
+import {readLaneSelection} from "./lib/lane-links";
 import { RecordingVideo } from "./components/recording-video";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
@@ -182,6 +183,7 @@ function AdminPage() {
   );
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
   const [restoration, setRestoration] = useState(initialRestoration);
+  const [laneSelection, setLaneSelection] = useState(() => readLaneSelection(window.location.search));
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
   const [invalidTestRunListScope, setInvalidTestRunListScope] = useState(() => hasInvalidTestRunListScope(window.location.search));
@@ -222,6 +224,7 @@ function AdminPage() {
     const restore = () => {
       const search = new URLSearchParams(window.location.search);
       setRestoration(search.get("restoration") === "1");
+      setLaneSelection(readLaneSelection(window.location.search));
       if (search.get("systemHealth") === "1") { setPage("system-health"); return; }
       const suite = readSuiteId(window.location.search);
       setSuiteId(suite);
@@ -385,7 +388,7 @@ function AdminPage() {
         setPage(key as AdminPageKey);
         setRestoration(false);
         const location = new URL(window.location.href);
-        for (const param of ["systemHealth", "restoration", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
+        for (const param of ["systemHealth", "restoration", "hostId", "laneId", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
@@ -393,6 +396,7 @@ function AdminPage() {
         selectTestRun(null, true);
         clearTestRunListScope();
         if (key === "test-runs") window.history.replaceState(null, "", "/?testRuns=1");
+        setLaneSelection(null);
         if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
         setSuiteId(null);
         if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
@@ -454,7 +458,7 @@ function AdminPage() {
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
       {page === "test-runs" ? <SystemHealthSummary /> : null}
-      {page === "system-health" ? <SystemHealthPage restoration={restoration} /> : null}
+      {page === "system-health" ? <SystemHealthPage restoration={restoration} lane={laneSelection} /> : null}
       {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
       {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
       {page === "test-runs" && !suiteId ? (

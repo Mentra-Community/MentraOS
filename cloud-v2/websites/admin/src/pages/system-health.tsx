@@ -4,6 +4,9 @@ import { DISK_FLOOR_BYTES, HOST_COMPONENTS, hostIsFresh, type CleanupHealthEvent
   type HostReason, type TestHostHistory, type TestHostLatest, type TestHostList } from "../../../../packages/core/src/types/test-host-health.types";
 import { api } from "../lib/api";
 import {LaneRestorationPage} from "./lane-restoration";
+import {LaneHistoryPage} from "./lane-history";
+import type {LaneSelection} from "../lib/lane-links";
+import {LaneHealthSection} from "./lane-health";
 
 const elapsed = (at: string, now: number) => `${Math.max(0, Math.floor((now - Date.parse(at)) / 60000))}m`;
 const GiB = 1024 ** 3;
@@ -117,8 +120,9 @@ export function CleanupEvents({ events }: { events: CleanupHealthEvent[] }) {
   </details>;
 }
 
-export function SystemHealthPage({restoration = false}: {restoration?: boolean}) {
-  return restoration ? <LaneRestorationPage /> : <SystemHealthDashboard />;
+export function SystemHealthPage({restoration = false, lane = null}: {restoration?: boolean; lane?: LaneSelection | null}) {
+  const now = useClock();
+  return lane ? <LaneHistoryPage key={`${lane.hostId}/${lane.laneId}`} selection={lane} now={now} /> : restoration ? <LaneRestorationPage /> : <SystemHealthDashboard />;
 }
 function SystemHealthDashboard() {
   const query = useHostHealth(), now = useClock(), [hostId, setHostId] = useState<string | null>(null), [days, setDays] = useState<1 | 7>(1);
@@ -127,6 +131,7 @@ function SystemHealthDashboard() {
     queryFn: () => api<TestHostHistory>(`/api/admin/test-runs/health/${encodeURIComponent(host!.hostId)}?days=${days}`) });
   const fresh = Boolean(host && !query.isError && hostIsFresh(host, now));
   return <div className="space-y-5">
+    <LaneHealthSection now={now} />
     <section className="rounded-2xl border border-[#dfe5dd] bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Workers &amp; disk space</h2><p className="mt-1 text-sm text-[#68746d]">Service status is separate from a job's progress and a device lane's availability.</p></div>
         <button className="text-sm font-medium text-[#087d50] underline" onClick={() => { void query.refetch(); if (host) void history.refetch(); }}>Refresh</button></div>
