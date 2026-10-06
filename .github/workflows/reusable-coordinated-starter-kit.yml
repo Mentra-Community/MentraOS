@@ -43,7 +43,7 @@ jobs:
     name: Build coordinated Starter Kit examples
     # Runs only after the Mentra beta is finalized: the example is its own
     # release notion built against a complete beta, never a gate on it.
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 150
     outputs:
       result_artifact: ${{ steps.coordinates.outputs.result_artifact }}

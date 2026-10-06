@@ -43,7 +43,7 @@ permissions:
 jobs:
   deploy:
     name: Import and deploy Azure Private Deployment
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     concurrency:
       # Preserve deployment order if coordinated runs overlap.

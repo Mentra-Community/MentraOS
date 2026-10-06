@@ -24,14 +24,14 @@ jobs:
   source-only:
     name: Defer registry gate during a dry run
     if: inputs.dry_run == true
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - run: echo "Registry-backed consumer validation runs only after public package publication."
 
   android:
     name: Install public Engine and build Android host
     if: inputs.dry_run != true
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

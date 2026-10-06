@@ -54,7 +54,7 @@ env:
 jobs:
   prepare:
     name: Verify centrally allocated GitHub release
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       release_id: ${{ steps.release.outputs.release_id }}
       release_tag: ${{ steps.release.outputs.release_tag }}
@@ -99,11 +99,14 @@ jobs:
   maven:
     name: Build SDK and submit Maven Central publication
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Prebuild, NDK, and two Gradle publishes take up to ~20 minutes; a
     # production run then waits up to 30 minutes for Sonatype validation.
     timeout-minutes: 60
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
@@ -621,10 +624,13 @@ jobs:
   result:
     name: Assemble native SDK result
     needs: [maven, swiftpm]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       result_artifact: ${{ steps.name.outputs.value }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}

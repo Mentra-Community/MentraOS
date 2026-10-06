@@ -31,7 +31,7 @@ concurrency:
 jobs:
   abort:
     name: Append terminal aborted state
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

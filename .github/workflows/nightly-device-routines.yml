@@ -15,7 +15,7 @@ permissions:
 jobs:
   plan:
     if: github.repository == 'Mentra-Community/MentraOS' && vars.DEVICE_ROUTINE_NIGHTLY_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -45,7 +45,7 @@ jobs:
   availability:
     needs: plan
     if: needs.plan.outputs.unavailable != '[]'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Report unavailable channel publications
@@ -64,7 +64,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     name: Nightly ${{ matrix.date }} / ${{ matrix.channel }} / OTA then Call
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
     concurrency:
       group: nightly-device-${{ matrix.date }}-${{ matrix.channel }}

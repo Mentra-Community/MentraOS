@@ -150,7 +150,7 @@ env:
 jobs:
   prepare:
     name: Prepare immutable mobile release
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       release_tag: ${{ steps.release.outputs.release_tag }}
       release_identity: ${{ steps.release.outputs.release_identity }}
@@ -171,6 +171,9 @@ jobs:
       ios_asset_exists: ${{ steps.container.outputs.ios_asset_exists }}
       ipa_asset_id: ${{ steps.container.outputs.ipa_asset_id }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
@@ -1058,7 +1061,7 @@ jobs:
       mac_url: ${{ steps.downloads.outputs.mac_url }}
     name: Publish immutable iOS app from Ubuntu
     needs: [prepare, ios]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -1182,7 +1185,7 @@ jobs:
   ios-store:
     name: Process iOS upload and assign TestFlight group
     needs: [prepare, ios, ios-upload]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 70
     outputs:
       install_url: ${{ steps.distribution.outputs.install_url }}
@@ -1327,10 +1330,13 @@ jobs:
   result:
     name: Assemble coordinated mobile result
     needs: [prepare, android, ios-store]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       result_artifact: ${{ steps.name.outputs.value }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
@@ -1373,7 +1379,7 @@ jobs:
     name: Export mobile build status
     needs: [prepare, android, ios, ios-publish, ios-upload, ios-store]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       android_result: ${{ steps.status.outputs.android_result }}
       ios_result: ${{ steps.status.outputs.ios_result }}

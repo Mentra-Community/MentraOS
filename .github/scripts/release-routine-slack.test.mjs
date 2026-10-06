@@ -148,7 +148,7 @@ test("same-second ambiguous update order does not silently discard a routine", a
   const fixture = historyFixture(); fixture.oldJob.started_at = fixture.currentJob.started_at
   await assert.rejects(prepareRoutineUpdate(fixture.options), /Ambiguous/)
 })
-test("every Slack credential consumer selects the notification environment on a hosted job", () => {
+test("every Slack credential consumer selects the notification environment on an ephemeral cloud job", () => {
   const expected = ["coordinated-release.yml/notify-slack", "notify-release-routine.yml/resolve", "notify-release-routine.yml/update"]
   const consumers = [], environmentJobs = []
   for (const name of ["coordinated-release.yml", "notify-release-routine.yml"]) {
@@ -160,7 +160,7 @@ test("every Slack credential consumer selects the notification environment on a 
       if (!job.includes("secrets.SLACK_BUILDS_BOT_TOKEN")) continue
       consumers.push(id)
       assert.match(job, /^    environment: build-notifications$/m, `${id} cannot read the environment secret`)
-      assert.match(job, /^    runs-on: ubuntu-latest$/m)
+      assert.match(job, /^    runs-on: blacksmith-\d+vcpu-ubuntu-2404$/m)
       assert.doesNotMatch(job, /^    uses:/m)
     }
   }
