@@ -19,7 +19,7 @@ export async function dispatchRerun({inputs, runId, token, fetchImpl=fetch}) {
   if (!token) throw new Error('Rerun ingest capability is unavailable');
   const rerunId = `manual-rerun-${runId}`;
   const post = async (path, body) => {
-    const response = await fetchImpl(`https://dev.mentraglass.com/api/internal/test-reruns/${path}`, {method:'POST', headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});
+    const response = await fetchImpl(`https://core.dev.us-west-2.mentraglass.com/api/internal/test-reruns/${path}`, {method:'POST', headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});
     if (!response.ok) throw new Error(`Rerun ${path} returned HTTP ${response.status}; reconcile ${rerunId}`);
     return response.json();
   };

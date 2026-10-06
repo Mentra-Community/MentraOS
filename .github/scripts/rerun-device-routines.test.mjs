@@ -11,4 +11,6 @@ test('workflow retries reuse the run identity and submit only the server preview
  const bodies=[];const fetchImpl=async(url,options)=>{bodies.push({url,body:JSON.parse(options.body)});return {ok:true,json:async()=>url.endsWith('/preview')?{previewDigest:'digest'}:{admissions:[]}}};
  const options={inputs,runId:123,token:'capability',fetchImpl};await dispatchRerun(options);await dispatchRerun(options);
  assert.equal(bodies[0].body.rerunId,bodies[2].body.rerunId);assert.deepEqual(bodies[1].body,{rerunId:'manual-rerun-123',previewDigest:'digest'});assert.equal(bodies[0].body.source,undefined);
+ assert.equal(bodies[0].url,'https://core.dev.us-west-2.mentraglass.com/api/internal/test-reruns/preview');
+ assert.equal(bodies[1].url,'https://core.dev.us-west-2.mentraglass.com/api/internal/test-reruns/submit');
 });
