@@ -45,10 +45,24 @@ export const cleanupEventSchema = z.object({
 });
 export type CleanupHealthEvent = z.infer<typeof cleanupEventSchema>;
 
+/** macOS usage excludes file cache: (anonymous - purgeable + wired + compressor) pages.
+ * Pressure is the OS level, never inferred from raw free pages, usage or swap. */
+export const hostMemorySchema = z.object({
+  totalBytes: z.number().int().positive().safe().nullable(), usedBytes: bytes,
+  compressedBytes: bytes, swapUsedBytes: bytes,
+  pressureFreePercent: z.number().finite().min(0).max(100).nullable(),
+  pressure: z.enum(["normal", "warning", "critical"]).nullable(),
+}).strict().superRefine((value, ctx) => {
+  if (value.totalBytes !== null && [value.usedBytes, value.compressedBytes].some(size => size !== null && size > value.totalBytes!))
+    ctx.addIssue({ code: "custom", message: "memory usage exceeds physical memory" });
+});
+export type HostMemory = z.infer<typeof hostMemorySchema>;
+
 /** Passive monitor snapshot, independent of fixer/triage/cleanup process lifetime. Exact retries keep identity/time. */
 export const testHostSampleSchema = z.object({
   schemaVersion: z.literal(1), hostId: testResourceHostIdSchema, sampleId: z.string().uuid(), sampledAt: timestamp,
   freeBytes: bytes,
+  memory: hostMemorySchema.nullable().optional(),
   components: z.array(component).max(3),
   cleanupEvents: z.array(cleanupEventSchema).max(32),
 }).strict().superRefine((value, ctx) => {
@@ -63,7 +77,7 @@ export type TestHostSample = z.infer<typeof testHostSampleSchema>;
 export type HostComponent = TestHostSample["components"][number];
 export interface TestHostLatest extends TestHostSample { receivedAt: string }
 export interface TestHostList { generatedAt: string; hosts: TestHostLatest[]; truncated: boolean; freshForMs: number }
-export interface HostDiskPoint { sampleId: string; sampledAt: string; freeBytes: number | null }
+export interface HostDiskPoint { sampleId: string; sampledAt: string; freeBytes: number | null; memory?: HostMemory | null }
 export interface TestHostHistory {
   hostId: string; generatedAt: string; from: string; to: string; points: HostDiskPoint[];
   cleanupEvents: CleanupHealthEvent[]; truncated: boolean; thresholdBytes: number; gapAfterMs: number;

@@ -42,7 +42,7 @@ export function componentHealth(host: TestHostLatest, component: HostComponent |
     ...reasonText[component.reason] };
 }
 const tones: Record<string, string> = { healthy: "bg-[#e6f5ed] text-[#087d50]", blocked: "bg-[#fff0e9] text-[#a64235]", unknown: "bg-[#f0f2ef] text-[#59655e]" };
-const size = (bytes: number | null) => bytes === null ? "Unavailable" : (bytes / GiB).toFixed(1) + " GiB";
+const size = (bytes: number | null | undefined) => bytes == null ? "Unavailable" : (bytes / GiB).toFixed(1) + " GiB";
 const time = (iso: string) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const cleanupReason = (event: CleanupHealthEvent) => event.reason === "budget-limited" ? "Pass time limit reached; remaining work was deferred."
   : event.reason === "none" ? "" : event.reason === "unknown" ? "Reason unavailable." : reasonText[event.reason].summary;
@@ -56,29 +56,39 @@ export function SystemHealthSummary() {
   const query = useHostHealth(), now = useClock(), hosts = query.data?.hosts ?? [];
   const problems = hosts.flatMap(host => !hostIsFresh(host, now) ? [`${host.hostId}: no recent report`]
     : [...(host.freeBytes !== null && host.freeBytes < DISK_FLOOR_BYTES ? [`${host.hostId}: ${size(host.freeBytes)} free (below ${recordingFloorGiB} GiB recorder minimum)`] : []),
+      ...(host.memory?.pressure === "warning" || host.memory?.pressure === "critical" ? [`${host.hostId}: ${host.memory.pressure} memory pressure`] : []),
       ...host.components.filter(item => ["blocked", "stopped"].includes(item.state)).map(item => `${componentNames[item.component]}: ${item.state === "stopped" ? "paused" : "blocked"}`)]);
   const text = query.isError ? "System health could not refresh. Current service status is unknown."
     : query.isPending ? "Loading system health…" : !hosts.length ? "Host monitoring has not reported yet."
-    : problems.length ? problems.slice(0, 3).join(" · ") : `${hosts.length} ${hosts.length === 1 ? "host is" : "hosts are"} reporting. Open service and disk details.`;
+    : problems.length ? problems.slice(0, 3).join(" · ") : `${hosts.length} ${hosts.length === 1 ? "host is" : "hosts are"} reporting. Open service, memory and disk details.`;
   return <aside className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dfe5dd] bg-white px-4 py-3 text-sm" aria-label="System health summary">
     <p className="text-[#59655e]"><strong className="text-[#202820]">System health</strong> · {text}</p>
-    <a href="/?systemHealth=1" className="font-medium text-[#087d50] underline">View health &amp; disk space</a>
+    <a href="/?systemHealth=1" className="font-medium text-[#087d50] underline">View system health</a>
   </aside>;
 }
 
 /** Real points only. Null measurements and missed ticks break the path instead of joining a fictional history. */
-export function diskSegments(points: HostDiskPoint[], gapAfterMs: number) {
+const historyMetrics = {
+  disk: { label: "Available disk space", percent: false, value: (point: HostDiskPoint) => point.freeBytes },
+  used: { label: "Used RAM", percent: false, value: (point: HostDiskPoint) => point.memory?.usedBytes ?? null },
+  compressed: { label: "Compressed RAM", percent: false, value: (point: HostDiskPoint) => point.memory?.compressedBytes ?? null },
+  swap: { label: "Swap used", percent: false, value: (point: HostDiskPoint) => point.memory?.swapUsedBytes ?? null },
+  availability: { label: "OS memory availability", percent: true, value: (point: HostDiskPoint) => point.memory?.pressureFreePercent ?? null },
+};
+export type HistoryMetric = keyof typeof historyMetrics;
+export function diskSegments(points: HostDiskPoint[], gapAfterMs: number, metric: HistoryMetric = "disk") {
   const segments: HostDiskPoint[][] = []; let current: HostDiskPoint[] = [];
   for (const point of points) {
-    if (point.freeBytes === null || current.length && Date.parse(point.sampledAt) - Date.parse(current[current.length - 1].sampledAt) > gapAfterMs) {
+    const measured = historyMetrics[metric].value(point);
+    if (measured === null || current.length && Date.parse(point.sampledAt) - Date.parse(current[current.length - 1].sampledAt) > gapAfterMs) {
       if (current.length) segments.push(current); current = [];
     }
-    if (point.freeBytes !== null) current.push(point);
+    if (measured !== null) current.push(point);
   }
   if (current.length) segments.push(current);
   return segments;
 }
-export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
+export function DiskHistoryChart({ history, metric = "disk" }: { history: TestHostHistory; metric?: HistoryMetric }) {
   const container = useRef<HTMLDivElement>(null), [width, setWidth] = useState(880);
   useEffect(() => {
     const node = container.current; if (!node) return;
@@ -86,25 +96,27 @@ export function DiskHistoryChart({ history }: { history: TestHostHistory }) {
     measure(); const observer = new ResizeObserver(measure); observer.observe(node); return () => observer.disconnect();
   }, []);
   const from = Date.parse(history.from), to = Date.parse(history.to), height = 225, left = 58, top = 15, bottom = 38;
-  const yMax = Math.ceil(Math.max(25, ...history.points.map(point => (point.freeBytes ?? 0) / GiB)) / 5) * 5;
+  const selected = historyMetrics[metric], unit = selected.percent ? 1 : GiB;
+  const display = (value: number) => selected.percent ? value.toFixed(0) + "%" : size(value);
+  const yMax = selected.percent ? 100 : Math.ceil(Math.max(metric === "disk" ? 25 : 5, ...history.points.map(point => (selected.value(point) ?? 0) / GiB)) / 5) * 5;
   const x = (at: string) => left + (Date.parse(at) - from) / Math.max(1, to - from) * (width - left - 16);
-  const y = (bytes: number) => height - bottom - (bytes / GiB / yMax) * (height - top - bottom);
-  const segments = diskSegments(history.points, history.gapAfterMs);
+  const y = (value: number) => height - bottom - (value / unit / yMax) * (height - top - bottom);
+  const segments = diskSegments(history.points, history.gapAfterMs, metric);
   return <div ref={container}>
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label={`Available disk space over time. Gaps mean no measurement. Dashed line marks the ${recordingFloorGiB} GiB recorder minimum.`}>
-      {[0, yMax / 2, yMax].map(tick => <g key={tick}><line x1={left} x2={width - 16} y1={y(tick * GiB)} y2={y(tick * GiB)} stroke="#e4e9e2" />
-        <text x={left - 9} y={y(tick * GiB) + 4} textAnchor="end" fontSize="11" fill="#68746d">{tick} GiB</text></g>)}
-      <line x1={left} x2={width - 16} y1={y(DISK_FLOOR_BYTES)} y2={y(DISK_FLOOR_BYTES)} stroke="#b57729" strokeDasharray="5 4" />
-      <text x={width - 20} y={y(DISK_FLOOR_BYTES) - 5} textAnchor="end" fontSize="11" fill="#946024">{recordingFloorGiB} GiB recorder minimum</text>
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label={`${selected.label} over time. Gaps mean no measurement.${metric === "disk" ? ` Dashed line marks the ${recordingFloorGiB} GiB recorder minimum.` : ""}`}>
+      {[0, yMax / 2, yMax].map(tick => <g key={tick}><line x1={left} x2={width - 16} y1={y(tick * unit)} y2={y(tick * unit)} stroke="#e4e9e2" />
+        <text x={left - 9} y={y(tick * unit) + 4} textAnchor="end" fontSize="11" fill="#68746d">{tick}{selected.percent ? "%" : " GiB"}</text></g>)}
+      {metric === "disk" ? <><line x1={left} x2={width - 16} y1={y(DISK_FLOOR_BYTES)} y2={y(DISK_FLOOR_BYTES)} stroke="#b57729" strokeDasharray="5 4" />
+      <text x={width - 20} y={y(DISK_FLOOR_BYTES) - 5} textAnchor="end" fontSize="11" fill="#946024">{recordingFloorGiB} GiB recorder minimum</text></> : null}
       {(width < 500 ? [0, 1] : [0, 0.5, 1]).map(ratio => <text key={ratio} x={left + ratio * (width - left - 16)} y={height - 10} textAnchor={ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"} fontSize="11" fill="#68746d">{time(new Date(from + ratio * (to - from)).toISOString())}</text>)}
-      {segments.map((segment, index) => <g key={index}><polyline points={segment.map(point => `${x(point.sampledAt)},${y(point.freeBytes!)}`).join(" ")} fill="none" stroke="#0c9667" strokeWidth="2" />
-        {segment.length === 1 ? <circle cx={x(segment[0].sampledAt)} cy={y(segment[0].freeBytes!)} r="3" fill="#0c9667"><title>{`${time(segment[0].sampledAt)} · ${size(segment[0].freeBytes)}`}</title></circle> : null}</g>)}
-      {history.cleanupEvents.map(event => <g key={event.receiptId}><line x1={x(event.startedAt)} x2={x(event.startedAt)} y1={top} y2={height - bottom} stroke={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"} strokeDasharray="2 5" />
+      {segments.map((segment, index) => <g key={index}><polyline points={segment.map(point => `${x(point.sampledAt)},${y(selected.value(point)!)}`).join(" ")} fill="none" stroke="#0c9667" strokeWidth="2" />
+        {(segment.length === 1 ? segment : segment.filter((_, index) => index % Math.ceil(history.points.length / 64) === 0 || index === segment.length - 1)).map(point => <circle key={point.sampleId} cx={x(point.sampledAt)} cy={y(selected.value(point)!)} r={segment.length === 1 ? 3 : 2} fill="#0c9667"><title>{`${time(point.sampledAt)} · ${display(selected.value(point)!)}${metric !== "disk" ? ` · Pressure: ${point.memory?.pressure ?? "unavailable"}` : ""}`}</title></circle>)}</g>)}
+      {(metric === "disk" ? history.cleanupEvents : []).map(event => <g key={event.receiptId}><line x1={x(event.startedAt)} x2={x(event.startedAt)} y1={top} y2={height - bottom} stroke={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"} strokeDasharray="2 5" />
         <circle cx={x(event.startedAt)} cy={top + 4} r="4" fill={event.status === "refused" || event.status === "error" ? "#bb5944" : "#87968c"}><title>{`${time(event.startedAt)} · ${event.origin} cleanup · ${cleanupStatus(event)} · ${event.removedCount} removed. ${cleanupReason(event)}`}</title></circle></g>)}
-      {!segments.length ? <text x={width / 2} y={height / 2} textAnchor="middle" fontSize="14" fill="#68746d">No disk measurements in this period</text> : null}
+      {!segments.length ? <text x={width / 2} y={height / 2} textAnchor="middle" fontSize="14" fill="#68746d">{metric === "disk" ? "No disk measurements in this period" : `No ${selected.label.toLowerCase()} measurements in this period`}</text> : null}
     </svg>
-    <p className="text-xs text-[#68746d]">Available space on the host's Data volume. Gaps are missing measurements; dotted markers are cleanup attempts. The dashed line marks the {recordingFloorGiB} GiB recorder minimum. Free space alone does not establish routine readiness.</p>
-    <p className="mt-1 text-xs text-[#68746d]">Default cleanup policy is separate: trigger below 30 GiB, target 35 GiB.</p>
+    {metric === "disk" ? <><p className="text-xs text-[#68746d]">Available space on the host's Data volume. Gaps are missing measurements; dotted markers are cleanup attempts. The dashed line marks the {recordingFloorGiB} GiB recorder minimum. Free space alone does not establish routine readiness.</p>
+    <p className="mt-1 text-xs text-[#68746d]">Default cleanup policy is separate: trigger below 30 GiB, target 35 GiB.</p></> : <p className="text-xs text-[#68746d]">{selected.label} from actual host reports. Gaps are missing measurements; hover a point for its observed pressure. Memory usage and swap do not determine OS pressure.</p>}
     {history.truncated ? <p className="mt-1 text-xs text-[#a64235]">Only the newest {history.points.length.toLocaleString()} measurements are shown.</p> : null}
   </div>;
 }
@@ -120,12 +132,30 @@ export function CleanupEvents({ events }: { events: CleanupHealthEvent[] }) {
   </details>;
 }
 
+export function MemoryHealth({ host, now, unavailable = false }: { host: TestHostLatest; now: number; unavailable?: boolean }) {
+  const fresh = !unavailable && hostIsFresh(host, now), memory = host.memory;
+  const pressure = memory?.pressure, tone = fresh && pressure ? pressure === "normal" ? "healthy" : "blocked" : "unknown";
+  const label = !fresh ? `${unavailable ? "Refresh unavailable" : "Stale report"} · current pressure unavailable` : pressure ? `${pressure[0].toUpperCase()}${pressure.slice(1)} pressure` : "Pressure unavailable";
+  return <section className="mt-6 border-t border-[#e4e9e2] pt-4" aria-label="Host memory">
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-base font-semibold">Memory</h3>
+      <span className={`rounded-md px-2 py-1 text-xs font-semibold ${tones[tone]}`}>{label}</span></div>
+    <p className="mt-2 text-xs text-[#68746d]">{fresh ? "Latest measurement" : `${unavailable ? "Refresh unavailable" : "Stale"} · last reported ${time(host.sampledAt)}, not current`}</p>
+    <dl className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div><dt className="text-xs text-[#68746d]">Used / physical RAM</dt><dd className="mt-1 font-semibold">{size(memory?.usedBytes)} / {size(memory?.totalBytes)}</dd></div>
+      <div><dt className="text-xs text-[#68746d]">Compressed RAM</dt><dd className="mt-1 font-semibold">{size(memory?.compressedBytes)}</dd></div>
+      <div><dt className="text-xs text-[#68746d]">Swap used</dt><dd className="mt-1 font-semibold">{size(memory?.swapUsedBytes)}</dd></div>
+      <div><dt className="text-xs text-[#68746d]">OS memory availability</dt><dd className="mt-1 font-semibold">{memory?.pressureFreePercent == null ? "Unavailable" : `${memory.pressureFreePercent.toFixed(0)}%`}</dd></div>
+    </dl>
+    <p className="mt-3 text-xs text-[#68746d]">Used RAM excludes file cache and includes the compressor's physical size. Availability and pressure are reported by macOS, not inferred from raw free pages. Swap can remain used after pressure subsides.</p>
+  </section>;
+}
+
 export function SystemHealthPage({restoration = false, lane = null}: {restoration?: boolean; lane?: LaneSelection | null}) {
   const now = useClock();
   return lane ? <LaneHistoryPage key={`${lane.hostId}/${lane.laneId}`} selection={lane} now={now} /> : restoration ? <LaneRestorationPage /> : <SystemHealthDashboard />;
 }
 function SystemHealthDashboard() {
-  const query = useHostHealth(), now = useClock(), [hostId, setHostId] = useState<string | null>(null), [days, setDays] = useState<1 | 7>(1);
+  const query = useHostHealth(), now = useClock(), [hostId, setHostId] = useState<string | null>(null), [days, setDays] = useState<1 | 7>(1), [metric, setMetric] = useState<HistoryMetric>("disk");
   const hosts = query.data?.hosts ?? [], host = hosts.find(value => value.hostId === hostId) ?? hosts[0];
   const history = useQuery({ queryKey: ["test-host-history", host?.hostId, days], enabled: Boolean(host), refetchInterval: 60_000,
     queryFn: () => api<TestHostHistory>(`/api/admin/test-runs/health/${encodeURIComponent(host!.hostId)}?days=${days}`) });
@@ -133,21 +163,23 @@ function SystemHealthDashboard() {
   return <div className="space-y-5">
     <LaneHealthSection now={now} />
     <section className="rounded-2xl border border-[#dfe5dd] bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Workers &amp; disk space</h2><p className="mt-1 text-sm text-[#68746d]">Service status is separate from a job's progress and a device lane's availability.</p></div>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Host health</h2><p className="mt-1 text-sm text-[#68746d]">Service status, memory and disk measurements are separate from a job's progress and a device lane's availability.</p></div>
         <button className="text-sm font-medium text-[#087d50] underline" onClick={() => { void query.refetch(); if (host) void history.refetch(); }}>Refresh</button></div>
       <a href="/?systemHealth=1&restoration=1" className="mt-3 inline-block text-sm font-medium text-[#087d50] underline">View lane restoration attempts &amp; resume decisions</a>
       {query.isError ? <p className="mt-4 text-sm text-[#a64235]">Health could not refresh. Current service status is unknown.</p> : null}
       {!hosts.length ? <p className="mt-4 text-sm text-[#68746d]">{query.isPending ? "Loading host reports…" : "No independent host monitor has reported yet. Historical disk measurements will appear as they are collected."}</p> : <>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><select aria-label="Host" value={host?.hostId} onChange={event => setHostId(event.target.value)} className="rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">{hosts.map(value => <option key={value.hostId}>{value.hostId}</option>)}</select>
-          <p className="text-xs text-[#68746d]">{fresh ? "Host reporting" : "No recent report"} · Last observed {host ? elapsed(host.sampledAt, now) : "unknown"} ago{host ? ` (${time(host.sampledAt)})` : ""}</p></div>
+          <p className="text-xs text-[#68746d]">{fresh ? "Host reporting" : "Stale · no recent report"} · Last observed {host ? elapsed(host.sampledAt, now) : "unknown"} ago{host ? ` (${time(host.sampledAt)})` : ""}</p></div>
         {host ? <div className="mt-4 grid gap-3 lg:grid-cols-3">{HOST_COMPONENTS.map(role => { const component = host.components.find(value => value.component === role), state = componentHealth(host, component, now, query.isError);
           return <article key={role} className="rounded-xl border border-[#e0e6de] p-4"><h3 className="font-semibold">{componentNames[role]}</h3>{role === "general-worker" ? <p className="mt-1 text-xs text-[#68746d]">Fixes and shared triage</p> : null}<span className={`mt-2 inline-block rounded-md px-2 py-1 text-xs font-semibold ${tones[state.tone]}`}>{state.label}</span>
             <p className="mt-3 text-sm text-[#59655e]">{state.summary}</p><p className="mt-2 text-xs text-[#68746d]"><strong>Next:</strong> {state.next}</p>
             {component?.state === "running" && fresh ? <p className="mt-2 text-xs text-[#68746d]">The service is alive; this does not say a model or routine is working.</p> : null}</article>; })}</div> : null}
-        <div className="mt-6 flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-base font-semibold">Available disk space</h3><p className={`mt-1 text-2xl font-semibold ${fresh && host?.freeBytes !== null && host!.freeBytes < DISK_FLOOR_BYTES ? "text-[#a64235]" : "text-[#202820]"}`}>{host ? size(host.freeBytes) : "Unavailable"}<span className="ml-2 text-xs font-normal text-[#68746d]">{fresh ? "latest measurement" : "last reported, not current"}</span></p></div>
+        {host ? <MemoryHealth host={host} now={now} unavailable={query.isError} /> : null}
+        <div className="mt-6 flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-base font-semibold">Available disk space</h3><p className={`mt-1 text-2xl font-semibold ${fresh && host?.freeBytes !== null && host!.freeBytes < DISK_FLOOR_BYTES ? "text-[#a64235]" : "text-[#202820]"}`}>{host ? size(host.freeBytes) : "Unavailable"}<span className="ml-2 text-xs font-normal text-[#68746d]">{fresh ? "latest measurement" : "stale · last reported, not current"}</span></p></div></div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><label className="text-sm">History metric <select aria-label="History metric" value={metric} onChange={event => setMetric(event.target.value as HistoryMetric)} className="ml-2 rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">{Object.entries(historyMetrics).map(([id, value]) => <option key={id} value={id}>{value.label}</option>)}</select></label>
           <div className="flex gap-1 rounded-lg bg-[#f0f3ee] p-1">{([1, 7] as const).map(value => <button key={value} aria-pressed={days === value} onClick={() => setDays(value)} className={`rounded-md px-3 py-1 text-sm ${days === value ? "bg-white font-semibold shadow-sm" : "text-[#68746d]"}`}>{value === 1 ? "24 hours" : "7 days"}</button>)}</div></div>
-        {history.isError ? <p className="mt-3 text-sm text-[#a64235]">Disk history could not refresh.</p> : null}
-        {history.data ? <div className="mt-4"><DiskHistoryChart history={history.data} /><CleanupEvents events={history.data.cleanupEvents} /></div> : <p className="mt-4 text-sm text-[#68746d]">Loading recorded measurements…</p>}
+        {history.isError ? <p className="mt-3 text-sm text-[#a64235]">History could not refresh. {history.data ? "Showing the last fetched history, not current." : ""}</p> : null}
+        {history.data ? <div className="mt-4"><DiskHistoryChart history={history.data} metric={metric} />{metric === "disk" ? <CleanupEvents events={history.data.cleanupEvents} /> : null}</div> : <p className="mt-4 text-sm text-[#68746d]">{history.isError ? "Historical measurements unavailable." : "Loading recorded measurements…"}</p>}
         {query.data?.truncated ? <p className="mt-3 text-xs text-[#a64235]">Only the first 32 reporting hosts are shown.</p> : null}
       </>}
     </section>
