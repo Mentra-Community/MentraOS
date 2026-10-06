@@ -230,7 +230,7 @@ test('unknown comment create reconciles one owned marker and retains intent acro
   f.outage = true
   f.now = start + 11 * 60_000
   await f.notification().tick()
-  expect(f.row.reporting?.error).toContain('issues:write')
+  expect(f.row.reporting?.error).toContain('pull_requests:write')
   expect(JSON.stringify(f.row.reporting)).not.toContain('secret')
   f.outage = false
   f.now = start + 12 * 60_000

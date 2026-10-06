@@ -48,10 +48,10 @@ export class RoutineWorkNotification {
     } catch (error) {
       if (error instanceof Error && error.message === 'permission')
         throw new ReportingFailure(
-          'GitHub App lacks source-PR comment permission; grant issues:write for MentraOS and retry this retained report.',
+          'GitHub App lacks source-PR comment permission; grant pull_requests:write for MentraOS and retry this retained report.',
         )
       throw new ReportingFailure(
-        'GitHub App source-PR reporting is unavailable; verify its installation and issues:write permission. The original job is retained.',
+        'GitHub App source-PR reporting is unavailable; verify its installation and pull_requests:write permission. The original job is retained.',
       )
     }
   }
