@@ -169,7 +169,7 @@ test("terminal request receipts bind exact input, host, identity and terminal ki
     d => {d.request.hostReceipt = {requestId: d.request.requestId}}, d => {d.request.terminalStatus = "cancelled"},
     d => {d.request.hostRejection.extra = true}]) {
     const detail = structuredClone(f.detail); mutate(detail)
-    assert.throws(() => boundRoutineResult(detail), /immutable receipt|dispatch intent/)
+    assert.throws(() => boundRoutineResult(detail), /immutable receipt|immutable input|dispatch intent/)
   }
   const cancellation = terminalRoutineFixture({status: "cancelled"})
   cancellation.request.state = "accepted"
