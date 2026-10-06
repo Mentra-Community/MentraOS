@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fix nightly failures"
+  short_description: "Diagnose, fix and verify independent nightly runs"
+  default_prompt: "Use $fix-nightly-failures to investigate this nightly suite and deliver verified fixes and the next full-suite result."
