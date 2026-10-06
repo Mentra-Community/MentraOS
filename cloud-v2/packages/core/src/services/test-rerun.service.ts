@@ -20,7 +20,7 @@ export interface RerunRepository {
   children(suiteId: string, before: string, limit: number): Promise<RerunRecord[]>;
   byRequest(requestId: string): Promise<RerunRecord | null>;
 }
-const repository: RerunRepository = {
+export const testRerunRepository: RerunRepository = {
   async get(rerunId) {return await TestRerunModel.findOne({rerunId}).read("primary").readConcern("majority").lean() as RerunRecord | null;},
   async insert(row) {await TestRerunModel.create([row], {writeConcern: testWriteConcern});},
   async accept(rerunId, previewDigest, claimKeys, acceptedAt) {
@@ -30,7 +30,7 @@ const repository: RerunRepository = {
   async history(rootKey, before, limit) {
     return await TestRerunModel.aggregate([
       {$match: {state: "accepted", "plan.members": {$elemMatch: {rootKey, attemptNumber: {$lt: before}}}}},
-      {$set: {historyMember: {$first: {$filter: {input: "$plan.members", as: "member", cond: {$eq: ["$$member.rootKey", rootKey]}}}}}},
+      {$set: {historyMember: {$arrayElemAt: [{$filter: {input: "$plan.members", as: "member", cond: {$eq: ["$$member.rootKey", rootKey]}}},0]}}},
       {$sort: {"historyMember.attemptNumber": -1}}, {$limit: limit}, {$unset: "historyMember"},
     ]).read("primary").readConcern("majority") as RerunRecord[];
   },
@@ -56,7 +56,7 @@ const verified = (row: RerunRecord): RerunRecord => {
 
 /** Reruns freeze native inputs once and reuse ordinary queue/result ownership. */
 export class TestRerunService {
-  constructor(private readonly store: RerunRepository = repository,
+  constructor(private readonly store: RerunRepository = testRerunRepository,
     private readonly suites: Pick<TestSuiteService, "detail"> & Partial<Pick<TestSuiteService,"originalMember">> = new TestSuiteService(),
     private readonly dispatch: Pick<RoutineDispatchService, "prepare"> = new RoutineDispatchService(),
     private readonly requests: Pick<TestRequestService, "get" | "submit"> = new TestRequestService(),

@@ -1,4 +1,4 @@
-import {expect,test} from 'bun:test';
+import {expect,test,spyOn} from 'bun:test';
 import {TestRerunService,type RerunRepository,type RerunRecord} from './test-rerun.service';
 import {requestInputDigest} from './test-request.service';
 import {TestRunError} from './test-result-error';
@@ -82,4 +82,14 @@ const {routineEnrollmentSchema}=await import('../types/routine-definition.types'
  const result={...plan,members:members.map(m=>({...m,publicationComplete:false})),expectedCount:28,passed:0,status:'running'};
  const projected=nightlySuiteProjection(suite as any,plan as any,result as any);(service as any).suites={async detail(){return projected}};
  const p=await service.preview({rerunId:'glasses',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},reason:'Harness fix'},'admin');expect(recorded.manifest).toEqual(manifest);expect(p.plan.members[0]!.input.build.manifest).toEqual(manifest);expect(p.plan.members[0]!.input.glassesReturn?.manifest).toEqual(manifest);
+});
+
+test('repository history uses MongoDB 4.2 array selection and sorts the matching member before limiting',async()=>{
+ const {TestRerunModel}=await import('../models/test-rerun.model');const {testRerunRepository}=await import('./test-rerun.service');let pipeline:any[]=[];
+ const aggregate=spyOn(TestRerunModel,'aggregate').mockImplementation((stages:any)=>{pipeline=stages;return {read(){return this},readConcern(){return Promise.resolve([])}} as any});
+ try {await testRerunRepository.history('root',4,2);expect(pipeline).toEqual([
+ {$match:{state:'accepted','plan.members':{$elemMatch:{rootKey:'root',attemptNumber:{$lt:4}}}}},
+ {$set:{historyMember:{$arrayElemAt:[{$filter:{input:'$plan.members',as:'member',cond:{$eq:['$$member.rootKey','root']}}},0]}}},
+ {$sort:{'historyMember.attemptNumber':-1}},{$limit:2},{$unset:'historyMember'}]);expect(JSON.stringify(pipeline)).not.toContain('$first');}
+ finally{aggregate.mockRestore()}
 });
