@@ -27,8 +27,9 @@ repair agent if necessary. Verify real invocation, the repair conclusion and
 accepted resume or out-of-service decision, then the next independent run.
 Keep the original verdict. State repair does not fix app/harness source.
 
-Do not install new harness source, change shared configuration or use a lane
-owned by this suite. Healthy lanes continue independently of a lane in repair.
+Keep installed harness source and shared configuration unchanged while accepted
+work depends on them. Do not take resources from another owner or displace
+accepted suite work. Healthy lanes continue independently of a lane in repair.
 If a global framework fault prevents useful execution, diagnose that specific
 fault and coordinate a safe interruption through normal controller operations;
 do not cancel a whole suite merely because it is red. Respect the current
@@ -38,13 +39,26 @@ cancellation authority and never force-release hardware or edit its database.
 
 Keep one small durable failure ledger in the task's existing coordination state:
 routine/run, failing phase/step, original error, evidence links, exact provenance,
-classification, named owner, PR/head/review, next action and verification result.
+classification, causal group and supporting evidence, named owner,
+PR/head/review, next action and verification result.
 Mark an unavailable observation unknown; do not copy an old success forward.
 
 Fetch the original logs, screenshots, recording and setup/teardown diagnostics.
 Separate the original failure from subsequent cleanup and publication errors.
 Classify app, harness, machine/fixture state or unknown on evidence. Compare the
 failing source with current source before deciding it needs another fix.
+
+Group failures when evidence demonstrates the same cause in a shared provider
+or action at the recorded source/build, with compatible triggering conditions.
+Matching error text alone is insufficient. A suspected shared cause may use one
+owner to collect the missing observation, but keep the grouping provisional and
+split it when evidence differs. Keep every member's immutable original outcome,
+provenance and evidence; grouping never makes an unverified member pass.
+
+Use one diagnosis owner and coherent fix for a demonstrated causal group. Check
+existing PRs, merged fixes and authoring jobs before opening another; link them
+from the same ledger and reuse work that covers the cause and target. Avoid one
+fix or authoring job per failed routine when the same work resolves the group.
 
 If the saved error omits the information needed to diagnose it, fix that
 diagnostic gap first. Preserve the original cause, phase and action; add bounded,
@@ -66,18 +80,27 @@ authority. Source tests and review remain separate from device verification.
 
 ## Choose the shortest useful verification
 
-After the current suite has finished and its owned resources/publication have
-settled, install reviewed merged harness changes through the existing source
-activation path at an idle boundary. Use the selected PR/channel artifact for
-app fixes. Do not silently substitute today's newest build for the failed build.
+Verify at the relevant lane's normal ownership boundary without displacing
+accepted suite work; unrelated members may continue. Harness activation through
+the existing path additionally requires every accepted request, executor and
+reservation depending on the replaced source/shared configuration to settle;
+an idle lane alone does not permit replacing live installed source. Publication
+custody and admission budgets remain enforced. Use reviewed merged harness code
+and the selected PR/channel artifact for app fixes. Do not silently substitute
+today's newest build for the failed build.
 
-Choose per failure, using judgment:
+Choose the smallest useful verification for each causal group, using judgment:
 
 | Evidence and remaining work | Next action |
 | --- | --- |
-| Focused fix with strong causal evidence and a high likelihood of passing | Manually dispatch the affected routine through ordinary orchestration; no authoring session needed |
-| Available logs/source are insufficient and device inspection or action iteration is needed | Submit a built-in `routine-work` create/edit job with the accumulated diagnosis and exact source/build |
+| Focused fix with strong causal evidence and a high likelihood of passing | Manually dispatch the smallest set of affected routines that exercises the shared cause through ordinary orchestration; no authoring session needed |
+| Available logs/source are insufficient and device inspection or action iteration is needed | Reuse a compatible built-in `routine-work` create/edit job, or submit one for a representative affected routine with the group's diagnosis and exact source/build |
 | Insufficient logs, missing artifact/capability or genuine access gap | Fix the observation/prerequisite or ask for the specific missing input; do not invent a pass or repeatedly retry |
+
+Keep separate device jobs when distinct unresolved device work or incompatible
+routine/platform/source/build targeting requires them. A grouped diagnosis does
+not change the job API: each job names one routine and target. Record which
+members a verification actually covers and what remains for the full catalog.
 
 The built-in job supervisor owns the workspace, machine agent, reservation and
 held session. Follow the harness [job guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-WORK.md)
