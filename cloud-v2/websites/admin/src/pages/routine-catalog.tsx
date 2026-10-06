@@ -23,17 +23,46 @@ export function RoutineCatalogPage() {
   return id && platform ? <RoutineDetailPage id={id} platform={platform} /> : <RoutineCatalogList />;
 }
 
-function RoutineCatalogList() {
+export function matchesCatalogSearch(routine: RoutineEnrollment, search: string, platform: string, glasses: string) {
+  const text = search.trim().toLowerCase();
+  return (!text || routine.definition.title.toLowerCase().includes(text) || routine.definition.purpose.toLowerCase().includes(text))
+    && (!platform || routine.platform === platform)
+    && (!glasses || (glasses === "no-glasses" ? !routine.definition.glasses : routine.definition.glasses?.models.includes(glasses)));
+}
+
+export function RoutineCatalogList() {
+  const [search, setSearch] = useState(""), [platform, setPlatform] = useState(""), [glasses, setGlasses] = useState("");
   const catalog = useQuery({queryKey: ["routine-catalog"],
     queryFn: () => api<{routines: CatalogRow[]}>("/api/admin/routine-catalog"), refetchInterval: 15000});
   if (catalog.isPending) return <p role="status">Loading routines…</p>;
   if (catalog.error && !catalog.data) return <p role="alert">Could not load routines: {catalog.error.message}</p>;
+  const routines = catalog.data.routines;
+  const platforms = [...new Set(routines.map(row => row.platform))].sort();
+  const glassesModels = [...new Set(routines.flatMap(row => row.definition.glasses?.models ?? []))].sort();
+  const filtered = routines.filter(row => matchesCatalogSearch(row, search, platform, glasses));
+  const hasFilters = Boolean(search || platform || glasses);
+  const field = "mt-1 block w-full rounded-lg border border-[#cbd3c8] bg-white p-2 text-sm";
   return <div className="space-y-5">
     <section className={PANEL}><h2 className="text-lg font-semibold">Routine catalog</h2>
-      <p className="mt-2">Routines with a published passing example, their requirements and run history.</p></section>
+      <p className="mt-2">Routines with a published passing example, their requirements and run history.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]" role="search" aria-label="Search routines">
+        <label className="text-sm">Search routines<input type="search" className={field} value={search} onChange={event => setSearch(event.target.value)} placeholder="Name or description" /></label>
+        <label className="text-sm">Platform<select className={field} value={platform} onChange={event => setPlatform(event.target.value)}>
+          <option value="">All platforms</option>{platforms.map(value => <option key={value} value={value}>{value === "android" ? "Android" : "iOS on Mac"}</option>)}
+        </select></label>
+        <label className="text-sm">Glasses<select className={field} value={glasses} onChange={event => setGlasses(event.target.value)}>
+          <option value="">All glasses</option><option value="no-glasses">No glasses required</option>{glassesModels.map(value => <option key={value} value={value}>{value === "mentra-live" ? "Mentra Live" : value}</option>)}
+        </select></label>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-3 text-sm">
+        <p role="status" aria-live="polite">Showing {filtered.length} of {routines.length} routines</p>
+        {hasFilters && <button className="underline" onClick={() => {setSearch(""); setPlatform(""); setGlasses("");}}>Clear filters</button>}
+      </div>
+    </section>
     {catalog.error && <p role="alert">Routines could not refresh: {catalog.error.message}</p>}
-    {!catalog.data.routines.length && <p>No routine has a published passing example on the new framework yet.</p>}
-    <div className="grid gap-5 lg:grid-cols-2">{catalog.data.routines.map(row => <EditableRoutineCatalogCard key={`${row.routineId}/${row.platform}`} routine={row} />)}</div>
+    {!routines.length ? <p>No routine has a published passing example on the new framework yet.</p>
+      : !filtered.length && <p>No routines match your filters. Try another search or clear the filters.</p>}
+    <div className="grid gap-5 lg:grid-cols-2">{filtered.map(row => <EditableRoutineCatalogCard key={`${row.routineId}/${row.platform}`} routine={row} />)}</div>
   </div>;
 }
 

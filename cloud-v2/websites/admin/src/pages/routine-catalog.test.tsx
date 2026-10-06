@@ -1,7 +1,7 @@
 import {expect, test} from "bun:test";
 import {renderToStaticMarkup} from "react-dom/server";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
-import {FrameworkRunPage, FrameworkRunsPage, RoutineCatalogCard, frameworkRunHref, frameworkRunRefetchInterval, routineHref, matchesStepSearch, recordingOffset} from "./routine-catalog";
+import {FrameworkRunPage, FrameworkRunsPage, RoutineCatalogCard, RoutineCatalogList, frameworkRunHref, frameworkRunRefetchInterval, routineHref, matchesCatalogSearch, matchesStepSearch, recordingOffset} from "./routine-catalog";
 import {readTestRunLink} from "../lib/test-run-links";
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types";
 import {frameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types";
@@ -9,6 +9,39 @@ import {frameworkRunSchema} from "../../../../packages/core/src/types/framework-
 const routine = routineEnrollmentSchema.parse({routineId: "notes-phone", platform: "ios-on-mac", definitionRevision: "c".repeat(40), definitionSha256: "d".repeat(64),
   definition: {id: "notes-phone", title: "Notes", purpose: "Create and find a note", platforms: ["ios-on-mac"], entry: "home", account: "lane", requires: [], requirements: [], fixtures: [],
     steps: [{id: "create", instruction: "Create a note", expected: "Note saved"}], source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: "c".repeat(40), path: "routines/notes-phone/routine.ts"}}});
+
+test("catalog search combines title or description substrings with exact platform and declared glasses models", () => {
+  const connected = {...routine, platform: "android" as const, definition: {...routine.definition, glasses: {models: ["mentra-live", "even-g1"]}}};
+  expect(matchesCatalogSearch(routine, "  OTE  ", "ios-on-mac", "no-glasses")).toBe(true);
+  expect(matchesCatalogSearch(routine, "FIND A", "", "")).toBe(true);
+  expect(matchesCatalogSearch(routine, "login", "", "")).toBe(false);
+  expect(matchesCatalogSearch(routine, "notes", "android", "")).toBe(false);
+  expect(matchesCatalogSearch(routine, "", "", "mentra-live")).toBeFalsy();
+  expect(matchesCatalogSearch(connected, "note", "android", "mentra-live")).toBe(true);
+  expect(matchesCatalogSearch(connected, "", "", "even-g1")).toBe(true);
+  expect(matchesCatalogSearch(connected, "", "", "no-glasses")).toBe(false);
+  expect(matchesCatalogSearch(connected, "", "", "mentra")).toBe(false);
+  expect(matchesCatalogSearch(routine, "   ", "", "")).toBe(true);
+});
+
+test("catalog filter controls derive options from the whole catalog and retain cards and nightly switches", () => {
+  const client = new QueryClient();
+  client.setQueryData(["routine-catalog"], {routines: [{...routine, example: null}, {...routine, platform: "android",
+    definition: {...routine.definition, glasses: {models: ["mentra-live", "even-g1"]}}, example: null}]});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><RoutineCatalogList /></QueryClientProvider>);
+  expect(html).toContain('role="search" aria-label="Search routines"');
+  expect(html).toContain('type="search"');
+  expect(html).toContain('placeholder="Name or description"');
+  for (const label of ["All platforms", "Android", "iOS on Mac", "All glasses", "No glasses required", "Mentra Live", "even-g1"])
+    expect(html).toContain(`>${label}</option>`);
+  expect(html).toContain("Showing 2 of 2 routines");
+  expect(html.match(/<article /g)).toHaveLength(2);
+  expect(html.match(/role="switch"/g)).toHaveLength(2);
+  client.setQueryData(["routine-catalog"], {routines: []});
+  const empty = renderToStaticMarkup(<QueryClientProvider client={client}><RoutineCatalogList /></QueryClientProvider>);
+  expect(empty).toContain("No routine has a published passing example");
+  expect(empty).not.toContain("No routines match your filters");
+});
 test("catalog labels a historical example without claiming the current definition passed", () => {
   const markup = renderToStaticMarkup(<RoutineCatalogCard routine={{...routine, example: {runId: "old-pass", startedAt: "2026-10-02T18:00:00Z", finishedAt: "2026-10-02T18:01:00Z", recordingAssetId: "video", definitionRevision: "a".repeat(40),
     build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}}}} />);
