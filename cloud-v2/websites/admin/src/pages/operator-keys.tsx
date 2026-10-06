@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient, type QueryClient, type UseMutati
 import { OPERATOR_KEY_SCOPES, type CredentialView, type OrganizationCapability } from "@mentra/workspace-contract";
 import { ConfirmButton, expiryFromDateInput, SecretDialog } from "@mentra/workspace-ui";
 import { Loader2, RefreshCcw } from "lucide-react";
-import { useId, useState, type FormEvent } from "react";
+import { useId, useReducer, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -82,27 +82,31 @@ export function createKeyMutationOptions(
 }
 
 export type SecretState = { status: "hidden" } | { status: "shown"; name: string; token: string };
+export type SecretAction = { type: "created"; name: string; token: string } | { type: "dismissed" };
 
-export function OperatorKeysPage() {
-  return <OperatorKeysScreen />;
+/** `hidden` holds nothing; `shown` is the only state that holds the token, and `dismissed` drops it. */
+export function secretReducer(_state: SecretState, action: SecretAction): SecretState {
+  return action.type === "created" ? { status: "shown", name: action.name, token: action.token } : { status: "hidden" };
+}
+
+/** The one-time dialog while a token is held, and nothing otherwise. Only Done dismisses it. */
+export function SecretGate({ secret, onDone }: { secret: SecretState; onDone(): void }) {
+  return secret.status === "shown" ? <SecretDialog name={secret.name} token={secret.token} onDone={onDone} /> : null;
 }
 
 /**
- * The page itself. `initialSecret` exists so a test can render the state after a key was created; the
- * page never sets it.
- *
- * The one-time dialog is rendered outside the loading and error states of the list: it holds the only copy
- * of the token, so a refetch that fails must not take it off the screen. The token lives in this state
- * only, until Done: not in the query or mutation cache, not in a URL.
+ * The page. The one-time dialog is rendered outside the loading and error states of the list: it holds the
+ * only copy of the token, so a refetch that fails must not take it off the screen. The token lives in the
+ * `secret` state only, until Done: not in the query or mutation cache, not in a URL.
  */
-export function OperatorKeysScreen({ initialSecret = { status: "hidden" } }: { initialSecret?: SecretState }) {
+export function OperatorKeysPage() {
   const client = useQueryClient();
-  const [secret, setSecret] = useState<SecretState>(initialSecret);
+  const [secret, dispatch] = useReducer(secretReducer, { status: "hidden" });
   const keys = useQuery({
     queryKey: OPERATOR_KEYS_QUERY_KEY,
     queryFn: () => api<{ items: CredentialView[] }>("/api/organization/credentials"),
   });
-  const create = useMutation(createKeyMutationOptions(client, revealed => setSecret({ status: "shown", ...revealed })));
+  const create = useMutation(createKeyMutationOptions(client, revealed => dispatch({ type: "created", ...revealed })));
   const revoke = useMutation({
     mutationFn: (credentialId: string) =>
       api<void>(`/api/organization/credentials/${encodeURIComponent(credentialId)}`, { method: "DELETE" }),
@@ -178,9 +182,7 @@ export function OperatorKeysScreen({ initialSecret = { status: "hidden" } }: { i
         ) : null}
       </section>
 
-      {secret.status === "shown" ? (
-        <SecretDialog name={secret.name} token={secret.token} onDone={() => setSecret({ status: "hidden" })} />
-      ) : null}
+      <SecretGate secret={secret} onDone={() => dispatch({ type: "dismissed" })} />
     </div>
   );
 }

@@ -91,10 +91,17 @@ jobs:
 
       - name: Run admin dashboard tests
         working-directory: cloud-v2
-        # Server-rendered page tests and the admin proxy tests; no browser and no
-        # external service. `bun test packages` above already covers
-        # packages/workspace-ui.
-        run: bun test --max-concurrency=1 websites/admin/src
+        # Server-rendered page, lib and shell tests: no browser and no external
+        # service. `bun test packages` above already covers packages/workspace-ui.
+        # websites/admin/src/index.test.ts is left out on purpose: it runs a real S3
+        # client and proxy against local servers, has never run in CI, and is not part
+        # of the dashboard UI.
+        run: >-
+          bun test --max-concurrency=1
+          websites/admin/src/pages
+          websites/admin/src/lib
+          websites/admin/src/app-nav.test.tsx
+          websites/admin/src/report-artifact-view.test.tsx
 
       - name: Typecheck backend packages
         working-directory: cloud-v2

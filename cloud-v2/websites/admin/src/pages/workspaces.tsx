@@ -23,7 +23,12 @@ const PANEL = "rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px
 /** The dashboard's own workspaces, behind the same origin as the rest of the admin API. */
 const workspaceApi = createWorkspaceApi({ basePath: "/api/workspaces" });
 
-export const ORGANIZATION_WORKSPACES_KEY = ["admin-organization-workspaces"] as const;
+/**
+ * Nested under the workspace list's key on purpose: every workspace-ui mutation that creates, renames,
+ * deletes or leaves a workspace (and accepting an invitation) invalidates `workspaceKeys.list`, so the
+ * "All workspaces" list below refetches with it instead of going stale.
+ */
+export const ORGANIZATION_WORKSPACES_KEY = [...workspaceKeys.list(workspaceApi), "organization"] as const;
 const ALL_WORKSPACES_PAGE_SIZE = 50;
 
 type TabKey = "members" | "invitations" | "keys" | "settings" | "audit";

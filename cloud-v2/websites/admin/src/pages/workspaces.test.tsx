@@ -223,3 +223,26 @@ describe("recover ownership", () => {
     }
   });
 });
+
+describe("the All workspaces list stays current", () => {
+  test("it is invalidated by the invalidation every workspace create, rename, delete and leave performs", () => {
+    const client = new QueryClient();
+    try {
+      client.setQueryData(workspaceKeys.list(api), [acme]);
+      client.setQueryData(ORGANIZATION_WORKSPACES_KEY, { pages: [{ items: everyone, next: null }], pageParams: [undefined] });
+      client.setQueryData(workspaceKeys.detail(api, ACME), acme);
+      // What `workspaceMutationOptions` and the picker do on success.
+      void client.invalidateQueries({ queryKey: workspaceKeys.list(api) });
+      expect(client.getQueryState(ORGANIZATION_WORKSPACES_KEY)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(workspaceKeys.list(api))?.isInvalidated).toBe(true);
+      // Another workspace's own data is not what the list is about.
+      expect(client.getQueryState(workspaceKeys.detail(api, ACME))?.isInvalidated).toBe(false);
+    } finally {
+      client.clear();
+    }
+  });
+
+  test("its key stays inside this API's cache scope", () => {
+    expect(ORGANIZATION_WORKSPACES_KEY.slice(0, 3)).toEqual(["workspace-ui", "/api/workspaces", "list"]);
+  });
+});

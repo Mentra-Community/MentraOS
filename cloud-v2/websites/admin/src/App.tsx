@@ -134,8 +134,9 @@ const initialFixFlows = new URLSearchParams(window.location.search).get("fixFlow
 const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
 // Invitation links point here as /?workspaceInvite=<token>. The token stays in the address bar until the
 // invitation is accepted or the person navigates away, so a sign-in round-trip (LoginGate's return_to)
-// or switching to the invited account still lands back on the accept screen.
-const initialWorkspaceInvite = readWorkspaceInvite(window.location.search);
+// or switching to the invited account still lands back on the accept screen. Like the report id above,
+// the module copy only seeds the first mount and is cleared once the invitation is spent.
+let pendingWorkspaceInvite = readWorkspaceInvite(window.location.search);
 
 export function AdminPage() {
   const client = useQueryClient();
@@ -145,11 +146,11 @@ export function AdminPage() {
     initialSystemHealth ? "system-health"
       : initialFixFlowLink || initialFixFlows ? "fix-flows"
       : initialTestRunLink || initialTestRunListScope ? "test-runs"
-      : initialWorkspaceInvite ? "workspaces"
+      : pendingWorkspaceInvite ? "workspaces"
       : pendingDeepLinkReportId ? "incidents"
       : null,
   );
-  const [workspaceInvite, setWorkspaceInvite] = useState<string | null>(initialWorkspaceInvite);
+  const [workspaceInvite, setWorkspaceInvite] = useState<string | null>(pendingWorkspaceInvite);
   const [fixFlowLink, setFixFlowLink] = useState<FixFlowLink | null>(initialFixFlowLink);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
@@ -188,6 +189,7 @@ export function AdminPage() {
   useEffect(() => {
     const restore = () => {
       const invite = readWorkspaceInvite(window.location.search);
+      pendingWorkspaceInvite = invite;
       setWorkspaceInvite(invite);
       if (invite) { setPage("workspaces"); return; }
       if (new URLSearchParams(window.location.search).get("systemHealth") === "1") { setPage("system-health"); return; }
@@ -226,6 +228,7 @@ export function AdminPage() {
     // Accepting added a workspace. Refresh who this is before forgetting the invitation: until then Workspaces
     // is open only because of the invitation, and a person in no other workspace would lose it.
     await client.invalidateQueries({ queryKey: ["admin-me"] });
+    pendingWorkspaceInvite = null;
     setWorkspaceInvite(null);
     window.history.replaceState(null, "", withoutWorkspaceInvite(window.location.href));
   }
@@ -252,6 +255,7 @@ export function AdminPage() {
         for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep", "systemHealth"]) location.searchParams.delete(param);
         // Leaving Workspaces spends the invitation link; staying on it must not.
         if (key !== "workspaces") {
+          pendingWorkspaceInvite = null;
           setWorkspaceInvite(null);
           location.searchParams.delete("workspaceInvite");
         }

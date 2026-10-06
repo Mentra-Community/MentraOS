@@ -6,10 +6,13 @@ import {
   createKeyMutationOptions,
   createOperatorKeyAndReveal,
   OPERATOR_KEYS_QUERY_KEY,
-  OperatorKeysScreen,
+  OperatorKeysPage,
   parseCreateKeyForm,
   SCOPE_LABELS,
   scopeLabel,
+  SecretGate,
+  secretReducer,
+  type SecretState,
 } from "./operator-keys";
 
 // A synthetic token shaped like a real one, so a leak would be recognizable.
@@ -40,19 +43,21 @@ const triage: CredentialView = {
 };
 
 /** `list` null leaves the list query unseeded: still loading. */
-function render(props: Parameters<typeof OperatorKeysScreen>[0] = {}, list: CredentialView[] | null = [harness, triage]): string {
+function render(list: CredentialView[] | null = [harness, triage]): string {
   const client = new QueryClient();
   if (list) client.setQueryData(OPERATOR_KEYS_QUERY_KEY, { items: list });
   try {
     return renderToStaticMarkup(
       <QueryClientProvider client={client}>
-        <OperatorKeysScreen {...props} />
+        <OperatorKeysPage />
       </QueryClientProvider>,
     );
   } finally {
     client.clear();
   }
 }
+
+const gate = (secret: SecretState) => renderToStaticMarkup(<SecretGate secret={secret} onDone={() => {}} />);
 
 describe("operator keys page", () => {
   test("labels each scope in words", () => {
@@ -103,13 +108,13 @@ describe("operator keys page", () => {
   });
 
   test("an empty list says so and still offers the form", () => {
-    const markup = render({}, []);
+    const markup = render([]);
     expect(markup).toContain("No operator keys yet.");
     expect(markup).toContain("Create operator key");
   });
 
   test("a list still loading says so", () => {
-    expect(render({}, null)).toContain("Loading");
+    expect(render(null)).toContain("Loading");
   });
 
   test("never renders a token on the list", () => {
@@ -117,19 +122,48 @@ describe("operator keys page", () => {
     expect(render()).not.toContain(TOKEN);
   });
 
-  test("shows the token once, in a dialog, with a copy button", () => {
-    const markup = render({ initialSecret: { status: "shown", name: "Routine harness", token: TOKEN } });
-    expect(markup).toContain('role="dialog"');
-    expect(markup).toContain("shown only once");
-    expect(markup.split(TOKEN)).toHaveLength(2);
-    expect(markup).toContain("Copy credential");
-    expect(markup).toContain("Done");
+  test("a fresh page holds no dialog", () => {
+    expect(render()).not.toContain('role="dialog"');
+  });
+});
+
+describe("the one-time token", () => {
+  test("creating a key shows the token once, in a dialog with a copy button; Done removes it", async () => {
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ credential: harness, token: TOKEN }, { status: 201 }));
+    try {
+      // The same pieces the page wires together: the create call reveals into the reducer, the gate renders the state.
+      const held: { secret: SecretState } = { secret: { status: "hidden" } };
+      expect(gate(held.secret)).toBe("");
+
+      await createOperatorKeyAndReveal({ name: "Routine harness", scopes: ["organization.testing.read"] }, revealed => {
+        held.secret = secretReducer(held.secret, { type: "created", ...revealed });
+      });
+      expect(held.secret).toEqual({ status: "shown", name: "Routine harness", token: TOKEN });
+      const shown = gate(held.secret);
+      expect(shown).toContain('role="dialog"');
+      expect(shown).toContain("shown only once");
+      expect(shown.split(TOKEN)).toHaveLength(2);
+      expect(shown).toContain("Copy credential");
+      expect(shown).toContain("Done");
+
+      // Done dispatches `dismissed`.
+      held.secret = secretReducer(held.secret, { type: "dismissed" });
+      expect(held.secret).toEqual({ status: "hidden" });
+      const gone = gate(held.secret);
+      expect(gone).not.toContain(TOKEN);
+      expect(gone).not.toContain('role="dialog"');
+      // And nothing about the token remains in the state itself.
+      expect(JSON.stringify(held.secret)).not.toContain(TOKEN);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
-  test("once dismissed the token is nowhere in the page", () => {
-    const markup = render({ initialSecret: { status: "hidden" } });
-    expect(markup).not.toContain(TOKEN);
-    expect(markup).not.toContain('role="dialog"');
+  test("a second key replaces the first token rather than adding to it", () => {
+    const first = secretReducer({ status: "hidden" }, { type: "created", name: "One", token: "tok_one" });
+    const second = secretReducer(first, { type: "created", name: "Two", token: "tok_two" });
+    expect(JSON.stringify(second)).not.toContain("tok_one");
+    expect(second).toEqual({ status: "shown", name: "Two", token: "tok_two" });
   });
 });
 
