@@ -3,6 +3,7 @@ import {Hono, type MiddlewareHandler} from "hono"
 import {organizationCapabilities} from "../../services/workspaces/authorization.service"
 import {listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppEnv} from "../../types/hono.types"
+import {adminFleetApi} from "../fleet/fleet-forwarding"
 import {principalAuth, requireOrganizationCapability} from "../middleware/principal.middleware"
 import reports from "./reports.api"
 import supportProfiles from "./support-profiles.api"
@@ -26,7 +27,10 @@ import testDispatches from "./test-dispatches.api"
  *    `organization.testing.read`, and `organization.testing.manage` for anything that writes.
  *
  * The principal gate is router-wide and the capability gates are per area, so
- * a route mounted here later can ask for less (`/me` needs only a principal).
+ * a route mounted here later can ask for less: `/me` needs only a principal, and
+ * so does `/fleet`, which forwards to the optional Fleet integration (a workspace
+ * admin who is not an Organization Admin must reach it; Fleet decides what they
+ * may do). No capability gate may match `/fleet`.
  */
 const app = new Hono<AppEnv>()
 app.get("/health", c => c.json({status: "ok", service: "cloud-core-admin"}))
@@ -56,6 +60,9 @@ app.get("/me", async c => {
   }
   return c.json(body)
 })
+
+// The Fleet integration authorizes its own callers, so nothing below gates `/fleet`.
+app.route("/fleet", adminFleetApi)
 
 const readsIncidents = requireOrganizationCapability("organization.incidents.read")
 const readsSupportProfiles = requireOrganizationCapability("organization.supportProfiles.read")

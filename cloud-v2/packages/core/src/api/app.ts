@@ -8,12 +8,16 @@
  *   /api/client/auth/*          — device-called auth: exchange, refresh,
  *                                 miniapp-token
  *   /api/client/reports/*       — device-filed reports
+ *   /api/client/capabilities    — what this organization offers (Fleet installed or not)
+ *   /api/client/fleet/*         — forwarded to the optional Fleet integration
  *   /api/agent/reports/*        — read-only private dev-agent access
  *   /api/workspaces/*           — workspaces: members, invitations, credentials, audit
  *   /api/organization/*         — organization capabilities, workspace administration,
  *                                 operator keys
  *   /api/internal/workspaces/*  — signed service API for the Store and the Fleet
  *                                 integration (64 KiB body limit)
+ *   /api/admin/fleet/*          — forwarded to the optional Fleet integration, for any
+ *                                 principal (no organization capability)
  *
  * Caller convention (auth/spec.md): /api/client/* is device-called and
  * /api/oem/* is reserved for the OEM's backend. The token exchange + refresh
@@ -44,6 +48,8 @@ import testHostObservations from "./internal/test-host-observations.api";
 import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
+import {clientFleetApi} from "./fleet/fleet-forwarding";
+import {userAuth} from "./middleware/user-auth.middleware";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import internalIdentity from "./internal/identity.api";
@@ -100,6 +106,10 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/auth", clientAuth);
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
+  // Fleet is optional and lives in its own service; Core only authenticates the phone and forwards.
+  app.use("/api/client/capabilities", userAuth);
+  app.use("/api/client/fleet/*", userAuth);
+  app.route("/api/client", clientFleetApi);
   app.route("/api/agent/reports", reportAgent);
   app.route("/api/agent/test-failures", testFailureAgent);
   app.route("/api/internal/test-runs", testRunIngest);
