@@ -205,21 +205,14 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
   }
 
   return (
-    // Opaque themed backdrop: the Compositor's Screen wrapper is transparent
-    // (so its scale animation reveals home behind the overlay), but liquid
-    // glass surfaces in the hosted screens sample whatever is behind them —
-    // without this they'd pick up the home screen instead of the app
-    // background they sat on when pushed as routes.
-    // Rounded corners match LocalMiniappView's surface (same radius). Unlike
-    // the WebView there — which clips itself — the hosted screens are plain
-    // views, so the root must clip them via overflow:hidden for the radius
-    // to show.
+    // The Compositor's Screen wrapper is transparent. Keep an opaque themed
+    // backdrop so glass surfaces sample the hosted app instead of home.
+    // Fill the screen without a corner radius, matching LocalMiniappView;
+    // app-switcher cards apply their own rounding to captured previews.
     <View
       style={{
         flex: 1,
         backgroundColor: theme.colors.background,
-        borderRadius: theme.spacing.s12,
-        borderCurve: "continuous",
         overflow: "hidden",
       }}
       ref={viewShotRef}

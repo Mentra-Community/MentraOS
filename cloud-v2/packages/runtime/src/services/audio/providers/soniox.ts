@@ -36,10 +36,52 @@ import type {
   TranscriptEvent,
 } from "./provider";
 import { createLogger } from "@mentra/cloud-shared";
+import type { AudioPosition, TranscriptionToken } from "@mentra/cloud-protocol";
+import { AudioTimeline } from "./audioTimeline";
 
 const logger = createLogger("runtime").child({ module: "soniox" });
 
 const SONIOX_MODEL = process.env.SONIOX_MODEL ?? "stt-rt-v4";
+
+/** Preserve timing through the adapter's existing overlap merge; never guess alignment. */
+function mergeTimedTokens(
+  text: string,
+  left: TranscriptionToken[],
+  right: TranscriptionToken[],
+): TranscriptionToken[] {
+  const a = left
+    .map((t) => t.text)
+    .join("")
+    .trim();
+  const b = right
+    .map((t) => t.text)
+    .join("")
+    .trim();
+  if (text === b) return right;
+  if (text === a) return left;
+  // The existing text merger can overlap inside a provider token. Remove
+  // duplicated characters without inventing a later timestamp for that token.
+  // Its retained suffix keeps the original start and crossing tokens remain
+  // excluded by the phone subscription cutoff.
+  const slice = (tokens: TranscriptionToken[], start: number, end: number) => {
+    let offset = 0;
+    return tokens.flatMap((token) => {
+      const from = Math.max(0, start - offset);
+      const to = Math.min(token.text.length, end - offset);
+      offset += token.text.length;
+      return to > from ? [{...token, text: token.text.slice(from, to)}] : [];
+    });
+  };
+  const rawLeft = left.map((token) => token.text).join("");
+  const rawRight = right.map((token) => token.text).join("");
+  const suffix = text.slice(a.length);
+  if (text.startsWith(a) && b.endsWith(suffix)) {
+    const prefixTokens = slice(left, rawLeft.indexOf(a), rawLeft.indexOf(a) + a.length);
+    const suffixStart = rawRight.indexOf(b) + b.length - suffix.length;
+    return [...prefixTokens, ...slice(right, suffixStart, suffixStart + suffix.length)];
+  }
+  return [];
+}
 function audioGapConfig(): { checkIntervalMs: number; thresholdMs: number } {
   return {
     checkIntervalMs: Number(process.env.SONIOX_GAP_CHECK_INTERVAL_MS ?? 1_000),
@@ -226,6 +268,23 @@ export async function createSonioxProvider(
   // tokens on each result. All of this state is scoped to ONE utterance and is
   // reset by `startNewUtterance` at each boundary.
   let stablePrefix = "";
+  const audioTimeline = new AudioTimeline();
+  let providerGeneration = 0;
+  let confirmedTokens = new Map<string, TranscriptionToken>();
+  let lastTokens: TranscriptionToken[] = [];
+  let pendingTokens: TranscriptionToken[] = [];
+  let pendingTokenGeneration = 0;
+  let lastEmittedTokens: TranscriptionToken[] = [];
+  let frameTimelineVersion: 1 | undefined;
+  let activeFrameTimelineVersion: 1 | undefined;
+  let pendingFrameTimelineVersion: 1 | undefined;
+  const emitTranscript = (event: TranscriptEvent): void => {
+    opts.onTranscript({
+      ...event,
+      frameTimelineVersion: event.frameTimelineVersion ??
+        (event.tokens?.some((token) => token.audioPosition) ? 1 : undefined),
+    });
+  };
   let prevFinalLen = 0;
   // Last interim string we emitted for this utterance. Doubles as the text we
   // commit when an utterance closes (endpoint / speaker change), and as a
@@ -274,7 +333,11 @@ export async function createSonioxProvider(
   };
 
   const startNewUtterance = (speakerId?: string, language?: string): void => {
+    activeFrameTimelineVersion = frameTimelineVersion;
     currentUtteranceId = mintUtteranceId();
+    confirmedTokens = new Map();
+    lastTokens = [];
+    lastEmittedTokens = [];
     currentSpeakerId = speakerId;
     currentLanguage = language;
     stablePrefix = "";
@@ -287,6 +350,10 @@ export async function createSonioxProvider(
   };
 
   const resetActiveUtterance = (): void => {
+    activeFrameTimelineVersion = undefined;
+    confirmedTokens = new Map();
+    lastTokens = [];
+    lastEmittedTokens = [];
     stablePrefix = "";
     prevFinalLen = 0;
     lastSentInterim = "";
@@ -308,8 +375,10 @@ export async function createSonioxProvider(
     sourceLanguage?: string;
     startMs?: number;
     endMs?: number;
+    tokens?: TranscriptionToken[];
+    frameTimelineVersion?: 1;
   }): void => {
-    opts.onTranscript({
+    emitTranscript({
       text: event.text,
       isFinal: true,
       utteranceId: event.utteranceId,
@@ -319,6 +388,8 @@ export async function createSonioxProvider(
       sourceLanguage: event.sourceLanguage,
       startMs: event.startMs,
       endMs: event.endMs,
+      tokens: event.tokens?.map((token) => ({ ...token, isFinal: true })),
+      frameTimelineVersion: event.frameTimelineVersion,
     });
   };
 
@@ -328,6 +399,8 @@ export async function createSonioxProvider(
       pendingFinalTimer = null;
     }
     pendingFinalText = "";
+    pendingTokens = [];
+    pendingFrameTimelineVersion = undefined;
     pendingFinalUtteranceId = null;
     pendingFinalSpeakerId = undefined;
     pendingFinalLanguage = undefined;
@@ -395,6 +468,8 @@ export async function createSonioxProvider(
       sourceLanguage: pendingFinalSourceLanguage,
       startMs: pendingFinalStartMs,
       endMs: pendingFinalEndMs,
+      tokens: pendingTokens,
+      frameTimelineVersion: pendingFrameTimelineVersion,
     });
     if (
       committedUtteranceId &&
@@ -415,6 +490,9 @@ export async function createSonioxProvider(
 
   const setPendingFinalFromActive = (text: string): void => {
     pendingFinalText = text;
+    pendingTokens = lastEmittedTokens;
+    pendingTokenGeneration = providerGeneration;
+    pendingFrameTimelineVersion = activeFrameTimelineVersion;
     pendingFinalUtteranceId = currentUtteranceId;
     pendingFinalSpeakerId = currentSpeakerId;
     pendingFinalLanguage = currentLanguage;
@@ -446,6 +524,8 @@ export async function createSonioxProvider(
       sourceLanguage: currentSourceLanguage,
       startMs,
       endMs,
+      tokens: lastEmittedTokens,
+      frameTimelineVersion: activeFrameTimelineVersion,
     });
     // Reset for the next utterance. A fresh id is minted lazily when the next
     // token arrives (see handleResult).
@@ -575,7 +655,58 @@ export async function createSonioxProvider(
     }
     prevFinalLen = currentFinalText.length;
 
-    const compositeText = (stablePrefix + interimText).trim();
+    const timed = tokens.filter(
+      (t) => t.text !== "<end>" && t.text !== "<fin>",
+    );
+    const hasTiming =
+      !isTranslation &&
+      timed.length > 0 &&
+      timed.every((t) => t.start_ms != null && t.end_ms != null);
+    if (hasTiming) {
+      for (const t of timed.filter((t) => t.is_final)) {
+        const key = `${providerGeneration}:${t.start_ms}:${t.end_ms}:${t.text}`;
+        confirmedTokens.set(key, {
+          text: t.text,
+          startMs: t.start_ms!,
+          endMs: t.end_ms!,
+          confidence: t.confidence,
+          isFinal: true,
+          speaker: t.speaker,
+          detectedLanguage: t.language,
+          audioPosition:
+            confirmedTokens.get(key)?.audioPosition ??
+            (pendingTokenGeneration === providerGeneration
+              ? pendingTokens.find((token) => token.startMs === t.start_ms && token.endMs === t.end_ms && token.text === t.text)?.audioPosition
+              : undefined) ??
+            audioTimeline.at(t.start_ms!),
+        });
+      }
+      lastTokens = [
+        ...confirmedTokens.values(),
+        ...timed
+          .filter((t) => !t.is_final)
+          .map((t) => ({
+            text: t.text,
+            startMs: t.start_ms!,
+            endMs: t.end_ms!,
+            confidence: t.confidence,
+            isFinal: false,
+            speaker: t.speaker,
+            detectedLanguage: t.language,
+            audioPosition: audioTimeline.at(t.start_ms!),
+          })),
+      ];
+    } else if (timed.length > 0) {
+      lastTokens = [];
+    }
+    if (result.final_audio_proc_ms > 0)
+      audioTimeline.prune(result.final_audio_proc_ms);
+    const compositeText = hasTiming || (!isTranslation && timed.length === 0 && lastTokens.length > 0)
+      ? lastTokens
+          .map((t) => t.text)
+          .join("")
+          .trim()
+      : (stablePrefix + interimText).trim();
     if (compositeText.length === 0) return;
 
     if (pendingFinalText && pendingFinalTimer) {
@@ -597,10 +728,14 @@ export async function createSonioxProvider(
         }
 
         pendingFinalText = merged;
+        pendingTokens = mergeTimedTokens(merged, pendingTokens, lastTokens);
+        lastTokens = pendingTokens;
+        lastEmittedTokens = pendingTokens;
+        if (activeFrameTimelineVersion === 1) pendingFrameTimelineVersion = 1;
         lastSentInterim = merged;
 
         if (merged !== pendingBefore) {
-          opts.onTranscript({
+          emitTranscript({
             text: merged,
             isFinal: false,
             utteranceId: currentUtteranceId ?? undefined,
@@ -610,6 +745,8 @@ export async function createSonioxProvider(
             sourceLanguage: pendingFinalSourceLanguage,
             startMs,
             endMs,
+            tokens: pendingTokens,
+            frameTimelineVersion: pendingFrameTimelineVersion,
           });
           schedulePendingFinalCommit();
         }
@@ -628,7 +765,7 @@ export async function createSonioxProvider(
     }
 
     if (compositeText !== lastSentInterim) {
-      opts.onTranscript({
+      emitTranscript({
         text: compositeText,
         isFinal: false,
         utteranceId: currentUtteranceId ?? undefined,
@@ -638,8 +775,13 @@ export async function createSonioxProvider(
         sourceLanguage: currentSourceLanguage,
         startMs,
         endMs,
+        tokens: lastTokens,
+        frameTimelineVersion: activeFrameTimelineVersion,
       });
       lastSentInterim = compositeText;
+      lastEmittedTokens = lastTokens;
+    } else if (lastTokens.map((token) => token.text).join("").trim() === compositeText) {
+      lastEmittedTokens = lastTokens;
     }
   };
 
@@ -653,6 +795,7 @@ export async function createSonioxProvider(
         const merged = tryMergeOverlap(pendingFinalText, candidate);
         if (merged !== null) {
           pendingFinalText = merged;
+          pendingTokens = mergeTimedTokens(merged, pendingTokens, lastEmittedTokens);
           if (currentSpeakerId) pendingFinalSpeakerId = currentSpeakerId;
           if (currentLanguage) pendingFinalLanguage = currentLanguage;
           if (lastOriginalText) {
@@ -820,13 +963,18 @@ export async function createSonioxProvider(
           await next.connect();
           // Connected: swap in the fresh session and clear the heal state.
           session = next;
+          providerGeneration += 1;
+          audioTimeline.reset();
           reconnecting = false;
           reconnectAttempts = 0;
           startGapDetection();
           logger.info(`self-heal reconnected scope=${opts.scope}`);
           return;
         } catch (err) {
-          logger.error({ err }, `self-heal connect failed scope=${opts.scope} attempt=${reconnectAttempts}`);
+          logger.error(
+            { err },
+            `self-heal connect failed scope=${opts.scope} attempt=${reconnectAttempts}`,
+          );
           unwireSession(next);
           try {
             await next.close();
@@ -855,7 +1003,7 @@ export async function createSonioxProvider(
 
   return {
     name: "soniox",
-    writeAudio(pcm: Int16Array): void {
+    writeAudio(pcm: Int16Array, position?: AudioPosition): void {
       // Drop frames while a self-heal reconnect is in flight (or after close):
       // there is no live upstream session to take them, and the pipeline already
       // tolerates a brief audio gap across a reconnect.
@@ -874,6 +1022,9 @@ export async function createSonioxProvider(
         }
       }
       try {
+        frameTimelineVersion = position ? 1 : undefined;
+        if (position && currentUtteranceId) activeFrameTimelineVersion = 1;
+        audioTimeline.add(pcm.length, position);
         session.sendAudio(bytes);
       } catch (err) {
         // A throw here usually means the socket died between checks: surface it

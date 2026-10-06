@@ -81,18 +81,6 @@ public class OtaConstants {
     public static final String EXTRA_DOWNGRADE_APK_PATH = "apk_path";
     public static final String EXTRA_DOWNGRADE_APK_SHA256 = "apk_sha256";
     public static final String DOWNGRADE_APK_FILENAME = "asg_client_downgrade.apk";
-    /**
-     * Grace period after a downgrade handoff before ASG concludes the recovery worker did not
-     * take the transaction. The watchdog only fires when the handoff was rejected/dropped,
-     * clearing the OTA-in-progress latch so future OTAs are not blocked. The window must cover
-     * the WORST-CASE legitimate queue time, not just the happy path: DowngradeWorker serializes
-     * behind the recovery install lock, which a backup reinstall may hold for up to its 60s
-     * observe window (recovery worker REINSTALL_OBSERVE_TIMEOUT_MS) before the uninstall can
-     * even be dispatched. 3 minutes = that hold + dispatch/uninstall time + margin, so a handoff
-     * queued behind an in-flight reinstall is not misreported as failed.
-     */
-    public static final long DOWNGRADE_HANDOFF_TIMEOUT_MS = 180_000L;
-
     /** Verdict broadcast from the recovery worker's handoff decision (see RecoveryConstants). */
     public static final String ACTION_DOWNGRADE_HANDOFF_RESULT =
             "com.mentra.recovery.ACTION_DOWNGRADE_HANDOFF_RESULT";
@@ -100,12 +88,7 @@ public class OtaConstants {
     public static final String EXTRA_HANDOFF_ACCEPTED = "accepted";
     public static final String EXTRA_HANDOFF_REASON = "reason";
 
-    /**
-     * Long-stop after an ACCEPTED handoff: the transaction owns the detour, so the short
-     * watchdog is cancelled — but if ASG is somehow still alive this long after acceptance,
-     * the transaction has necessarily hit its own stale give-up (recovery's
-     * DOWNGRADE_TRANSACTION_STALE_MS is 30 min) and the OTA latch must not stay stuck.
-     */
+    /** Surface a support action for a prolonged transaction; never release ownership by time. */
     public static final long DOWNGRADE_SUPERVISION_TIMEOUT_MS = 40 * 60 * 1000L;
     /**
      * Oldest recovery worker versionCode eligible for a production downgrade handoff
@@ -113,10 +96,8 @@ public class OtaConstants {
      * at startup, so a downgrade must not be staged until the installed recovery worker both
      * supports the verdict protocol and enforces the production target floor.
      */
-    // v10 = first worker that enables the production downgrade floor. Requiring it here prevents
-    // a still-installed v8/v9 worker from accepting the handoff protocol but rejecting every
-    // production target while the bundled-worker upgrade is still landing asynchronously.
-    public static final long MIN_RECOVERY_VERSION_FOR_DOWNGRADE = 10L;
+    // v11 adds correlated status/readiness and durable transaction identity.
+    public static final long MIN_RECOVERY_VERSION_FOR_DOWNGRADE = 11L;
     /**
      * Oldest ASG versionCode a pinned downgrade may target. Builds below this floor predate the
      * downgrade-safe contract — most importantly the shared media root

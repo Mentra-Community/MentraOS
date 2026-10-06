@@ -129,6 +129,43 @@ test("admin matching normalizes allowlists and only admits exact emails or domai
   }
 })
 
+test("plus tags inherit an allowlisted base email for any domain", () => {
+  process.env.CLOUD_CORE_ADMIN_EMAILS = "example-admin@gmail.com, named@personal.test"
+  delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS
+  for (const email of [
+    "example-admin@gmail.com",
+    "example-admin+test@gmail.com",
+    " EXAMPLE-ADMIN+one+two@GMAIL.COM ",
+    "named+test@personal.test",
+  ]) {
+    expect(isOrganizationAdminEmail(email, true)).toBe(true)
+  }
+  for (const email of [
+    "example-admin2+test@gmail.com",
+    "other+example-admin@gmail.com",
+    "example-admin+test@evil.test",
+    "example-admin+test@gmail.com.evil.test",
+    "example-admin+@gmail.com",
+    "example-admin+test@evil@gmail.com",
+    "example-admin+test @gmail.com",
+    "+test@gmail.com",
+  ]) {
+    expect(isOrganizationAdminEmail(email, true)).toBe(false)
+  }
+  // A tagged alias is still only an Organization Admin once verified.
+  expect(isOrganizationAdminEmail("example-admin+test@gmail.com", false)).toBe(false)
+  process.env.CLOUD_CORE_ADMIN_EMAILS = ""
+  expect(isOrganizationAdminEmail("example-admin+test@gmail.com", true)).toBe(false)
+})
+
+test("an explicitly allowlisted tagged address does not allow its base or sibling aliases", () => {
+  process.env.CLOUD_CORE_ADMIN_EMAILS = "named+specific@personal.test"
+  delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS
+  expect(isOrganizationAdminEmail("named+specific@personal.test", true)).toBe(true)
+  expect(isOrganizationAdminEmail("named@personal.test", true)).toBe(false)
+  expect(isOrganizationAdminEmail("named+other@personal.test", true)).toBe(false)
+})
+
 test("missing allowlists fail closed and changes are read at use time", () => {
   delete process.env.CLOUD_CORE_ADMIN_EMAILS
   delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS

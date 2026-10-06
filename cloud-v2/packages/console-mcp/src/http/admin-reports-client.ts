@@ -66,6 +66,7 @@ export interface ReportLogEntry {
 
 export interface ListReportsFilter {
   kind?: ReportKind;
+  category?: ReportKind | "internal" | "testing";
   status?: ReportStatus;
   limit?: number;
   before?: string;
@@ -113,6 +114,7 @@ export function createAdminReportsClient(config: ConsoleMcpConfig) {
     listReports: (filter: ListReportsFilter = {}) => {
       const query: Record<string, string> = {};
       if (filter.kind) query.kind = filter.kind;
+      if (filter.category) query.category = filter.category;
       if (filter.status) query.status = filter.status;
       if (filter.limit !== undefined) query.limit = String(filter.limit);
       if (filter.before) query.before = filter.before;

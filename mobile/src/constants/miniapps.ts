@@ -11,6 +11,7 @@ export const miniappDeveloperPackageName = "com.mentra.miniappdev"
 export const notifyPackageName = "cloud.augmentos.notify"
 export const navigationPackageName = "com.mentra.navigation" // "Mentra Map"
 export const mentraCallPackageName = "com.mentra.call"
+export const linkLingoPackageName = "com.mentra.link"
 
 // Build-selected Stores cannot be replaced by organization-managed userland.
 // Shared by deployment validation and the host's install-authority setup.

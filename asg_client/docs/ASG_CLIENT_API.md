@@ -416,6 +416,24 @@ While a stream is active, supported firmware also emits this status periodically
 Stops the current or pending stream. The operation is idempotent: an already stopped stream
 returns a stopped snapshot. Cleanup releases capture and cancels phone-loss/resource work.
 
+Automated cleanup sends `request_id`, `streamId`, `controllerId`, `expectedSid`, and
+`expectedRevision` together. The first three are bounded identity strings; SID is eight
+hexadecimal characters and revision is a nonnegative integer. The lifecycle dispatcher
+refuses all mutation while an admission is pending. Otherwise the current snapshot SID
+and revision must still match before it stops the matching active controller. A changed
+snapshot or foreign owner is refused without mutation. Any supplied guard field selects
+conditional handling; incomplete, null or malformed guards never become global Stop.
+Even a replacement reusing both public IDs changes the native revision. A terminal
+matching stream and retained controller acknowledges without
+stopping services. The caller may freshly observe a refused snapshot and decide its next
+action; refusal never causes an automatic retry or global stop.
+
+The correlated `stream_status` has `kind: "stop_ack"`, `stopAccepted`, `stopReason`, the
+requested stream/controller IDs and expected SID/revision. These fields do not become
+retained state. Acceptance acknowledges the operation; a fresh terminal query is still
+required before releasing resources. A queued admission must settle normally or remain
+explicitly unresolved; cleanup does not cancel it based only on reused public IDs.
+
 #### `get_stream_status`
 
 ```json
@@ -432,7 +450,13 @@ An optional `request_id` matching `[A-Za-z0-9][A-Za-z0-9_-]{0,119}` is echoed on
 that snapshot, before it enters the outbound BLE queue. For example,
 `{"type":"get_stream_status","request_id":"status-123"}` returns the existing
 snapshot with `"request_id":"status-123"`. Omitted or invalid IDs retain the
-uncorrelated response. The ID is not retained on later snapshots or stream events;
+uncorrelated response. Fresh queries include `pendingStart`; a pending admission also
+includes `pendingStreamId`/`pendingControllerId`, and the last admitted owner includes
+`controllerId` plus its existing `startRevision` captured at admission. Lifecycle events
+advance `revision` while `startRevision` stays fixed through terminal state until replacement.
+Retained identity grants no active ownership and lets callers distinguish a stopped
+replacement that reused public IDs. This prevents a stopped snapshot from concealing a queued admission.
+The ID is not retained on later snapshots or stream events;
 `timestamp` remains display time and can change when the phone synchronizes the clock.
 
 #### `keep_stream_alive`
@@ -647,6 +671,15 @@ The glasses also emit `battery_status` outbound:
 ```json
 {"type": "request_version", "request_id": "version-request-123"}
 ```
+
+Optional `fresh_bes: true` requests one `cs_syvr` snapshot through the existing
+Mentra Live UART coordinator before sending the version chunks. Busy file/OTA
+ownership, restricted safety state or an unready transport can refuse the probe;
+the command does not reset phone readiness or wait/retry the probe. The immediate
+version response still contains cached BES data and is not freshness proof.
+Diagnostics consumers must observe a later current-session BES reply within their
+own bounded deadline; a handled version request does not prove that reply arrived.
+Requests without the flag and the `cs_syvr` alias retain their existing behavior.
 
 Returns version information in chunks to fit the BLE MTU:
 

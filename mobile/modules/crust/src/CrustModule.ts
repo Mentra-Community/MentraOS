@@ -3,9 +3,13 @@ import {NativeModule, requireNativeModule} from "expo"
 import {CrustModuleEvents, InstalledApp} from "./Crust.types"
 
 declare class CrustModule extends NativeModule<CrustModuleEvents> {
+  /** True for the native iOS app running on an Apple Silicon Mac. */
+  readonly isIOSAppOnMac?: boolean
   PI: number
   hello(): string
   setValueAsync(value: string): Promise<void>
+  /** Android: copy the displayed view's window pixels to a temporary JPEG URI. */
+  captureMiniappPreview(viewTag: number): Promise<string>
   nativeHttpRequest(
     method: string,
     url: string,
@@ -13,8 +17,6 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
     body?: string | null,
   ): Promise<{status: number; statusText: string; headers: Record<string, string>; body: string}>
   showAVRoutePicker(tintColor?: string | null): void
-  /** Android: whether the JS incident report service is subscribed to submit_incident_report. */
-  setIncidentReportServiceReady(ready: boolean): void
 
   /**
    * iOS: configure `preferredScreenEdgesDeferringSystemGestures`. When an

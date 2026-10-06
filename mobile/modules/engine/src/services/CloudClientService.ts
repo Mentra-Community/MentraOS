@@ -18,7 +18,7 @@ import {DEFAULT_REFRESH_TOKEN_KEY} from "@mentra/cloud-client"
 import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
-import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
+import type {AudioPosition, AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import CrustModule from "@mentra/crust"
@@ -722,6 +722,10 @@ export const cloudClientService = {
 
   sendAudioFrame(frame: Uint8Array): void {
     client?.runtime.sendAudioFrame(frame)
+  },
+
+  getAudioPosition(): AudioPosition | null {
+    return client?.runtime.getAudioPosition() ?? null
   },
 
   onTranscript(cb: (d: TranscriptionData) => void): () => void {

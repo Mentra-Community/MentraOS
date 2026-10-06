@@ -20,7 +20,7 @@ const methods = ["handleSpeak", "cancelSpeech"]
   .join("\n")
 const compiled = new Bun.Transpiler({loader: "ts"}).transformSync(`class Host { ${methods} }`)
 
-type PlayRequest = {requestId: string; audioUrl: string}
+type PlayRequest = {requestId: string; audioUrl: string; startupTimeoutMs?: number}
 type Completion = (
   id: string,
   success: boolean,
@@ -76,6 +76,27 @@ async function flushFallback() {
 }
 
 describe("cloud speech native failure recovery", () => {
+  test("a cloud startup timeout speaks the error response offline", async () => {
+    const {host, plays, ttsModelManager} = createHost()
+    const response = "I'm sorry, I couldn't process that. Please try again."
+    await host.handleSpeak(appId, {text: response}, "error-speech")
+    expect(plays[0].request.startupTimeoutMs).toBe(5000)
+    plays[0].complete("error-speech", false, "Playback did not start within 5000ms", null, "error")
+    await flushFallback()
+    expect(ttsModelManager.synthesizeToFile).toHaveBeenCalledWith(response, expect.any(Object))
+    expect(plays[1].request).toMatchObject({audioUrl: "file://offline.wav"})
+    expect(plays[1].request.startupTimeoutMs).toBeUndefined()
+    plays[1].complete("error-speech", true, null, 3000, "completed")
+    expect(host.sendResult).toHaveBeenCalledTimes(1)
+    expect(host.sendResult).toHaveBeenCalledWith(
+      appId,
+      "error-speech",
+      true,
+      {completed: true, duration: 3000},
+      undefined,
+    )
+  })
+
   test("plays the same answer offline after an explicit native playback error", async () => {
     const {host, plays, ttsModelManager, cleanup} = createHost()
     await host.handleSpeak(appId, {text: "An answer."}, "speech")

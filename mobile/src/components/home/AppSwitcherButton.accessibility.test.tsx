@@ -1,5 +1,6 @@
 import {act, fireEvent, render, screen} from "@testing-library/react-native"
 import type {ClientApp} from "@mentra/engine"
+import {Platform} from "react-native"
 import type {SharedValue} from "react-native-reanimated"
 
 import AppSwitcherButton from "./AppSwitcherButtton"
@@ -28,10 +29,14 @@ jest.mock("@/stores/appSwitcher", () => ({
   SWIPE_DISTANCE_THRESHOLD: 100,
   SWIPE_PERCENT_THRESHOLD: 0.5,
 }))
-jest.mock("@/components/home/AppIcon", () => ({app}: {app: ClientApp}) => {
-  const {View} = require("react-native")
-  return <View testID={`trayIcon.${app.packageName}`} />
-})
+jest.mock(
+  "@/components/home/AppIcon",
+  () =>
+    function MockAppIcon({app}: {app: ClientApp}) {
+      const {View} = require("react-native")
+      return <View testID={`trayIcon.${app.packageName}`} />
+    },
+)
 jest.mock("@/components/ui/GlassView", () => require("react-native").View)
 jest.mock("expo-blur", () => ({BlurView: require("react-native").View}))
 jest.mock("expo-linear-gradient", () => ({LinearGradient: require("react-native").View}))
@@ -59,8 +64,41 @@ beforeEach(() => {
   useMiniappPresentationStore.setState({closingPackageName: null})
 })
 
+afterEach(() => {
+  jest.restoreAllMocks()
+})
+
+test.each([
+  ["ios", false],
+  ["ios", true],
+  ["android", false],
+  ["android", true],
+] as const)("native and touch activation open All Apps on %s, populated=%s", async (platform, populated) => {
+  jest.replaceProperty(Platform, "OS", platform)
+  mockApps = populated ? [{packageName: "com.mentra.settings", name: "Settings"} as ClientApp] : []
+  const openGrid = jest.fn()
+  render(
+    <AppSwitcherButton
+      swipeProgress={{value: 0} as SharedValue<number>}
+      onGridButtonPress={openGrid}
+      blurTargetRef={{current: null}}
+    />,
+  )
+  await act(async () => {})
+
+  const grid = screen.getByRole("button", {name: "home:openAllApps"})
+  fireEvent(grid, "accessibilityTap")
+  expect(openGrid).toHaveBeenCalledTimes(1)
+
+  fireEvent.press(grid)
+  expect(openGrid).toHaveBeenCalledTimes(2)
+})
+
 test("X-button close immediately removes its icon from the running tray", async () => {
-  mockApps = ["one", "two"].map((packageName) => ({packageName, name: packageName} as ClientApp))
+  mockApps = ["one", "two"].map((packageName) => {
+    const app = {packageName, name: packageName}
+    return app as ClientApp
+  })
   render(
     <AppSwitcherButton
       swipeProgress={{value: 0} as SharedValue<number>}

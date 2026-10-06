@@ -132,7 +132,8 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:updateInfoUnavailable": "Update Info Unavailable",
   "ota:updateInfoUnavailableMessage":
     "Update information for this version of the app is unavailable. Please check the app store for a newer version of the Mentra App.",
-  "ota:downgradeDuration": "Your glasses will restart twice — this may take up to 2 minutes.",
+  "ota:downgradeDuration":
+    "Changing versions can take several minutes. Keep your glasses nearby while they install and reconnect.",
   "ota:versionChangeRestarting": "Installing a different version…",
   "ota:versionChangeVerifying": "Verifying your glasses…",
   "ota:versionChangeKeepNearby": "Keep your glasses nearby and connected. They will restart on their own.",
@@ -331,8 +332,8 @@ function OtaFlowContent({
       state.screen === "wifi_required"
         ? "ota:wifiRequiredTitle"
         : state.versionChange
-          ? "ota:downgradeAvailable"
-          : "ota:updateAvailable"
+        ? "ota:downgradeAvailable"
+        : "ota:updateAvailable"
     return (
       <FlowPage
         colors={colors}
@@ -478,10 +479,10 @@ function OtaFlowContent({
       state.hotspotPhase === "downloading"
         ? "ota:downloadingToPhone"
         : state.hotspotPhase === "starting_hotspot"
-          ? "ota:startingGlassesHotspot"
-          : state.hotspotPhase === "joining_hotspot"
-            ? "ota:connectingPhoneToGlasses"
-            : "ota:startingHotspotUpdate",
+        ? "ota:startingGlassesHotspot"
+        : state.hotspotPhase === "joining_hotspot"
+        ? "ota:connectingPhoneToGlasses"
+        : "ota:startingHotspotUpdate",
     )
     const artifact = state.hotspotPhase === "downloading" ? state.hotspotArtifact : null
     return (
@@ -512,8 +513,8 @@ function OtaFlowContent({
     const title = hotspot
       ? translate(state.phase === "download" ? "ota:transferringToGlasses" : "ota:installingOnGlasses")
       : state.phase === "download"
-        ? "Downloading…"
-        : "Installing…"
+      ? "Downloading…"
+      : "Installing…"
     const component = state.step ? translate(componentCopyKey[state.step]) : null
     const hasStepCount =
       state.currentStep !== null &&
@@ -521,7 +522,7 @@ function OtaFlowContent({
       state.currentStep > 0 &&
       state.currentStep <= state.totalSteps
     return (
-      <FlowPage colors={colors} icon="download" title={title}>
+      <FlowPage colors={colors} icon={state.phase === "install" ? "settings" : "download"} title={title}>
         {hotspot && component ? (
           <BodyText colors={colors}>
             {hasStepCount
@@ -567,13 +568,13 @@ function OtaFlowContent({
     const title = state.versionChangeConverged
       ? translate("ota:versionChangeComplete")
       : state.versionChange
-        ? translate("ota:versionChangeFirmwarePassComplete")
-        : "Update complete!"
+      ? translate("ota:versionChangeFirmwarePassComplete")
+      : "Update complete!"
     const message = state.versionChangeConverged
       ? translate("ota:versionChangeCompleteMessage")
       : state.versionChange
-        ? translate("ota:versionChangeFirmwarePassCompleteMessage")
-        : "Your glasses are up to date."
+      ? translate("ota:versionChangeFirmwarePassCompleteMessage")
+      : "Your glasses are up to date."
     return (
       <FlowPage
         actions={

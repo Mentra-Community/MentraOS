@@ -14,6 +14,7 @@
 #   --json           Print the raw report JSON to stdout, skip artifact downloads
 #   --env ENV        prod | staging | dev (default: auto-discover)
 #   --kind KIND      (--list) bug | feedback | automatic
+#   --category CAT   (--list) bug | feedback | internal | testing | automatic
 #   --status STATUS  (--list) collecting | ready | closed
 #   --limit N        (--list) max reports to return (1-200, default 50)
 #
@@ -28,7 +29,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 
@@ -44,6 +45,7 @@ MODE="fetch"
 ENV_NAME=""
 ENV_EXPLICIT=0
 LIST_KIND=""
+LIST_CATEGORY=""
 LIST_STATUS=""
 LIST_LIMIT=""
 
@@ -54,6 +56,7 @@ while [ $# -gt 0 ]; do
     -o|--out) OUT_DIR="${2:?--out requires a directory}"; shift ;;
     --env) ENV_NAME="${2:?--env requires prod|staging|dev}"; ENV_EXPLICIT=1; shift ;;
     --kind) LIST_KIND="${2:?--kind requires a value}"; shift ;;
+    --category) LIST_CATEGORY="${2:?--category requires a value}"; shift ;;
     --status) LIST_STATUS="${2:?--status requires a value}"; shift ;;
     --limit) LIST_LIMIT="${2:?--limit requires a number}"; shift ;;
     -h|--help) usage ;;
@@ -180,6 +183,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 if [ "$MODE" = "list" ]; then
   QUERY=""
   [ -n "$LIST_KIND" ] && QUERY="$QUERY&kind=$LIST_KIND"
+  [ -n "$LIST_CATEGORY" ] && QUERY="$QUERY&category=$LIST_CATEGORY"
   [ -n "$LIST_STATUS" ] && QUERY="$QUERY&status=$LIST_STATUS"
   [ -n "$LIST_LIMIT" ] && QUERY="$QUERY&limit=$LIST_LIMIT"
   QUERY="${QUERY#&}"

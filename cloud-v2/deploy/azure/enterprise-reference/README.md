@@ -190,7 +190,7 @@ literal zero-internet air-gapped profile.
 
 ## Mentra Call
 
-The reference manifest pins Mentra Call 2.1.43. Its ZIP is included in the Runtime
+The reference manifest pins Mentra Call 2.1.48. Its ZIP is included in the Runtime
 image under `miniapps/` and is byte-identical to the Mentra App's bundled ZIP.
 The coordinated deployment passes that managed list to Bicep and verifies the
 served bundle's SHA-256. `scripts/sync-miniapp.mjs` updates only the Mentra App

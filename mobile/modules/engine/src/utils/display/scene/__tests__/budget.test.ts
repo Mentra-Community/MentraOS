@@ -31,6 +31,16 @@ const image = (id: string, size: number): SceneElementInput => ({
 })
 
 describe("whole-frame admission", () => {
+  test("admits NIMO replacement bytes instead of charging for the original Unicode text", () => {
+    const profile = {
+      ...NIMO_PROFILE,
+      sceneBudget: {...NIMO_PROFILE.sceneBudget!, maxTextBytes: 32, maxEncodedBytes: 52},
+    }
+    const result = processScene([{...text("dashes", "—".repeat(32)), box: {...box, h: 20}}], caps, profile)
+    expect(result.elements[0].text).toBe("-".repeat(32))
+    expect(result.dropped).toEqual([])
+    expect(result.degraded).toBe(false)
+  })
   test("drops expanded text objects past 64 and omits their feedback", () => {
     const result = processScene(
       Array.from({length: 6}, (_, i) => text(`t${i}`)),

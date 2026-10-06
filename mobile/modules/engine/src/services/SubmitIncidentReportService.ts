@@ -1,6 +1,3 @@
-import CrustModule from "@mentra/crust"
-import {Platform} from "react-native"
-
 import {submitAutomaticReport} from "../facades/reports"
 import {
   logAutomaticReportSubmissionStatus,
@@ -10,10 +7,6 @@ import {
 } from "./AutomaticReportResult"
 
 const LOG_TAG = "SubmitIncidentReport"
-const EVENT_NAME = "submit_incident_report"
-
-let subscription: {remove: () => void} | null = null
-
 export type IncidentReportResult = {
   alert_id?: string
   test_run_id?: string
@@ -99,31 +92,4 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
     const result = logUnexpectedAutomaticReportError(LOG_TAG, error)
     return logIncidentResult({alertId, testRunId, failureCode, scenarioName, result})
   }
-}
-
-// Android's broadcast receiver answers with a failed receipt unless this service
-// is subscribed; Expo drops events that arrive before the listener exists.
-// Never let this abort engine start: if marking ready fails, native keeps
-// answering with the failed receipt.
-function setNativeServiceReady(ready: boolean): void {
-  if (Platform.OS !== "android") return
-  try {
-    CrustModule.setIncidentReportServiceReady(ready)
-  } catch (error) {
-    console.warn(`${LOG_TAG}: could not update native readiness:`, error instanceof Error ? error.message : error)
-  }
-}
-
-export function startSubmitIncidentReportService(): void {
-  if (subscription) return
-  subscription = CrustModule.addListener(EVENT_NAME, (event) => {
-    void submitIncidentReport(event)
-  })
-  setNativeServiceReady(true)
-}
-
-export function stopSubmitIncidentReportService(): void {
-  if (subscription) setNativeServiceReady(false)
-  subscription?.remove()
-  subscription = null
 }

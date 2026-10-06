@@ -900,7 +900,7 @@ describe("the admin surface", () => {
     configure()
     const member = as("member", person(false))
 
-    for (const path of ["/reports", "/support-profiles/lookup", "/test-runs", "/fix-flows", "/test-routines"]) {
+    for (const path of ["/reports", "/support-profiles/lookup", "/test-runs", "/routine-catalog", "/test-routines"]) {
       expect([path, (await admin(member, path)).status]).toEqual([path, 403])
     }
     expect(calls).toHaveLength(0)

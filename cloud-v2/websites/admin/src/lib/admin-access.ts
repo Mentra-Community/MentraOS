@@ -1,6 +1,6 @@
 import type { OrganizationCapability, PrincipalResponse } from "@mentra/workspace-contract";
 
-export type AdminPageKey = "incidents" | "test-runs" | "fix-flows" | "system-health" | "workspaces" | "operator-keys";
+export type AdminPageKey = "incidents" | "test-runs" | "routine-catalog" | "system-health" | "workspaces" | "operator-keys";
 
 /** What `GET /api/admin/me` answers: who is calling and what they may do here. Open to every signed-in person. */
 export interface AdminMe {
@@ -15,7 +15,7 @@ export interface AdminMe {
 const PAGE_ORDER: readonly AdminPageKey[] = [
   "incidents",
   "test-runs",
-  "fix-flows",
+  "routine-catalog",
   "system-health",
   "workspaces",
   "operator-keys",
@@ -25,7 +25,7 @@ const PAGE_ORDER: readonly AdminPageKey[] = [
 const PAGE_CAPABILITY: Record<Exclude<AdminPageKey, "workspaces">, OrganizationCapability> = {
   incidents: "organization.incidents.read",
   "test-runs": "organization.testing.read",
-  "fix-flows": "organization.testing.read",
+  "routine-catalog": "organization.testing.read",
   "system-health": "organization.testing.read",
   "operator-keys": "organization.credentials.manage",
 };

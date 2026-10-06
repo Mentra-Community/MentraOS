@@ -86,6 +86,7 @@ function localLookup(tag: number) {
     mentraUserId: e.data.mentraUserId,
     audioSessionId: e.data.audioSessionId,
     encryptionKeyB64: e.data.encryptionKeyB64,
+    frameTimelineVersion: e.data.frameTimelineVersion,
   };
 }
 

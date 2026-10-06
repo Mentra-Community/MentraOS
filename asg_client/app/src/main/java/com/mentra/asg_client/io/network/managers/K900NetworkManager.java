@@ -41,6 +41,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private final ISystemController systemController;
     private BroadcastReceiver wifiStateReceiver;
     private final boolean isSystemApp;
+    private final StationAutojoinPause stationAutojoinPause;
 
     private final Handler mWifiStateHandler = new Handler(Looper.getMainLooper());
     private final Handler mHotspotHandler = new Handler(Looper.getMainLooper());
@@ -65,6 +66,7 @@ public class K900NetworkManager extends BaseNetworkManager {
         this.notificationManager = new DebugNotificationManager(context);
         this.systemController = systemController;
         this.isSystemApp = checkIsSystemApp(context);
+        this.stationAutojoinPause = StationAutojoinPause.create(context, wifiManager);
 
         Log.i(TAG, "📶 K900NetworkManager initialized, isSystemApp=" + isSystemApp);
         notificationManager.showDebugNotification(
@@ -101,6 +103,8 @@ public class K900NetworkManager extends BaseNetworkManager {
         Log.d(TAG, "🌐 ✅ WiFi state receiver registered");
 
         adoptExistingVendorHotspot();
+        // A pause left behind by a crash or reinstall while the hotspot was up.
+        if (!isHotspotEnabled) stationAutojoinPause.resume();
 
         // Check if we're already connected to WiFi
         boolean wifiConnected = isConnectedToWifi();
@@ -140,6 +144,13 @@ public class K900NetworkManager extends BaseNetworkManager {
                             + " gateway="
                             + gatewayIp);
         }
+    }
+
+    @Override
+    protected void onHotspotActiveChanged(boolean active) {
+        if (!isSystemApp) return;
+        if (active) stationAutojoinPause.pause();
+        else stationAutojoinPause.resume();
     }
 
     @Override

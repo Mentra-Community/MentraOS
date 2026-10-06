@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 import { DISK_FLOOR_BYTES, DISK_GAP_MS, HOST_FRESH_MS, HOST_HISTORY_DAYS, HOST_SAMPLE_LIMIT, testHostSampleSchema,
   type CleanupHealthEvent, type TestHostHistory, type TestHostLatest, type TestHostList, type TestHostSample } from "../types/test-host-health.types";
-import { testResourceHostIdSchema } from "../types/test-resource-observation.types";
+import {frameworkIdentitySchema as testResourceHostIdSchema} from "../types/framework-request.types";
 
 const DAY_MS = 86_400_000;
 const HOST_LIMIT = 32;
@@ -99,7 +99,8 @@ export class TestHostHealthService {
         events.set(event.receiptId, event); // Latest observed receipt version; immutable sample history is unchanged.
     }
     return { hostId, generatedAt: to.toISOString(), from: from.toISOString(), to: to.toISOString(),
-      points: retained.map(({ sampleId, sampledAt, freeBytes }) => ({ sampleId, sampledAt, freeBytes })),
+      points: retained.map(({ sampleId, sampledAt, freeBytes, memory }) => ({ sampleId, sampledAt, freeBytes,
+        ...(memory === undefined ? {} : { memory }) })),
       cleanupEvents: [...events.values()].sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt)),
       truncated: rows.length > HOST_SAMPLE_LIMIT, thresholdBytes: DISK_FLOOR_BYTES, gapAfterMs: DISK_GAP_MS };
   }

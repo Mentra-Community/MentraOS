@@ -44,6 +44,8 @@ export interface IslandConfigValues {
   runtimeRealtimeSession?: boolean
   /** Complete allowlist for bundled/local miniapps; null or omitted allows all. */
   localMiniappAllowlist?: readonly string[] | null
+  /** Live host access gate, composed with deployment policy at listing and launch. */
+  isLocalMiniappAllowed?: (packageName: string) => boolean
   /** Provenance-aware policy for organization SYSTEM and managed miniapps. */
   localMiniappPolicy?: LocalMiniappPolicy
   /** Host availability for user-facing discovery/launch or transient background execution. */
@@ -144,6 +146,7 @@ export function isMiniappAvailable(packageName: string, mode: "interactive" | "b
 }
 
 export function isLocalMiniappPackageAllowed(packageName: string): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (policy) {
     return (
@@ -157,6 +160,7 @@ export function isLocalMiniappPackageAllowed(packageName: string): boolean {
 }
 
 export function isOfflineSystemMiniappAllowed(packageName: string): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (!policy) return isLocalMiniappPackageAllowed(packageName)
   return policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
@@ -173,6 +177,7 @@ export function isInstalledMiniappAllowed(
     deploymentOrigin?: string
   } | null,
 ): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
   const policy = options?.config?.localMiniappPolicy
   if (!policy) return isLocalMiniappPackageAllowed(packageName)
 
@@ -190,6 +195,18 @@ export function isInstalledMiniappAllowed(
       entry.deploymentId === releaseIdentity.deploymentId &&
       entry.deploymentOrigin === releaseIdentity.deploymentOrigin,
   )
+}
+
+/**
+ * A developer build from the Miniapp Developer scanner. An organization admits one
+ * only in super mode, and only in place of a miniapp it already manages, so a
+ * scanned QR can stand in for its Call but never add a package it lacks.
+ */
+export function isDevMiniappAllowed(packageName: string, superMode: boolean): boolean {
+  if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
+  const policy = options?.config?.localMiniappPolicy
+  if (!policy) return isLocalMiniappPackageAllowed(packageName)
+  return superMode && policy.managed.some((entry) => entry.packageName === packageName)
 }
 
 /** Read a defensive package-scoped configuration snapshot. */

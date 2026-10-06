@@ -1,6 +1,6 @@
 import {useLocalSearchParams} from "expo-router"
 import {useEffect} from "react"
-import {Platform, TouchableOpacity, View} from "react-native"
+import {Platform, Pressable, View} from "react-native"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 
@@ -70,6 +70,11 @@ export default function LoginScreen() {
     push("/auth/signup")
   }
 
+  const handleEmailLogin = async () => {
+    if (!(await selectDeployment(() => store.returnToMentra()))) return
+    push("/auth/email-login")
+  }
+
   const selectDeployment = async (select: () => Promise<void>): Promise<boolean> => {
     try {
       await select()
@@ -83,84 +88,81 @@ export default function LoginScreen() {
   }
 
   return (
-    <Screen preset="fixed">
-      <View className="flex-1">
-        <View className="flex-1 justify-center p-4">
-          <View className="items-center justify-center mb-4">
-            <MentraLogoStandalone width={100} height={48} />
-          </View>
-
-          <Text
-            text="Mentra"
-            className="text-[46px] text-primary-foreground text-secondary-foreground text-center mb-2 pt-8 pb-4"
-          />
-
-          <Text tx="login:subtitle" className="text-base text-secondary-foreground text-center text-xl mb-4">
-            {translate("login:subtitle")}
-          </Text>
-
-          <View className="mb-4">
-            <View className="gap-4">
-              <Button
-                preset="primary"
-                text={translate("login:signUpWithEmail")}
-                onPress={handleSignup}
-                LeftAccessory={() => <Icon name="mail" size={20} color={theme.colors.background} />}
-              />
-
-              {!isChina && (
-                <Button
-                  preset="secondary"
-                  text={translate("login:continueWithGoogle")}
-                  onPress={handleGoogleSignIn}
-                  LeftAccessory={() => <GoogleIcon />}
-                />
-              )}
-
-              {Platform.OS === "ios" && !isChina && (
-                <Button
-                  preset="secondary"
-                  text={translate("login:continueWithApple")}
-                  onPress={handleAppleSignIn}
-                  LeftAccessory={() => <AppleIcon color={theme.colors.foreground} />}
-                />
-              )}
-            </View>
-          </View>
-
-          {/* Already have an account? Log in */}
-          <View className="flex-row justify-center items-center gap-1 mt-2">
-            <Text className="text-sm text-muted-foreground">{translate("login:alreadyHaveAccount")}</Text>
-            <TouchableOpacity
-              onPress={async () => {
-                if (!(await selectDeployment(() => store.returnToMentra()))) return
-                push("/auth/email-login")
-              }}>
-              <Text className="text-sm text-secondary-foreground font-semibold">{translate("login:logIn")}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <Text className="text-[11px] text-muted-foreground text-center mt-2">{translate("login:termsText")}</Text>
-
-          <View className="flex-row items-center my-6">
-            <View className="flex-1 h-px bg-border" />
-            <Text className="mx-3 text-sm text-muted-foreground">{translate("organization:or")}</Text>
-            <View className="flex-1 h-px bg-border" />
-          </View>
-
-          <Button
-            preset="secondary"
-            text={translate("organization:connectAction")}
-            onPress={async () => {
-              // Stop Mentra telemetry/cloud effects before contacting the
-              // customer organization, even when a prior consumer selection was
-              // persisted on this installation.
-              if (!(await selectDeployment(() => store.beginOrganizationSelection()))) return
-              push("/auth/organization")
-            }}
-            LeftAccessory={() => <Icon name="building" size={20} color={theme.colors.foreground} />}
-          />
+    <Screen preset="auto" contentContainerStyle={{flexGrow: 1, flexShrink: 0, flexBasis: "auto"}}>
+      <View className="grow justify-center p-4">
+        <View className="items-center justify-center mb-4">
+          <MentraLogoStandalone width={100} height={48} />
         </View>
+
+        <Text
+          text="Mentra"
+          className="text-[46px] text-primary-foreground text-secondary-foreground text-center mb-2 pt-8 pb-4"
+        />
+
+        <Text tx="login:subtitle" className="text-base text-secondary-foreground text-center text-xl mb-4">
+          {translate("login:subtitle")}
+        </Text>
+
+        <View className="mb-4">
+          <View className="gap-4">
+            <Button
+              preset="primary"
+              text={translate("login:signUpWithEmail")}
+              onPress={handleSignup}
+              LeftAccessory={() => <Icon name="mail" size={20} color={theme.colors.background} />}
+            />
+
+            {!isChina && (
+              <Button
+                preset="secondary"
+                text={translate("login:continueWithGoogle")}
+                onPress={handleGoogleSignIn}
+                LeftAccessory={() => <GoogleIcon />}
+              />
+            )}
+
+            {Platform.OS === "ios" && !isChina && (
+              <Button
+                preset="secondary"
+                text={translate("login:continueWithApple")}
+                onPress={handleAppleSignIn}
+                LeftAccessory={() => <AppleIcon color={theme.colors.foreground} />}
+              />
+            )}
+          </View>
+        </View>
+
+        {/* Already have an account? Log in */}
+        <View className="flex-row flex-wrap justify-center items-center gap-1 mt-2">
+          <Text className="text-sm text-muted-foreground">{translate("login:alreadyHaveAccount")}</Text>
+          <Pressable
+            onPress={handleEmailLogin}
+            onAccessibilityTap={handleEmailLogin}
+            style={({pressed}) => ({opacity: pressed ? 0.2 : 1})}>
+            <Text className="text-sm text-secondary-foreground font-semibold">{translate("login:logIn")}</Text>
+          </Pressable>
+        </View>
+
+        <Text className="text-[11px] text-muted-foreground text-center mt-2">{translate("login:termsText")}</Text>
+
+        <View className="flex-row items-center my-6">
+          <View className="flex-1 h-px bg-border" />
+          <Text className="mx-3 text-sm text-muted-foreground">{translate("organization:or")}</Text>
+          <View className="flex-1 h-px bg-border" />
+        </View>
+
+        <Button
+          preset="secondary"
+          text={translate("organization:connectAction")}
+          onPress={async () => {
+            // Stop Mentra telemetry/cloud effects before contacting the
+            // customer organization, even when a prior consumer selection was
+            // persisted on this installation.
+            if (!(await selectDeployment(() => store.beginOrganizationSelection()))) return
+            push("/auth/organization")
+          }}
+          LeftAccessory={() => <Icon name="building" size={20} color={theme.colors.foreground} />}
+        />
       </View>
     </Screen>
   )

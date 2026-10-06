@@ -5,9 +5,11 @@ import {InteractionManager} from "react-native"
 
 import Compositor from "./Compositor"
 import {useMiniappPresentationStore} from "@/stores/miniappLaunch"
+import {captureScreenshotForLater} from "@/effects/CapsuleMenu"
 
 let mockForegroundApp: ClientApp | null = null
 const mockStop = jest.fn()
+const mockMount = jest.fn()
 jest.mock("@mentra/engine", () => ({
   SETTINGS: {ios_app_switcher_bottom_swipe: {key: "bottomSwipe"}},
   useSetting: () => [false],
@@ -24,7 +26,17 @@ jest.mock("@mentra/engine", () => ({
 }))
 jest.mock("@/components/miniapp/LocalMiniappView", () => {
   const {Pressable} = require("react-native")
-  return ({onClose}: {onClose: () => void}) => <Pressable testID="close-miniapp" onPress={onClose} />
+  const {useEffect} = require("react")
+  return ({onClose, onMinimize, onExit}: {onClose: () => void; onMinimize: () => void; onExit: () => void}) => {
+    useEffect(() => {mockMount()}, [])
+    return (
+      <>
+        <Pressable testID="close-miniapp" onPress={onClose} />
+        <Pressable testID="minimize-miniapp" onPress={onMinimize} />
+        <Pressable testID="back-miniapp" onPress={() => onExit()} />
+      </>
+    )
+  }
 })
 jest.mock("@/components/miniapp/OfflineAppHost", () => () => null)
 jest.mock("@/components/miniapp/offlineHostedPackages", () => ({isOfflineHosted: () => false}))
@@ -53,9 +65,11 @@ beforeEach(() => {
     callback()
     return {cancel: jest.fn()} as any
   })
-  useMiniappPresentationStore.setState({closingPackageName: null, revealedPackageName: null})
+  useMiniappPresentationStore.setState({closingPackageName: null, revealedPackageName: null, replacementGenerations: {}})
+  mockMount.mockClear()
   mockForegroundApp = {packageName: "one", name: "One", foregrounded: true, running: true} as ClientApp
   mockStop.mockReset()
+  jest.mocked(captureScreenshotForLater).mockReset()
 })
 
 afterEach(() => {
@@ -100,3 +114,48 @@ test("slow teardown cannot hide a relaunch or clear a later close animation", as
   expect(mockStop).toHaveBeenCalledTimes(2)
   expect(useMiniappPresentationStore.getState().closingPackageName).toBeNull()
 })
+
+test("repacking the same version remounts its WebView; ordinary store refresh does not", () => {
+  const view = render(<Compositor />)
+  expect(mockMount).toHaveBeenCalledTimes(1)
+  mockForegroundApp = {...mockForegroundApp!}
+  view.rerender(<Compositor />)
+  expect(mockMount).toHaveBeenCalledTimes(1)
+  act(() => useMiniappPresentationStore.getState().replaceSurface("one"))
+  expect(mockMount).toHaveBeenCalledTimes(2)
+  act(() => useMiniappPresentationStore.getState().replaceSurface("other"))
+  expect(mockMount).toHaveBeenCalledTimes(2)
+  mockForegroundApp = {...mockForegroundApp!}
+  view.rerender(<Compositor />)
+  expect(mockMount).toHaveBeenCalledTimes(2)
+})
+
+test.each(["back-miniapp", "minimize-miniapp"])(
+  "%s keeps the surface mounted until pixel capture completes",
+  async (control) => {
+    jest.replaceProperty(require("react-native").Platform, "OS", "android")
+    let finishCapture!: (persist: () => Promise<void>) => void
+    const persist = jest.fn().mockResolvedValue(undefined)
+    jest.mocked(captureScreenshotForLater).mockReturnValue(
+      new Promise((resolve) => {
+        finishCapture = resolve
+      }),
+    )
+    const view = render(<Compositor />)
+
+    fireEvent.press(view.getByTestId(control))
+    await act(async () => {
+      jest.advanceTimersByTime(100)
+    })
+    expect(captureScreenshotForLater).toHaveBeenCalledTimes(1)
+    expect(mockForegroundApp?.packageName).toBe("one")
+    expect(persist).not.toHaveBeenCalled()
+
+    await act(async () => {
+      finishCapture(persist)
+    })
+    expect(mockForegroundApp).toBeNull()
+    expect(persist).toHaveBeenCalledTimes(1)
+    expect(mockStop).not.toHaveBeenCalled()
+  },
+)

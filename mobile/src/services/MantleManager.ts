@@ -17,11 +17,12 @@ import {
 import {
   BUNDLED_STORE_MINIAPP_PACKAGES,
   CHINA_HIDDEN_APPS,
+  linkLingoPackageName,
   mentraCallPackageName,
   notifyPackageName,
 } from "@/constants/miniapps"
 import {IosMiniappVisibility} from "@/services/miniapps/IosMiniappVisibility"
-import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
+import {isSuperModeMiniappAllowed, shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
 import {storage} from "@/utils/storage"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
@@ -41,14 +42,12 @@ import {
   miniappLauncher,
   isHostTrustedSystemMiniapp,
   offlineSpeechModelService,
-  phoneLocationService,
   saveLocalAppRunningState,
   ttsModelManager,
   shouldActivateBundledVersion,
 } from "@mentra/engine-host-internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
-import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
@@ -118,7 +117,7 @@ const SPOKEN_NOTIFICATION_MAX_MS = 30_000
 const SPOKEN_NOTIFICATION_GAP_MS = 10_000
 
 class MantleManager {
-  private iosMiniappVisibility = new Map<string, IosMiniappVisibility>()
+  private miniappVisibility = new Map<string, IosMiniappVisibility>()
   private static instance: MantleManager | null = null
   private calendarSyncTimer: ReturnType<typeof BgTimer.setInterval> | null = null
   private micDataTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
@@ -521,6 +520,7 @@ class MantleManager {
       // client from these; the host keeps the dev/settings URL resolution.
       config: {
         ...deploymentCloudConfigValues(deployment),
+        isLocalMiniappAllowed: isSuperModeMiniappAllowed,
         bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
         bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
         bundledSystemMiniappStoreOwners: BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS,
@@ -572,6 +572,7 @@ class MantleManager {
     await engine.start()
     this.assertInitializationCurrent(miniappGeneration)
     this.setupIosMiniappVisibility()
+    this.setupSuperModeMiniappVisibility()
 
     // iOS: require a second swipe across the bottom edge to invoke the Home
     // indicator / app switcher, so users don't accidentally background the
@@ -656,8 +657,8 @@ class MantleManager {
 
   private async cleanupRuntime(): Promise<void> {
     const managedSyncStopped = deploymentManagedMiniappSync.cancel()
-    for (const visibility of this.iosMiniappVisibility.values()) visibility.dispose()
-    this.iosMiniappVisibility.clear()
+    for (const visibility of this.miniappVisibility.values()) visibility.dispose()
+    this.miniappVisibility.clear()
     // Stop timers
     if (this.calendarSyncTimer) {
       BgTimer.clearInterval(this.calendarSyncTimer)
@@ -668,8 +669,6 @@ class MantleManager {
     this.subs = []
     storeUpdateScheduler.stop()
     this.activePhoneNotificationId = null
-
-    phoneLocationService.stopPhoneLocation()
 
     // Spoken notifications: a queued summary would otherwise synthesize and play
     // after the subscriptions that produced it are gone, or carry its count and
@@ -723,14 +722,14 @@ class MantleManager {
     const generation = this.miniappGeneration
     const deployment = deploymentStore.getActive()
     const isCurrent = () => generation === this.miniappGeneration && deploymentStore.getActive() === deployment
+    // Reconcile resources before disk restoration, including an empty registry.
+    localMiniappRuntime.initialize()
+
     // Warm the local miniapp registry by reading lmas/ off disk. Cheap call —
     // it populates AppRegistry's cache so the first refreshApplets() doesn't
     // pay the disk-walk cost in the UI thread.
     await appRegistry.getInstalledMiniapps()
     if (!isCurrent()) return
-
-    // Initialize local miniapp runtime
-    localMiniappRuntime.initialize()
 
     await this.restoreMiniapps(background)
   }
@@ -755,7 +754,7 @@ class MantleManager {
     // Publish iOS enablement only after managed installation has finished.
     // Every startup/retry follows this order, including recovery from a failed
     // download with a previously forced-hidden Call entry.
-    for (const visibility of this.iosMiniappVisibility.values()) {
+    for (const visibility of this.miniappVisibility.values()) {
       await visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
       if (!isCurrent()) return
     }
@@ -767,7 +766,7 @@ class MantleManager {
 
     // Region-restricted miniapps must not surface or autostart from an old install.
     this.hidePlatformBlockedMiniapps()
-    for (const visibility of this.iosMiniappVisibility.values()) visibility.applyRestriction()
+    for (const visibility of this.miniappVisibility.values()) visibility.applyRestriction()
 
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
@@ -896,7 +895,7 @@ class MantleManager {
     const installedVersions = appRegistry.getInstalledVersions(packageName)
     if (installedVersions.length > 0) {
       const activeVersion = await appRegistry.getActiveVersion(packageName)
-      const activeIdentity = appRegistry.getReleaseIdentity(packageName, activeVersion)
+      const activeIdentity = activeVersion ? appRegistry.getReleaseIdentity(packageName, activeVersion) : null
       const manuallyInstalled = deployment.kind === "consumer" && activeIdentity?.source === "direct_download"
       if (manuallyInstalled && activeVersion === version) return
       if (
@@ -981,9 +980,43 @@ class MantleManager {
           }
         },
       })
-      this.iosMiniappVisibility.set(settingKey, visibility)
+      this.miniappVisibility.set(settingKey, visibility)
       visibility.applyRestriction()
     }
+  }
+
+  private setupSuperModeMiniappVisibility(): void {
+    const packageName = linkLingoPackageName
+    const policyKey = "linklingo_last_enabled"
+    // Reuse the install/stop serialization used by iOS opt-ins on both platforms.
+    const visibility = new IosMiniappVisibility({
+      isEnabled: () => !shouldHideMiniapp(packageName),
+      wasEnabled: () => {
+        const result = storage.load<boolean>(policyKey)
+        return result.is_ok() && result.value === true
+      },
+      saveEnabled: (enabled) => {
+        const result = storage.save(policyKey, enabled)
+        if (result.is_error()) throw result.error
+      },
+      setHidden: (hidden) => engine.miniapps.setHiddenStatus(packageName, hidden),
+      clearRunningState: () => saveLocalAppRunningState(packageName, false),
+      install: async () => {
+        const asset = BUNDLED_MINIAPPS.map((module) => Asset.fromModule(module)).find(
+          (candidate) => parseBundledMiniappName(candidate.name)?.packageName === packageName,
+        )
+        if (!asset) throw new Error(`Missing bundled miniapp: ${packageName}`)
+        await this.installBundledMiniapp(asset)
+      },
+      stop: async () => {
+        if (engine.miniapps.list().some((app) => app.packageName === packageName && app.foregrounded)) {
+          engine.miniapps.clearForeground()
+        }
+        await miniappLauncher.stop(packageName)
+      },
+    })
+    this.miniappVisibility.set(SETTINGS.super_mode.key, visibility)
+    visibility.applyRestriction()
   }
 
   private reportMiniappVisibilityError(error: unknown): void {
@@ -1013,18 +1046,6 @@ class MantleManager {
       },
       60 * 60 * 1000,
     ) // 1 hour
-
-    try {
-      // only start location updates if we have the location permission (host UI gate);
-      // the island PhoneLocationService owns the background task + accuracy at the saved tier.
-      const hasLocation = await checkFeaturePermissions(PermissionFeatures.LOCATION)
-      if (hasLocation) {
-        const savedTier = await engine.settings.get<string>(SETTINGS.location_tier.key)
-        await phoneLocationService.setLocationTier(savedTier as string)
-      }
-    } catch (error) {
-      console.error("MANTLE: Error starting location updates", error)
-    }
 
     // check for requirements immediately, but only if we've passed through onboarding:
     // const onboardingCompleted = await engine.settings.get(SETTINGS.onboarding_completed.key)
@@ -1056,7 +1077,7 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
 
-    for (const [settingKey, visibility] of this.iosMiniappVisibility) {
+    for (const [settingKey, visibility] of this.miniappVisibility) {
       this.subs.push({
         remove: engine.settings.onChanged(settingKey, () => {
           void visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))

@@ -81,7 +81,7 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  super_mode: {key: "super_mode", defaultValue: () => process.env.EXPO_PUBLIC_SUPER_MODE === "true", writable: true, saveOnServer: true, persist: true},
   appearance_menu_enabled: {
     key: "appearance_menu_enabled",
     defaultValue: () => false,
@@ -465,9 +465,6 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  // The Mentra App intentionally preserves Mentra Live's historical VAD-on
-  // product default. Standalone public Bluetooth SDK hosts default VAD off so
-  // their microphone audio remains continuous.
   voice_activity_detection_enabled: {
     key: "voice_activity_detection_enabled",
     defaultValue: () => true,

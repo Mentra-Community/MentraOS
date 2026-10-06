@@ -197,6 +197,8 @@ public class WhipStreamingService extends Service {
       new java.util.concurrent.atomic.AtomicReference<>();
   /** Bumped whenever the still slot is taken or torn down, so late worker steps can tell they are stale. */
   private int mStillGeneration;
+  /** {@link SystemClock#elapsedRealtime()} when the live camera was stopped for this still. */
+  private volatile long mStillLentElapsedMs;
   private ExecutorService mStillExecutor;
   private Runnable mStillWatchdog;
 
@@ -1600,8 +1602,10 @@ public class WhipStreamingService extends Service {
       }
     }
     if (lent) {
+      mStillLentElapsedMs = SystemClock.elapsedRealtime();
       Log.i(TAG, "[STREAM_PHOTO] camera lent requestId=" + requestId
-          + " stopMs=" + (SystemClock.elapsedRealtime() - startedAt));
+          + " stopMs=" + (mStillLentElapsedMs - startedAt)
+          + " filler=black fps=" + AsgConstants.STREAM_PHOTO_FILLER_FPS);
       callback.onCameraReleased();
     } else {
       callback.onUnavailable("STREAM_CHANGED", "WHIP stream changed before the camera was released");
@@ -1646,23 +1650,27 @@ public class WhipStreamingService extends Service {
           + AsgConstants.STREAM_PHOTO_CAMERA_RELEASE_TIMEOUT_MS + "ms; reopening anyway");
     }
     final AtomicBoolean firstFrame = new AtomicBoolean(false);
+    final long reopenAtMs = SystemClock.elapsedRealtime();
     synchronized (mStillLock) {
       if (!ownsCapturerForRestart(capturer, generation)) {
         Log.i(TAG, "[STREAM_PHOTO] restart skipped requestId=" + requestId + " (stream changed)");
         return;
       }
       capturer.setFirstFrameListener(() -> {
-        firstFrame.set(true);
+        if (!firstFrame.compareAndSet(false, true)) return;
+        long nowMs = SystemClock.elapsedRealtime();
+        long sinceLentMs = mStillLentElapsedMs > 0 ? nowMs - mStillLentElapsedMs : -1;
+        Log.i(TAG, "[STREAM_PHOTO] live frame requestId=" + requestId
+            + " attempt=" + attempt
+            + " reopenMs=" + (nowMs - reopenAtMs)
+            + " blackFreezeMs=" + sinceLentMs);
         stopStillFiller("camera_frame");
       });
       Log.i(TAG, "[STREAM_PHOTO] reopening live camera requestId=" + requestId + " attempt=" + attempt);
       capturer.startCapture(capturer.getOutputWidth(), capturer.getOutputHeight(), capturer.getOutputFps());
     }
     mMainHandler.postDelayed(() -> {
-      if (firstFrame.get()) {
-        Log.i(TAG, "[STREAM_PHOTO] live camera back requestId=" + requestId + " attempt=" + attempt);
-        return;
-      }
+      if (firstFrame.get()) return;
       try {
         stillExecutor().execute(() -> retryCameraAfterStill(requestId, capturer, generation, attempt));
       } catch (java.util.concurrent.RejectedExecutionException e) {

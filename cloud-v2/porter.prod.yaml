@@ -42,6 +42,7 @@ services:
       timeoutSeconds: 5
       initialDelaySeconds: 15
     ingressAnnotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "2g"
       nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"

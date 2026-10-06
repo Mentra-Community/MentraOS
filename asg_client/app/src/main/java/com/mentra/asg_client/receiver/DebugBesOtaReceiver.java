@@ -4,11 +4,15 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
+
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
+
 import dagger.hilt.android.EntryPointAccessors;
+
 import java.io.File;
+import java.io.IOException;
 import java.util.Locale;
 
 /**
@@ -50,17 +54,15 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
             return;
         }
 
+        String filePath = intent.getStringExtra(AsgConstants.DEBUG_BES_OTA_FILE_PATH_EXTRA);
         Context applicationContext = context.getApplicationContext();
         PendingResult pendingResult = goAsync();
         new Thread(
                         () -> {
-                            File artifact =
-                                    new File(
-                                            AsgConstants.DEBUG_BES_OTA_ARTIFACT_PREFIX
-                                                    + normalizedSha256
-                                                    + ".bin");
                             boolean started = false;
                             try {
+                                File artifact = selectArtifact(filePath, normalizedSha256);
+                                if (filePath != null) requireReadableCanonicalFile(artifact);
                                 OtaHelper helper =
                                         EntryPointAccessors.fromApplication(
                                                         applicationContext,
@@ -88,6 +90,29 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
                         },
                         "debug-bes-ota")
                 .start();
+    }
+
+    static File selectArtifact(String filePath, String expectedSha256) {
+        if (filePath == null) {
+            return new File(AsgConstants.DEBUG_BES_OTA_ARTIFACT_PREFIX + expectedSha256 + ".bin");
+        }
+        String prefix = AsgConstants.DEBUG_BES_OTA_STAGING_PREFIX;
+        if (!filePath.matches(
+                java.util.regex.Pattern.quote(prefix)
+                        + "[0-9a-f]{32}/"
+                        + expectedSha256
+                        + "\\.bin")) {
+            throw new IllegalArgumentException("Invalid owned BES staging path");
+        }
+        return new File(filePath);
+    }
+
+    static void requireReadableCanonicalFile(File artifact) throws IOException {
+        if (!artifact.getAbsolutePath().equals(artifact.getCanonicalPath())
+                || !artifact.isFile()
+                || !artifact.canRead()) {
+            throw new IOException("BES staging artifact must be a readable canonical regular file");
+        }
     }
 
     private static boolean isBlank(String value) {

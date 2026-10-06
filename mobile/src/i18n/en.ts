@@ -63,13 +63,11 @@ const en = {
     microphonePermissionRequiredMessage:
       "Microphone permission is required to use the phone microphone feature. Please grant the microphone permission in settings.",
     infoTitle: "About this setting",
-    infoDescription:
-      'Most users should leave this set to "Automatic". Only change this if you need to use a Bluetooth lapel microphone to improve transcription quality.',
-    glassesMicGates: "Glasses microphone gates",
-    vadLabel: "Voice activity detection",
-    vadSubtitle: "GX8002 speech detector. Off falls back to the loudness gate if Barrier is on.",
+    infoDescription: "Most users should not change these settings.",
+    glassesMicGates: "Glasses microphone settings",
+    vadLabel: "Allow voice activity detection",
     barrierLabel: "Barrier",
-    barrierSubtitle: "Center-mic RMS loudness gate. Blocks quiet audio independently of VAD.",
+    barrierSubtitle: "Block quiet audio",
     tuningTitle: "Mic tuning",
     tuningEntrySubtitle: "Gain, RMS gate, and speaker-elevated thresholds. RAM-only on the glasses.",
     tuningWaiting: "Waiting for the glasses to report a level...",
@@ -153,6 +151,24 @@ const en = {
     forget: "Forget",
   },
   pairing: {
+    nimoOpenTitle: "Open your glasses",
+    nimoOpenBody: "Unfold both arms. Your NIMO will turn on automatically.",
+    nimoTheyreOpen: "They're open",
+    nimoFindGlasses: "Find my glasses",
+    nimoConnectTitle: "Connect your NIMO",
+    nimoChooseTitle: "Choose your NIMO",
+    nimoSettings: "Open Settings → Bluetooth.",
+    nimoMacSettings: "Open System Settings → Bluetooth.",
+    nimoChooseMain: "Choose the name without _BLE. When it says Connected, return here.",
+    nimoSettingsImage: "Bluetooth settings illustration highlighting the main NIMO device, without _BLE.",
+    nimoNeedHelp: "Need help?",
+    nimoChargeTitle: "Charge your glasses",
+    nimoChargeBody: "Charge your NIMO, then unfold both arms to turn it on.",
+    nimoCloseAppTitle: "Close the NIMO app",
+    nimoCloseAppBody:
+      "Close the NIMO app if it is running, and disconnect your glasses from other phones before trying again.",
+    nimoRestartTitle: "Restart your glasses",
+    nimoRestartBody: "Close both arms for about 8 seconds, then open them again.",
     cancelPairing: "Cancel pairing",
     cancelFailed: "Pairing could not be cancelled. Please try again.",
     selectModel: "Select Model",
@@ -160,6 +176,18 @@ const en = {
     pairing: "Pairing",
     needMoreHelp: "I need more help",
     glassesBooting: "Glasses are booting up…",
+    g2WaitingForLeft: "Right arm connected. Waiting for left arm…",
+    g2WaitingForRight: "Left arm connected. Waiting for right arm…",
+    g2ReconnectTitle: "Reconnect your G2s",
+    g2ResetTitle: "Reset using the touchpads",
+    g2ResetInstructions:
+      "While wearing your G2s, quickly tap both touchpads 5 times simultaneously. You will hear a low tone confirming the reset. Then try pairing again.",
+    g2ResetOlderHardware: "Older hardware may not play a confirmation tone, but the glasses will still reset.",
+    r1ResetTitle: "Reset using the ring touchpad",
+    r1ResetInstructions:
+      "Place your R1 in its charger and keep the charger plugged into power. Tap the ring's touchpad 5 times, then try pairing again.",
+    r1PreviousPhone:
+      "If your ring was previously paired with another phone, forget the ring in that phone's Bluetooth settings first. Then try pairing with this phone.",
     simulatedGlassesDescription: "Simulated Glasses allows you to run MentraOS without physical smart glasses.",
     permissionRequired: "Permission Required",
     bluetoothPermissionRequiredTitle: "Permission Required",
@@ -390,12 +418,6 @@ const en = {
     osTapGridDescription: "See every miniapp you have installed.",
     osSearchTitle: "Search",
     osSearchDescription: "Type to find any miniapp.",
-    osMovedMiniappsTitle: "Some miniapps have moved",
-    osMissingMiniappTitle: "Missing a miniapp?",
-    osMissingMiniappDescription: "Some miniapps aren't available in this version of the Mentra App.",
-    osMentraOsLegacyTitle: "Find them in MentraOS Legacy",
-    osMentraOsLegacyDescription: "Visit MentraOS Legacy to keep using those miniapps.",
-    osOpenLegacyPage: "Open MentraOS Legacy",
     learnAboutOs: "Learn about MentraOS",
     btClassicStep1: "Tap Open Settings",
     btClassicStep2: "Tap Bluetooth",
@@ -513,7 +535,8 @@ const en = {
     downloading: "Downloading Update",
     installing: "Installing Update",
     doNotDisconnect: "Please keep your glasses connected and do not close the app.",
-    downgradeDuration: "Your glasses will restart twice \u2014 this may take up to 2 minutes.",
+    downgradeDuration:
+      "Changing versions can take several minutes. Keep your glasses nearby while they install and reconnect.",
     versionChangeRestarting: "Installing a different version\u2026",
     versionChangeVerifying: "Verifying your glasses\u2026",
     versionChangeKeepNearby: "Keep your glasses nearby and connected. They will restart on their own.",
@@ -534,6 +557,22 @@ const en = {
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
     // Glasses-reported OTA failure codes. Keys mirror OTA_ERROR_ENGLISH_COPY in the engine's
     // OtaErrorMapping; the raw code is shown under the message via errorCode.
+    errorDnsFailed: "Could not find the update server — retry, or check glasses Wi-Fi if this continues",
+    errorConnectionFailed: "Could not connect to the update server — please retry",
+    errorConnectTimeout: "The update server took too long to connect — please retry",
+    errorDownloadTimeout: "The update stopped responding — please retry",
+    errorHttpError: "The update server returned an error — retry later or contact support",
+    errorDowngradeRecoveryDisabled:
+      "The recovery service is disabled. Contact support to restore it before changing versions.",
+    errorDowngradeRecoveryIncompatible:
+      "The recovery service is incompatible. Contact support to restore it before changing versions.",
+    errorDowngradeRecoveryUnavailable:
+      "The recovery service is not ready. Wait a moment and retry; contact support if this continues.",
+    errorDowngradeRecoveryBusy:
+      "Another glasses recovery is still running. Keep your glasses nearby and retry after it finishes.",
+    errorDowngradeStatusUnknown:
+      "Still checking the version change on your glasses. Keep them nearby. Contact support if this continues.",
+    errorDowngradeNotOwned: "The version change did not finish. Recovery has stopped; you can safely retry.",
     errorNoInternet: "Glasses Wi-Fi has no internet connection",
     errorClockSkew: "Glasses clock is wrong — syncing time from your phone, then retrying update check",
     errorSslError: "Secure connection failed — try a different Wi-Fi network",
@@ -740,6 +779,8 @@ const en = {
     notificationsLoadingApps: "Loading apps…",
     notificationsSearchApps: "Search apps…",
     notificationsAppsEnabled: "{{enabled}} of {{total}} apps enabled",
+    notificationsEnableAll: "Enable all",
+    notificationsDisableAll: "Disable all",
     notificationsBlocked: "Notifications blocked",
     notificationsEnabled: "Notifications enabled",
     notificationsFailedLoad: "Failed to load apps",
@@ -1182,6 +1223,9 @@ const en = {
     invalidEmail: "Invalid email address.",
     pairNeedDisconnect:
       "Pairing failed. Please make sure to disconnect your glasses in your phone's Bluetooth settings before trying again.",
+    g2LeftArmUnavailable: "The right arm connected, but the left arm didn't.",
+    g2RightArmUnavailable: "The left arm connected, but the right arm didn't.",
+    g2ConnectionTimedOut: "Couldn't finish connecting both G2 arms.",
     pairingCouldNotStart:
       "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
   },

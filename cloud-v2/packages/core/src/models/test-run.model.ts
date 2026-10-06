@@ -1,42 +1,47 @@
-import { Schema } from "mongoose";
-import { registerModel } from "./register-model";
+import {Schema} from "mongoose";
+import {registerModel} from "./register-model";
 
-export const TEST_RUN_COMPLETION_INDEX = "test_runs_completed_at";
+/** Native framework results. Startup reconciles this model's indexes before creating them. */
 const schema = new Schema({
-  runId: { type: String, required: true, unique: true },
-  requestId: { type: String, required: true, index: true },
-  startedAt: { type: Date, required: true },
-  // Server-derived from validated payload.finishedAt. Null marks an unparseable legacy value.
-  completedAt: { type: Date },
-  completionProjectionVersion: { type: Number, enum: [1] },
-  payloadSha256: { type: String, required: true },
-  payload: { type: Schema.Types.Mixed, required: true },
-  // Server-owned upload projection; the source payload and its digest never change.
-  uploadsComplete: { type: Boolean, required: true },
-  outcome: { type: String, required: true },
-  // Canonical occurrences and the delivery outbox share the accepted metadata
-  // insert. This is not an analysis execution queue; the dev-agent owns that.
-  failureOccurrences: { type: [Schema.Types.Mixed], default: undefined },
-  // Validated recovery ancestry and references to existing occurrences, never another delivery outbox.
-  recoveryLineage: { type: Schema.Types.Mixed },
-  // Admin-reviewed provenance corrections of existing occurrences (at most one each), with
-  // their own delivery receipts. They never replace the payload, its digest or an occurrence.
-  provenanceCorrections: { type: [Schema.Types.Mixed], default: undefined },
-  // Bounded reviewed diagnostic additions; original payload, source, outcome and assets remain immutable.
-  evidenceSupplements: { type: [Schema.Types.Mixed], default: undefined },
-}, { collection: "test_runs", timestamps: true });
-schema.index({ startedAt: -1, runId: -1 });
-schema.index({ completionProjectionVersion: 1, completedAt: -1, runId: -1 }, { name: TEST_RUN_COMPLETION_INDEX });
-schema.index({ "payload.prNumber": 1, startedAt: -1 });
-schema.index({ "payload.channel": 1, startedAt: -1 });
-schema.index({ outcome: 1, startedAt: -1 });
-// runId is already unique; occurrence IDs are derived from it and validated
-// phase/step pairs. Empty arrays on passing runs need no unique multikey index.
-schema.index({ "failureOccurrences.occurrenceId": 1 }, { sparse: true });
-schema.index({ "recoveryLineage.inheritedFailures.occurrenceId": 1 }, { sparse: true });
-schema.index({ "failureOccurrences.delivery.state": 1, startedAt: 1 });
-schema.index({ "provenanceCorrections.delivery.state": 1 }, { sparse: true });
-schema.index({ "evidenceSupplements.delivery.state": 1 }, { sparse: true });
+  runId: {type: String, required: true, unique: true},
+  requestId: {type: String, required: true},
+  routineId: {type: String, required: true}, definitionRevision: {type: String, required: true},
+  hostId: {type: String, required: true}, platform: {type: String, required: true}, laneId: {type: String, required: true},
+  startedAt: {type: Date, required: true}, completedAt: {type: Date, required: true},
+  summaryProjection: {type: Schema.Types.Mixed},
+  payloadSha256: {type: String, required: true}, payload: {type: Schema.Types.Mixed, required: true},
+  uploadsComplete: {type: Boolean, required: true}, outcome: {type: String, required: true},
+  verification: {type: Schema.Types.Mixed, immutable: true}, catalogEligible: {type: Boolean},
+}, {collection: "test_runs", timestamps: true, autoIndex: false});
+schema.index({requestId: 1}, {unique: true, name: "test_runs_terminal_request",
+  partialFilterExpression: {"payload.schemaVersion": 1}});
+schema.index({routineId: 1, platform: 1, definitionRevision: 1, outcome: 1, uploadsComplete: 1, startedAt: -1, runId: -1});
+schema.index({startedAt: -1, runId: -1});
+// Native readers must be able to exhaust a short page without fetching retained legacy payloads.
+export const TEST_RUN_NATIVE_HISTORY_INDEX = "test_runs_native_history";
+schema.index({startedAt: -1, runId: -1}, {name: TEST_RUN_NATIVE_HISTORY_INDEX,
+  partialFilterExpression: {"payload.schemaVersion": 1}});
+schema.index({hostId: 1, laneId: 1, startedAt: -1, runId: -1});
+export const TEST_RUN_COMPLETION_INDEX = "test_runs_completed_at";
+schema.index({completedAt: -1, runId: -1}, {name: TEST_RUN_COMPLETION_INDEX});
+export const TestRunModel = registerModel("TestRun", schema);
+
+/** One-time index cutover; old documents are retained but never parsed by native readers. */
+export async function reconcileTestRunIndexes(collection = TestRunModel.collection): Promise<void> {
+  let indexes;
+  try {indexes = await collection.listIndexes().toArray();}
+  catch (error) {if ((error as {code?: number}).code === 26) return; throw error;}
+  for (const index of indexes) {
+    const oldRequest = Object.keys(index.key).length === 1 && index.key.requestId === 1
+      && (index.name !== "test_runs_terminal_request" || !index.unique
+        || JSON.stringify(index.partialFilterExpression) !== JSON.stringify({"payload.schemaVersion": 1}));
+    const oldCompletion = index.name === TEST_RUN_COMPLETION_INDEX
+      && JSON.stringify(index.key) !== JSON.stringify({completedAt: -1, runId: -1});
+    if (!oldRequest && !oldCompletion) continue;
+    try {await collection.dropIndex(index.name!);}
+    catch (error) {if ((error as {code?: number}).code !== 27) throw error;}
+  }
+}
 
 const assetSchema = new Schema({
   runId: { type: String, required: true },
@@ -47,5 +52,4 @@ const assetSchema = new Schema({
 }, { collection: "test_assets", timestamps: true });
 assetSchema.index({ runId: 1, assetId: 1 }, { unique: true });
 
-export const TestRunModel = registerModel("TestRun", schema);
 export const TestAssetModel = registerModel("TestAsset", assetSchema);

@@ -9,6 +9,7 @@ internal class NimoCanvasSession {
   }
   private data class Flight(val key: Int, val frame: ByteArray, val ticket: Long)
   private var ready = false
+  private var transportReady = false
   private var active = false
   private var held = false
   private var locked = false
@@ -16,6 +17,7 @@ internal class NimoCanvasSession {
   private var waitingReadiness = false
   private var observedNotReady = false
   private var readinessRetries = 0
+  private var probeRetries = 0
   private var exitRequested = false
   private var desired: ByteArray? = null
   private var accepted: ByteArray? = null
@@ -35,6 +37,23 @@ internal class NimoCanvasSession {
     return pump()
   }
 
+  /** Enter a blank canvas on a fresh connection unless a newer host scene is retained. */
+  fun activate(): List<Action> {
+    if (desired == null) desired = byteArrayOf(0, 0, 1)
+    exitRequested = false
+    return pump()
+  }
+
+  /** Launch itself checks peer readiness in firmware. Retry only explicit NOT_READY,
+   * with a small budget; never retry an ambiguous/missing business ACK on this link. */
+  fun retryNotReady(): List<Action> {
+    if (!transportReady || !waitingReadiness || desired == null || probeRetries >= 3) return emptyList()
+    probeRetries++
+    waitingReadiness = false
+    ready = true
+    return pump()
+  }
+
   /** Debug capture seam; production behavior is unchanged unless explicitly held. */
   fun hold(value: Boolean, resume: Boolean = true): List<Action> {
     held = value
@@ -50,7 +69,8 @@ internal class NimoCanvasSession {
   fun confirmedReadiness(value: Boolean): List<Action> = updateReadiness(value, confirmed = true)
 
   private fun updateReadiness(value: Boolean, confirmed: Boolean): List<Action> {
-    if (!value) readinessRetries = 0
+    transportReady = value
+    if (!value) { readinessRetries = 0; probeRetries = 0 }
     if (!value && flight != null) return resetLink("Readiness lost during canvas command")
     if (waitingReadiness) {
       if (!value) observedNotReady = true
@@ -67,9 +87,9 @@ internal class NimoCanvasSession {
 
   /** A new transport generation has no accepted frame. Retain only the latest desired scene. */
   fun disconnected() {
-    ready = false; active = false; held = false; locked = false; launchBlocked = false
+    ready = false; transportReady = false; active = false; held = false; locked = false; launchBlocked = false
     waitingReadiness = false; observedNotReady = false
-    readinessRetries = 0
+    readinessRetries = 0; probeRetries = 0
     accepted = null; rejected = null; flight = null; ticket++; forceRevision++
   }
 
@@ -78,21 +98,13 @@ internal class NimoCanvasSession {
     return pump()
   }
 
-  /** A local gesture/native app takeover suppresses replay until the host submits another scene. */
+  /** Firmware can restore its stock UI after reconnect. Keep host ownership and
+   * replay the newest scene, serializing behind any outstanding command ACK. */
   fun nativeApp(appId: Int, entered: Boolean): List<Action> {
     if ((appId == NimoCanvasCodec.APP_ID && !entered) || (appId != NimoCanvasCodec.APP_ID && entered)) {
-      // The expected FD Exit report preserves newer host content. A different
-      // native app entering is a real takeover, even while our Exit waits for ACK.
-      if (flight?.key == 3) {
-        active = false; accepted = null
-        if (appId != NimoCanvasCodec.APP_ID && entered) {
-          desired = null; rejected = null; scope = null
-        }
-        return emptyList()
-      }
-      val ambiguous = flight != null
-      desired = null; accepted = null; rejected = null; active = false; exitRequested = false; scope = null
-      if (ambiguous) return resetLink("Native app transition interrupted canvas command")
+      active = false
+      accepted = null
+      return pump()
     }
     return emptyList()
   }
@@ -130,8 +142,8 @@ internal class NimoCanvasSession {
       return listOf(Action.Rejected(status)) + pump()
     }
     when (key) {
-      1 -> active = true
-      4 -> { accepted = current.frame; rejected = null; readinessRetries = 0 }
+      1 -> { active = true; accepted = null }
+      4 -> { accepted = current.frame; rejected = null; readinessRetries = 0; probeRetries = 0 }
       3 -> { active = false; accepted = null; exitRequested = false }
     }
     return pump()
@@ -143,7 +155,7 @@ internal class NimoCanvasSession {
   }
 
   private fun resetLink(reason: String): List<Action> {
-    ready = false; active = false; accepted = null; flight = null; ticket++; forceRevision++
+    ready = false; transportReady = false; active = false; accepted = null; flight = null; ticket++; forceRevision++
     return listOf(Action.Reconnect(reason))
   }
 

@@ -33,9 +33,10 @@ const savedServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 let directoryUsers: Array<{ id: string; email: string }> = [];
 let directoryFailure = false;
 let directoryNeverEnds = false;
+let directoryHonorsFilters = false;
 let directoryRequests = 0;
-// A local directory deliberately ignores filter, like older GoTrue deployments.
-// This verifies that the server still applies exact admin matching itself.
+// Exercise both older directories that ignore filter and substring filtering.
+// The server must always apply the full admin policy to returned candidates.
 const directory = Bun.serve({
   hostname: "127.0.0.1", port: 0,
   fetch(req) {
@@ -45,9 +46,12 @@ const directory = Bun.serve({
     if (directoryFailure) return new Response(null, { status: 503 });
     const page = Number(url.searchParams.get("page"));
     const perPage = Number(url.searchParams.get("per_page"));
+    const candidates = directoryHonorsFilters
+      ? directoryUsers.filter(user => user.email.toLowerCase().includes((url.searchParams.get("filter") ?? "").toLowerCase()))
+      : directoryUsers;
     return Response.json({ users: directoryNeverEnds
       ? Array.from({ length: perPage }, (_, i) => ({ id: `repeated-${i}`, email: "outside@example.test" }))
-      : directoryUsers.slice((page - 1) * perPage, page * perPage) });
+      : candidates.slice((page - 1) * perPage, page * perPage) });
   },
 });
 {
@@ -194,6 +198,7 @@ beforeEach(async () => {
   directoryUsers = [];
   directoryFailure = false;
   directoryNeverEnds = false;
+  directoryHonorsFilters = false;
   directoryRequests = 0;
   await Promise.all([
     ReportModel.deleteMany({}),
@@ -295,19 +300,29 @@ describe("admin reports read surface", () => {
       await ReportModel.create({ ...row, trigger: source ? { type: row.kind === "bug" ? "manual" : "automatic", source, reason: "test" } : null,
         context: { source: "mentra_automated_testing" }, createdAt: new Date(1_700_000_000_000 + i * 1000) });
     }
-    const testing = await listed("kind=testing");
+    // Existing API/MCP/script clients filter stored kinds, including every category.
+    expect((await listed("kind=bug")).map(row => row.reportId)).toEqual(["rep_human", "rep_harness_bug"]);
+    expect((await listed("kind=automatic")).map(row => row.reportId)).toEqual(
+      ["rep_untagged", "rep_runtime", "rep_harness_new", "rep_harness_old"],
+    );
+    expect((await listed("kind=bug&category=internal")).map(row => row.reportId)).toEqual(["rep_human"]);
+    expect((await listed("kind=bug&category=testing")).map(row => row.reportId)).toEqual(["rep_harness_bug"]);
+    expect(await listed("kind=automatic&category=internal")).toEqual([]);
+    const testing = await listed("category=testing");
     expect(testing.map(row => row.reportId)).toEqual(["rep_harness_new", "rep_harness_bug", "rep_harness_old"]);
     expect(testing.map(row => row.kind)).toEqual(["automatic", "bug", "automatic"]);
-    expect((await listed("kind=automatic")).map(row => row.reportId)).toEqual(["rep_untagged", "rep_runtime"]);
-    expect((await listed("kind=internal")).map(row => row.reportId)).toEqual(["rep_human"]);
-    expect(await listed("kind=bug")).toEqual([]);
-    expect((await listed("kind=testing&status=ready&limit=1")).map(row => row.reportId)).toEqual(["rep_harness_new"]);
-    expect((await listed("kind=testing&before=2023-11-14T22:13:21.500Z&limit=1")).map(row => row.reportId)).toEqual(["rep_harness_bug"]);
+    expect((await listed("category=automatic")).map(row => row.reportId)).toEqual(["rep_untagged", "rep_runtime"]);
+    expect((await listed("category=internal")).map(row => row.reportId)).toEqual(["rep_human"]);
+    expect(await listed("category=bug")).toEqual([]);
+    expect((await listed("category=testing&status=ready&limit=1")).map(row => row.reportId)).toEqual(["rep_harness_new"]);
+    expect((await listed("category=testing&before=2023-11-14T22:13:21.500Z&limit=1")).map(row => row.reportId)).toEqual(["rep_harness_bug"]);
     expect(await listed("")).toHaveLength(fixtures.length);
     directoryFailure = true;
     directoryRequests = 0;
-    expect(await listed("kind=testing")).toHaveLength(3);
-    expect(await listed("kind=automatic")).toHaveLength(2);
+    expect(await listed("kind=bug")).toHaveLength(2);
+    expect(await listed("kind=automatic")).toHaveLength(4);
+    expect(await listed("category=testing")).toHaveLength(3);
+    expect(await listed("category=automatic")).toHaveLength(2);
     expect(directoryRequests).toBe(0);
   });
 
@@ -343,19 +358,19 @@ describe("admin reports read surface", () => {
     process.env.CLOUD_CORE_ADMIN_EMAILS = `${adminEmail}, named@personal.test`;
     process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "company.test, @SECOND.test";
 
-    const internal = await listed("kind=internal");
+    const internal = await listed("category=internal");
     expect(internal.map(row => row.reportId).sort()).toEqual(internalIds.filter(id => !id.endsWith("-automatic")).sort());
     expect(new Set(internal.map(row => row.kind))).toEqual(new Set(["bug", "feedback"]));
     for (const kind of ["bug", "feedback"]) {
-      const rows = await listed(`kind=${kind}&status=ready`);
+      const rows = await listed(`category=${kind}&status=ready`);
       expect(rows.map(row => row.reportId).sort()).toEqual(externalIds.filter(id => id.endsWith(`-${kind}`)).sort());
     }
-    expect((await listed("kind=automatic&status=ready")).map(row => row.reportId).sort()).toEqual(
+    expect((await listed("category=automatic&status=ready")).map(row => row.reportId).sort()).toEqual(
       [...internalIds, ...externalIds].filter(id => id.endsWith("-automatic")).sort(),
     );
-    expect((await listed("kind=bug&status=closed")).map(row => row.reportId)).toEqual(["rep_oem"]);
-    expect(await listed("kind=internal&status=closed")).toEqual([]);
-    const limited = await listed("kind=internal&limit=2&before=2023-11-14T22:13:21.500Z");
+    expect((await listed("category=bug&status=closed")).map(row => row.reportId)).toEqual(["rep_oem"]);
+    expect(await listed("category=internal&status=closed")).toEqual([]);
+    const limited = await listed("category=internal&limit=2&before=2023-11-14T22:13:21.500Z");
     expect(limited).toHaveLength(2);
     expect(limited.every(row => row.mentraUserId === "mu_internal-fixture-domain")).toBe(true);
     directoryRequests = 0;
@@ -363,8 +378,31 @@ describe("admin reports read surface", () => {
     expect(directoryRequests).toBe(0);
     process.env.CLOUD_CORE_ADMIN_EMAILS = adminEmail;
     process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "";
-    expect(await listed("kind=internal")).toEqual([]);
-    expect(await listed("kind=bug")).toHaveLength(7);
+    expect(await listed("category=internal")).toEqual([]);
+    expect(await listed("category=bug")).toHaveLength(7);
+  });
+
+  test("finds plus aliases through directory filters without admitting similar mailboxes or other domains", async () => {
+    directoryHonorsFilters = true;
+    const fixtures = [
+      { id: "internal-fixture-base", email: "named@personal.test", internal: true },
+      { id: "internal-fixture-alias", email: "NAMED+test@PERSONAL.TEST", internal: true },
+      { id: "internal-fixture-other-domain", email: "named+test@elsewhere.test", internal: false },
+      { id: "internal-fixture-similar", email: "namedmore+test@personal.test", internal: false },
+      { id: "internal-fixture-wrong-base", email: "other+named@personal.test", internal: false },
+    ];
+    directoryUsers = fixtures;
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `${adminEmail}, named@personal.test`;
+    for (const fixture of fixtures) {
+      await UserModel.create({ mentraUserId: `mu_${fixture.id}`, tenantId: "mentra", tenantUserId: fixture.id });
+      await ReportModel.create({ reportId: `rep_${fixture.id}`, mentraUserId: `mu_${fixture.id}`, kind: "bug", context: {} });
+    }
+    expect((await listed("category=internal")).map(row => row.reportId).sort()).toEqual(
+      fixtures.filter(f => f.internal).map(f => `rep_${f.id}`).sort(),
+    );
+    expect((await listed("category=bug")).map(row => row.reportId).sort()).toEqual(
+      fixtures.filter(f => !f.internal).map(f => `rep_${f.id}`).sort(),
+    );
   });
 
   test("finds admins beyond the first directory page and rejects incomplete classification", async () => {
@@ -373,17 +411,17 @@ describe("admin reports read surface", () => {
     await UserModel.create({ mentraUserId: "mu_late", tenantId: "mentra", tenantUserId: "internal-fixture-late" });
     await ReportModel.create({ reportId: "rep_late", mentraUserId: "mu_late", kind: "bug", context: {} });
     process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "company.test";
-    expect((await listed("kind=internal")).map(row => row.reportId)).toEqual(["rep_late"]);
+    expect((await listed("category=internal")).map(row => row.reportId)).toEqual(["rep_late"]);
     directoryFailure = true;
-    expect((await adminGet(`${ADMIN_REPORTS_PATH}?kind=internal`)).status).toBe(502);
-    expect((await adminGet(`${ADMIN_REPORTS_PATH}?kind=bug`)).status).toBe(502);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?category=internal`)).status).toBe(502);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?category=bug`)).status).toBe(502);
     // The unfiltered incident evidence remains usable during a directory outage.
     expect(await listed("")).toHaveLength(1);
-    expect(await listed("kind=automatic")).toEqual([]);
+    expect(await listed("category=automatic")).toEqual([]);
     expect((await adminGet(`${ADMIN_REPORTS_PATH}/rep_late`)).status).toBe(200);
     directoryFailure = false;
     directoryNeverEnds = true;
-    expect((await adminGet(`${ADMIN_REPORTS_PATH}?kind=internal`)).status).toBe(502);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?category=internal`)).status).toBe(502);
   });
 
   test("lists reports newest-first with artifact metadata and no context", async () => {
@@ -409,6 +447,8 @@ describe("admin reports read surface", () => {
 
     const badQuery = await adminGet(`${ADMIN_REPORTS_PATH}?kind=nonsense`);
     expect(badQuery.status).toBe(400);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?category=nonsense`)).status).toBe(400);
+    expect((await adminGet(`${ADMIN_REPORTS_PATH}?kind=internal`)).status).toBe(400);
   });
 
   test("returns full detail with context and asset rows", async () => {

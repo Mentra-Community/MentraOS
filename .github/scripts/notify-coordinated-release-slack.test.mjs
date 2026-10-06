@@ -22,6 +22,8 @@ function notification(scope, overrides = {}) {
         FINALIZE_RESULT: "success",
         EXAMPLES_DISPATCH_RESULT: "success",
         ...overrides,
+        TEST_RUN_INGEST_TOKEN: "",
+        TEST_RUN_INGEST_TOKEN_DEV: "",
       },
     }),
   )
@@ -33,8 +35,9 @@ test("core completion is reported without pending example and docs results", () 
   const text = JSON.stringify(payload)
   assert.match(text, /View separate workflow/)
   assert.doesNotMatch(text, /Bluetooth example|Example checks|\*.*Docs\*/)
-  assert.match(text, /Requested tests/)
-  assert.match(text, /No-glasses UI/)
+  assert.match(text, /Available device tests/)
+  assert.match(text, /catalog is unavailable/)
+  assert.doesNotMatch(text, /No-glasses UI|Requested tests/)
   assert.match(text, /Request pipeline/)
 })
 

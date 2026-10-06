@@ -451,6 +451,7 @@ const mockIslandEntries = () => {
         hasDefaultDevice: jest.fn(() => Promise.resolve(true)),
         disconnect: jest.fn(() => Promise.resolve()),
         forget: jest.fn(() => Promise.resolve()),
+        unpair: jest.fn(() => Promise.resolve()),
         connect: jest.fn(() => Promise.resolve()),
         connectSimulated: jest.fn(() => Promise.resolve()),
         setDefault: jest.fn(() => Promise.resolve()),

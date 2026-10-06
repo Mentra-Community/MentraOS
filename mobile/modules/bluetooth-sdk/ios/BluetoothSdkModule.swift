@@ -90,7 +90,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
-            "submit_incident_report",
             "extraction_progress"
         )
 
@@ -224,6 +223,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             await MainActor.run {
                 self.bluetoothSdk().forget()
             }
+        }
+
+        AsyncFunction("unpair") {
+            try await DeviceManager.shared.unpair()
         }
 
         AsyncFunction("forgetController") {

@@ -3,12 +3,42 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { TestHostHistory, TestHostLatest } from "../../../../packages/core/src/types/test-host-health.types";
-import { CleanupEvents, componentHealth, DiskHistoryChart, diskSegments, SystemHealthPage, SystemHealthSummary } from "./system-health";
+import { CleanupEvents, componentHealth, DiskHistoryChart, diskSegments, MemoryHealth, SystemHealthPage, SystemHealthSummary } from "./system-health";
 
 const now = Date.parse("2026-09-29T00:00:00Z"), at = (offset: number) => new Date(now + offset).toISOString();
 const host: TestHostLatest = { schemaVersion: 1, hostId: "test-mini", sampleId: "sample", sampledAt: at(0), receivedAt: at(0), freeBytes: 19 * 1024 ** 3,
   components: [], cleanupEvents: [] };
 describe("system health presentation", () => {
+  test("memory pressure remains independent of usage and swap; missing or stale readings are explicit", () => {
+    const memory = { totalBytes: 8 * 1024 ** 3, usedBytes: 7 * 1024 ** 3, compressedBytes: 1.136 * 1024 ** 3,
+      swapUsedBytes: 4.395 * 1024 ** 3, pressureFreePercent: 61, pressure: "normal" as const };
+    const render = (value: TestHostLatest, clock = now, unavailable = false) => renderToStaticMarkup(createElement(MemoryHealth, { host: value, now: clock, unavailable }));
+    const current = render({ ...host, memory });
+    expect(current).toContain("Normal pressure"); expect(current).toContain("7.0 GiB / 8.0 GiB");
+    expect(current).toContain("1.1 GiB"); expect(current).toContain("4.4 GiB"); expect(current).toContain("61%");
+    expect(current).toContain("not inferred from raw free pages");
+    expect(render(host)).toContain("Pressure unavailable"); expect(render(host)).toContain("Unavailable / Unavailable");
+    expect(render({ ...host, memory: { ...memory, pressure: null, usedBytes: null } })).toContain("Pressure unavailable");
+    for (const stale of [render({ ...host, memory }, now + 180_001), render({ ...host, memory }, now, true)]) {
+      expect(stale).toContain("current pressure unavailable"); expect(stale).toContain("not current"); expect(stale).not.toContain("Normal pressure");
+    }
+    expect(render({ ...host, memory: { ...memory, pressure: "critical" } })).toContain("Critical pressure");
+  });
+  test("each memory metric uses only its real samples and keeps gaps independent of disk measurements", () => {
+    const memory = { totalBytes: 8 * 1024 ** 3, usedBytes: 5 * 1024 ** 3, compressedBytes: 1024 ** 3,
+      swapUsedBytes: 0, pressureFreePercent: 61, pressure: "normal" as const };
+    const points = [0, 60_000, 120_000, 400_000].map((offset, index) => ({ sampleId: String(index), sampledAt: at(offset),
+      freeBytes: index === 0 ? null : 25 * 1024 ** 3, ...(index === 1 ? {} : { memory }) }));
+    expect(diskSegments(points, 90_000, "used").map(segment => segment.map(point => point.sampleId))).toEqual([["0"], ["2"], ["3"]]);
+    const history: TestHostHistory = { hostId: host.hostId, generatedAt: at(400_000), from: at(-86_400_000), to: at(400_000), points,
+      cleanupEvents: [], truncated: false, thresholdBytes: 5 * 1024 ** 3, gapAfterMs: 90_000 };
+    const used = renderToStaticMarkup(createElement(DiskHistoryChart, { history, metric: "used" }));
+    expect(used).toContain("Used RAM over time"); expect(used).toContain("Pressure: normal"); expect(used).not.toContain("recorder minimum");
+    const availability = renderToStaticMarkup(createElement(DiskHistoryChart, { history, metric: "availability" }));
+    expect(availability).toContain("61%"); expect(availability).toContain("100%"); expect(availability).not.toContain("GiB");
+    const legacy = renderToStaticMarkup(createElement(DiskHistoryChart, { history: { ...history, points: [{ ...points[1] }] }, metric: "used" }));
+    expect(legacy).toContain("No used ram measurements in this period"); expect(legacy).not.toContain("<polyline");
+  });
   test("independent fresh host reporting can show paused/blocked components without claiming the computer is offline", () => {
     expect(componentHealth(host, { component: "general-worker", enabled: true, state: "stopped", reason: "operator-drained" }, now).label).toBe("Intentionally stopped");
     expect(componentHealth(host, { component: "disk-cleanup", enabled: true, state: "blocked", reason: "permission-denied" }, now)).toMatchObject({ label: "Blocked", tone: "blocked" });

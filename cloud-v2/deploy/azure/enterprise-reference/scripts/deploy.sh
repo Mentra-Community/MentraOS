@@ -64,6 +64,8 @@ jq -e '
   (.location | nonempty) and
   (.registryName | test("^[a-zA-Z0-9]{5,50}$")) and
   (.sourceImage | test("^ghcr\\.io/mentra-community/mentra-cloud@sha256:[0-9a-f]{64}$")) and
+  (.sourceRegistryMirror == null or (.sourceRegistryMirror | type == "string")) and
+  ((.sourceRegistryMirror // "") | . == "" or test("^[a-z0-9]+\\.azurecr\\.io/[a-z0-9]+([._/-][a-z0-9]+)*$")) and
   (.releaseTag | test("^[A-Za-z0-9._-]+$")) and
   (.tenantId | guid) and
   (.coreApiClientId | guid) and
@@ -79,6 +81,7 @@ jq -e '
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
   ((.coreAdminEmails // "") | type == "string") and
+  (.manageAcrPullRoleAssignment == null or (.manageAcrPullRoleAssignment | type == "boolean")) and
   ((.miniappConfiguration // {}) | miniapp_configuration_map) and
   ($minVersion | semver) and
   ($recommendedVersion | semver) and
@@ -109,15 +112,27 @@ LOCATION="$(jq -r .location "$CONFIG")"
 DEPLOYMENT_NAME="$(jq -r '.deploymentName // "mentra-private"' "$CONFIG")"
 REGISTRY_NAME="$(jq -r .registryName "$CONFIG")"
 SOURCE_IMAGE="$(jq -r .sourceImage "$CONFIG")"
+SOURCE_MIRROR="$(jq -r '.sourceRegistryMirror // ""' "$CONFIG")"
+if [[ -n "$SOURCE_MIRROR" ]]; then
+  SOURCE_IMAGE="$SOURCE_MIRROR@${SOURCE_IMAGE##*@}"
+fi
 RELEASE_TAG="$(jq -r .releaseTag "$CONFIG")"
 
+# Wizard calls are bound to an explicit subscription without changing az defaults.
+if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
+  az() { command az "$@" --subscription "$MENTRA_SUBSCRIPTION_ID"; }
+fi
 az account show --output none
-az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+# The wizard creates and checks its owned resource group before invoking this
+# legacy wrapper. Keep the standalone deploy.sh interface for existing operators.
+if [[ "${MENTRA_GROUP_PREPARED:-false}" != true ]]; then
+  az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+fi
 az deployment group create \
   --name "$DEPLOYMENT_NAME-bootstrap" \
   --resource-group "$RESOURCE_GROUP" \
   --template-file "$TEMPLATE_DIR/bootstrap.bicep" \
-  --parameters registryName="$REGISTRY_NAME" \
+  --parameters registryName="$REGISTRY_NAME" resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")" \
   --query properties.provisioningState \
   --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
 
@@ -146,6 +161,8 @@ jq -n \
       location:{value:$c.location},
       cloudImage:{value:$cloudImage},
       registryName:{value:$c.registryName},
+      resourceTags:{value:($c.resourceTags // {})},
+      manageAcrPullRoleAssignment:{value:(if $c.manageAcrPullRoleAssignment == null then true else $c.manageAcrPullRoleAssignment end)},
       tenantId:{value:$c.tenantId},
       coreApiClientId:{value:$c.coreApiClientId},
       mobileClientId:{value:$c.mobileClientId},
@@ -175,7 +192,7 @@ jq -n \
       approvedSystemMiniapps:{value:($c.approvedSystemMiniapps // ["com.mentra.settings"])},
       managedMiniapps:{value:($c.managedMiniapps // [])},
       miniappConfiguration:{value:($c.miniappConfiguration // {})},
-      managedMiniappDirectory:{value:($c.managedMiniappDirectory // "")},
+      managedMiniappDirectory:{value:($c.managedMiniappDirectory // "/app/cloud-v2/deploy/azure/enterprise-reference/miniapps")},
       allowedGlassesModels:{value:($c.allowedGlassesModels // ["mentra-live"])},
       telemetryEnabled:{value:($c.telemetryEnabled // false)},
       privacyPolicyUrl:{value:($c.privacyPolicyUrl // "")},
@@ -183,7 +200,45 @@ jq -n \
       documentationUrl:{value:($c.documentationUrl // "")},
       supportUrl:{value:($c.supportUrl // "")}
     }
-  }' > "$PARAMETERS"
+  } | if ($c.mongoAccountName // "") != "" then .parameters.mongoAccountName={value:$c.mongoAccountName} else . end
+    | if ($c.reportStorageAccountName // "") != "" then .parameters.reportStorageAccountName={value:$c.reportStorageAccountName} else . end
+  ' > "$PARAMETERS"
+
+# Azure requires an unbound hostname on the app before issuing its managed
+# certificate. A fresh custom-domain install first deploys on the generated
+# hostname; add this DNS-verified binding before the certificate deployment.
+# Existing bindings must remain intact on an unchanged rerun.
+WORKSPACE_HOSTNAME="$(jq -r '.workspaceHostname // ""' "$CONFIG")"
+if [[ -n "$WORKSPACE_HOSTNAME" ]]; then
+  RUNTIME_NAME="$(jq -r .runtimeName "$CONFIG")"
+  APPS="$(az containerapp list --resource-group "$RESOURCE_GROUP" --output json)"
+  if ! jq -e --arg app "$RUNTIME_NAME" 'any(.name == $app)' <<<"$APPS" >/dev/null; then
+    # The standalone entry point needs the same two-phase DNS handoff as the
+    # packaged installer. Azure cannot bind a hostname to an absent app.
+    az deployment group validate --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
+      --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" workspaceHostname="" --output none
+    az deployment group create --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
+      --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" workspaceHostname="" --output none
+    az deployment group show --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
+      --query properties.outputs --output json
+    printf 'Initial app created. Configure DNS for %s using the generated hostname and custom-domain verification ID, then rerun this same command. Signing keys and image pins must remain unchanged.\n' "$WORKSPACE_HOSTNAME" >&2
+    exit 3
+  fi
+  HOSTNAMES="$(az containerapp hostname list --name "$RUNTIME_NAME" --resource-group "$RESOURCE_GROUP" --output json)"
+  if ! jq -e --arg host "$WORKSPACE_HOSTNAME" 'any(.name == $host)' <<<"$HOSTNAMES" >/dev/null; then
+    az containerapp hostname add --name "$RUNTIME_NAME" --resource-group "$RESOURCE_GROUP" \
+      --hostname "$WORKSPACE_HOSTNAME" --output none
+  fi
+fi
+
+# Provider validation checks permissions, policy and parameters before the
+# application deployment. Never print secure parameter/provider responses.
+az deployment group validate \
+  --name "$DEPLOYMENT_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --template-file "$TEMPLATE_DIR/main.bicep" \
+  --parameters "@$PARAMETERS" \
+  --output none
 
 az deployment group create \
   --name "$DEPLOYMENT_NAME" \
@@ -214,13 +269,18 @@ WORKSPACE="$(az deployment group show \
   --resource-group "$RESOURCE_GROUP" \
   --query properties.outputs.workspaceOrigin.value \
   --output tsv)"
-"$SCRIPT_DIR/smoke-test.sh" "$WORKSPACE"
+if [[ "${MENTRA_SKIP_SMOKE:-false}" != true ]]; then
+  "$SCRIPT_DIR/smoke-test.sh" "$WORKSPACE"
+fi
 
 CORE_ORIGIN="$(az deployment group show --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
   --query properties.outputs.coreOrigin.value --output tsv)"
-if [[ -n "${MENTRA_ADMIN_TOKEN:-}" ]]; then
-  curl --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
-    -H "Authorization: Bearer $MENTRA_ADMIN_TOKEN" \
+if [[ -n "${MENTRA_ADMIN_TOKEN:-}" && "${MENTRA_SKIP_SMOKE:-false}" != true ]]; then
+  AUTH_CONFIG="$(mktemp "${TMPDIR:-/tmp}/mentra-private-auth.XXXXXX")"
+  trap 'rm -f "$PARAMETERS" "${AUTH_CONFIG:-}"' EXIT
+  [[ "$MENTRA_ADMIN_TOKEN" != *$'\n'* && "$MENTRA_ADMIN_TOKEN" != *$'\r'* && "$MENTRA_ADMIN_TOKEN" != *'"'* && "$MENTRA_ADMIN_TOKEN" != *'\'* ]] || exit 1
+  printf 'header = "Authorization: Bearer %s"\n' "$MENTRA_ADMIN_TOKEN" > "$AUTH_CONFIG"
+  curl --connect-timeout 10 --max-time 30 --retry-max-time 300 --config "$AUTH_CONFIG" --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
     "$CORE_ORIGIN/api/admin/reports?limit=1" | jq -e '.reports | type == "array"' >/dev/null
 fi
 

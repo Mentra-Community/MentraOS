@@ -1,6 +1,21 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** ASG-side intent to hand off; survives process death until recovery proves it is idle. */
+    public static final String PENDING_DOWNGRADE_PREFS = "pending_downgrade";
+
+    /** Versioned, permission-protected query; response is ordered after pending handoff decisions. */
+    public static final String RECOVERY_QUERY_STATUS = "com.mentra.recovery.ACTION_QUERY_DOWNGRADE_STATUS";
+    public static final String RECOVERY_HEARTBEAT_PERMISSION = "com.mentra.recovery.permission.HEARTBEAT";
+    public static final int RECOVERY_STATUS_PROTOCOL = 1;
+    public static final String EXTRA_RECOVERY_REQUEST_ID = "request_id";
+    public static final long RECOVERY_READY_TIMEOUT_MS = 30_000L;
+    public static final long RECOVERY_QUERY_TIMEOUT_MS = 5_000L;
+    public static final long RECOVERY_RECONCILE_INTERVAL_MS = 15_000L;
+
+    /** Retain request boundaries outside logcat so a later incident includes failed retries. */
+    public static final int OTA_NETWORK_HISTORY_LIMIT = 32;
+    public static final String OTA_NETWORK_HISTORY_PREFS = "ota_network_history";
     /** Packaged camera feedback format, matching the BES I2S output rate. */
     public static final int CAMERA_PCM_SAMPLE_RATE = 48000;
     /** Bound camera cue preload memory even if a packaged asset is replaced. */
@@ -373,6 +388,12 @@ public class AsgConstants {
 
     /** Debug BES intent extra carrying a stable identifier for durable state. */
     public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
+
+    /** Optional debug BES intent extra for a hash-addressed owned local staging file. */
+    public static final String DEBUG_BES_OTA_FILE_PATH_EXTRA = "file_path";
+
+    /** Allowed parent prefix for owned shared-provider BES staging directories. */
+    public static final String DEBUG_BES_OTA_STAGING_PREFIX = "/data/local/tmp/mentra-live-";
 
     /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
     public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =

@@ -20,6 +20,7 @@ import {miniappLauncher} from "./MiniappLauncher"
 import {MentraJSCrashController} from "./MentraJSCrashController"
 import {MentraJSRouter, type MentraJSCrustBinding} from "./MentraJSRouter"
 import {MentraUIRouter} from "./MentraUIRouter"
+import {BgTimer} from "../utils/timers"
 
 export interface MiniappEngine {
   router: MentraJSRouter
@@ -98,6 +99,7 @@ export function ensureMiniappEngine(): MiniappEngine {
   const router = new MentraJSRouter(localMiniappRuntime, crust)
   router.crashController = crashController
   router.uiRouter = uiRouter
+  router.timer = BgTimer
 
   // Hand the router to the engine MiniappLauncher so headless launch/teardown
   // (apps.ts start/stop, the action broker, the WebView mount path) all spawn

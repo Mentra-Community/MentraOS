@@ -38,6 +38,7 @@ import {
   parseAudioPacket,
   refreshSessionTag,
   registerSessionTag,
+  enableSessionFrameTimeline,
   SESSION_TAG_REFRESH_INTERVAL_MS,
   unregisterSessionTag,
 } from "../services/session/stream";
@@ -59,10 +60,17 @@ import {
   takeoverSubscriptions,
 } from "../services/session/subscriptions-store";
 import { clientToCloudMessage } from "@mentra/cloud-protocol/messages";
-import { envelopeSchema, PROTOCOL_MAJOR } from "@mentra/cloud-protocol/envelope";
-import type { ProtocolError, ProtocolErrorCode } from "@mentra/cloud-protocol/errors";
+import {
+  envelopeSchema,
+  PROTOCOL_MAJOR,
+} from "@mentra/cloud-protocol/envelope";
+import type {
+  ProtocolError,
+  ProtocolErrorCode,
+} from "@mentra/cloud-protocol/errors";
 import { PROTOCOL_ERROR_CODES } from "@mentra/cloud-protocol/errors";
 import type { ConnectionInit } from "@mentra/cloud-protocol/handshake";
+import { negotiatedFrameTimeline } from "../services/session/frame-timeline";
 
 const logger = createLogger("audio").child({ service: "session.service" });
 
@@ -97,6 +105,7 @@ export function configureAudioSession(opts: {
 
 /** What we attach to each WebSocket. Available as `ws.data` in handlers. */
 export interface WsData {
+  frameTimelineVersion?: 1;
   /** u32, placed in every UDP packet header. */
   sessionTag: number;
   /** ULID. Identifies this audio session uniquely across pods. */
@@ -706,6 +715,16 @@ async function handleConnectionInit(
   ws: ServerWebSocket<WsData>,
   init: ConnectionInit,
 ): Promise<void> {
+  if (negotiatedFrameTimeline(init.audio?.frameTimelineVersion) === 1) {
+    try {
+      await enableSessionFrameTimeline(ws.data.sessionTag, ws.data.audioSessionId);
+    } catch (err) {
+      logger.error({err, sessionTag: ws.data.sessionTag}, "failed to negotiate audio frame timeline");
+      ws.close(1011, "audio init failed");
+      return;
+    }
+    ws.data.frameTimelineVersion = 1;
+  }
   // Tell the worker this session's codec before any audio is processed, so it
   // knows whether to LC3-decode the stream entries or treat them as raw PCM.
   setUserCodec(
@@ -795,6 +814,7 @@ async function handleConnectionInit(
         negotiatedVersion: NEGOTIATED_VERSION,
         audio: {
           sessionTag: ws.data.sessionTag,
+          frameTimelineVersion: ws.data.frameTimelineVersion,
           udp: { host: udpAdvertise.host, port: udpAdvertise.port },
           // The per-session key was minted at upgrade and registered to Redis;
           // we deliver it here over the TLS WebSocket so it never rides UDP.
@@ -857,6 +877,7 @@ async function handleWsBinaryAudio(
       return {
         mentraUserId: e.data.mentraUserId,
         audioSessionId: e.data.audioSessionId,
+        frameTimelineVersion: e.data.frameTimelineVersion,
       };
     });
   } catch (err) {

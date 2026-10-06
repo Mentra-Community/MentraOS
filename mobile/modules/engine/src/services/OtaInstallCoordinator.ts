@@ -23,6 +23,8 @@ import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
 import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
+import {otaDeviceSessionRevision, subscribeOtaDeviceSession} from "./OtaDeviceSession"
+import {isOtaCheckForCurrentDevice} from "./OtaUpdateCheckService"
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
@@ -187,6 +189,24 @@ interface OtaStartOwnership {
 }
 
 class OtaInstallCoordinator {
+  constructor() {
+    subscribeOtaDeviceSession(() => {
+      this.detach()
+      this.otaStartOwnership = null
+      this.preparedCheckResult = null
+      this.selectedTransport = "wifi"
+      this.hotspotManifestUrl = null
+      this.hotspotPhase = "idle"
+      this.hotspotArtifactPercent = null
+      this.hotspotArtifact = null
+      this.resetSessionState()
+      // Release the old phone endpoint without issuing hotspot commands to the
+      // new glasses. An in-flight preparation fences itself before BLE work.
+      void hotspotOtaTransport.teardown(false).catch(() => {})
+      this.emitInternalChange()
+    })
+  }
+
   private attached = false
   private preparedCheckResult: OtaCheckCurrentGlassesResult | null = null
   private selectedTransport: "wifi" | "hotspot" = "wifi"
@@ -197,6 +217,7 @@ class OtaInstallCoordinator {
 
   // Genuinely session-local state (was component state/refs).
   private errorMsg = ""
+  private versionChangeReconnected = false
   private sawReconnectEdge = false
   private continueButtonDisabled = false
   // True once this session reported an APK step. After an APK install the ASG
@@ -296,6 +317,7 @@ class OtaInstallCoordinator {
 
   /** Select the transport at the existing install entry point before the progress route attaches. */
   prepare(checkResult: OtaCheckCurrentGlassesResult): "wifi" | "hotspot" {
+    if (!isOtaCheckForCurrentDevice(checkResult)) throw new Error("The checked glasses have changed")
     const state = useGlassesStore.getState()
     if (!state.wifiStatusKnown) {
       throw new Error("Glasses Wi-Fi status is not available")
@@ -438,6 +460,9 @@ class OtaInstallCoordinator {
       this.clearContinueLockoutTimer()
       this.retryCount = 0
       if (!this.prepareFreshOtaStartAttempt()) return
+      // A terminal recovery result released the previous detour. Its reconnect
+      // cannot count as verification of the new install attempt.
+      this.versionChangeReconnected = false
       this.resetBesRestartAttempt()
       this.setSawReconnectEdge(false)
       this.setErrorMsg("")
@@ -481,7 +506,9 @@ class OtaInstallCoordinator {
    * navigates away and back through /ota routes.
    */
   async discard(): Promise<void> {
+    const deviceRevision = otaDeviceSessionRevision()
     await this.finish()
+    if (deviceRevision !== otaDeviceSessionRevision()) return
     const store = useGlassesStore.getState()
     store.setOtaStatus(null)
     store.setOtaProgress(null)
@@ -538,7 +565,7 @@ class OtaInstallCoordinator {
   private deriveVersionChangePhase(connected: boolean): "installing" | "restarting" | "verifying" | null {
     if (!this.versionChangeSession || this.versionChangeConverged) return null
     if (!this.versionChangeInstallStarted) return "installing"
-    return connected ? "verifying" : "restarting"
+    return !connected ? "restarting" : this.versionChangeReconnected ? "verifying" : "installing"
   }
 
   /**
@@ -567,6 +594,7 @@ class OtaInstallCoordinator {
 
   private resetSessionState(): void {
     this.errorMsg = ""
+    this.versionChangeReconnected = false
     this.sawReconnectEdge = false
     this.continueButtonDisabled = false
     this.apkStepSeen = false
@@ -865,20 +893,15 @@ class OtaInstallCoordinator {
       this.emitInternalChange()
     }
 
-    // Ownership refuted: ASG emits install/STARTED BEFORE handing off, so the latch above can
-    // be set even when no transaction ends up owning the detour. Recovery answers every
-    // handoff synchronously, so exactly three error codes prove non-ownership and release the
-    // latch: downgrade_handoff_refused (recovery's explicit verdict),
-    // downgrade_handoff_failed (no verdict at all — recovery dead/missing, so it never began),
-    // and downgrade_transaction_stalled (the long-stop past recovery's own stale give-up).
-    // An accepted-but-slow transaction emits NONE of these (acceptance cancels the short
-    // watchdog), so the latch is never released while a live worker owns the staged artifact
-    // — which recovery additionally claims by rename at acceptance.
+    // New ASG builds release only after a correlated recovery status query proves idle.
+    // Keep legacy terminal codes compatible with older glasses. A status-unknown failure
+    // deliberately retains the detour latch: silence is not permission to repeat an install.
     if (
       this.versionChangeInstallStarted &&
       !this.versionChangeConverged &&
       otaStatus?.status === "failed" &&
-      (otaStatus.error === "downgrade_handoff_refused" ||
+      (otaStatus.error === "downgrade_not_owned" ||
+        otaStatus.error === "downgrade_handoff_refused" ||
         otaStatus.error === "downgrade_handoff_failed" ||
         otaStatus.error === "downgrade_transaction_stalled")
     ) {
@@ -1085,6 +1108,7 @@ class OtaInstallCoordinator {
    * edge handling is complete).
    */
   private runReconnectArbitration(label: string): boolean {
+    if (this.isInVersionChangeDetour()) this.versionChangeReconnected = true
     console.log(`[OTA_PROGRESS] ${label}: false->true, flipping sawReconnectEdge=true`)
     // A physical reconnect passed through the disconnect branch first, which cleared
     // these timers; a session-change edge never disconnects, so a fallback armed by an
@@ -1512,13 +1536,15 @@ class OtaInstallCoordinator {
       outcome: "pending",
       promise: Promise.resolve(),
     }
-    ownership.promise = this.performOtaStart(ownership)
     this.otaStartOwnership = ownership
+    ownership.promise = this.performOtaStart(ownership)
     return ownership.promise
   }
 
   private async performOtaStart(ownership: OtaStartOwnership): Promise<void> {
     let nativeStartAttempted = false
+    const deviceRevision = otaDeviceSessionRevision()
+    const isCurrentAttempt = () => this.otaStartOwnership === ownership && deviceRevision === otaDeviceSessionRevision()
     try {
       const state = useGlassesStore.getState()
       let otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
@@ -1527,24 +1553,28 @@ class OtaInstallCoordinator {
           if (!this.preparedCheckResult) {
             throw new Error("No selected OTA check is available for hotspot staging")
           }
-          this.hotspotManifestUrl = await hotspotOtaTransport.prepare(this.preparedCheckResult, (progress) => {
+          const manifestUrl = await hotspotOtaTransport.prepare(this.preparedCheckResult, (progress) => {
+            if (!isCurrentAttempt()) return
             this.hotspotPhase = progress.phase
             this.hotspotArtifact = progress.artifact ? {...progress.artifact} : null
             this.hotspotArtifactPercent =
               progress.artifact && progress.artifact.contentLength > 0 ? progress.artifact.artifactPercent : null
             this.emitInternalChange()
           })
+          if (!isCurrentAttempt()) return
+          this.hotspotManifestUrl = manifestUrl
         }
         otaVersionUrl = this.hotspotManifestUrl
         this.maybeArmStuckWatchdog()
       }
+      if (!isCurrentAttempt()) return
       if (!otaVersionUrl) {
         throw new Error("OTA is disabled because this build has no immutable manifest pin")
       }
       console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
       nativeStartAttempted = true
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)
-      if (this.otaStartOwnership !== ownership) return
+      if (!isCurrentAttempt()) return
       // The public SDK promise resolves only from ota_start_ack. Treat that
       // resolution as the acknowledgement even if the parallel event dispatch
       // reaches the coordinator later (or is dropped by a remount).
@@ -1552,12 +1582,13 @@ class OtaInstallCoordinator {
     } catch (err) {
       console.warn("[OTA_PROGRESS] sendOtaStart threw", err)
 
-      if (this.otaStartOwnership !== ownership) return
+      if (!isCurrentAttempt()) return
 
       if (this.selectedTransport === "hotspot" && !nativeStartAttempted) {
         ownership.outcome = "rejected"
         this.clearStuckTimeout()
         await this.teardownHotspotTransport()
+        if (!isCurrentAttempt()) return
         if (this.attached) this.setErrorMsg(hotspotPreflightErrorMessage(err))
         return
       }
@@ -1607,7 +1638,9 @@ class OtaInstallCoordinator {
 
   private async teardownHotspotTransport(): Promise<void> {
     if (this.selectedTransport !== "hotspot" && !this.hotspotManifestUrl) return
+    const deviceRevision = otaDeviceSessionRevision()
     await hotspotOtaTransport.teardown()
+    if (deviceRevision !== otaDeviceSessionRevision()) return
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
     this.hotspotArtifactPercent = null

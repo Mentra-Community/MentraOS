@@ -49,7 +49,7 @@ env:
 jobs:
   load:
     name: Freeze the promoted beta source and package plan
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
     outputs:
       release_identity: ${{ steps.plan.outputs.release_identity }}
@@ -197,7 +197,7 @@ jobs:
     name: Approve staging the plain package versions
     if: inputs.phase == 'publish'
     needs: load
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     environment:
       name: production-packages
@@ -238,7 +238,7 @@ jobs:
     name: Record the staged package publication
     if: inputs.phase == 'publish'
     needs: [load, npm, sdk-native]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -337,7 +337,7 @@ jobs:
     name: Move latest, publish Maven Central, and tag SwiftPM
     if: inputs.phase == 'release'
     needs: load
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 120
     environment:
       name: production-packages-release

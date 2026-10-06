@@ -1,0 +1,51 @@
+import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
+import {frameworkRunIdSchema} from "./framework-run.types";
+import {z} from "zod";
+
+/** A dispatched group of at least two members, declared before execution. */
+export const testSuiteSchema = z.object({
+  suiteId: frameworkRunIdSchema,
+  channel: z.enum(["dev", "staging", "pr", "local"]),
+  trigger: z.enum(["nightly", "manual", "pr", "build"]),
+  startedAt: z.string().datetime({offset: true}),
+  build: z.object({headSha: z.string().regex(/^[a-f0-9]{40}$/),
+    release: z.string().min(1).max(200).optional(),
+    producerUrl: z.string().url().max(2000).refine(value => /^https:\/\/github\.com\/Mentra-Community\//.test(value)).optional(),
+  }).strict(),
+  members: z.array(z.object({memberId: frameworkRunIdSchema, requestId: frameworkRunIdSchema.optional(), headSha: z.string().regex(/^[a-f0-9]{40}$/).optional(), routineId: routineIdentitySchema,
+    platform: routinePlatformSchema, definitionRevision: z.string().regex(/^[a-f0-9]{40}$/).optional(),
+    unavailableReason: z.string().min(1).max(2000).optional(),
+  }).strict()).min(2).max(100),
+}).strict().superRefine((suite, ctx) => {
+  if (new Set(suite.members.map(member => member.memberId)).size !== suite.members.length
+    || new Set(suite.members.flatMap(member => member.requestId ? [member.requestId] : [])).size !== suite.members.filter(member => member.requestId).length)
+    ctx.addIssue({code: "custom", message: "duplicate suite member or requestId"});
+});
+export const testSuiteCompletionSchema = z.object({finishedAt: z.string().datetime({offset: true})}).strict();
+export type TestSuite = z.infer<typeof testSuiteSchema>;
+export type SuiteRun = {runId: string; requestId: string; routineId: string; platform: string; definitionRevision?: string;
+  publicationComplete?: boolean; channel: string; source?: {headSha?: string}; provenance: {headSha?: string}; outcome: string; startedAt: string; finishedAt: string};
+export type SuiteRejection = {requestId: string; routineId: string; platform: string; definitionRevision: string;
+  channel: string; headSha: string; rejectedAt: string; reason: string};
+
+/** Missing, mismatched, or ambiguous results never count as a pass. */
+export function summarizeSuite(suite: TestSuite, runs: SuiteRun[], finishedAt?: string, rejections: SuiteRejection[] = []) {
+  const members = suite.members.map(member => {
+    const matches = runs.filter(run => !!member.requestId && run.requestId === member.requestId && run.routineId === member.routineId
+      && run.platform === member.platform && (!member.definitionRevision || run.definitionRevision === member.definitionRevision)
+      && run.channel === suite.channel && (run.source?.headSha ?? run.provenance.headSha) === (member.headSha ?? suite.build.headSha));
+    const run = matches.length === 1 ? matches[0] : undefined;
+    const rejected = rejections.filter(receipt => receipt.requestId === member.requestId && receipt.routineId === member.routineId
+      && receipt.platform === member.platform && (!member.definitionRevision || receipt.definitionRevision === member.definitionRevision)
+      && receipt.channel === suite.channel && receipt.headSha === (member.headSha ?? suite.build.headSha));
+    const rejection = !matches.length && rejected.length === 1 ? rejected[0] : undefined;
+    return {...member, status: run?.outcome ?? (rejection || finishedAt ? "not-run" : "waiting"),
+      ...(rejection ? {unavailableReason: rejection.reason, publicationComplete: false, rejectedAt: rejection.rejectedAt} : {}),
+      ...(run ? {publicationComplete: run.publicationComplete === true, runId: run.runId, startedAt: run.startedAt, finishedAt: run.finishedAt} : {})};
+  });
+  const passed = members.filter(member => member.status === "pass" && member.publicationComplete).length;
+  const failed = members.filter(member => !["pass", "waiting"].includes(member.status) || member.status === "pass" && !member.publicationComplete);
+  return {...suite, ...(finishedAt ? {finishedAt} : {}), members, passed,
+    outcome: !finishedAt ? "running" : passed === members.length ? "passed" : "failed",
+    failedRoutines: [...new Set(failed.map(member => member.routineId))]};
+}

@@ -65,6 +65,10 @@ public class CrustModule: Module {
     public func definition() -> ModuleDefinition {
         Name("Crust")
 
+        Constant("isIOSAppOnMac") {
+            ProcessInfo.processInfo.isiOSAppOnMac
+        }
+
         Constant("PI") {
             Double.pi
         }
@@ -73,7 +77,6 @@ public class CrustModule: Module {
             "onChange",
             "phone_notification",
             "phone_notification_dismissed",
-            "submit_incident_report",
             "onNavManeuver",
             "onNavRerouting",
             "onNavArrived",

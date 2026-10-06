@@ -32,8 +32,8 @@ class OutgoingVideoHold(
   private val scheduler = Executors.newSingleThreadScheduledExecutor { runnable ->
     Thread(runnable, "acs-photo-hold").apply { isDaemon = true }
   }
-  private var task: ScheduledFuture<*>? = null
-  private var planes: HeldPlanes? = null
+  @Volatile private var task: ScheduledFuture<*>? = null
+  @Volatile private var planes: HeldPlanes? = null
 
   fun isActive(): Boolean = running.get()
 
@@ -45,13 +45,17 @@ class OutgoingVideoHold(
    * module thread cannot stall (and risk an ANR) waiting for ACS to accept the first frame.
    */
   fun start(kind: String, imageBytes: ByteArray?, onResult: (Boolean) -> Unit) {
-    stop()
+    // Build the replacement before touching the current hold. Card -> still must not open a gap:
+    // while `running` is false the session forwards live glasses frames, and right after a photo
+    // those are the reopened camera's unexposed first frames.
     val w = width()
     val h = height()
     val frame = when (kind) {
       "image" -> imageBytes?.let { decode(it, w, h) } ?: card(w, h)
       else -> card(w, h)
     }
+    task?.cancel(false)
+    task = null
     planes = frame
     running.set(true)
     val settled = AtomicBoolean(false)
@@ -84,7 +88,7 @@ class OutgoingVideoHold(
       textAlign = Paint.Align.CENTER
       textSize = (h / 12f).coerceAtLeast(24f)
     }
-    canvas.drawText("Taking a photo", w / 2f, h / 2f, paint)
+    canvas.drawText("Taking a photo...", w / 2f, h / 2f, paint)
     return HeldPlanes(bitmap)
   }
 
@@ -189,10 +193,26 @@ private class HeldPlanes(bitmap: Bitmap) {
     }
   }
 
-  fun frame(): I420Planes {
-    y.position(0)
-    u.position(0)
-    v.position(0)
-    return I420Planes(y, width, u, chromaWidth, v, chromaWidth, width, height, System.nanoTime())
+  /**
+   * Fresh views per frame: the preview reads a frame on its own worker after the sender has
+   * moved on, so frames must not share buffer positions. The pixels never change while held, so
+   * retaining one past the callback is safe and needs no bookkeeping.
+   */
+  fun frame(): I420Planes = I420Planes(
+    y.duplicate().apply { position(0) },
+    width,
+    u.duplicate().apply { position(0) },
+    chromaWidth,
+    v.duplicate().apply { position(0) },
+    chromaWidth,
+    width,
+    height,
+    System.nanoTime(),
+    retain = NO_OP,
+    release = NO_OP,
+  )
+
+  private companion object {
+    val NO_OP: () -> Unit = {}
   }
 }

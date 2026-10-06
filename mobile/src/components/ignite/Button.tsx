@@ -24,7 +24,9 @@ export interface ButtonAccessoryProps {
   disabled?: boolean
 }
 
-export interface ButtonProps extends PressableProps {
+export interface ButtonProps extends Omit<PressableProps, "onPress"> {
+  /** The business action shared by touch and native accessibility activation. */
+  onPress?: () => void
   /**
    * Text which is looked up via i18n.
    */
@@ -142,6 +144,8 @@ function OriginalButton(props: ButtonProps) {
     RightAccessory,
     LeftAccessory,
     disabled,
+    onPress,
+    onAccessibilityTap,
     disabledStyle: $disabledViewStyleOverride,
     compact = false,
     flex = false,
@@ -191,12 +195,19 @@ function OriginalButton(props: ButtonProps) {
       accessibilityRole="button"
       accessibilityState={{disabled: !!disabled}}
       {...rest}
+      onPress={onPress}
+      onAccessibilityTap={() => {
+        if (!disabled) (onAccessibilityTap ?? onPress)?.()
+      }}
       disabled={disabled}>
       {(state) => (
         <View
-          style={[{position: "relative", justifyContent: "center", alignItems: "center"}, flexContainer && {flex: 1}]}>
+          style={[
+            {flexDirection: "row", flexShrink: 1, alignItems: "center", justifyContent: "center"},
+            flexContainer && {flex: 1},
+          ]}>
           {!!LeftAccessory && (
-            <View style={{position: "absolute", left: 0, alignItems: "center", justifyContent: "center"}}>
+            <View style={{marginEnd: 8, flexShrink: 0}}>
               <LeftAccessory style={$leftAccessoryStyle} pressableState={state} disabled={disabled} />
             </View>
           )}
@@ -208,18 +219,13 @@ function OriginalButton(props: ButtonProps) {
               tx={tx}
               text={text}
               txOptions={txOptions}
-              style={[
-                $textStyle(state),
-                {textAlign: props.textAlignment === "left" ? "left" : "center"},
-                !!LeftAccessory && {paddingLeft: 28},
-                !!RightAccessory && {paddingRight: 28},
-              ]}>
+              style={[$textStyle(state), {textAlign: props.textAlignment === "left" ? "left" : "center"}]}>
               {children}
             </Text>
           )}
 
           {!!RightAccessory && (
-            <View style={{position: "absolute", right: 0, alignItems: "center", justifyContent: "center"}}>
+            <View style={{marginStart: 8, flexShrink: 0}}>
               <RightAccessory style={$rightAccessoryStyle} pressableState={state} disabled={disabled} />
             </View>
           )}

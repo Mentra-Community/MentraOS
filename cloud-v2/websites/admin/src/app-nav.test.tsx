@@ -85,7 +85,7 @@ describe("admin navigation follows what the principal may do", () => {
 
   test("testing access opens the three testing pages and starts on Test runs", () => {
     const markup = renderAdmin(me(["organization.testing.read"]));
-    expect(navLabels(markup)).toEqual(["Test runs", "Fix flows", "System health"]);
+    expect(navLabels(markup)).toEqual(["Test runs", "Routine catalog", "System health"]);
     expect(pageTitle(markup)).toBe("Test runs");
   });
 
@@ -113,7 +113,7 @@ describe("admin navigation follows what the principal may do", () => {
     expect(navLabels(markup)).toEqual([
       "Incident system",
       "Test runs",
-      "Fix flows",
+      "Routine catalog",
       "System health",
       "Workspaces",
       "Operator keys",

@@ -391,7 +391,7 @@ describe("incident reports", () => {
     for (const path of [
       "/api/admin/test-routines",
       "/api/admin/test-runs",
-      "/api/admin/fix-flows",
+      "/api/admin/routine-catalog",
       "/api/admin/support-profiles/lookup?email=a%40example.test",
     ]) {
       expect([path, (await call("GET", path, {as: key.token})).status]).toEqual([path, 403])
@@ -447,10 +447,10 @@ describe("testing routes", () => {
     const reader = await operatorKey("reader", ["organization.testing.read"])
     const manager = await operatorKey("manager", ["organization.testing.manage"])
 
-    // A static read: allowed for the reader, refused for a key that can only manage.
+    // A read: allowed for the reader (no routine is enrolled here), refused for a key that can only manage.
     const routines = await call("GET", "/api/admin/test-routines", {as: reader.token})
     expect(routines.status).toBe(200)
-    expect(routines.json.routines.length).toBeGreaterThan(0)
+    expect(routines.json.routines).toEqual([])
     expect((await call("GET", "/api/admin/test-routines", {as: manager.token})).status).toBe(403)
 
     // A write: refused for the reader; for the manager it passes the gate and fails on the body.
@@ -458,22 +458,24 @@ describe("testing routes", () => {
     expect(refused.status).toBe(403)
     const invalid = await call("POST", "/api/admin/test-dispatches", {as: manager.token, body: {}})
     expect(invalid.status).toBe(400)
-    expect(invalid.json.error).toBe("test_dispatch_error")
+    expect(invalid.json.error).toBe("invalid_submission")
   })
 
-  test("follow-up and review writes need organization.testing.manage", async () => {
+  test("picker dispatches, reruns and routine preferences need organization.testing.manage", async () => {
     const reader = await operatorKey("reader", ["organization.testing.read"])
     const manager = await operatorKey("manager", ["organization.testing.manage"])
-    const writes = [
-      "/api/admin/test-runs/claims/request-1/cancel-follow-up",
-      "/api/admin/test-runs/run-1/failures/occ-1/provenance-correction",
-      "/api/admin/test-runs/run-1/failures/occ-1/evidence-supplements",
+    const writes: Array<[method: string, path: string]> = [
+      ["POST", "/api/admin/test-dispatches/picker"],
+      ["POST", "/api/admin/test-runs/reruns/preview"],
+      ["POST", "/api/admin/test-runs/reruns/individual"],
+      ["POST", "/api/admin/test-runs/reruns/submit"],
+      ["PATCH", "/api/admin/routines/routine-1/platforms/android/preferences"],
     ]
 
-    for (const path of writes) {
-      expect([path, (await call("POST", path, {as: reader.token, body: {}})).status]).toEqual([path, 403])
-      // Past the gate, the missing JSON content type is the first thing the route objects to.
-      const passed = await call("POST", path, {as: manager.token, headers: {"content-type": "text/plain"}})
+    for (const [method, path] of writes) {
+      expect([path, (await call(method, path, {as: reader.token, body: {}})).status]).toEqual([path, 403])
+      // Past the gate, a body that is not JSON is the first thing the route objects to.
+      const passed = await call(method, path, {as: manager.token, headers: {"content-type": "text/plain"}})
       expect([path, passed.status]).toEqual([path, 400])
     }
   })

@@ -14,15 +14,20 @@ let available = true
 let backgroundAvailable = false
 let releaseSource = "bundled_asset"
 let releaseStorePackageName: string | undefined
+let selectedSnapshot: string | null = null
+let superMode = false
+let storedDevUrl: string | null = null
+let snapshotVersions: string[] = []
 
 mock.module("../AppRegistry", () => ({
   default: {
     getActiveVersion: async () => activeVersion,
     getReleaseIdentity: () => ({source: releaseSource, storePackageName: releaseStorePackageName}),
-    getMiniappEntryPaths: (_packageName: string, version: string) => ({
-      background: `file:///bundle/${version}/bg.js`,
-      ui: `file:///bundle/${version}/ui.html`,
-    }),
+    getSelectedDevSnapshot: () => selectedSnapshot,
+    getMiniappEntryPaths: (_packageName: string, version: string) => {
+      snapshotVersions.push(version)
+      return {background: `file:///bundle/${version}/bg.js`, ui: `file:///bundle/${version}/ui.html`}
+    },
     getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
     getLatestDevSnapshotVersion: () => null,
     hasDevSnapshot: () => false,
@@ -51,7 +56,10 @@ mock.module("../LocalMiniappRuntime", () => ({
 // deliberately do NOT mock.module("../../utils/devMiniappLaunch"): that mock is
 // process-global in Bun and would leak into devMiniappLaunch.test.ts.
 mock.module("../../utils/storage/storage", () => ({
-  storage: {load: () => ({is_ok: () => false}), save: () => ({is_ok: () => true})},
+  storage: {
+    load: (key: string) => ({is_ok: () => key.endsWith("_dev_url") && !!storedDevUrl, value: storedDevUrl}),
+    save: () => ({is_ok: () => true}),
+  },
 }))
 mock.module("expo-file-system", () => ({
   File: class {
@@ -64,6 +72,8 @@ mock.module("expo-file-system", () => ({
     }
   },
 }))
+
+mock.module("../../stores/settings", () => ({SETTINGS: {super_mode: {key: "super_mode"}}, useSettingsStore: {getState: () => ({getSetting: () => superMode})}}))
 
 let miniappLauncher: typeof import("../MiniappLauncher").miniappLauncher
 
@@ -136,6 +146,10 @@ describe("MiniappLauncher", () => {
     backgroundAvailable = false
     releaseSource = "bundled_asset"
     releaseStorePackageName = undefined
+    selectedSnapshot = null
+    superMode = false
+    storedDevUrl = null
+    snapshotVersions = []
     waitForConnectCalls = []
     mockRouter = buildMockRouter()
     miniappLauncher.configure({router: mockRouter.router})
@@ -292,6 +306,14 @@ describe("MiniappLauncher", () => {
     await expect(miniappLauncher.installWhenIdle("com.x", install)).resolves.toBe("updated")
     expect(install).toHaveBeenCalledTimes(1)
     expect(miniappLauncher.isRunning("com.x")).toBe(false)
+  })
+
+  test.each(["http://reachable.local:3000", "http://unreachable.local:3000"])("explicit packed snapshot wins over scanned URL %s", async url => {
+    superMode = true
+    selectedSnapshot = "dev-1234-a"
+    storedDevUrl = url
+    await miniappLauncher.resolveBundle("com.x", {devUrl: url})
+    expect(snapshotVersions).toEqual([selectedSnapshot])
   })
 
   test("ensureRunning spawns the background context when not registered", async () => {

@@ -404,7 +404,6 @@ class BluetoothSdkModule : Module() {
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
-            "submit_incident_report",
             "extraction_progress",
         )
 
@@ -549,6 +548,8 @@ class BluetoothSdkModule : Module() {
         SdkAsyncFunction("disconnect") { -> sdk?.disconnect() }
 
         SdkAsyncFunction("forget") { -> sdk?.forget() }
+
+        SdkCoroutineFunction("unpair") { -> deviceManager?.unpair() }
 
         AsyncFunction("connectDefaultController") { deviceManager?.connectDefaultController() }
 

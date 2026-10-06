@@ -1,5 +1,8 @@
+import {TestRunsTabs} from "./pages/test-runs-tabs";
+import {TestRerunPage, readRerunId} from "./pages/test-reruns";
+import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Bug, Check, ClipboardList, FileText, FlaskConical, History, Home, KeyRound, Loader2, MessageSquareWarning, RefreshCcw, RotateCcw, ShieldCheck, Users, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bug, Check, ClipboardList, FileText, FlaskConical, History, Home, KeyRound, Loader2, MessageSquareWarning, RefreshCcw, ShieldCheck, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -7,14 +10,14 @@ import mentraLogo from "./assets/mentra-logo.svg";
 import { resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./lib/admin-access";
 import { api, ApiError } from "./lib/api";
 import {
-  readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
+  hasInvalidTestRunListScope, readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
-import { TestRunsPage } from "./pages/test-runs";
-import { FixFlowsPage } from "./pages/fix-flows";
+import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
 import { OperatorKeysPage } from "./pages/operator-keys";
 import { WorkspacesPage } from "./pages/workspaces";
-import { fixFlowHref, readFixFlowLink, type FixFlowLink } from "./lib/fix-flow-links";
+import {readLaneSelection} from "./lib/lane-links";
+import { RecordingVideo } from "./components/recording-video";
 import { readWorkspaceInvite, withoutWorkspaceInvite } from "./lib/workspace-invite-link";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
@@ -23,14 +26,14 @@ type Environment = "debug" | "dev" | "staging" | "prod";
 const ADMIN_NAV: ReadonlyArray<NavItem & { key: AdminPageKey }> = [
   { key: "incidents", label: "Incident system", icon: Bug },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
-  { key: "fix-flows", label: "Fix flows", icon: RotateCcw },
+  { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
   { key: "system-health", label: "System health", icon: ShieldCheck },
   { key: "workspaces", label: "Workspaces", icon: Users },
   { key: "operator-keys", label: "Operator keys", icon: KeyRound },
 ];
 
 const PAGE_META: Record<AdminPageKey, { title: string; body: string }> = {
-  "fix-flows": { title: "Fix flows", body: "Follow a failed routine through its incident, AI investigation, PR, review and verification." },
+  "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
   "system-health": { title: "System health", body: "Host contact, worker status, device lanes and recorded disk space." },
   incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
   "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
@@ -127,11 +130,14 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
+const initialTestRunsPage = new URLSearchParams(window.location.search).get("testRuns") === "1";
+const initialRerunId = readRerunId(window.location.search);
+const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
-const initialFixFlowLink = readFixFlowLink(window.location.search);
-const initialFixFlows = new URLSearchParams(window.location.search).get("fixFlows") === "active";
 const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
+const initialRestoration = new URLSearchParams(window.location.search).get("restoration") === "1";
+const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
 // Invitation links point here as /?workspaceInvite=<token>. The token stays in the address bar until the
 // invitation is accepted or the person navigates away, so a sign-in round-trip (LoginGate's return_to)
 // or switching to the invited account still lands back on the accept screen. Like the report id above,
@@ -144,16 +150,20 @@ export function AdminPage() {
   // cannot see (a deep link) falls back to their default page.
   const [page, setPage] = useState<AdminPageKey | null>(
     initialSystemHealth ? "system-health"
-      : initialFixFlowLink || initialFixFlows ? "fix-flows"
-      : initialTestRunLink || initialTestRunListScope ? "test-runs"
+      : initialRerunId || initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs"
+      : initialRoutineCatalog ? "routine-catalog"
       : pendingWorkspaceInvite ? "workspaces"
       : pendingDeepLinkReportId ? "incidents"
       : null,
   );
   const [workspaceInvite, setWorkspaceInvite] = useState<string | null>(pendingWorkspaceInvite);
-  const [fixFlowLink, setFixFlowLink] = useState<FixFlowLink | null>(initialFixFlowLink);
+  const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
+  const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
+  const [restoration, setRestoration] = useState(initialRestoration);
+  const [laneSelection, setLaneSelection] = useState(() => readLaneSelection(window.location.search));
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
+  const [invalidTestRunListScope, setInvalidTestRunListScope] = useState(() => hasInvalidTestRunListScope(window.location.search));
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<unknown>(null);
@@ -192,35 +202,36 @@ export function AdminPage() {
       pendingWorkspaceInvite = invite;
       setWorkspaceInvite(invite);
       if (invite) { setPage("workspaces"); return; }
-      if (new URLSearchParams(window.location.search).get("systemHealth") === "1") { setPage("system-health"); return; }
-      const fixFlow = readFixFlowLink(window.location.search);
-      setFixFlowLink(fixFlow);
-      if (fixFlow || new URLSearchParams(window.location.search).get("fixFlows") === "active") {
-        setPage("fix-flows"); return;
-      }
+      const search = new URLSearchParams(window.location.search);
+      setRestoration(search.get("restoration") === "1");
+      setLaneSelection(readLaneSelection(window.location.search));
+      if (search.get("systemHealth") === "1") { setPage("system-health"); return; }
+      const rerun = readRerunId(window.location.search);
+      setRerunId(rerun);
+      const suite = readSuiteId(window.location.search);
+      setSuiteId(suite);
       const selection = readTestRunLink(window.location.search);
       const scope = readTestRunListScope(window.location.search);
       setTestRunLink(selection);
       setTestRunListScope(scope);
-      if (selection || scope) setPage("test-runs");
+      setInvalidTestRunListScope(hasInvalidTestRunListScope(window.location.search));
+      if (rerun || suite || selection || scope || search.get("testRuns") === "1") setPage("test-runs");
+      else if (search.get("routineCatalog") === "1") setPage("routine-catalog");
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
 
-  function selectFixFlow(selection: FixFlowLink | null) {
-    setFixFlowLink(selection);
-    setPage("fix-flows");
-    window.history.pushState(null, "", fixFlowHref(selection));
-  }
-
   function selectTestRun(selection: TestRunLink | null, replace = false) {
+    setRerunId(null);
+    setSuiteId(null);
     setTestRunLink(selection);
     window.history[replace ? "replaceState" : "pushState"](null, "", testRunLocation(window.location.href, selection));
   }
 
   function clearTestRunListScope() {
     setTestRunListScope(null);
+    setInvalidTestRunListScope(false);
     window.history.replaceState(null, "", testRunListLocation(window.location.href, null));
   }
 
@@ -250,9 +261,9 @@ export function AdminPage() {
       activeKey={active ?? ""}
       onSelect={key => {
         setPage(key as AdminPageKey);
-        setFixFlowLink(null);
+        setRestoration(false);
         const location = new URL(window.location.href);
-        for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep", "systemHealth"]) location.searchParams.delete(param);
+        for (const param of ["systemHealth", "restoration", "hostId", "laneId", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
         // Leaving Workspaces spends the invitation link; staying on it must not.
         if (key !== "workspaces") {
           pendingWorkspaceInvite = null;
@@ -263,12 +274,13 @@ export function AdminPage() {
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
         setDeepLinkReportId(null);
-        if (key !== "test-runs") {
-          selectTestRun(null, true);
-          clearTestRunListScope();
-        }
-        if (key === "fix-flows") window.history.replaceState(null, "", fixFlowHref(null));
+        selectTestRun(null, true);
+        clearTestRunListScope();
+        if (key === "test-runs") window.history.replaceState(null, "", "/?testRuns=1");
+        setLaneSelection(null);
         if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
+        setSuiteId(null);
+        if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
       }}
       title={meta.title}
       description={meta.body}
@@ -287,12 +299,24 @@ export function AdminPage() {
         </section>
       ) : null}
       {active === "incidents" ? <ReportsPage key={deepLinkReportId ?? "reports"} initialReportId={deepLinkReportId} /> : null}
-      {active === "fix-flows" || active === "test-runs" ? <SystemHealthSummary /> : null}
-      {active === "system-health" ? <SystemHealthPage /> : null}
-      {active === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
-      {active === "test-runs" ? (
-        <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
-          scope={testRunListScope} onClearScope={clearTestRunListScope} />
+      {active === "test-runs" ? <SystemHealthSummary /> : null}
+      {active === "system-health" ? <SystemHealthPage restoration={restoration} lane={laneSelection} /> : null}
+      {active === "routine-catalog" ? <RoutineCatalogPage /> : null}
+      {active === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
+      {active === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
+      {active === "test-runs" && !rerunId && !suiteId ? (
+        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <TestRunsTabs>
+          {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
+            <h2 className="font-semibold">Results for the selected build</h2>
+            <p className="mt-2">{testRunListScope.repository} · {testRunListScope.channel} · <code>{testRunListScope.headSha}</code> · {testRunListScope.routineId} · {testRunListScope.platform}</p>
+            <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
+          </section>}
+          {invalidTestRunListScope ? <section role="alert" className="rounded-2xl border border-[#e0e4de] bg-white p-5">
+            <h2 className="font-semibold">This test-results filter is unavailable</h2>
+            <p className="mt-2">The link has missing or unsupported build details. Open a current result link, or choose all test runs.</p>
+            <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
+          </section> : <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />}
+        </TestRunsTabs>
       ) : null}
       {active === "workspaces" ? (
         <WorkspacesPage
@@ -337,15 +361,15 @@ function EnvBadge({ env }: { env: Environment }) {
 }
 
 function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
-  const [kind, setKind] = useState<"all" | ReportKind | "internal" | "testing">("all");
+  const [category, setCategory] = useState<"all" | ReportKind | "internal" | "testing">("bug");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
   const [detailId, setDetailId] = useState<string | null>(initialReportId);
 
   const reports = useQuery({
-    queryKey: ["admin-reports", kind, status],
+    queryKey: ["admin-reports", category, status],
     queryFn: () => {
       const params = new URLSearchParams();
-      if (kind !== "all") params.set("kind", kind);
+      if (category !== "all") params.set("category", category);
       if (status !== "all") params.set("status", status);
       const qs = params.toString();
       return api<{ reports: ReportSummary[] }>(`/api/admin/reports${qs ? `?${qs}` : ""}`);
@@ -365,8 +389,8 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <FilterPills
-              value={kind}
-              onChange={setKind}
+              value={category}
+              onChange={setCategory}
               options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["internal", "Internal"], ["testing", "Testing"], ["automatic", "Automatic"]]}
             />
             <FilterPills
@@ -391,7 +415,7 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
         ) : reports.isError ? (
           <div className="p-5"><ErrorText error={reports.error} /></div>
         ) : rows.length === 0 ? (
-          <EmptyState title="No reports" body={kind === "internal" ? "Bugs and feedback submitted by admin accounts will appear here." : kind === "testing" ? "Reports submitted by the automated testing harness will appear here." : "Reports matching these filters will appear here."} />
+          <EmptyState title="No reports" body={category === "internal" ? "Bugs and feedback submitted by admin accounts will appear here." : category === "testing" ? "Reports submitted by the automated testing harness will appear here." : "Reports matching these filters will appear here."} />
         ) : (
           <div className="divide-y divide-[#eceeeb]">
             {rows.map(report => (
@@ -586,12 +610,9 @@ export function ReportArtifactView({ reportId, artifact }: { reportId: string; a
     return (
       <div className="rounded-[14px] bg-[#f5f7f4] p-3">
         {header}
-        <video
+        <RecordingVideo
           src={url}
-          controls
-          playsInline
-          preload="metadata"
-          className="mt-2 max-h-96 w-full rounded-[10px] border border-[#e0e4de] bg-black"
+          className="mt-2 border border-[#e0e4de]"
         />
         <a className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-[#087d50]" href={url} download>
           <FileText className="size-4" /> Download payload

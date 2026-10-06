@@ -69,6 +69,7 @@ internal object NimoProtocol {
     const val CMD_INSTRUCTION_REPORT = 0x06
     const val CMD_CONTROL_INSTRUCTION = 0x07
     const val CMD_CONTROL_FACTORY = 0x08
+    const val FACTORY_RECOVER = 0x03
     const val CMD_CONTROL_NOTIFICATION = 0x09
 
     // get parameter keys
@@ -89,6 +90,9 @@ internal object NimoProtocol {
     const val SET_DISPLAY_OFF = 0x0F
     const val SET_PHONE_TYPE = 0x14
     const val SET_HEIGHT_LEVEL = 0x17
+    // Dynamic-v1 firmware: 1-based UI locale; 1 selects English.
+    const val SET_SYSTEM_LANGUAGE = 0x24
+    const val LANGUAGE_ENGLISH = 0x01
 
     // control instruction keys
     const val CTRL_ENTER_APP = 0x01
@@ -889,6 +893,17 @@ class Nimo : SGCManager() {
         private const val KEY_LAST_ADDRESS = "nimo_lastDeviceAddress"
         private const val KEY_LAST_NAME = "nimo_lastDeviceName"
 
+        internal fun removeBluetoothBond(address: String?) {
+            if (address.isNullOrBlank()) return
+            try {
+                val device = BluetoothAdapter.getDefaultAdapter()?.getRemoteDevice(address) ?: return
+                val removed = device.javaClass.getMethod("removeBond").invoke(device) as? Boolean
+                Bridge.log("NIMO: Bluetooth unbond requested=$removed")
+            } catch (error: Exception) {
+                Bridge.log("NIMO: Bluetooth unbond failed: ${error.message}")
+            }
+        }
+
         private const val TWS_TIMEOUT_MS = 10_000L
         private const val ACK_TIMEOUT_MS = 5_000L
         // Generous: the glasses' classic bond can take 30-45s PER attempt and may need
@@ -1095,6 +1110,31 @@ class Nimo : SGCManager() {
         DeviceStore.apply("glasses", "connected", false)
         DeviceStore.apply("glasses", "fullyBooted", false)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
+    }
+
+    /** Explicit Unpair only. Ordinary forget/cleanup must never reset the glasses. */
+    internal fun resetForUnpair(onResult: (Boolean) -> Unit) {
+        check(Looper.myLooper() == mainHandler.looper)
+        if (gatt == null || txChar == null || handshakeState != HandshakeState.READY) {
+            Bridge.log("NIMO: unpair while offline; remote reset unavailable")
+            onResult(false)
+            return
+        }
+        isDisconnecting = true
+        stopTimers()
+        reconnectionManager.stop()
+        canvasEncoder.invalidate()
+        canvas.disconnected()
+        Bridge.log("NIMO: sending factory reset for explicit Unpair")
+        sendAwaitingAck(NimoProtocol.CMD_CONTROL_FACTORY, NimoProtocol.FACTORY_RECOVER, byteArrayOf()) {
+            Bridge.log("NIMO: factory reset acknowledged=$it")
+            onResult(it)
+        }
+    }
+
+    internal fun removeBluetoothBond() {
+        val address = gatt?.device?.address ?: lastDeviceAddress ?: return
+        removeBluetoothBond(address)
     }
 
     override fun forget() {
@@ -1980,7 +2020,10 @@ class Nimo : SGCManager() {
         }
         val timeout = Runnable {
             // Do not retry a timed-out key on the same transport: a late response is uncorrelated.
-            if (pendingAcks.remove(ackKey) != null) abortTransport("Handshake ACK timeout cmd=$cmd key=$key")
+            pendingAcks.remove(ackKey)?.let { expired ->
+                abortTransport("ACK timeout cmd=$cmd key=$key")
+                expired.onResult(false)
+            }
         }
         pendingAcks[ackKey] = PendingAck(onResult, timeout)
         mainHandler.postDelayed(timeout, timeoutMs)
@@ -2080,6 +2123,9 @@ class Nimo : SGCManager() {
                         needsAck = false
                 )
         )
+        // Optional setting: older firmware may reject it without preventing connection.
+        sendFrame(NimoFrameCodec.encodeFrame(NimoProtocol.CMD_SET_PARAMETER,
+            NimoProtocol.SET_SYSTEM_LANGUAGE, byteArrayOf(NimoProtocol.LANGUAGE_ENGLISH.toByte())))
         getBatteryStatus()
         requestVersionInfo()
 
@@ -2099,7 +2145,10 @@ class Nimo : SGCManager() {
             )
         }
         diagnostics?.connected((negotiatedMtu - 3).coerceIn(20, 512))
-        canvas.readiness(twsConnected && peerCompanionReady == true)
+        // Launch checks peer readiness in firmware; do not wait up to a minute for
+        // the first unsolicited heartbeat just because peer status is still unknown.
+        canvas.activate()
+        canvas.readiness(twsConnected && peerCompanionReady != false)
     }
 
     private fun handshakeFailed() {
@@ -2117,6 +2166,10 @@ class Nimo : SGCManager() {
         canvasEncoder.invalidate()
         canvas.disconnected()
         audioClient.stop()
+        // Nimo's decoder/stream belongs to this GATT session. Consumer demand
+        // remains in bluetooth.should_send_*; readiness must start a fresh stream
+        // even when reconnecting with this same adapter instance.
+        DeviceStore.apply("glasses", "micEnabled", false)
         receiveAssembler.reset()
         writes.reset()
         negotiatedMtu = 23
@@ -2171,6 +2224,7 @@ class Nimo : SGCManager() {
         if (diagnostics?.onPacket(packet) == true) return
         if (packet.size >= 10 && packet[8].toInt() == 7 && (packet[9].toInt() and 255) in listOf(1, 3, 4)) {
             val response = NimoCanvasCodec.response(packet) ?: return
+            if (response.first == 1) Bridge.log("NIMO: canvas Launch response status=${response.second.firstOrNull()?.toInt()}")
             canvas.response(response.first, response.second)
             return
         }
@@ -2202,13 +2256,13 @@ class Nimo : SGCManager() {
                             if (appId != NimoCanvasCodec.APP_ID) {
                                 diagnostics?.cancelHeldCapture("Native app takeover preempted held capture", resumeCanvas = false)
                             }
-                            if (canvas.nativeApp(appId, true)) canvasEncoder.invalidate()
+                            canvas.nativeApp(appId, true)
                         }
                         NimoProtocol.STATE_EXIT -> {
                             if (appId == NimoCanvasCodec.APP_ID) {
                                 diagnostics?.cancelHeldCapture("Canvas exit preempted held capture", resumeCanvas = false)
                             }
-                            if (canvas.nativeApp(appId, false)) canvasEncoder.invalidate()
+                            canvas.nativeApp(appId, false)
                         }
                     }
                 }
@@ -2240,7 +2294,7 @@ class Nimo : SGCManager() {
                     // Both predicates were sampled by this device report. TWS-only
                     // reports and cached state cannot release a status-7 wait.
                     if (handshakeState == HandshakeState.READY) {
-                        canvas.confirmedReadiness(twsConnected && peerCompanionReady == true)
+                        canvas.confirmedReadiness(twsConnected && peerCompanionReady != false)
                     }
                 }
             }
@@ -2266,7 +2320,7 @@ class Nimo : SGCManager() {
         if (!connected && handshakeState == HandshakeState.READY) {
             Bridge.log("NIMO: TWS service dropped mid-session (arm removed/off?)")
         }
-        if (handshakeState == HandshakeState.READY) canvas.readiness(connected && peerCompanionReady == true)
+        if (handshakeState == HandshakeState.READY) canvas.readiness(connected && peerCompanionReady != false)
     }
 
     private fun handleInputEvent(code: Int) {
@@ -2301,6 +2355,9 @@ class Nimo : SGCManager() {
             // Protocol error codes: 1 fail, 2 timeout, 3 invalid format, 4 no memory,
             // 5 not supported, 6 bad parameter, 7 device busy.
             Bridge.log("NIMO: response cmd=$cmd key=$key error status=$statusCode")
+        }
+        if (cmd == NimoProtocol.CMD_SET_PARAMETER && key == NimoProtocol.SET_SYSTEM_LANGUAGE) {
+            Bridge.log("NIMO: English menu setting acknowledged=${statusCode == 0} status=$statusCode")
         }
         resolvePendingAck(cmd, key, statusCode == 0)
 

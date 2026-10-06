@@ -1,97 +1,73 @@
-import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
-import { TestFailureCorrectionService } from "../../services/test-failure-correction.service";
-import { TestRunError, TestRunService } from "../../services/test-run.service";
-import { TestRunOverviewService } from "../../services/test-run-overview.service";
-import { TestRunFollowUpError, TestRunFollowUpService } from "../../services/test-run-follow-up.service";
-import { testRunQuerySchema } from "../../types/test-run.types";
-import type { AppContext, AppEnv } from "../../types/hono.types";
-import { TestHostHealthError, TestHostHealthService } from "../../services/test-host-health.service";
-import { TestFailureEvidenceService } from "../../services/test-failure-evidence.service";
-import { organizationCapabilities } from "../../services/workspaces/authorization.service";
-import { principalLabel } from "../middleware/principal.middleware";
+import {Hono} from "hono";
+import type {AppEnv} from "../../types/hono.types";
+import {FrameworkResultService} from "../../services/framework-result.service";
+import {TestSuiteService} from "../../services/test-suite.service";
+import {TestRunError} from "../../services/test-result-error";
+import {TestHostHealthError, TestHostHealthService} from "../../services/test-host-health.service";
+import {TestRequestModel} from "../../models/test-request.model";
+import {TestHistoryService} from "../../services/test-history.service";
+import {hostCancellationSchema, hostRejectionSchema, requestInputDigest, TestRequestService} from "../../services/test-request.service";
+import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema, type FrameworkRequestDisplay} from "../../types/framework-request.types";
+import {createTestRerunRoutes} from "../internal/test-reruns.api";
+import {LaneRestorationService} from "../../services/lane-restoration.service";
 
 /**
- * The caller behind a reviewed write, as the label the audit trail records. Fails closed (403) unless the request
- * carries a principal holding `organization.testing.manage`, so the route is safe even if it is ever mounted without
- * admin.api's gate.
+ * Results and delivery projections only; the host controller owns lanes and repairs. Mounted only behind Core
+ * admin.api's `organization.testing.*` gates: read to look, manage to write (the rerun routes).
  */
-function reviewer(c: AppContext): string {
-  const principal = c.get("principal");
-  if (!principal || !organizationCapabilities(principal).has("organization.testing.manage"))
-    throw new TestRunFollowUpError(403, "admin access required");
-  return principalLabel(principal);
-}
-
-/** Mounted only behind Core admin.api's `organization.testing.*` gates: read to look, manage to write. */
-export function createTestRunAdminApi(service = new TestRunService(), overview = new TestRunOverviewService(), followUp = new TestRunFollowUpService(),
-  corrections = new TestFailureCorrectionService(), health = new TestHostHealthService(), evidence = new TestFailureEvidenceService()) {
+export function createTestRunAdminApi(health = new TestHostHealthService(), history = new TestHistoryService(),
+  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService()) {
   const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
-    if (error instanceof TestRunError) return c.json({ error: "test_run_error", error_description: error.message }, error.status);
-    if (error instanceof TestRunFollowUpError) return c.json({ error: "test_run_follow_up_error", error_description: error.message }, error.status);
-    if (error instanceof TestHostHealthError) return c.json({ error: "host_health_error", error_description: error.message }, error.status);
-    throw error;
+    if (error instanceof TestRunError || error instanceof TestHostHealthError)
+      return c.json({error: "test_run_error", message: error.message}, error.status);
+    c.var.logger?.error({errorName: error.name}, "test result query failed");
+    return c.json({error: "test_results_unavailable"}, 503);
   });
-  app.get("/", async c => {
-    const parsed = testRunQuerySchema.safeParse(c.req.query());
-    if (!parsed.success) throw new TestRunError(400, "invalid test run list query");
-    return c.json(await service.list(parsed.data));
+  const suites = new TestSuiteService();
+  app.route("/reruns", createTestRerunRoutes(undefined, "admin"));
+  app.get("/suite-index/labels", async c => c.json(await suites.labels((c.req.query("requestIds") ?? "").split(",").filter(Boolean))));
+  app.get("/suite-index/list", async c => c.json(await suites.list()));
+  app.get("/history/list", async c => c.json(await history.list(c.req.query())));
+  app.get("/suites/:suiteId", async c => c.json(await suites.detail(c.req.param("suiteId"))));
+  app.get("/", async c => c.json(await results.list(c.req.query())));
+  app.get("/activity", async c => c.json({requests: await TestRequestModel.find({state: {$ne: "terminal"}})
+    .sort({createdAt: 1, requestId: 1}).limit(100).select({requestId: 1, hostId: 1, state: 1, input: 1, createdAt: 1})
+    .read("primary").readConcern("majority").lean()}));
+  app.get("/health", async c => c.json(await health.list()));
+  app.get("/health/:hostId", async c => c.json(await health.history(c.req.param("hostId"), c.req.query("days"))));
+  app.get("/restoration/list", async c => c.json(await restoration.list()));
+  app.get("/:runId", async c => {
+    const id = c.req.param("runId");
+    if (!frameworkIdentitySchema.safeParse(id).success) throw new TestRunError(400, "Invalid run or request identity");
+    try {return c.json({kind: "run", ...await results.detailByRun(id)});}
+    catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
+    try {return c.json({kind: "run", ...await results.detail(id)});}
+    catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
+    const row = await requests.get(id);
+    if (!row) throw new TestRunError(404, "Routine run or request was not found");
+    const parsed = recordedFrameworkRequestInputSchema.safeParse(row.input);
+    if (!parsed.success || requestInputDigest(parsed.data) !== row.inputSha256)
+      throw new TestRunError(503, "Stored request identity is unavailable");
+    const rejection = row.hostRejection ? hostRejectionSchema.parse(row.hostRejection) : undefined;
+    const cancellation = row.hostCancellation ? hostCancellationSchema.parse(row.hostCancellation) : undefined;
+    const reason = rejection ?? cancellation;
+    if (reason && (reason.requestId !== row.requestId || reason.hostId !== row.hostId || reason.inputSha256 !== row.inputSha256))
+      throw new TestRunError(503, "Stored request receipt identity is unavailable");
+    const input = parsed.data;
+    const request: FrameworkRequestDisplay = {requestId: row.requestId, hostId: row.hostId, inputSha256: row.inputSha256,
+      routineId: input.routineId, platform: input.platform, definitionRevision: input.definitionRevision,
+      ...(input.routineSource ? {routineSource: input.routineSource} : {}),
+      ...(input.minimumFrameworkVersion !== undefined ? {minimumFrameworkVersion: input.minimumFrameworkVersion} : {}),
+      laneId: input.laneId, build: input.build, state: row.state, terminalStatus: row.terminalStatus,
+      createdAt: row.createdAt?.toISOString(), acceptedAt: row.hostReceipt?.acceptedAt,
+      reason: rejection ? `${rejection.code}: ${rejection.reason}` : cancellation?.reason,
+      reasonAt: rejection?.rejectedAt ?? cancellation?.requestedAt,
+      ...(cancellation ? {cancellationRequested: true, cancellationAcknowledged: row.cancellationAcknowledged === true} : {})};
+    return c.json({kind: "request", request});
   });
-  app.get("/overview", async c => {
-    c.header("Cache-Control", "no-store");
-    return c.json(await overview.overview());
-  });
-  app.get("/recent", async c => {
-    c.header("Cache-Control", "no-store");
-    return c.json(await service.recent());
-  });
-  app.get("/health", async c => {
-    c.header("Cache-Control", "no-store");
-    return c.json(await health.list());
-  });
-  app.get("/health/:hostId", async c => {
-    c.header("Cache-Control", "no-store");
-    return c.json(await health.history(c.req.param("hostId"), c.req.query("days")));
-  });
-  app.post("/claims/:requestId/cancel-follow-up", async c => {
-    const reviewedBy = reviewer(c);
-    if (c.req.header("content-type") !== "application/json") throw new TestRunFollowUpError(400, "JSON confirmation required");
-    const input = await c.req.json().catch(() => null);
-    if (!input || input.confirmation !== "cancel-follow-up" || Object.keys(input).length !== 1)
-      throw new TestRunFollowUpError(400, "explicit follow-up cancellation confirmation required");
-    return c.json(await followUp.cancel(c.req.param("requestId"), reviewedBy));
-  });
-  // Explicit reviewed provenance correction of one acknowledged occurrence. The calling principal identifies the reviewer;
-  // the service still corroborates every binding against the immutable result. No other caller can write it.
-  const correctionPath = "/:runId/failures/:occurrenceId/provenance-correction";
-  app.get(correctionPath, async c => {
-    c.header("Cache-Control", "no-store");
-    return c.json(await corrections.read(c.req.param("runId"), c.req.param("occurrenceId")));
-  });
-  app.post(correctionPath, bodyLimit({ maxSize: 16 * 1024, onError: c => c.json({ error: "too_large" }, 413) }), async c => {
-    c.header("Cache-Control", "no-store");
-    const reviewedBy = reviewer(c);
-    if (c.req.header("content-type") !== "application/json") throw new TestRunError(400, "JSON correction required");
-    const input = await c.req.json().catch(() => null);
-    const result = await corrections.submit(c.req.param("runId"), c.req.param("occurrenceId"), input, reviewedBy);
-    return c.json(result.correction, result.created ? 201 : 200);
-  });
-  app.get("/:runId", async c => c.json(await service.detail(c.req.param("runId"))));
-  const evidencePath = "/:runId/failures/:occurrenceId/evidence-supplements";
-  app.get(evidencePath, async c => {
-    c.header("Cache-Control", "no-store");
-    return c.json(await evidence.list(c.req.param("runId"), c.req.param("occurrenceId")));
-  });
-  app.post(evidencePath, bodyLimit({ maxSize: 1024 * 1024, onError: c => c.json({ error: "too_large" }, 413) }), async c => {
-    c.header("Cache-Control", "no-store");
-    const reviewedBy = reviewer(c);
-    if (c.req.header("content-type") !== "application/json") throw new TestRunError(400, "JSON evidence supplement required");
-    const result = await evidence.submit(c.req.param("runId"), c.req.param("occurrenceId"), await c.req.json().catch(() => null), reviewedBy);
-    return c.json(result.supplement, result.created ? 201 : 200);
-  });
-  app.on(["GET", "HEAD"], "/:runId/assets/:assetId", c => service.media(c.req.param("runId"), c.req.param("assetId"), c.req.raw));
+  app.on(["GET", "HEAD"], "/:runId/assets/:assetId", c => results.mediaByRun(c.req.param("runId"), c.req.param("assetId"), c.req.raw));
   return app;
 }
-
 export default createTestRunAdminApi();

@@ -2,14 +2,16 @@
  * @fileoverview `startCore` runs the boot warning about WorkOS without a Mongo.
  *
  * The condition itself is covered by `services/workspaces/identity-link.startup-warning.test.ts`; this
- * pins that the real boot path calls the check, exactly once. Mongo and the startup migrations are
- * stubbed, so nothing here connects to any database.
+ * pins that the real boot path calls the check, exactly once. Mongo, the startup migrations and the
+ * background workers that read Mongo are stubbed, so nothing here connects to any database.
  */
 
 import {afterEach, beforeEach, expect, spyOn, test} from "bun:test"
 import * as mongoConnection from "./connections/mongo.connection"
 import {startCore} from "./index"
 import * as startupMigrations from "./migrations/startup.migrations"
+import * as frameworkRunSummary from "./services/framework-run-summary.service"
+import * as routineWorkNotification from "./services/routine-work-notification"
 import * as identityLink from "./services/workspaces/identity-link.service"
 
 const ENV_KEYS = [
@@ -33,7 +35,15 @@ beforeEach(() => {
   const connect = spyOn(mongoConnection, "connectMongo").mockResolvedValue(undefined as never)
   const disconnect = spyOn(mongoConnection, "disconnectMongo").mockResolvedValue(undefined as never)
   const migrate = spyOn(startupMigrations, "runStartupMigrations").mockResolvedValue(undefined as never)
-  restore = [() => connect.mockRestore(), () => disconnect.mockRestore(), () => migrate.mockRestore()]
+  const backfill = spyOn(frameworkRunSummary, "startFrameworkRunSummaryBackfill").mockReturnValue(async () => {})
+  const reporting = spyOn(routineWorkNotification, "startRoutineWorkReporting").mockReturnValue(async () => {})
+  restore = [
+    () => connect.mockRestore(),
+    () => disconnect.mockRestore(),
+    () => migrate.mockRestore(),
+    () => backfill.mockRestore(),
+    () => reporting.mockRestore(),
+  ]
 })
 
 afterEach(() => {

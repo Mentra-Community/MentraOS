@@ -65,7 +65,9 @@ jobs:
 
       - name: Test enterprise deployment helpers
         working-directory: cloud-v2
-        run: node --test deploy/azure/enterprise-reference/scripts/*.test.mjs
+        run: |
+          node --test deploy/azure/enterprise-reference/scripts/*.test.mjs
+          python3 -m unittest discover -s deploy/azure/enterprise-reference/installer -p 'test_*.py'
 
       - name: Test Miniapp CLI
         working-directory: sdk

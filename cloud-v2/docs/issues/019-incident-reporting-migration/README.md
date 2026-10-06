@@ -76,6 +76,12 @@ artifacts with an `.mp4` extension.
 
 ## Slack routing
 
+The admin list API keeps `kind=bug|feedback|automatic` as a stored-kind filter,
+including internal and harness submissions. The dashboard uses the separate
+`category=bug|feedback|internal|testing|automatic` filter to partition triage views.
+When both are provided, both must match. Console MCP `report_list` accepts both
+filters, and `fetch-incident-logs.sh --list` exposes `--kind` and `--category`.
+
 Notifications use the same category precedence as the admin dashboard:
 
 | Category | Rule | Channel | Bot destination env var |
@@ -86,7 +92,10 @@ Notifications use the same category precedence as the admin dashboard:
 | Bug / Feedback | All remaining reports | `#user-feedback` | `CLOUD_REPORTS_SLACK_CHANNEL_ID` |
 
 Internal uses the first-party account email resolved by the server and the existing
-`CLOUD_CORE_ADMIN_EMAILS` / `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` policy. Contact email and
+`CLOUD_CORE_ADMIN_EMAILS` / `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` policy. An allowlisted
+base email also grants admin status to its `+tag` aliases on the same domain;
+this applies to any email provider. Domain allowlist entries still match only
+the exact domain. Contact email and
 client context never grant Internal status. If the account lookup fails or times
 out, the existing best-effort notifier posts with the opaque user ID and falls
 back to the non-admin category. Slack routing is evaluated at notification time;
@@ -167,13 +176,11 @@ Gallery media integrity:
 
 External incident requests, including the captions tester:
 
-- Trigger: `com.mentra.SUBMIT_INCIDENT_REPORT` on Android, available in all builds,
-  forwards the Crust event `submit_incident_report` to the engine.
-- Submission:
-  `mobile/modules/engine/src/services/SubmitIncidentReportService.ts`.
-- The service emits `INCIDENT_REPORT_RESULT` with the request's alert/test IDs
-  and a report ID, skipped reason, or failure error. The Mentra App must be
-  running and signed in. [Android contract](../../../../mobile/docs/incident-report-intent.md).
+- Trigger: `com.mentra://test/submit-incident-report` on Android and iOS,
+  requiring the existing Super Mode setting and a signed-in app.
+- Submission uses the engine's normal automatic report uploader. The modal
+  exposes correlated request/result JSON and Android logs `INCIDENT_REPORT_RESULT`.
+  See the [shared contract](../../../../mobile/INCIDENT_REPORT_AUTOMATION.md).
 - Cloud V2 transcript test logging is emitted from island via
   `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`, and the
   laptop monitor records the marker in

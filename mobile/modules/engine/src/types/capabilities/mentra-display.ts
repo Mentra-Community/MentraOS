@@ -20,6 +20,7 @@ export const mentraDisplay: Capabilities = {
   // Display capabilities - Mentra Display has a green monochrome display
   hasDisplay: true,
   display: {
+    position: {depth: {min: 1, max: 4}, height: {min: 1, max: 8}},
     count: 2,
     isColor: false,
     color: "green",
@@ -55,7 +56,7 @@ export const mentraDisplay: Capabilities = {
 
   // IMU capabilities - Mentra Display has IMU for head-up/down detection but raw data not exposed to apps
   hasIMU: true,
-  imu: null,
+  imu: {headUpAngle: {min: 0, max: 60}},
 
   // Button capabilities - Mentra Display does not have buttons
   hasButton: false,

@@ -2,7 +2,12 @@ import {submitIncidentReport} from "@mentra/engine"
 
 import {parseIncidentReportRequest, submitIncidentReportOnce} from "./incidentReportAutomation"
 
-jest.mock("@mentra/engine", () => ({submitIncidentReport: jest.fn()}))
+const mockSuperMode = jest.fn()
+jest.mock("@mentra/engine", () => ({
+  engine: {settings: {get: () => mockSuperMode()}},
+  SETTINGS: {super_mode: {key: "super_mode"}},
+  submitIncidentReport: jest.fn(),
+}))
 
 const request = {
   alert_id: "ios-ota-1",
@@ -14,6 +19,7 @@ const receipt = {...request, status: "filed", report_id: "rep_test", incident_id
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockSuperMode.mockReturnValue(true)
   jest.mocked(submitIncidentReport).mockResolvedValue(receipt as Awaited<ReturnType<typeof submitIncidentReport>>)
 })
 
@@ -78,4 +84,15 @@ it("returns a correlated failure if the uploader unexpectedly rejects", async ()
     status: "failed",
     error: "offline",
   })
+})
+
+it("refuses normal-mode reports without uploading or reusing cached success", async () => {
+  await submitIncidentReportOnce("normal-mode-test", request)
+  jest.mocked(submitIncidentReport).mockClear()
+  mockSuperMode.mockReturnValue(false)
+  await expect(submitIncidentReportOnce("normal-mode-test", request)).resolves.toMatchObject({
+    status: "failed",
+    error: expect.stringContaining("Super Mode"),
+  })
+  expect(submitIncidentReport).not.toHaveBeenCalled()
 })

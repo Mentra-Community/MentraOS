@@ -6,9 +6,8 @@ import {Header, Screen} from "@/components/ignite"
 import SliderSetting from "@/components/settings/SliderSetting"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {SETTINGS, useSetting, getModelCapabilities, engine} from "@mentra/engine"
 import {useKonamiCode} from "@/utils/dev/konami"
-import {engine} from "@mentra/engine"
 
 export default function ScreenSettingsScreen() {
   const {goBack} = useNavigationStore.getState()
@@ -19,12 +18,8 @@ export default function ScreenSettingsScreen() {
   const {setEnabled} = useKonamiCode()
 
   const isG1 = deviceModel === "Even Realities G1" || deviceModel === "evenrealities_g1" || deviceModel === "g1"
-  const isNex = deviceModel === "Mentra Display" || deviceModel === "Mentra Nex" || deviceModel === "mentra_display"
-
-  // Only Mentra Display supports a 4th depth tier; every other device keeps the original 1-3 range.
-  const depthMax = isNex ? 4 : 3
-
-  const depthClamped = Math.min(depthMax, Math.max(1, Number(dashboardDepth ?? 2)))
+  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const position = getModelCapabilities(defaultWearable).display?.position
 
   useFocusEffect(
     useCallback(() => {
@@ -33,7 +28,7 @@ export default function ScreenSettingsScreen() {
       return () => {
         setScreenDisabled(false)
       }
-    }, [isG1]),
+    }, [isG1, setScreenDisabled]),
   )
 
   useEffect(() => {
@@ -45,27 +40,29 @@ export default function ScreenSettingsScreen() {
     <Screen preset="fixed">
       <Header titleTx="positionSettings:title" leftIcon="chevron-left" onLeftPress={goBack} />
 
-      <View className="gap-6 pt-6">
-        <SliderSetting
-          label="Display Depth"
-          subtitle="Adjust how far the content appears from you."
-          value={depthClamped}
-          min={1}
-          max={depthMax}
-          onValueChange={(_value) => {}}
-          onValueSet={setDashboardDepth}
-        />
+      {position && (
+        <View className="gap-6 pt-6">
+          <SliderSetting
+            label="Display Depth"
+            subtitle="Adjust how far the content appears from you."
+            value={Math.min(position.depth.max, Math.max(position.depth.min, dashboardDepth ?? 2))}
+            min={position.depth.min}
+            max={position.depth.max}
+            onValueChange={(_value) => {}}
+            onValueSet={setDashboardDepth}
+          />
 
-        <SliderSetting
-          label="Display Height"
-          subtitle="Adjust the vertical position of the content."
-          value={dashboardHeight ?? 4}
-          min={1}
-          max={8}
-          onValueChange={(_value) => {}}
-          onValueSet={setDashboardHeight}
-        />
-      </View>
+          <SliderSetting
+            label="Display Height"
+            subtitle="Adjust the vertical position of the content."
+            value={Math.min(position.height.max, Math.max(position.height.min, dashboardHeight ?? 4))}
+            min={position.height.min}
+            max={position.height.max}
+            onValueChange={(_value) => {}}
+            onValueSet={setDashboardHeight}
+          />
+        </View>
+      )}
     </Screen>
   )
 }

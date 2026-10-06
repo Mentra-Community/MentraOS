@@ -4,6 +4,7 @@ import {afterEach, beforeEach, describe, expect, test, jest} from "bun:test"
 
 import type localMiniappRuntime from "../LocalMiniappRuntime"
 import {MentraJSRouter, type MentraJSCrustBinding} from "../MentraJSRouter"
+import {MentraUIRouter} from "../MentraUIRouter"
 
 type LocalMiniappRuntime = typeof localMiniappRuntime
 
@@ -314,6 +315,41 @@ describe("MentraJSRouter", () => {
     ])
   })
 
+  test("PING delivery gets correlated metadata without recording the raw payload", () => {
+    router.registerApp("com.foo")
+    const raw = JSON.stringify({payload: {type: "miniapp_ping", token: "private-value"}})
+    runtimeMock.registerCalls[0]!.sendFn(raw)
+    expect(crust.dispatchCalls[0]!.envelope).toEqual({kind: "bridge", raw, deliveryId: 1})
+    expect(logger.log.mock.calls).toContainEqual(["PING submitted for com.foo", {deliveryId: 1}])
+    expect(JSON.stringify(logger.log.mock.calls)).not.toContain("private-value")
+  })
+
+  test("native delivery rejection is caught and preserves safe error identity", async () => {
+    router.registerApp("com.foo")
+    crust.binding.mentraJsDispatchToJs = () => Promise.reject(new TypeError("token=private-value"))
+    runtimeMock.registerCalls[0]!.sendFn(JSON.stringify({payload: {type: "miniapp_ping"}}))
+    await Promise.resolve()
+    expect(logger.warn.mock.calls).toContainEqual([
+      "Native delivery rejected for com.foo",
+      {deliveryId: 1, errorClass: "TypeError"},
+    ])
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("private-value")
+  })
+
+  test("native delivery diagnostics use the existing host and crash-report log path", () => {
+    router.start()
+    const metadata = {event: "native-ping-delivery", deliveryId: 5, phase: "evaluate-failed", errorClass: "IOException"}
+    crust.emit("mentrajs_message", {
+      packageName: "com.foo",
+      iface: "__log",
+      method: "warn",
+      argsJson: JSON.stringify([metadata]),
+    })
+    expect(logger.warn.mock.calls).toContainEqual(["[com.foo] console.warn", [metadata]])
+    expect(router.logRing.snapshot("com.foo")[0]).toContain("evaluate-failed")
+    expect(router.logRing.snapshot("com.foo")[0]).toContain("IOException")
+  })
+
   test("spawnAndRegister spawns + sets manifest + registers + dispatches init", async () => {
     const installedManifest = {
       permissions: [{type: "MICROPHONE", description: "transcription"}],
@@ -490,6 +526,43 @@ describe("MentraJSRouter", () => {
       packageName: "com.foo",
       envelope: {kind: "init"},
     })
+  })
+
+  test("recovery reopens mounted UI once the replacement connects, not at init", async () => {
+    const {MentraJSCrashController} = await import("../MentraJSCrashController")
+    router.crashController = new MentraJSCrashController({backoffMs: [1], maxRetries: 3})
+    router.uiRouter = new MentraUIRouter(crust.binding)
+    router.uiRouter.bindWebView("com.foo", () => {})
+    router.start()
+    await router.spawnAndRegister("com.foo", "/* miniapp */")
+    crust.dispatchCalls.length = 0
+    ;(runtimeMock.runtime as unknown as {onLivenessTimeout: (p: string) => void}).onLivenessTimeout("com.foo")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    // UI_OPEN before the fresh SDK session exists would be dropped.
+    expect(crust.dispatchCalls.map((call) => call.envelope.kind)).toEqual(["init"])
+    crust.emit("mentrajs_message", {
+      packageName: "com.foo",
+      iface: "__bridge",
+      method: "send",
+      args: [JSON.stringify({payload: {type: "miniapp_connect", packageName: "com.foo"}})],
+    })
+    const reopen = crust.dispatchCalls.filter((call) => call.envelope.kind === "bridge")
+    expect(reopen).toHaveLength(1)
+    expect(JSON.parse(reopen[0]!.envelope.raw as string)).toMatchObject({
+      payload: {streamType: "_ui", data: {type: "UI_OPEN"}},
+    })
+  })
+
+  test("recovery does not announce an unmounted UI", async () => {
+    const {MentraJSCrashController} = await import("../MentraJSCrashController")
+    router.crashController = new MentraJSCrashController({backoffMs: [1], maxRetries: 3})
+    router.uiRouter = new MentraUIRouter(crust.binding)
+    router.start()
+    await router.spawnAndRegister("com.foo", "/* miniapp */")
+    crust.dispatchCalls.length = 0
+    ;(runtimeMock.runtime as unknown as {onLivenessTimeout: (p: string) => void}).onLivenessTimeout("com.foo")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(crust.dispatchCalls.map((call) => call.envelope.kind)).toEqual(["init"])
   })
 
   test("listener throwing does not poison subsequent events", () => {

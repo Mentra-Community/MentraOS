@@ -36,7 +36,7 @@ differences are collected in [iOS](#ios).
 **The phone is a relay, not a capture device.** It receives what the glasses already
 encoded, decodes it, and re-publishes it into ACS. Live video is not drawn on the phone,
 and a live frame does not cross the JavaScript bridge. A photo shutter is the exception:
-the phone draws a "Taking a photo" card, then a still, and feeds those pixels through the
+the phone draws a "Taking a photo..." card, then a still, and feeds those pixels through the
 same sender. See [Photo hold](#photo-hold).
 
 ```
@@ -542,7 +542,7 @@ publisher (`start_stream` on Direct link; Call's own stream on Cloudflare), keep
 meeting, the hotspot, and the ACS sender up, and replaces the tile with three pictures
 in order:
 
-1. A full-frame card, "Taking a photo", from the button press until the still is ready.
+1. A full-frame card, "Taking a photo...", from the button press until the still is ready.
 2. The still, for a few seconds counted by the caller from `shownAt`.
 3. Live video again.
 

@@ -25,7 +25,13 @@
 
 import {File} from "expo-file-system"
 
-import {isInstalledMiniappAllowed, isLocalMiniappPackageAllowed, isMiniappAvailable} from "../runtime/bootstrap"
+import {
+  isDevMiniappAllowed,
+  isInstalledMiniappAllowed,
+  isLocalMiniappPackageAllowed,
+  isMiniappAvailable,
+} from "../runtime/bootstrap"
+import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
@@ -33,7 +39,7 @@ import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./
 import devServerBridge from "./DevServerBridge"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
-import {canUseManualMiniappRelease, isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
+import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
 
 interface LauncherDeps {
   /** The host-constructed router (needs the native Crust binding). */
@@ -170,13 +176,21 @@ class MiniappLauncher {
       return null
     }
     // QR-selected local code can override a bundled identity, but receives no
-    // SYSTEM privileges. Organization pins never follow consumer dev URLs.
-    const devUrl = canUseManualMiniappRelease(packageName)
-      ? (hints?.devUrl ?? this.storedDevUrl(packageName))
-      : undefined
+    // SYSTEM privileges. An organization follows a scanned build only in super
+    // mode and only in place of a miniapp it manages (isDevMiniappAllowed).
+    const devAllowed = isDevMiniappAllowed(
+      packageName,
+      useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
+    )
+    const devUrl = devAllowed ? (hints?.devUrl ?? this.storedDevUrl(packageName)) : undefined
+
+    const selectedSnapshot = devAllowed ? appRegistry.getSelectedDevSnapshot(packageName) : null
+    if (selectedSnapshot) return this.resolveInstalledBundle(packageName, selectedSnapshot)
 
     // --- Dev: live HTTP, then the last on-disk snapshot if the laptop is gone. ---
-    if (devUrl) {
+    // A stored URL from a scan that this organization will not run must fall
+    // through to the released bundle, or the home tile disappears.
+    if (devUrl && devAllowed) {
       const source = await resolveDevBundleSource(packageName, devUrl)
       if (source.kind === "live") {
         const live = await this.resolveLiveHttp(packageName, source.resolvedUrl, source.manifest, hints)
@@ -383,13 +397,20 @@ class MiniappLauncher {
       throw new Error(`MiniappLauncher: cannot resolve bundle for ${packageName}`)
     }
     const version = resolved.installedManifest?.version
+    // A live dev server sets devUrl. A snapshot keeps the directory name `dev-*`
+    // as the active version. Either one is the scanned build; a release fallback is neither.
+    const activeVersion = await appRegistry.getActiveVersion(packageName)
+    const devBuild = Boolean(resolved.devUrl) || Boolean(activeVersion?.startsWith("dev-"))
+    const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
     if (
       !isMiniappAvailable(packageName, runtimeOptions?.projectRunning === false ? "background" : "interactive") ||
-      !isInstalledMiniappAllowed(
-        packageName,
-        version,
-        version ? appRegistry.getReleaseIdentity(packageName, version) : null,
-      )
+      (devBuild
+        ? !isDevMiniappAllowed(packageName, superMode)
+        : !isInstalledMiniappAllowed(
+            packageName,
+            version,
+            version ? appRegistry.getReleaseIdentity(packageName, version) : null,
+          ))
     ) {
       throw new Error(`MiniappLauncher: ${packageName} bundle is not authorized by deployment policy`)
     }

@@ -21,6 +21,7 @@ public class OtaSessionManager {
      * Set by OtaService.resumeFromSession() and consumed by OtaHelper.onPhoneConnected().
      */
     private static final String KEY_PENDING_APK_STATUS = "pending_apk_status";
+    private static final String KEY_PENDING_APK_SESSION_ID = "pending_apk_session_id";
     private static final long SESSION_EXPIRY_MS = 30 * 60 * 1000L;
     /**
      * Cooldown after APK install before auto-resuming the next OTA step (MTK/BES).
@@ -237,6 +238,7 @@ public class OtaSessionManager {
         mStatus = "failed";
         mErrorMessage = errorMessage;
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
+        mPrefs.edit().remove(KEY_PENDING_APK_STATUS).remove(KEY_PENDING_APK_SESSION_ID).apply();
         persist();
         Log.e(TAG, "Session failed: " + errorMessage);
     }
@@ -335,8 +337,10 @@ public class OtaSessionManager {
      *
      * @param status "step_complete" if more OTA steps follow; "complete" for APK-only sessions.
      */
-    public void setPendingApkStatus(String status) {
-        mPrefs.edit().putString(KEY_PENDING_APK_STATUS, status).apply();
+    public synchronized void setPendingApkStatus(String status) {
+        if (mSessionId == null || "failed".equals(mStatus)) return;
+        mPrefs.edit().putString(KEY_PENDING_APK_STATUS, status)
+                .putString(KEY_PENDING_APK_SESSION_ID, mSessionId).apply();
         Log.i(TAG, "Pending APK status queued for next phone reconnect: " + status);
     }
 
@@ -344,13 +348,14 @@ public class OtaSessionManager {
      * Retrieves and clears the pending APK status. Returns null if none is queued.
      * Intended to be called from OtaHelper.onPhoneConnected().
      */
-    public String consumePendingApkStatus() {
+    public synchronized String consumePendingApkStatus() {
         String status = mPrefs.getString(KEY_PENDING_APK_STATUS, null);
+        String sessionId = mPrefs.getString(KEY_PENDING_APK_SESSION_ID, null);
         if (status != null) {
-            mPrefs.edit().remove(KEY_PENDING_APK_STATUS).apply();
+            mPrefs.edit().remove(KEY_PENDING_APK_STATUS).remove(KEY_PENDING_APK_SESSION_ID).apply();
             Log.i(TAG, "Consumed pending APK status: " + status);
         }
-        return status;
+        return mSessionId != null && mSessionId.equals(sessionId) && !"failed".equals(mStatus) ? status : null;
     }
 
     /**
@@ -398,7 +403,7 @@ public class OtaSessionManager {
         mLastActivityAtElapsed = 0;
         mRestartingSinceElapsed = -1;
         mLastPersistedPercent = 0;
-        mPrefs.edit().remove(KEY_SESSION_DATA).apply();
+        mPrefs.edit().remove(KEY_SESSION_DATA).remove(KEY_PENDING_APK_STATUS).remove(KEY_PENDING_APK_SESSION_ID).apply();
     }
 
     public synchronized String getStepType(int index) {

@@ -38,10 +38,15 @@ mock.module("react-native-mmkv", () => ({
 }))
 mock.module("../../runtime/bootstrap", () => ({
   getConfigValues: () => ({}),
+  isDevMiniappAllowed: () => true,
   isInstalledMiniappAllowed: () => true,
   isMiniappAvailable: () => true,
   isLocalMiniappPackageAllowed: () => true,
   isOfflineSystemMiniappAllowed: () => true,
+}))
+mock.module("../../stores/settings", () => ({
+  SETTINGS: {super_mode: {key: "super_mode"}},
+  useSettingsStore: {getState: () => ({getSetting: () => false})},
 }))
 mock.module("expo/fetch", () => ({fetch: mock()}))
 mock.module("expo-file-system", () => {

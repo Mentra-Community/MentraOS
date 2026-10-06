@@ -12,6 +12,17 @@ import type {OtaProgress, OtaStatus} from "../facades/ota"
  * secondary line so support can still identify it.
  */
 export const OTA_GLASSES_ERROR_COPY_KEYS: Readonly<Record<string, string>> = {
+  dns_failed: "ota:errorDnsFailed",
+  connection_failed: "ota:errorConnectionFailed",
+  connect_timeout: "ota:errorConnectTimeout",
+  download_timeout: "ota:errorDownloadTimeout",
+  http_error: "ota:errorHttpError",
+  downgrade_recovery_disabled: "ota:errorDowngradeRecoveryDisabled",
+  downgrade_recovery_incompatible: "ota:errorDowngradeRecoveryIncompatible",
+  downgrade_recovery_unavailable: "ota:errorDowngradeRecoveryUnavailable",
+  downgrade_recovery_busy: "ota:errorDowngradeRecoveryBusy",
+  downgrade_status_unknown: "ota:errorDowngradeStatusUnknown",
+  downgrade_not_owned: "ota:errorDowngradeNotOwned",
   no_internet: "ota:errorNoInternet",
   clock_skew: "ota:errorClockSkew",
   ssl_error: "ota:errorSslError",
@@ -33,6 +44,22 @@ export const OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY = "ota:errorBesRestartRequi
 
 /** English copy for every OTA error key above. Mirrored in the Mentra App's `ota` i18n namespace. */
 export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
+  "ota:errorDnsFailed": "Could not find the update server — retry, or check glasses Wi-Fi if this continues",
+  "ota:errorConnectionFailed": "Could not connect to the update server — please retry",
+  "ota:errorConnectTimeout": "The update server took too long to connect — please retry",
+  "ota:errorDownloadTimeout": "The update stopped responding — please retry",
+  "ota:errorHttpError": "The update server returned an error — retry later or contact support",
+  "ota:errorDowngradeRecoveryDisabled":
+    "The recovery service is disabled. Contact support to restore it before changing versions.",
+  "ota:errorDowngradeRecoveryIncompatible":
+    "The recovery service is incompatible. Contact support to restore it before changing versions.",
+  "ota:errorDowngradeRecoveryUnavailable":
+    "The recovery service is not ready. Wait a moment and retry; contact support if this continues.",
+  "ota:errorDowngradeRecoveryBusy":
+    "Another glasses recovery is still running. Keep your glasses nearby and retry after it finishes.",
+  "ota:errorDowngradeStatusUnknown":
+    "Still checking the version change on your glasses. Keep them nearby. Contact support if this continues.",
+  "ota:errorDowngradeNotOwned": "The version change did not finish. Recovery has stopped; you can safely retry.",
   "ota:errorNoInternet": "Glasses Wi-Fi has no internet connection",
   "ota:errorClockSkew": "Glasses clock is wrong — syncing time from your phone, then retrying update check",
   "ota:errorSslError": "Secure connection failed — try a different Wi-Fi network",

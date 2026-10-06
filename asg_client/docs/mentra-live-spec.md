@@ -187,6 +187,16 @@ Camera-device loss after opening is a terminal device failure, not a network rec
 Its callback reaches the stream owner off the Camera2 callback thread, and callbacks from a
 closed or replaced camera session cannot terminate the current publisher.
 
+Conditional cleanup supplies the original `streamId`, `controllerId`, current `sid` and
+`revision`, and a fresh `request_id` to `stop_stream`. Comparison and stop happen together
+on the existing lifecycle dispatcher. A changed snapshot, foreign owner, or any pending
+admission refuses mutation. Every accepted active start increases the retained revision,
+even when public IDs are reused. The correlated `stop_ack` is followed by a fresh terminal
+query to prove settlement. Pending admission must settle normally or retain custody; no
+public-ID-only cancellation is used. Query snapshots report pending admission and active
+controller identity and the existing start revision. The caller binds that start revision
+to reject a later same-ID incarnation, then compares the latest revision atomically. Normal user stop retains its intentional current-stream behavior.
+
 The OS-1937 streaming lifecycle is owned by the phone's explicit start/stop commands, not by
 cloud-era per-stream keep-alives. A stream may otherwise end on terminal publisher or device
 failure, or after sustained loss of the controlling phone. BES phone BLE presence is authoritative;
@@ -299,6 +309,22 @@ which the phone offers a downgrade already supports the downgrade/recovery contr
 has the downgrade floor enabled. Phone-side availability checks therefore rely on this
 release invariant rather than a separate minimum-installed-version or capability gate.
 
+Recovery worker v11 adds a permission-protected readiness/status query before staging
+an APK downgrade. The updater checks the worker package, signature, permissions and
+receiver availability, then observes its durable transaction identity. An existing
+transaction cannot be replaced by Retry. ASG persists its pending handoff before
+sending it and resumes reconciliation on startup without another phone install request. A missing acknowledgement retains admission
+until recovery confirms it is idle; a verified unclaimed APK can then be reused. A
+disabled or incompatible worker needs a specific support repair, not an instruction
+that promises reboot will fix it. Older source builds need the signed worker repair
+or a source-side bridge release before they can benefit from the new updater.
+
+OTA HTTP requests distinguish DNS, connect, response timeout, HTTP and TLS failures.
+Every request closes its streams and connection on failure. A bounded, credential-free
+request history joins incident logs and survives ordinary ASG process restarts; like
+other ASG preferences, it is reset by the uninstall used for an APK downgrade. Network
+validation is diagnostic, not an admission requirement for phone-local hotspot OTA.
+
 The shipped downgrade floor must never decrease. It may increase to retire older targets,
 but any increase must be coordinated across ASG, the recovery worker, Engine, and the Swift
 and Kotlin SDK defaults so the phone only offers targets accepted by the aligned glasses.
@@ -359,6 +385,13 @@ current-session BES UART version diagnostics include `elapsed_realtime_ms`, samp
 from Android's monotonic elapsed realtime before reading OTA state. Phone clock
 synchronization does not change these freshness signals. Neither field starts an
 update or changes stream state; clients omitting the request ID retain existing behavior.
+
+`request_version` may opt into `fresh_bes: true` to request one fresh `cs_syvr`
+snapshot through the same guarded UART coordinator. It does not reset the phone
+handshake, wait/retry, or interrupt file/OTA/baud ownership. Immediate correlated
+version chunks still contain cached BES values; fresh evidence requires an actual
+current-session BES reply, whose existing diagnostic records its receive elapsed
+time. A refused or unanswered probe remains unknown to a bounded observer.
 
 Mentra Live's canonical product serial is provisioned by the Android firmware in
 `ro.serialno`. `asg_client` reads that property directly and forwards a valid

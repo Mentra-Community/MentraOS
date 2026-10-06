@@ -102,6 +102,7 @@ function setup(options: {channel?: FakeChannel; visible?: boolean} = {}) {
   const handlers = new Map<string, () => void>()
   let visible = options.visible ?? true
   let clock = 0
+  const pending: Array<() => void> = []
   const connection = new PreviewConnection({
     channel,
     createTransport: () => {
@@ -115,6 +116,13 @@ function setup(options: {channel?: FakeChannel; visible?: boolean} = {}) {
       return () => handlers.delete(type)
     },
     isDocumentVisible: () => visible,
+    after: (_ms, fn) => {
+      pending.push(fn)
+      return () => {
+        const index = pending.indexOf(fn)
+        if (index >= 0) pending.splice(index, 1)
+      }
+    },
   })
   const states: PreviewConnectionState[] = []
   const errors: string[] = []
@@ -138,6 +146,10 @@ function setup(options: {channel?: FakeChannel; visible?: boolean} = {}) {
     },
     advance: (ms: number) => {
       clock += ms
+    },
+    flush: () => {
+      const fns = pending.splice(0)
+      for (const fn of fns) fn()
     },
   }
 }
@@ -327,6 +339,24 @@ describe("PreviewConnection", () => {
     expect(h.connection.snapshot().reconnects).toBe(3)
     expect(h.channel.cmds().filter((c) => c === "handshake")).toHaveLength(4)
     expect(traceLines.some((line) => line.includes("phase=reconnect_budget_exhausted"))).toBe(true)
+    expect(h.connection.currentState).toBe("error")
+  })
+
+  test("a cooldown after the reconnect budget brings the preview back", async () => {
+    const h = setup()
+    const epoch = h.connection.nextMountEpoch()
+    h.connection.attach(h.sinkFor(epoch))
+    show(h.connection, epoch)
+    await settle()
+    for (let i = 0; i < 4; i += 1) {
+      h.channel.push({t: "error", code: "ack_timeout", docGen: 7})
+      await settle()
+    }
+    expect(h.connection.currentState).toBe("error")
+    h.flush()
+    await settle()
+    expect(h.connection.currentState).toBe("open")
+    expect(h.channel.cmds().filter((c) => c === "handshake").length).toBeGreaterThan(4)
   })
 
   test("errors for another document are ignored", async () => {

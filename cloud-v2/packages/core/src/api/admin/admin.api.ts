@@ -6,8 +6,9 @@ import type {AppEnv} from "../../types/hono.types"
 import {adminFleetApi} from "../fleet/fleet-forwarding"
 import {principalAuth, requireOrganizationCapability} from "../middleware/principal.middleware"
 import reports from "./reports.api"
+import {createRoutineCatalogApi} from "./routine-catalog.api"
+import {createRoutinePreferencesApi} from "./routine-preferences.api"
 import supportProfiles from "./support-profiles.api"
-import fixFlows from "./fix-flows.api"
 import testRuns from "./test-runs.api"
 import testDispatches from "./test-dispatches.api"
 
@@ -23,7 +24,7 @@ import testDispatches from "./test-dispatches.api"
  *
  *  - `/reports`: `organization.incidents.read`;
  *  - `/support-profiles`: `organization.supportProfiles.read`;
- *  - `/test-runs`, `/fix-flows`, `/test-routines`, `/test-builds`, `/test-dispatches`:
+ *  - `/test-runs`, `/routine-catalog`, `/routines`, `/test-routines`, `/test-builds`, `/test-dispatches`:
  *    `organization.testing.read`, and `organization.testing.manage` for anything that writes.
  *
  * The principal gate is router-wide and the capability gates are per area, so
@@ -80,7 +81,8 @@ const testingGate: MiddlewareHandler<AppEnv> = (c, next) =>
 app.use("/reports/*", readsIncidents)
 app.use("/support-profiles/*", readsSupportProfiles)
 app.use("/test-runs/*", testingGate)
-app.use("/fix-flows/*", testingGate)
+app.use("/routine-catalog/*", testingGate)
+app.use("/routines/*", testingGate)
 app.use("/test-routines/*", testingGate)
 app.use("/test-builds/*", testingGate)
 app.use("/test-dispatches/*", testingGate)
@@ -88,6 +90,7 @@ app.use("/test-dispatches/*", testingGate)
 app.route("/reports", reports)
 app.route("/support-profiles", supportProfiles)
 app.route("/test-runs", testRuns)
-app.route("/fix-flows", fixFlows)
+app.route("/routine-catalog", createRoutineCatalogApi())
+app.route("/routines", createRoutinePreferencesApi())
 app.route("/", testDispatches)
 export default app

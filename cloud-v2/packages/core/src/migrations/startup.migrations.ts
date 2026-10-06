@@ -3,14 +3,15 @@ import {createLogger} from "@mentra/cloud-shared"
 import {OemModel} from "../models/oem.model"
 import {RefreshTokenModel} from "../models/refresh-token.model"
 import {UserModel} from "../models/user.model"
-import {TestAssetModel, TestRunModel} from "../models/test-run.model"
-import {TestRunClaimModel} from "../models/test-run-claim.model"
+import {TestHostStateModel} from "../models/test-host-state.model"
+import {TestRerunModel} from "../models/test-rerun.model"
+import {TestRequestModel} from "../models/test-request.model"
+import {RoutineDefinitionModel} from "../models/routine-definition.model"
+import {RoutinePreferenceModel} from "../models/routine-preference.model"
+import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.model"
+import {reconcileTestRunIndexes, TestAssetModel, TestRunModel} from "../models/test-run.model"
 import {TestDispatchModel} from "../models/test-dispatch.model"
-
-import {TestRepairModel} from "../models/test-repair.model"
-import {TestResourceObservationModel} from "../models/test-resource-observation.model"
 import {TestHostLatestModel, TestHostSampleModel} from "../models/test-host-health.model"
-import {backfillTestRunCompletionDates} from "./test-run-completion.migration"
 
 const logger = createLogger("core").child({component: "startup-migrations"})
 const USERS = "users"
@@ -28,17 +29,27 @@ export async function runStartupMigrations(): Promise<void> {
   await dropLegacyUserIdentityIndex()
   await dedupeUserIdentityRows()
   await UserModel.createIndexes()
+  // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes()
-  // Immutable evidence and execution grants require uniqueness before serving requests.
+  // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.
+  await TestHostStateModel.createIndexes()
+  await TestRequestModel.createIndexes()
+  // Batch successor claims must be unique before admitting any linked rerun.
+  await TestRerunModel.createIndexes()
+  // Existing definitions were ordinary enrollments. Candidate metadata is explicit from this rollout onward.
+  await RoutineDefinitionModel.updateMany({ordinaryEnrolledAt: {$exists: false}, candidateBindings: {$exists: false}},
+    [{$set: {ordinaryEnrolledAt: "$createdAt"}}])
+  await RoutineDefinitionModel.createIndexes()
+  await RoutinePreferenceModel.createIndexes()
+  await reconcileTestRunIndexes()
   await TestRunModel.createIndexes()
-  logger.info({migration: "test-run-completed-at", ...await backfillTestRunCompletionDates()}, "test-run completion projection ready")
+  await backfillTestSuiteStartedAt()
+  await TestSuiteModel.createIndexes()
   await TestAssetModel.createIndexes()
-  await TestRunClaimModel.createIndexes()
+  // No device execution grant is safe until request IDs are unique across all Core instances.
   // The send receipt must be unique before any admin can submit a device request.
   await TestDispatchModel.createIndexes()
-  // Receipts and observations require uniqueness before serving requests.
-  await TestRepairModel.createIndexes()
-  await TestResourceObservationModel.createIndexes()
+  // Passive host observations require idempotent identity and indexed, expiring history before ingestion.
   await TestHostSampleModel.createIndexes()
   await TestHostLatestModel.createIndexes()
   await ensureMentraAccountOem()

@@ -1,7 +1,6 @@
 import {isDeepStrictEqual} from "node:util"
 import {downloadNames, validateDownloads} from "./coordinated-install-downloads.mjs"
-import {deviceRoutine, registeredRoutine} from "./device-routines.mjs"
-import {jsonArtifact, REQUEST_WORKFLOW, sourcePublication} from "./request-e2e-routine.mjs"
+import {jsonArtifact} from "./published-build-metadata.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 import {ANDROID_MAX_VERSION_CODE, androidBuildNumberOf} from "./release-family.mjs"
 
@@ -155,62 +154,4 @@ export async function resolveCoordinatedSelection({github, context, source, plat
   requireThat(current.head_sha === run.head_sha, "Producing run changed during selection")
   return {...selection, producer: {workflow: COORDINATED_WORKFLOW, runId: run.id,
     publicationAttempt: run.run_attempt, url: `https://github.com/${REPOSITORY}/actions/runs/${run.id}`}}
-}
-
-export async function createCoordinatedRoutineRequest({github, context, number, channel, routine = "no-glasses",
-  requestOrigin = "workflow-dispatch", source, sourceBuildRunId, sourcePublicationAttempt, nightlyRunId, nightlyRunAttempt, nightlyMode = "ordered", fetchImpl = fetch, now = () => new Date(),
-  routineCatalog}) {
-  // A planned routine without a registered automatic worker refuses before any request is created.
-  const registered = registeredRoutine(routine, routineCatalog)
-  const selected = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
-  requireThat(!number && selected && ["dev", "staging"].includes(channel), "Coordinated requests require an exact run/attempt and no PR number")
-  requireThat(requestOrigin === "workflow-dispatch" || (requestOrigin === "successful-build" && ["no-glasses", "no-glasses-android"].includes(routine)),
-    "Unsupported coordinated routine authorization")
-  requireThat(`${context.repo.owner}/${context.repo.repo}` === REPOSITORY && context.eventName === "workflow_dispatch" &&
-    positive(context.runId) && positive(source?.runAttempt) && source.ref === "refs/heads/dev" && SHA.test(source.sha ?? "") &&
-    source.workflowSha === source.sha && source.workflowRef === `${REPOSITORY}/${REQUEST_WORKFLOW}@refs/heads/dev`,
-  "Coordinated requests require the trusted dev workflow")
-  const request = {schemaVersion: 2, kind: "mentra-routine-request",
-    requestId: `routine-${context.runId}-${source.runAttempt}-${channel}-${routine}`, createdAt: now().toISOString(),
-    status: "no-artifact", reason: "Selected coordinated publication is unavailable",
-    trigger: {kind: context.eventName, repository: REPOSITORY, workflow: REQUEST_WORKFLOW, runId: context.runId, ...source},
-    source: {kind: "coordinated-release", channel, buildRunId: selected.runId, publicationAttempt: selected.publicationAttempt},
-    routine: {id: routine, authorization: requestOrigin, reason: requestOrigin === "successful-build"
-      ? "Automatic no-glasses test after successful coordinated publication" : "Explicit workflow_dispatch opt-in", harnessRevision: source.sha},
-    selection: null, attempts: []}
-  const nightly = sourcePublication(nightlyRunId, nightlyRunAttempt)
-  requireThat(["ordered", "independent"].includes(nightlyMode) && (nightly || nightlyMode === "ordered"), "Invalid nightly dispatch mode")
-  if (nightly) {
-    request.sequence = {kind: nightlyMode === "independent" ? "nightly-routine" : "nightly-ota-call", runId: nightly.runId, runAttempt: nightly.publicationAttempt, member: routine}
-    const {authenticateNightlyMarker} = await import("./nightly-device-routines.mjs")
-    await authenticateNightlyMarker({github, context, request})
-  }
-  try {
-    request.selection = await resolveCoordinatedSelection({github, context, source: request.source, platform: registered.platform, fetchImpl})
-    request.status = "ready"
-    request.reason = `Verified exact coordinated run, channel ancestry, immutable release plan, ${registered.platform === "android" ? "Android" : "Mac"} receipt and OTA pin`
-  } catch (error) {
-    request.reason = error instanceof Error ? error.message : "Coordinated publication could not be verified"
-  }
-  request.attempts.push({runId: selected.runId, reason: request.reason})
-  return request
-}
-
-export async function verifyCoordinatedReadyRequest({github, context, request, fetchImpl = fetch}) {
-  requireThat(request.schemaVersion === 2 && request.source?.kind === "coordinated-release" && !request.pullRequest &&
-    request.requestId === `routine-${request.trigger.runId}-${request.trigger.runAttempt}-${request.source.channel}-${request.routine.id}` &&
-    (request.routine.authorization === "workflow-dispatch" ||
-      (request.routine.authorization === "successful-build" && ["no-glasses", "no-glasses-android"].includes(request.routine.id))), "Invalid coordinated request")
-  const selection = await resolveCoordinatedSelection({github, context, source: request.source, platform: deviceRoutine(request.routine.id).platform, fetchImpl})
-  requireThat(isDeepStrictEqual(selection, request.selection), "Ready coordinated selection differs from its published source")
-  const {data: issuer} = await github.rest.git.getRef({...context.repo, ref: "heads/dev"})
-  requireThat(issuer.ref === "refs/heads/dev" && issuer.object?.type === "commit" &&
-    SHA.test(issuer.object.sha ?? "") && SHA.test(request.trigger.sha ?? ""), "Invalid authenticated request issuer ref")
-  // The caller binds this immutable issuer SHA to the authenticated request run.
-  // Later dev commits must not invalidate an otherwise unchanged queued request.
-  const {data: ancestry} = await github.rest.repos.compareCommitsWithBasehead({...context.repo,
-    basehead: `${request.trigger.sha}...${issuer.object.sha}`})
-  requireThat(["ahead", "identical"].includes(ancestry?.status) &&
-    ancestry.base_commit?.sha === request.trigger.sha && ancestry.merge_base_commit?.sha === request.trigger.sha,
-  "Request issuer is not an ancestor of trusted dev")
 }

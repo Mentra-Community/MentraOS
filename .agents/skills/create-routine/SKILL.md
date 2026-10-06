@@ -1,217 +1,249 @@
 ---
 name: create-routine
-description: Create or extend a Mentra automated testing routine through AI-guided exploration, editable actions and assertions, deterministic replay and CI qualification. Use when adding test coverage or authoring routines in parallel. To request an existing routine on a PR, use select-pr-routines instead.
+description: Create, edit or port a Mentra automated testing routine with English requirements, saved actions verified during authoring, and deterministic replay through the shared framework. To request routine runs or authoring from a PR, use select-pr-routines instead.
 ---
 
-# Add a testing routine
+# Create, edit or port a routine
 
-**Author the routine in the private [Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing). Register its `routine:<id>` label in MentraOS so people and agents can request it on a PR.**
+Routines should be **fast, reliable and easy to create or edit**. Keep English
+instructions, observable expectations and executable actions together in the private
+[Mentra-Automated-Testing repository](https://github.com/Mentra-Community/Mentra-Automated-Testing).
+Read its [porting guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-PORTING.md)
+when migrating old coverage; it links the deleted source and explains what to reuse.
 
-This skill is the entry point from MentraOS. Keep harness implementation, device
-configuration and recordings in the private testing system.
+## Put the behavior in the routine
 
-## Authoring workflow
+Inspect the selected harness revision's `routines/`, `framework/` and controller
+schemas. Start from the closest routine for the platform and glasses. Preserve
+proven product actions and fixtures; replace old executor/ownership wrappers.
 
-1. **Plan.** Define the human checks and expected outcomes in the brief below
-   before choosing selectors or writing replay code.
-2. **Explore and capture.** Use AI computer use to traverse the whole real flow
-   in the Mentra App as a person would. Capture video, screenshots and action
-   notes that show the actions and observed outcomes. When a real
-   product bug appears, attempt an incident with the available evidence through
-   the shared reporting path; retain its ID or submission failure. Keep the
-   affected path failed or blocked and continue independent exploration whose
-   prerequisites still hold. Bug fixing proceeds separately; it does not gate
-   all discovery or turn the failed check into a pass. Acoustic calibration and
-   probes are prerequisites for automated audio measurement, not for using or
-   exploring the app: without them, keep audio assertions unverified and
-   continue UI exploration that is otherwise valid. Permission, resource
-   ownership, in-flight operation and recording/cleanup restrictions still apply.
-3. **Encode the observed flow.** After a complete successful real traversal,
-   turn its captured actions and outcomes into editable English steps and
-   observable assertions using the existing flow helpers. Do not substitute
-   scripted assumptions for paths that discovery has not completed successfully.
-4. **Replay and qualify.** Replay the captured flow deterministically without
-   AI for faster repeated coverage. Iterate from usable live state as
-   described below, then qualify the complete flow with one clean recording
-   against the exact source and build. Partial exploration remains development
-   evidence, not a full routine pass.
-
-## 1. Find the closest routine
-
-Read the [routine catalog](../../../.github/scripts/device-routines.mjs). Follow
-its revision-pinned definition and implementation links to understand existing
-coverage. Extend an existing routine when the new behavior belongs in its flow;
-create an ID when the behavior needs independent selection, resources or setup.
-
-Work in a separate private-repository worktree. Use current `main` for new work
-unless the task specifies another base; record that source revision. Catalog
-links describe the published definition and may precede the current source.
-If private access is missing, prepare the brief below and report that dependency;
-do not recreate the private harness in MentraOS.
-
-In the selected private revision, use `docs/ROUTINE-AUTHORING.md` and
-`templates/routine-brief.md` when present. Read the closest working flow and
-platform adapter before choosing commands. Authoring and development tools can
-arrive separately from their documentation: verify the checkout's supported
-entry point and help rather than assuming a command is implemented.
-
-## 2. Define what a pass means
-
-Write a short brief before selectors. Resolve choices from the request and
-existing routines; ask only for missing product expectations that matter.
-
-| Decision | Record |
+| Location | Responsibility |
 | --- | --- |
-| Identity | Routine ID, platform and user behavior it proves |
-| Inputs | Exact selected PR/dev/staging build and its artifacts; OTA manifest when applicable |
-| Resources | App, account, phone/glasses, browser, network or audio devices actually required |
-| Starting state | Required app/account/pairing state and, for glasses routines, software versions |
-| Return state | Usable state to leave behind, verified against this run's selected build |
-| Steps | Stable ID, English action, expected result and observable assertion for each step |
-| Evidence | Recording, screenshots, logs or device checks needed to substantiate the result |
-| Limits | Prerequisites and behavior this routine does not exercise |
+| `routines/<id>/routine.ts` | Export `createRoutine(state)` using `defineRoutine` and `step`; English metadata, product setup/steps/teardown and fixtures |
+| `framework/drivers/` | Shared interactions and recorded observations; Mac uses `executeMacStep(action, context)` with the supplied `context.ui` |
+| `framework/platforms/`, `framework/glasses/` | Composed platform and glasses lifecycle providers |
+| `framework/authoring/`, `orchestration/` | Held sessions, jobs, lane ownership, repair and publication |
 
-The next job establishes its own starting state. Teardown need not predict that
-job's versions: reuse the selected build's return target, check the actual state,
-and restore only what differs. A successful test may already satisfy it.
+Declare platforms, entry (`home` or `sign-in`), account, requirements, fixtures,
+stable ordered step IDs, `glasses.models` and required capability IDs in `requires`.
+Keep device identities, secrets and tool paths in private lane configuration.
+Confirm the installed lane offers those capabilities. Add a reusable provider once
+for missing shared functionality; do not hide host setup in product steps.
+Preflight the complete fixture contract before reserving hardware. Check tool roles,
+not just executable hashes: the Mac UI driver and app launcher are distinct pins.
+When a capability is missing, assign its shared provider work separately and use
+the other lane or already installed routines while it is built.
+No routine-name branches in workers, dispatch or catalog, and no hardcoded videos:
+source enrollment discovers definitions; published passing runs supply examples.
 
-Declare the account needed, then use the platform's runtime account loader and
-the worker recipe's account reference. Reuse its secret-input and report-redaction
-helpers. Keep passwords out of routine definitions, prompts, request JSON and
-evidence. Provision separate accounts for concurrent authenticated sessions.
-Account files belong to host configuration, outside Git; credential rotation
-must also refresh any pinned copy/reference used by that worker.
+## Hold one session and verify the saved actions
 
-## 3. Reuse the lifecycle
+Start through the built-in machine `routine-work` create/edit job described in the
+harness [job guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-WORK.md)
+and [assigned-agent skill](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/.agents/skills/prepare-routine-work/SKILL.md).
+The supervisor owns the workspace, machine agent, reservation and held session.
+The following are inner operations for that assigned agent, using its provisioned
+`MENTRA_TEST_CLIENT_CONFIG` and the current `mentra-test` CLI; they are not a
+parallel coordinator authoring path:
 
-When encoding deterministic replay, compose
-**setup → test → final checks → cleanup → return verification** using
-the existing platform lifecycle. Mac flows use the `Step` contract in
-`tools/mentra-e2e/runner/suite.ts`; use the corresponding Android adapter for
-Android execution. Reuse artifact preparation, fixture ownership, progress,
-recording, incident submission and result publication.
+```sh
+bun run mentra-test lane request @reservation.json
+bun run mentra-test lane wait @wait.json
+bun run mentra-test author start @start.json
+bun run mentra-test author command @command.json
+bun run mentra-test author inspect @scope.json
+bun run mentra-test lane give-back @give-back.json
+```
 
-- Put an observable outcome after each meaningful action. A click succeeding
-  does not establish navigation, media delivery or a firmware update.
-- Prefer existing stable selectors and state-based waits. Add a shared driver
-  capability only when the routine cannot express its behavior with current ones.
-- Preserve the original failed assertion when cleanup succeeds. Capture the
-  failure and submit its incident through the shared path before cleanup loses
-  useful app state. Route product defects to
-  [fix-routine-failure](../fix-routine-failure/SKILL.md).
-- Keep one owner for a shared harness defect. Other authors can continue their
-  independent flows instead of adding per-routine workarounds.
+Read harness `orchestration/README.md`, `orchestration/controller.ts` and
+`framework/authoring/session.ts` for current schemas and held-session behavior;
+`contracts/controller.ts` defines admission. Run the CLI from the harness checkout,
+not MentraOS. Do not invent IDs or use an old standalone author CLI.
+Use `ControllerClient`/these service endpoints for controller mutations, including
+diagnostic attachments. Never open `ControllerStore` against the live database to
+register evidence, change ownership or manufacture cleanup receipts. Read-only SQL
+can help inspect state; a missing public operation is framework work to assign.
+Reservation request supplies `requestId`, `laneId`, `purpose`, `admissionExpiresAt`.
+Wait with `{reservationId, afterGeneration, timeoutMs}` until granted. Start supplies
+the granted `reservationId`, `generation`, a stable `operationId`, selected `build`
+and canonical editable `sourcePath`. Default start performs setup and starts the
+original recorder; optional `setupMode: "manual"` exposes individual lifecycle actions.
 
-## 4. Develop with recorded evidence
+Each author command carries `{reservationId, generation, operationId, command}`.
+Nested commands use `op`: `steps`, `snapshot`, `step` with `stepId`, `actions` with
+`phase: "setup" | "test" | "teardown"`, `action` with setup/teardown `phase` and
+`actionId`, or `finish`. Use returned IDs and inspect `{reservationId, generation}`
+until each operation settles; a settled operation may contain a failed assertion.
+Use a new operation ID for each action; a lost response reuses its original ID to
+reconcile that call. Direct driver calls must retain the supplied owned context.
+For example, the inner product command is `{ "op": "step", "stepId": "saved-id" }`,
+inside `command`, not a separate CLI verb.
 
-**Before the first complete pass, iterate from usable live state rather than
-restarting the routine after every fix.** Preserve the failed observation and
-retry the failed step or smallest dependent section. Do not repeat downloads,
-installation, OTA preparation or an already-passed prefix merely because a later
-step changed. Re-establish only prerequisites that changed or are no longer
-proven. Keep the existing ownership and command-completion rules: an unanswered
-writer needs reconciliation, and owned recorders still need confirmed cleanup.
+Declare the complete flow before starting. Use computer use to discover controls,
+save each action and assertion, then execute that saved action through the same
+driver/helper replay will use. Traverse the **whole English flow** this way: a manual
+click does not prove a different script written afterward. Prefer the simplest
+supported interaction that works; verify outcomes rather than successful clicks.
+Complete every saved product step and normal teardown before ordinary replay.
+A partially successful held traversal or expired recording is not that boundary.
+On a settled step failure, inspect the actual error, edit that existing action and
+retry with a concrete `retryReason` from its current safe prerequisite state. Keep
+the same owner, recorder and passing prefix; do not reinstall or restart setup for
+an ordinary authoring mistake. Do not repeat an uncertain submission/firmware write.
+If returning to a prerequisite needs an already passed product action, inspect
+`{op: "actions", phase: "test"}` for eligibility and repeat that same saved action
+with an explicit `retryReason` describing the observed prerequisite. The controller
+must confirm its previous input settled; a source reload alone permits no repeat.
+For a completed navigation tap, wait for its observable destination before the
+next input. A delivered-but-rejected tap keeps its intent: reconcile the resulting
+page without tapping again. Keep those checks in the same saved action for replay.
+The held loader preserves `createRoutine(state)` state and original lifecycle while
+reloading existing product steps. Changing step IDs/order, lifecycle callbacks or
+metadata requires finishing the session first. Shared helper/native changes require
+the updated installed revision and a fresh session. Fix a broken app control rather
+than accumulating alternate input or focus algorithms.
+Prepare and compile changed shared source off hardware while other work uses the
+lanes. Once affected owners release, activate one frozen candidate; local iteration
+may use reviewed source before merge while retaining the PR's review/CI merge gates.
+Check the installed recorder's duration, byte limit and output allowance before a
+long flow, including held editing and accepted operation settlement; step deadlines
+do not extend capture. A Mac fixture with a recorded
+browser window declares `external-window` with `fixture-data` and uses the shared
+admitted policy for both recordings. A product update can continue after a recorder
+or client deadline; inspect that original operation and settle it normally rather
+than issuing another update or restarting the passing prefix.
+Request authoring reservations before waiting for the current run to finish, so
+the next queued job does not repeatedly displace ready authoring work.
+Before ordinary dispatch, confirm the installed executor source and enrolled
+definition revision agree; frozen requests do not change during a service upgrade.
+Enroll the intended source before submitting new work. A stale local request that
+never launched can be cancelled normally with a reason, then replaced with the
+same saved actions on the intended source. Preserve launched/nightly requests.
+Publish startup failures through normal evidence delivery without replay; inspect
+the exact export error when publication stalls rather than repeating the test.
+For UI transitions, verify the departing overlay disappears as well as the
+new page appears. Home controls can remain visible behind a miniapp. Use bounded
+postcondition observation; an acknowledged click is not a completed transition.
+Inspect current controls rather than copying old labels blindly: Android's radio
+icon can toggle while its label opens details, and an empty miniapp switcher opener
+can remain present on idle Home. Require the actual state before sending input.
+Before hardware, compare the old saved selector with the selected build's current
+component. Several URL editors can coexist: preserve OTA's specific manifest
+placeholder instead of selecting any editable field. After an uncertain typing
+response, observe the exact requested value before clearing or typing again;
+the empty placeholder disappears when input succeeded. Keep that observation
+in the same saved action, not a separate replay technique.
+Static headings may appear twice on a platform: require readable content, and use
+exact IDs/counts for the actionable controls that must be unique.
+On Android, use the supplied `ui.scroll(anchor, direction)` for a bounded gesture
+inside the observed scroll view, then resnapshot. Check `checked` for toggles rather
+than assuming a click changed them; public text replacement uses `clearText` before
+`type`. Use `hideKeyboard` for the actual IME. The optional `systemUi` retains the
+same ownership and permits only the enrolled system-dialog namespaces; normal `ui`
+remains scoped to the Mentra App.
+Reuse observations, not assumptions. Android can repeat a radio label on its
+parent and text child; count actual checkable controls. A tall option group can
+span viewports: accumulate all known checked/unchecked states under the same
+foreground group, reject contradictions and scroll toward an unobserved option.
+Validate visible preconditions again in the driver's final input-planning snapshot.
+After one acknowledged tap, observe its resulting state; don't repeat input because
+a receipt write or screenshot failed. Retain an answered-input flag before later
+assertions so a settled held retry continues observation rather than toggling again.
 
-For scripted iteration, run focused checks for the changed flow/helper and the
-relevant typecheck, and use the supported development entry in the selected
-private revision. For AI discovery, use the available authorized computer-use
-surface; a replay entry is not a prerequisite. Preserve the exact harness
-snapshot, selected app artifacts, steps, assertions, recording and cleanup
-outcome with the result. Inspect playback and the failure evidence, not just
-the process exit code.
+Keep a failing native command's bounded original error/cause in diagnostics before
+iterating. Compare its failed expectation with the original AX/XML and recording:
+an observed offer with a different label is a selector mismatch, not proof the
+offer needs more time. Correct the saved observation in the held state first.
+If original diagnostics would be disposed when an authoring reservation
+returns, preserve their bounded safe failure summary in the existing operation
+receipt first. Distinguish an empty successful trace from a malformed/failed read;
+do not repeat setup merely to guess the missing cause. Compare a failed HTTP probe
+with the app's actual request contract before calling it a server outage. A missing positive log reply is an observation gap, not proof the product
+action failed. Use the assigned phone's current-process trace for BLE replies when
+camera logs flood the glasses' short tail. Reconcile the original request instead
+of resending it. For cleanup-only corrections, select the reviewed provider source
+through the public repair API while retaining the original resource/fixture inputs;
+a new checkout alone does not change the implementation used by repair.
+When a framework callback times out, retain its original operation/call identity,
+deadline and bounded queue/start/finish/send facts through existing diagnostics.
+A successful earlier snapshot does not prove callback settlement. Fill a diagnostic
+gap before another expensive reproduction; exclude callback inputs and credentials.
+For an apparent hosted recording fault, compare the same run's exact asset hash
+and decoded frame at the saved timestamp with its screenshot before changing
+native capture. The coordinator owns browser playback/seek diagnosis.
 
-Label section runs **development evidence**, recording their starting state,
-executed steps and ending state. Do not combine successful sections into a full
-pass. Once the flow works, perform one clean recorded end-to-end qualification
-against the exact source and build. Normal CI and nightly runs retain their full
-setup, assertions, teardown and verified return state.
+For audio coverage, read the harness `framework/audio/witness.md` and current
+browser service reference before adding helpers. The optional native witness uses
+the existing audio grant: await actual capture readiness before the stimulus and
+evaluate completed pinned PCM. Keep challenge words/assertions in the routine;
+shared providers own exact device routes, children and guarded mute restoration.
+Browser device options require actual selected state, and RTP counters alone do
+not prove heard speech. Preserve sequential speech/mute-control coverage without
+claiming simultaneous duplex. Missing configured endpoints/tools are a precise
+prerequisite to coordinate, not reason to revive an old reservation or runner.
 
-Check the selected revision's actual commands. At private `e20dbb9` they are
-the [`develop.ts` usage](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/e20dbb96b93696d681e7e06f5ddb90b580e86bfd/worker/develop.ts#L60-L90)
-and the [development entry guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/e20dbb96b93696d681e7e06f5ddb90b580e86bfd/docs/DEVELOPMENT-ENTRY.md#development-segments);
-copy invocations from there, not from memory.
+Flag actual bugs and impossible/human-only requirements with the exact failed step.
+Routine code does not repair the harness. Finish runs the original teardown; then
+give back with `{reservationId, generation, requestId}` for ordinary boundary cleanup.
 
-- **Full `run`/`recover` (Mac unpaired only).** `run`, from private
-  [PR #105](https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/105),
-  wraps the frozen flow in install, account setup and Home cleanup. `recover`
-  reconciles that original execution; it is not a failed-step retry.
-- **`segment` (`mac-unpaired-ui` and `android-no-glasses` only).** It runs one
-  authored `--section`, or a stable `--from`/`--through` step range, once with
-  `--mode execute` (sends actions) or `--mode observe` (no input; recheck a
-  corrected assertion after an answered action). The snapshot and flow export
-  are hash-pinned. A first segment names a platform-specific settled `--origin`;
-  each later one names the previous immutable result with `--parent`.
-  Before any input it requires the pinned previous owner settled (writer and
-  recorder included), the actual pinned app and driver/tools, and fresh entry
-  assertions. It never installs, signs in or runs setup: if the app moved or
-  needs setup it is refused, so use full `run` or the existing setup instead.
-  Each segment has its own recording and result; a failed result is kept and
-  never rewritten by a later success.
-- `inspect-segment` verifies a result receipt without device access.
-  `recover-segment` reconciles the same original owner and never resends
-  unknown input or recorder work. `end` closes the session with the declared
-  return cleanup.
+## Shared lifecycle and modified miniapps
 
-Segments are local UI development evidence, not Day1 firmware or Call
-continuation. Merged source does not mean a host's runtime is ready or
-authorized to run them, and the private guide records only offline tests; no
-live segment or full routine pass is implied. Missing scripted replay, segment
-or observer support does not itself stop authorized AI computer-use discovery
-on available resources. State the automation gap, continue the real flow and
-retain video, screenshots and action notes; leave assertions unverified when
-their required evidence is unavailable. Do not invent flags or present a
-full-lifecycle rerun as continuation.
+Shared providers install the selected Mentra App, establish requested account/entry,
+prepare applicable glasses/fixtures, record, settle resources and uninstall the owned
+app. Routine setup/teardown own only product-specific effects. Inspect the current miniapp's persistence before porting old teardown: app-local
+SimpleStorage is removed with shared app data, while backend fixtures need their
+own exact owned-ID cleanup. Uninstall does not delete cloud data. Cleanup must
+not wait for a product effect that failed to be created.
+Use the supplied account context (`account` on Mac, `credentials()` on Android)
+and optional `audio` or `fixtures` when the installed platform supports them.
+Routine fixture content stays in `routines/<id>/`; reusable
+capture/connection/audio and platform delivery belong to shared providers. Do not
+copy another lane's serial, account, audio route or firmware setup into the routine.
+To try a modified miniapp, build/pack it in its source repo, then from MentraOS run
+`bun scripts/load-authoring-miniapp.mjs <packed.zip> --mac` (set `MENTRA_MAC_APP`)
+or `--android <phone-serial>`. The installed app needs existing Super Mode and miniapp
+permissions. Keep the temporary server until loading completes, verify the changed
+saved step, then stop it. See the [miniapp CLI guide](../../../sdk/miniapp-cli/README.md#try-a-packed-miniapp-during-routine-authoring).
 
-Separate worktrees allow parallel authoring; execution still uses shared resource
-ownership. Independent Mac and Android fixtures can run together. Routines using
-the same app, glasses, account or network/audio configuration must coordinate.
-Use the existing ownership/admission and cleanup rules for the resource; do not
-clear another run's lock, change global enrollment or invoke a legacy runner to
-bypass an unavailable development entry. If a resource is owned or an operation
-remains in flight, wait for its normal handoff or reconciliation; continue
-independent discovery on available resources or source work while that dependency
-is resolved.
+## Replay and publish
 
-Local development proves the tested snapshot. It is not a CI qualification of a
-different revision or platform.
+After the full saved flow works, commit/enroll its exact source and replay the **same
+actions** through normal setup/test/teardown:
 
-## 5. Register, review and qualify
+```sh
+bun run mentra-test source enroll @source-enrollment.json
+bun run mentra-test run submit @run-request.json
+bun run mentra-test run dispatch-once '{"id":"ACCEPTED_LOCAL_REQUEST_ID"}'
+bun run mentra-test run inspect '{"id":"ACCEPTED_LOCAL_REQUEST_ID"}'
+```
 
-1. Open the private routine PR with the brief, focused validation and recorded
-   development result. Run the [Codex PR review skill](../codex-pr-review/SKILL.md)
-   for PRs created or updated and address its findings.
-2. Trace the closest routine through the private worker's supported IDs/dispatch
-   and MentraOS request/Admin selection. Add the new ID wherever required. In
-   [device-routines.mjs](../../../.github/scripts/device-routines.mjs), provide
-   coverage, platform, prerequisites, exclusions and links pinned to the reviewed
-   private implementation. Coordinate the private worker rollout before public
-   requests can reach the new ID; a label alone cannot make it executable.
-3. Ensure the exact `routine:<id>` label exists in MentraOS. Catalog registration
-   does not create it. Check with `gh label list --repo Mentra-Community/MentraOS
-   --search 'routine:gallery'`; inspect the exact name. Only if absent, create it:
-
-   ```bash
-   gh label create routine:gallery --repo Mentra-Community/MentraOS \
-     --color 0E8A16 --description 'Request the registered gallery routine'
-   ```
-
-   Substitute the actual registered ID. Preserve existing labels and their
-   settings; do not use `--force` to overwrite them.
-4. Once registered and admitted by the worker, request the routine against an
-   exact existing build. Use [select-pr-routines](../select-pr-routines/SKILL.md)
-   to append its label to a relevant PR, or use Admin for a selected PR/dev/staging
-   artifact. For example, after `gallery` is registered:
-
-   ```bash
-   gh pr edit PR --repo Mentra-Community/MentraOS --add-label routine:gallery
-   ```
-
-5. Check the resulting run: tested build and harness revision, assertions,
-   recordings, duration, failure/incident details and verified return state.
-   Report pending or failed qualification explicitly. Registration does not
-   automatically opt the routine into dev/staging defaults or nightly schedules;
-   change those only when included in the task and after qualification.
-
-Finish with the routine ID/label, covered behavior, implementation PRs and exact
-qualification result or remaining gap. Public PRs should link approved result
-pages; keep credentials, private logs and raw recordings out of their bodies.
+Use `enrollRoutine`/platform enrollment and `localAdmissionId` helpers for source
+provenance and local admission. Activate a changed shared framework/native revision
+only after affected held sessions and runs have finished; do not replace their pinned
+source under active owners. Ordinary replay stops at its first failed product
+step, preserves remaining steps as `not-run` and still tears down; other runs stay
+independent. Preserve the original error if cleanup/publication also fails.
+Completion needs passing assertions, teardown, acknowledged evidence and working
+recording/step seeking. A composite fixture must preserve evidence errors returned
+by its shared providers even when their physical cleanup succeeded. Bound the
+whole recorded observation to its declared timeout; polling must not consume a
+bounded event journal by writing a marker on every read. Do lengthy external fixture
+preparation before entering the browser observation deadline, retaining its declared
+app/resource operation budget. A preparation refusal before input can use the
+existing original-owner settlement API only when it proves zero dispatch and
+unchanged idle state; unknown or answered inputs remain retained.
+Settle active media before changing its route. After media is settled, attempt
+independent cleanup of browser evidence, clipboard, receiver and network resources
+even if one fails; preserve the first error and subsequent failures. The coordinator
+owns deployed Admin/playback verification.
+Report exact source/build/platform, result URL, recording and timings. Do not add
+repeated qualification runs without changed code or unresolved failures.
+`run retry-publication` retries delivery without hardware replay. Dispose owned local
+payloads after acknowledgement; preserve shared tools and native Codex/Claude history.
+Keep frozen execution evidence immutable; late boundary/repair observations use
+their own existing operation diagnostics. Check new exports against the installed
+publisher's asset-count and envelope-size bounds before freezing. A rejected old
+export stays unchanged for normal delivery retry after its owning contract is fixed;
+do not filter attachments or fabricate acknowledgements to obtain a pass.
+Use focused checks and [codex-pr-review](../codex-pr-review/SKILL.md) for the PR;
+[select-pr-routines](../select-pr-routines/SKILL.md) selects relevant coverage labels.

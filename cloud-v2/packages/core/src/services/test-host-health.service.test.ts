@@ -27,6 +27,35 @@ class MemoryHealth implements TestHostHealthRepository {
     .sort((a, b) => +b.sampledAt - +a.sampledAt || b.sampleId.localeCompare(a.sampleId)).slice(0, limit).map(row => row.payload); }
 }
 describe("passive host health", () => {
+  test("memory shares immutable samples, latest ordering and disk history without backfilling old observations", async () => {
+    const repo = new MemoryHealth(); let now = start;
+    const service = new TestHostHealthService(repo, () => new Date(now)), old = sample();
+    await service.ingest(old); now += 60_000;
+    const memory = { totalBytes: 8 * 1024 ** 3, usedBytes: 5 * 1024 ** 3, compressedBytes: 1024 ** 3,
+      swapUsedBytes: 4 * 1024 ** 3, pressureFreePercent: 61, pressure: "normal" as const };
+    const current = sample(now, { memory }); await service.ingest(current);
+    const first = (await service.list()).hosts[0]; expect(first.memory).toEqual(memory);
+    now += 60_000; await service.ingest(structuredClone(current));
+    await service.ingest(sample(start - 60_000, { memory: { ...memory, pressure: "critical" } }));
+    expect((await service.list()).hosts[0]).toEqual(first);
+    await expect(service.ingest({ ...current, memory: { ...memory, swapUsedBytes: 0 } })).rejects.toMatchObject({ status: 409 });
+    const history = await service.history("mini-1", "1");
+    expect(history.points.at(-1)).toMatchObject({ sampleId: current.sampleId, freeBytes: current.freeBytes, memory });
+    expect(history.points.find(point => point.sampleId === old.sampleId)).not.toHaveProperty("memory");
+    now += 60_000; await service.ingest(sample(now, { memory: null, freeBytes: null }));
+    expect((await service.list()).hosts[0].memory).toBeNull();
+    expect((await service.history("mini-1", "1")).points.at(-1)).toMatchObject({ memory: null, freeBytes: null });
+  });
+  test("memory reports admit independent partial readings and reject impossible/private metrics", () => {
+    const memory = { totalBytes: 8 * 1024 ** 3, usedBytes: null, compressedBytes: null, swapUsedBytes: 12 * 1024 ** 3,
+      pressureFreePercent: null, pressure: null };
+    expect(testHostSampleSchema.safeParse(sample(start, { memory })).success).toBe(true);
+    for (const change of [{ totalBytes: 0 }, { usedBytes: -1 }, { compressedBytes: Number.MAX_SAFE_INTEGER + 1 },
+      { usedBytes: 9 * 1024 ** 3 }, { compressedBytes: 9 * 1024 ** 3 }, { pressureFreePercent: 101 },
+      { pressureFreePercent: Number.NaN }, { pressure: "low-free-pages" }, { raw: "private vm output" }])
+      expect(testHostSampleSchema.safeParse(sample(start, { memory: { ...memory, ...change } as any })).success).toBe(false);
+    expect(testHostSampleSchema.safeParse(sample(start, { memory: { ...memory, usedBytes: 7 * 1024 ** 3, pressure: "normal", pressureFreePercent: 61 } })).success).toBe(true);
+  });
   test("real sample identity is immutable and replay/delayed delivery cannot refresh the last observation", async () => {
     const repo = new MemoryHealth(); let now = start;
     const service = new TestHostHealthService(repo, () => new Date(now)), original = sample();
@@ -112,17 +141,25 @@ describe("host health authorization", () => {
     expect(repo.rows.size).toBe(0);
     const bad = await send({ ...sample(), error: "private host path" }, token);
     expect(bad.status).toBe(400); expect(await bad.text()).not.toContain("private host path");
-    const input = sample(); expect((await send(input, token)).status).toBe(201); expect((await send(input, token)).status).toBe(200);
+    const input = sample(start, { memory: { totalBytes: 8 * 1024 ** 3, usedBytes: null, compressedBytes: null,
+      swapUsedBytes: null, pressureFreePercent: 61, pressure: "normal" } });
+    expect((await send(input, token)).status).toBe(201); expect((await send(input, token)).status).toBe(200);
+    expect((await new TestHostHealthService(repo, () => new Date(start)).list()).hosts[0].memory).toEqual(input.memory);
     expect((await send({ padding: "x".repeat(33 * 1024) }, token)).status).toBe(413);
   });
   test("both Admin reads remain behind the real admin session gate; ingestion auth does not grant browsing", async () => {
     const repo = new MemoryHealth(), service = new TestHostHealthService(repo, () => new Date(start));
-    await service.ingest(sample());
+    const input = sample(start, { memory: { totalBytes: 8 * 1024 ** 3, usedBytes: 5 * 1024 ** 3, compressedBytes: 1024 ** 3,
+      swapUsedBytes: 0, pressureFreePercent: 61, pressure: "normal" } });
+    await service.ingest(input);
     const app = new Hono<AppEnv>(); app.use("*", principalAuth);
-    app.route("/", createTestRunAdminApi(undefined, undefined, undefined, undefined, service));
+    app.route("/", createTestRunAdminApi(service));
     for (const path of ["/health", "/health/mini-1?days=7"]) expect((await app.request(path, { headers: { authorization: "Bearer " + token } })).status).toBe(401);
-    const read = createTestRunAdminApi(undefined, undefined, undefined, undefined, service);
+    const read = createTestRunAdminApi(service);
     expect((await read.request("/health")).headers.get("cache-control")).toBe("no-store");
-    expect((await read.request("/health/mini-1?days=1")).status).toBe(200);
+    const list = await (await read.request("/health")).json() as any;
+    const history = await (await read.request("/health/mini-1?days=1")).json() as any;
+    expect(list.hosts[0].memory).toEqual(input.memory); expect(history.points[0].memory).toEqual(input.memory);
+    expect(history.points[0].freeBytes).toBe(input.freeBytes);
   });
 });

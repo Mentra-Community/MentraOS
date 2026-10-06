@@ -6,6 +6,8 @@ import {
   isReadyGlassesConnectionStatus,
 } from "@mentra/bluetooth-sdk/types"
 
+import {isEnabledHotspotStatus} from "../../modules/bluetooth-sdk/src/BluetoothSdk.types"
+
 type Listener = (payload: any) => void
 
 const listeners = new Map<string, Set<Listener>>()
@@ -56,6 +58,7 @@ export const bluetoothSdkMock = {
   isConnectedGlassesConnectionStatus,
   isReadyGlassesConnectionStatus,
   isBusyGlassesConnectionStatus,
+  isEnabledHotspotStatus,
   requestBluetoothPermissions: jest.fn(() => Promise.resolve(true)),
   getBluetoothStatus: jest.fn(() =>
     Promise.resolve({
@@ -128,6 +131,7 @@ export const bluetoothSdkMock = {
   connectSimulated: jest.fn(() => Promise.resolve()),
   disconnect: jest.fn(() => Promise.resolve()),
   forget: jest.fn(() => Promise.resolve()),
+  unpair: jest.fn(() => Promise.resolve()),
   forgetController: jest.fn(() => Promise.resolve()),
   showDashboard: jest.fn(() => Promise.resolve()),
   ping: jest.fn(() => Promise.resolve()),

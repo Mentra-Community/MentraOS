@@ -139,7 +139,11 @@ class AcsMeetingSession(
   private val muted = AtomicBoolean(false)
   private val frameSender = AcsFrameSender(stats, avSync)
   private val outgoingHold = OutgoingVideoHold(
-    send = { planes -> frameSender.sendPlanes(planes) },
+    // The self-preview mirrors what Teams receives, so it shows the card and the still too.
+    send = { planes ->
+      DecodedFrameTap.offer(planes)
+      frameSender.sendPlanes(planes)
+    },
     // The negotiated size, not the profile ceiling: ACS renegotiates below the ceiling under load,
     // and sendPlanes drops any hold frame whose dimensions differ from the negotiated format.
     width = { frameSender.negotiatedSize()?.width ?: profile.width },

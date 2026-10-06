@@ -18,6 +18,7 @@ const methods = [
   "clearActionState",
   "finalizeActionCall",
   "doPingRound",
+  "hasLiveSoftapAttempt",
 ]
   .map((name) => {
     const start = source.search(new RegExp(`^  (?:private|public) (?:async )?${name}\\(`, "m"))

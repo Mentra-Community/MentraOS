@@ -68,7 +68,8 @@ database configuration; keep any local Mongo binding on loopback only.
 
 ## API and exact selection
 
-All routes are behind `/api/admin` and the existing admin authentication gate:
+All routes are behind `/api/admin` and its organization testing capabilities
+(`organization.testing.read` to look, `organization.testing.manage` to submit):
 
 - `GET /test-routines`: supported routine descriptions.
 - `GET /test-builds?channel=pr&pr=4148`: the current PR's recent build runs.

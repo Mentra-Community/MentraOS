@@ -25,7 +25,7 @@ function me(capabilities: OrganizationCapability[], workspaces: AdminMe["workspa
 describe("which admin pages a principal sees", () => {
   test("each page follows its own capability", () => {
     expect(visiblePages(me(["organization.incidents.read"]))).toEqual(["incidents"]);
-    expect(visiblePages(me(["organization.testing.read"]))).toEqual(["test-runs", "fix-flows", "system-health"]);
+    expect(visiblePages(me(["organization.testing.read"]))).toEqual(["test-runs", "routine-catalog", "system-health"]);
     expect(visiblePages(me(["organization.credentials.manage"]))).toEqual(["operator-keys"]);
     expect(visiblePages(me(["organization.workspaces.administer"]))).toEqual(["workspaces"]);
   });
@@ -55,7 +55,7 @@ describe("which admin pages a principal sees", () => {
           "organization.testing.manage",
         ]),
       ),
-    ).toEqual(["incidents", "test-runs", "fix-flows", "system-health", "workspaces", "operator-keys"]);
+    ).toEqual(["incidents", "test-runs", "routine-catalog", "system-health", "workspaces", "operator-keys"]);
   });
 
   test("an invitation link opens Workspaces for someone who is not in a workspace yet", () => {

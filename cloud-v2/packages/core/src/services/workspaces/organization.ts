@@ -60,11 +60,14 @@ export function configuredAdminAllowlist(): OrganizationAdminAllowlist {
 }
 
 /**
- * Whether `email` is on the configured allowlist: an exact address, or exactly
- * one of the listed domains (no subdomains). This is the bare list match and
- * does not know whether the address was verified, so use it only for display
- * and classification. Authorization goes through {@link isOrganizationAdminEmail}.
- * Pass `allowlist` to match many addresses against one read of the config.
+ * Whether `email` is on the configured allowlist: an exact address, a plus-tagged
+ * alias of a listed address (`name+tag@domain` for `name@domain`), or exactly one
+ * of the listed domains (no subdomains). Only the submitted address loses its tag:
+ * a listed tagged address does not admit its base mailbox or sibling tags. This is
+ * the bare list match and does not know whether the address was verified, so use
+ * it only for display and classification. Authorization goes through
+ * {@link isOrganizationAdminEmail}. Pass `allowlist` to match many addresses
+ * against one read of the config.
  */
 export function isConfiguredOrganizationAdminEmail(
   email: string | null | undefined,
@@ -72,9 +75,11 @@ export function isConfiguredOrganizationAdminEmail(
 ): boolean {
   const normalized = email?.trim().toLowerCase()
   if (!normalized) return false
-  return (
-    allowlist.emails.includes(normalized) || allowlist.domains.some(domain => normalized.endsWith(`@${domain}`))
-  )
+  const [local, domain, ...extra] = normalized.split("@")
+  if (!local || !domain || extra.length > 0 || /\s/.test(normalized)) return false
+  const plus = local.indexOf("+")
+  const base = plus > 0 && plus < local.length - 1 ? `${local.slice(0, plus)}@${domain}` : normalized
+  return allowlist.emails.includes(normalized) || allowlist.emails.includes(base) || allowlist.domains.includes(domain)
 }
 
 /**

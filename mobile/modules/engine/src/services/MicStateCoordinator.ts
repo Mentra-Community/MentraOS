@@ -224,7 +224,8 @@ class MicStateCoordinator {
   /**
    * Apply a miniapp-owned gate override without changing the OS preference.
    * Overrides are lifecycle-scoped and last-live-owner-wins independently for
-   * VAD and Barrier.
+   * VAD and Barrier. The user's VAD-off preference and raw PCM requirements
+   * always take precedence over a miniapp's VAD-enable request.
    */
   public async setMiniappGateOverride(
     packageName: string,
@@ -272,8 +273,8 @@ class MicStateCoordinator {
   /**
    * Preserve the runtime microphone contract when the persisted device
    * settings are replayed (for example after a glasses reconnect). Active
-   * miniapp gate overrides replace the OS values, and raw PCM keeps VAD off
-   * until the last raw-audio consumer unsubscribes.
+   * miniapp gate overrides replace the OS values unless the user disallows
+   * VAD. Raw PCM also keeps VAD off until the last raw-audio consumer unsubscribes.
    */
   public applyRuntimeOverrides(settings: Record<string, unknown>): Record<string, unknown> {
     this.rememberConfiguredGates({
@@ -309,7 +310,7 @@ class MicStateCoordinator {
     const vadOverride = this.latestOverride(this.miniappVadOverrides)
     const loudnessOverride = this.latestOverride(this.miniappLoudnessGateOverrides)
 
-    if (this.wantsRawPcm) {
+    if (this.configuredVad === false || this.wantsRawPcm) {
       runtimeSettings.voice_activity_detection_enabled = false
     } else if (vadOverride) {
       runtimeSettings.voice_activity_detection_enabled = vadOverride.enabled
@@ -385,9 +386,9 @@ class MicStateCoordinator {
     const vadOverride = this.latestOverride(this.miniappVadOverrides)
     const loudnessOverride = this.latestOverride(this.miniappLoudnessGateOverrides)
 
-    // Hardware VAD suppresses silence. Raw-audio consumers need a continuous
-    // timeline, so their requirement wins over both OS and miniapp VAD values.
-    if (this.wantsRawPcm) patch.voice_activity_detection_enabled = false
+    // The user's off setting vetoes every miniapp VAD-enable request. When
+    // allowed, raw-audio consumers still need a continuous timeline and win.
+    if (this.configuredVad === false || this.wantsRawPcm) patch.voice_activity_detection_enabled = false
     else if (vadOverride) patch.voice_activity_detection_enabled = vadOverride.enabled
     else if (this.configuredVad !== undefined) patch.voice_activity_detection_enabled = this.configuredVad
 

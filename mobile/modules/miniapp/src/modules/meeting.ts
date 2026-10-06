@@ -583,17 +583,6 @@ export class MeetingModule {
   }
 
   /**
-   * End the meeting for everyone, then leave.
-   *
-   * Different from [leave] in what happens to the other participants: leaving takes this device out
-   * of a meeting that carries on, ending terminates the group call. Only a presenter may do it, so
-   * check `state.capabilities?.hangUpForEveryone.allowed` before offering it.
-   *
-   * A rejection means the meeting may still be live — it never means the wearer is still in the
-   * call. The host always completes local teardown, so the honest thing to tell the user is "you
-   * left, but the meeting may still be active".
-   */
-  /**
    * Stop the glasses camera publisher without leaving the meeting.
    * On Direct link this stops only `start_stream`. Cloudflare callers pause their own stream.
    */
@@ -659,7 +648,7 @@ export class MeetingModule {
 
   /**
    * Share one full-size glasses photo on the outgoing video of a Direct link call, without
-   * stopping the glasses camera stream. The host shows the "Taking a photo" card, has the glasses
+   * stopping the glasses camera stream. The host shows the "Taking a photo..." card, has the glasses
    * shoot and upload straight to the phone, holds the still for `durationMs`, then returns to live
    * video. Do not combine with [pauseVideoPublisher] or [showCard]/[showImage]; this replaces them.
    *
@@ -692,6 +681,17 @@ export class MeetingModule {
     }
   }
 
+  /**
+   * End the meeting for everyone, then leave.
+   *
+   * Different from [leave] in what happens to the other participants: leaving takes this device out
+   * of a meeting that carries on, ending terminates the group call. Only a presenter may do it, so
+   * check `state.capabilities?.hangUpForEveryone.allowed` before offering it.
+   *
+   * A rejection means the meeting may still be live — it never means the wearer is still in the
+   * call. The host always completes local teardown, so the honest thing to tell the user is "you
+   * left, but the meeting may still be active".
+   */
   async end(): Promise<void> {
     try {
       await this.session.sendRequest<void>({type: MiniappRequestType.MEETING_END}, {timeoutMs: 0})

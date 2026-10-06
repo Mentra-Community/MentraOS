@@ -254,25 +254,25 @@ export default function ProfileSettingsPage() {
             <Spacer height={theme.spacing.s6} />
 
             <Group title={translate("account:appSettings")}>
+              {activeDeployment.kind === "consumer" &&
+                userData.provider !== "google" &&
+                userData.provider !== "apple" && (
+                  <RouteButton label={translate("profileSettings:changePassword")} onPress={handleChangePassword} />
+                )}
+              {activeDeployment.kind === "consumer" &&
+                userData.provider !== "google" &&
+                userData.provider !== "apple" && (
+                  <RouteButton label={translate("profileSettings:changeEmail")} onPress={handleChangeEmail} />
+                )}
               {activeDeployment.kind === "consumer" && (
-                <>
-                  {/* Show password/email options only for email/password users (not OAuth) */}
-                  {userData.provider !== "google" && userData.provider !== "apple" && (
-                    <RouteButton label={translate("profileSettings:changePassword")} onPress={handleChangePassword} />
-                  )}
-                  {userData.provider !== "google" && userData.provider !== "apple" && (
-                    <RouteButton label={translate("profileSettings:changeEmail")} onPress={handleChangeEmail} />
-                  )}
-                  <RouteButton
-                    label={translate("profileSettings:requestDataExport")}
-                    onPress={handleRequestDataExport}
-                  />
-                  <RouteButton
-                    label={translate("profileSettings:deleteAccount")}
-                    onPress={handleDeleteAccount}
-                    preset="destructive"
-                  />
-                </>
+                <RouteButton label={translate("profileSettings:requestDataExport")} onPress={handleRequestDataExport} />
+              )}
+              {activeDeployment.kind === "consumer" && (
+                <RouteButton
+                  label={translate("profileSettings:deleteAccount")}
+                  onPress={handleDeleteAccount}
+                  preset="destructive"
+                />
               )}
               <RouteButton label={translate("common:logOut")} onPress={confirmSignOut} preset="destructive" />
             </Group>
@@ -285,17 +285,19 @@ export default function ProfileSettingsPage() {
           </>
         )}
 
-        <Spacer height={theme.spacing.s6} />
-
-        <Group title={translate("organization:organizationLabel")}>
-          <RouteButton label={translate("profileSettings:organizationName")} text={organizationName} />
-          {activeDeployment.kind === "organization" && (
-            <RouteButton
-              label={translate("profileSettings:organizationUrl")}
-              text={activeDeployment.organizationOrigin}
-            />
-          )}
-        </Group>
+        {activeDeployment.kind === "organization" && (
+          <>
+            <Spacer height={theme.spacing.s6} />
+            <Group title={translate("organization:organizationLabel")}>
+              <RouteButton label={translate("profileSettings:organizationName")} text={organizationName} />
+              <RouteButton
+                label={translate("profileSettings:organizationUrl")}
+                text={activeDeployment.organizationOrigin}
+              />
+            </Group>
+          </>
+        )}
+        <Spacer height={theme.spacing.s16} />
       </ScrollView>
 
       {/* Loading overlay for sign out */}

@@ -1,7 +1,9 @@
 # Request an incident report from an automated test
 
-The Mentra App exposes a report trigger in **every Android and iOS build**, including
+The Mentra App exposes a shared report deep link in **every Android and iOS build**, including
 iOS apps running on macOS. Use the existing signed-in app after a failure. The
+script entry point requires the existing **Super Mode** setting. In normal mode it
+returns a failed receipt without uploading; normal user feedback is unaffected. The
 normal incident pipeline creates the report in the selected deployment, uploads
 recent phone console logs (including the Bluetooth SDK's forwarded native log
 events), and requests logs from connected glasses. This is the app's recent
@@ -9,7 +11,7 @@ in-memory log buffer, not a complete Android logcat or iOS system-log capture.
 
 | Platform | Trigger | Receipt |
 | --- | --- | --- |
-| Android | `com.mentra.SUBMIT_INCIDENT_REPORT` broadcast | `INCIDENT_REPORT_RESULT` in logcat |
+| Android | `com.mentra://test/submit-incident-report?...` | `INCIDENT_REPORT_RESULT` in logcat |
 | iPhone / iOS on Mac | `com.mentra://test/submit-incident-report?...` | JSON in the incident modal |
 
 These commands request real reports using the app's current account. No credentials
@@ -18,7 +20,7 @@ normal teardown even when reporting is unavailable or times out. Do not restart
 the app to file a failure report: doing so loses the state under investigation.
 
 The trigger is intentionally available to any local Android app, or any app/site
-that opens the iOS URL, while Mentra is signed in. Reports upload only to the
+that opens the iOS URL, while Mentra is signed in with Super Mode enabled. Reports upload only to the
 currently configured Mentra backend; callers cannot choose another upload
 destination or read logs back through the trigger.
 
@@ -83,63 +85,18 @@ retry. This does not claim durable idempotency across app restarts.
 
 ## Android
 
-`com.mentra.SUBMIT_INCIDENT_REPORT` is available in **all Android builds**.
-Keep the Mentra App running and signed in. The request uses its normal report
-pipeline: authenticated submission, phone logs, diagnostic context, and a request
-for logs from connected glasses. It does not start a stopped app's report engine.
-
-Submission starts as soon as the broadcast is received, but only while the app's
-report service is running. That service starts after the app's signed-in engine
-starts, so a process that Android started for other work, or that has crashed and
-restarted, can exist without it. If the service is not running, the app does not
-queue the request. The broadcast immediately logs a correlated `failed` receipt with
-`error` starting `Incident report service is not running`. Nothing is uploaded or
-retried later. After the app is reopened and signed in, send a new request if one
-is still needed.
+Use the shared sender, which preserves the complete URL through the device shell:
 
 ```bash
-adb -s PHONE_SERIAL shell am broadcast \
-  -a com.mentra.SUBMIT_INCIDENT_REPORT \
-  -n com.mentra.mentra/com.mentra.crust.receivers.SubmitIncidentReportReceiver \
-  --es alert_id request-unique-id \
-  --es test_run_id routine-run-id \
-  --es source mentra_automated_testing \
-  --es failure_code update_failed \
-  --es failure_message 'Update did not finish' \
-  --es expected_behavior 'Versions match the selected OTA manifest' \
-  --es scenario_name day1-ota
+bun scripts/submit-test-incident.mjs --android PHONE_SERIAL \
+  alert_id=authoring-1 failure_code=search_failed \
+  'failure_message=Search did not filter the notes'
 ```
 
-| Extra | Purpose |
-| --- | --- |
-| `alert_id` | Unique request ID, echoed in the result; use it to correlate one submission. |
-| `test_run_id` | Owning test run; also the correlation fallback when `alert_id` is absent. |
-| `source` | Calling tool or workflow; defaults to `external_trigger`. |
-| `failure_code`, `failure_message` | Short failure identifier and explanation. |
-| `scenario_name` | Routine or workflow name. |
-| `expected_behavior` | Expected outcome. |
-| `dashboard_url` | Evidence/dashboard link used in default expected-outcome text. |
+The modal exposes the same three test IDs on both platforms. Android also logs
+`INCIDENT_REPORT_RESULT` JSON. Match both request IDs, dismiss the matching modal
+in a finally block, and continue normal teardown. A filed receipt confirms report
+creation; individual phone and glasses log attachments remain best effort.
 
-All extras are optional. Additional primitive extras are preserved as report
-metadata; Android's action and reception timestamp cannot be overridden. The old
-`com.mentra.CAPTIONS_TESTER_INCIDENT` action/component is replaced by this API.
-
-Read the result from `adb -s PHONE_SERIAL logcat -T 1 ReactNativeJS:I '*:S'`.
-Start observation before sending the request and match `alert_id` and
-`test_run_id`:
-
-```text
-INCIDENT_REPORT_RESULT {"alert_id":"request-unique-id","test_run_id":"routine-run-id","failure_code":"update_failed","scenario_name":"day1-ota","status":"filed","report_id":"rep_...","incident_id":"rep_..."}
-```
-
-`status` is `filed`, `skipped` with `reason`, or `failed` with `error`.
-Only `filed` has a `report_id`. `report_id` and `incident_id` are the same value. `filed` confirms the report was
-created; phone and glasses log uploads are best effort, so this receipt alone
-does not prove every artifact was uploaded. Android's “Broadcast completed”
-only acknowledges delivery; it does not prove that a report was submitted.
-The existing automatic-report throttle applies to duplicate request IDs; distinct
-alert IDs use distinct keys. It is in memory and only records completed uploads:
-retransmitting within 90 seconds of a filed request returns `skipped`, while a
-retransmit after an app restart may file again. Each broadcast gets at most one
-receipt. Send once per failure and bound how long the caller waits for a receipt. A missing receipt is an unconfirmed submission and must not
-replace the original test failure or prevent teardown.
+The old incident broadcast action and receiver have been removed. No legacy
+input is accepted.

@@ -28,6 +28,7 @@ on:
       - ".github/actions/inject-signing/**"
       - ".github/scripts/pr-mobile-build*"
       - ".github/scripts/ensure-android-ndk*"
+      - ".github/scripts/install-android-sdk*"
       - ".github/scripts/pr_mobile_config.py"
       - ".github/scripts/prepare-pr-mobile.mjs"
       - ".github/scripts/repackage-pr-apk*"
@@ -71,7 +72,9 @@ env:
 jobs:
   select:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    # Blacksmith like the build itself: a GitHub-hosted gate stalls every ASG
+    # PR build whenever GitHub-hosted runners are unavailable.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     outputs:
       mode: ${{ steps.select.outputs.mode }}
@@ -559,3 +562,4 @@ jobs:
       pull-requests: write
     secrets:
       SLACK_WEBHOOK_PR_BUILDS: ${{ secrets.SLACK_WEBHOOK_PR_BUILDS }}
+      TEST_RUN_INGEST_TOKEN_DEV: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}

@@ -63,7 +63,7 @@ export type NavManeuverEvent = {
 export type NavOffRouteEvent = {kind: "off_route"; offRouteDistanceMeters: number}
 export type NavReroutingEvent = {kind: "rerouting"}
 export type NavArrivedEvent = {kind: "arrived"}
-export type NavErrorEvent = {kind: "error"; message: string}
+export type NavErrorEvent = {kind: "error"; message: string; terminal?: boolean}
 export type NavUpdate = NavManeuverEvent | NavOffRouteEvent | NavReroutingEvent | NavArrivedEvent | NavErrorEvent
 
 export type NavLocation = {

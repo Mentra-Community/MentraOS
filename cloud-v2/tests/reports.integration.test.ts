@@ -604,9 +604,12 @@ describe("report Slack notifications", () => {
     { kind: "bug", email: "customer@example.test", source: "feedback_screen", category: "bug", channel: "main" },
     { kind: "feedback", email: "customer@example.test", source: "feedback_screen", category: "feedback", channel: "main" },
     { kind: "bug", email: "admin@personal.test", source: "feedback_screen", category: "internal", channel: "internal" },
+    { kind: "bug", email: "admin+test@personal.test", source: "feedback_screen", category: "internal", channel: "internal" },
     { kind: "feedback", email: "team@mentra.glass", source: "feedback_screen", category: "internal", channel: "internal" },
     { kind: "automatic", email: "team@mentra.glass", source: "watchdog", category: "automatic", channel: "automatic" },
+    { kind: "automatic", email: "admin+test@personal.test", source: "watchdog", category: "automatic", channel: "automatic" },
     { kind: "automatic", email: "team@mentra.glass", source: "mentra_automated_testing", category: "testing", channel: "testing" },
+    { kind: "automatic", email: "admin+test@personal.test", source: "mentra_automated_testing", category: "testing", channel: "testing" },
     { kind: "bug", email: "customer@example.test", source: "mentra_automated_testing", category: "testing", channel: "testing" },
   ] as const) {
     test(`routes submitted ${scenario.kind} / ${scenario.email} / ${scenario.source} to the same category as the dashboard`, async () => {
@@ -637,7 +640,7 @@ describe("report Slack notifications", () => {
       expect(slackCalls[0]!.payload.channel).toBe(`C_${scenario.channel.toUpperCase()}`);
       // Exercise the database filters and the notifier against the same trusted directory.
       for (const kind of ["bug", "feedback", "internal", "automatic", "testing"] as const) {
-        const ids = (await listReports({ kind })).map(report => report.reportId);
+        const ids = (await listReports({ category: kind })).map(report => report.reportId);
         expect(ids.includes(reportId)).toBe(kind === scenario.category);
       }
     });
