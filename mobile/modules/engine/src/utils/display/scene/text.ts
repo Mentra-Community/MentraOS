@@ -1,4 +1,5 @@
 import {TextMeasurer} from "../measurer/TextMeasurer"
+import {normalizeTextWithSource} from "../normalization"
 import type {DisplayProfile} from "../profiles/types"
 import {TextWrapper} from "../wrapper/TextWrapper"
 import type {SceneBox, SceneTextLayout, SceneTextLine, SceneTextStyle} from "./types"
@@ -15,9 +16,10 @@ export function sourceLines(
   profile: DisplayProfile,
 ): SceneTextLine[] {
   const wrapper = new TextWrapper(new TextMeasurer(profile))
+  const normalized = normalizeTextWithSource(text, profile)
   const out: SceneTextLine[] = []
   let paragraphStart = 0
-  for (const paragraph of text.split("\n")) {
+  for (const paragraph of normalized.text.split("\n")) {
     const wrapped = wrapper.wrap(paragraph, {
       maxWidthPx: width,
       maxLines: Infinity,
@@ -47,7 +49,7 @@ export function sourceLines(
           start = cursor
         }
       }
-      paragraphLines.unshift({text: line, start: paragraphStart + start, end: paragraphStart + end})
+      paragraphLines.unshift({text: line, ...normalized.sourceRange(paragraphStart + start, paragraphStart + end)})
     }
     out.push(...paragraphLines)
     paragraphStart += paragraph.length + 1

@@ -33,6 +33,9 @@ export interface DisplayProfile {
   /** BLE chunk size for transmission */
   bleChunkSize: number
 
+  /** Idempotent substitutions per source character (including its marks); preserve newlines. */
+  normalizeText?: (text: string) => string
+
   /** Native whole-frame limits and encoding costs, enforced before render acceptance. */
   sceneBudget?: SceneBudget
 
