@@ -111,9 +111,14 @@ test("actual failures stay red and incomplete routines have their own neutral su
 test("suite rows show compact 12-hour start times and retain the full suite date", () => {
   const startedAt = "2026-10-01T11:01:23Z";
   const html = renderSuite({...suite, members: [{...suite.members[0]!, startedAt}, suite.members[1]!]});
-  expect(html).toContain("<th>Started</th>");
+  expect(html).toContain('<th class="py-3">Started</th><th>Routine</th><th>Lane</th><th>Duration</th><th>Recording &amp; steps</th><th>Status</th>');
   expect(html).toContain(`<time dateTime="${startedAt}">${new Date(startedAt).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})}</time>`);
   expect(html).toContain(`Started ${new Date(suite.startedAt).toLocaleString()}`);
+  const rows = html.match(/<tbody>(.*?)<\/tbody>/)?.[1].match(/<tr[^>]*>(.*?)<\/tr>/g) ?? [];
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toContain('<td class="whitespace-nowrap py-4"><time');
+  expect(rows[0]).toMatch(/<td class="text-green-700">pass<\/td><\/tr>$/);
+  expect(rows[1]).toMatch(/<td class="text-\[#68746d\]">Did not run<\/td><\/tr>$/);
   expect(html.match(/<time /g)).toHaveLength(1);
-  expect(html).toContain('<td class="whitespace-nowrap">—</td>');
+  expect(html).toContain('<td class="whitespace-nowrap py-4">—</td>');
 });
