@@ -30,6 +30,7 @@ try {
     const source = join(anchor, name)
     if (!existsSync(source)) continue
     const root = realpathSync(source), selected = dirname(join(resolve(review), name)), storage = dirname(root)
+    if (!existsSync(selected)) continue
     if (dependencySet(selected) !== dependencySet(storage)) fail(`dependency declarations differ for ${name}`)
     for (const lock of locks) {
       const a = join(selected, lock), b = join(storage, lock)

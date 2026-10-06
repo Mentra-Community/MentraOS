@@ -239,6 +239,17 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(codexCalls(f)).toBe(0)
   })
 
+  test("a head without the optional harness parent remains reviewable with retained anchor dependencies", () => {
+    const f = makeFixture(), shared = join(f.root, "storage/tools/mentra-e2e/node_modules")
+    mkdirSync(shared, {recursive: true});mkdirSync(join(f.repo, "tools/mentra-e2e"), {recursive: true})
+    writeFileSync(join(f.root, "storage/tools/mentra-e2e/package.json"), '{"dependencies":{"external":"1.0.0"}}')
+    symlinkSync(realpathSync(shared), join(f.repo, "tools/mentra-e2e/node_modules"))
+    const result = run(f, [f.repo, "1"])
+    expect(result.code, result.out).toBe(0)
+    expect(existsSync(join(f.worktree, "tools/mentra-e2e"))).toBe(false)
+    expect(codexCalls(f)).toBe(1)
+  }, 90_000)
+
   test("the standalone project runner resolves a relative checkout against its caller", () => {
     const f = makeFixture()
     const project = join(f.root, "Review project with spaces")
