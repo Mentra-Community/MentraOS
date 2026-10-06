@@ -264,3 +264,42 @@ test("asset identities allow bounded safe segments without entity or path gramma
       evidence: [assetId], steps: [{id: "settings", status: "passed", durationMs: 1,
         recordingLocation: {assetId, startOffsetMs: 0, endOffsetMs: 1}}]}}).success).toBe(true);
 });
+
+test('rejected public recording retains original step offsets only with matching finalization diagnostics', () => {
+  const base = run();
+  const error = {phase: 'evidence' as const, actionId: 'finalize-recording', message: 'Public recording duration differs'};
+  const action = {id: 'cleanup:recorder', instruction: 'Stop and finalize the original recording',
+    expected: 'The recorder is settled', scope: 'shared', status: 'failed', durationMs: 10};
+  const steps = Array.from({length: 5}, (_, index) => ({id: `step-${index}`, status: 'passed' as const, durationMs: 1000,
+    recordingLocation: {assetId: 'recording', startOffsetMs: index * 1000}}));
+  const frozen = {...base, result: {...base.result, steps, failures: [error], teardown: {...base.result.teardown,
+    actions: [action], errors: [error], outcomes: [{state: 'cleaned', resourceId: 'recorder', evidence: [], errors: [error]}]}}};
+  const parsed = frameworkRunSchema.parse(frozen);
+  expect(parsed.result.steps).toEqual(steps);
+  expect(parsed.assets).toEqual([]);
+  expect(parsed.recordingAssetId).toBeUndefined();
+  expect(frameworkRunOutcome(parsed)).toBe('pass');
+  expect(frameworkEvidenceComplete(parsed)).toBe(false);
+  for (const invalid of [
+    {...frozen, result: {...frozen.result, failures: []}},
+    {...frozen, result: {...frozen.result, teardown: {...frozen.result.teardown, errors: []}}},
+    {...frozen, result: {...frozen.result, teardown: {...frozen.result.teardown, outcomes: []}}},
+    {...frozen, result: {...frozen.result, teardown: {...frozen.result.teardown, actions: []}}},
+    {...frozen, result: {...frozen.result, teardown: {...frozen.result.teardown, actions: [{...action, status: 'passed'}]}}},
+    {...frozen, result: {...frozen.result, teardown: {...frozen.result.teardown,
+      outcomes: [{state: 'cleaned', resourceId: 'other-recorder', evidence: [], errors: [error]}]}}},
+    {...frozen, result: {...frozen.result, steps: steps.map(step => ({...step,
+      recordingLocation: {...step.recordingLocation, assetId: 'foreign-recording'}}))}},
+    {...frozen, result: {...frozen.result, steps: [{...steps[0], recordingLocation: {assetId: 'recording', startOffsetMs: 10, endOffsetMs: 9}}]}},
+    {...frozen, recordingAssetId: 'recording'},
+    {...frozen, assets: [{id: 'recording', kind: 'diagnostic', path: 'recording.json', size: 10,
+      sha256: 'a'.repeat(64), mimeType: 'application/json'}]},
+  ]) expect(frameworkRunSchema.safeParse(invalid).success).toBe(false);
+  const unrelated = {phase: 'evidence', actionId: 'snapshot', message: 'Snapshot capture failed'};
+  const snapshotFailure = {...frozen, result: {...frozen.result, failures: [unrelated], teardown: {...frozen.result.teardown,
+    errors: [unrelated], outcomes: [{state: 'cleaned', resourceId: 'recorder', evidence: [], errors: [unrelated]}]}}};
+  const rejected = frameworkRunSchema.safeParse(snapshotFailure);
+  expect(rejected.success).toBe(false);
+  if (!rejected.success) expect(rejected.error.issues.map(issue => issue.path)).toEqual(
+    steps.map((_, index) => ['result', 'steps', index, 'recordingLocation']));
+});

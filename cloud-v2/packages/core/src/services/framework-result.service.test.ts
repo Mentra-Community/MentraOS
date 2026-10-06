@@ -499,3 +499,52 @@ test("results cursor validates before querying and handles equal timestamps by r
   for (const cursor of ["invalid", "x".repeat(2001), Buffer.from(JSON.stringify({startedAt: "invalid", runId: "run"})).toString("base64url")])
     expect(() => frameworkResultCursorFilter(cursor)).toThrow("Invalid routine results cursor");
 });
+
+test('failed recording publication preserves immutable step offsets and settled evidence failure on retry', async () => {
+  const {frameworkRunSchema} = await import('../types/framework-run.types');
+  const diagnostic = {phase: 'evidence' as const, actionId: 'finalize-recording', message: 'Public recording could not be finalized'};
+  const frozen: FrameworkRun = {schemaVersion: 1, hostId: 'mini', requestId: 'recording-result', routineId: 'wifi-connect-android',
+    definitionRevision: 'a'.repeat(40), platform: 'android', laneId: 'android',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: '2026-10-06T18:00:00Z', finishedAt: '2026-10-06T18:02:00Z', assets: [],
+    result: {runId: 'recording-result', finishedAt: '2026-10-06T18:02:00Z', setup: {status: 'passed'}, test: 'passed',
+      steps: Array.from({length: 5}, (_, index) => ({id: `step-${index}`, status: 'passed', durationMs: 1000,
+        recordingLocation: {assetId: 'recording', startOffsetMs: index * 1000}})),
+      teardown: {ready: true, actions: [{id: 'cleanup:recorder', instruction: 'Finalize the original recording',
+        expected: 'The recorder is settled', scope: 'shared', status: 'failed', durationMs: 1000}],
+        outcomes: [{state: 'cleaned', resourceId: 'recorder', evidence: [], errors: [diagnostic]}],
+        errors: [diagnostic], unavailableResources: []}, failures: [diagnostic], evidence: [],
+      timing: {startedAt: '2026-10-06T18:00:00Z', setupMs: 1000, testMs: 5000, teardownMs: 1000}}};
+  let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
+  let writes = 0;
+  const repository: FrameworkResultRepository = {
+    async insert(payload, payloadSha256) {
+      if (stored) throw Object.assign(new Error('duplicate'), {code: 11000});
+      writes++;
+      stored = {payload, payloadSha256, uploadsComplete: true};
+    },
+    async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset() {return null;},
+  };
+  const service = new FrameworkResultService(repository, async () => ({hostId: frozen.hostId, input: {
+    routineId: frozen.routineId, definitionRevision: frozen.definitionRevision, platform: frozen.platform,
+    laneId: frozen.laneId, build: frozen.build}}), async () => {},
+    async () => ({definition: {steps: frozen.result.steps.map(step => ({id: step.id}))}} as unknown as RoutineEnrollment),
+    undefined, {async list() {return [];}, async complete() {}});
+  const originalDigest = requestInputDigest(frozen);
+  const first = await service.ingest(frozen, frozen.hostId);
+  expect(first).toMatchObject({payloadSha256: originalDigest, created: true});
+  expect(await service.ingest(frozen, frozen.hostId)).toEqual({...first, created: false});
+  expect(writes).toBe(1);
+  expect(stored!.payload).toEqual(frozen);
+  expect(requestInputDigest(frozen)).toBe(originalDigest);
+  expect((await service.detail(frozen.requestId))).toMatchObject({outcome: 'pass', uploadsComplete: true, evidenceStatus: 'failed'});
+  expect((await service.detail(frozen.requestId)).run.recordingAssetId).toBeUndefined();
+  expect(await service.complete(frozen.requestId, frozen.hostId)).toMatchObject({entityId: frozen.requestId, payloadSha256: originalDigest});
+  const refused = {...frozen, result: {...frozen.result, steps: frozen.result.steps.map(step => ({...step,
+    recordingLocation: {...step.recordingLocation, assetId: 'foreign-recording'}}))}};
+  expect(frameworkRunSchema.safeParse(refused).success).toBe(false);
+  await expect(service.ingest(refused, frozen.hostId)).rejects.toThrow('custom at result.steps.0.recordingLocation');
+  await expect(service.ingest({...frozen, result: {...frozen.result, steps: frozen.result.steps.map(step => ({...step,
+    recordingLocation: {...step.recordingLocation, startOffsetMs: step.recordingLocation!.startOffsetMs + 1}}))}}, frozen.hostId))
+    .rejects.toThrow('different terminal result');
+});
