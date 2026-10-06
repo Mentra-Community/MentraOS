@@ -1,6 +1,7 @@
-import {expect, test} from 'bun:test'
+import {expect, spyOn, test} from 'bun:test'
 import {RoutineWorkNotification, startRoutineWorkReporting} from './routine-work-notification'
-import {PROGRESS_INTERVAL_MS, REPORT_LEASE_MS, type RoutineWorkReportRepository} from './routine-work-reporting'
+import {PROGRESS_INTERVAL_MS, REPORT_LEASE_MS, routineWorkReportRepository, type RoutineWorkReportRepository} from './routine-work-reporting'
+import {RoutineWorkModel} from '../models/routine-work.model'
 import type {RoutineWorkDelivery} from './routine-work.service'
 import type {TestRunGithubApp} from './test-run-github-app'
 import {requestInputDigest} from './test-request.service'
@@ -166,6 +167,53 @@ test('durable ten-minute progress survives a worker exit and reporter restart wi
   expect(f.row.reporting?.nextProgressAt.getTime()).toBe(start + 6 * PROGRESS_INTERVAL_MS)
   await f.notification().tick()
   expect(f.row.reporting?.history).toHaveLength(3)
+})
+
+test('startup tick initializes retained stopped PR jobs without a worker, and preserves an existing report receipt', async () => {
+  const f = fixture()
+  f.status('stopped', {reason: 'Agent exited before reporting was installed.'})
+  const finds: Array<{filter: Record<string, unknown>; limit?: number}> = []
+  let initializations = 0
+  const find = spyOn(RoutineWorkModel, 'find').mockImplementation(((filter: Record<string, unknown> = {}) => {
+    const call = {filter} as (typeof finds)[number]
+    finds.push(call)
+    const query = {
+      select() { return query }, sort() { return query },
+      limit(value: number) { call.limit = value; return query },
+      read() { return query }, readConcern() { return query }, setOptions() { return query },
+      async lean() {
+        if ('reporting' in filter) return f.row.reporting ? [] : [{workId: f.row.workId}]
+        return f.row.reporting && f.row.reporting.nextProgressAt <= new Date(start) ? [{workId: f.row.workId}] : []
+      },
+    }
+    return query as never
+  }) as typeof RoutineWorkModel.find)
+  const update = spyOn(RoutineWorkModel, 'updateMany').mockImplementation(((filter: any, values: any) => {
+    expect(filter).toEqual({workId: {$in: [f.row.workId]}, reporting: {$exists: false}})
+    initializations++
+    f.row.reporting ??= structuredClone(values.$set.reporting)
+    return Promise.resolve({matchedCount: 1}) as never
+  }) as typeof RoutineWorkModel.updateMany)
+  const due = f.rows.due
+  f.rows.due = date => routineWorkReportRepository.due(date)
+  try {
+    await f.notification().tick()
+    expect(f.comments).toHaveLength(1)
+    expect(f.comments[0]?.body).toContain('stopped')
+    expect(f.row.reporting?.history).toHaveLength(1)
+    expect(initializations).toBe(1)
+    expect(finds.every(value => value.limit === 20)).toBe(true)
+    expect(finds[0]?.filter).toEqual({'work.origin': {$exists: true}, reporting: {$exists: false}})
+    const retained = structuredClone(f.row.reporting)
+    await f.notification().tick()
+    expect(initializations).toBe(1)
+    expect(f.row.reporting).toEqual(retained)
+    expect(f.createCalls).toBe(1)
+  } finally {
+    f.rows.due = due
+    update.mockRestore()
+    find.mockRestore()
+  }
 })
 
 test('unknown comment create reconciles one owned marker and retains intent across outage and restart', async () => {

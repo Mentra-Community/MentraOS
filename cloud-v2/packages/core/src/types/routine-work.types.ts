@@ -239,13 +239,18 @@ export const routineWorkStatusSchema = z
     const detail = view.details
     if (
       event.state === 'passed' &&
-      (!detail.completion ||
+      (!view.attemptId ||
+        !detail.review ||
+        !detail.completion ||
         !detail.requestId ||
+        detail.review.sourceRevision !== detail.completion.reviewedRevision ||
+        detail.review.prUrl !== detail.completion.prUrl ||
+        detail.review.reviewUrl !== detail.completion.reviewUrl ||
         detail.sourceRevision !== detail.completion.sourceRevision ||
         detail.prUrl !== detail.completion.prUrl ||
         detail.resultUrl !== detail.completion.resultUrl)
     )
-      ctx.addIssue({code: 'custom', message: 'Passed work lacks exact reviewed source and recorded result links'})
+      ctx.addIssue({code: 'custom', message: 'Passed work lacks its current attempt, exact formal review and recorded result links'})
     if (detail.review && detail.sourceRevision !== detail.review.sourceRevision)
       ctx.addIssue({code: 'custom', message: 'Current source differs from its approved review'})
     if (['failed', 'cancelled'].includes(event.state) && !detail.reason)

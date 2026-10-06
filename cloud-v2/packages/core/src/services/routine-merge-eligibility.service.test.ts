@@ -8,7 +8,8 @@ import {RoutineWorkModel} from '../models/routine-work.model'
 import {RoutineDefinitionModel} from '../models/routine-definition.model'
 import {TestRequestModel} from '../models/test-request.model'
 import {TestRunModel} from '../models/test-run.model'
-import {authoringWorkSchema} from '../types/routine-work.types'
+import {authoringWorkSchema, type RoutineWorkStatus} from '../types/routine-work.types'
+import {RoutineWorkService, type RoutineWorkRepository} from './routine-work.service'
 
 function enrollment(revision: string, verification?: RoutineEnrollment['verification']): RoutineEnrollment {
   const definition: RoutineEnrollment['definition'] = {id: 'notes', title: 'Notes', purpose: 'Verify notes',
@@ -97,10 +98,24 @@ test('promotion retries an interrupted run-first update without losing candidate
       archive: {name: 'app.apk', url: 'https://example.com/app.apk', size: 10, sha256: 'd'.repeat(64)},
       receipt: {url: 'https://example.com/receipt.json', size: 10, sha256: 'e'.repeat(64)}}})
   const inputSha256 = requestInputDigest(work), prUrl = 'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/500'
-  const job = {hostId: 'mini', inputSha256, work, acceptance: {hostId: 'mini', inputSha256}, status: {details:
-    {workId: work.workId, hostId: 'mini', inputSha256, work, acceptedAt: '2026-10-05T10:00:00Z',
-      state: 'passed', sequence: 4, attemptId: 3, events: [], details: {sourceRevision, prUrl, requestId: 'local:candidate',
-        review: {sourceRevision, verdict: 'APPROVED', prUrl, reviewUrl: prUrl + '#pullrequestreview-44'}}}}}
+  const acceptedAt = '2026-10-05T10:00:00Z', resultUrl = 'https://admin.dev.mentraglass.com/?testRun=local:candidate'
+  const review = {sourceRevision, verdict: 'APPROVED' as const, prUrl, reviewUrl: prUrl + '#pullrequestreview-44'}
+  const completion = {sourceRevision, reviewedRevision: sourceRevision, prUrl, reviewUrl: review.reviewUrl,
+    resultUrl, summary: 'Recorded steps passed, source restored and workspace disposed.'}
+  const event = {workId: work.workId, hostId: 'mini', inputSha256, eventId: 'terminal:one', sequence: 4, state: 'passed' as const,
+    details: {workId: work.workId, hostId: 'mini', inputSha256, work, acceptedAt, state: 'passed' as const,
+      sequence: 4, attemptId: 3, events: [], details: {sourceRevision, prUrl, requestId: 'local:candidate', resultUrl, review, completion}}}
+  const job = {workId: work.workId, hostId: 'mini', inputSha256, work,
+    acceptance: {workId: work.workId, hostId: 'mini', inputSha256, acceptedAt},
+    status: undefined as typeof event | undefined, statusReceipts: [] as Array<{eventId: string; sequence: number; sha256: string}>}
+  const intake = new RoutineWorkService({async get() {return structuredClone(job)}, async updateStatus(value: RoutineWorkStatus) {
+    job.status = value as typeof event; job.statusReceipts.push({eventId: value.eventId, sequence: value.sequence, sha256: requestInputDigest(value)})
+    return structuredClone(job)
+  }} as unknown as RoutineWorkRepository, undefined, undefined, {async publish() {}})
+  // Use the actual terminal acceptance boundary before testing normal merged enrollment.
+  await intake.status(event, 'mini')
+  expect(job.status?.details.attemptId).toBe(candidate.verification!.attemptId)
+  expect(job.status?.details.details.review).toEqual(review)
   const request = {requestId: 'local:candidate', hostId: 'mini', catalogEligible: false,
     input: {routineId: 'notes', platform: 'android', definitionRevision: sourceRevision, verification: candidate.verification}}
   const chain = (read: () => unknown) => ({read() {return this}, readConcern() {return this}, lean: async () => read()})

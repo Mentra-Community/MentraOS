@@ -71,6 +71,21 @@ export const routineWorkReportRepository: RoutineWorkReportRepository = {
     )
   },
   async due(now) {
+    // Reconciliation owns initialization too: retained PR jobs do not need a live worker to wake reporting.
+    const unreported = await RoutineWorkModel.find({'work.origin': {$exists: true}, reporting: {$exists: false}})
+      .select({workId: 1})
+      .sort({createdAt: 1, workId: 1})
+      .limit(20)
+      .read('primary')
+      .readConcern('majority')
+      .setOptions({timeoutMS: 10_000})
+      .lean()
+    if (unreported.length)
+      await RoutineWorkModel.updateMany(
+        {workId: {$in: unreported.map((row) => row.workId)}, reporting: {$exists: false}},
+        {$set: {reporting: {nextProgressAt: now, history: []}}},
+        {writeConcern: testWriteConcern, timeoutMS: 10_000},
+      )
     const rows = await RoutineWorkModel.find({
       'work.origin': {$exists: true},
       'reporting.finalCommentId': {$exists: false},

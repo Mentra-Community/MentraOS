@@ -301,6 +301,7 @@ test('terminal status requires exact reviewed source and recording links and can
     prUrl,
     requestId: 'candidate-one',
     resultUrl: 'https://admin.dev.mentraglass.com/?testRun=run-one',
+    review: {sourceRevision: 'c'.repeat(40), prUrl, reviewUrl: `${prUrl}#pullrequestreview-21`, verdict: 'APPROVED' as const},
     completion: {
       sourceRevision: 'c'.repeat(40),
       reviewedRevision: 'c'.repeat(40),
@@ -315,9 +316,11 @@ test('terminal status requires exact reviewed source and recording links and can
     eventId: 'terminal-one',
     sequence: 1,
     state,
-    details: {...receipt, sequence: 1, state, work: row.work, details, events: []},
+    details: {...receipt, sequence: 1, state, attemptId: 3, work: row.work, details, events: []},
   }
   for (const invalid of [
+    {...details, review: undefined},
+    {...details, review: {...details.review, reviewUrl: `${prUrl}#pullrequestreview-22`}},
     {...details, completion: undefined},
     {...details, completion: {...details.completion, reviewedRevision: 'd'.repeat(40)}},
     {...details, completion: {...details.completion, reviewUrl: `${prUrl}/comments/21`}},
@@ -332,6 +335,8 @@ test('terminal status requires exact reviewed source and recording links and can
     await expect(
       f.service.status({...event, details: {...event.details, details: invalid}}, row.hostId),
     ).rejects.toMatchObject({status: 400})
+  await expect(f.service.status({...event, details: {...event.details, attemptId: undefined}}, row.hostId))
+    .rejects.toMatchObject({status: 400})
   await f.service.status(event, row.hostId)
   expect(await f.service.status(event, row.hostId)).toEqual(event)
   await expect(
@@ -347,4 +352,5 @@ test('terminal status requires exact reviewed source and recording links and can
     ),
   ).rejects.toThrow('Terminal')
   expect(f.rows.get(row.workId)?.status?.state).toBe('passed')
+  expect(f.rows.get(row.workId)?.status?.details).toMatchObject({attemptId: 3, details: {review: details.review}})
 })
