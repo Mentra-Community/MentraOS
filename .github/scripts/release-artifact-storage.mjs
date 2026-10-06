@@ -411,6 +411,14 @@ export async function updateIndex(store, repository, tag, change, wait = sleep) 
   }
 }
 
+// GitHub resets a draft release's tag to `untagged-<hash>` when an update
+// omits tag_name. The stable `mentra-vX.Y.Z` draft is found by its tag, so
+// losing it makes the next workflow allocate a second draft and split the
+// release records between them.
+export function releaseBodyUpdate(current, tag, body) {
+  return current.draft ? {body, tag_name: tag} : {body}
+}
+
 export function releaseDownloadBody(body, repository, tag) {
   const url = `${artifactBaseUrl(repository, tag)}/index.html`
   if ((body || "").includes(url)) return body
@@ -491,7 +499,7 @@ export async function publishR2Artifact({
     if (body !== current.body)
       await phase("update GitHub download link", () =>
         gh(["api", "--method", "PATCH", `repos/${repository}/releases/${release.id}`, "--input", "-"], {
-          input: JSON.stringify({body}),
+          input: JSON.stringify(releaseBodyUpdate(current, release.tag_name, body)),
         }),
       )
   }

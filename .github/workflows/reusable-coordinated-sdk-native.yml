@@ -388,9 +388,14 @@ jobs:
             --publishing-type "$PUBLISHING_TYPE" \
             --output native-result/maven/sonatype-deployment.json
           [[ "$(jq -er .publishingType native-result/maven/sonatype-deployment.json)" == "$PUBLISHING_TYPE" ]]
+          # A private (draft) release stores this record as a GitHub asset, which
+          # must carry its file's basename; stage a copy under the asset name.
+          mkdir -p native-result/sonatype-record
+          cp native-result/maven/sonatype-deployment.json "native-result/sonatype-record/$ASSET_NAME"
           node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/publish-immutable-release-asset.mjs" \
-            --file native-result/maven/sonatype-deployment.json --name "$ASSET_NAME" \
+            --file "native-result/sonatype-record/$ASSET_NAME" --name "$ASSET_NAME" \
             --release-id "$RELEASE_ID" --repository "$GITHUB_REPOSITORY"
+          rm -r native-result/sonatype-record
 
       - name: Require the production deployment to be validated before staging succeeds
         if: inputs.dry_run != true && steps.existing.outputs.exists != 'true' && steps.release.outputs.channel == 'production'
