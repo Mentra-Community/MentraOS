@@ -63,12 +63,65 @@ test("Android PR publication retains the exact manifest beside its APK and origi
   manifest: {url: `${CDN}pr-builds/ota-pr-12-${HEAD}.json`, sha256: createHash("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes)}});
  expect(selected.manifestSha256).toBe(selected.manifest!.sha256);
 });
-test("wrong archive size and moved PR base cannot become selectable", async () => {
+test("wrong archive size and moved PR base cannot become newly selectable", async () => {
  for (const kind of ["size", "base"]) {
   const f = fixture();
   if (kind === "size") f.rows.set(`HEAD ${CDN}pr-builds/${f.receipt.artifacts.mac.name}`, new Response(null, {headers: {"Content-Length": "99"}}));
   else f.rows.set(`${API}/git/ref/heads/dev`, {ref: "refs/heads/dev", object: {type: "commit", sha: "e".repeat(40)}});
-  expect((await f.gateway.resolve({channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}, "ios-on-mac")).availability).toBe("unavailable");
+  f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, {workflow_runs: [run()]});
+  expect((await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"}))[0]!.availability).toBe("unavailable");
+ }
+});
+
+test("an immutable Mac publication survives base advance without changing original references", async () => {
+ const f = fixture(), source = {channel: "pr" as const, prNumber: 12, buildRunId: 50, publicationAttempt: 1};
+ const original = await f.gateway.resolve(source, "ios-on-mac");
+ f.rows.set(`${API}/git/ref/heads/dev`, {ref: "refs/heads/dev", object: {type: "commit", sha: "e".repeat(40)}});
+ f.calls.length = 0;
+ expect(await f.gateway.resolve(source, "ios-on-mac")).toEqual(original);
+ expect(f.calls.some(call => call.url === `${API}/git/ref/heads/dev`)).toBe(false);
+ for (const commit of [
+  {sha: "e".repeat(40), parents: [{sha: BASE}, {sha: HEAD}]},
+  {sha: MERGE, parents: [{sha: BASE}, {sha: "e".repeat(40)}]},
+  {sha: MERGE, parents: [{sha: BASE}]},
+ ]) {
+  f.rows.set(`${API}/commits/${MERGE}`, commit);
+  expect((await f.gateway.resolve(source, "ios-on-mac")).availability).toBe("unavailable");
+ }
+});
+
+test("an immutable Android publication verifies its recorded base after dev advances", async () => {
+ const f = fixture(), name = `mentra-android-pr-12-${HEAD}-50-1`;
+ const androidRun = run({path: ".github/workflows/mentra-app-android-build.yml"});
+ f.rows.set(`${API}/actions/runs/50/attempts/1`, androidRun);
+ f.rows.set(`${API}/actions/workflows/mentra-app-android-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, {workflow_runs: [androidRun]});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{...jobs[0]!,
+  steps: [{name: "Upload APK to the public artifact CDN", status: "completed", conclusion: "success"}]}]});
+ const receipt = {schemaVersion: 1, pr: 12, headSha: HEAD, baseSha: BASE, buildSha: MERGE, runId: 50, runAttempt: 1,
+  app: {packageId: "com.mentra.mentra", version: "3.2.1", build: "20", headSha: HEAD, buildSha: MERGE, backend: "dev",
+   otaManifestUrl: `${CDN}pr-builds/ota-pr-12-${HEAD}.json`}, artifacts: {android: {name: `${name}.apk`, sha256: HASH, size: 100}}};
+ f.rows.set(`${CDN}pr-builds/${name}.json`, receipt);
+ f.rows.set(`HEAD ${CDN}pr-builds/${name}.apk`, new Response(null, {headers: {"Content-Length": "100"}}));
+ const source = {channel: "pr" as const, prNumber: 12, buildRunId: 50, publicationAttempt: 1};
+ const original = await f.gateway.resolve(source, "android");
+ expect(original.availability).toBe("available");
+ f.rows.set(`${API}/git/ref/heads/dev`, {ref: "refs/heads/dev", object: {type: "commit", sha: "e".repeat(40)}});
+ f.calls.length = 0;
+ expect(await f.gateway.resolve(source, "android")).toEqual(original);
+ expect(f.calls.some(call => call.url === `${API}/git/ref/heads/dev`)).toBe(false);
+ expect((await f.gateway.inventory({channel: "pr", pr: 12, platform: "android"}))[0]!.availability).toBe("unavailable");
+ for (const commit of [
+  {sha: MERGE, parents: [{sha: "e".repeat(40)}, {sha: HEAD}]},
+  {sha: MERGE, parents: [{sha: BASE}, {sha: "e".repeat(40)}]},
+  {sha: "e".repeat(40), parents: [{sha: BASE}, {sha: HEAD}]},
+ ]) {
+  f.rows.set(`${API}/commits/${MERGE}`, commit);
+  expect((await f.gateway.resolve(source, "android")).availability).toBe("unavailable");
+ }
+ f.rows.set(`${API}/commits/${MERGE}`, {sha: MERGE, parents: [{sha: BASE}, {sha: HEAD}]});
+ for (const changed of [{...receipt, runAttempt: 2}, {...receipt, baseSha: "e".repeat(40)}, {...receipt, headSha: "e".repeat(40)}]) {
+  f.rows.set(`${CDN}pr-builds/${name}.json`, changed);
+  expect((await f.gateway.resolve(source, "android")).availability).toBe("unavailable");
  }
 });
 

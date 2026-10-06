@@ -10,6 +10,7 @@ import {
   workDigest,
   planRoutineWork,
   routineWorkPrNumbers,
+  routineWorkApi,
 } from './routine-work.mjs'
 
 const input = {
@@ -176,6 +177,44 @@ test('a lost admission response reconciles the same frozen request without a sec
     }),
     /digest/,
   )
+})
+
+test('intake failures retain bounded public Core reasons and preserve the original HTTP retry decision', async () => {
+  const options = {token: 'private-token', operation: 'inspect', workId: 'routine-work-example'}
+  await assert.rejects(routineWorkApi({...options, fetchImpl: async () => Response.json({
+    error: 'routine_work_error', message: 'The exact originating PR build is not published',
+  }, {status: 409})}), error => {
+    assert.equal(error.message, 'Authoring intake inspect failed (409): The exact originating PR build is not published')
+    assert.equal(error.httpStatus, 409)
+    assert.equal(error.retryable, false)
+    return true
+  })
+  await assert.rejects(routineWorkApi({...options, fetchImpl: async () => Response.json({
+    error: 'routine_work_conflict', message: 'Authoring work\nchanged its owner',
+  }, {status: 503})}), error => {
+    assert.equal(error.message, 'Authoring intake inspect failed (503): Authoring work changed its owner')
+    assert.equal(error.retryable, true)
+    return true
+  })
+  for (const response of [
+    new Response('<html>private proxy diagnostic</html>', {status: 502}),
+    Response.json({error: 'provider_error', message: 'private upstream response'}, {status: 502}),
+    Response.json({error: 'routine_work_error', message: 'x'.repeat(501)}, {status: 502}),
+    Response.json({error: 'routine_work_error', message: 'invalid\0diagnostic'}, {status: 502}),
+    Response.json({error: 'routine_work_error', message: 'safe', unexpected: 'x'.repeat(4096)}, {status: 502}),
+  ]) await assert.rejects(routineWorkApi({...options, fetchImpl: async () => response}), error => {
+    assert.equal(error.message, 'Authoring intake inspect failed (502)')
+    assert.equal(error.httpStatus, 502)
+    assert.equal(error.retryable, true)
+    return true
+  })
+  let cancelled = false
+  const response = new Response(new ReadableStream({
+    start(controller) {controller.enqueue(new Uint8Array(4097));},
+    cancel() {cancelled = true},
+  }), {status: 409})
+  await assert.rejects(routineWorkApi({...options, fetchImpl: async () => response}), /failed \(409\)$/)
+  assert.equal(cancelled, true)
 })
 
 test('non-finite provider JSON and a foreign PR cannot enter authoring intake', async () => {

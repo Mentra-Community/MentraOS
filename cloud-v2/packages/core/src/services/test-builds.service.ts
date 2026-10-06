@@ -200,7 +200,9 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const run = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${source.buildRunId}/attempts/${source.publicationAttempt}`));
     requireThat(run.id === source.buildRunId && run.run_attempt === source.publicationAttempt && this.matches(run, source.channel, platform, pr),
       "Build does not match the selected source and publication attempt");
-    const result = await this.describe(run, source.channel, platform, pr, pr ? await this.baseSha(pr) : undefined, true);
+    // Explicit sources identify an immutable publication. Its producing merge may
+    // precede today's base tip; inventory alone requires the current base.
+    const result = await this.describe(run, source.channel, platform, pr, undefined, true);
     requireThat(result.source.publicationAttempt === source.publicationAttempt, "Selected attempt retained a different publication");
     return result;
   }
@@ -211,7 +213,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       headSha: run.head_sha, buildUrl: runUrl(REPOSITORY, run.id), createdAt: run.created_at,
       availability: "unavailable" };
     try {
-      const artifacts = pr ? await (platform === "android" ? this.androidPrArtifacts(run, pr, baseSha!) : this.prArtifacts(run, pr, baseSha!))
+      const artifacts = pr ? await (platform === "android" ? this.androidPrArtifacts(run, pr, baseSha) : this.prArtifacts(run, pr, baseSha))
         : await this.releaseArtifacts(run, channel, platform);
       build.source.publicationAttempt = artifacts.attempt;
       const archive = artifacts.archive;
@@ -228,7 +230,7 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       return { ...build, reason: error instanceof TestDispatchError ? error.message : "Published metadata does not match this build" };
     }
   }
-  private async prArtifacts(run: GithubRun, pr: PrIdentity, baseSha: string) {
+  private async prArtifacts(run: GithubRun, pr: PrIdentity, baseSha?: string) {
     const attempts = publication(run, await this.jobs(run.id));
     requireThat(attempts, "Build or Mac publication has not succeeded");
     const suffix = `pr-${pr.number}-${pr.head.sha}-${run.id}-${attempts.publish}`;
@@ -246,15 +248,17 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       && data.artifacts.mac.name === `mentra-ios-mac-pr-${pr.number}-${pr.head.sha}-${run.id}-${attempts.build}.zip`,
       "Mac receipt belongs to a different PR build");
     const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${REPOSITORY}/commits/${data.buildSha}`));
-    requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && commit.parents[0]!.sha === baseSha
-      && commit.parents[1]!.sha === pr.head.sha, "Mac build does not contain the current PR head and base");
+    // The immutable iOS receipt records the synthetic merge SHA. Its first parent
+    // is the original base; only a new inventory selection compares it to today's tip.
+    requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && (!baseSha || commit.parents[0]!.sha === baseSha)
+      && commit.parents[1]!.sha === pr.head.sha, "Mac build does not contain the selected PR head and base");
     const ota = await this.metadata("pr-builds", otaName);
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
       "OTA manifest belongs to another PR revision");
     return { attempt: attempts.publish, tag: "pr-builds", archive: data.artifacts.mac,
       result: { receipt: {url: receipt.url, sha256: receipt.sha256, size: receipt.size}, manifestSha256: ota.sha256, manifest: {url: ota.url, sha256: ota.sha256, size: ota.size} } };
   }
-  private async androidPrArtifacts(run: GithubRun, pr: PrIdentity, baseSha: string) {
+  private async androidPrArtifacts(run: GithubRun, pr: PrIdentity, baseSha?: string) {
     const jobs = await this.jobs(run.id);
     const builds = jobs.filter(job => job.name === "build" && job.run_attempt <= run.run_attempt);
     const latest = Math.max(0, ...builds.map(job => job.run_attempt));
@@ -274,13 +278,13 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         headSha: sha, buildSha: sha, backend: z.enum(PR_BASES), otaManifestUrl: z.string() }),
       artifacts: z.object({ android: assetSchema }) }).parse(receipt.value);
     const otaName = `ota-pr-${pr.number}-${pr.head.sha}.json`;
-    requireThat(data.pr === pr.number && data.headSha === pr.head.sha && data.baseSha === baseSha
+    requireThat(data.pr === pr.number && data.headSha === pr.head.sha && (!baseSha || data.baseSha === baseSha)
       && data.runId === run.id && data.runAttempt === attempt && data.app.headSha === data.headSha
       && data.app.buildSha === data.buildSha && data.app.backend === pr.base.ref && data.app.otaManifestUrl === `${CDN}pr-builds/${otaName}`
       && data.artifacts.android.name === `${name}.apk`, "Android receipt belongs to a different PR build");
     const commit = z.object({ sha, parents: z.array(z.object({ sha })) }).parse(await this.api(`${REPOSITORY}/commits/${data.buildSha}`));
-    requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && commit.parents[0]!.sha === baseSha
-      && commit.parents[1]!.sha === pr.head.sha, "Android build does not contain the current PR head and base");
+    requireThat(commit.sha === data.buildSha && commit.parents.length === 2 && commit.parents[0]!.sha === data.baseSha
+      && commit.parents[1]!.sha === pr.head.sha, "Android build does not contain the recorded base and selected PR head");
     const ota = await this.metadata("pr-builds", otaName);
     requireThat(z.object({ releaseVersion: z.string() }).parse(ota.value).releaseVersion === `pr-${pr.number}-${pr.head.sha}`,
       "OTA manifest belongs to another PR revision");
