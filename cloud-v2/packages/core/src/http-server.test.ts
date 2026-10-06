@@ -4,7 +4,7 @@ import {CORE_ORDINARY_BODY_BYTES, createCoreStop, serveCore} from "./http-server
 import {createFrameworkResultsApi} from "./api/internal/framework-results.api";
 import {FrameworkResultService} from "./services/framework-result.service";
 import {createRoutineDefinitionsApi} from './api/internal/routine-definitions.api';
-import {ROUTINE_BUNDLE_BODY_BYTES} from './types/framework-version.types';
+import {ROUTINE_BUNDLE_BODY_BYTES, routineSourceRefSchema} from './types/framework-version.types';
 import {StorageService} from './services/storage/storage.service';
 import {createHash} from 'node:crypto';
 
@@ -108,12 +108,12 @@ test('Core listener admits authenticated routine archives above ordinary limit a
       if (withLength) headers['content-length'] = String(size)
       const response = await fetch(url, {method: 'POST', headers, body: stream(size)})
       expect(response.status).toBe(200)
-      expect((await response.json()).bundle.size).toBe(size)
+      expect(routineSourceRefSchema.parse(await response.json()).bundle.size).toBe(size)
       expect(uploaded).toBe(size)
       if (withLength) headers['content-length'] = String(ROUTINE_BUNDLE_BODY_BYTES + 1)
       const oversized = await fetch(url, {method: 'POST', headers, body: stream(ROUTINE_BUNDLE_BODY_BYTES + 1)})
       expect(oversized.status).toBe(413)
-      expect((await oversized.json()).error).toBe('invalid_definition')
+      expect(await oversized.json()).toMatchObject({error: 'invalid_definition'})
     }
     expect(handled).toBe(2)
   } finally {storage.mockRestore(); await server.stop(true)}
