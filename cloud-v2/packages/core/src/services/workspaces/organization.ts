@@ -6,7 +6,8 @@
  * allowlist or label takes effect on the next call and tests can set it freely.
  */
 
-const ORGANIZATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/
+/** What an organization id may look like. Shared with the migration script so it validates ids the same way. */
+export const ORGANIZATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/
 
 /**
  * The id of this organization, stamped on workspaces, memberships and audit
