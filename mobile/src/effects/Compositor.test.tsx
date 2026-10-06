@@ -9,6 +9,7 @@ import {captureScreenshotForLater} from "@/effects/CapsuleMenu"
 
 let mockForegroundApp: ClientApp | null = null
 const mockStop = jest.fn()
+const mockMount = jest.fn()
 jest.mock("@mentra/engine", () => ({
   SETTINGS: {ios_app_switcher_bottom_swipe: {key: "bottomSwipe"}},
   useSetting: () => [false],
@@ -25,7 +26,9 @@ jest.mock("@mentra/engine", () => ({
 }))
 jest.mock("@/components/miniapp/LocalMiniappView", () => {
   const {Pressable} = require("react-native")
+  const {useEffect} = require("react")
   return ({onClose, onMinimize, onExit}: {onClose: () => void; onMinimize: () => void; onExit: () => void}) => {
+    useEffect(() => {mockMount()}, [])
     return (
       <>
         <Pressable testID="close-miniapp" onPress={onClose} />
@@ -62,13 +65,69 @@ beforeEach(() => {
     callback()
     return {cancel: jest.fn()} as any
   })
-  useMiniappPresentationStore.setState({
-    closingPackageName: null,
-    revealedPackageName: null,
-  })
+  useMiniappPresentationStore.setState({closingPackageName: null, revealedPackageName: null, replacementGenerations: {}})
+  mockMount.mockClear()
   mockForegroundApp = {packageName: "one", name: "One", foregrounded: true, running: true} as ClientApp
   mockStop.mockReset()
   jest.mocked(captureScreenshotForLater).mockReset()
+})
+
+afterEach(() => {
+  jest.restoreAllMocks()
+  jest.useRealTimers()
+})
+
+test("slow teardown cannot hide a relaunch or clear a later close animation", async () => {
+  let finishFirstStop!: () => void
+  mockStop.mockReturnValueOnce(
+    new Promise<void>((resolve) => {
+      finishFirstStop = resolve
+    }),
+  )
+  mockStop.mockResolvedValue(undefined)
+  const app = mockForegroundApp
+  const view = render(<Compositor />)
+
+  fireEvent.press(view.getByTestId("close-miniapp"))
+  expect(useMiniappPresentationStore.getState().closingPackageName).toBe("one")
+  expect(mockStop).not.toHaveBeenCalled()
+
+  await act(async () => {
+    jest.advanceTimersByTime(100)
+  })
+  expect(mockStop).toHaveBeenCalledWith("one")
+  expect(useMiniappPresentationStore.getState().closingPackageName).toBeNull()
+
+  // A relaunch is visible while the first shutdown remains pending.
+  mockForegroundApp = app
+  view.rerender(<Compositor />)
+  fireEvent.press(view.getByTestId("close-miniapp"))
+  expect(useMiniappPresentationStore.getState().closingPackageName).toBe("one")
+
+  await act(async () => {
+    finishFirstStop()
+  })
+  expect(useMiniappPresentationStore.getState().closingPackageName).toBe("one")
+  await act(async () => {
+    jest.advanceTimersByTime(100)
+  })
+  expect(mockStop).toHaveBeenCalledTimes(2)
+  expect(useMiniappPresentationStore.getState().closingPackageName).toBeNull()
+})
+
+test("repacking the same version remounts its WebView; ordinary store refresh does not", () => {
+  const view = render(<Compositor />)
+  expect(mockMount).toHaveBeenCalledTimes(1)
+  mockForegroundApp = {...mockForegroundApp!}
+  view.rerender(<Compositor />)
+  expect(mockMount).toHaveBeenCalledTimes(1)
+  act(() => useMiniappPresentationStore.getState().replaceSurface("one"))
+  expect(mockMount).toHaveBeenCalledTimes(2)
+  act(() => useMiniappPresentationStore.getState().replaceSurface("other"))
+  expect(mockMount).toHaveBeenCalledTimes(2)
+  mockForegroundApp = {...mockForegroundApp!}
+  view.rerender(<Compositor />)
+  expect(mockMount).toHaveBeenCalledTimes(2)
 })
 
 test.each(["back-miniapp", "minimize-miniapp"])(
@@ -100,8 +159,3 @@ test.each(["back-miniapp", "minimize-miniapp"])(
     expect(mockStop).not.toHaveBeenCalled()
   },
 )
-
-afterEach(() => {
-  jest.restoreAllMocks()
-  jest.useRealTimers()
-})

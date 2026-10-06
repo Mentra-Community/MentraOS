@@ -2050,3 +2050,99 @@ describe("SoftapCallTransport stop wins during recovery", () => {
     })
   }
 })
+
+describe("photo publisher pause", () => {
+  test("pause stops only the publisher and resume starts it on the same ingest URL", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    calls.length = 0
+
+    const {pauseId} = await transport.pauseVideoPublisher()
+
+    expect(calls).toEqual(["stopPublishing"])
+    expect(transport.isPublisherPaused()).toBe(true)
+    await transport.resumeVideoPublisher(pauseId)
+    expect(calls).toContain("startPublishing:http://192.168.43.20:8790/whip")
+    expect(calls).not.toContain("stopHotspot")
+    expect(calls).not.toContain("leaveMeeting")
+    expect(transport.isPublisherPaused()).toBe(false)
+  })
+
+  test("a stale resume does not start the publisher", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    calls.length = 0
+    await transport.pauseVideoPublisher()
+
+    await transport.resumeVideoPublisher("stale")
+
+    expect(calls).toEqual(["stopPublishing"])
+    expect(transport.isPublisherPaused()).toBe(true)
+  })
+
+  test("recovery is suppressed while the publisher is paused", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    await transport.pauseVideoPublisher()
+    calls.length = 0
+
+    await transport.recover("publisher lost")
+
+    expect(calls).toEqual([])
+    expect(transport.currentPhase()).toBe("live")
+  })
+
+  test("leave cancels the pause and does not start the publisher again first", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    const {pauseId} = await transport.pauseVideoPublisher()
+    calls.length = 0
+
+    await transport.stop()
+
+    expect(transport.isPublisherPaused()).toBe(false)
+    await transport.resumeVideoPublisher(pauseId)
+    expect(calls.filter((call) => call.startsWith("startPublishing"))).toEqual([])
+  })
+
+  test("a pause that hits its ceiling resumes the publisher", async () => {
+    const expired: string[] = []
+    const {calls, transport} = recordingDeps({
+      publisherPauseCeilingMs: 15,
+      onPublisherPauseExpired: (pauseId) => expired.push(pauseId),
+    })
+    await transport.start()
+    calls.length = 0
+
+    const {pauseId} = await transport.pauseVideoPublisher()
+    await new Promise((resolve) => setTimeout(resolve, 40))
+
+    expect(expired).toEqual([pauseId])
+    expect(calls).toContain("startPublishing:http://192.168.43.20:8790/whip")
+    expect(transport.isPublisherPaused()).toBe(false)
+  })
+})
+
+describe("stream photo readiness", () => {
+  test("a live publisher can lend its camera; asking does not touch the sequence", async () => {
+    const {calls, transport} = recordingDeps()
+    expect(transport.stillCaptureReady()).toBe(false)
+    await transport.start()
+    calls.length = 0
+
+    expect(transport.stillCaptureReady()).toBe(true)
+    expect(calls).toEqual([])
+  })
+
+  test("a paused or ending publisher cannot", async () => {
+    const {transport} = recordingDeps()
+    await transport.start()
+    const {pauseId} = await transport.pauseVideoPublisher()
+    expect(transport.stillCaptureReady()).toBe(false)
+    await transport.resumeVideoPublisher(pauseId)
+    expect(transport.stillCaptureReady()).toBe(true)
+
+    await transport.stop()
+    expect(transport.stillCaptureReady()).toBe(false)
+  })
+})

@@ -20,6 +20,9 @@ import {createLogger} from "@mentra/cloud-shared"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/mongo.connection"
 import {createApp} from "./api/app"
 import {runStartupMigrations} from "./migrations/startup.migrations"
+import {createCoreStop, serveCore} from "./http-server"
+import {startFrameworkRunSummaryBackfill} from "./services/framework-run-summary.service"
+import {startRoutineWorkReporting} from "./services/routine-work-notification"
 
 const logger = createLogger("core")
 
@@ -54,18 +57,21 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   }
 
   const app = createApp({readinessChecks: [mongoReadinessCheck]})
-  const server = Bun.serve({port, fetch: app.fetch})
+  const server = serveCore(app.fetch, port)
   const boundPort = server.port!
+  const stopSummaryBackfill = startFrameworkRunSummaryBackfill()
+  const stopRoutineWorkReporting = startRoutineWorkReporting()
 
   logger.info({port: boundPort}, "cloud-v2 core listening")
 
   return {
     port: boundPort,
     url: `http://localhost:${boundPort}`,
-    async stop() {
-      server.stop()
+    stop: createCoreStop(server, async () => {
+      await stopSummaryBackfill()
+      await stopRoutineWorkReporting()
       await disconnectMongo()
-    },
+    }),
   }
 }
 

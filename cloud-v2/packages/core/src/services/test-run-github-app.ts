@@ -1,10 +1,12 @@
 import { createPrivateKey } from "node:crypto";
 import { SignJWT } from "jose";
 
-type Scope = "source" | "private";
+type Scope = "source" | "private" | "harness" | "reporter";
 interface Credentials { appId?: string; privateKey?: string; installationId?: string }
 const grants = {
+  reporter: { repositories: ["MentraOS"], permissions: { issues: "write", pull_requests: "read" } },
   source: { repositories: ["MentraOS"], permissions: { actions: "write", contents: "read", pull_requests: "read" } },
+  harness: { repositories: ["Mentra-Automated-Testing"], permissions: { contents: "read", pull_requests: "read" } },
   private: { repositories: ["Mentra-Automated-Testing"], permissions: { actions: "read" } },
 } as const;
 const refreshBeforeMs = 60_000;
@@ -22,6 +24,7 @@ export class TestRunGithubApp {
     };
   }
   get configured() { return !!(this.credentials.appId && this.credentials.privateKey && this.credentials.installationId); }
+  get applicationId() { return Number(this.credentials.appId) || null; }
   private now() { return (this.options.now ?? Date.now)(); }
   async token(scope: Scope): Promise<string> {
     const cached = this.cache.get(scope);

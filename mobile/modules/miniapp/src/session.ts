@@ -217,6 +217,8 @@ type SessionEmitterEvents = {
   permissions: (perms: PermissionRecord) => void
   speakerState: (event: import("./modules/speaker").SpeakerStateEvent) => void
   meetingState: (event: import("./modules/meeting").MeetingState) => void
+  meetingVideoPublisher: (event: import("./modules/meeting").MeetingVideoPublisherEvent) => void
+  meetingStill: (event: import("./modules/meeting").MeetingStillProgressEvent) => void
   auth: (auth: MiniappAuthState) => void
 }
 
@@ -735,8 +737,15 @@ export class MiniappSession<TChannels extends object = any> {
       case MiniappResponseType.MEETING_STATE: {
         const state = payload.state as import("./modules/meeting").MeetingPhase | undefined
         if (!state) return
+        const identityMode =
+          payload.identityMode === "guest" || payload.identityMode === "teams-user" ? payload.identityMode : undefined
         const event: import("./modules/meeting").MeetingState = {
           state,
+          identityMode,
+          guestReason:
+            identityMode === "guest"
+              ? (payload.guestReason as import("./modules/meeting").MeetingState["guestReason"])
+              : undefined,
           muted: Boolean(payload.muted),
           videoEnabled: typeof payload.videoEnabled === "boolean" ? payload.videoEnabled : undefined,
           error: payload.error as string | undefined,
@@ -755,6 +764,22 @@ export class MiniappSession<TChannels extends object = any> {
         }
         this.meeting._applyState(event)
         this.emitter.emit("meetingState", event)
+        return
+      }
+
+      case MiniappResponseType.MEETING_VIDEO_PUBLISHER: {
+        const pauseId = typeof payload.pauseId === "string" ? payload.pauseId : ""
+        if (!pauseId || payload.status !== "expired") return
+        const event = {pauseId, status: "expired" as const}
+        this.emitter.emit("meetingVideoPublisher", event)
+        return
+      }
+
+      case MiniappResponseType.MEETING_STILL: {
+        const stillId = typeof payload.stillId === "string" ? payload.stillId : ""
+        const phase = payload.phase
+        if (!stillId || (phase !== "card" && phase !== "uploading" && phase !== "shown")) return
+        this.emitter.emit("meetingStill", {stillId, phase})
         return
       }
 

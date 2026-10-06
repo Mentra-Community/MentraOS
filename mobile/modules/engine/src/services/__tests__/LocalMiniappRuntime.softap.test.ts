@@ -103,6 +103,7 @@ function buildFixture(gates: Gates) {
   let forcedIngestCloses = 0
   const hotspotCommands: boolean[] = []
   const native = {
+    setPhotoPauseExpiredHandler() {},
     setStateHandler(handler: typeof stateHandler) {
       stateHandler = handler
     },

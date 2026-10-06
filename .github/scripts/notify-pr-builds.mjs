@@ -4,7 +4,8 @@ import {createHash} from "node:crypto"
 import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {DEVICE_ROUTINES, deviceRoutine, hasRoutineLabel} from "./device-routines.mjs"
+import {routineApi, routineLabelIds, selectedCatalog} from "./routine-api.mjs"
+import {slackRoutineSection, slackRoutineText} from "./slack-routine-section.mjs"
 
 export function iosBuildRequired(files) {
   return files.some(({filename}) =>
@@ -14,8 +15,7 @@ export function iosBuildRequired(files) {
   )
 }
 
-const escape = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-const link = (url, label) => `<${url}|${escape(label).replaceAll("|", " ")}>`
+const link = (url, label) => `<${url}|${slackRoutineText(label, 200).replaceAll("|", " ")}>`
 const marker = "<!-- mentra-pr-builds-slack -->"
 const iosTextTypes = {install: "text/html", manifest: "text/xml"}
 
@@ -60,10 +60,11 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   backend, unverifiedBackend = []}) {
   const ready = !error && !ios?.error
   const title = ready ? "✅ PR build ready to test" : "⚠️ PR build incomplete"
+  const overflowUrl = pr.html_url
   const lines = [
     `*${title}*`,
     link(pr.html_url, `#${pr.number} — ${pr.title}`),
-    `${escape(pr.head.ref)} → ${escape(pr.base.ref)} · by ${escape(pr.user.login)} · commit \`${sha.slice(0, 7)}\``,
+    `${slackRoutineText(pr.head.ref, 120)} → ${slackRoutineText(pr.base.ref, 120)} · by ${slackRoutineText(pr.user.login, 80)} · commit \`${sha.slice(0, 7)}\``,
   ]
   const appleStatus = ios?.error ? "Unavailable" : "Not built for these changes"
   const richLink = (url, text) => ({type: "link", url, text})
@@ -105,12 +106,12 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
       ],
     })),
   }
-  if (error) lines.push(`*Android:* ${escape(error)}`)
-  if (ios?.error) lines.push(`*iOS / macOS:* ${escape(ios.error)}`)
+  if (error) lines.push(`*Android:* ${slackRoutineText(error, 200)}`)
+  if (ios?.error) lines.push(`*iOS / macOS:* ${slackRoutineText(ios.error, 200)}`)
   if (!error || ios?.assets)
     lines.push(
       `Backend: ${backend ? `*${backendName(backend)}*` : "not verified"}${
-        backend && unverifiedBackend.length ? ` (${unverifiedBackend.join(", ")} not verified)` : ""}${!error ? " · Android ARM64" : ""}${
+        backend && unverifiedBackend.length ? ` (${slackRoutineText(unverifiedBackend.join(", "), 200)} not verified)` : ""}${!error ? " · Android ARM64" : ""}${
         ios?.assets
           ? ` · Apple devices must be registered · ${link(ios.instructionsUrl, "Installation instructions")}`
           : ""
@@ -118,9 +119,9 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     )
   if (!error) {
     lines.push(
-      `🕶️ *Glasses OTA — ready*\n*ASG:* ${escape(targets.asg.versionName)} · build ${
+      `🕶️ *Glasses OTA — ready*\n*ASG:* ${slackRoutineText(targets.asg.versionName, 120)} · build ${
         targets.asg.versionCode
-      }\n*BES:* ${escape(targets.bes)}\n*MTK:* ${escape(targets.mtk)}\n${link(manifestUrl, "OTA manifest")} · ${link(
+      }\n*BES:* ${slackRoutineText(targets.bes, 120)}\n*MTK:* ${slackRoutineText(targets.mtk, 120)}\n${link(manifestUrl, "OTA manifest")} · ${link(
         targets.asg.apkUrl,
         "ASG APK",
       )}`,
@@ -129,36 +130,38 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
       "Install the app, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
     )
   }
-  for (const routine of routines)
-    lines.push(
-      `*Requested tests:* ${deviceRoutine(routine.id).name} · iOS on Mac\n${[
-        routine.resultsUrl ? link(routine.resultsUrl, "View results") : "Results link available with the Mac build",
+  if (routines.length) lines.push(slackRoutineSection({
+    lines: routines.map(routine =>
+      `*Requested tests:* ${slackRoutineText(routine.title ?? routine.id, 200)}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n${[
+        routine.resultsUrl ? link(routine.resultsUrl, "View results") : routine.resultsUnavailable ? slackRoutineText(routine.resultsUnavailable, 200) : `Results link available with the ${routine.platform === "android" ? "Android" : "Mac"} build`,
         link(routine.pipelineUrl, routine.pipelineLabel),
-      ].join(" · ")}\nResults appear after the device run is uploaded.`,
-    )
+      ].join(" · ")}`),
+    footer: "Results appear after the device run is uploaded.", overflowUrl, overflowLabel: "View all requested tests on the PR",
+  }))
   lines.push(
     `${link(pr.html_url, "View PR and checks")} · ${link(androidRunUrl, "Android build logs")}${
       ios?.runUrl ? ` · ${link(ios.runUrl, "iOS / macOS build logs")}` : ""
     }${asgRunUrl ? ` · ${link(asgRunUrl, "ASG build logs")}` : ""}`,
   )
   if (ready) lines.push("Downloads may be cleaned up after 7 days.")
-  const blocks = lines.map((text) => ({type: "section", text: {type: "mrkdwn", text}}))
+  const blocks = lines.map(text => ({type: "section", text: {type: "mrkdwn", text}}))
   blocks.splice(3, 0, platforms)
   return {
-    text: `${title}: #${pr.number} ${pr.title} (${sha.slice(0, 7)})`,
+    text: `${title}: #${pr.number} ${slackRoutineText(pr.title, 200)} (${sha.slice(0, 7)})`,
     unfurl_links: false,
     unfurl_media: false,
     blocks,
   }
 }
 
-export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId = "day1-ota"}) {
+export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId, platform}) {
   if (
     !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
     !Number.isSafeInteger(pr) ||
     pr <= 0 ||
     !/^[a-f0-9]{40}$/.test(sha) ||
-    !/^[a-f0-9]{64}$/.test(archiveSha256 ?? "") || !Object.hasOwn(DEVICE_ROUTINES, routineId)
+    !/^[a-f0-9]{64}$/.test(archiveSha256 ?? "") || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(routineId ?? "") ||
+    !["android", "ios-on-mac"].includes(platform)
   )
     return null
   // Results are stored centrally regardless of the app backend. This is the deployed
@@ -166,18 +169,18 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
   const url = new URL("https://admin.dev.mentraglass.com/")
   url.search = new URLSearchParams({
     testRuns: "1",
+    channel: "pr",
     repository,
     pr: String(pr),
     headSha: sha,
     archiveSha256,
     routineId,
-    platform: "ios-mac",
+    platform,
   }).toString()
   return url.href
 }
 
-async function requestedRoutineLinks({github, context, pr, sha, ios, core}) {
-  const requested = Object.keys(DEVICE_ROUTINES).filter(id => hasRoutineLabel(pr, id))
+async function requestedRoutineLinks({context, pr, sha, ios, android, requested, fetchImpl, token}) {
   if (!requested.length) return []
   const repository = `${context.repo.owner}/${context.repo.repo}`
   const workflow = "request-e2e-routine.yml"
@@ -185,37 +188,18 @@ async function requestedRoutineLinks({github, context, pr, sha, ios, core}) {
     pipelineUrl: `https://github.com/${repository}/actions/workflows/${workflow}`,
     pipelineLabel: "Request pipeline (workflow)",
   }
-  try {
-    const {data} = await github.rest.actions.listWorkflowRuns({
-      ...context.repo,
-      workflow_id: workflow,
-      head_sha: sha,
-      event: "pull_request",
-      per_page: 100,
-    })
-    // One branch/head can back several PRs with different base branches. A
-    // request belongs to a PR, so require its unambiguous Actions association.
-    const associated = data.workflow_runs.filter(
-      (run) => run.pull_requests?.length === 1 && run.pull_requests[0]?.number === pr.number,
-    )
-    const run = matchingBuildRun(associated, pr, sha)
-    if (
-      run &&
-      Number.isSafeInteger(run.id) &&
-      run.id > 0 &&
-      Number.isSafeInteger(run.run_attempt) &&
-      run.run_attempt > 0
-    ) {
-      result.pipelineUrl = `https://github.com/${repository}/actions/runs/${run.id}/attempts/${run.run_attempt}`
-      result.pipelineLabel = "Request pipeline"
-    }
-  } catch (error) {
-    // Request creation and hardware are independent of build availability. A
-    // missing/pending request or a lookup failure must not gate the build post.
-    core.warning(`Could not locate this revision's routine request; linking its workflow: ${error.message}`)
+  let definitions
+  try {definitions = selectedCatalog(await routineApi({token, operation: "catalog", fetchImpl}), requested)}
+  catch {
+    return requested.map(id => ({...result, id, title: id,
+      resultsUnavailable: "The current routine catalog could not resolve this selection. Inspect the request pipeline; no execution result is inferred."}))
   }
-  return requested.map(id => ({...result, id,
-    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: ios.archiveSha256, routineId: id})}))
+  return definitions.map(definition => ({...result, id: definition.routineId, title: definition.title, platform: definition.platform,
+    definitionRevision: definition.definitionRevision,
+    ...(definition.platform === "android" && android.receiptUnavailable
+      ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
+    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: definition.platform === "android" ? android.archiveSha256 : ios.archiveSha256,
+      routineId: definition.routineId, platform: definition.platform})}))
 }
 
 export function matchingBuildRun(runs, pr, sha) {
@@ -438,7 +422,15 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const publicationIdentity = builds
     .map((build) => `${build.run.id}-${build.attempt}`)
     .join(":")
-  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}`
+  // Selected routines are part of the delivered post, so a label added to the same
+  // publications posts their requested tests and result links once.
+  const requested = routineLabelIds(pr)
+  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested, fetchImpl,
+    token: process.env.TEST_RUN_INGEST_TOKEN || process.env.TEST_RUN_INGEST_TOKEN_DEV})
+  const selectionIdentity = requested.length ? createHash("sha256").update(JSON.stringify(routines.map(row =>
+    [row.id, row.platform ?? "unavailable", row.definitionRevision ?? "", row.title]))).digest("hex") : undefined
+  const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}${
+    selectionIdentity ? `:routines-${selectionIdentity}` : ""}`
   if (android.receiptUnavailable) {
     const previous = comment?.body.split("\n").map(line =>
       new RegExp(`^<!-- ${buildIdentity}:android-([a-f0-9]{64}) -->$`).exec(line)).find(Boolean)
@@ -451,20 +443,27 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       android.receiptUnavailable = false
     }
   }
+  routines = routines.map(row => {
+    if (!row.platform) return row
+    const {resultsUrl, resultsUnavailable, ...definition} = row
+    return {...definition, ...(row.platform === "android" && android.receiptUnavailable
+      ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
+    resultsUrl: routineResultsUrl({repository: `${context.repo.owner}/${context.repo.repo}`, pr: pr.number, sha,
+      archiveSha256: row.platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: row.id, platform: row.platform})}
+  })
   // A verified APK binds its immutable hash; an unverified backend is distinct so a
   // later notification can replace it once its receipt verifies.
-  const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable"
-    : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
+  const identity = `${buildIdentity}${android.receiptUnavailable ? ":android-receipt-unavailable" : android.archiveSha256 ? `:android-${android.archiveSha256}` : ""}`
   if (comment?.body.includes(`<!-- ${identity} -->`)) {
     core.info("This PR revision's notification was already delivered.")
     return
   }
-  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, core})
   if (!(await current())) {
     core.info("PR superseded or retargeted before notification.")
     return
   }
-  routines = routines.filter(routine => hasRoutineLabel(pr, routine.id))
+  const currentRequested = new Set(routineLabelIds(pr))
+  routines = routines.filter(routine => currentRequested.has(routine.id))
   const payload = buildPost({
     pr,
     sha,
@@ -500,8 +499,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
   for (const routine of routines)
     downloads.push(
-      `**Requested tests:** ${deviceRoutine(routine.id).name} · iOS on Mac\n\n${[
+      `**Requested tests:** ${routine.title ?? routine.id}${routine.platform ? ` · ${routine.platform === "android" ? "Android" : "iOS on Mac"}` : ""}\n\n${[
         ...(routine.resultsUrl ? [`[View results](${routine.resultsUrl})`] : []),
+        ...(routine.resultsUnavailable ? [routine.resultsUnavailable] : []),
         `[${routine.pipelineLabel}](${routine.pipelineUrl})`,
       ].join(" · ")}\n\nResults appear after the device run is uploaded.`,
     )

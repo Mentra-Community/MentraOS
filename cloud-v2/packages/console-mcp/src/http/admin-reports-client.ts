@@ -17,7 +17,7 @@ import { ApiRequestError, describeAdminApiStatus, parseJsonResponse } from "./er
 
 export type ReportKind = "bug" | "feedback" | "automatic";
 export type ReportStatus = "collecting" | "ready" | "closed";
-export type ReportArtifactType = "logs" | "screenshot" | "state_snapshot";
+export type ReportArtifactType = "logs" | "screenshot" | "state_snapshot" | "video";
 
 export interface ReportArtifactMeta {
   artifactId: string;

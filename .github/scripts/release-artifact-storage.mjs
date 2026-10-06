@@ -13,6 +13,21 @@ export const ARTIFACT_ORIGIN = "https://artifactscdn.mentraglass.com"
 const INDEX_NAME = "_assets.json"
 const RESERVED_NAMES = new Set([INDEX_NAME, "index.html"])
 
+// A runner can kill the process before a network promise rejects. Emit the
+// phase before awaiting it, without putting diagnostics in JSON CLI stdout.
+async function artifactPhase(label, operation, log) {
+  log(`[artifact-storage] ${label}: started`)
+  try {
+    const result = await operation()
+    log(`[artifact-storage] ${label}: completed`)
+    return result
+  } catch (error) {
+    // Do not echo SDK errors here: they may contain request/authentication data.
+    log(`[artifact-storage] ${label}: failed`)
+    throw error
+  }
+}
+
 export function usesPrivateArtifactStorage(release) {
   return release.draft && !/^mentra-v\d+\.\d+\.\d+$/.test(release.tag_name)
 }
@@ -128,21 +143,26 @@ export async function listReleaseAssets(repository, release) {
   return mergeAssets(legacy, (await readArtifactIndex(repository, release.tag_name)).assets)
 }
 
-export async function readArtifactIndex(repository, tag, {store, env = process.env, verify = downloadAsset} = {}) {
+export async function readArtifactIndex(
+  repository,
+  tag,
+  {store, env = process.env, verify = downloadAsset, phaseLog = console.error} = {},
+) {
   // CI must discover committed objects even if the previous job died before
   // indexing them. Public/operator reads can still work without S3 credentials.
   if (!store && !env.ARTIFACTS_R2_ACCESS_KEY_ID && !env.ARTIFACTS_R2_SECRET_ACCESS_KEY)
     return readPublicIndex(repository, tag)
-  store ||= await createR2Store(env)
   const prefix = artifactPrefix(repository, tag)
-  const previous = await store.read(prefix + INDEX_NAME)
+  const phase = (name, operation) => artifactPhase(`${prefix} recovery ${name}`, operation, phaseLog)
+  store ||= await phase("initialize storage", () => createR2Store(env))
+  const previous = await phase("read index", () => store.read(prefix + INDEX_NAME))
   const index = previous
     ? validateIndex(JSON.parse(previous.body), repository, tag)
     : {schemaVersion: 1, repository, tag, assets: []}
   const known = new Map(index.assets.map((asset) => [asset.name, asset]))
   const recovered = []
   const retentionDays = {"pr-builds": 7, "oem-app-builds": 14}[tag]
-  for (const object of await store.list(prefix)) {
+  for (const object of await phase("list committed objects", () => store.list(prefix))) {
     const name = object.Key.slice(prefix.length)
     if (RESERVED_NAMES.has(name)) continue
     artifactKey(repository, tag, name)
@@ -150,30 +170,32 @@ export async function readArtifactIndex(repository, tag, {store, env = process.e
     // Lifecycle deletion is asynchronous. Do not resurrect an expired rolling
     // build that a sweep already removed from the download index.
     if (retentionDays && object.LastModified.getTime() < Date.now() - retentionDays * 86400000) continue
-    const head = await store.head(object.Key)
+    const head = await phase(`inspect ${name}`, () => store.head(object.Key))
     if (!head) continue // It expired between listing and HEAD.
     const asset = recordFromObject(repository, tag, name, head)
     const directory = await mkdtemp(path.join(tmpdir(), "mentra-artifact-recovery-"))
     try {
       // A corrupt/unavailable committed object is a failure, never "not built".
-      await verify(repository, asset, path.join(directory, "artifact"))
+      await phase(`verify public bytes ${name}`, () => verify(repository, asset, path.join(directory, "artifact")))
     } finally {
       await rm(directory, {recursive: true, force: true})
     }
     recovered.push(asset)
   }
   if (!recovered.length) return index
-  const next = await updateIndex(store, repository, tag, (assets) => {
-    const current = new Map(assets.map((asset) => [asset.name, asset]))
-    for (const asset of recovered) {
-      // A concurrent publisher may have indexed a newer replacement while we
-      // verified this one. Preserve its record and only repair our snapshot.
-      if (JSON.stringify(current.get(asset.name)) === JSON.stringify(known.get(asset.name)))
-        current.set(asset.name, asset)
-    }
-    return [...current.values()]
-  })
-  await writeDownloadPage(store, repository, tag)
+  const next = await phase("commit recovered index", () =>
+    updateIndex(store, repository, tag, (assets) => {
+      const current = new Map(assets.map((asset) => [asset.name, asset]))
+      for (const asset of recovered) {
+        // A concurrent publisher may have indexed a newer replacement while we
+        // verified this one. Preserve its record and only repair our snapshot.
+        if (JSON.stringify(current.get(asset.name)) === JSON.stringify(known.get(asset.name)))
+          current.set(asset.name, asset)
+      }
+      return [...current.values()]
+    }),
+  )
+  await phase("write download page", () => writeDownloadPage(store, repository, tag))
   return next
 }
 
@@ -422,6 +444,7 @@ export async function publishR2Artifact({
   fingerprint,
   verify = downloadAsset,
   log = console.log,
+  phaseLog = console.error,
   updateRelease = true,
   wait = sleep,
 }) {
@@ -430,31 +453,32 @@ export async function publishR2Artifact({
   if (replace && !["pr-builds", "oem-app-builds"].includes(release.tag_name))
     throw new Error("Replacement is only allowed for rolling PR/OEM builds")
   if (fingerprint && !/^[a-f0-9]{64}$/.test(fingerprint)) throw new Error("Invalid mobile build fingerprint")
-  store ||= await createR2Store()
   const key = artifactKey(repository, release.tag_name, name)
-  const digest = await sha256File(file)
+  const phase = (name, operation) => artifactPhase(`${key} publication ${name}`, operation, phaseLog)
+  store ||= await phase("initialize storage", () => createR2Store())
+  const digest = await phase("hash source", () => sha256File(file))
   const size = statSync(file).size
-  const existing = await store.head(key)
+  const existing = await phase("inspect existing object", () => store.head(key))
   const matches = (head) => head && head.ContentLength === size && head.Metadata?.sha256 === digest
   if (existing && !matches(existing) && !replace)
     throw new Error(`Refusing to overwrite immutable R2 artifact ${name} with different bytes`)
   if (!matches(existing) || replace) {
     try {
-      await store.upload(key, file, digest, {replace, etag: existing?.ETag, fingerprint})
+      await phase("upload object", () => store.upload(key, file, digest, {replace, etag: existing?.ETag, fingerprint}))
     } catch (error) {
       // A lost completion response or a concurrent identical publisher is safe
       // to reconcile; an incomplete multipart upload never becomes an object.
-      if (!matches(await store.head(key))) throw error
+      if (!matches(await phase("reconcile upload", () => store.head(key)))) throw error
     }
   }
-  const committed = await store.head(key)
+  const committed = await phase("inspect committed object", () => store.head(key))
   if (!matches(committed)) throw new Error(`Committed R2 artifact ${name} changed during publication`)
   const asset = recordFromObject(repository, release.tag_name, name, committed)
   const verificationFile = `${file}.${randomUUID()}.verify`
   try {
     for (let attempt = 0; ; attempt++) {
       try {
-        await verify(repository, asset, verificationFile)
+        await phase(`verify public bytes attempt ${attempt + 1}`, () => verify(repository, asset, verificationFile))
         break
       } catch (error) {
         if (attempt === 2) throw error
@@ -465,15 +489,19 @@ export async function publishR2Artifact({
   } finally {
     await rm(verificationFile, {force: true})
   }
-  await updateIndex(store, repository, release.tag_name, (assets) => [...assets.filter((a) => a.name !== name), asset])
-  await writeDownloadPage(store, repository, release.tag_name)
+  await phase("commit index", () =>
+    updateIndex(store, repository, release.tag_name, (assets) => [...assets.filter((a) => a.name !== name), asset]),
+  )
+  await phase("write download page", () => writeDownloadPage(store, repository, release.tag_name))
   if (updateRelease) {
-    const current = resolveRelease(repository, {releaseId: release.id})
+    const current = await phase("read GitHub release", () => resolveRelease(repository, {releaseId: release.id}))
     const body = releaseDownloadBody(current.body, repository, release.tag_name)
     if (body !== current.body)
-      gh(["api", "--method", "PATCH", `repos/${repository}/releases/${release.id}`, "--input", "-"], {
-        input: JSON.stringify(releaseBodyUpdate(current, release.tag_name, body)),
-      })
+      await phase("update GitHub download link", () =>
+        gh(["api", "--method", "PATCH", `repos/${repository}/releases/${release.id}`, "--input", "-"], {
+          input: JSON.stringify(releaseBodyUpdate(current, release.tag_name, body)),
+        }),
+      )
   }
   log(`Published ${name} (${size} bytes, sha256:${digest}) at ${asset.url}`)
   return asset

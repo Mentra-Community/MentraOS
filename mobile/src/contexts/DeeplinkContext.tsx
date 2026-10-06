@@ -1,12 +1,14 @@
 import * as Linking from "expo-linking"
 import * as WebBrowser from "expo-web-browser"
-import {FC, ReactNode, createContext, useContext, useEffect, useRef} from "react"
+import {FC, ReactNode, createContext, useContext, useEffect, useRef, useState} from "react"
 import {AppState, Platform} from "react-native"
 
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import mentraAuth from "@/utils/auth/authClient"
 import {BgTimer, glassesMicProbe, parseMicProbeParams} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
+import IncidentReportRequest from "@/components/diagnostics/IncidentReportRequest"
+import {loadAuthoringMiniapp} from "@/services/miniapps/loadAuthoringMiniapp"
 
 /**
  * adb / zsh often backslash-escapes `&` in a custom-scheme URL. That turns
@@ -452,7 +454,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
 ]
 
 interface DeeplinkContextType {
-  processUrl: (url: string) => Promise<void>
+  processUrl: (url: string, initial?: boolean, replayPending?: boolean) => Promise<void>
 }
 
 const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContextType)
@@ -460,13 +462,44 @@ const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContext
 export const useDeeplink = () => useContext(DeeplinkContext)
 
 export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
+  const [incidentParams, setIncidentParams] = useState<Record<string, unknown> | null>(null)
   const {setSplashEnabled} = useSplashLoader()
   const lastProcessed = useRef({url: null as string | null, time: 0})
   const nav = useNavigationStore.getState()
   const config = {
     scheme: "com.mentra",
     host: "apps.mentra.glass",
-    routes: deepLinkRoutes,
+    routes: [
+      {
+        pattern: "/test/submit-incident-report",
+        handler: (url: string) => {
+          const query = new URL(url).searchParams
+          const params: Record<string, unknown> = {}
+          query.forEach((_value, key) => {
+            const values = query.getAll(key)
+            params[key] = values.length === 1 ? values[0] : values
+          })
+          setIncidentParams(params)
+        },
+        // Diagnostics must preserve the failed screen even when auth is unavailable.
+        // The modal and uploader report that failure without sending the user to login.
+        requiresAuth: false,
+      },
+      {
+        pattern: "/test/load-miniapp",
+        requiresAuth: true,
+        handler: async (url: string) => {
+          try {
+            const result = await loadAuthoringMiniapp(url)
+            console.info("MINIAPP_LOAD_RESULT", JSON.stringify({status: "opened", ...result}))
+          } catch (error) {
+            console.error("MINIAPP_LOAD_RESULT", JSON.stringify({status: "failed", error: String(error)}))
+            throw error
+          }
+        },
+      },
+      ...deepLinkRoutes,
+    ],
     authCheckHandler: async () => {
       // TODO: this is a hack when we should really be using the auth context:
       const res = await mentraAuth.getSession()
@@ -559,7 +592,11 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     return params
   }
 
-  const processUrl = async (url: string, initial: boolean = false) => {
+  const deferredUrl = useRef<string | null>(null)
+  const processingUrls = useRef(new Set<string>())
+
+  const processUrl = async (url: string, initial: boolean = false, replayPending = false) => {
+    let claimed = false
     try {
       url = sanitizeDeeplinkUrl(url)
       // ignore expo-dev-deeplinks: (this was causing android to restart the app after hot-reloads twice)
@@ -571,11 +608,12 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       // Deduplicate — iOS can fire the same universal link event multiple times,
       // and on cold start both getInitialURL and addEventListener fire for the
       // same URL. Initial calls skip the check but claim the URL so that the
-      // duplicate addEventListener call is blocked. The index.tsx re-processing
-      // call happens >2s later (1s initial delay + init time + 1s DEEPLINK_DELAY)
-      // so it naturally falls outside the dedup window.
+      // duplicate addEventListener call is blocked. A route deferred to startup
+      // or sign-in can be consumed immediately, regardless of the dedup window.
       const now = Date.now()
-      if (!initial && url === lastProcessed.current.url && now - lastProcessed.current.time < 3000) {
+      const authReplay = replayPending && deferredUrl.current === url
+      if (processingUrls.current.has(url)) return
+      if (!initial && !authReplay && url === lastProcessed.current.url && now - lastProcessed.current.time < 3000) {
         console.log("DEEPLINK: Ignoring duplicate URL")
         return
       }
@@ -586,6 +624,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
       // delay and calls navigateToDestination() before the pending route is set,
       // causing it to navigate to /home instead of the deep link target.
       if (initial) {
+        deferredUrl.current = url
         nav.setPendingRoute(url)
         await new Promise((resolve) => setTimeout(resolve, 1000))
         // If index.tsx already consumed and re-processed the pending route
@@ -595,6 +634,14 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
           return
         }
       }
+
+      // Only startup's explicit pending-route consumer may bypass deduplication.
+      // Claim before the asynchronous auth check so concurrent events cannot run it.
+      if (processingUrls.current.has(url)) return
+      processingUrls.current.add(url)
+      claimed = true
+      if (deferredUrl.current === url) deferredUrl.current = null
+      if (nav.getPendingRoute() === url) nav.setPendingRoute(null)
 
       // small hack since some sources strip the host and we want to put the url into URL object here
       if (url.startsWith("/")) {
@@ -610,12 +657,13 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
         return
       }
 
-      const authed = await config.authCheckHandler()
+      const authed = matchedRoute.requiresAuth === false ? false : await config.authCheckHandler()
 
       // Check authentication if required
       if (matchedRoute.requiresAuth && !authed) {
         console.warn("Authentication required for route:", matchedRoute.pattern)
         // Store the URL for after authentication
+        deferredUrl.current = url
         nav.setPendingRoute(url)
         setTimeout(() => {
           try {
@@ -624,6 +672,7 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
             console.warn("Navigation failed, router may not be ready:", error)
           }
         }, 100)
+        return
       }
 
       // Extract parameters from URL
@@ -651,6 +700,8 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     } catch (error) {
       console.error("Error handling deep link:", error)
       config.fallbackHandler?.(url)
+    } finally {
+      if (claimed) processingUrls.current.delete(url)
     }
   }
 
@@ -658,5 +709,10 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     processUrl,
   }
 
-  return <DeeplinkContext.Provider value={contextValue}>{children}</DeeplinkContext.Provider>
+  return (
+    <DeeplinkContext.Provider value={contextValue}>
+      {children}
+      {incidentParams && <IncidentReportRequest params={incidentParams} onDismiss={() => setIncidentParams(null)} />}
+    </DeeplinkContext.Provider>
+  )
 }

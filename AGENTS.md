@@ -161,8 +161,10 @@ Write imperative, present-tense commit subjects (e.g., "Add BLE retry delay") an
 
 When opening or updating a PR, use the
 [`select-pr-routines` skill](.agents/skills/select-pr-routines/SKILL.md) to search
-existing device-test coverage and add relevant `routine:<id>` labels. Report
-uncovered behavior; a routine request is not a passing test result.
+device-test coverage. Add relevant `routine:<id>` labels for existing coverage;
+when the behavior needs changed or new coverage, submit the skill's authoring
+brief with `routine-work:edit` or `routine-work:create`. Explain the coverage and
+any missing prerequisite in the PR; a request is not a passing test result.
 
 ### AI agent attribution
 

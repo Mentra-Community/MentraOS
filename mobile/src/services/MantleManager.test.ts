@@ -8,7 +8,7 @@ import {router} from "expo-router"
 import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
-import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
+import {linkLingoPackageName, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
 import {deploymentStore} from "@/services/deployment/store"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
 import type {WorkspaceDeployment} from "@/services/deployment/types"
@@ -21,6 +21,7 @@ import {
   audioPlaybackService,
   localDisplayManager,
   localMiniappRuntime,
+  miniappLauncher,
   saveLocalAppRunningState,
   useAppStatusStore,
   useCoreStore,
@@ -181,7 +182,7 @@ describe("MantleManager", () => {
         contextual_dashboard: true,
         auth_email: "from-server@example.com",
         power_saving_mode: false,
-        voice_activity_detection_enabled: false,
+        voice_activity_detection_enabled: true,
       }),
     )
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
@@ -237,13 +238,13 @@ describe("MantleManager", () => {
     useGlassesStore.getState().setGlassesInfo({deviceModel: "Even Realities G1"})
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, "new-token", false)
-    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, true, false)
+    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
     // Setting pushes are debounced (300ms) and merged into one native write.
     jest.runOnlyPendingTimers()
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         core_token: "new-token",
-        voice_activity_detection_enabled: true,
+        voice_activity_detection_enabled: false,
       }),
     )
   })
@@ -305,7 +306,7 @@ describe("MantleManager", () => {
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalled()
 
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("power_saving_mode")
-    expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("voice_activity_detection_enabled", false)
+    expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("voice_activity_detection_enabled", true)
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("metric_system")
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("twelve_hour_time")
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
@@ -654,6 +655,49 @@ describe("MantleManager", () => {
     })
   })
 
+  it.each(["ios", "android"] as const)(
+    "installs LinkLingo only in Super Mode and stops it on opt-out on %s",
+    async (os) => {
+      jest.replaceProperty(Platform, "OS", os)
+      await engine.settings.set(SETTINGS.super_mode.key, false)
+      storage.remove("linklingo_last_enabled")
+      const instance = new (mantle.constructor as new () => {
+        setupSuperModeMiniappVisibility(): void
+        miniappVisibility: Map<string, {reconcile(): Promise<void>; dispose(): void}>
+        installBundledMiniapp: (asset: Asset) => Promise<void>
+      })()
+      const asset = {name: "com.mentra.link-1.0.18.zip"} as Asset
+      const fromModule = jest.spyOn(Asset, "fromModule").mockReturnValue(asset)
+      const install = jest.fn(async () => {})
+      instance.installBundledMiniapp = install
+      const stop = jest.spyOn(miniappLauncher, "stop").mockResolvedValue(undefined)
+      instance.setupSuperModeMiniappVisibility()
+      const visibility = instance.miniappVisibility.get(SETTINGS.super_mode.key)!
+      try {
+        await visibility.reconcile()
+        expect(install).not.toHaveBeenCalled()
+        expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(linkLingoPackageName, true)
+        await engine.settings.set(SETTINGS.super_mode.key, true)
+        await visibility.reconcile()
+        expect(install).toHaveBeenCalledWith(asset)
+        expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(linkLingoPackageName, false)
+        useAppStatusStore.setState({foregroundedPackage: linkLingoPackageName})
+        await engine.settings.set(SETTINGS.super_mode.key, false)
+        await visibility.reconcile()
+        expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(linkLingoPackageName, true)
+        expect(engine.miniapps.clearForeground).toHaveBeenCalled()
+        expect(saveLocalAppRunningState).toHaveBeenCalledWith(linkLingoPackageName, false)
+        expect(stop).toHaveBeenLastCalledWith(linkLingoPackageName)
+      } finally {
+        visibility.dispose()
+        fromModule.mockRestore()
+        stop.mockRestore()
+        useAppStatusStore.setState({foregroundedPackage: null})
+        await engine.settings.set(SETTINGS.super_mode.key, false)
+      }
+    },
+  )
+
   it("continues startup bundle installation after one asset fails", async () => {
     const instance = new (mantle.constructor as new () => {
       installBundledMiniapps: () => Promise<void>
@@ -834,7 +878,7 @@ describe("MantleManager", () => {
         initMiniapps: () => Promise<void>
         installBundledMiniapps: () => Promise<void>
         installBundledMiniapp: (asset: Asset) => Promise<void>
-        iosMiniappVisibility: Map<string, {reconcile: () => Promise<void>; dispose: () => void}>
+        miniappVisibility: Map<string, {reconcile: () => Promise<void>; dispose: () => void}>
       })()
       instance.installBundledMiniapps = jest.fn(async () => {})
       try {
@@ -870,7 +914,7 @@ describe("MantleManager", () => {
         expect(assets).not.toHaveBeenCalled()
         expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
       } finally {
-        for (const visibility of instance.iosMiniappVisibility.values()) visibility.dispose()
+        for (const visibility of instance.miniappVisibility.values()) visibility.dispose()
         appRegistry.getReleaseIdentity = originalIdentity
         appRegistry.getInstalledVersions = originalVersions
         active.mockRestore()
@@ -928,7 +972,7 @@ describe("MantleManager", () => {
       setupSubscriptions: () => Promise<void>
       prepareIosCall: () => Promise<void>
       subs: Array<{remove: () => void}>
-      iosMiniappVisibility: Map<string, {dispose: () => void}>
+      miniappVisibility: Map<string, {dispose: () => void}>
     })()
     const installCall = jest.fn(async () => {})
     instance.prepareIosCall = installCall
@@ -984,7 +1028,7 @@ describe("MantleManager", () => {
       await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, false))
       expect(otherInstall).not.toHaveBeenCalled()
     } finally {
-      for (const visibility of instance.iosMiniappVisibility.values()) visibility.dispose()
+      for (const visibility of instance.miniappVisibility.values()) visibility.dispose()
       instance.subs.forEach((sub) => sub.remove())
       installNotify.mockRestore()
       Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})

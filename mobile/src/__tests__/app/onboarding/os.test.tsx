@@ -2,10 +2,8 @@ import {SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
 import {act, fireEvent, render} from "@testing-library/react-native"
 import type {ReactNode} from "react"
-import {Linking} from "react-native"
 
 import MentraOSOnboarding from "@/app/onboarding/os"
-import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import showAlertMock from "@/utils/AlertUtils"
 
 const mockPushPrevious = jest.fn()
@@ -88,14 +86,13 @@ describe("MentraOS onboarding", () => {
     )
 
     const {steps} = mockOnboardingGuide.mock.calls[0][0]
-    expect(steps).toHaveLength(6)
+    expect(steps).toHaveLength(5)
     expect(steps.map((step: {title: string}) => step.title)).toEqual([
       "onboarding:osWelcomeTitle",
       "onboarding:osStartMiniappTitle",
       "onboarding:osMinimizeCloseTitle",
       "onboarding:osSwitchMiniappsTitle",
       "onboarding:osMiniappDrawerTitle",
-      "onboarding:osMovedMiniappsTitle",
     ])
     expect(steps[0]).toEqual(
       expect.objectContaining({
@@ -125,13 +122,13 @@ describe("MentraOS onboarding", () => {
         ],
       }),
     )
-    expect(steps[5]).toEqual(
+    expect(steps[4]).toEqual(
       expect.objectContaining({
         type: "image",
-        testID: "mentraos-onboarding-hero-5",
+        testID: "mentraos-onboarding-hero-4",
         details: expect.arrayContaining([
-          expect.objectContaining({title: "onboarding:osMissingMiniappTitle"}),
-          expect.objectContaining({title: "onboarding:osMentraOsLegacyTitle"}),
+          expect.objectContaining({title: "onboarding:osTapGridTitle"}),
+          expect.objectContaining({title: "onboarding:osSearchTitle"}),
         ]),
       }),
     )
@@ -161,19 +158,5 @@ describe("MentraOS onboarding", () => {
 
     expect(useSettingsStore.getState().getSetting(SETTINGS.onboarding_os_completed.key)).toBe(true)
     expect(mockPushPrevious).toHaveBeenCalledTimes(1)
-  })
-
-  it("opens the MentraOS Legacy page from the moved miniapps step", () => {
-    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValueOnce(undefined)
-    render(<MentraOSOnboarding />)
-
-    const {steps} = mockOnboardingGuide.mock.calls[0][0]
-    expect(steps[5].action).toBeUndefined()
-
-    const {getByTestId, UNSAFE_getByType} = render(steps[5].content)
-    expect(UNSAFE_getByType(MentraLogoStandalone).props.colorOverride).toBe("#00B869")
-    fireEvent.press(getByTestId("mentraos-onboarding-open-legacy"))
-
-    expect(openUrl).toHaveBeenCalledWith("https://mentraglass.com/legacy")
   })
 })

@@ -104,6 +104,10 @@ export type {
   MeetingParticipant,
   MeetingParticipantState,
   MeetingMediaSource,
+  MeetingStillError,
+  MeetingStillFailure,
+  MeetingStillPhase,
+  MeetingStillResult,
 } from "../modules/meeting"
 export {
   MEETING_HOST_UPDATE_MESSAGE,

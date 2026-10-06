@@ -187,6 +187,16 @@ Camera-device loss after opening is a terminal device failure, not a network rec
 Its callback reaches the stream owner off the Camera2 callback thread, and callbacks from a
 closed or replaced camera session cannot terminate the current publisher.
 
+Conditional cleanup supplies the original `streamId`, `controllerId`, current `sid` and
+`revision`, and a fresh `request_id` to `stop_stream`. Comparison and stop happen together
+on the existing lifecycle dispatcher. A changed snapshot, foreign owner, or any pending
+admission refuses mutation. Every accepted active start increases the retained revision,
+even when public IDs are reused. The correlated `stop_ack` is followed by a fresh terminal
+query to prove settlement. Pending admission must settle normally or retain custody; no
+public-ID-only cancellation is used. Query snapshots report pending admission and active
+controller identity and the existing start revision. The caller binds that start revision
+to reject a later same-ID incarnation, then compares the latest revision atomically. Normal user stop retains its intentional current-stream behavior.
+
 The OS-1937 streaming lifecycle is owned by the phone's explicit start/stop commands, not by
 cloud-era per-stream keep-alives. A stream may otherwise end on terminal publisher or device
 failure, or after sustained loss of the controlling phone. BES phone BLE presence is authoritative;
@@ -222,6 +232,13 @@ platforms, and short BLE outages before release; native callback wake behavior i
 unit tests.
 
 WHIP streams seed WebRTC with an explicit initial send bitrate capped by the caller's configured maximum. Congestion control remains enabled so the sender can still reduce bitrate on constrained networks instead of treating the configured bitrate as a fixed rate.
+
+A full-size photo can be taken during a WHIP stream on the glasses hotspot without ending it. The
+phone requests it with `take_photo` whose upload target is its own local `/photo/<id>` endpoint on
+the WHIP listener. The WHIP capturer lends Camera2 to the still while black substitute frames keep
+the track flowing, reopens as soon as the JPEG is in memory, and the JPEG is uploaded to the phone
+over the hotspot. A watchdog returns the camera to the stream regardless of the photo's outcome. Any
+other photo request during a stream is still rejected as camera busy.
 
 Streaming endpoints on the active Mentra Live hotspot subnet are reachable without a separate STA WiFi connection. `asg_client` derives that subnet from the live hotspot interface rather than assuming fixed client addresses. For WHIP, the WebRTC network inventory must also expose the hotspot interface so ICE can gather a directly reachable local candidate.
 
@@ -368,6 +385,13 @@ current-session BES UART version diagnostics include `elapsed_realtime_ms`, samp
 from Android's monotonic elapsed realtime before reading OTA state. Phone clock
 synchronization does not change these freshness signals. Neither field starts an
 update or changes stream state; clients omitting the request ID retain existing behavior.
+
+`request_version` may opt into `fresh_bes: true` to request one fresh `cs_syvr`
+snapshot through the same guarded UART coordinator. It does not reset the phone
+handshake, wait/retry, or interrupt file/OTA/baud ownership. Immediate correlated
+version chunks still contain cached BES values; fresh evidence requires an actual
+current-session BES reply, whose existing diagnostic records its receive elapsed
+time. A refused or unanswered probe remains unknown to a bounded observer.
 
 Mentra Live's canonical product serial is provisioned by the Android firmware in
 `ro.serialno`. `asg_client` reads that property directly and forwards a valid

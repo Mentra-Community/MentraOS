@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize } from "node:path";
 import type { PutObjectInput, StorageProvider, StoredObject } from "../storage.service";
 
@@ -9,7 +9,15 @@ export class LocalStorageProvider implements StorageProvider {
   async putObject(input: PutObjectInput): Promise<StoredObject> {
     const path = this.pathForKey(input.key);
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, input.body);
+    // Concurrent identical retries may have observed an unfinished reservation.
+    // Never truncate the final object: only replace it once all new bytes exist.
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, input.body, { flag: "wx" });
+      await rename(temporary, path);
+    } finally {
+      await rm(temporary, { force: true });
+    }
     return {
       key: input.key,
       contentType: input.contentType,

@@ -1,187 +1,187 @@
 import assert from "node:assert/strict"
 import {createHash} from "node:crypto"
-import {readFileSync} from "node:fs"
 import test from "node:test"
 import {applyRoutineResult, ROUTINE_BLOCK} from "./release-slack-message.mjs"
-import {jobName, prepareRoutineUpdate, readActionsJson, resolveRoutineNotifications, stateName, terminalRow, WORKFLOW} from "./release-routine-slack.mjs"
-
-const repo = {owner: "Mentra-Community", repo: "MentraOS"}, privateRepo = {owner: "Mentra-Community", repo: "Mentra-Automated-Testing"}
-const request = JSON.parse(readFileSync(new URL("fixtures/coordinated-routine-request.json", import.meta.url))).request
-const run = (id, overrides = {}) => ({id, run_attempt: 1, head_sha: "b".repeat(40), head_branch: "dev", event: "workflow_dispatch",
-  status: "completed", conclusion: "success", path: WORKFLOW, repository: {full_name: "Mentra-Community/MentraOS"},
-  head_repository: {full_name: "Mentra-Community/MentraOS"}, created_at: "2026-09-23T01:00:00Z", ...overrides})
-const worker = run(600, {head_branch: "main", head_sha: "c".repeat(40), path: ".github/workflows/device-routine.yml",
-  repository: {full_name: "Mentra-Community/Mentra-Automated-Testing"}, head_repository: {full_name: "Mentra-Community/Mentra-Automated-Testing"}})
-const terminal = () => ({schemaVersion: 1, kind: "mentra-routine-terminal",
-  privateRun: {repository: worker.repository.full_name, runId: 600, runAttempt: 1, revision: worker.head_sha},
-  request: {repository: "Mentra-Community/MentraOS", runId: 500, runAttempt: 1, routineId: "no-glasses"},
-  status: "passed", resultRunId: request.requestId,
-  checks: {test: true, teardown: true, returnVerification: true, evidence: true, fixture: true, publication: true, settlement: true}})
-const notification = () => ({schemaVersion: 1, kind: "mentra-release-slack-message",
-  build: {repository: "Mentra-Community/MentraOS", channel: "dev", runId: 100, headSha: "a".repeat(40), release: "3.3.0-dev.223", archiveSha256: "e".repeat(64)},
-  producer: {runId: 100, runAttempt: 2, headSha: "a".repeat(40)}, message: {channel: "CDEV", ts: "100.123", botId: "BBUILDS"},
-  payload: {blocks: [{type: "section", text: {type: "mrkdwn", text: "Original downloads / OTA"}},
-    {type: "section", block_id: ROUTINE_BLOCK, text: {type: "mrkdwn", text: "Pending"}}]}, rows: {}})
-const plan = () => ({notification: notification(), row: terminalRow(terminal(), worker, request), sourceCreatedAt: "2026-09-23T00:00:00Z"})
+import {jobName, prepareRoutineUpdate, readActionsJson, resolveRoutineNotifications, resolveRoutineSelectors, resolveRoutineResults,
+  launchRoutineResultNotifications, stateName, WORKFLOW} from "./release-routine-slack.mjs"
+import {boundRoutineResult} from "./routine-api.mjs"
+import {routineFixture, terminalRoutineFixture} from "./routine-api-fixture.mjs"
+import {renderPrRoutineResult, publishPrRoutineResult} from "./pr-routine-result.mjs"
+const repo = {owner: "Mentra-Community", repo: "MentraOS"}, repository = "Mentra-Community/MentraOS"
 const context = {repo, eventName: "workflow_dispatch", ref: "refs/heads/dev", runId: 701}
-
-function resolver(overrides = {}) {
-  const values = {terminal: terminal(), request: structuredClone(request), notification: notification(), worker: structuredClone(worker), ...overrides}
-  const github = {rest: {actions: {
-    listWorkflowRunArtifacts: "artifacts",
-    getWorkflowRunAttempt: async ({run_id}) => ({data: run_id === 500
-      ? run(500, {path: ".github/workflows/request-e2e-routine.yml"})
-      : run(100, {run_attempt: 2, head_sha: "a".repeat(40)})}),
-  }}, paginate: async () => [{name: "release-slack-message-100-2"}]}
-  const privateGithub = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: values.worker})}}}
-  return {github, privateGithub, context, workerRunId: 600, workerAttempt: 1,
-    verify: async () => {}, read: async (_github, _repo, _run, name) => name.startsWith("routine-terminal-")
-      ? {"routine-terminal-no-glasses.json": values.terminal} : name.startsWith("mentra-routine-request-")
-      ? {"request.json": values.request} : {"slack-release-message.json": values.notification}}
+const run = (id, overrides = {}) => ({id, run_attempt: 1, head_sha: "a".repeat(40), head_branch: "dev", event: "workflow_dispatch", status: "completed", conclusion: "success",
+  path: WORKFLOW, repository: {full_name: repository}, head_repository: {full_name: repository}, created_at: "2026-10-03T00:00:00Z", ...overrides})
+function fixture() {
+  const f = routineFixture({channel: "dev"}), notification = {schemaVersion: 2, kind: "mentra-release-slack-message",
+    build: {repository, channel: "dev", runId: 10, headSha: f.build.headSha, release: f.build.releaseIdentity, artifacts: {[f.request.input.platform]: f.build.archive.sha256}},
+    producer: {runId: 10, runAttempt: 2, headSha: f.build.headSha}, message: {channel: "CDEV", ts: "100.123", botId: "BBUILDS"},
+    payload: {blocks: [{type: "section", text: {type: "mrkdwn", text: "Original downloads"}}, {type: "section", block_id: ROUTINE_BLOCK, text: {type: "mrkdwn", text: "Available"}}]}, rows: {}}
+  return {...f, notification, plan: {notification, row: boundRoutineResult(f.detail), sourceCreatedAt: "2026-10-03T00:00:00Z"}}
 }
-
-test("resolves a terminal result only to its exact bot-owned release post", async () => {
-  const result = await resolveRoutineNotifications(resolver())
-  assert.equal(result.length, 1)
-  assert.deepEqual(result[0].row, plan().row)
+test("bound frozen platform archive resolves exact editable release post", async () => {
+  const f = fixture(), github = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: run(10, {run_attempt: 2, path: ".github/workflows/coordinated-release.yml"})}), listWorkflowRunArtifacts: () => {}}},
+    paginate: async () => [{id: 1, name: "release-slack-message-10-2"}]}
+  const options = {github, context, details: [f.detail], read: async () => ({"slack-release-message.json": f.notification})}
+  assert.equal((await resolveRoutineNotifications(options))[0].row.title, f.definition.title)
+  f.notification.build.artifacts["ios-on-mac"] = "f".repeat(64); await assert.rejects(resolveRoutineNotifications(options), /archive differs/)
 })
-test("wrong private revision, request attempt and build archive cannot update", async () => {
-  for (const corrupt of [
-    values => { values.terminal.privateRun.revision = "d".repeat(40) },
-    values => { values.terminal.request.runAttempt = 2 },
-    values => { values.notification.build.archiveSha256 = "f".repeat(64) },
-    values => { values.notification.build.headSha = "f".repeat(40) },
-    values => { values.worker.head_branch = "untrusted" },
-  ]) {
-    const values = {terminal: terminal(), notification: notification(), worker: structuredClone(worker)}
-    corrupt(values)
-    await assert.rejects(resolveRoutineNotifications(resolver(values)))
-  }
-})
-test("passing requires every dimension and an actually published matching result", () => {
-  for (const key of Object.keys(terminal().checks)) {
-    const invalid = terminal(); invalid.checks[key] = false
-    assert.throws(() => terminalRow(invalid, worker, request), /contradicts/)
-  }
-  assert.throws(() => terminalRow({...terminal(), resultRunId: "another-run"}, worker, request), /contradicts/)
-  assert.throws(() => terminalRow({...terminal(), resultRunId: undefined}, worker, request), /contradicts/)
-})
-test("webhook-era posts with no editable receipt are left alone", async () => {
-  const options = resolver(); options.github.paginate = async () => []
+test("old release posts remain untouched and cannot abort current-format notification selection", async () => {
+  const f = fixture(), old = {...structuredClone(f.notification), schemaVersion: 1,
+    producer: {...f.notification.producer, runAttempt: 1}}
+  const retained = new Map([["release-slack-message-10-1", old], ["release-slack-message-10-2", f.notification]])
+  const github = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: run(10, {run_attempt: 2, path: ".github/workflows/coordinated-release.yml"})}),
+    listWorkflowRunArtifacts: () => {}}}, paginate: async () => [...retained.keys()].map((name, index) => ({id: index + 1, name}))}
+  const options = {github, context, details: [f.detail], read: async (_, __, ___, name) => ({"slack-release-message.json": retained.get(name)})}
+  const original = structuredClone(old)
+  const plans = await resolveRoutineNotifications(options)
+  assert.equal(plans.length, 1); assert.deepEqual(plans[0].notification, f.notification)
+  assert.deepEqual(old, original)
+  retained.delete("release-slack-message-10-2")
   assert.deepEqual(await resolveRoutineNotifications(options), [])
+  assert.deepEqual(old, original)
 })
-test("a notification-only retry does not need to share the original publication attempt", async () => {
-  const later = notification(); later.producer.runAttempt = 3
-  const options = resolver({notification: later})
-  options.github.paginate = async () => [{name: "release-slack-message-100-3"}]
-  const [result] = await resolveRoutineNotifications(options)
-  assert.equal(request.source.publicationAttempt, 2)
-  assert.equal(result.notification.producer.runAttempt, 3)
+test("explicit notification selector is validated; only current-attempt callback artifacts are read", async () => {
+  assert.deepEqual(await resolveRoutineSelectors({context, requestId: "example-request"}), ["example-request"])
+  await assert.rejects(resolveRoutineSelectors({context, requestId: "../invalid"}), /selector/)
+  const producer = run(10, {path: ".github/workflows/request-e2e-routine.yml"})
+  const github = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: producer}), listWorkflowRunArtifacts: () => {}}}, paginate: async () => [{id: 1, name: "routine-dispatches-10-1"}, {id: 2, name: "routine-dispatches-10-2"}]}
+  const ids = await resolveRoutineSelectors({github, context: {...context, eventName: "workflow_run", payload: {workflow_run: producer}},
+    read: async (_github, _repo, _run, name) => {
+      assert.equal(name, "routine-dispatches-10-1");
+      return {"routine-dispatches.json": {requestIds: ["new-check-request", "second-check-request"]}}
+    }})
+  assert.deepEqual(ids, ["new-check-request", "second-check-request"])
 })
-test("multiple notification attempts continue editing the original matching post", async () => {
-  const options = resolver(), original = options.read
-  options.github.paginate = async () => [{id: 1, name: "release-slack-message-100-3"}, {id: 2, name: "release-slack-message-100-2"}]
-  options.read = async (...args) => {
-    const response = await original(...args)
-    if (args[3] === "release-slack-message-100-3") {
-      const later = notification(); later.producer.runAttempt = 3; later.message.ts = "300.123"
-      return {"slack-release-message.json": later}
-    }
-    return response
-  }
-  const [result] = await resolveRoutineNotifications(options)
-  assert.equal(result.notification.message.ts, "100.123")
-})
-test("artifact digest is checked before JSON is read", async () => {
-  const bytes = Buffer.from("synthetic archive"), digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`
-  const github = {rest: {actions: {listWorkflowRunArtifacts: "artifacts", downloadArtifact: async () => ({data: bytes})}},
-    paginate: async () => [{name: "receipt", id: 1, size_in_bytes: bytes.length, digest, workflow_run: {id: 600, head_sha: worker.head_sha}}]}
-  const options = {readZip: async () => ({"receipt.json": {valid: true}})}
-  assert.deepEqual(await readActionsJson(github, privateRepo, worker, "receipt", ["receipt.json"], options), {"receipt.json": {valid: true}})
-  github.rest.actions.downloadArtifact = async () => ({data: Buffer.from("changed")})
-  await assert.rejects(readActionsJson(github, privateRepo, worker, "receipt", ["receipt.json"], options), /digest differs/)
-})
-
-function historyFixture({previousState, previousStep = "success", retained = true, previousAttempt = 1} = {}) {
-  const currentPlan = plan()
-  const previous = run(700), current = run(701, {status: "in_progress"})
-  const oldJob = {id: 70, name: jobName(currentPlan).replace("no-glasses", "day1-ota"), run_attempt: previousAttempt,
-    status: "completed", started_at: "2026-09-23T02:00:00Z", completed_at: "2026-09-23T02:01:00Z",
-    steps: [{name: "Update original Slack message", started_at: "2026-09-23T02:00:30Z", conclusion: previousStep}]}
-  const currentJob = {id: 71, name: jobName(currentPlan), run_attempt: 1, status: "in_progress", started_at: "2026-09-23T02:02:00Z"}
-  const github = {rest: {actions: {listWorkflowRuns: async () => ({data: {total_count: 2, workflow_runs: [current, previous]}}),
-    listJobsForWorkflowRun: "jobs", listWorkflowRunArtifacts: "artifacts"}},
-  paginate: async (method, {run_id}) => method === "jobs" ? run_id === 701 ? [currentJob] : [oldJob]
-    : retained ? [{id: 1, name: stateName(700, 1, "day1-ota")}] : []}
+test("retained state applies every prior row before a later independently completed request", async () => {
+  const f = fixture(), previousRow = {...f.plan.row, routineId: "previous-check", title: "Previous check", requestId: "previous-request", resultRunId: "previous-request"}
+  const prior = applyRoutineResult(f.notification, previousRow), priorRun = run(700), currentRun = run(701, {status: "in_progress", event: "workflow_run"})
+  const jobs = new Map([[700, [{id: 100, name: jobName({...f.plan, row: previousRow}), run_attempt: 1, status: "completed", started_at: "2026-10-03T12:00:00Z", completed_at: "2026-10-03T12:01:00Z"}]],
+    [701, [{id: 101, name: jobName(f.plan), run_attempt: 1, status: "in_progress", started_at: "2026-10-03T12:02:00Z"}]]])
+  const github = {rest: {actions: {listWorkflowRuns: async () => ({data: {total_count: 2, workflow_runs: [priorRun, currentRun]}}), listJobsForWorkflowRun: "jobs", listWorkflowRunArtifacts: "artifacts"}},
+    paginate: async (method, input) => method === "jobs" ? jobs.get(input.run_id) : [{id: 1, name: stateName(700, 1, previousRow.requestId)}]}
   let saved
-  return {options: {github, context, plan: currentPlan, runAttempt: 1,
-    read: async () => ({"slack-update-state.json": previousState ?? applyRoutineResult(notification(), {...currentPlan.row,
-      routineId: "day1-ota", requestRunId: 499, status: "failed", resultRunId: "routine-499-1-dev-day1-ota"})}),
-    write: async (_path, contents) => { saved = JSON.parse(contents) }}, saved: () => saved, oldJob, currentJob}
-}
-test("a previous failed Slack call still contributes its retained desired state", async () => {
-  const fixture = historyFixture({previousStep: "failure"})
-  const result = await prepareRoutineUpdate(fixture.options)
-  assert.equal(result.rows["no-glasses"].status, "passed")
-  assert.equal(result.rows["day1-ota"].status, "failed")
-  assert.deepEqual(fixture.saved(), result)
+  const state = await prepareRoutineUpdate({github, context, plan: f.plan, runAttempt: 1,
+    read: async () => ({"slack-update-state.json": prior}), write: async (_, body) => {saved = JSON.parse(body)}})
+  assert.equal(Object.keys(state.rows).length, 2); assert.deepEqual(saved, state)
+  assert.equal(state.payload.blocks[0].text.text, "Original downloads")
+  github.paginate = async (method, input) => method === "jobs" ? jobs.get(input.run_id) : []
+  jobs.get(700)[0].steps = [{name: "Update original Slack message", started_at: "2026-10-03T12:00:01Z", conclusion: "success"}]
+  await assert.rejects(prepareRoutineUpdate({github, context, plan: f.plan, runAttempt: 1, write: async () => {}}), /refusing to erase/)
 })
-test("retained successful job clones reuse their original state artifact attempt", async () => {
-  const fixture = historyFixture(), original = fixture.options.github.paginate
-  fixture.options.github.paginate = async (method, coordinates) => {
-    const values = await original(method, coordinates)
-    return method === "jobs" && coordinates.run_id === 700 ? [...values, {...values[0], id: 72, run_attempt: 2}] : values
-  }
-  const result = await prepareRoutineUpdate(fixture.options)
-  assert.equal(result.rows["day1-ota"].status, "failed")
-})
-test("missing state after an applied update is visible failure, never erased rows", async () => {
-  const fixture = historyFixture({retained: false})
-  await assert.rejects(prepareRoutineUpdate(fixture.options), /no longer retained/)
-  assert.equal(fixture.saved(), undefined)
-})
-test("a state belonging to another post cannot replace this one", async () => {
-  const altered = notification(); altered.message.ts = "900.123"
-  await assert.rejects(prepareRoutineUpdate(historyFixture({previousState: altered}).options), /different release post/)
-})
-test("same-second ambiguous update order does not silently discard a routine", async () => {
-  const fixture = historyFixture(); fixture.oldJob.started_at = fixture.currentJob.started_at
-  await assert.rejects(prepareRoutineUpdate(fixture.options), /Ambiguous/)
-})
-test("every Slack credential consumer selects the notification environment on an ephemeral cloud job", () => {
-  const expected = ["coordinated-release.yml/notify-slack", "notify-release-routine.yml/resolve", "notify-release-routine.yml/update"]
-  const consumers = [], environmentJobs = []
-  for (const name of ["coordinated-release.yml", "notify-release-routine.yml"]) {
-    const source = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
-    const jobs = source.split("\njobs:\n")[1].split(/(?=^  [a-z0-9-]+:\n)/m)
-    for (const job of jobs) {
-      const id = `${name}/${job.match(/^  ([a-z0-9-]+):/)?.[1]}`
-      if (/^    environment: build-notifications$/m.test(job)) environmentJobs.push(id)
-      if (!job.includes("secrets.SLACK_BUILDS_BOT_TOKEN")) continue
-      consumers.push(id)
-      assert.match(job, /^    environment: build-notifications$/m, `${id} cannot read the environment secret`)
-      assert.match(job, /^    runs-on: blacksmith-\d+vcpu-ubuntu-2404$/m)
-      assert.doesNotMatch(job, /^    uses:/m)
-    }
-  }
-  assert.deepEqual(consumers, expected)
-  assert.deepEqual(environmentJobs, expected)
+test("GitHub JSON reader verifies digest, file set and bounds without extracting archive", async () => {
+  const bytes = Buffer.from("fixture zip"), artifact = {id: 1, name: "receipt", expired: false, size_in_bytes: bytes.length,
+    digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, workflow_run: {id: 10, head_sha: "a".repeat(40)}}
+  const github = {rest: {actions: {listWorkflowRunArtifacts: () => {}, downloadArtifact: async () => ({data: bytes})}}, paginate: async () => [artifact]}
+  assert.deepEqual(await readActionsJson(github, repo, run(10), "receipt", ["data.json"], {readZip: async () => ({"data.json": {ok: true}})}), {"data.json": {ok: true}})
+  artifact.digest = `sha256:${"f".repeat(64)}`; await assert.rejects(readActionsJson(github, repo, run(10), "receipt", ["data.json"], {readZip: async () => ({})}), /digest differs/)
 })
 
-test("workflow keeps pending routine updates and persists state before chat.update", () => {
-  const workflow = readFileSync(new URL("../workflows/notify-release-routine.yml", import.meta.url), "utf8")
-  assert.match(workflow, /queue: max/)
-  assert.match(workflow, /cancel-in-progress: false/)
-  assert.ok(workflow.indexOf("Retain desired message before updating Slack") < workflow.indexOf("name: Update original Slack message"))
-  assert.doesNotMatch(workflow, /chat\.postMessage/)
-})
-test("PR and dev workflow-only or notification-script edits run the routine checks", () => {
-  const workflow = readFileSync(new URL("../workflows/e2e-setup-checks.yml", import.meta.url), "utf8")
-  for (const event of ["pull_request", "push"]) {
-    const section = workflow.match(new RegExp(`^  ${event}:\\n((?:    .*\\n|\\n)+)`, "m"))?.[1]
-    assert.ok(section, `${event} trigger is configured`)
-    for (const path of [".github/workflows/notify-release-routine.yml", ".github/scripts/release-slack-message*", ".github/scripts/release-routine-slack*"]) {
-      assert.ok(section.includes(`- "${path}"`), `${event} includes ${path}`)
-    }
+test("fanout child workflows publish rejected request and pass before a transient neighbor fails", async () => {
+  const rejected = terminalRoutineFixture(), passed = routineFixture({routineId: "second.arbitrary-check"})
+  const details = new Map([["rejected", rejected.detail], ["passed", passed.detail]])
+  let releaseTransient, startedTransient
+  const started = new Promise(resolve => {startedTransient = resolve}), transient = new Promise((_, reject) => {releaseTransient = reject})
+  const comments = [], github = {paginate: async () => [], rest: {issues: {listComments: () => {}, createComment: async plan => {
+    comments.push(plan.body); return {data: {id: comments.length}}
+  }}}}
+  const f = fanoutFixture(), childResults = []
+  f.github.rest.actions.createWorkflowDispatch = async ({inputs}) => {
+    // Dispatch acknowledges a child; its own result wait and publication run independently.
+    const child = resolveRoutineResults({requestIds: [inputs.request_id], wait: async ({requestId}) => {
+      if (requestId === "transient") {startedTransient(); return transient}
+      return details.get(requestId)
+    }}).then(([detail]) => publishPrRoutineResult({github, context, plan: renderPrRoutineResult(detail)}))
+    childResults.push(child.then(value => ({status: "fulfilled", value}), reason => ({status: "rejected", reason})))
   }
+  const launches = await launchRoutineResultNotifications({...f, requestIds: ["transient", "rejected", "passed"]})
+  assert.equal(launches.length, 3)
+  await started
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(comments.length, 2) // Publication is not waiting for the neighboring API outage.
+  assert.ok(comments.some(body => body.includes("No framework result has been published")))
+  assert.ok(comments.some(body => body.includes("Recording and full result")))
+  releaseTransient(new Error("Core API remained unavailable"))
+  const children = await Promise.all(childResults)
+  assert.equal(children.filter(child => child.status === "fulfilled").length, 2)
+  assert.equal(children[0].status, "rejected"); assert.match(children[0].reason.message, /Core API remained unavailable/)
+})
+
+test("release receipt updates retain a published pass alongside an immediately rejected request", () => {
+  const f = fixture(), rejected = terminalRoutineFixture({channel: "dev", routineId: "unavailable.other-check"})
+  const receipt = boundRoutineResult(rejected.detail), updated = applyRoutineResult(applyRoutineResult(f.notification, f.plan.row), receipt)
+  assert.equal(Object.keys(updated.rows).length, 2)
+  assert.equal(updated.rows[`${receipt.routineId}:${receipt.platform}`].resultRunId, undefined)
+  assert.match(updated.payload.blocks[1].text.text, /Passed/)
+  assert.match(updated.payload.blocks[1].text.text, /Not run.*Request receipt/)
+  assert.match(updated.payload.blocks[1].text.text, /Installed host cannot execute/)
+})
+
+function fanoutFixture() {
+  const producer = run(10, {path: ".github/workflows/request-e2e-routine.yml"}), current = run(701, {status: "in_progress", event: "workflow_run"})
+  const launches = [], github = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: producer}),
+    getWorkflowRun: async () => ({data: current}),
+    createWorkflowDispatch: async input => {launches.push(input)}}}, paginate: async () => assert.fail("Fanout must not inspect notification titles")}
+  return {producer, launches, github, context: {...context, eventName: "workflow_run", payload: {workflow_run: producer}}}
+}
+
+test("automatic fanout launches every neighbor despite failure and retries the same accepted request", async () => {
+  const f = fanoutFixture(), requestIds = ["failed-neighbor", "published-pass", "rejected-request"]
+  f.github.rest.actions.createWorkflowDispatch = async input => {
+    f.launches.push(input)
+    if (input.inputs.request_id === "failed-neighbor") throw new Error("transient dispatch outage")
+  }
+  await assert.rejects(launchRoutineResultNotifications({...f, requestIds}), error => error instanceof AggregateError && error.errors.length === 1)
+  assert.equal(f.launches.length, 3)
+  for (const launch of f.launches) {
+    assert.equal(launch.ref, "dev"); assert.equal(launch.workflow_id, WORKFLOW)
+    assert.deepEqual(Object.keys(launch.inputs), ["request_id"])
+  }
+  assert.equal((await launchRoutineResultNotifications({...f, requestIds: ["published-pass"]}))[0].status, "launched")
+  assert.equal(f.launches.length, 4)
+  await assert.rejects(launchRoutineResultNotifications({...f, context: {...f.context, eventName: "workflow_dispatch"}, requestIds}), /trusted unique/)
+})
+
+test("failed or uncertain fanout dispatch can retry the same publication identity without a new Core request", async () => {
+  const f = fanoutFixture()
+  f.github.rest.actions.createWorkflowDispatch = async input => {f.launches.push(input); throw new Error("dispatch response lost")}
+  await assert.rejects(launchRoutineResultNotifications({...f, requestIds: ["uncertain-request"]}), /dispatch response lost/)
+  f.github.rest.actions.createWorkflowDispatch = async input => {f.launches.push(input)}
+  assert.equal((await launchRoutineResultNotifications({...f, requestIds: ["uncertain-request"]}))[0].status, "launched")
+  assert.equal(f.launches.length, 2)
+  assert.deepEqual(f.launches[0], f.launches[1])
+})
+
+test("manually forged matching notification titles cannot suppress another accepted request", async () => {
+  const f = fanoutFixture(), requestId = "real-request"
+  const history = [run(800, {display_title: "Routine result real-request", conclusion: "success"})]
+  f.github.rest.actions.listWorkflowRuns = async () => ({data: {workflow_runs: history}})
+  f.github.paginate = async () => assert.fail("Display title history cannot authorize publication suppression")
+  const [result] = await launchRoutineResultNotifications({...f, requestIds: [requestId]})
+  assert.equal(result.status, "launched"); assert.equal(f.launches.length, 1)
+  assert.deepEqual(f.launches[0].inputs, {request_id: requestId})
+})
+
+test("failed request producer's authenticated artifact still publishes accepted neighbors and ignores extra outcomes", async () => {
+  const f = fanoutFixture(); f.producer.conclusion = "failure"
+  const selector = {requestIds: ["accepted-first", "accepted-third"], outcomes: [
+    {requestId: "accepted-first", routineId: "first", status: "accepted"},
+    {requestId: "rejected-second", routineId: "second", status: "failed", reason: "Recorder unavailable"},
+    {requestId: "accepted-third", routineId: "third", status: "accepted"},
+  ]}
+  const bytes = Buffer.from("authenticated selector zip"), artifact = {id: 1, name: "routine-dispatches-10-1", expired: false,
+    size_in_bytes: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    workflow_run: {id: 10, head_sha: f.producer.head_sha}}
+  f.github.rest.actions.listWorkflowRunArtifacts = "artifacts"
+  f.github.rest.actions.downloadArtifact = async () => ({data: bytes})
+  f.github.paginate = async (method, input) => {
+    assert.equal(method, "artifacts"); assert.equal(input.run_id, f.producer.id)
+    return [artifact, {...artifact, id: 2, name: "routine-dispatches-10-2"}]
+  }
+  const requestIds = await resolveRoutineSelectors({...f, read: (...args) => readActionsJson(...args, {
+    readZip: async () => ({"routine-dispatches.json": selector}),
+  })})
+  assert.deepEqual(requestIds, selector.requestIds)
+  await launchRoutineResultNotifications({...f, requestIds})
+  assert.deepEqual(f.launches.map(launch => launch.inputs.request_id), selector.requestIds)
+  assert.ok(f.launches.every(launch => launch.inputs.request_id !== "rejected-second"))
 })

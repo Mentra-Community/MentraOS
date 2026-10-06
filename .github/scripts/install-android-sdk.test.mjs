@@ -153,11 +153,11 @@ test("both workflows install packages before Gradle and changes invalidate APK r
     assert.match(workflow, /packages: ""/)
     const setup = workflow.indexOf("node .github/scripts/install-android-sdk.mjs --mobile mobile")
     assert.ok(setup > workflow.indexOf("bun install --frozen-lockfile"))
-    assert.ok(setup < workflow.indexOf("run: ./gradlew"))
+    assert.ok(setup < workflow.indexOf("./gradlew"))
     assert.ok(workflow.includes(".github/scripts/install-android-sdk*"))
     assert.ok(workflow.includes("node --test .github/scripts/install-android-sdk.test.mjs"))
     assert.doesNotMatch(workflow, /Retry build with clean cache|steps\.gradle-build/)
-    for (const step of workflow.split(/\n      - name:/).filter((step) => step.includes("run: ./gradlew"))) {
+    for (const step of workflow.split(/\n      - name:/).filter((step) => step.includes("./gradlew"))) {
       assert.doesNotMatch(step, /continue-on-error/)
     }
   }

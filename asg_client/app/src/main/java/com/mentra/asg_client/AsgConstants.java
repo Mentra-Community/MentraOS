@@ -124,6 +124,41 @@ public class AsgConstants {
     public static final int WHIP_INITIAL_VIDEO_BITRATE_BPS = 1_500_000;
 
     /**
+     * Path prefix of the phone's local still endpoint. A {@code take_photo} whose upload URL is a
+     * plain-HTTP private address with this path, received while a WHIP stream is active, is a
+     * stream photo: the stream keeps running on substitute frames while the camera shoots.
+     */
+    public static final String STREAM_PHOTO_UPLOAD_PATH_PREFIX = "/photo/";
+
+    /** Substitute frame rate that keeps the WHIP video track flowing while the camera shoots. */
+    public static final int STREAM_PHOTO_FILLER_FPS = 10;
+
+    /**
+     * Hard ceiling on a stream photo's hold of the WHIP camera. The live capturer restarts at this
+     * point even if the capture or upload never reported back, so a stalled photo cannot leave the
+     * stream on substitute frames.
+     */
+    public static final long STREAM_PHOTO_MAX_HOLD_MS = 25_000L;
+
+    /** How long to wait for CameraNeo to release the device before restarting the live capturer. */
+    public static final long STREAM_PHOTO_CAMERA_RELEASE_TIMEOUT_MS = 3_000L;
+
+    /** Attempts to reopen the live capturer after a stream photo before reporting it failed. */
+    public static final int STREAM_PHOTO_CAMERA_RESTART_ATTEMPTS = 3;
+
+    /** Delay between live capturer reopen attempts after a stream photo. */
+    public static final long STREAM_PHOTO_CAMERA_RESTART_RETRY_MS = 1_000L;
+
+    /** Substitute frames stop after this long even if the reopened camera never delivers a frame. */
+    public static final long STREAM_PHOTO_FIRST_FRAME_TIMEOUT_MS = 4_000L;
+
+    /** Connect timeout for the stream photo upload to the phone over the hotspot. */
+    public static final int STREAM_PHOTO_UPLOAD_CONNECT_TIMEOUT_MS = 3_000;
+
+    /** Read/write timeout for the stream photo upload to the phone over the hotspot. */
+    public static final int STREAM_PHOTO_UPLOAD_IO_TIMEOUT_MS = 10_000;
+
+    /**
      * 1Hz encoder FPS/bitrate/dropped-frame telemetry ({@code [STREAM_QUALITY]} and BLE {@code
      * stream_status.stats}). Lifecycle {@code stream_status} (started/stopped/error) is unaffected.
      * Build-time DEFAULT only: the live switch is {@link
@@ -353,6 +388,12 @@ public class AsgConstants {
 
     /** Debug BES intent extra carrying a stable identifier for durable state. */
     public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
+
+    /** Optional debug BES intent extra for a hash-addressed owned local staging file. */
+    public static final String DEBUG_BES_OTA_FILE_PATH_EXTRA = "file_path";
+
+    /** Allowed parent prefix for owned shared-provider BES staging directories. */
+    public static final String DEBUG_BES_OTA_STAGING_PREFIX = "/data/local/tmp/mentra-live-";
 
     /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
     public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =

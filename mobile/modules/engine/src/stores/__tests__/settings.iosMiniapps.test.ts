@@ -45,3 +45,22 @@ describe("iOS miniapp local setting hydration", () => {
     },
   )
 })
+
+test("authoring build defaults Super Mode on only with the explicit flag, preserving a saved choice", async () => {
+  const previous = process.env.EXPO_PUBLIC_SUPER_MODE
+  try {
+    delete process.env.EXPO_PUBLIC_SUPER_MODE
+    expect(restartSettings().SETTINGS.super_mode.defaultValue()).toBe(false)
+    process.env.EXPO_PUBLIC_SUPER_MODE = "true"
+    let state = restartSettings().useSettingsStore
+    await state.getState().loadAllSettings()
+    expect(state.getState().getSetting("super_mode")).toBe(true)
+    await state.getState().setSetting("super_mode", false)
+    state = restartSettings().useSettingsStore
+    await state.getState().loadAllSettings()
+    expect(state.getState().getSetting("super_mode")).toBe(false)
+  } finally {
+    if (previous === undefined) delete process.env.EXPO_PUBLIC_SUPER_MODE
+    else process.env.EXPO_PUBLIC_SUPER_MODE = previous
+  }
+})

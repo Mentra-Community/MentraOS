@@ -1,18 +1,22 @@
+import {NativeDispatchPanel, NativeActivityPanel} from "./pages/framework-dispatch";
+import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
 import { api, ApiError } from "./lib/api";
 import {
-  readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
+  hasInvalidTestRunListScope, readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
-import { TestRunsPage } from "./pages/test-runs";
+import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
+import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
+import { RecordingVideo } from "./components/recording-video";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs";
+type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "routine-catalog" | "system-health";
 type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
 
 interface AdminUser {
@@ -68,7 +72,7 @@ type ReportStatus = "collecting" | "ready" | "closed";
 
 interface ReportArtifact {
   artifactId: string;
-  type: "logs" | "screenshot" | "state_snapshot";
+  type: "logs" | "screenshot" | "state_snapshot" | "video";
   source: string;
   filename: string | null;
   contentType: string | null;
@@ -130,6 +134,8 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "audit", label: "Audit log", icon: History },
   { key: "incidents", label: "Incident system", icon: Bug },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
+  { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
+  { key: "system-health", label: "System health", icon: ShieldCheck },
 ];
 
 /**
@@ -160,17 +166,25 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
+const initialTestRunsPage = new URLSearchParams(window.location.search).get("testRuns") === "1";
+const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
+const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
+const initialRestoration = new URLSearchParams(window.location.search).get("restoration") === "1";
+const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(
-    initialTestRunLink || initialTestRunListScope ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home",
+    initialSystemHealth ? "system-health" : initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
   );
+  const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
+  const [restoration, setRestoration] = useState(initialRestoration);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
+  const [invalidTestRunListScope, setInvalidTestRunListScope] = useState(() => hasInvalidTestRunListScope(window.location.search));
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
@@ -206,23 +220,32 @@ function AdminPage() {
   }, [me.isSuccess]);
   useEffect(() => {
     const restore = () => {
+      const search = new URLSearchParams(window.location.search);
+      setRestoration(search.get("restoration") === "1");
+      if (search.get("systemHealth") === "1") { setPage("system-health"); return; }
+      const suite = readSuiteId(window.location.search);
+      setSuiteId(suite);
       const selection = readTestRunLink(window.location.search);
       const scope = readTestRunListScope(window.location.search);
       setTestRunLink(selection);
       setTestRunListScope(scope);
-      if (selection || scope) setPage("test-runs");
+      setInvalidTestRunListScope(hasInvalidTestRunListScope(window.location.search));
+      if (suite || selection || scope || new URLSearchParams(window.location.search).get("testRuns") === "1") setPage("test-runs");
+      else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
 
   function selectTestRun(selection: TestRunLink | null, replace = false) {
+    setSuiteId(null);
     setTestRunLink(selection);
     window.history[replace ? "replaceState" : "pushState"](null, "", testRunLocation(window.location.href, selection));
   }
 
   function clearTestRunListScope() {
     setTestRunListScope(null);
+    setInvalidTestRunListScope(false);
     window.history.replaceState(null, "", testRunListLocation(window.location.href, null));
   }
 
@@ -340,6 +363,8 @@ function AdminPage() {
     audit: { title: "Audit log", body: "Every admin mutation: who approved, rejected, published, or promoted something." },
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
+    "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
+    "system-health": { title: "System health", body: "Host contact, worker status, device lanes and recorded disk space." },
   };
 
   if (me.isLoading) return <Splash label="Checking admin session" />;
@@ -358,13 +383,19 @@ function AdminPage() {
       activeKey={page}
       onSelect={key => {
         setPage(key as AdminPageKey);
+        setRestoration(false);
+        const location = new URL(window.location.href);
+        for (const param of ["systemHealth", "restoration", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
+        window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
         setDeepLinkReportId(null);
-        if (key !== "test-runs") {
-          selectTestRun(null, true);
-          clearTestRunListScope();
-        }
+        selectTestRun(null, true);
+        clearTestRunListScope();
+        if (key === "test-runs") window.history.replaceState(null, "", "/?testRuns=1");
+        if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
+        setSuiteId(null);
+        if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
       }}
       title={pageMeta[page].title}
       description={pageMeta[page].body}
@@ -422,9 +453,24 @@ function AdminPage() {
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
-      {page === "test-runs" ? (
-        <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
-          scope={testRunListScope} onClearScope={clearTestRunListScope} />
+      {page === "test-runs" ? <SystemHealthSummary /> : null}
+      {page === "system-health" ? <SystemHealthPage restoration={restoration} /> : null}
+      {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
+      {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
+      {page === "test-runs" && !suiteId ? (
+        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <>
+          {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
+            <h2 className="font-semibold">Results for the selected build</h2>
+            <p className="mt-2">{testRunListScope.repository} · {testRunListScope.channel} · <code>{testRunListScope.headSha}</code> · {testRunListScope.routineId} · {testRunListScope.platform}</p>
+            <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
+          </section>}
+          {invalidTestRunListScope ? <section role="alert" className="rounded-2xl border border-[#e0e4de] bg-white p-5">
+            <h2 className="font-semibold">This test-results filter is unavailable</h2>
+            <p className="mt-2">The link has missing or unsupported build details. Open a current result link, or choose all test runs.</p>
+            <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
+          </section> : <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />}
+          <NativeActivityPanel /><NativeDispatchPanel />
+        </>
       ) : null}
 
       {detailRelease ? (
@@ -1064,7 +1110,7 @@ function ReportDetailDrawer(props: { reportId: string; onClose: () => void }) {
                   Artifacts ({report.artifacts.length})
                 </div>
                 {report.artifacts.length === 0 ? (
-                  <p className="mt-2 text-sm text-[#68746d]">No screenshots or logs were attached.</p>
+                  <p className="mt-2 text-sm text-[#68746d]">No screenshots, videos or logs were attached.</p>
                 ) : (
                   <div className="mt-3 space-y-4">
                     {report.artifacts.map(artifact => (
@@ -1101,7 +1147,11 @@ function isPreviewableImage(contentType: string | null | undefined): boolean {
   return PREVIEWABLE_IMAGE_TYPES.has(contentType.split(";")[0].trim().toLowerCase());
 }
 
-function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact: ReportArtifact }) {
+function isPlayableVideo(contentType: string | null | undefined): boolean {
+  return contentType?.split(";")[0].trim().toLowerCase() === "video/mp4";
+}
+
+export function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact: ReportArtifact }) {
   const url = `/api/admin/reports/${reportId}/artifacts/${artifact.artifactId}`;
   const header = (
     <div className="flex flex-wrap items-center gap-2 text-xs text-[#68746d]">
@@ -1123,6 +1173,22 @@ function ReportArtifactView({ reportId, artifact }: { reportId: string; artifact
             loading="lazy"
             className="mt-2 max-h-72 rounded-[10px] border border-[#e0e4de] bg-white"
           />
+        </a>
+      </div>
+    );
+  }
+  if (artifact.type === "video" && isPlayableVideo(artifact.contentType)) {
+    // Same-origin artifact URL, like screenshots: the browser sends the admin
+    // session cookie and the API serves the MP4 inline.
+    return (
+      <div className="rounded-[14px] bg-[#f5f7f4] p-3">
+        {header}
+        <RecordingVideo
+          src={url}
+          className="mt-2 border border-[#e0e4de]"
+        />
+        <a className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-[#087d50]" href={url} download>
+          <FileText className="size-4" /> Download payload
         </a>
       </div>
     );

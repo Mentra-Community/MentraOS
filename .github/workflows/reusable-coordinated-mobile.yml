@@ -324,6 +324,12 @@ jobs:
             echo "ipa_asset_id=$ipa_id"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Check Mapbox SDK download authentication
+        if: inputs.dry_run == true || steps.container.outputs.android_assets_exist != 'true' || steps.container.outputs.ios_asset_exists != 'true'
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: node release-tooling/.github/scripts/check-mapbox-downloads.mjs
+
   android:
     name: Build and distribute coordinated Android app
     needs: prepare

@@ -14,6 +14,7 @@ on:
       - ".github/workflows/mentra-asg-client-build.yml"
       - ".github/actions/inject-signing/**"
       - ".github/scripts/pr-mobile-build*"
+      - ".github/scripts/ensure-android-ndk*"
       - ".github/scripts/install-android-sdk*"
       - ".github/scripts/pr_mobile_config.py"
       - ".github/scripts/prepare-pr-mobile.mjs"
@@ -23,6 +24,8 @@ on:
       - ".github/workflows/mentra-app-ios-build.yml"
       - ".github/workflows/reusable-pr-build-notification.yml"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/ios-*"
+      - ".github/actions/disk-guard/**"
       - ".github/scripts/pr-android-artifacts*"
       - ".github/scripts/select-pr-asg.mjs"
       - ".github/scripts/compute-asg-build-identity.mjs"
@@ -174,7 +177,7 @@ jobs:
 
       - name: Verify PR packaging and notification contracts
         run: |
-          node --test .github/scripts/install-android-sdk.test.mjs .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/pr-android-artifacts.test.mjs
+          node --test .github/scripts/install-android-sdk.test.mjs .github/scripts/ensure-android-ndk.test.mjs .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/pr-android-artifacts.test.mjs
           python3 .github/scripts/test_repackage_pr_apk.py
 
       - name: Setup environment
@@ -388,6 +391,11 @@ jobs:
         working-directory: ./mobile
         run: bun expo prebuild --platform android
 
+      - name: Ensure the React Native Android NDK is complete
+        if: steps.select-apk.outputs.reused != 'true'
+        timeout-minutes: 5
+        run: node .github/scripts/ensure-android-ndk.mjs
+
       - name: Fix React Native symlinks
         if: steps.select-apk.outputs.reused != 'true'
         working-directory: ./mobile
@@ -582,3 +590,4 @@ jobs:
       pull-requests: write
     secrets:
       SLACK_WEBHOOK_PR_BUILDS: ${{ secrets.SLACK_WEBHOOK_PR_BUILDS }}
+      TEST_RUN_INGEST_TOKEN_DEV: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}

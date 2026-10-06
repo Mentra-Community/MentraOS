@@ -81,7 +81,6 @@ export default function WifiConnectingScreen() {
 
   const attemptConnection = async () => {
     try {
-      console.log("Attempting to send wifi credentials to Core", ssid, password)
       await engine.glasses.wifi.connect(ssid, password)
 
       // Save credentials ONLY on successful connection if checkbox was checked.

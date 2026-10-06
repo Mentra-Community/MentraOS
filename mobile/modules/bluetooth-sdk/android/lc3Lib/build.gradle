@@ -129,7 +129,12 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments '-DCMAKE_OBJECT_PATH_MAX=600', '-DANDROID_STL=c++_static'
+                // Google Play rejects 64-bit libraries whose ELF LOAD segments
+                // are not 16 KB aligned. NDK r27 (the React Native default)
+                // only aligns them with this flag; React Native's Gradle plugin
+                // adds it to the app module, never to library modules.
+                arguments '-DCMAKE_OBJECT_PATH_MAX=600', '-DANDROID_STL=c++_static',
+                    '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
             }
         }
     }

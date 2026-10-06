@@ -41,7 +41,10 @@ One coordinated source run retains one automatic generation per routine across
 all its rerun attempts because the existing release plan/identity is reused.
 The authenticated callback send-step history is the durable fence. Concurrency
 serializes only callbacks for that source/routine. An entered send with an unknown
-acknowledgement requires manual reconciliation; there is no SDK retry. Deleting
+acknowledgement requires manual reconciliation; there is no SDK retry. Before
+reading other callbacks, a send must observe its own entered step under that exact
+job name. The jobs API can briefly lag the running step, so only these reads repeat
+for about 15 seconds. The send is then refused if the step is still absent. Deleting
 history never authorizes another automatic generation. Explicit manual requests
 remain separate generations and require deliberate operator action.
 
@@ -63,7 +66,40 @@ The first coordinated worker routine is `no-glasses`. Coordinated OTA/Call requi
 registered adapters and fixture qualifications. No staging or hardware verification
 was performed for the public source adapter.
 
-## Nightly OTA then Call sequence
+## Nightly independent routines
+
+The current [nightly runbook](../../../.github/NIGHTLY-DEVICE-ROUTINES.md) supersedes
+the earlier ordered implementation below for new requests. At 03:00 America/Los_Angeles,
+select one exact retained publication per dev/staging channel and independently
+request Day1 OTA, Mentra Call and the combined Mac/Android suites. Missing real
+worker registrations or platform artifacts stay unavailable; per-build no-glasses
+defaults remain unchanged. Each routine keeps its own result and verified return.
+Shared resource leases govern serialization. Call uses fresh compatible ready state
+and its own setup/preflight rather than depending on a passed Day1 verdict.
+
+New schema2 markers use `{kind: "nightly-routine", runId, runAttempt: 1, member}`.
+Both the scheduled source and generated request workflow must remain attempt 1;
+rerunning either cannot produce another automatic generation. The marker authenticates
+the exact per-routine entered send. Ordinary callbacks dispatch these requests to
+the existing private worker. Legacy `nightly-ota-call` markers retain the original
+paired route below and are never reinterpreted as independent execution.
+
+The scheduler uses a short-lived MentraOS-only Actions-write App token for request
+creation so the request emits its downstream workflow callback. That callback mints
+a separate private Actions-write token after downloading the request artifact. The
+nightly scheduler no longer needs a private repository token, paired-artifact wait
+or private paired dispatch. No token crosses into a hardware process.
+
+Enable `DEVICE_ROUTINE_NIGHTLY_ENABLED` once the trusted dispatch/runtime and
+reporting paths are available. Run eligible registered routines during qualification;
+report missing workers, artifacts or usable fixtures as unavailable or failed.
+Do not hold every routine behind another routine's qualification. Source support
+and partial development evidence are not full device qualification.
+
+## Legacy nightly OTA then Call sequence
+
+The following describes previously published paired requests and the retained
+private sequence entry. It is not the dispatch path for new nightly requests.
 
 The opt-in `nightly-device-routines.yml` workflow selects one immutable publication
 per dev/staging channel at Los Angeles midnight. The two UTC schedules account for
@@ -96,7 +132,7 @@ creating or deleting another workflow run is not an authorization to repeat hard
 work. A failed channel does not prevent the other eligible channel from proceeding.
 
 
-## Private dispatch authentication
+## Legacy paired dispatch authentication
 
 The trusted public callback and nightly workflows mint short-lived installation
 tokens from the organization-owned GitHub App. Configure repository variable

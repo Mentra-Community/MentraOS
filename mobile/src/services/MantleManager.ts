@@ -10,9 +10,9 @@ import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSy
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
+import {CHINA_HIDDEN_APPS, linkLingoPackageName, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
 import {IosMiniappVisibility} from "@/services/miniapps/IosMiniappVisibility"
-import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
+import {isSuperModeMiniappAllowed, shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
 import {storage} from "@/utils/storage"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
@@ -96,7 +96,7 @@ const SPOKEN_NOTIFICATION_MAX_MS = 30_000
 const SPOKEN_NOTIFICATION_GAP_MS = 10_000
 
 class MantleManager {
-  private iosMiniappVisibility = new Map<string, IosMiniappVisibility>()
+  private miniappVisibility = new Map<string, IosMiniappVisibility>()
   private static instance: MantleManager | null = null
   private calendarSyncTimer: ReturnType<typeof BgTimer.setInterval> | null = null
   private micDataTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
@@ -499,7 +499,7 @@ class MantleManager {
           },
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
-      config: deploymentCloudConfigValues(deployment),
+      config: {...deploymentCloudConfigValues(deployment), isLocalMiniappAllowed: isSuperModeMiniappAllowed},
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
@@ -544,6 +544,7 @@ class MantleManager {
     await engine.start()
     this.assertInitializationCurrent(miniappGeneration)
     this.setupIosMiniappVisibility()
+    this.setupSuperModeMiniappVisibility()
 
     // iOS: require a second swipe across the bottom edge to invoke the Home
     // indicator / app switcher, so users don't accidentally background the
@@ -628,8 +629,8 @@ class MantleManager {
 
   private async cleanupRuntime(): Promise<void> {
     const managedSyncStopped = deploymentManagedMiniappSync.cancel()
-    for (const visibility of this.iosMiniappVisibility.values()) visibility.dispose()
-    this.iosMiniappVisibility.clear()
+    for (const visibility of this.miniappVisibility.values()) visibility.dispose()
+    this.miniappVisibility.clear()
     // Stop timers
     if (this.calendarSyncTimer) {
       BgTimer.clearInterval(this.calendarSyncTimer)
@@ -724,7 +725,7 @@ class MantleManager {
     // Publish iOS enablement only after managed installation has finished.
     // Every startup/retry follows this order, including recovery from a failed
     // download with a previously forced-hidden Call entry.
-    for (const visibility of this.iosMiniappVisibility.values()) {
+    for (const visibility of this.miniappVisibility.values()) {
       await visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
       if (!isCurrent()) return
     }
@@ -739,7 +740,7 @@ class MantleManager {
 
     // Region-restricted miniapps must not surface or autostart from an old install.
     this.hidePlatformBlockedMiniapps()
-    for (const visibility of this.iosMiniappVisibility.values()) visibility.applyRestriction()
+    for (const visibility of this.miniappVisibility.values()) visibility.applyRestriction()
 
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
@@ -872,9 +873,41 @@ class MantleManager {
           }
         },
       })
-      this.iosMiniappVisibility.set(settingKey, visibility)
+      this.miniappVisibility.set(settingKey, visibility)
       visibility.applyRestriction()
     }
+  }
+
+  private setupSuperModeMiniappVisibility(): void {
+    const packageName = linkLingoPackageName
+    const policyKey = "linklingo_last_enabled"
+    // Reuse the install/stop serialization used by iOS opt-ins on both platforms.
+    const visibility = new IosMiniappVisibility({
+      isEnabled: () => !shouldHideMiniapp(packageName),
+      wasEnabled: () => {
+        const result = storage.load<boolean>(policyKey)
+        return result.is_ok() && result.value === true
+      },
+      saveEnabled: (enabled) => {
+        const result = storage.save(policyKey, enabled)
+        if (result.is_error()) throw result.error
+      },
+      setHidden: (hidden) => engine.miniapps.setHiddenStatus(packageName, hidden),
+      clearRunningState: () => saveLocalAppRunningState(packageName, false),
+      install: async () => {
+        const asset = BUNDLED_MINIAPPS.map((module) => Asset.fromModule(module)).find(
+          (candidate) => parseBundledMiniappName(candidate.name)?.packageName === packageName,
+        )
+        if (!asset) throw new Error(`Missing bundled miniapp: ${packageName}`)
+        await this.installBundledMiniapp(asset)
+      },
+      stop: async () => {
+        if (useAppStatusStore.getState().foregroundedPackage === packageName) engine.miniapps.clearForeground()
+        await miniappLauncher.stop(packageName)
+      },
+    })
+    this.miniappVisibility.set(SETTINGS.super_mode.key, visibility)
+    visibility.applyRestriction()
   }
 
   private reportMiniappVisibilityError(error: unknown): void {
@@ -935,7 +968,7 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
 
-    for (const [settingKey, visibility] of this.iosMiniappVisibility) {
+    for (const [settingKey, visibility] of this.miniappVisibility) {
       this.subs.push({
         remove: engine.settings.onChanged(settingKey, () => {
           void visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))

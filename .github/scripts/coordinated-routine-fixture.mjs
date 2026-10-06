@@ -53,9 +53,27 @@ export function coordinatedFixture(channel = "dev") {
       [prefix + names.receipt, state.receipt], [prefix + plan.artifactNames.otaManifest, state.ota]]).get(url)
     return payload ? new Response(JSON.stringify(payload)) : new Response("missing", {status: 404})
   }
-  const options = {github, context: {repo: {owner: "Mentra-Community", repo: "MentraOS"}, runId: 500, eventName: "workflow_dispatch"},
-    channel, routine: "no-glasses", sourceBuildRunId: "100", sourcePublicationAttempt: "2", fetchImpl,
-    now: () => new Date("2026-09-23T01:00:00Z"), source: {runAttempt: 1, ref: "refs/heads/dev", sha: issuer, workflowSha: issuer,
-      workflowRef: `${repository}/.github/workflows/request-e2e-routine.yml@refs/heads/dev`, actor: "synthetic-operator"}}
+  const options = {github, context: {repo: {owner: "Mentra-Community", repo: "MentraOS"}}, channel, fetchImpl}
   return {state, options, pin: value => createHash("sha256").update(JSON.stringify(value)).digest("hex")}
+}
+
+
+export function coordinatedAndroidFixture(channel = "dev") {
+  const f = coordinatedFixture(channel), {state, options} = f, plan = state.plan
+  plan.artifactNames.androidApp = `mentraos-${plan.releaseIdentity}-android.apk`
+  plan.artifactNames.releaseManifest = `mentra-release-${plan.releaseIdentity}.json`
+  const prefix = `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/${plan.artifactContainerTag}/`
+  state.androidReceipt = {schemaVersion: 1, releaseSetId: plan.releaseSetId, releaseIdentity: plan.releaseIdentity,
+    releasePlanSha256: f.pin(plan),
+    sourceCommit: plan.sourceCommit, channel: plan.channel, native: structuredClone(plan.native), artifacts: [{
+      coordinate: plan.artifactNames.androidApp, status: "built", url: prefix + plan.artifactNames.androidApp,
+      sha256: "2".repeat(64), size: 9999, provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/100"}]}
+  const original = options.fetchImpl
+  options.fetchImpl = async (url, opts) => {
+    if (url === prefix + plan.artifactNames.releaseManifest) return new Response(JSON.stringify(state.androidReceipt))
+    if (url === prefix + plan.artifactNames.androidApp && opts?.method === "HEAD")
+      return new Response(null, {headers: {"content-length": String(state.androidSize ?? 9999)}})
+    return original(url, opts)
+  }
+  return f
 }

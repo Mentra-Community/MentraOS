@@ -62,11 +62,12 @@ jest.mock("@/components/ui/GlassView", () => {
 })
 
 describe("onboarding welcome", () => {
+  const goHomeAndPush = jest.fn()
   const push = jest.fn()
 
   beforeEach(() => {
     jest.clearAllMocks()
-    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({push})
+    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({goHomeAndPush, push})
     ;(isGlassesModelAllowedByDeployment as jest.Mock).mockReturnValue(true)
   })
 
@@ -82,7 +83,7 @@ describe("onboarding welcome", () => {
     expect(getByLabelText("auto")).toBeTruthy()
   })
 
-  it("starts glasses pairing from the glasses card", async () => {
+  it("starts glasses pairing with Home as the completed onboarding Back destination", async () => {
     const {getByTestId} = render(<OnboardingWelcome />)
 
     await act(async () => {
@@ -90,7 +91,8 @@ describe("onboarding welcome", () => {
     })
 
     expect(mockSetOnboardingCompleted).toHaveBeenCalledWith(true)
-    expect(push).toHaveBeenCalledWith("/pairing/select-glasses-model", {onboarding: true})
+    expect(goHomeAndPush).toHaveBeenCalledWith("/pairing/select-glasses-model", {onboarding: true})
+    expect(push).not.toHaveBeenCalled()
   })
 
   it("starts simulated pairing from the phone-only card", () => {
@@ -100,6 +102,28 @@ describe("onboarding welcome", () => {
 
     expect(mockSetOnboardingCompleted).toHaveBeenCalledWith(true)
     expect(push).toHaveBeenCalledWith("/pairing/prep", {deviceModel: DeviceTypes.SIMULATED})
+  })
+
+  it.each(["with", "without"])("activates the %s-glasses card through native accessibility", async (kind) => {
+    const {getByTestId} = render(<OnboardingWelcome />)
+    const card = getByTestId(`onboarding-setup-${kind}-glasses`)
+
+    expect(card.props.onAccessibilityTap).toEqual(expect.any(Function))
+    await act(async () => {
+      fireEvent(card, "accessibilityTap")
+    })
+
+    expect(mockSetOnboardingCompleted).toHaveBeenCalledTimes(1)
+    expect(mockSetOnboardingCompleted).toHaveBeenCalledWith(true)
+    if (kind === "with") {
+      expect(goHomeAndPush).toHaveBeenCalledTimes(1)
+      expect(goHomeAndPush).toHaveBeenCalledWith("/pairing/select-glasses-model", {onboarding: true})
+      expect(push).not.toHaveBeenCalled()
+    } else {
+      expect(push).toHaveBeenCalledTimes(1)
+      expect(push).toHaveBeenCalledWith("/pairing/prep", {deviceModel: DeviceTypes.SIMULATED})
+      expect(goHomeAndPush).not.toHaveBeenCalled()
+    }
   })
 
   it("hides phone-only setup when the deployment disallows simulated glasses", () => {

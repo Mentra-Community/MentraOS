@@ -1,6 +1,6 @@
 {
   "name": "mentraos",
-  "version": "3.2.1",
+  "version": "3.3.0",
   "private": true,
   "main": "index.js",
   "workspaces": [
@@ -220,7 +220,8 @@
     "@livekit/react-native-webrtc@137.0.3": "patches/@livekit%2Freact-native-webrtc@137.0.3.patch",
     "@dr.pogodin/react-native-fs@2.38.2": "patches/@dr.pogodin%2Freact-native-fs@2.38.2.patch",
     "expo-router@55.0.16": "patches/expo-router@55.0.16.patch",
-    "react-native-udp@4.1.7": "patches/react-native-udp@4.1.7.patch"
+    "react-native-udp@4.1.7": "patches/react-native-udp@4.1.7.patch",
+    "react-native-wifi-reborn@4.13.6": "patches/react-native-wifi-reborn@4.13.6.patch"
   },
   "trustedDependencies": [
     "@sentry/cli",

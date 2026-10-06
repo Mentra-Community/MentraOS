@@ -6,6 +6,7 @@ import test from "node:test"
 import {fileURLToPath} from "node:url"
 
 import {
+  androidBuildNumberOf,
   channelForBranch,
   createReleasePlan,
   dependencyOrder,
@@ -531,6 +532,19 @@ test("a manifest carries the Android build's version code when a testing track f
     () => finalizeReleaseManifest({plan, results, completedAt: "2026-09-21T10:00:00.000Z"}),
     /coordinate must be com\.mentra\.mentra:310000213:beta/,
   )
+})
+
+test("the Android version code is the family number or a Play-valid code above it", () => {
+  const plan = {native: {buildNumber: 302010043}}
+  assert.equal(androidBuildNumberOf(plan, {}), 302010043)
+  assert.equal(androidBuildNumberOf(plan, {native: {buildNumber: 302010043}}), 302010043)
+  assert.equal(androidBuildNumberOf(plan, {native: {androidBuildNumber: 302010043}}), 302010043)
+  assert.equal(androidBuildNumberOf(plan, {native: {androidBuildNumber: 310000224}}), 310000224)
+  assert.equal(androidBuildNumberOf(plan, {native: {androidBuildNumber: 2_100_000_000}}), 2_100_000_000)
+  for (const invalid of [null, "310000224", 310000224.5, 302010042, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => androidBuildNumberOf(plan, {native: {androidBuildNumber: invalid}}), /below the family/)
+  }
+  assert.throws(() => androidBuildNumberOf(plan, {native: {androidBuildNumber: 2_100_000_001}}), /exceeds 2100000000/)
 })
 
 test("plans freeze their Play destination and archived Internal App Sharing betas still validate", () => {

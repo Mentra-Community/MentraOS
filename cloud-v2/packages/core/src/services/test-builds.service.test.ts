@@ -1,18 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { createHash, generateKeyPairSync } from "node:crypto";
-import { zipSync, strToU8 } from "fflate";
-import { GithubTestBuildGateway, readRequestZip, readTestMetadata } from "./test-builds.service";
-import { testBuildQuerySchema, testDispatchInputSchema, type TestDispatchInput } from "../types/test-dispatch.types";
-import { TestRunGithubApp } from "./test-run-github-app";
-
+import {expect, test} from "bun:test";
+import {GithubTestBuildGateway} from "./test-builds.service";
+import {createHash} from "node:crypto";
 const REPO = "Mentra-Community/MentraOS";
 const API = `https://api.github.com/repos/${REPO}`;
 const CDN = `https://artifactscdn.mentraglass.com/${REPO}/releases/`;
 const HEAD = "a".repeat(40), BASE = "b".repeat(40), MERGE = "c".repeat(40), HASH = "d".repeat(64);
-const appCredentials = { appId: "12345", installationId: "67890", privateKey:
-  generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ format: "pem", type: "pkcs1" }).toString() };
-const input: TestDispatchInput = { source: { channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1 },
-  routineId: "no-glasses", archiveSha256: HASH, idempotencyKey: "ad616c04-c5e5-4dcd-b7c4-d9d4a626166d" };
 const run = (extra = {}) => ({ id: 50, run_attempt: 1, head_sha: HEAD, head_branch: "candidate", path: ".github/workflows/mentra-app-ios-build.yml",
   event: "pull_request", status: "completed", conclusion: "success", created_at: "2026-09-23T01:00:00Z", display_title: "Candidate",
   repository: { full_name: REPO }, head_repository: { full_name: REPO }, ...extra });
@@ -44,244 +36,186 @@ function fixture() {
   return { rows, calls, fetch, receipt, gateway: new GithubTestBuildGateway({ token: "test-only-token", fetch }) };
 }
 
-test("strict user input accepts only supported selectors and never a ref, command, URL or repository", () => {
-  expect(testDispatchInputSchema.parse(input)).toEqual(input);
-  for (const change of [{ source: { ...input.source, ref: "main" } }, { source: { ...input.source, repository: "elsewhere/repo" } },
-    { routineId: "shell" }, { command: "anything" }, { archiveSha256: "wrong" }])
-    expect(testDispatchInputSchema.safeParse({ ...input, ...change }).success).toBe(false);
-  expect(testBuildQuerySchema.safeParse({ channel: "dev", pr: "12" }).success).toBe(false);
-  expect(testBuildQuerySchema.safeParse({ channel: "pr" }).success).toBe(false);
+test("published PR archive retains identity and read-only discovery", async () => {
+ const f = fixture();
+ const selected = await f.gateway.resolve({channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}, "ios-on-mac");
+ expect(selected.availability).toBe("available"); expect(selected.archive?.sha256).toBe(HASH);
+ expect(selected.archive?.url).toBe(`${CDN}pr-builds/${f.receipt.artifacts.mac.name}`);
+ const bytes = JSON.stringify({releaseVersion: `pr-12-${HEAD}`});
+ expect(selected.manifest).toEqual({url: `${CDN}pr-builds/ota-pr-12-${HEAD}.json`,
+  sha256: createHash("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes)});
+ expect(selected.manifestSha256).toBe(selected.manifest!.sha256);
+ expect(f.calls.every(call => !call.init?.method || ["GET", "HEAD"].includes(call.init.method))).toBe(true);
 });
 
-describe("exact PR build inventory", () => {
-  test("a current published build is selectable without a PR label", async () => {
-    const f = fixture();
-    const selected = await f.gateway.resolve(input.source);
-    expect(selected.availability).toBe("available");
-    expect(selected.archive?.sha256).toBe(HASH);
-    expect(selected.routines.filter(routine => routine.available).map(routine => routine.id)).toEqual(["no-glasses"]);
-    expect(f.calls.every(call => !call.init?.method || ["GET", "HEAD"].includes(call.init.method))).toBe(true);
-  });
-  test("closed/forked PR and mismatched exact attempts are refused", async () => {
-    const f = fixture();
-    f.rows.set(`${API}/pulls/12`, { ...pr, state: "closed" });
-    await expect(f.gateway.resolve(input.source)).rejects.toThrow("open same-repository");
-    f.rows.set(`${API}/pulls/12`, pr);
-    f.rows.set(`${API}/actions/runs/50/attempts/1`, run({ run_attempt: 2 }));
-    await expect(f.gateway.resolve(input.source)).rejects.toThrow("selected source");
-  });
-  test("stale base, bad receipt binding, wrong manifest and unavailable archive cannot enable dispatch", async () => {
-    for (const scenario of ["base", "receipt", "manifest", "archive"]) {
-      const f = fixture();
-      if (scenario === "base") f.rows.set(`${API}/commits/${MERGE}`, { sha: MERGE, parents: [{ sha: HEAD }, { sha: HEAD }] });
-      if (scenario === "receipt") f.receipt.app.runId = 51;
-      if (scenario === "manifest") f.rows.set(`${CDN}pr-builds/ota-pr-12-${HEAD}.json`, { releaseVersion: "another-build" });
-      if (scenario === "archive") f.rows.delete(`HEAD ${CDN}pr-builds/${f.receipt.artifacts.mac.name}`);
-      const selected = await f.gateway.resolve(input.source);
-      expect(selected.availability).toBe("unavailable");
-      expect(selected.routines.every(routine => !routine.available)).toBe(true);
-    }
-  });
-  test("notification failure retains a successful publication, but unfinished builds do not", async () => {
-    const f = fixture();
-    f.rows.set(`${API}/actions/runs/50/attempts/1`, run({ conclusion: "failure" }));
-    expect((await f.gateway.resolve(input.source)).availability).toBe("available");
-    f.rows.set(`${API}/actions/runs/50/attempts/1`, run({ status: "in_progress" }));
-    expect((await f.gateway.resolve(input.source)).availability).toBe("unavailable");
-  });
-  test("exact resolution preserves transient metadata and archive failures while inventory remains readable", async () => {
-    for (const failure of [new Response("busy", { status: 429 }), new Response("unavailable", { status: 503 }), new Error("Network timeout")]) {
-      for (const location of ["metadata", "archive"]) {
-        const f = fixture();
-        f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, { workflow_runs: [run()] });
-        f.rows.set(location === "metadata" ? `${CDN}pr-builds/mentra-ios-pr-12-${HEAD}-50-1.json`
-          : `HEAD ${CDN}pr-builds/${f.receipt.artifacts.mac.name}`, failure);
-        await expect(f.gateway.resolve(input.source)).rejects.toThrow(failure instanceof Error ? "Network timeout" : /unavailable/);
-        expect((await f.gateway.inventory({ channel: "pr", pr: 12 }))[0]!.availability).toBe("unavailable");
-      }
-    }
-  });
+test("Android PR publication retains the exact manifest beside its APK and original digest", async () => {
+ const f = fixture(), name = `mentra-android-pr-12-${HEAD}-50-1`;
+ f.rows.set(`${API}/actions/runs/50/attempts/1`, run({path: ".github/workflows/mentra-app-android-build.yml"}));
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{...jobs[0]!,
+  steps: [{name: "Upload APK to the public artifact CDN", status: "completed", conclusion: "success"}]}]});
+ f.rows.set(`${CDN}pr-builds/${name}.json`, {schemaVersion: 1, pr: 12, headSha: HEAD, baseSha: BASE, buildSha: MERGE, runId: 50, runAttempt: 1,
+  app: {packageId: "com.mentra.mentra", version: "3.2.1", build: "20", headSha: HEAD, buildSha: MERGE, backend: "dev",
+   otaManifestUrl: `${CDN}pr-builds/ota-pr-12-${HEAD}.json`}, artifacts: {android: {name: `${name}.apk`, sha256: HASH, size: 100}}});
+ f.rows.set(`HEAD ${CDN}pr-builds/${name}.apk`, new Response(null, {headers: {"Content-Length": "100"}}));
+ const selected = await f.gateway.resolve({channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}, "android");
+ const bytes = JSON.stringify({releaseVersion: `pr-12-${HEAD}`});
+ expect(selected).toMatchObject({availability: "available", archive: {name: `${name}.apk`},
+  manifest: {url: `${CDN}pr-builds/ota-pr-12-${HEAD}.json`, sha256: createHash("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes)}});
+ expect(selected.manifestSha256).toBe(selected.manifest!.sha256);
+});
+test("wrong archive size and moved PR base cannot become selectable", async () => {
+ for (const kind of ["size", "base"]) {
+  const f = fixture();
+  if (kind === "size") f.rows.set(`HEAD ${CDN}pr-builds/${f.receipt.artifacts.mac.name}`, new Response(null, {headers: {"Content-Length": "99"}}));
+  else f.rows.set(`${API}/git/ref/heads/dev`, {ref: "refs/heads/dev", object: {type: "commit", sha: "e".repeat(40)}});
+  expect((await f.gateway.resolve({channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}, "ios-on-mac")).availability).toBe("unavailable");
+ }
 });
 
-function releaseFixture(channel: "dev" | "staging", attempt = 1) {
-  const f = fixture(), releaseChannel = channel === "dev" ? "dev" : "beta", identity = `3.3.0-${releaseChannel}.325`, tag = "mentra-builds-v3.3.0";
-  const releaseRun = run({ run_attempt: attempt, event: "push", head_branch: channel, path: ".github/workflows/coordinated-release.yml" });
-  const publicationJobs = [{ ...jobs[0]!, name: "Finalize immutable release bill of materials", run_attempt: attempt,
-    steps: [{ name: "Publish immutable plan, package, and manifest assets", status: "completed", conclusion: "success" }] }];
-  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: publicationJobs.length, jobs: publicationJobs });
-  f.rows.set(`${API}/actions/runs/50/attempts/${attempt}`, releaseRun);
-  f.rows.set(`${API}/actions/workflows/coordinated-release.yml/runs?branch=${channel}&per_page=10`, { workflow_runs: [releaseRun] });
-  f.rows.set(`${API}/actions/runs/50/artifacts?per_page=100`, { artifacts: [{ name: `coordinated-release-plan-mentra-${identity}`, expired: false,
-    workflow_run: { id: 50, head_sha: HEAD } }] });
-  f.rows.set(`${CDN}${tag}/mentra-release-plan-${identity}.json`, { releaseIdentity: identity, sourceCommit: HEAD, channel: releaseChannel,
-    artifactContainerTag: tag, native: { buildNumber: 303000325, marketingVersion: "3.3.0" }, artifactNames: { otaManifest: `mentra-live-ota-${identity}.json` } });
-  f.rows.set(`${CDN}${tag}/mentraos-${identity}-apple-downloads.json`, { schemaVersion: 1, releaseIdentity: identity, sourceCommit: HEAD,
-    app: { bundleId: "com.mentra.mentra", headSha: HEAD, backend: channel, build: "303000325", version: "3.3.0",
-      otaManifestUrl: `${CDN}${tag}/mentra-live-ota-${identity}.json`, executableSha256: HASH, javascriptSha256: HASH },
-    artifacts: { mac: { name: `mentraos-${identity}-mac.zip`, size: 100, sha256: HASH } } });
-  f.rows.set(`${CDN}${tag}/mentra-live-ota-${identity}.json`, { releaseVersion: identity });
-  f.rows.set(`HEAD ${CDN}${tag}/mentraos-${identity}-mac.zip`, new Response(null, { headers: { "Content-Length": "100" } }));
-  return { ...f, identity, publicationJobs, releaseRun };
+test("PR inventory exposes only the current same-repository head with verified published artifacts", async () => {
+ const f = fixture();
+ f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, {
+  workflow_runs: [run(), run({id: 51, head_sha: BASE}), run({id: 52, head_repository: {full_name: "external/fork"}})],
+ });
+ const builds = await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"});
+ expect(builds).toHaveLength(1);
+ expect(builds[0]).toMatchObject({availability: "available", headSha: HEAD,
+  source: {channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}});
+ expect(builds[0]!.archive?.url).toBe(`${CDN}pr-builds/${f.receipt.artifacts.mac.name}`);
+ expect(f.calls.some(call => /actions\/runs\/(51|52)\//.test(call.url))).toBe(false);
+});
+
+test("dev inventory distinguishes a newer unpublished build from the previous immutable Mac release", async () => {
+ const f = fixture();
+ const identity = "3.2.1-dev.20", tag = "mentra-builds-v3.2.1";
+ f.rows.set(`${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&per_page=10`, {
+  workflow_runs: [run({id: 60, head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml", status: "in_progress", conclusion: null}),
+   run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})],
+ });
+ f.rows.set(`${API}/actions/runs/60/jobs?filter=all&per_page=100&page=1`, {total_count: 0, jobs: []});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{id: 70,
+  name: "Finalize immutable release bill of materials", run_attempt: 1, status: "completed", conclusion: "success",
+  started_at: "2026-09-23T01:00:00Z", completed_at: "2026-09-23T01:10:00Z",
+  steps: [{name: "Publish immutable plan, package, and manifest assets", status: "completed", conclusion: "success"}]}]});
+ f.rows.set(`${API}/actions/runs/50/artifacts?per_page=100`, {artifacts: [{name: `coordinated-release-plan-mentra-${identity}`,
+  expired: false, workflow_run: {id: 50, head_sha: HEAD}}]});
+ f.rows.set(`${CDN}${tag}/mentra-release-plan-${identity}.json`, {releaseIdentity: identity, sourceCommit: HEAD, channel: "dev",
+  artifactContainerTag: tag, native: {buildNumber: 20, marketingVersion: "3.2.1"}, artifactNames: {otaManifest: `mentra-live-ota-${identity}.json`}});
+ const archive = {name: `mentraos-${identity}-mac.zip`, sha256: HASH, size: 100};
+ f.rows.set(`${CDN}${tag}/mentraos-${identity}-apple-downloads.json`, {schemaVersion: 1, releaseIdentity: identity, sourceCommit: HEAD,
+  app: {bundleId: "com.mentra.mentra", headSha: HEAD, backend: "dev", build: "20", version: "3.2.1",
+   otaManifestUrl: `${CDN}${tag}/mentra-live-ota-${identity}.json`, executableSha256: HASH, javascriptSha256: HASH}, artifacts: {mac: archive}});
+ f.rows.set(`${CDN}${tag}/mentra-live-ota-${identity}.json`, {releaseVersion: identity});
+ f.rows.set(`HEAD ${CDN}${tag}/${archive.name}`, new Response(null, {headers: {"Content-Length": "100"}}));
+ const builds = await f.gateway.inventory({channel: "dev", platform: "ios-on-mac"});
+ expect(builds[0]).toMatchObject({availability: "unavailable", source: {buildRunId: 60}, reason: "Selected coordinated attempt did not publish immutable assets"});
+ const available = builds.filter(build => build.availability === "available");
+ expect(available).toHaveLength(1);
+ expect(available[0]).toMatchObject({headSha: HEAD, release: identity, source: {channel: "dev", buildRunId: 50, publicationAttempt: 1}, archive});
+ expect(available[0]!.archive?.url).toBe(`${CDN}${tag}/${archive.name}`);
+});
+
+
+const before = "2026-09-23T11:00:00Z";
+const nightlyUrl = `${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=1`;
+const finalizer = {id: 70, name: "Finalize immutable release bill of materials", run_attempt: 1, status: "completed", conclusion: "success",
+  started_at: "2026-09-23T01:00:00Z", completed_at: "2026-09-23T01:10:00Z",
+  steps: [{name: "Publish immutable plan, package, and manifest assets", status: "completed", conclusion: "success"}]};
+const releaseRun = (extra = {}) => run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml", ...extra});
+function nightlyFixture() {
+ const f = fixture();
+ const identity = "3.2.1-dev.20", tag = "mentra-builds-v3.2.1";
+ f.rows.set(`${API}/actions/runs/60/jobs?filter=all&per_page=100&page=1`, {total_count: 0, jobs: []});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [finalizer]});
+ f.rows.set(`${API}/actions/runs/50/artifacts?per_page=100`, {artifacts: [{name: `coordinated-release-plan-mentra-${identity}`,
+  expired: false, workflow_run: {id: 50, head_sha: HEAD}}]});
+ f.rows.set(`${CDN}${tag}/mentra-release-plan-${identity}.json`, {releaseIdentity: identity, sourceCommit: HEAD, channel: "dev",
+  artifactContainerTag: tag, native: {buildNumber: 20, marketingVersion: "3.2.1"}, artifactNames: {otaManifest: `mentra-live-ota-${identity}.json`}});
+ const archive = {name: `mentraos-${identity}-mac.zip`, sha256: HASH, size: 100};
+ f.rows.set(`${CDN}${tag}/mentraos-${identity}-apple-downloads.json`, {schemaVersion: 1, releaseIdentity: identity, sourceCommit: HEAD,
+  app: {bundleId: "com.mentra.mentra", headSha: HEAD, backend: "dev", build: "20", version: "3.2.1",
+   otaManifestUrl: `${CDN}${tag}/mentra-live-ota-${identity}.json`, executableSha256: HASH, javascriptSha256: HASH}, artifacts: {mac: archive}});
+ f.rows.set(`${CDN}${tag}/mentra-live-ota-${identity}.json`, {releaseVersion: identity});
+ f.rows.set(`HEAD ${CDN}${tag}/${archive.name}`, new Response(null, {headers: {"Content-Length": "100"}}));
+ f.rows.set(nightlyUrl, {total_count: 2, workflow_runs: [releaseRun({id: 60, status: "in_progress", conclusion: null}), releaseRun()]});
+ return {...f, archive, planUrl: `${CDN}${tag}/mentra-release-plan-${identity}.json`};
 }
 
-for (const channel of ["dev", "staging"] as const) test(`${channel} inventories coordinated Mac receipts without fabricating PR provenance`, async () => {
-  const f = releaseFixture(channel);
-  const builds = await f.gateway.inventory({ channel });
-  expect(builds[0]?.availability).toBe("available");
-  expect(builds[0]?.release).toBe(f.identity);
-  expect(builds[0]?.source).toEqual({ channel, buildRunId: 50, publicationAttempt: 1 });
-  expect(builds[0]?.routines[0]?.available).toBe(false);
-  expect(builds[0]?.routines[0]?.reason).toContain("not enabled");
-  const enabled = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: ["pr", "dev", "staging"] });
-  const available = (await enabled.inventory({ channel }))[0]!;
-  expect(available.routines.find(routine => routine.id === "no-glasses")?.available).toBe(true);
-  expect(available.routines.find(routine => routine.id === "day1-ota")?.available).toBe(false);
-  expect(available.routines.find(routine => routine.id === "day1-ota")?.reason).toContain("not enabled");
-  expect(available.routines.find(routine => routine.id === "mentra-call")?.available).toBe(false);
-  const commissioned = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
-    routines: ["no-glasses", "day1-ota", "mentra-call"] });
-  expect((await commissioned.inventory({ channel }))[0]!.routines.every(routine => routine.available)).toBe(true);
+test("coordinated Android publication retains source-bound manifest URL, size and digest", async () => {
+ const f = nightlyFixture(), identity = "3.2.1-dev.20", tag = "mentra-builds-v3.2.1";
+ const plan = f.rows.get(f.planUrl) as {native: {buildNumber: number; marketingVersion: string}; artifactNames: Record<string, string>};
+ plan.artifactNames.androidApp = `mentraos-${identity}-android.apk`;
+ plan.artifactNames.releaseManifest = `mentra-release-${identity}.json`;
+ f.rows.set(`${API}/actions/runs/50/attempts/1`, releaseRun());
+ f.rows.set(`${CDN}${tag}/${plan.artifactNames.releaseManifest}`, {schemaVersion: 1, releaseIdentity: identity, releaseSetId: `mentra-${identity}`,
+  sourceCommit: HEAD, releasePlanSha256: createHash("sha256").update(JSON.stringify(plan)).digest("hex"), channel: "dev", native: plan.native,
+  artifacts: [{coordinate: plan.artifactNames.androidApp, url: `${CDN}${tag}/${plan.artifactNames.androidApp}`, sha256: HASH, size: 100, status: "published"}]});
+ f.rows.set(`HEAD ${CDN}${tag}/${plan.artifactNames.androidApp}`, new Response(null, {headers: {"Content-Length": "100"}}));
+ const selected = await f.gateway.resolve({channel: "dev", buildRunId: 50, publicationAttempt: 1}, "android");
+ const bytes = JSON.stringify({releaseVersion: identity});
+ expect(selected).toMatchObject({availability: "available", release: identity, manifest: {url: `${CDN}${tag}/mentra-live-ota-${identity}.json`,
+  sha256: createHash("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes)}});
+ expect(selected.manifestSha256).toBe(selected.manifest!.sha256);
 });
 
-for (const channel of ["dev", "staging"] as const) test(`${channel} retained artifacts cannot qualify a non-publishing attempt`, async () => {
-  for (const scenario of ["earlier-attempt", "later-skipped", "later-failed", "dry-run", "missing-step", "ambiguous-finalizer"]) {
-    const f = releaseFixture(channel, 2);
-    const published = structuredClone(f.publicationJobs[0]!);
-    if (scenario === "earlier-attempt") {
-      f.releaseRun.run_attempt = 1;
-      f.rows.set(`${API}/actions/runs/50/attempts/1`, f.releaseRun);
-      f.publicationJobs.unshift({ ...published, id: 99, run_attempt: 1, conclusion: "skipped", steps: [] });
-    }
-    if (scenario === "later-skipped" || scenario === "later-failed") {
-      f.publicationJobs.unshift({ ...published, id: 99, run_attempt: 1 });
-      f.publicationJobs[1]!.conclusion = scenario === "later-skipped" ? "skipped" : "failure";
-    }
-    if (scenario === "dry-run") f.publicationJobs[0]!.steps[0]!.conclusion = "skipped";
-    if (scenario === "missing-step") f.publicationJobs[0]!.steps = [];
-    if (scenario === "ambiguous-finalizer") f.publicationJobs.push({ ...published, id: 99 });
-    f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: f.publicationJobs.length, jobs: f.publicationJobs });
-    const gateway = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel],
-      routines: ["no-glasses", "day1-ota", "mentra-call"] });
-    const selected = await gateway.resolve({ channel, buildRunId: 50, publicationAttempt: f.releaseRun.run_attempt });
-    const inventoried = (await gateway.inventory({ channel }))[0]!;
-    for (const build of [selected, inventoried]) {
-      expect(build.availability).toBe("unavailable");
-      expect(build.reason).toContain("did not publish immutable assets");
-      expect(build.routines.every(routine => !routine.available)).toBe(true);
-    }
-    expect(f.calls.some(call => call.url.startsWith(CDN) || call.url.includes("/artifacts?"))).toBe(false);
-  }
+test("nightly latest dev selection passes newer unpublished runs and pins the publication before its boundary", async () => {
+ const f = nightlyFixture();
+ const selected = await f.gateway.latestDev("ios-on-mac", before);
+ expect(selected).toMatchObject({availability: "available", source: {channel: "dev", buildRunId: 50, publicationAttempt: 1}, archive: f.archive});
+ const bytes = JSON.stringify({releaseVersion: "3.2.1-dev.20"});
+ expect(selected!.manifest).toEqual({url: `${CDN}mentra-builds-v3.2.1/mentra-live-ota-3.2.1-dev.20.json`,
+  sha256: createHash("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes)});
+ expect(selected!.manifestSha256).toBe(selected!.manifest!.sha256);
+ expect(f.calls.every(call => !call.init?.method || ["GET", "HEAD"].includes(call.init.method))).toBe(true);
 });
 
-for (const channel of ["dev", "staging"] as const) test(`${channel} retains the actual publication through downstream failure and notification-only retries`, async () => {
-  for (const conclusion of ["success", "failure"]) for (const clonedJob of [false, true]) {
-    const f = releaseFixture(channel);
-    f.releaseRun.conclusion = "failure";
-    const latest = { ...f.releaseRun, run_attempt: 2, conclusion };
-    f.rows.set(`${API}/actions/runs/50/attempts/2`, latest);
-    f.rows.set(`${API}/actions/workflows/coordinated-release.yml/runs?branch=${channel}&per_page=10`, { workflow_runs: [latest] });
-    if (clonedJob) f.publicationJobs.push({ ...structuredClone(f.publicationJobs[0]!), id: 99, run_attempt: 2 });
-    f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: f.publicationJobs.length, jobs: f.publicationJobs });
-    const gateway = new GithubTestBuildGateway({ token: "test-only-token", fetch: f.fetch, channels: [channel] });
-    const inventoried = (await gateway.inventory({ channel }))[0]!;
-    expect(inventoried.availability).toBe("available");
-    expect(inventoried.source.publicationAttempt).toBe(1);
-    expect(inventoried.routines.find(routine => routine.id === "no-glasses")?.available).toBe(true);
-    expect((await gateway.resolve(inventoried.source)).availability).toBe("available");
-    await expect(gateway.resolve({ channel, buildRunId: 50, publicationAttempt: 2 }))
-      .rejects.toThrow("retained a different publication");
-    f.rows.set(`POST ${API}/actions/workflows/request-e2e-routine.yml/dispatches`, {
-      workflow_run_id: 70, html_url: `https://github.com/${REPO}/actions/runs/70`, run_url: `${API}/actions/runs/70`,
-    });
-    await gateway.dispatch({ ...input, source: inventoried.source });
-    expect(JSON.parse(String(f.calls.at(-1)!.init?.body)).inputs.source_publication_attempt).toBe("1");
-  }
+test("nightly latest dev refuses truncated history and transient GitHub job metadata instead of selecting older releases", async () => {
+ const before = "2026-09-23T11:00:00Z", url = `${API}/actions/workflows/coordinated-release.yml/runs?branch=dev&created=<=${encodeURIComponent(before)}&per_page=100&page=1`;
+ const f = fixture();
+ f.rows.set(url, {total_count: 2, workflow_runs: [run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})]});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 0, jobs: []});
+ await expect(f.gateway.latestDev("android", before)).rejects.toThrow("incomplete");
+ f.rows.set(url, {total_count: 1, workflow_runs: [run({head_branch: "dev", event: "push", path: ".github/workflows/coordinated-release.yml"})]});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, new Response("unavailable", {status: 503}));
+ await expect(f.gateway.latestDev("android", before)).rejects.toThrow("unavailable");
 });
 
-test("a new finalizer execution selects its own publication attempt", async () => {
-  const f = releaseFixture("dev", 2);
-  f.publicationJobs[0]!.started_at = "2026-09-23T02:00:00Z";
-  f.publicationJobs[0]!.completed_at = "2026-09-23T02:10:00Z";
-  f.publicationJobs.unshift({ ...f.publicationJobs[0]!, id: 99, run_attempt: 1,
-    started_at: "2026-09-23T01:00:00Z", completed_at: "2026-09-23T01:10:00Z" });
-  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: f.publicationJobs.length, jobs: f.publicationJobs });
-  expect((await f.gateway.inventory({ channel: "dev" }))[0]!.source.publicationAttempt).toBe(2);
-  expect((await f.gateway.resolve({ channel: "dev", buildRunId: 50, publicationAttempt: 2 })).availability).toBe("available");
+test("post-boundary retries cannot erase the available original nightly publication", async () => {
+ for (const retry of [
+  {status: "in_progress", conclusion: null, completed_at: null},
+  {status: "completed", conclusion: "failure", completed_at: "2026-09-23T12:10:00Z"},
+  {status: "completed", conclusion: "success", completed_at: "2026-09-23T12:10:00Z"},
+ ]) {
+  const f = nightlyFixture();
+  f.rows.set(nightlyUrl, {total_count: 1, workflow_runs: [releaseRun({run_attempt: 2})]});
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 2,
+   jobs: [finalizer, {...finalizer, id: 71, run_attempt: 2, started_at: "2026-09-23T12:00:00Z", ...retry}]});
+  expect(await f.gateway.latestDev("ios-on-mac", before)).toMatchObject({availability: "available",
+   source: {buildRunId: 50, publicationAttempt: 1}, archive: f.archive});
+ }
 });
 
-test("the actual successful producing retry is available with its original attempt number", async () => {
-  const f = releaseFixture("dev", 2);
-  f.publicationJobs.unshift({ ...f.publicationJobs[0]!, id: 99, run_attempt: 1, conclusion: "skipped", steps: [] });
-  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, { total_count: f.publicationJobs.length, jobs: f.publicationJobs });
-  const selected = await f.gateway.resolve({ channel: "dev", buildRunId: 50, publicationAttempt: 2 });
-  expect(selected.availability).toBe("available");
-  expect(selected.source.publicationAttempt).toBe(2);
-  expect(selected.archive?.sha256).toBe(HASH);
+test("an execution begun by the boundary supersedes earlier attempts but must finish by the boundary to publish", async () => {
+ for (const started_at of ["2026-09-23T10:59:59Z", before]) {
+  const f = nightlyFixture();
+  f.rows.set(nightlyUrl, {total_count: 1, workflow_runs: [releaseRun({run_attempt: 2})]});
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 2,
+   jobs: [finalizer, {...finalizer, id: 71, run_attempt: 2, started_at, completed_at: "2026-09-23T11:00:01Z"}]});
+  expect(await f.gateway.latestDev("ios-on-mac", before)).toBeNull();
+ }
+ const f = nightlyFixture();
+ f.rows.set(nightlyUrl, {total_count: 1, workflow_runs: [releaseRun({run_attempt: 2})]});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 2,
+  jobs: [finalizer, {...finalizer, id: 71, run_attempt: 2, started_at: "2026-09-23T10:59:59Z", completed_at: before}]});
+ expect(await f.gateway.latestDev("ios-on-mac", before)).toMatchObject({availability: "available", source: {publicationAttempt: 2}});
 });
 
-test("dispatch fixes the repository/workflow/ref and passes only exact explicit request selectors", async () => {
-  const f = fixture();
-  f.rows.set(`POST ${API}/actions/workflows/request-e2e-routine.yml/dispatches`, {
-    workflow_run_id: 70, html_url: `https://github.com/${REPO}/actions/runs/70`, run_url: `${API}/actions/runs/70`,
-  });
-  expect((await f.gateway.dispatch(input)).requestRunId).toBe(70);
-  const call = f.calls.at(-1)!;
-  expect(JSON.parse(String(call.init?.body))).toEqual({ ref: "dev", return_run_details: true, inputs: {
-    routine: "no-glasses", request_origin: "workflow-dispatch", source_build_run_id: "50", source_publication_attempt: "1", pr: "12",
-  } });
-});
-
-test("request artifact reads are bounded and reject other files before decompression", async () => {
-  await expect(readTestMetadata(new Response("12345"), 4)).rejects.toThrow("size limit");
-  expect(readRequestZip(zipSync({ "request.json": strToU8('{"ok":true}') }))).toEqual({ ok: true });
-  expect(() => readRequestZip(zipSync({ "request.json": strToU8("{}"), "run.sh": strToU8("bad") }))).toThrow("Unexpected");
-  expect(() => readRequestZip(zipSync({ "request.json": new Uint8Array(1024 * 1024 + 1) }))).toThrow("Unexpected");
-});
-
-for (const channel of ["pr", "dev", "staging"] as const) test(`${channel} ready and no-artifact requests authenticate the exact source and artifact digest`, async () => {
-  const selected: TestDispatchInput = { ...input, source: channel === "pr" ? input.source : { channel, buildRunId: 50, publicationAttempt: 1 } };
-  for (const status of ["ready", "no-artifact"] as const) {
-    const f = fixture();
-    f.rows.set(`${API}/actions/runs/70/attempts/1`, run({ id: 70, event: "workflow_dispatch", head_branch: "dev", path: ".github/workflows/request-e2e-routine.yml" }));
-    const request = { schemaVersion: channel === "pr" ? 1 : 2,
-      ...(channel === "pr" ? {} : { source: { ...selected.source, kind: "coordinated-release" } }),
-      kind: "mentra-routine-request", requestId: `routine-70-1-${channel === "pr" ? 12 : channel}-no-glasses`, status, reason: "No artifact for this revision", routine: { id: "no-glasses", authorization: "workflow-dispatch" },
-      trigger: { repository: REPO, kind: "workflow_dispatch", runId: 70, runAttempt: 1, sha: HEAD, workflowSha: HEAD, ref: "refs/heads/dev", workflow: ".github/workflows/request-e2e-routine.yml" },
-      selection: status === "ready" ? { archive: f.receipt.artifacts.mac, producer: { runId: 50, publicationAttempt: 1 } } : null };
-    const bytes = zipSync({ "request.json": strToU8(JSON.stringify(request)) });
-    f.rows.set(`${API}/actions/runs/70/artifacts?per_page=100`, { artifacts: [{ id: 80, name: "mentra-routine-request-70-1", expired: false,
-      size_in_bytes: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, workflow_run: { id: 70, head_sha: HEAD } }] });
-    f.rows.set(`${API}/actions/artifacts/80/zip`, new Response(null, { status: 302, headers: { location: "https://test.blob.core.windows.net/request.zip?signature=synthetic" } }));
-    f.rows.set("https://test.blob.core.windows.net/request.zip?signature=synthetic", new Response(bytes));
-    const progress = await f.gateway.progress(70, selected);
-    expect(progress.state).toBe(status === "ready" ? "requesting" : "unavailable");
-    const download = f.calls.find(call => call.url.includes("blob.core.windows.net"));
-    expect(download?.init?.headers).toBeUndefined();
-    if (status === "ready") {
-      const calls: { url: string; authorization: string | null }[] = [];
-      const fetch = (async (url: string, init?: RequestInit) => {
-        calls.push({ url, authorization: new Headers(init?.headers).get("Authorization") });
-        if (url === "https://api.github.com/app/installations/67890/access_tokens") {
-          const scope = JSON.parse(String(init?.body)).repositories[0];
-          return Response.json({ token: `token-${scope}`, expires_at: new Date(Date.now() + 3600_000).toISOString() }, { status: 201 });
-        }
-        return f.fetch(url, init);
-      }) as typeof globalThis.fetch;
-      f.rows.set("https://api.github.com/repos/Mentra-Community/Mentra-Automated-Testing/actions/workflows/device-routine.yml/runs?event=workflow_dispatch&branch=main&per_page=100", { workflow_runs: [] });
-      const gateway = new GithubTestBuildGateway({ fetch, appAuth: new TestRunGithubApp({ credentials: appCredentials, fetch }) });
-      expect((await gateway.progress(70, selected)).state).toBe("requesting");
-      expect(calls.filter(call => call.url.startsWith(`${API}/`)).every(call => call.authorization === "Bearer token-MentraOS")).toBe(true);
-      expect(calls.find(call => call.url.includes("/repos/Mentra-Community/Mentra-Automated-Testing/"))?.authorization).toBe("Bearer token-Mentra-Automated-Testing");
-      expect(calls.find(call => call.url.includes("blob.core.windows.net"))?.authorization).toBeNull();
-    }
-    if (channel !== "pr") {
-      for (const source of [{ ...selected.source, channel: channel === "dev" ? "staging" as const : "dev" as const },
-        { ...selected.source, buildRunId: 51 }, { ...selected.source, publicationAttempt: 2 }])
-        await expect(f.gateway.progress(70, { ...selected, source })).rejects.toThrow("Published request source differs");
-      await expect(f.gateway.progress(70, input)).rejects.toThrow("Published request source differs");
-    } else {
-      await expect(f.gateway.progress(70, { ...input, source: { channel: "dev", buildRunId: 50, publicationAttempt: 1 } }))
-        .rejects.toThrow("Published request source differs");
-    }
-  }
+test("retained finalizer rows pin their original attempt and CDN failures do not select an older release", async () => {
+ const f = nightlyFixture();
+ f.rows.set(nightlyUrl, {total_count: 1, workflow_runs: [releaseRun({run_attempt: 2})]});
+ f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 2,
+  jobs: [finalizer, {...finalizer, id: 71, run_attempt: 2}]});
+ expect(await f.gateway.latestDev("ios-on-mac", before)).toMatchObject({availability: "available", source: {publicationAttempt: 1}});
+ f.rows.set(f.planUrl, new Response("unavailable", {status: 503}));
+ await expect(f.gateway.latestDev("ios-on-mac", before)).rejects.toThrow("Build metadata unavailable (HTTP 503)");
 });

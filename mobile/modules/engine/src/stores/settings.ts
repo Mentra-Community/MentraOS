@@ -47,6 +47,11 @@ export interface Setting {
    * Absent means the value is never invalidated automatically.
    */
   resetOnBuildEnvChange?: true
+  /**
+   * The value is a credential (for example a bearer token). Surfaces that show
+   * or hand settings to the user, such as Data Export, must redact it.
+   */
+  credential?: true
 }
 
 export const SETTINGS: Record<string, Setting> = {
@@ -76,7 +81,7 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  super_mode: {key: "super_mode", defaultValue: () => process.env.EXPO_PUBLIC_SUPER_MODE === "true", writable: true, saveOnServer: true, persist: true},
   appearance_menu_enabled: {
     key: "appearance_menu_enabled",
     defaultValue: () => false,
@@ -286,7 +291,14 @@ export const SETTINGS: Record<string, Setting> = {
   // Volatile bearer synced to Bluetooth for glasses-side Cloud V2 calls. The
   // key name is kept for BLE compatibility, but the value must never be loaded
   // from or saved to the legacy Cloud V1 settings store.
-  core_token: {key: "core_token", defaultValue: () => "", writable: true, saveOnServer: false, persist: false},
+  core_token: {
+    key: "core_token",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: false,
+    credential: true,
+  },
   auth_email: {key: "auth_email", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   // Pairing identity is per-phone, not per-account: two phones on one account
   // can be paired to different glasses, so none of these keys may sync to the
@@ -453,11 +465,9 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  // Keep speech continuous by default: Mentra Live's VAD can clip the first
-  // words after a pause, including the Mentra AI wake word. Users can opt in.
   voice_activity_detection_enabled: {
     key: "voice_activity_detection_enabled",
-    defaultValue: () => false,
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -1154,20 +1164,6 @@ export const useSettingsStore = create<SettingsState>()(
           // repeated attempt per launch until a write succeeds.
           if (allCleared) {
             storage.save(BUILD_ENV_KEY, buildEnv)
-          }
-        }
-
-        // Apply the VAD-off default to upgrades too. A saved value from the
-        // previous default must not keep clipping speech after the update.
-        // Later explicit opt-ins survive subsequent launches.
-        const VAD_MIGRATION_KEY = "migration:vad_default_off_v1"
-        const vadMigrationDone = storage.load<boolean>(VAD_MIGRATION_KEY)
-        if (vadMigrationDone.is_error() || !vadMigrationDone.value) {
-          const result = await get().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, true)
-          if (result.is_error()) {
-            console.log("SETTINGS: VAD migration failed:", result.error)
-          } else {
-            storage.save(VAD_MIGRATION_KEY, true)
           }
         }
 

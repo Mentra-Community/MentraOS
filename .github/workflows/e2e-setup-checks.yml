@@ -4,15 +4,22 @@ on:
   pull_request:
     paths:
       - ".github/scripts/request-e2e-routine*"
-      - ".github/scripts/device-routines.mjs"
+      - ".github/scripts/routine-api*"
       - ".github/scripts/dispatch-device-routine*"
       - ".github/scripts/nightly-device-routines*"
       - ".github/scripts/coordinated-routine-*"
+      - ".github/scripts/published-build-metadata*"
       - ".github/scripts/notify-pr-builds*"
       - ".github/scripts/release-slack-message*"
       - ".github/scripts/release-routine-slack*"
+      - ".github/scripts/pr-routine-result*"
+      - ".github/scripts/routine-work*"
+      - ".github/scripts/pr-routine-work*"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/pr-android-artifacts*"
       - ".github/workflows/request-e2e-routine.yml"
+      - ".github/workflows/request-routine-work.yml"
+      - ".github/workflows/notify-routine-work.yml"
       - ".github/workflows/dispatch-device-routine.yml"
       - ".github/workflows/nightly-device-routines.yml"
       - ".github/workflows/notify-release-routine.yml"
@@ -25,15 +32,22 @@ on:
     branches: [dev]
     paths:
       - ".github/scripts/request-e2e-routine*"
-      - ".github/scripts/device-routines.mjs"
+      - ".github/scripts/routine-api*"
       - ".github/scripts/dispatch-device-routine*"
       - ".github/scripts/nightly-device-routines*"
       - ".github/scripts/coordinated-routine-*"
+      - ".github/scripts/published-build-metadata*"
       - ".github/scripts/notify-pr-builds*"
       - ".github/scripts/release-slack-message*"
       - ".github/scripts/release-routine-slack*"
+      - ".github/scripts/pr-routine-result*"
+      - ".github/scripts/routine-work*"
+      - ".github/scripts/pr-routine-work*"
       - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/pr-android-artifacts*"
       - ".github/workflows/request-e2e-routine.yml"
+      - ".github/workflows/request-routine-work.yml"
+      - ".github/workflows/notify-routine-work.yml"
       - ".github/workflows/dispatch-device-routine.yml"
       - ".github/workflows/nightly-device-routines.yml"
       - ".github/workflows/notify-release-routine.yml"
@@ -66,10 +80,15 @@ jobs:
           .github/scripts/dispatch-device-routine.test.mjs
           .github/scripts/nightly-device-routines.test.mjs
           .github/scripts/coordinated-routine-request.test.mjs
+          .github/scripts/routine-api.test.mjs
           .github/scripts/notify-pr-builds.test.mjs
           .github/scripts/release-slack-message.test.mjs
           .github/scripts/release-routine-slack.test.mjs
+          .github/scripts/pr-routine-result.test.mjs
+          .github/scripts/routine-work.test.mjs
+          .github/scripts/pr-routine-work.test.mjs
           .github/scripts/pr-ios-artifacts.test.mjs
+          .github/scripts/pr-android-artifacts.test.mjs
       - name: Verify shared Mac installer and ownership
         run: node --test mobile/scripts/install-ios-mac.test.mjs
       - name: Verify Mac installer packaging

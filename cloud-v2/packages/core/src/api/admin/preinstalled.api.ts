@@ -4,6 +4,8 @@ import { adminAuth } from "../middleware/admin-auth.middleware";
 import adminReports from "./reports.api";
 import adminSupportProfiles from "./support-profiles.api";
 import adminTestRuns from "./test-runs.api";
+import {createRoutineCatalogApi} from "./routine-catalog.api";
+import {createRoutinePreferencesApi} from "./routine-preferences.api";
 import adminTestDispatches from "./test-dispatches.api";
 import {
   PREINSTALLED_INSTALL_POLICIES,
@@ -75,6 +77,8 @@ app.get("/audit-log", getAuditLog);
 app.route("/reports", adminReports);
 app.route("/support-profiles", adminSupportProfiles);
 app.route("/test-runs", adminTestRuns);
+app.route("/routine-catalog", createRoutineCatalogApi());
+app.route("/routines", createRoutinePreferencesApi());
 app.route("/", adminTestDispatches);
 
 async function getSubmissions(c: AppContext) {

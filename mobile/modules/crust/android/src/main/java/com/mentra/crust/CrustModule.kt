@@ -59,10 +59,6 @@ class CrustModule : Module() {
       NotificationProcessBridge.emitDismissed(context, notificationKey, packageName)
     }
 
-    fun emitCaptionsTesterIncident(data: Map<String, Any>) {
-      emitEvent("captions_tester_incident", data)
-    }
-
     private fun emitEvent(eventName: String, data: Map<String, Any>) {
       val emitter = eventEmitter
       if (emitter == null) {
@@ -145,7 +141,6 @@ class CrustModule : Module() {
       "onChange",
       "phone_notification",
       "phone_notification_dismissed",
-      "captions_tester_incident",
       "onNavManeuver",
       "onNavRerouting",
       "onNavArrived",
@@ -192,13 +187,23 @@ class CrustModule : Module() {
     }
 
     AsyncFunction("nativeHttpRequest") {
-      method: String, url: String, headers: Map<String, String>, body: String? ->
-      val result = JSCPolyfillBridge.executeHttp(method, url, headers, body)
-      mapOf(
-        "status" to result.status,
-        "statusText" to result.statusText,
-        "headers" to result.headers,
-        "body" to result.body,
+      method: String, url: String, headers: Map<String, String>, body: String?, promise: expo.modules.kotlin.Promise ->
+      JSCPolyfillBridge.enqueueHttp(
+        method,
+        url,
+        headers,
+        body,
+        onResult = { result ->
+          promise.resolve(
+            mapOf(
+              "status" to result.status,
+              "statusText" to result.statusText,
+              "headers" to result.headers,
+              "body" to result.body,
+            )
+          )
+        },
+        onError = { error -> promise.reject("E_NATIVE_HTTP", error.message ?: "Native HTTP request failed", error) },
       )
     }
 
@@ -310,7 +315,8 @@ class CrustModule : Module() {
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("MentraJS: no context")
       val json = org.json.JSONObject(envelope as Map<*, *>).toString()
-      JSCRuntime.shared(ctx).dispatchToJs(packageName, json)
+      val deliveryId = (envelope["deliveryId"] as? Number)?.toLong()?.takeIf { it > 0 }
+      JSCRuntime.shared(ctx).dispatchToJs(packageName, json, deliveryId)
     }.runOnQueue(mentraJsQueue)
 
     AsyncFunction("mentraJsSetManifest") { packageName: String, permissions: List<String> ->
