@@ -107,6 +107,11 @@ final class NimoCanvasCodecTests: XCTestCase {
     }
 
     func testUtf8RowsAndGeometryValidation() throws {
+        let dashes = try NimoCanvasCodec.label("—é— - –", 0, 0, 100, 20)
+        let expectedText = Data("-é- - –".utf8)
+        XCTAssertEqual(Data(dashes.payload.dropFirst(14)), expectedText)
+        XCTAssertEqual(dashes.textBytes, expectedText.count)
+        XCTAssertEqual(Int(dashes.payload[12]), expectedText.count)
         XCTAssertEqual(try NimoCanvasCodec.label("😀é", 0, 0, 100, 20).textBytes, 6)
         XCTAssertThrowsError(try NimoCanvasCodec.label("a\0b", 0, 0, 100, 20))
         XCTAssertThrowsError(try NimoCanvasCodec.label(String(repeating: "é", count: 1025), 0, 0, 100, 20))
@@ -156,11 +161,11 @@ final class NimoCanvasCodecTests: XCTestCase {
     }
 
     func testWholeScenePreservesOrderAndIgnoresDiffAnnotations() throws {
-        let text = SceneElement(id: "caption", type: "text", x: 10, y: 20, w: 100, h: 40, text: "hello",
+        let text = SceneElement(id: "caption", type: "text", x: 10, y: 20, w: 100, h: 40, text: "hello—world",
                                 data: nil, border: 2, radius: 3, change: "unchanged", contentHash: "")
         let expected = try NimoCanvasCodec.replace([
             NimoCanvasCodec.rectangle(10, 20, 100, 40, stroke: 2, radius: 3),
-            NimoCanvasCodec.label("hello", 10, 20, 100, 20),
+            NimoCanvasCodec.label("hello-world", 10, 20, 100, 20),
         ])
         XCTAssertEqual(try NimoCanvasCodec.scene([text]) { _, _, _ in XCTFail("Not an image"); return Data() }, expected)
     }
