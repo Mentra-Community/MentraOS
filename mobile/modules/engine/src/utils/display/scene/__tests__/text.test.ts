@@ -1,6 +1,7 @@
 import {describe, expect, test} from "bun:test"
 import {TextMeasurer} from "../../measurer/TextMeasurer"
 import {TextWrapper} from "../../wrapper/TextWrapper"
+import {normalizeNimoDisplayText} from "../../normalization"
 import {processText, sourceLines} from "../text"
 import {processScene} from "../process"
 import {degradeTextScene} from "../degrade"
@@ -23,6 +24,16 @@ const caps: SceneDisplayCapabilities = {
 const box = {x: 0, y: 0, w: 500, h: 220}
 
 describe("render text selection", () => {
+  test("NIMO Latin fallback preserves other scripts, their marks and original syllable widths", () => {
+    const otherScripts = "ありがとう が パ カ\u3099 한국어 한\u302E Α\u0301 مُرَحَّبًا शि ❤️"
+    expect(normalizeNimoDisplayText(`${otherScripts} café—Æ\u0301`)).toBe(`${otherScripts} cafe-AE`)
+    for (const text of ["한".repeat(31), "が".repeat(31)]) {
+      const result = processText(text, {...box, h: 20}, {maxLines: 1}, NIMO_PROFILE)
+      expect(result.text).toBe(text)
+      expect(result.degraded).toBe(false)
+      expect(result.layout.lines).toEqual([{text, start: 0, end: 31}])
+    }
+  })
   test("normalizes NIMO text before legacy and scene wrapping can truncate it", () => {
     const text = "—".repeat(32)
     const wrapper = new TextWrapper(new TextMeasurer(NIMO_PROFILE))

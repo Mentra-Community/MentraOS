@@ -23,8 +23,7 @@ const LATIN_REPLACEMENTS: Record<string, string> = {
 export function normalizeNimoDisplayText(text: string): string {
   return text
     .replace(/[ĐÐđðŁłØøÆæŒœẞßÞþ]/g, (character) => LATIN_REPLACEMENTS[character])
-    .normalize("NFD")
-    .replace(/\p{M}+/gu, "")
+    .replace(/\p{Script=Latin}\p{M}*/gu, (cluster) => cluster.normalize("NFD").replace(/\p{M}+/gu, ""))
     .replace(/—/g, "-")
 }
 

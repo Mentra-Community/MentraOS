@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NimoCanvasCodecTest {
+  @Test fun LatinFallbackPreservesOtherScriptsAndTheirMarks() {
+    val otherScripts = "ありがとう が パ カ\u3099 한국어 한\u302E Α\u0301 مُرَحَّبًا शि ❤️"
+    val label = NimoCanvasCodec.label("$otherScripts café—Æ\u0301", 0, 0, 500, 220)
+    val expected = "$otherScripts cafe-AE".toByteArray(Charsets.UTF_8)
+    assertArrayEquals(expected, label.payload.copyOfRange(14, label.payload.size))
+    assertEquals(expected.size, label.textBytes)
+  }
+
   @Test fun imageSourcesAcceptRawAndMatchingDataUris() {
     // ImageIO/BitmapFactory validate the complete raster; this boundary validates file kind and size.
     val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 13, 10, 26, 10) + ByteArray(24)
