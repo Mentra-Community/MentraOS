@@ -26,13 +26,30 @@ including refusals and dry runs. The
 before/after difference includes other host activity and is not claimed as
 space reclaimed by the cleanup itself.
 
+Memory shows physical total, used memory excluding file cache, compressor
+occupancy and swap usage. On macOS, used bytes are `(anonymous - purgeable +
+wired + compressor) * page size`; compressed bytes are the pages occupied by
+the compressor, not the uncompressed pages stored in it. Pressure comes from
+the OS pressure level (1 normal, 2 warning, 4 critical); availability is the
+percentage reported by `memory_pressure -Q`. Neither is inferred from raw free
+pages. Swap may remain allocated after pressure subsides. Missing metrics say
+**Unavailable**, and old values are explicitly last reported, not current.
+The same 24-hour/seven-day history can show disk, used RAM, compression, swap
+or OS memory availability. Each metric's missing measurements break its chart.
+
 ## Reporting contract
 
 The existing ingestion capability authenticates `POST
 /api/internal/test-host-observations`. The strict v1 body is defined in
 `packages/core/src/types/test-host-health.types.ts`: configured host ID, stable
 sample UUID, actual sample timestamp, nullable available bytes, three
-allowlisted service observations, and safe cleanup receipt summaries. No raw
+allowlisted service observations, safe cleanup receipt summaries, and an optional
+nullable `memory` object. When present, it has six nullable fields: `totalBytes`,
+`usedBytes`, `compressedBytes`, `swapUsedBytes`, `pressureFreePercent`, and
+`pressure` (`normal`, `warning`, or `critical`). Byte counts are safe nonnegative
+integers (physical total is positive); percentages range from 0 to 100. Failed
+reads are null, never an old reading with a fresh timestamp. Old disk-only
+samples remain valid and do not acquire invented memory values. No raw
 paths, commands, logs, credentials or device ownership tokens are accepted.
 The endpoint never starts workers, admits jobs or performs cleanup.
 
@@ -49,6 +66,9 @@ session gate. History uses an indexed host/time range and retains seven days;
 the latest host row is kept so a missing host does not vanish when history
 expires. Both reads are bounded and disclose truncation. Startup creates the
 unique/history/TTL indexes before ingestion is available.
+Memory stays in these same sample/latest payloads and history points; there is
+no separate memory store. Restore the independent monitor when minute samples
+stop arriving; a dashboard refresh cannot create missing history or backfill it.
 
 Deploying the page and API does not install the passive monitor. Until the
 host companion publishes its first actual sample, the page says no monitor

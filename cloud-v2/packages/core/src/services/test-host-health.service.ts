@@ -99,7 +99,8 @@ export class TestHostHealthService {
         events.set(event.receiptId, event); // Latest observed receipt version; immutable sample history is unchanged.
     }
     return { hostId, generatedAt: to.toISOString(), from: from.toISOString(), to: to.toISOString(),
-      points: retained.map(({ sampleId, sampledAt, freeBytes }) => ({ sampleId, sampledAt, freeBytes })),
+      points: retained.map(({ sampleId, sampledAt, freeBytes, memory }) => ({ sampleId, sampledAt, freeBytes,
+        ...(memory === undefined ? {} : { memory }) })),
       cleanupEvents: [...events.values()].sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt)),
       truncated: rows.length > HOST_SAMPLE_LIMIT, thresholdBytes: DISK_FLOOR_BYTES, gapAfterMs: DISK_GAP_MS };
   }
