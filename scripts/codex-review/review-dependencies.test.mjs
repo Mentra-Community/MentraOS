@@ -41,3 +41,14 @@ test("changed dependency declarations, local dependencies, and lockfiles cannot 
   expect(f.run().stderr).toContain("lock differs")
   write(f.review, {external: "workspace:*"});expect(f.run().stderr).toContain("local or workspace dependency")
 })
+
+test("a skipped optional package cannot be a bridge to anchor source", () => {
+  const f = fixture(), nested = join(f.storage, "tools/mentra-e2e/node_modules"), source = join(f.anchor, "source")
+  mkdirSync(nested, {recursive: true});mkdirSync(join(f.anchor, "tools/mentra-e2e"), {recursive: true});mkdirSync(source)
+  writeFileSync(join(source, "index.cjs"), 'module.exports = "ANCHOR SOURCE"')
+  symlinkSync(nested, join(f.anchor, "tools/mentra-e2e/node_modules"))
+  symlinkSync(source, join(nested, "source"));symlinkSync(join(nested, "source"), join(f.storage, "node_modules/bridge"))
+  const unsafe = spawnSync("node", ["-e", 'process.stdout.write(require(process.argv[1]))', join(f.storage, "node_modules/bridge/index.cjs")], {encoding: "utf8"})
+  expect(unsafe.stdout).toBe("ANCHOR SOURCE")
+  expect(f.run().stderr).toContain("escapes external package storage")
+})

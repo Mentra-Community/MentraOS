@@ -26,6 +26,17 @@ const dependencySet = (directory) => {
 
 try {
   if (!review || !anchor || roots.length === 0) fail("missing review dependency paths")
+  for (const root of roots) {
+    const walk = (directory) => {
+      for (const entry of readdirSync(directory)) {
+        const path = join(directory, entry), stat = lstatSync(path)
+        if (stat.isSymbolicLink()) {
+          if (!inside(realpathSync(path))) fail(`dependency link escapes external package storage: ${path.slice(root.length + 1)}`)
+        } else if (stat.isDirectory()) walk(path)
+      }
+    }
+    walk(root)
+  }
   for (const name of names) {
     const source = join(anchor, name)
     if (!existsSync(source)) continue
@@ -39,15 +50,6 @@ try {
         fail(`dependency lock differs for ${name}/${lock}`)
       }
     }
-    const walk = (directory) => {
-      for (const entry of readdirSync(directory)) {
-        const path = join(directory, entry), stat = lstatSync(path)
-        if (stat.isSymbolicLink()) {
-          if (!inside(realpathSync(path))) fail(`dependency link escapes external package storage: ${name}/${path.slice(root.length + 1)}`)
-        } else if (stat.isDirectory()) walk(path)
-      }
-    }
-    walk(root)
   }
 } catch (error) {
   console.error(`review dependency validation failed: ${error.message}`)
