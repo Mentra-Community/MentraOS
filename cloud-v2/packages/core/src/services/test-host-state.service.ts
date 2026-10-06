@@ -143,6 +143,26 @@ export const hostStateSchema = z
       }
   })
 export type TestHostState = z.infer<typeof hostStateSchema>
+const frameworkStopSchema = z.object({
+  installationId: frameworkIdentitySchema,
+  process: frameworkProcessSchema,
+  observedAt: z.string().datetime({offset: true}),
+}).strict()
+type FrameworkStop = z.infer<typeof frameworkStopSchema>
+const sameStoppedProcess = (stop: FrameworkStop, installationId: string, process: FrameworkStop['process']) =>
+  stop.installationId === installationId && stop.process.pid === process.pid && stop.process.startedAt === process.startedAt
+function reconcileFrameworkStops(history: FrameworkHistoryEntry[], stops: FrameworkStop[]) {
+  for (const stop of stops) {
+    const interval = history.find(value => sameStoppedProcess(stop, value.binding.installationId, value.process))
+    if (!interval) continue
+    if (Date.parse(stop.observedAt) < Date.parse(interval.effectiveAt))
+      throw new TestRunError(409, "Observed framework stop precedes its accepted startup")
+    if (!interval.endedAt || (interval.endReason === 'accepted-replacement' && Date.parse(stop.observedAt) <= Date.parse(interval.endedAt))) {
+      interval.endedAt = stop.observedAt
+      interval.endReason = 'observed-stop'
+    }
+  }
+}
 export const updaterDeploymentSchema = z
   .object({
     hostId: frameworkIdentitySchema,
@@ -150,14 +170,7 @@ export const updaterDeploymentSchema = z
     generation: z.number().int().positive().safe(),
     sequence: z.number().int().positive().safe(),
     deployment: frameworkDeploymentSchema,
-    stopped: z
-      .object({
-        installationId: frameworkIdentitySchema,
-        process: frameworkProcessSchema,
-        observedAt: z.string().datetime({offset: true}),
-      })
-      .strict()
-      .optional(),
+    stopped: frameworkStopSchema.optional(),
   })
   .strict()
 export type ReceivedTestHostState = TestHostState & {receivedAt: string; frameworkHistory?: FrameworkHistoryEntry[]}
@@ -200,6 +213,7 @@ export class TestHostStateService {
     const history: FrameworkHistoryEntry[] = (current?.frameworkHistory ?? []).map((value) =>
       frameworkHistoryEntrySchema.parse(value),
     )
+    const stops = (current?.frameworkStopReceipts ?? []).map(value => frameworkStopSchema.parse(value))
     for (const interval of snapshot.frameworkHistory ?? []) {
       if (interval.incarnationGeneration > snapshot.incarnationGeneration)
         throw new TestRunError(409, "Framework history names a future controller generation")
@@ -255,6 +269,8 @@ export class TestHostStateService {
         )
       }
     }
+    // Startup/history may arrive after the updater already acknowledged the exact process's stop.
+    reconcileFrameworkStops(history, stops)
     try {
       const saved = await TestHostStateModel.findOneAndUpdate(
         filter,
@@ -310,27 +326,10 @@ export class TestHostStateService {
     const history: FrameworkHistoryEntry[] = (current.frameworkHistory ?? []).map((value) =>
       frameworkHistoryEntrySchema.parse(value),
     )
+    const stops = (current.frameworkStopReceipts ?? []).map(value => frameworkStopSchema.parse(value))
     const stop = observation.stopped
-    const last = stop
-      ? history.find(
-          (value) =>
-            value.binding.installationId === stop.installationId &&
-            JSON.stringify(value.process) === JSON.stringify(stop.process),
-        )
-      : undefined
-    if (
-      last &&
-      stop &&
-      last.binding.installationId === stop.installationId &&
-      JSON.stringify(last.process) === JSON.stringify(stop.process) &&
-      (!last.endedAt ||
-        (last.endReason === "accepted-replacement" && Date.parse(stop.observedAt) <= Date.parse(last.endedAt)))
-    ) {
-      if (Date.parse(stop.observedAt) < Date.parse(last.effectiveAt))
-        throw new TestRunError(409, "Observed framework stop precedes its accepted startup")
-      last.endedAt = stop.observedAt
-      last.endReason = "observed-stop"
-    }
+    if (stop && !stops.some(value => sameStoppedProcess(value, stop.installationId, stop.process))) stops.push(stop)
+    reconcileFrameworkStops(history, stops)
     const saved = await TestHostStateModel.findOneAndUpdate(
       {
         hostId,
@@ -346,6 +345,8 @@ export class TestHostStateService {
           deploymentObservation: observation.deployment,
           deploymentReceivedAt: new Date(this.now()),
           frameworkHistory: history,
+          // Same bound as accepted history; unmatched receipts survive delayed controller delivery.
+          frameworkStopReceipts: stops.slice(-100),
         },
       },
       {new: true, writeConcern: testWriteConcern},

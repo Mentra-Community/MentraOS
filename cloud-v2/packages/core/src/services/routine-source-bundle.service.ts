@@ -3,11 +3,11 @@ import {z} from 'zod';
 import {createStorageService, type StorageService} from './storage/storage.service';
 import {TestRunError} from './test-result-error';
 import {routineIdentitySchema} from '../types/routine-definition.types';
-import {routineSourceRefSchema} from '../types/framework-version.types';
+import {ROUTINE_BUNDLE_BODY_BYTES, routineSourceRefSchema} from '../types/framework-version.types';
 
 export const routineBundleMetadataSchema = z.object({commit: z.string().regex(/^[a-f0-9]{40}$/),
   routineId: routineIdentitySchema, minimumRoutineApiVersion: z.number().int().positive().safe(),
-  definitionSha256: z.string().regex(/^[a-f0-9]{64}$/), size: z.number().int().positive().max(256 * 1024 ** 2)}).strict();
+  definitionSha256: z.string().regex(/^[a-f0-9]{64}$/), size: z.number().int().positive().max(ROUTINE_BUNDLE_BODY_BYTES)}).strict();
 /** Existing storage owns immutable routine bytes; no per-host clone or source registry. */
 export class RoutineSourceBundleService {
   constructor(private storage: () => StorageService = createStorageService) {}

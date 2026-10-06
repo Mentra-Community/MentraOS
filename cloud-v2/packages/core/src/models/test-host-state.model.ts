@@ -11,6 +11,7 @@ const schema = new Schema(
     observedAt: {type: Date, required: true},
     snapshot: {type: Schema.Types.Mixed, required: true},
     frameworkHistory: {type: [Schema.Types.Mixed], default: []},
+    frameworkStopReceipts: {type: [Schema.Types.Mixed], default: []},
     deploymentObservation: {type: Schema.Types.Mixed},
     deploymentGeneration: {type: Number, default: 0},
     deploymentSequence: {type: Number, default: 0},
