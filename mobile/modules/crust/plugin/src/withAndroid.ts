@@ -1,4 +1,10 @@
-import {withAppBuildGradle, withMainApplication, withProjectBuildGradle, type ConfigPlugin} from "expo/config-plugins"
+import {
+  withAppBuildGradle,
+  withGradleProperties,
+  withMainApplication,
+  withProjectBuildGradle,
+  type ConfigPlugin,
+} from "expo/config-plugins"
 
 // Marker comments double as idempotency checks: each injection looks for its
 // OWN unique marker (never a shared substring — a marker one block contains
@@ -19,6 +25,37 @@ const MAPBOX_REPO = [
   "    }",
 ].join("\n")
 
+// quickjs-kt 1.0.15 is compiled with Kotlin 2.4, and a Kotlin compiler reads
+// metadata one version ahead. 2.3.0 is the newest 2.3 release Expo SDK 55's
+// root plugin maps to a KSP version.
+const MIN_KOTLIN_VERSION = "2.3.0"
+// The template's unversioned classpath entry resolves to the Kotlin Gradle
+// plugin React Native's Gradle plugin depends on (2.1.20 on RN 0.83), not the
+// `android.kotlinVersion` that expo-build-properties writes to the catalog.
+const UNVERSIONED_KOTLIN_PLUGIN = "classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')"
+const CATALOG_KOTLIN_PLUGIN = 'classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:${expoLibs.versions.kotlin.get()}")'
+
+function isOlderVersion(version: string, minimum: string) {
+  const actual = version.split(".").map(Number)
+  const required = minimum.split(".").map(Number)
+  for (let i = 0; i < required.length; i++) {
+    if ((actual[i] ?? 0) !== required[i]) return (actual[i] ?? 0) < required[i]
+  }
+  return false
+}
+
+function withCrustKotlinVersion(config: Parameters<ConfigPlugin>[0]) {
+  return withGradleProperties(config, (cfg) => {
+    const property = cfg.modResults.find((item) => item.type === "property" && item.key === "android.kotlinVersion")
+    if (property?.type !== "property") {
+      cfg.modResults.push({type: "property", key: "android.kotlinVersion", value: MIN_KOTLIN_VERSION})
+    } else if (isOlderVersion(property.value, MIN_KOTLIN_VERSION)) {
+      property.value = MIN_KOTLIN_VERSION
+    }
+    return cfg
+  })
+}
+
 const PROTOBUF_EXCLUDE = "exclude group: 'com.google.protobuf', module: 'protobuf-javalite'"
 const NOTIFICATION_PROCESS_GUARD = "crust: skip React Native in notification process"
 const NOTIFICATION_CONFIG_GUARD = "crust: skip Expo lifecycle in notification process"
@@ -26,6 +63,8 @@ const NOTIFICATION_CONFIG_GUARD = "crust: skip Expo lifecycle in notification pr
 function withCrustProjectGradle(config: Parameters<ConfigPlugin>[0]) {
   return withProjectBuildGradle(config, (cfg) => {
     let gradle = cfg.modResults.contents
+
+    gradle = gradle.replace(UNVERSIONED_KOTLIN_PLUGIN, CATALOG_KOTLIN_PLUGIN)
 
     // Mapbox Downloads repo, inserted at the top of allprojects.repositories.
     if (!gradle.includes(MAPBOX_REPO_MARKER)) {
@@ -147,6 +186,7 @@ function withNotificationProcessGuard(config: Parameters<ConfigPlugin>[0]) {
 }
 
 export const withCrustAndroidBuildContract: ConfigPlugin = (config) => {
+  config = withCrustKotlinVersion(config)
   config = withCrustProjectGradle(config)
   config = withCrustAppGradle(config)
   return withNotificationProcessGuard(config)

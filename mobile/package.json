@@ -221,7 +221,8 @@
     "@dr.pogodin/react-native-fs@2.38.2": "patches/@dr.pogodin%2Freact-native-fs@2.38.2.patch",
     "expo-router@55.0.16": "patches/expo-router@55.0.16.patch",
     "react-native-udp@4.1.7": "patches/react-native-udp@4.1.7.patch",
-    "react-native-wifi-reborn@4.13.6": "patches/react-native-wifi-reborn@4.13.6.patch"
+    "react-native-wifi-reborn@4.13.6": "patches/react-native-wifi-reborn@4.13.6.patch",
+    "react-native-gesture-handler@2.30.1": "patches/react-native-gesture-handler@2.30.1.patch"
   },
   "trustedDependencies": [
     "@sentry/cli",
