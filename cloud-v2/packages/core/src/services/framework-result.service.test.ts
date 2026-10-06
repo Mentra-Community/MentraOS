@@ -530,7 +530,7 @@ test("result ingestion binds every routine lifecycle action to the complete orde
   expect(stored?.result.teardown.actions?.[0]?.status).toBe("not-run");
 
   // Fixture providers declared by the routine are routine actions, alongside exact explicit hooks.
-  source.fixtures = [{provider: "notes-data", description: "Owned Notes data", input: {}}];
+  source.fixtures = [{provider: "notes-data", description: "Owned Notes data"}];
   const fixture = {...report({id: "prepare-notes-data", instruction: "Prepare Notes data", expected: "Notes ready"}), fixtureProvider: "notes-data"};
   const fixtureRun = {...run, result: {...run.result,
     setup: {...run.result.setup, actions: [shared, fixture, ...setup.map(report)]},
