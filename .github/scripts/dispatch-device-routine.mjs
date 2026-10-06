@@ -1,5 +1,5 @@
-import {routineApi, submitRoutineRequest, routineLabelIds, selectedCatalog, ensure, positive} from "./routine-api.mjs"
-import {authenticatedPr, publicationForPlatform, platformProducer, planForDefinition} from "./request-e2e-routine.mjs"
+import {submitRoutineRequest, routineLabelIds, routineId, ensure, positive} from "./routine-api.mjs"
+import {authenticatedPr, publicationForPlatform, platformProducer, planRoutineRequest} from "./request-e2e-routine.mjs"
 import {COORDINATED_WORKFLOW} from "./coordinated-routine-request.mjs"
 
 /** Reauthenticate the completed public producer; application archives are resolved by Core. */
@@ -26,10 +26,9 @@ export async function planDeviceDispatches({github, context, token, fetchImpl = 
   if (pr.head.sha !== run.head_sha || pr.head.ref !== run.head_branch) return []
   const ids = routineLabelIds(pr)
   if (!ids.length) return []
-  const catalog = await routineApi({token, operation: "catalog", fetchImpl})
-  // Validate every requested ID against the complete catalog before selecting this producer's platform.
-  return selectedCatalog(catalog, ids).filter(definition => definition.platform === platform).map(definition =>
-    planForDefinition(definition, {channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: publication.publicationAttempt}))
+  ensure(ids.every(routineId), "Invalid routine label")
+  return ids.map(routineId => planRoutineRequest({routineId, platform},
+    {channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: publication.publicationAttempt}))
 }
 
 export async function dispatchRoutinePlan({token, plan, fetchImpl = fetch}) {

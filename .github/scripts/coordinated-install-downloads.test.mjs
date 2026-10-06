@@ -178,17 +178,16 @@ test("coordinated routine links select the exact source and archive without clai
       TEST_RUN_INGEST_TOKEN: "synthetic-ingest-token",
       MAC_URL: state.receipt.app.otaManifestUrl.replace(state.plan.artifactNames.otaManifest, state.receipt.artifacts.mac.name)}
     const fetchImpl = (url, init) => String(url).endsWith("/api/internal/routine-catalog")
-      ? new Response(JSON.stringify({routines: [{routineId: "current-enrolled-id", platform: "ios-on-mac", definitionRevision: "a".repeat(40),
-        definition: {id: "current-enrolled-id", title: "Current enrolled test", platforms: ["ios-on-mac"], execution: {module: "routine.ts", export: "createRoutine"}}}]}))
+      ? new Response(JSON.stringify({routineRevision: "a".repeat(40), routines: [{routineId: "current-source-id"}]}))
       : options.fetchImpl(url, init)
     const blocks = await coordinatedRoutineLinks(env, fetchImpl)
     const text = blocks[0].text.text
-    assert.match(text, /Tests require an explicit request/); assert.match(text, /Available device tests/)
+    assert.match(text, /Publishing this build does not request tests/); assert.match(text, /Routine results for published app builds/)
     assert.doesNotMatch(text, /test passed|test succeeded|queued/i)
     const results = new URL(text.match(/<(https:\/\/admin\.dev\.[^|]+)\|/)[1])
     assert.equal(results.searchParams.get("headSha"), state.plan.sourceCommit)
     assert.equal(results.searchParams.get("archiveSha256"), state.receipt.artifacts.mac.sha256)
-    assert.equal(results.searchParams.get("routineId"), "current-enrolled-id")
+    assert.equal(results.searchParams.get("routineId"), "current-source-id")
     assert.equal(results.searchParams.get("channel"), channel)
     assert.equal(results.searchParams.has("pr"), false)
     const pipeline = new URL(text.match(/<(https:\/\/github\.com\/[^|]+)\|/)[1])
@@ -200,7 +199,7 @@ test("coordinated routine links select the exact source and archive without clai
     }
     for (const key of ["RELEASE_PAGE_RESULT", "EXAMPLES_DISPATCH_RESULT"]) for (const result of ["failure", "cancelled", "skipped", undefined]) {
       const notRequested = JSON.stringify(await coordinatedRoutineLinks({...env, [key]: result}, fetchImpl))
-      assert.match(notRequested, /Tests require an explicit request/)
+      assert.match(notRequested, /Publishing this build does not request tests/)
       assert.doesNotMatch(notRequested, /pending/)
       assert.match(notRequested, /Results for this exact build/, "A published artifact remains reviewable independently of other release jobs")
     }

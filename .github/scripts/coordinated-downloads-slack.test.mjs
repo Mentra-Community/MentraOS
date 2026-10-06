@@ -45,60 +45,71 @@ test("cancellation and publication failures are explicit and escape Slack markup
   assert.doesNotMatch(failed, /iOS\/Mac build failed/)
 })
 
-const catalogRow = (id, platform, title) => ({routineId: id, platform, definitionRevision: "a".repeat(40),
-  definition: {id, title, platforms: [platform], execution: {module: "routine.ts", export: "createRoutine"}}})
+const catalogRow = routineId => ({routineId})
 const published = {...env, FINALIZE_RESULT: "success", RELEASE_IDENTITY: "3.3.0-dev.223", SHA: "a".repeat(40),
   TEST_RUN_INGEST_TOKEN: "synthetic-ingest-token", MAC_URL: "https://example.com/mac.zip", MOBILE_APK_URL: "https://example.com/app.apk"}
 const catalogFetch = rows => async (url, init) => {
   assert.equal(url, "https://core.dev.us-west-2.mentraglass.com/api/internal/routine-catalog")
   assert.equal(init.headers.Authorization, "Bearer synthetic-ingest-token")
-  return new Response(JSON.stringify({routines: rows}))
+  return new Response(JSON.stringify({routineRevision: "f".repeat(40), routines: rows}))
 }
-test("enrolled arbitrary IDs and titles link their exact published platform without implying a request", async () => {
+test("main source IDs link actual published app platforms without implying routine compatibility or a request", async () => {
   const calls = []
   const [block] = await coordinatedRoutineLinks(published, catalogFetch([
-    catalogRow("new-id", "android", "A new <routine>"), catalogRow("new-id", "ios-on-mac", "A new <routine>")]), {
+    catalogRow("new-id")]), {
     select: async ({platform}) => {calls.push(platform); return {archive: {url: platform === "android" ? published.MOBILE_APK_URL : published.MAC_URL,
       sha256: (platform === "android" ? "d" : "e").repeat(64)}}},
   })
   assert.deepEqual(calls, ["android", "ios-on-mac"])
-  assert.match(block.text.text, /Available device tests/)
-  assert.match(block.text.text, /Tests require an explicit request/)
+  assert.match(block.text.text, /Routine results for published app builds/)
+  assert.match(block.text.text, /Publishing this build does not request tests/)
   assert.doesNotMatch(block.text.text, /Automatic request|No-glasses|execution and results are pending/)
-  assert.match(block.text.text, /A new &lt;routine&gt; · Android/)
+  assert.match(block.text.text, /new-id · Android/)
   const urls = [...block.text.text.matchAll(/<(https:[^|]+)\|Results for this exact build>/g)].map(match => new URL(match[1]).searchParams)
   assert.deepEqual(urls.map(params => params.get("platform")), ["android", "ios-on-mac"])
   assert.deepEqual(urls.map(params => params.get("archiveSha256")), ["d".repeat(64), "e".repeat(64)])
   assert.ok(urls.every(params => params.get("routineId") === "new-id" && params.get("headSha") === published.SHA))
 })
-test("one unverified platform cannot borrow another archive and repeated rows share one verification", async () => {
+test("one unverified app platform cannot borrow another archive and all IDs share one platform verification", async () => {
   const calls = []
   const [block] = await coordinatedRoutineLinks(published, catalogFetch([
-    catalogRow("new-android", "android", "Phone coverage"), catalogRow("new-mac", "ios-on-mac", "Desktop coverage"),
-    catalogRow("second-android", "android", "More phone coverage")]), {
+    catalogRow("new-android"), catalogRow("new-mac"), catalogRow("second-android")]), {
     select: async ({platform}) => {calls.push(platform); return {archive: {url: published.MOBILE_APK_URL, sha256: "d".repeat(64)}}},
   })
   assert.deepEqual(calls, ["android", "ios-on-mac"])
-  assert.match(block.text.text, /Desktop coverage · iOS on Mac — Published app download could not be verified; results link unavailable/)
-  assert.equal([...block.text.text.matchAll(/\|Results for this exact build>/g)].length, 2)
+  assert.match(block.text.text, /new-mac · iOS on Mac — Published app download could not be verified; results link unavailable/)
+  assert.equal([...block.text.text.matchAll(/\|Results for this exact build>/g)].length, 3)
 })
 
-test("catalog Slack section bounds escaped long titles and many definitions with an Admin overflow link", async () => {
-  for (const titles of [Array(30).fill("Example screen check"), Array(30).fill("<&&>".repeat(500)), ["<&&>".repeat(500)]]) {
-    const rows = titles.map((title, index) => catalogRow(`new-routine-${index}`, "android", title))
-    const [block] = await coordinatedRoutineLinks(published, catalogFetch(rows), {select: async () => ({archive: {url: published.MOBILE_APK_URL, sha256: "d".repeat(64)}})})
-    assert.ok(block.text.text.length <= 3000, block.text.text.length)
-    assert.match(block.text.text, /Request pipeline/)
-    if (rows.length > 1) assert.match(block.text.text, /routineCatalog=1\|View all available tests in Admin/)
-    assert.doesNotMatch(block.text.text, /<&&>/)
-    const links = [...block.text.text.matchAll(/<(https:[^|]+)\|[^>]+>/g)]
-    assert.ok(links.every(match => new URL(match[1]).protocol === "https:"))
-  }
+test("source ID sections stay bounded for many routines with an inventory overflow link", async () => {
+  const rows = Array.from({length: 50}, (_, index) => catalogRow(`new-routine-${index}-${"x".repeat(90)}`))
+  const [block] = await coordinatedRoutineLinks(published, catalogFetch(rows), {select: async ({platform}) => ({archive: {
+    url: platform === "android" ? published.MOBILE_APK_URL : published.MAC_URL, sha256: "d".repeat(64)}})})
+  assert.ok(block.text.text.length <= 3000, block.text.text.length)
+  assert.match(block.text.text, /Request pipeline/)
+  assert.match(block.text.text, /routineCatalog=1\|View routine inventory in Admin/)
+  const links = [...block.text.text.matchAll(/<(https:[^|]+)\|[^>]+>/g)]
+  assert.ok(links.every(match => new URL(match[1]).protocol === "https:"))
 })
+
 test("empty or unavailable catalogs leave the release post useful without invented coverage", async () => {
-  const [empty] = await coordinatedRoutineLinks(published, catalogFetch([]), {select: async () => assert.fail("No enrolled definitions")})
-  assert.match(empty.text.text, /No device tests are currently enrolled/)
+  const [empty] = await coordinatedRoutineLinks(published, catalogFetch([]), {select: async () => assert.fail("No routine source IDs")})
+  assert.match(empty.text.text, /No routine IDs are present in current Harness main/)
   const [missing] = await coordinatedRoutineLinks(published, async () => {throw new Error("private backend details")})
-  assert.match(missing.text.text, /current routine catalog is unavailable/)
+  assert.match(missing.text.text, /current Harness routine source inventory is unavailable/)
   assert.doesNotMatch(missing.text.text, /private backend details|\|Results for this exact build>/)
+})
+
+test("absent app platforms are not inferred from routine IDs or legacy asset aliases", async () => {
+  for (const input of [{...published, MAC_URL: undefined}, {...published, MOBILE_APK_URL: undefined,
+    MOBILE_ASSET_BASE_URL: "https://example.com/legacy", APK_NAME: "legacy.apk"}]) {
+    const available = input.MAC_URL ? "ios-on-mac" : "android", calls = []
+    const [block] = await coordinatedRoutineLinks(input, catalogFetch([catalogRow("new-id")]), {select: async ({platform}) => {
+      calls.push(platform); return {archive: {url: platform === "android" ? input.MOBILE_APK_URL : input.MAC_URL, sha256: "d".repeat(64)}}
+    }})
+    assert.deepEqual(calls, [available])
+    const params = new URL(block.text.text.match(/<(https:[^|]+)\|Results for this exact build>/)[1]).searchParams
+    assert.equal(params.get("platform"), available)
+    assert.equal([...block.text.text.matchAll(/\|Results for this exact build>/g)].length, 1)
+  }
 })

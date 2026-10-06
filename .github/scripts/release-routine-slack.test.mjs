@@ -25,21 +25,15 @@ test("bound frozen platform archive resolves exact editable release post", async
   assert.equal((await resolveRoutineNotifications(options))[0].row.title, f.definition.title)
   f.notification.build.artifacts["ios-on-mac"] = "f".repeat(64); await assert.rejects(resolveRoutineNotifications(options), /archive differs/)
 })
-test("old release posts remain untouched and cannot abort current-format notification selection", async () => {
-  const f = fixture(), old = {...structuredClone(f.notification), schemaVersion: 1,
-    producer: {...f.notification.producer, runAttempt: 1}}
-  const retained = new Map([["release-slack-message-10-1", old], ["release-slack-message-10-2", f.notification]])
-  const github = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: run(10, {run_attempt: 2, path: ".github/workflows/coordinated-release.yml"})}),
-    listWorkflowRunArtifacts: () => {}}}, paginate: async () => [...retained.keys()].map((name, index) => ({id: index + 1, name}))}
-  const options = {github, context, details: [f.detail], read: async (_, __, ___, name) => ({"slack-release-message.json": retained.get(name)})}
-  const original = structuredClone(old)
-  const plans = await resolveRoutineNotifications(options)
-  assert.equal(plans.length, 1); assert.deepEqual(plans[0].notification, f.notification)
-  assert.deepEqual(old, original)
-  retained.delete("release-slack-message-10-2")
-  assert.deepEqual(await resolveRoutineNotifications(options), [])
-  assert.deepEqual(old, original)
+test("obsolete release receipt formats are refused rather than adapted", async () => {
+  const f = fixture()
+  f.notification.schemaVersion = 1
+  const github = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: run(10, {run_attempt: 2, path: ".github/workflows/coordinated-release.yml"})}), listWorkflowRunArtifacts: () => {}}},
+    paginate: async () => [{id: 1, name: "release-slack-message-10-2"}]}
+  await assert.rejects(resolveRoutineNotifications({github, context, details: [f.detail],
+    read: async () => ({"slack-release-message.json": f.notification})}), /Invalid retained release message/)
 })
+
 test("explicit notification selector is validated; only current-attempt callback artifacts are read", async () => {
   assert.deepEqual(await resolveRoutineSelectors({context, requestId: "example-request"}), ["example-request"])
   await assert.rejects(resolveRoutineSelectors({context, requestId: "../invalid"}), /selector/)
