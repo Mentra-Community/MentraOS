@@ -100,3 +100,51 @@ test("enrollment and dispatch bind routine-declared starting software while pres
   expect(() => routineEnrollmentSchema.parse({...declared, definition: {...declared.definition,
     glasses: {models: ["mentra-live"], startSoftware: {...startSoftware, manifest: {...manifest, url: "file:///private/reset.json"}}}}})).toThrow();
 });
+
+
+test("host fixture requirements do not become physical glasses capabilities on either platform", () => {
+  for (const platform of ["android", "ios-on-mac"] as const) {
+    const definition = enrollment(); definition.platform = platform; definition.definition.platforms = [platform];
+    definition.definition.requires = ["camera", "fixture-data"];
+    definition.definition.fixtures = [{provider: "recorded-media", description: "Owned recorded media fixture"}];
+    definition.definition.execution!.resourceKinds.push("fixture-data");
+    const observed = host(), lane = observed.lanes[0]!; lane.platform = platform;
+    lane.resources.push({id: "recorded-media", kind: "fixture-data"});
+    lane.routineAvailability = [{routineId: definition.routineId, definitionRevision: revision, available: true}];
+    const input = select(definition, {...build, platform}, observed);
+    expect(input.resources).toContainEqual({id: "recorded-media", kind: "fixture-data"});
+    expect(input.resources).toContainEqual({id: "physical-live", kind: "glasses"});
+    expect(input.glassesReturn).toEqual({model: "mentra-live", manifest});
+    expect(lane.glasses![0]!.capabilities).toEqual(["camera"]);
+    expect(definition.definition.requires).toEqual(["camera", "fixture-data"]);
+    lane.resources = lane.resources.filter(value => value.kind !== "fixture-data");
+    expect(() => select(definition, {...build, platform}, observed)).toThrow("exactly one fixture-data resource");
+    lane.resources.push({id: "recorded-media", kind: "fixture-data"});
+    lane.routineAvailability[0]!.available = false;
+    expect(() => select(definition, {...build, platform}, observed)).toThrow("cannot prepare");
+  }
+});
+
+test("mixed host audio and external-window requirements retain their exact resource bindings", () => {
+  const definition = enrollment(); definition.definition.requires = ["camera", "audio", "external-window"];
+  definition.definition.execution!.resourceKinds.push("audio", "fixture-data");
+  const observed = host(), lane = observed.lanes[0]!;
+  lane.resources.push({id: "loopback", kind: "audio"}, {id: "external-player", kind: "fixture-data"});
+  lane.routineAvailability = [{routineId: definition.routineId, definitionRevision: revision, available: true}];
+  const input = select(definition, build, observed);
+  expect(input.resources).toContainEqual({id: "loopback", kind: "audio"});
+  expect(input.resources).toContainEqual({id: "external-player", kind: "fixture-data"});
+  lane.resources = lane.resources.filter(value => value.kind !== "audio");
+  expect(() => select(definition, build, observed)).toThrow("exactly one audio resource");
+});
+
+test("projecting known host providers preserves missing real and unknown glasses capability refusals", () => {
+  for (const capability of ["camera", "unimplemented-glasses-feature"]) {
+    const definition = enrollment(); definition.definition.requires = [capability, "fixture-data"];
+    definition.definition.execution!.resourceKinds.push("fixture-data");
+    const observed = host(), lane = observed.lanes[0]!;
+    lane.resources.push({id: "media", kind: "fixture-data"});
+    lane.glasses![0]!.capabilities = [];
+    expect(() => select(definition, build, observed)).toThrow("compatible glasses");
+  }
+});
