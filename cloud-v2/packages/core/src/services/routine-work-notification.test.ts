@@ -38,7 +38,7 @@ function fixture() {
     async schedule(value, date) {
       row.reporting ??= {nextProgressAt: date, history: []}
       if (
-        !row.reporting.finalCommentId &&
+        (!row.reporting.finalCommentId || (value.status?.sequence ?? 0) > (row.reporting.finalSequence ?? 0)) &&
         ((row.reporting.lastSequence ?? -1) < (value.status?.sequence ?? 0) ||
           (value.acceptance && row.reporting.lastAcceptedAt !== value.acceptance.acceptedAt))
       )
@@ -46,7 +46,7 @@ function fixture() {
     },
     async due(date) {
       return row.reporting &&
-        !row.reporting.finalCommentId &&
+        (!row.reporting.finalCommentId || (row.status?.sequence ?? 0) > (row.reporting.finalSequence ?? 0)) &&
         row.reporting.nextProgressAt <= date &&
         (!row.reporting.lease || row.reporting.lease.expiresAt <= date)
         ? [row.workId]
@@ -55,7 +55,7 @@ function fixture() {
     async claim(_, date) {
       if (
         !row.reporting ||
-        row.reporting.finalCommentId ||
+        (row.reporting.finalCommentId && (row.status?.sequence ?? 0) <= (row.reporting.finalSequence ?? 0)) ||
         row.reporting.nextProgressAt > date ||
         (row.reporting.lease && row.reporting.lease.expiresAt > date)
       )
@@ -99,6 +99,7 @@ function fixture() {
         const id = Number(url.split('/').at(-1)),
           comment = comments.find((value) => value.id === id)!
         comment.body = JSON.parse(String(init.body)).body
+        if (loseReply) {loseReply = false; throw new Error('secret response lost')}
         return Response.json(comment)
       },
       rows,
@@ -163,6 +164,7 @@ test('durable ten-minute progress survives a worker exit and reporter restart wi
   expect(f.comments[0]!.body).not.toBe(first)
   expect(f.comments[0]!.body).toContain('worker activity is unknown')
   expect(f.comments[0]!.body).toContain('Waiting for human input')
+  expect(f.comments[0]!.body).toContain('This authoring attempt is unfinished')
   expect(f.row.reporting?.history).toHaveLength(3)
   expect(f.row.reporting?.nextProgressAt.getTime()).toBe(start + 6 * PROGRESS_INTERVAL_MS)
   await f.notification().tick()
@@ -406,4 +408,39 @@ test('service timer starts without importing an agent and shutdown drains active
   expect(stopped).toBe(true)
   await new Promise((resolve) => setTimeout(resolve, 25))
   expect(calls).toBe(1)
+})
+
+test('later cancellation custody refreshes the same final marker after a lost update and restart', async () => {
+  const f = fixture()
+  const detail = {summary: 'Operator cancelled this fixture.',
+    prUrl: 'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/539',
+    progress: {observedAt: new Date(start).toISOString(), completed: [], current: 'Cancelled',
+      plan: ['Complete saved authoring, independent review and verification.'], estimatedCompletionAt: null, estimateReason: 'Cancelled'}}
+  f.status('cancelled', detail)
+  f.row.status!.sequence = 13
+  await f.notification().publish(f.row)
+  const id = f.row.reporting!.finalCommentId
+  expect(f.row.reporting?.finalSequence).toBe(13)
+  expect(f.comments[0]!.body).toContain('Plan: No further authoring is scheduled.')
+  expect(f.comments[0]!.body).toContain('Next action: No further authoring is scheduled.')
+  expect(f.comments[0]!.body).not.toContain('Complete saved authoring')
+  f.now = start + 1_000
+  f.status('cancelled', detail)
+  f.loseReply = true
+  await expect(f.notification().publish(f.row)).rejects.toThrow('retained')
+  expect(f.row.reporting?.pending?.sequence).toBe(14)
+  expect(f.row.reporting?.finalCommentId).toBe(id)
+  f.status('cancelled', detail)
+  f.now = start + 61_000
+  await f.notification().tick()
+  expect(f.row.reporting?.finalSequence).toBe(15)
+  expect(f.row.reporting?.finalCommentId).toBe(id)
+  expect(f.row.reporting?.pending).toBeUndefined()
+  expect(f.comments).toHaveLength(1)
+  expect(f.createCalls).toBe(1)
+  expect(f.row.reporting?.history.at(-1)?.sequence).toBe(15)
+  const completed = structuredClone(f.row.reporting)
+  f.now = start + PROGRESS_INTERVAL_MS
+  await f.notification().tick()
+  expect(f.row.reporting).toEqual(completed)
 })

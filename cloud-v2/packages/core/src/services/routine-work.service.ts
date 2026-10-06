@@ -36,7 +36,7 @@ export interface RoutineWorkRepository {
   insert(row: RoutineWorkDelivery): Promise<void>
   queued(hostId: string, after: {createdAt: Date; workId: string} | null, limit: number): Promise<RoutineWorkDelivery[]>
   accept(receipt: z.infer<typeof routineWorkAcceptanceSchema>): Promise<RoutineWorkDelivery | null>
-  updateStatus(event: RoutineWorkStatus): Promise<RoutineWorkDelivery | null>
+  updateStatus(event: RoutineWorkStatus, previous?: RoutineWorkStatus): Promise<RoutineWorkDelivery | null>
 }
 const repository: RoutineWorkRepository = {
   async get(workId) {
@@ -69,7 +69,7 @@ const repository: RoutineWorkRepository = {
       {new: true, writeConcern: testWriteConcern},
     ).lean()) as RoutineWorkDelivery | null
   },
-  async updateStatus(event) {
+  async updateStatus(event, previous) {
     return (await RoutineWorkModel.findOneAndUpdate(
       {
         'workId': event.workId,
@@ -77,7 +77,9 @@ const repository: RoutineWorkRepository = {
         'inputSha256': event.inputSha256,
         'acceptance': {$exists: true},
         'statusReceipts.eventId': {$ne: event.eventId},
-        'status.state': {$nin: ['passed', 'failed', 'cancelled']},
+        // Bind the entire observed status, including its sequence and terminal
+        // outcome. A concurrent status must not pass this earlier inspection.
+        'status': previous ?? {$exists: false},
         '$or': [{status: {$exists: false}}, {'status.sequence': {$lt: event.sequence}}],
       },
       {
@@ -87,6 +89,12 @@ const repository: RoutineWorkRepository = {
       {new: true, writeConcern: testWriteConcern},
     ).lean()) as RoutineWorkDelivery | null
   },
+}
+
+const terminalState = (state?: string) => ['passed', 'failed', 'cancelled'].includes(state ?? '')
+function terminalOutcome(event: RoutineWorkStatus) {
+  const {progress: _, ...details} = event.details.details
+  return {state: event.state, attemptId: event.details.attemptId ?? null, details}
 }
 
 export class RoutineWorkService {
@@ -252,13 +260,16 @@ export class RoutineWorkService {
     )
       throw new TestRequestConflict('Authoring job projection changed its accepted work')
     if (
-      ['passed', 'failed', 'cancelled'].includes(row.status?.state ?? '') &&
+      terminalState(row.status?.state) &&
       !row.statusReceipts?.some(
         (receipt) => receipt.eventId === event.eventId && receipt.sha256 === requestInputDigest(event),
       )
-    )
-      throw new TestRequestConflict('Terminal authoring work cannot be replaced by a later status')
-    const updated = (await this.rows.updateStatus(event)) ?? (await this.inspect(event.workId))
+    ) {
+      if (!row.status || !row.status.details.attemptId || event.sequence <= row.status.sequence ||
+          requestInputDigest(terminalOutcome(event)) !== requestInputDigest(terminalOutcome(row.status)))
+        throw new TestRequestConflict('Terminal authoring outcome cannot be replaced by a later status')
+    }
+    const updated = (await this.rows.updateStatus(event, row.status)) ?? (await this.inspect(event.workId))
     const receipt = updated.statusReceipts?.find((receipt) => receipt.eventId === event.eventId)
     if (!receipt || receipt.sequence !== event.sequence || receipt.sha256 !== requestInputDigest(event))
       throw new TestRequestConflict('Authoring status is stale or changed its original event')

@@ -44,6 +44,10 @@ export interface RoutineWorkReportRepository {
 }
 const read = (workId: string) =>
   RoutineWorkModel.findOne({workId}).read('primary').readConcern('majority').setOptions({timeoutMS: 10_000}).lean()
+const reportPending = {$or: [
+  {'reporting.finalCommentId': {$exists: false}},
+  {$expr: {$gt: ['$status.sequence', '$reporting.finalSequence']}},
+]}
 export const routineWorkReportRepository: RoutineWorkReportRepository = {
   async get(workId) {
     return (await read(workId)) as RoutineWorkDelivery | null
@@ -59,7 +63,7 @@ export const routineWorkReportRepository: RoutineWorkReportRepository = {
     await RoutineWorkModel.updateOne(
       {
         'workId': row.workId,
-        'reporting.finalCommentId': {$exists: false},
+        '$and': [reportPending],
         '$or': [
           {'reporting.lastSequence': {$exists: false}},
           {'reporting.lastSequence': {$lt: sequence}},
@@ -88,7 +92,7 @@ export const routineWorkReportRepository: RoutineWorkReportRepository = {
       )
     const rows = await RoutineWorkModel.find({
       'work.origin': {$exists: true},
-      'reporting.finalCommentId': {$exists: false},
+      '$and': [reportPending],
       'reporting.nextProgressAt': {$lte: now},
       '$or': [{'reporting.lease': {$exists: false}}, {'reporting.lease.expiresAt': {$lte: now}}],
     })
@@ -105,7 +109,7 @@ export const routineWorkReportRepository: RoutineWorkReportRepository = {
     return (await RoutineWorkModel.findOneAndUpdate(
       {
         workId,
-        'reporting.finalCommentId': {$exists: false},
+        '$and': [reportPending],
         'reporting.nextProgressAt': {$lte: now},
         '$or': [{'reporting.lease': {$exists: false}}, {'reporting.lease.expiresAt': {$lte: now}}],
       },
@@ -162,6 +166,9 @@ export function renderRoutineWorkReport(row: RoutineWorkDelivery, kind: 'progres
     detail = row.status?.details.details ?? {},
     progress = observedWorkProgress(row)
   const completion = detail.completion
+  const plan = state === 'cancelled'
+    ? `No further authoring is scheduled.${detail.prUrl ? ' Routine source remains in the linked unmerged PR.' : ''}`
+    : (progress.plan.length ? items(progress.plan) : 'No remaining plan reported.')
   if (kind === 'final' && (!terminalWorkState(state) || (state === 'passed' && !completion)))
     throw new Error('Terminal work has no complete reviewed result')
   const marker = kind === 'final' ? routineWorkFinalMarker(row.workId) : routineWorkProgressMarker(row.workId)
@@ -178,7 +185,7 @@ export function renderRoutineWorkReport(row: RoutineWorkDelivery, kind: 'progres
     '',
     `Completed: ${progress.completed.length ? items(progress.completed) : 'No completed work reported.'}`,
     `Current: ${plain(progress.current)}`,
-    `Plan: ${progress.plan.length ? items(progress.plan) : 'No remaining plan reported.'}`,
+    `Plan: ${plan}`,
     `Estimated completion: ${progress.estimatedCompletionAt ?? 'unknown'}. ${plain(progress.estimateReason)}`,
     ...(progress.estimatedCompletionAt &&
     Date.parse(progress.estimatedCompletionAt) < Date.parse(at) &&
@@ -191,6 +198,8 @@ export function renderRoutineWorkReport(row: RoutineWorkDelivery, kind: 'progres
       : []),
     '',
   ]
+  if (state === 'stopped')
+    lines.push('This authoring attempt is unfinished; no successful final review and recorded qualification are reported.', '')
   if (detail.question) lines.push(`Input needed (${plain(detail.questionId ?? '')}): ${plain(detail.question)}`, '')
   if (kind === 'final' && state === 'passed')
     lines.push(
@@ -206,7 +215,7 @@ export function renderRoutineWorkReport(row: RoutineWorkDelivery, kind: 'progres
       lines.push(
         `Cause: ${plain(detail.reason ?? detail.summary ?? 'No precise cause was recorded.')}`,
         `Attempted work: ${plain(detail.summary ?? (items(progress.completed) || 'No completed attempt reported.'))}`,
-        `Next action: ${progress.plan.length ? items(progress.plan) : 'Resolve the recorded cause with the machine owner.'}`,
+        `Next action: ${state === 'cancelled' ? plan : (progress.plan.length ? items(progress.plan) : 'Resolve the recorded cause with the machine owner.')}`,
       )
     else lines.push('Authoring progress is separate from an ordinary passing routine result.')
   }
