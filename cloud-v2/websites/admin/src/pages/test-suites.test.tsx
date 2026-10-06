@@ -106,3 +106,14 @@ test("actual failures stay red and incomplete routines have their own neutral su
   expect(html).toContain('text-red-700">Failed: call');
   expect(html).toContain('text-[#68746d]">Incomplete: ota');
 });
+
+
+test("suite rows show compact 12-hour start times and retain the full suite date", () => {
+  const startedAt = "2026-10-01T11:01:23Z";
+  const html = renderSuite({...suite, members: [{...suite.members[0]!, startedAt}, suite.members[1]!]});
+  expect(html).toContain("<th>Started</th>");
+  expect(html).toContain(`<time dateTime="${startedAt}">${new Date(startedAt).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})}</time>`);
+  expect(html).toContain(`Started ${new Date(suite.startedAt).toLocaleString()}`);
+  expect(html.match(/<time /g)).toHaveLength(1);
+  expect(html).toContain('<td class="whitespace-nowrap">—</td>');
+});
