@@ -15,7 +15,7 @@ maps, Store, or reporting dependencies.
 
 Core's report API is available independently of Runtime and consumer telemetry.
 See [report setup and retrieval](operations.md#reports-and-durable-attachments)
-for existing admin org API-key authorization and the attachment-storage lifecycle.
+for the installer-minted operator key (`mak_`) and the attachment-storage lifecycle.
 
 The Enterprise Demo manifest enables the built-in Give Feedback miniapp alongside
 Settings. Reports go to the selected Enterprise Core, including phone logs and

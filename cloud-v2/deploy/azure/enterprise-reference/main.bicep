@@ -25,7 +25,7 @@ param miniappJwtPrivateKey string
 @secure()
 param miniappJwtPublicKey string
 
-@description('Comma-separated administrator emails for existing Core admin authorization. For an org API key, allowlist api-key@<keyId>.local. This is not a bearer credential.')
+@description('Comma-separated Organization Admin emails (CLOUD_CORE_ADMIN_EMAILS). Include operator@private-cloud.local, the creator of the installer operator key. This is not a bearer credential.')
 param coreAdminEmails string = ''
 
 @description('Durable Core attachment storage account. The default is stable for this resource group.')

@@ -172,6 +172,13 @@ jobs:
           parameters="$RUNNER_TEMP/private-deployment-dev.parameters.json"
           trap 'rm -f "$parameters"' EXIT
           umask 077
+          # ENTERPRISE_DEV_ADMIN_TOKEN is an operator key (mak_) minted by the
+          # installer's bootstrap-admin as operator@private-cloud.local. It works only
+          # while that creator stays allowlisted, so every deployment keeps it.
+          # api-key@<keyId>.local entries belonged to retired msk_ admin keys.
+          export CORE_ADMIN_EMAILS="$(printf '%s,operator@private-cloud.local' "${CORE_ADMIN_EMAILS:-}" \
+            | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | grep -v -E '^(api-key@[0-9A-HJKMNP-TV-Z]{26}\.local)?$' | sort -u | paste -sd, -)"
           jq -n \
             --arg cloudImage "${{ steps.source.outputs.image }}" \
             --arg registryName "$AZURE_REGISTRY" \
@@ -386,6 +393,10 @@ jobs:
 
           jq -s . private-deployment-checks.ndjson > private-deployment-checks.json
 
+          if [[ "$MENTRA_ADMIN_TOKEN" != mak_* ]]; then
+            echo "::error::ENTERPRISE_DEV_ADMIN_TOKEN must be an operator key (mak_) from setup.sh bootstrap-admin; Core no longer accepts msk_ admin keys."
+            exit 1
+          fi
           curl --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
             -H "Authorization: Bearer $MENTRA_ADMIN_TOKEN" \
             "$core_origin/api/admin/reports?limit=1" | jq -e '.reports | type == "array"' >/dev/null

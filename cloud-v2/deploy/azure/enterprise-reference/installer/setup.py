@@ -817,6 +817,39 @@ def execute_admin_script(config, current, owner, script):
     return result
 
 
+# The identity installer/admin-key.ts mints the operator key as; keep both in sync.
+# An operator key works only while its creator's email is in CLOUD_CORE_ADMIN_EMAILS.
+OPERATOR_EMAIL = 'operator@private-cloud.local'
+OPERATOR_KEY = re.compile(r'mak_local_([0-9A-HJKMNP-TV-Z]{26})\.[A-Za-z0-9_-]{43}')
+# Earlier installers allowlisted one synthetic address per msk_ administrator key.
+LEGACY_KEY_EMAIL = re.compile(r'api-key@[0-9A-HJKMNP-TV-Z]{26}\.local')
+CORE_REVISION_TIMEOUT_SECONDS = 900
+
+
+def core_admin_emails(current):
+    return next((entry.get('value', '') for entry in current['properties']['template']['containers'][0]['env']
+                 if entry['name'] == 'CLOUD_CORE_ADMIN_EMAILS'), '')
+
+
+def admin_allowlist(*values):
+    emails = {email.strip() for value in values for email in value.split(',')}
+    return ','.join(sorted(email for email in emails if email and not LEGACY_KEY_EMAIL.fullmatch(email)))
+
+
+def wait_for_core_allowlist(config, allowlist):
+    import time
+    deadline = time.monotonic() + CORE_REVISION_TIMEOUT_SECONDS
+    while True:
+        current = azure(config, 'containerapp', 'show', '--name', config['coreName'], '--resource-group', config['resourceGroup'])
+        properties = current['properties']
+        if (properties.get('latestReadyRevisionName') == properties.get('latestRevisionName')
+                and core_admin_emails(current) == allowlist):
+            return current
+        if time.monotonic() >= deadline:
+            raise SetupError('Core has not finished rolling out the administrator allowlist. Retry bootstrap-admin.')
+        time.sleep(10)
+
+
 def bootstrap_admin(args, directory, config, state):
     if not state.get('outputs', {}).get('coreOrigin'):
         raise SetupError('Deploy Core before creating its administrator key')
@@ -824,17 +857,31 @@ def bootstrap_admin(args, directory, config, state):
     if output.exists() and (output.is_symlink() or output.stat().st_mode & 0o077):
         raise SetupError('Administrator key file must be owner-only and not a symlink')
     current = azure(config, 'containerapp', 'show', '--name', config['coreName'], '--resource-group', config['resourceGroup'])
-    if not output.exists():
+    deployed = core_admin_emails(current)
+    allowlist = admin_allowlist(deployed, config.get('coreAdminEmails', ''), OPERATOR_EMAIL)
+    # Preserve the setting in installer configuration so later resume retains it.
+    if config.get('coreAdminEmails', '') != allowlist:
+        update_configuration(directory, config, state, coreAdminEmails=allowlist)
+    if deployed != allowlist:
+        # Core mints an operator key only for an Organization Admin, so the
+        # installer identity must be allowlisted in the revision that runs it.
+        azure(config, 'containerapp', 'update', '--name', config['coreName'], '--resource-group', config['resourceGroup'],
+              '--set-env-vars', 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
+        current = wait_for_core_allowlist(config, allowlist)
+    saved = read_json(output) if output.exists() else {}
+    if not OPERATOR_KEY.fullmatch(saved.get('value', '')):
+        # No key yet, or an msk_ key from an earlier installer that Core no longer accepts.
         result = execute_admin_script(config, current, state['owner'], (ROOT / 'installer/admin-key.ts').read_bytes())
         match = re.search(r'MENTRA_ADMIN_BEGIN(.*?)MENTRA_ADMIN_END', result.stdout, re.S)
         if not match:
             raise SetupError('Core admin bootstrap did not return a credential. Check the selected Core revision; raw output withheld.')
         credential = json.loads(match.group(1))
-        if not re.fullmatch(r'[0-9A-HJKMNP-TV-Z]{26}', credential.get('id', '')) or not credential.get('value', '').startswith('msk_local_'):
+        key = OPERATOR_KEY.fullmatch(credential.get('value', ''))
+        if not key or credential.get('id') != key.group(1):
             raise SetupError('Core returned an invalid administrator credential')
         write_json(output, credential)
         if credential.get('cleanupRequired'):
-            raise SetupError('Recovered key saved locally, but legacy share cleanup failed. Resolve Azure Files access and retry bootstrap-admin before granting admin access.')
+            raise SetupError('Key saved locally, but legacy share cleanup failed. Resolve Azure Files access and retry bootstrap-admin before granting admin access.')
     else:
         # Previous installer versions left a plaintext share cache. Remove it
         # even when the protected local key allows skipping key creation.
@@ -842,18 +889,11 @@ def bootstrap_admin(args, directory, config, state):
         result = execute_admin_script(config, current, state['owner'], cleanup)
         if 'MENTRA_ADMIN_END' not in result.stdout:
             raise SetupError('Legacy admin credential cleanup did not complete; retry bootstrap-admin')
-    credential = read_json(output)
-    email = 'api-key@' + credential['id'] + '.local'
-    values = next((entry.get('value', '') for entry in current['properties']['template']['containers'][0]['env']
-                   if entry['name'] == 'CLOUD_CORE_ADMIN_EMAILS'), '')
-    emails = sorted(set(filter(None, (values + ',' + config.get('coreAdminEmails', '') + ',' + email).split(','))))
-    allowlist = ','.join(emails)
-    # Preserve the setting in installer configuration so later resume retains it.
-    update_configuration(directory, config, state, coreAdminEmails=allowlist)
-    azure(config, 'containerapp', 'update', '--name', config['coreName'], '--resource-group', config['resourceGroup'],
-          '--set-env-vars', 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
     emit(args, {'status': 'admin_key_created', 'file': str(output),
-                'next': 'Store this credential in your secret manager. Wait for the new Core revision, then use it as MENTRA_ADMIN_TOKEN for report retrieval.'})
+                'next': 'Store this operator key in your secret manager and use it as MENTRA_ADMIN_TOKEN for report retrieval. '
+                        'It works while ' + OPERATOR_EMAIL + ' stays in coreAdminEmails; replace any earlier msk_ key.'})
+
+
 def configure_entra(args, directory, config, state):
     preflight(config)
     if state.get('outputs') or state.get('configHash'):

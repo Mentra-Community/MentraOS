@@ -83,7 +83,9 @@ Ask Mentra for the IT guide before configuring these; never reuse Mentra's consu
 Run ./setup.sh install --directory ../mentra-setup
 Install/verify checks Teams licensing when the operator has permission; otherwise it gives an Entra-admin handoff.
 After Core is deployed: ./setup.sh bootstrap-admin --directory ../mentra-setup
+It allowlists operator@private-cloud.local and mints a Core operator key (mak_).
 Store admin-key.json in your secret manager; use its value as MENTRA_ADMIN_TOKEN.
+Keep operator@private-cloud.local in coreAdminEmails or that key stops working.
 A custom hostname pauses for the CNAME and TXT in dns-records.json.
 After publishing those records: ./setup.sh resume --directory ../mentra-setup --dns-ready
 The setup directory contains private keys: protect it and back it up to your secret manager.
