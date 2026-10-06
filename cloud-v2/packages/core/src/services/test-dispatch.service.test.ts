@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { generateKeyPairSync } from "node:crypto";
 import { createTestDispatchAdminApi } from "../api/admin/test-dispatches.api";
-import { adminAuth } from "../api/middleware/admin-auth.middleware";
+import { principalAuth } from "../api/middleware/principal.middleware";
 import { TestDispatchService, type TestDispatchRepository } from "./test-dispatch.service";
 import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from "./test-builds.service";
 import { TestRunGithubApp } from "./test-run-github-app";
@@ -118,12 +118,14 @@ describe("durable dispatch ownership", () => {
     const f = fixture();
     f.github.resolve = async () => { throw new TestDispatchError(409, "Choose an open same-repository PR targeting dev"); };
     const root = new Hono<AppEnv>();
-    root.use("*", async (c, next) => { c.set("developer", { developerId: "test-admin", email: "admin@example.test" }); await next(); });
+    root.use("*", async (c, next) => { c.set("principal", { kind: "user", organizationId: "local", mentraUserId: "mu_test_admin", email: "admin@example.test", emailVerified: true, name: null, workosUserId: "workos_test_admin", isOrganizationAdmin: true }); await next(); });
     root.route("/", createTestDispatchAdminApi(f.service, f.github));
     const response = await root.request("/test-dispatches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
     expect(response.status).toBe(202);
     const body = await response.json() as TestDispatchView;
     expect(body).toMatchObject({ sendState: "rejected", state: "unavailable", dispatchId: input.idempotencyKey });
+    // The requester is the caller's principal label.
+    expect(f.repository.rows.get(input.idempotencyKey)?.receipt.requestedBy).toBe("admin@example.test");
     expect(body.message).toContain("open same-repository PR");
     const detail = await root.request(`/test-dispatches/${input.idempotencyKey}`);
     expect(detail.status).toBe(200); expect(await detail.json()).toEqual(body);
@@ -255,7 +257,7 @@ describe("durable dispatch ownership", () => {
 
 test("all dispatch endpoints require the same admin authentication as recorded results", async () => {
   const f = fixture();
-  const root = new Hono(); root.use("*", adminAuth); root.route("/", createTestDispatchAdminApi(f.service, f.github));
+  const root = new Hono(); root.use("*", principalAuth); root.route("/", createTestDispatchAdminApi(f.service, f.github));
   for (const [method, path] of [["GET", "/test-builds?channel=dev"], ["GET", "/test-dispatches"], ["POST", "/test-dispatches"], ["GET", "/test-routines"]]) {
     const response = await root.request(path!, { method, headers: { "Content-Type": "application/json", Authorization: "Bearer synthetic-worker-token" },
       ...(method === "POST" ? { body: JSON.stringify(input) } : {}) });

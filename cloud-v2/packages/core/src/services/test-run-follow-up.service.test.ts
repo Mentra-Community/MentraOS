@@ -1,7 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
 import { Hono } from "hono";
+import type { CorePrincipal } from "@mentra/workspace-contract";
 import { createTestRunAdminApi } from "../api/admin/test-runs.api";
-import { adminAuth } from "../api/middleware/admin-auth.middleware";
+import { principalAuth } from "../api/middleware/principal.middleware";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
 import type { AppEnv } from "../types/hono.types";
 import type { OverviewJob, TestRunFollowUpCancellation } from "../types/test-run-overview.types";
@@ -68,13 +69,35 @@ test("the endpoint requires Admin auth and explicit JSON confirmation; worker cr
   const repository = new Repository();
   const service = new TestRunFollowUpService(repository, { activity: async () => ({ jobs: [], warnings: [] }) });
   const route = createTestRunAdminApi(undefined, undefined, service);
-  const gated = new Hono<AppEnv>(); gated.use("*", adminAuth); gated.route("/", route);
+  const gated = new Hono<AppEnv>(); gated.use("*", principalAuth); gated.route("/", route);
   expect((await gated.request("/claims/request-1/cancel-follow-up", { method: "POST", headers: { Authorization: "Bearer synthetic-worker-token" } })).status).toBe(401);
   expect((await route.request("/claims/request-1/cancel-follow-up", { method: "POST" })).status).toBe(403);
   const admin = new Hono<AppEnv>(); admin.use("*", async (c, next) => {
-    c.set("isAdmin", true); c.set("developer", { developerId: "admin-1", email: "admin@example.test" }); await next();
+    c.set("principal", { kind: "user", organizationId: "local", mentraUserId: "mu_admin_1", email: "admin@example.test", emailVerified: true, name: null, workosUserId: "workos_admin_1", isOrganizationAdmin: true }); await next();
   }); admin.route("/", route);
   expect((await admin.request("/claims/request-1/cancel-follow-up", { method: "POST" })).status).toBe(400);
   expect((await admin.request("/claims/request-1/cancel-follow-up", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmation: "cancel-follow-up" }) })).status).toBe(200);
   expect(repository.calls).toBe(1);
+  // The audit trail names the caller by its principal label.
+  expect(repository.row?.followUpCancellation?.cancelledBy).toBe("admin@example.test");
+});
+test("only a principal holding organization.testing.manage may close follow-up, and an operator key is named by its credential", async () => {
+  const closeAs = async (principal: CorePrincipal | null) => {
+    const repository = new Repository();
+    const service = new TestRunFollowUpService(repository, { activity: async () => ({ jobs: [], warnings: [] }) });
+    const app = new Hono<AppEnv>(); app.use("*", async (c, next) => { if (principal) c.set("principal", principal); await next(); });
+    app.route("/", createTestRunAdminApi(undefined, undefined, service));
+    const response = await app.request("/claims/request-1/cancel-follow-up", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmation: "cancel-follow-up" }) });
+    return { status: response.status, cancelledBy: repository.row?.followUpCancellation?.cancelledBy };
+  };
+  const user = (isOrganizationAdmin: boolean): CorePrincipal => ({ kind: "user", organizationId: "local", mentraUserId: "mu_1", email: "person@example.test",
+    emailVerified: true, name: null, workosUserId: "workos_1", isOrganizationAdmin });
+  const key = (kind: "organization" | "workspace", scopes: string[]): CorePrincipal => ({ kind: "credential", organizationId: "local", credentialId: "01HZKEY",
+    credentialKind: kind, workspaceId: kind === "workspace" ? "ws_1" : null, scopes, packageNames: [], label: "ci" });
+  expect(await closeAs(null)).toEqual({ status: 403, cancelledBy: undefined });
+  expect(await closeAs(user(false))).toEqual({ status: 403, cancelledBy: undefined });
+  expect(await closeAs(key("organization", ["organization.testing.read"]))).toEqual({ status: 403, cancelledBy: undefined });
+  expect(await closeAs(key("workspace", ["organization.testing.manage"]))).toEqual({ status: 403, cancelledBy: undefined });
+  expect(await closeAs(key("organization", ["organization.testing.manage"]))).toEqual({ status: 200, cancelledBy: "credential:01HZKEY" });
+  expect(await closeAs(user(true))).toEqual({ status: 200, cancelledBy: "person@example.test" });
 });

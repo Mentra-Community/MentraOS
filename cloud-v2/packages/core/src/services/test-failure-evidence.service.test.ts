@@ -157,14 +157,16 @@ test("an authenticated controller refusal stays terminal and revokes supplementa
 
 test("admin review and existing occurrence read capabilities are required at the HTTP boundary", async () => {
   const admin = new Hono<any>();
-  admin.use("*", async (c, next) => { if (c.req.header("x-test-admin") === "yes") { c.set("isAdmin", true); c.set("developer", { developerId: "reviewer" }); } await next(); });
+  admin.use("*", async (c, next) => { if (c.req.header("x-test-admin") === "yes") { c.set("principal", { kind: "user", organizationId: "local", mentraUserId: "mu_reviewer", email: "reviewer@example.test", emailVerified: true, name: null, workosUserId: "workos_reviewer", isOrganizationAdmin: true }); } await next(); });
   admin.route("/", createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, service));
   const path = `/${runId}/failures/${occurrenceId}/evidence-supplements`;
   const send = (headers: Record<string, string>) => admin.request(path, { method: "POST", headers, body: JSON.stringify(request()) });
   expect((await send({ "content-type": "application/json" })).status).toBe(403);
   expect((await send({ "x-test-admin": "yes", "content-type": "text/plain" })).status).toBe(400);
   const posted = await send({ "x-test-admin": "yes", "content-type": "application/json" }); expect(posted.status).toBe(201);
-  const r = (await posted.json() as { reference: EvidenceSupplementReference }).reference;
+  const supplement = (await posted.json() as { reference: EvidenceSupplementReference; reviewedBy: string });
+  expect(supplement.reviewedBy).toBe("reviewer@example.test");
+  const r = supplement.reference;
   const api = createTestFailureAgentApi(undefined, undefined, undefined, undefined, undefined, service);
   const route = `/${occurrenceId}/evidence-supplements/${r.supplementId}`;
   const oldSecret = process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET; process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = secret;

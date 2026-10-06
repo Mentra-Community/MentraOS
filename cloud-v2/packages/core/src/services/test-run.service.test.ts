@@ -5,10 +5,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
+import type { CorePrincipal } from "@mentra/workspace-contract";
 import { createTestFailureAgentApi } from "../api/agent/test-failures.api";
 import { createTestRunAdminApi } from "../api/admin/test-runs.api";
 import { createTestRunIngestApi } from "../api/internal/test-runs.api";
-import { adminAuth } from "../api/middleware/admin-auth.middleware";
+import { principalAuth } from "../api/middleware/principal.middleware";
 import { TestRunModel } from "../models/test-run.model";
 import { signTestFailureCorrectionDelivery, signTestFailureDelivery, signTestFailureReadGrant } from "./test-failure-auth";
 import { TestFailureCorrectionService } from "./test-failure-correction.service";
@@ -541,7 +542,7 @@ describe("test run authentication and immutable ingestion", () => {
     delete process.env.TEST_RUN_INGEST_TOKEN;
     expect((await post()).status).toBe(503);
     const gated = new Hono();
-    gated.use("*", adminAuth);
+    gated.use("*", principalAuth);
     gated.route("/", admin);
     expect((await gated.request("/", { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(401);
     expect((await gated.request("/recent")).status).toBe(401);
@@ -1282,9 +1283,9 @@ describe("reviewed provenance correction of an existing source-null occurrence",
   const corrections = () => new TestFailureCorrectionService(repository);
   const REDACTION = { policy: "routine-diagnostics-v1", confirmation: "reviewed-redacted-for-occurrence-access" };
   const diag = (assets: Array<{ assetId: string; sha256: string; chapterId: string }>, redaction: unknown = REDACTION) => ({ assets, redaction });
-  const adminApp = (identity: { developerId: string; email: string } | null = { developerId: "admin_reviewer", email: "reviewer@example.invalid" }) => {
+  const adminApp = (identity: CorePrincipal | null = { kind: "user", organizationId: "local", mentraUserId: "mu_admin_reviewer", email: "reviewer@example.invalid", emailVerified: true, name: null, workosUserId: "workos_admin_reviewer", isOrganizationAdmin: true }) => {
     const app = new Hono<import("../types/hono.types").AppEnv>();
-    app.use("*", async (c, next) => { if (identity) { c.set("isAdmin", true); c.set("developer", identity); } return next(); });
+    app.use("*", async (c, next) => { if (identity) c.set("principal", identity); return next(); });
     app.route("/", createTestRunAdminApi(service, undefined, undefined, corrections()));
     return app;
   };
@@ -1329,7 +1330,7 @@ describe("reviewed provenance correction of an existing source-null occurrence",
     expect(created.status).toBe(201);
     const record = await created.json() as TestFailureProvenanceCorrection;
     expect(record).toMatchObject({ correctionId: `tpc_${record.correctionSha256}`, runId: p.run.runId, payloadSha256: p.payloadSha256,
-      occurrenceId: p.id, agentRunId: ANCHOR, reviewedBy: "admin_reviewer", delivery: { state: "pending" },
+      occurrenceId: p.id, agentRunId: ANCHOR, reviewedBy: "reviewer@example.invalid", delivery: { state: "pending" },
       original: { source: null, assetIds: [], incidentIds: [] },
       review: { corroborated: ["repository", "channel", "headSha", "trigger"], asserted: ["branch"] } });
     // Immutable original: payload bytes/hash, occurrence identity, generic failure and acknowledgement are byte-identical.
@@ -1353,7 +1354,7 @@ describe("reviewed provenance correction of an existing source-null occurrence",
     expect(packet.provenanceCorrection?.added).toEqual(record.added);
     expect(packet.failure.missingEvidence.map(item => item.kind)).toEqual(["failure-details", "source"]);
     expect(packet.evidence.complete).toBe(false); // A correction is not a pass or a full qualification.
-    expect(JSON.stringify(packet)).not.toContain("admin_reviewer");
+    expect(JSON.stringify(packet)).not.toContain("reviewer@example.invalid");
     const agent = new Hono(); agent.route("/api/agent/test-failures", createTestFailureAgentApi(service));
     const path = `/api/agent/test-failures/${p.id}`;
     expect((await agent.request(`${path}/assets/gate-video`, { headers: grant(p.id) })).status).toBe(200);
@@ -1544,7 +1545,7 @@ describe("reviewed provenance correction of an existing source-null occurrence",
   });
 
   test("the correction route sits behind the existing admin gate", async () => {
-    const gated = new Hono(); gated.use("*", adminAuth); gated.route("/", adminApp(null));
+    const gated = new Hono(); gated.use("*", principalAuth); gated.route("/", adminApp(null));
     const p = await published();
     for (const authorization of [`Bearer ${TOKEN}`, `Bearer ${signTestFailureReadGrant(p.id, "dev", Math.floor(Date.now() / 1000) + 300, secret)}`])
       expect((await gated.request(`/${p.run.runId}/failures/${p.id}/provenance-correction`, { method: "POST",

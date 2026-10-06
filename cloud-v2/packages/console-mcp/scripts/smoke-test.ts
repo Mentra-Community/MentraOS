@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   console.log(`Core URL: ${config.coreUrl}`);
   console.log(`Capabilities: reports=${config.capabilities.reports}\n`);
 
-  // Reachability — /api/admin/health sits before the adminAuth gate.
+  // Reachability — /api/admin/health sits before the admin principal gate.
   try {
     const res = await fetch(`${config.coreUrl}/api/admin/health`);
     if (res.ok) pass("core reachable", config.coreUrl);

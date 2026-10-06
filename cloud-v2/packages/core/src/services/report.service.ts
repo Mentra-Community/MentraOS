@@ -369,7 +369,7 @@ async function addArtifacts(input: {
 }
 
 // === Admin read surface ===
-// Consumed by the adminAuth-gated routes behind the internal admin console.
+// Consumed by the capability-gated (organization.incidents.read) routes behind the internal admin console.
 
 export interface AdminReportArtifact {
   artifactId: string;

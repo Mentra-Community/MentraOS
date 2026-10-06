@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { createTestRunClaimApi } from "../api/internal/test-run-claims.api";
 import { createTestRunIngestApi } from "../api/internal/test-runs.api";
-import { adminAuth } from "../api/middleware/admin-auth.middleware";
+import { principalAuth } from "../api/middleware/principal.middleware";
 import { TestRunClaimModel } from "../models/test-run-claim.model";
 import type {
   TestRunClaimClosure, TestRunClaimClosureRecord, TestRunClaimRequest, TestRunClaimResponse, TestRunClaimSettlement, TestRunProgressCheckpoint,
@@ -163,7 +163,7 @@ describe("claim capability and execution ownership", () => {
     }
     const ingestion = createTestRunIngestApi();
     expect((await ingestion.request("/", { method: "POST", headers: { authorization: `Bearer ${TOKEN}` }, body: "{}" })).status).toBe(401);
-    const admin = new Hono(); admin.use("*", adminAuth); admin.get("/", c => c.text("admin"));
+    const admin = new Hono(); admin.use("*", principalAuth); admin.get("/", c => c.text("admin"));
     expect((await admin.request("/", { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(401);
   });
 

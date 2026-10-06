@@ -135,7 +135,7 @@ once a deployment adds it to `TEST_RUN_DISPATCH_ROUTINES` after its worker lane 
 enrolled. Their live CI qualification is still pending. They are not nightly
 targets or successful-build requests.
 
-Existing `adminAuth` protects all three routes using the admin console session:
+All three routes need the `organization.testing.read` capability: an Organization Admin's console session or WorkOS token, or an operator key (`mak_`) created with that scope.
 
 - `GET /api/admin/test-runs/` returns `{runs, nextCursor}`. Filters: `pr`,
   `channel`, `outcome`, `routineId`, `platform`, `fixtureAlias`, `startedAfter`,

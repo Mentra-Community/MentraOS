@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { createTestHostObservationsApi } from "../api/internal/test-host-observations.api";
 import { createTestRunAdminApi } from "../api/admin/test-runs.api";
-import { adminAuth } from "../api/middleware/admin-auth.middleware";
+import { principalAuth } from "../api/middleware/principal.middleware";
 import { HOST_FRESH_MS, HOST_SAMPLE_LIMIT, hostIsFresh, testHostSampleSchema, type TestHostSample } from "../types/test-host-health.types";
 import type { AppEnv } from "../types/hono.types";
 import { TestHostHealthService, type StoredHostSample, type TestHostHealthRepository } from "./test-host-health.service";
@@ -118,7 +118,7 @@ describe("host health authorization", () => {
   test("both Admin reads remain behind the real admin session gate; ingestion auth does not grant browsing", async () => {
     const repo = new MemoryHealth(), service = new TestHostHealthService(repo, () => new Date(start));
     await service.ingest(sample());
-    const app = new Hono<AppEnv>(); app.use("*", adminAuth);
+    const app = new Hono<AppEnv>(); app.use("*", principalAuth);
     app.route("/", createTestRunAdminApi(undefined, undefined, undefined, undefined, service));
     for (const path of ["/health", "/health/mini-1?days=7"]) expect((await app.request(path, { headers: { authorization: "Bearer " + token } })).status).toBe(401);
     const read = createTestRunAdminApi(undefined, undefined, undefined, undefined, service);

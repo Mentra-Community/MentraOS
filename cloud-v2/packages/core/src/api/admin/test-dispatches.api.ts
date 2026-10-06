@@ -4,8 +4,9 @@ import { GithubTestBuildGateway, TestDispatchError, type TestBuildGateway } from
 import { TestDispatchService } from "../../services/test-dispatch.service";
 import { TEST_ROUTINES, testBuildQuerySchema } from "../../types/test-dispatch.types";
 import type { AppEnv } from "../../types/hono.types";
+import { principalLabel } from "../middleware/principal.middleware";
 
-/** Mounted behind the existing admin session gate; worker capability tokens do not grant access. */
+/** Mounted behind admin.api's `organization.testing.*` gates (read to look, manage to dispatch); worker capability tokens do not grant access. */
 export function createTestDispatchAdminApi(service = new TestDispatchService(), builds: TestBuildGateway = new GithubTestBuildGateway()) {
   const app = new Hono<AppEnv>();
   app.onError((error, c) => {
@@ -26,7 +27,9 @@ export function createTestDispatchAdminApi(service = new TestDispatchService(), 
       throw new TestDispatchError(400, "application/json is required");
     let input: unknown;
     try { input = await c.req.json(); } catch { throw new TestDispatchError(400, "Invalid JSON"); }
-    return c.json(await service.create(input, c.var.developer?.email ?? ""), 202);
+    // Without a principal the requester is empty and the service refuses the dispatch.
+    const principal = c.get("principal");
+    return c.json(await service.create(input, principal ? principalLabel(principal) : ""), 202);
   });
   return app;
 }

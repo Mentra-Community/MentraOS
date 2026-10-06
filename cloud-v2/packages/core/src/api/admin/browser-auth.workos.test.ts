@@ -1,5 +1,8 @@
+import {ORGANIZATION_CAPABILITIES} from "@mentra/workspace-contract"
 import {afterEach, beforeEach, expect, spyOn, test} from "bun:test"
 import {exportJWK, generateKeyPair, SignJWT} from "jose"
+import * as identityLinks from "../../services/workspaces/identity-link.service"
+import * as workspaces from "../../services/workspaces/workspace.service"
 import {createApp} from "../app"
 
 const names = [
@@ -8,6 +11,7 @@ const names = [
   "WORKOS_COOKIE_PASSWORD",
   "ADMIN_URL",
   "CLOUD_CORE_ADMIN_EMAILS",
+  "CLOUD_CORE_ORGANIZATION_ID",
   "NODE_ENV",
 ] as const
 const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]))
@@ -24,6 +28,9 @@ const user = {
   updated_at: "2026-01-01T00:00:00Z",
 }
 let network: ReturnType<typeof spyOn>
+// The admin routes resolve a principal, which links the WorkOS user and lists workspaces; no database here.
+let linking: ReturnType<typeof spyOn>
+let listing: ReturnType<typeof spyOn>
 let initialToken: string
 let validToken: string
 let refreshRejected = false
@@ -36,7 +43,11 @@ beforeEach(async () => {
   process.env.WORKOS_COOKIE_PASSWORD = "cookie-contract-password-at-least-32-characters"
   process.env.ADMIN_URL = origin
   process.env.CLOUD_CORE_ADMIN_EMAILS = user.email
+  // Required in production, and the principal carries it.
+  process.env.CLOUD_CORE_ORGANIZATION_ID = "contract"
   process.env.NODE_ENV = "production"
+  linking = spyOn(identityLinks, "resolveWorkosUser").mockResolvedValue({mentraUserId: "mu_cookie_contract"})
+  listing = spyOn(workspaces, "listWorkspacesForUser").mockResolvedValue([])
   grants.length = 0
   jwksRequests = []
   refreshRejected = false
@@ -85,6 +96,8 @@ beforeEach(async () => {
 })
 afterEach(() => {
   network?.mockRestore()
+  linking?.mockRestore()
+  listing?.mockRestore()
   for (const name of names) {
     if (saved[name] === undefined) delete process.env[name]
     else process.env[name] = saved[name]
@@ -117,7 +130,14 @@ test("Core's actual WorkOS callback cookie authenticates /me through the shared 
   const {app, session} = await signedInCore()
   const response = await app.request("/api/admin/me", {headers: {cookie: session}})
   expect(response.status).toBe(200)
-  expect(await response.json()).toMatchObject({authenticated: true, admin: true, user: {email: user.email}})
+  expect(await response.json()).toEqual({
+    authenticated: true,
+    user: {mentraUserId: "mu_cookie_contract", email: user.email},
+    credential: null,
+    organization: {organizationId: "contract", capabilities: [...ORGANIZATION_CAPABILITIES].sort()},
+    workspaces: [],
+  })
+  expect(linking).toHaveBeenCalledWith(expect.objectContaining({workosUserId: user.id, email: user.email, emailVerified: true}))
   expect(jwksRequests).toEqual([`https://api.workos.com/sso/jwks/${clientId}`])
 })
 test("expired cookie tokens refresh using the configured client ID and rotate the cookie", async () => {

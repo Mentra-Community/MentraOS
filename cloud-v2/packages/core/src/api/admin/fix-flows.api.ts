@@ -3,7 +3,7 @@ import { FixFlowService } from "../../services/fix-flow.service";
 import { TestRunError } from "../../services/test-run.service";
 import type { AppEnv } from "../../types/hono.types";
 
-/** Read-only, mounted behind the existing adminAuth middleware. */
+/** Read-only, mounted behind admin.api's `organization.testing.read` gate. */
 export function createFixFlowAdminApi(service = new FixFlowService()) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => { c.header("Cache-Control", "private, no-store"); await next(); });

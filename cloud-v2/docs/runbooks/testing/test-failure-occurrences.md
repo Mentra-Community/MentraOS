@@ -180,7 +180,7 @@ The GET returns the exact binding a reviewer must echo — `payloadSha256`, `occ
 }
 ```
 
-**Authorization.** The route uses the existing `adminAuth` gate (a Mentra console session whose email is on `CLOUD_CORE_ADMIN_EMAILS` / `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`) and records that admin's `developerId` as `reviewedBy`. That proves who reviewed it, not that the source is right; the ingest token, occurrence read grants, continuation grants and the controller signing secret cannot call it, and the Mini never holds an admin session. An approval flag is not part of the schema: any unknown key is rejected.
+**Authorization.** The route needs the `organization.testing.manage` capability (an Organization Admin, whose verified email is on `CLOUD_CORE_ADMIN_EMAILS` / `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`, or an operator key (`mak_`) created with that scope) and records the caller's principal label as `reviewedBy`: their email, or `credential:<id>` for an operator key. That proves who reviewed it, not that the source is right; the ingest token, occurrence read grants, continuation grants and the controller signing secret cannot call it, and the Mini never holds an Organization Admin session or operator key. An approval flag is not part of the schema: any unknown key is rejected.
 
 **What Core checks before storing it** (otherwise 400/404/409, nothing written):
 

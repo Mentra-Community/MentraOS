@@ -5,11 +5,25 @@ import { TestRunError, TestRunService } from "../../services/test-run.service";
 import { TestRunOverviewService } from "../../services/test-run-overview.service";
 import { TestRunFollowUpError, TestRunFollowUpService } from "../../services/test-run-follow-up.service";
 import { testRunQuerySchema } from "../../types/test-run.types";
-import type { AppEnv } from "../../types/hono.types";
+import type { AppContext, AppEnv } from "../../types/hono.types";
 import { TestHostHealthError, TestHostHealthService } from "../../services/test-host-health.service";
 import { TestFailureEvidenceService } from "../../services/test-failure-evidence.service";
+import { organizationCapabilities } from "../../services/workspaces/authorization.service";
+import { principalLabel } from "../middleware/principal.middleware";
 
-/** Mounted only behind Core admin.api's existing adminAuth gate. */
+/**
+ * The caller behind a reviewed write, as the label the audit trail records. Fails closed (403) unless the request
+ * carries a principal holding `organization.testing.manage`, so the route is safe even if it is ever mounted without
+ * admin.api's gate.
+ */
+function reviewer(c: AppContext): string {
+  const principal = c.get("principal");
+  if (!principal || !organizationCapabilities(principal).has("organization.testing.manage"))
+    throw new TestRunFollowUpError(403, "admin access required");
+  return principalLabel(principal);
+}
+
+/** Mounted only behind Core admin.api's `organization.testing.*` gates: read to look, manage to write. */
 export function createTestRunAdminApi(service = new TestRunService(), overview = new TestRunOverviewService(), followUp = new TestRunFollowUpService(),
   corrections = new TestFailureCorrectionService(), health = new TestHostHealthService(), evidence = new TestFailureEvidenceService()) {
   const app = new Hono<AppEnv>();
@@ -41,15 +55,14 @@ export function createTestRunAdminApi(service = new TestRunService(), overview =
     return c.json(await health.history(c.req.param("hostId"), c.req.query("days")));
   });
   app.post("/claims/:requestId/cancel-follow-up", async c => {
-    const admin = c.get("developer");
-    if (!c.get("isAdmin") || !admin) throw new TestRunFollowUpError(403, "admin access required");
+    const reviewedBy = reviewer(c);
     if (c.req.header("content-type") !== "application/json") throw new TestRunFollowUpError(400, "JSON confirmation required");
     const input = await c.req.json().catch(() => null);
     if (!input || input.confirmation !== "cancel-follow-up" || Object.keys(input).length !== 1)
       throw new TestRunFollowUpError(400, "explicit follow-up cancellation confirmation required");
-    return c.json(await followUp.cancel(c.req.param("requestId"), admin.developerId));
+    return c.json(await followUp.cancel(c.req.param("requestId"), reviewedBy));
   });
-  // Explicit reviewed provenance correction of one acknowledged occurrence. The admin session identifies the reviewer;
+  // Explicit reviewed provenance correction of one acknowledged occurrence. The calling principal identifies the reviewer;
   // the service still corroborates every binding against the immutable result. No other caller can write it.
   const correctionPath = "/:runId/failures/:occurrenceId/provenance-correction";
   app.get(correctionPath, async c => {
@@ -58,11 +71,10 @@ export function createTestRunAdminApi(service = new TestRunService(), overview =
   });
   app.post(correctionPath, bodyLimit({ maxSize: 16 * 1024, onError: c => c.json({ error: "too_large" }, 413) }), async c => {
     c.header("Cache-Control", "no-store");
-    const admin = c.get("developer");
-    if (!c.get("isAdmin") || !admin) throw new TestRunFollowUpError(403, "admin access required");
+    const reviewedBy = reviewer(c);
     if (c.req.header("content-type") !== "application/json") throw new TestRunError(400, "JSON correction required");
     const input = await c.req.json().catch(() => null);
-    const result = await corrections.submit(c.req.param("runId"), c.req.param("occurrenceId"), input, admin.developerId);
+    const result = await corrections.submit(c.req.param("runId"), c.req.param("occurrenceId"), input, reviewedBy);
     return c.json(result.correction, result.created ? 201 : 200);
   });
   app.get("/:runId", async c => c.json(await service.detail(c.req.param("runId"))));
@@ -73,10 +85,9 @@ export function createTestRunAdminApi(service = new TestRunService(), overview =
   });
   app.post(evidencePath, bodyLimit({ maxSize: 1024 * 1024, onError: c => c.json({ error: "too_large" }, 413) }), async c => {
     c.header("Cache-Control", "no-store");
-    const admin = c.get("developer");
-    if (!c.get("isAdmin") || !admin) throw new TestRunFollowUpError(403, "admin access required");
+    const reviewedBy = reviewer(c);
     if (c.req.header("content-type") !== "application/json") throw new TestRunError(400, "JSON evidence supplement required");
-    const result = await evidence.submit(c.req.param("runId"), c.req.param("occurrenceId"), await c.req.json().catch(() => null), admin.developerId);
+    const result = await evidence.submit(c.req.param("runId"), c.req.param("occurrenceId"), await c.req.json().catch(() => null), reviewedBy);
     return c.json(result.supplement, result.created ? 201 : 200);
   });
   app.on(["GET", "HEAD"], "/:runId/assets/:assetId", c => service.media(c.req.param("runId"), c.req.param("assetId"), c.req.raw));
