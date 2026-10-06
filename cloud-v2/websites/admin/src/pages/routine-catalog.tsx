@@ -84,8 +84,14 @@ function EditableRoutineCatalogCard({routine}: {routine: CatalogRow}) {
 export function RoutineCatalogCard({routine, onNightlyChange, saving = false, preferenceError}: {routine: CatalogRow; onNightlyChange?: (enabled: boolean) => void; saving?: boolean; preferenceError?: string | null}) {
   return <article className={PANEL}>
     <p className="text-sm text-[#68746d]">{routine.platform === "android" ? "Android" : "iOS on Mac"}</p>
-    <div className="mt-2 flex items-center justify-between gap-4"><h3 className="text-lg font-semibold"><a className="underline" href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
-      <label className="flex shrink-0 items-center gap-2 text-sm"><input type="checkbox" role="switch" aria-label={`Run ${routine.definition.title} in nightly`} checked={routine.nightlyEnabled ?? true} disabled={saving} onChange={event => onNightlyChange?.(event.target.checked)} />Run in nightly</label></div>
+    <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1"><h3 className="text-lg font-semibold"><a className="underline" href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
+      <label className={`flex min-h-11 shrink-0 items-center gap-2.5 text-sm font-medium text-[#5d6068] ${saving ? "cursor-wait opacity-60" : "cursor-pointer"}`}>
+        <input className="peer sr-only" type="checkbox" role="switch" aria-label={`${routine.definition.title}: Runs nightly`} checked={routine.nightlyEnabled ?? true} disabled={saving} onChange={event => onNightlyChange?.(event.target.checked)} />
+        <span aria-hidden="true" className="inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-[#747780] p-0.5 shadow-inner transition-colors duration-200 peer-checked:bg-[#2563eb] peer-focus-visible:ring-2 peer-focus-visible:ring-[#2563eb] peer-focus-visible:ring-offset-2 peer-checked:[&>span]:translate-x-5 motion-reduce:transition-none">
+          <span className="h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 motion-reduce:transition-none" />
+        </span>
+        <span>Runs nightly</span>
+      </label></div>
     {preferenceError && <p role="alert" className="mt-2 text-sm">{preferenceError}</p>}
     <p className="mt-2">{routine.definition.purpose}</p>
     <p className="mt-4">{routine.example ? "Complete passing example available" : "Awaiting a published passing example"}</p>
