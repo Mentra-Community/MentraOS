@@ -235,3 +235,13 @@ test("suite completion refuses empty or single nightly occurrences before delega
   }
   expect(complete).not.toHaveBeenCalled(); expect(write).not.toHaveBeenCalled();
 });
+test('nightly projection retains full admitted firmware references and unadmitted manifest data',async()=>{
+ const {nightlySuiteProjection}=await import('./test-suite.service');
+ const manifest={url:'https://artifactscdn.mentraglass.com/exact/firmware.json',size:100,sha256:'c'.repeat(64)};
+ const build={repository:'Mentra-Community/MentraOS',headSha:'a'.repeat(40),channel:'dev' as const,source:{channel:'dev' as const,buildRunId:21,publicationAttempt:2},archive:{name:'app',url:'https://artifactscdn.mentraglass.com/app',size:100,sha256:'d'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:100,sha256:'e'.repeat(64)},manifest,manifestSha256:manifest.sha256};
+ const suite=testSuiteSchema.parse({suiteId:'firmware-nightly',channel:'dev',trigger:'nightly',startedAt:'2026-10-06T11:00:00Z',build:{headSha:build.headSha},members:[{memberId:'admitted',requestId:'one',routineId:'camera',platform:'android'},{memberId:'unadmitted',requestId:'two',routineId:'camera-two',platform:'android'}]});
+ const members=suite.members.map((m,i)=>({...m,requestId:m.requestId!,definitionRevision:'a'.repeat(40),definitionSha256:'b'.repeat(64),build:{...build,kind:'android-apk'},...(i===0?{input:{routineId:m.routineId,definitionRevision:'a'.repeat(40),platform:'android',laneId:'lane',resources:[],build}}:{})}));
+ const plan={occurrenceId:'firmware-occurrence',suiteId:suite.suiteId,startedAt:suite.startedAt,trigger:'nightly',suite,members} as NightlyPlan;
+ const result={occurrenceId:plan.occurrenceId,suiteId:suite.suiteId,startedAt:suite.startedAt,trigger:'nightly',members:members.map(m=>({...m,status:'setup-failed',publicationComplete:false})),expectedCount:2,passed:0,status:'running'} as NightlyResult;
+ const projection=nightlySuiteProjection(suite,plan,result);expect((projection.members[0] as any).build.manifest).toEqual(manifest);expect((projection.members[1] as any).build.manifest).toEqual(manifest);
+});

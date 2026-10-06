@@ -8,6 +8,7 @@ import {TestRequestModel} from "../../models/test-request.model";
 import {TestHistoryService} from "../../services/test-history.service";
 import {hostCancellationSchema, hostRejectionSchema, requestInputDigest, TestRequestService} from "../../services/test-request.service";
 import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema, type FrameworkRequestDisplay} from "../../types/framework-request.types";
+import {createTestRerunRoutes} from "../internal/test-reruns.api";
 import {LaneRestorationService} from "../../services/lane-restoration.service";
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
@@ -22,6 +23,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     return c.json({error: "test_results_unavailable"}, 503);
   });
   const suites = new TestSuiteService();
+  app.route("/reruns", createTestRerunRoutes(undefined, "admin"));
   app.get("/suite-index/labels", async c => c.json(await suites.labels((c.req.query("requestIds") ?? "").split(",").filter(Boolean))));
   app.get("/suite-index/list", async c => c.json(await suites.list()));
   app.get("/history/list", async c => c.json(await history.list(c.req.query())));

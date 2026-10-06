@@ -8,9 +8,11 @@ description: Diagnose an ongoing or finished Mentra nightly suite, group demonst
 Own the source repair loop: evidence → diagnosis → fix → PR → independent review
 → required checks → merge → final report. A standalone chat can start from an
 ongoing or finished suite. Do not require a continuously running coordinator.
-This skill ends at approved merged fixes and diagnostic conclusions; harness
-deployment, a new full-catalog suite and Slack delivery are separate tasks unless
-the user explicitly adds them. A merged fix does not make the original suite pass.
+Carry each fix through targeted verification when the user requests suite repair
+and the required source/API is available. Approved merged source is a milestone;
+record deployment prerequisites while continuing other repairs. Framework deployment,
+a new full-catalog suite and Slack delivery are separate tasks unless authorized.
+A merged fix does not make the original suite pass.
 
 ## Start from the suite
 
@@ -122,6 +124,17 @@ deployment prerequisite and its actual owner. Continue independent diagnoses,
 source fixes and PR work. Do not take over deployment or make a general
 coordinator handoff a stopping gate. Required merge checks still apply; distinguish
 optional deferred device evidence from a check that actually blocks merging.
+Prefer linked reruns for suite members once the endpoint is deployed: dispatch a
+fixed item immediately, or batch compatible ready items. Omit the app source to
+reuse each original artifact; supply an optional exact publication override only
+when testing an app fix. Framework fixes require the corrected installed source;
+verify its receipt rather than requesting a framework revision through this API.
+Read latest attempts first and adopt accepted equivalent work. Retain stable rerun
+IDs and preview digests across uncertain transport retries. For an unaccepted
+preview that has definitively expired, create a new ID and preview; accepted
+submissions always reconcile their existing identity. A deliberate next
+attempt gets a new ID and terminal predecessor. Never repeat passing long tests
+merely to verify a shared fix. See the linked API in operations.
 A new failure returns to diagnosis, not an automatic full-suite retry loop.
 
 ## Continue efficiently through long waits
@@ -144,9 +157,11 @@ bounded waiting while preserving work; do not introduce a queue/timer framework.
 
 ## Report merged fixes and honest limits
 
-Finish when each observed failure is reconciled to an approved merged fix,
-already merged equivalent, evidence-backed machine/fixture conclusion, or a
-specific unresolved dependency with next action and owner. Do not hide an
+Finish when each observed failure has a targeted verification result for its
+approved merged fix or equivalent, an evidence-backed machine/fixture conclusion,
+or an explicitly unavailable deployment/access prerequisite with next action and
+owner. A source fix with available verification is not completion; dispatch it
+and consume its result. Do not hide an
 unresolved failure to claim completion. If members are still running, report the
 observed coverage and continue via the verified resume path to consume remaining
 results. Preserve concise receipts and evidence links; clean disposable owned

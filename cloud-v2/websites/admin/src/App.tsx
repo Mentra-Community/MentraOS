@@ -1,4 +1,5 @@
-import {NativeDispatchPanel, NativeActivityPanel} from "./pages/framework-dispatch";
+import {TestRunsTabs} from "./pages/test-runs-tabs";
+import {TestRerunPage, readRerunId} from "./pages/test-reruns";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
@@ -168,6 +169,7 @@ export function App() {
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
 const initialTestRunsPage = new URLSearchParams(window.location.search).get("testRuns") === "1";
+const initialRerunId = readRerunId(window.location.search);
 const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
@@ -179,8 +181,9 @@ function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(
-    initialSystemHealth ? "system-health" : initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
+    initialSystemHealth ? "system-health" : initialRerunId || initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
   );
+  const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
   const [restoration, setRestoration] = useState(initialRestoration);
   const [laneSelection, setLaneSelection] = useState(() => readLaneSelection(window.location.search));
@@ -226,6 +229,8 @@ function AdminPage() {
       setRestoration(search.get("restoration") === "1");
       setLaneSelection(readLaneSelection(window.location.search));
       if (search.get("systemHealth") === "1") { setPage("system-health"); return; }
+      const rerun = readRerunId(window.location.search);
+      setRerunId(rerun);
       const suite = readSuiteId(window.location.search);
       setSuiteId(suite);
       const selection = readTestRunLink(window.location.search);
@@ -233,7 +238,7 @@ function AdminPage() {
       setTestRunLink(selection);
       setTestRunListScope(scope);
       setInvalidTestRunListScope(hasInvalidTestRunListScope(window.location.search));
-      if (suite || selection || scope || new URLSearchParams(window.location.search).get("testRuns") === "1") setPage("test-runs");
+      if (rerun || suite || selection || scope || new URLSearchParams(window.location.search).get("testRuns") === "1") setPage("test-runs");
       else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
     };
     window.addEventListener("popstate", restore);
@@ -241,6 +246,7 @@ function AdminPage() {
   }, []);
 
   function selectTestRun(selection: TestRunLink | null, replace = false) {
+    setRerunId(null);
     setSuiteId(null);
     setTestRunLink(selection);
     window.history[replace ? "replaceState" : "pushState"](null, "", testRunLocation(window.location.href, selection));
@@ -460,9 +466,10 @@ function AdminPage() {
       {page === "test-runs" ? <SystemHealthSummary /> : null}
       {page === "system-health" ? <SystemHealthPage restoration={restoration} lane={laneSelection} /> : null}
       {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
-      {page === "test-runs" && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
-      {page === "test-runs" && !suiteId ? (
-        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <>
+      {page === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
+      {page === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
+      {page === "test-runs" && !rerunId && !suiteId ? (
+        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <TestRunsTabs>
           {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
             <h2 className="font-semibold">Results for the selected build</h2>
             <p className="mt-2">{testRunListScope.repository} · {testRunListScope.channel} · <code>{testRunListScope.headSha}</code> · {testRunListScope.routineId} · {testRunListScope.platform}</p>
@@ -473,8 +480,7 @@ function AdminPage() {
             <p className="mt-2">The link has missing or unsupported build details. Open a current result link, or choose all test runs.</p>
             <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
           </section> : <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />}
-          <NativeActivityPanel /><NativeDispatchPanel />
-        </>
+        </TestRunsTabs>
       ) : null}
 
       {detailRelease ? (
