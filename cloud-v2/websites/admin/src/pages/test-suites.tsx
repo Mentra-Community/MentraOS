@@ -1,6 +1,6 @@
 import {frameworkRunHref} from "./routine-catalog";
 import {useState} from "react";
-import {AttemptHistory, AttemptLine, RerunForm} from "./test-reruns";
+import {AttemptHistory, AttemptLine, ChildReruns, RerunForm} from "./test-reruns";
 import type {RerunAttempt} from "../../../../packages/core/src/types/test-rerun.types";
 import {useQuery} from "@tanstack/react-query";
 import {api} from "../lib/api";
@@ -70,9 +70,9 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
     <div className="my-4 flex gap-4"><button className="underline" disabled={!failedRoutines.length} onClick={()=>setDispatchMembers(members.filter(m=>isFailure(m.status)).map(m=>m.memberId))}>Rerun failures</button>
       <button className="underline" disabled={!selected.length} onClick={()=>setDispatchMembers(selected)}>Rerun selected ({selected.length})</button></div>
     {dispatchMembers && <RerunForm key={dispatchMembers.join(",")} suiteId={suiteId} memberIds={dispatchMembers} onClose={()=>setDispatchMembers(null)}/>}
-    {progress.data && <p className="my-3 text-sm">Repair progress: {members.filter(m=>isFailure(m.status)).length} originally failed · {members.filter(m=>isFailure(m.status)&&progress.data.members.some(p=>p.memberId===m.memberId&&p.latest?.status==="pass"&&p.latest.publicationComplete)).length} passed on rerun · {members.filter(m=>isFailure(m.status)&&progress.data.members.some(p=>p.memberId===m.memberId&&["queued","accepted","running","admission-pending"].includes(p.latest?.status??""))).length} pending. Original verdict remains {suite.outcome}.</p>}
+    {progress.data && <p className="my-3 text-sm">Repair progress: {members.filter(m=>isFailure(m.status)).length} originally failed · {members.filter(m=>isFailure(m.status)&&progress.data.members.some(p=>p.memberId===m.memberId&&p.latest?.status==="pass"&&p.latest.publicationComplete)).length} passed on rerun · {members.filter(m=>isFailure(m.status)&&progress.data.members.some(p=>p.memberId===m.memberId&&["queued","accepted","running","admission-pending"].includes(p.latest?.status??""))).length} pending · {members.filter(m=>isFailure(m.status)&&!progress.data.members.some(p=>p.memberId===m.memberId&&((p.latest?.status==="pass"&&p.latest.publicationComplete)||["queued","accepted","running","admission-pending"].includes(p.latest?.status??"")))).length} unresolved. Original verdict remains {suite.outcome}.</p>}
     {progress.error && <p role="alert">Rerun progress unavailable. <button onClick={()=>progress.refetch()}>Retry</button></p>}
-    {progress.data?.children.map(child=><p key={child.rerunId}><a className="underline" href={`/?testRerun=${encodeURIComponent(child.rerunId)}`}>Rerun: {child.reason}</a></p>)}
+    <ChildReruns suiteId={suiteId}/>
     <div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-[#68746d]"><th className="py-3">Routine</th><th>Lane</th><th>Original result</th><th>Latest rerun</th><th>Started</th><th>Duration</th><th>Recording & steps</th></tr></thead>
       <tbody>{members.map(member => <tr key={member.memberId} className="border-b last:border-0"><td className="py-4 font-medium">{member.routineId}</td><td>{member.platform === "ios-on-mac" ? "Mac" : member.platform === "android" ? "Android" : "iOS"}</td>
         <td className={resultColor(member.status)}>{member.status === "not-run" ? "Did not run" : member.status === "waiting" ? "Awaiting result" : member.status}<label><input type="checkbox" aria-label={`Select ${member.memberId}`} disabled={!["pass","failed","setup-failed","teardown-failed","not-run","cancelled","incomplete"].includes(member.status)} checked={selected.includes(member.memberId)} onChange={e=>setSelected(old=>e.target.checked?[...old,member.memberId]:old.filter(id=>id!==member.memberId))}/> </label>

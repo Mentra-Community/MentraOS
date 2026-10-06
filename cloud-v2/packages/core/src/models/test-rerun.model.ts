@@ -13,5 +13,5 @@ const schema = new Schema({
 schema.index({claimKeys: 1}, {unique: true, sparse: true});
 schema.index({"plan.members.rootKey": 1, state: 1, "plan.createdAt": -1});
 schema.index({"plan.members.requestId": 1});
-schema.index({"plan.parent.suiteId": 1, state: 1, "plan.createdAt": -1});
+schema.index({"plan.parent.suiteId": 1, state: 1, acceptedAt: -1, rerunId: -1});
 export const TestRerunModel = registerModel("TestRerun", schema);

@@ -1,7 +1,7 @@
 import {z} from "zod";
 import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
 import {routineIdentitySchema, routinePlatformSchema} from "../types/routine-definition.types";
-import {testBuildSourceSchema} from "../types/test-build.types";
+import {testBuildSourceSchema, type TestBuild} from "../types/test-build.types";
 import {RoutineDefinitionService} from "./routine-definition.service";
 import {GithubTestBuildGateway, type TestBuildGateway} from "./test-builds.service";
 import {TestHostStateService} from "./test-host-state.service";
@@ -31,7 +31,7 @@ export class RoutineDispatchService {
       throw new TestRunError(409, "Request retry changed its original routine/platform or exact build source");
     return request;
   }
-  async prepare(input: unknown) {
+  async prepare(input: unknown, recordedBuild?: z.infer<typeof frameworkRequestInputSchema>["build"]) {
     const parsed = routineDispatchSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "Invalid exact-source routine request");
     const selected = parsed.data;
@@ -39,7 +39,8 @@ export class RoutineDispatchService {
     if (!definition) throw new TestRunError(409, "Routine is not enrolled for this platform");
     const binding = this.bindings()[selected.platform];
     if (!binding) throw new TestRunError(409, `No configured host/lane binding for ${selected.platform}.`);
-    const [build, host] = await Promise.all([this.builds.resolve(selected.source, selected.platform), this.hosts.get(binding.hostId)]);
+    const recorded = recordedBuild ? recordedRoutineBuild(recordedBuild, selected.source, selected.platform) : undefined;
+    const [build, host] = await Promise.all([recorded ?? this.builds.resolve(selected.source, selected.platform), this.hosts.get(binding.hostId)]);
     return {hostId: binding.hostId, input: routineAdmissionInput(definition, build, binding, host)};
   }
   async submit(input: unknown) {
@@ -64,4 +65,15 @@ export class RoutineDispatchService {
     try {return {request, result: await this.results.detail(requestId)};}
     catch (error) {if (error instanceof TestRunError && error.status === 404) return {request, result: null}; throw error;}
   }
+}
+
+/** Original admissions already verified publication. Reuse their immutable references after a PR closes or moves. */
+export function recordedRoutineBuild(input: z.infer<typeof frameworkRequestInputSchema>["build"], source: z.infer<typeof testBuildSourceSchema>, platform: TestBuild["platform"]): TestBuild {
+  const asset = z.object({url:z.string().url().refine(value=>value.startsWith("https://artifactscdn.mentraglass.com/")),size:z.number().int().positive().safe(),sha256:z.string().regex(/^[a-f0-9]{64}$/)}).passthrough();
+  const parsed = z.object({repository:z.literal("Mentra-Community/MentraOS"),headSha:z.string().regex(/^[a-f0-9]{40}$/),channel:z.enum(["pr","dev","staging"]),source:testBuildSourceSchema,archive:asset.extend({name:z.string().min(1)}),receipt:asset,manifest:asset.optional(),manifestSha256:z.string().optional(),releaseIdentity:z.string().optional()}).passthrough().safeParse(input);
+  if (!parsed.success || requestInputDigest(parsed.data.source)!==requestInputDigest(source) || parsed.data.channel!==source.channel)
+    throw new TestRunError(409,"Original exact app references are incomplete; choose an explicit replacement artifact");
+  const build=parsed.data;
+  return {source,platform,headSha:build.headSha,title:"Original recorded artifact",createdAt:"1970-01-01T00:00:00Z",buildUrl:`https://github.com/Mentra-Community/MentraOS/actions/runs/${source.buildRunId}`,availability:"available",archive:build.archive,receipt:build.receipt,
+    ...(build.manifest?{manifest:build.manifest,manifestSha256:build.manifestSha256}:{}),...(build.releaseIdentity?{release:build.releaseIdentity}:{})};
 }

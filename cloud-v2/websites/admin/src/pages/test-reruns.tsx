@@ -1,6 +1,6 @@
 import {useState} from "react";
 import {useQuery, useQueryClient} from "@tanstack/react-query";
-import {api} from "../lib/api";
+import {api, ApiError} from "../lib/api";
 import type {RerunAttempt, RerunPlan} from "../../../../packages/core/src/types/test-rerun.types";
 import type {TestBuildSource} from "../../../../packages/core/src/types/test-build.types";
 import {frameworkRunHref} from "./routine-catalog";
@@ -15,7 +15,7 @@ export function AttemptLine({attempt}: {attempt: RerunAttempt}) {
   return <p className="my-2 text-sm"><a className="underline" href={attemptHref(attempt)}>{attempt.attemptNumber === 0 ? "Original" : `Attempt ${attempt.attemptNumber}`} · {attempt.status}</a>
     {attempt.status === "pass" && !attempt.publicationComplete && " · Evidence incomplete"}
     {attempt.build && <> · App {attempt.build.headSha.slice(0,10)}{source && <> · Build {source.buildRunId}, publication {source.publicationAttempt}</>}</>}
-    {attempt.build?.archive && <span className="block text-xs">Artifact {(attempt.build.archive as {sha256:string}).sha256.slice(0,12)}</span>}
+    {!!attempt.build?.archive && <span className="block text-xs">Artifact {(attempt.build.archive as {sha256:string}).sha256.slice(0,12)}</span>}
     {attempt.definitionRevision && <> · Definition {attempt.definitionRevision.slice(0,10)}</>}
     {attempt.createdAt && <> · {new Date(attempt.createdAt).toLocaleString()}</>}
     {attempt.rerunId && <> · <a className="underline" href={`/?testRerun=${encodeURIComponent(attempt.rerunId)}`}>Rerun batch</a></>}
@@ -35,7 +35,7 @@ type Preview={rerunId:string;previewDigest:string;plan:RerunPlan;state:string};
 export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {suiteId?:string;originalRequestId?:string;memberIds:string[];onClose:()=>void}) {
   const [override,setOverride]=useState(false);
   const [channel,setChannel]=useState<TestBuildSource["channel"]>("dev"), [build,setBuild]=useState(""),[publication,setPublication]=useState("1"),[pr,setPr]=useState(""),[reason,setReason]=useState("");
-  const [id]=useState(()=>crypto.randomUUID()),[preview,setPreview]=useState<Preview|null>(null),[message,setMessage]=useState(""),[busy,setBusy]=useState(false),[entered,setEntered]=useState(false),[previewEntered,setPreviewEntered]=useState(false);
+  const [id,setId]=useState(()=>crypto.randomUUID()),[preview,setPreview]=useState<Preview|null>(null),[message,setMessage]=useState(""),[busy,setBusy]=useState(false),[entered,setEntered]=useState(false),[previewEntered,setPreviewEntered]=useState(false);
   const client=useQueryClient();
   async function prepare() {
     setBusy(true); setMessage("");
@@ -45,7 +45,7 @@ export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {sui
       if(!reason.trim()) throw new Error("Enter a reason for this rerun.");
       setPreviewEntered(true);
       const value=await api<Preview>("/api/admin/test-runs/reruns/preview",{method:"POST",body:{rerunId:id,parent:suiteId?{suiteId}:{requestId:originalRequestId},selection:{memberIds},...(source?{source}:{}),reason}});setPreview(value);
-    }catch(error){setMessage(error instanceof Error?error.message:"Preview unavailable; retry the same selection.");}finally{setBusy(false);}
+    }catch(error){if(error instanceof ApiError && error.status<500){setPreviewEntered(false);setId(crypto.randomUUID());}setMessage(error instanceof Error?error.message:"Preview unavailable; retry the same selection.");}finally{setBusy(false);}
   }
   async function submit() {
     if(!preview)return;setBusy(true);setEntered(true);
@@ -67,6 +67,7 @@ export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {sui
     {preview&&<ul>{preview.plan.members.map(m=><li key={m.memberId}>{m.input.routineId} · {m.input.platform} · App {m.input.build.headSha.slice(0,10)} · Definition {m.input.definitionRevision.slice(0,10)} · {m.hostId}/{m.input.laneId}</li>)}</ul>}
     <button disabled={busy} className="underline" onClick={preview?submit:prepare}>{busy?"Working…":preview?entered?"Reconcile same submission":"Submit this preview":"Preview rerun"}</button>
     <button className="ml-4 underline" disabled={busy} onClick={onClose}>Close</button>
+    {!entered&&<button className="ml-4 underline" disabled={busy} onClick={()=>{setId(crypto.randomUUID());setPreview(null);setPreviewEntered(false);setMessage("New preview; any prior preview remains unsubmitted.");}}>Start fresh preview</button>}
     {preview&&<a className="ml-4 underline" href={`/?testRerun=${encodeURIComponent(preview.rerunId)}`}>View rerun</a>}
     {message&&<p role="status">{message}</p>}</div>;
 }
@@ -103,4 +104,11 @@ export function RunRerunLinks({requestId}:{requestId:string}) {
     <button className="ml-3 underline" onClick={()=>setOpen(true)}>Rerun this test</button>
     <AttemptHistory suiteId={"suiteId" in parent?parent.suiteId:undefined} originalRequestId={"requestId" in parent?parent.requestId:undefined} memberId={memberId}/>
     {open&&<RerunForm suiteId={"suiteId" in parent?parent.suiteId:undefined} originalRequestId={"requestId" in parent?parent.requestId:undefined} memberIds={[memberId]} onClose={()=>setOpen(false)}/>}</div>;
+}
+
+export function ChildReruns({suiteId}:{suiteId:string}) {
+  const [before,setBefore]=useState<string|null>(null);
+  const result=useQuery({queryKey:["rerun-children",suiteId,before],queryFn:()=>api<{children:{rerunId:string;reason:string;createdAt?:string}[];nextCursor:string|null}>(`/api/admin/test-runs/reruns/suite/${encodeURIComponent(suiteId)}/children${before?`?before=${encodeURIComponent(before)}`:""}`),refetchInterval:15000});
+  return <div>{result.error&&<p>Rerun batches unavailable. <button onClick={()=>result.refetch()}>Retry</button></p>}{result.data?.children.map(child=><p key={child.rerunId}><a className="underline" href={`/?testRerun=${encodeURIComponent(child.rerunId)}`}>Rerun: {child.reason}</a>{child.createdAt&&<> · {new Date(child.createdAt).toLocaleString()}</>}</p>)}
+    {result.data?.nextCursor&&<button className="underline" onClick={()=>setBefore(result.data!.nextCursor)}>Older rerun batches</button>}{before&&<button className="ml-3 underline" onClick={()=>setBefore(null)}>Latest batches</button>}</div>;
 }

@@ -5,7 +5,7 @@ owner: Philippe Ferreira de Sousa
 
 # Linked test reruns with exact execution versions
 
-Date: October 6, 2026. Current implementation scope approved; framework revision selection and framework/routine separation are follow-up work.
+Date: October 6, 2026. Current implementation scope approved; actual framework identity recording and independent routine source loading are follow-up work.
 
 ## Purpose and scope
 
@@ -51,11 +51,11 @@ Store requested and resolved execution identities separately from the host's obs
 | Glasses/fixtures | Existing frozen firmware start/return identities and fixture/resource references, without public secrets |
 | Execution | Request/input digest, run ID, host/lane, execution start/end, original outcome, cleanup and publication state |
 
-App override is optional. If omitted, recover each original member’s exact app source from its recorded admission or nightly receipt and verify the resolved commit/archive/receipt. Missing historical provenance requires an explicit override; never silently choose latest. An override supplies exact channel/build workflow/publication attempt and resolves its immutable commit, archive and receipt once during preview. Each new rerun may choose a different artifact; transport retries of the same attempt retain its chosen artifact. Freeze current enrolled routine definition and host input at the same boundary. Do not silently substitute a newer app artifact or re-resolve enrollment on a submission retry. Preserve existing provenance in results; missing historical fields remain unknown.
+App override is optional. If omitted, recover each original member’s exact app source from its recorded admission or nightly receipt and verify its recorded commit/archive/receipt and reuse their immutable references, without requiring the original PR to remain open or at the same head. Missing historical provenance requires an explicit override; never silently choose latest. An override supplies exact channel/build workflow/publication attempt and resolves its immutable commit, archive and receipt once during preview. Each new rerun may choose a different artifact; transport retries of the same attempt retain its chosen artifact. Freeze current enrolled routine definition and host input at the same boundary. Do not silently substitute a newer app artifact or re-resolve enrollment on a submission retry. Preserve existing provenance in results; missing historical fields remain unknown.
 
 ### Follow-up: framework deployment and routine data
 
-After the automatic framework deployment subsystem is available, design framework revision selection and observed installed-source attestation. Investigate separating executable framework code from routine definitions/data so updating a routine does not necessarily require deploying the entire framework. This feature adds neither that separation nor a requested framework SHA, native-tool version gate, waiting-for-framework state or deployment timeout. Existing host admission checks still apply.
+After the automatic framework deployment subsystem is available, record the actual installed framework identity and design independent routine source loading. The framework remains installed on the machine, not selectable per rerun. Future routine selection precedence is explicit override, then the original member’s routine identity, then the latest CI-checked/published main collection for a new job. Investigate separating executable framework code from routine definitions/data so updating a routine does not necessarily require deploying the entire framework. This feature adds neither that separation nor a requested framework SHA, native-tool version gate, waiting-for-framework state or deployment timeout. Existing host admission checks still apply.
 
 ## Proposed API contract
 
@@ -140,6 +140,8 @@ A later failure makes the latest repair status unresolved again; an older passin
 
 “Rerun failed” includes test/setup/teardown failures and excludes not-run/rejected/cancelled/incomplete unless selected. Explicit passing-item selection is allowed. Latest-attempt rows retain original verdicts. Framework waiting expiry is deferred with framework deployment selection.
 
-No runtime system is deleted. Existing nightly scheduling, catalog preferences, request execution, ownership, restoration and publication remain the foundation. Framework revision selection and framework/routine data separation are explicitly deferred follow-ups.
+No runtime system is deleted. Existing nightly scheduling, catalog preferences, request execution, ownership, restoration and publication remain the foundation. Actual framework identity recording and framework/routine data separation are explicitly deferred follow-ups.
 
 Implemented reads: `GET <base>/:rerunId`, `/suite/:suiteId/progress`, `/suite/:suiteId/children?before=<id>`, `/suite/:suiteId/members/:memberId/history?before=<attempt-number>&limit=<1..25>`, `/request/:requestId/history`, and `/request/:requestId/lineage`. History uses descending attempt number and preserves the original result separately.
+
+Child batches sort by acceptance timestamp with rerun ID as a tie-breaker; `before` is an opaque cursor containing both. Admin exposes older/latest batch pagination. A definitively refused preview unlocks correction controls; transport uncertainty preserves the same preview identity, and an unsubmitted/expired preview can be replaced explicitly.

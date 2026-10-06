@@ -35,8 +35,9 @@ const repository: RerunRepository = {
     ]).read("primary").readConcern("majority") as RerunRecord[];
   },
   async children(suiteId, before, limit) {
-    return await TestRerunModel.find({state: "accepted", "plan.parent.suiteId": suiteId, ...(before ? {rerunId: {$lt: before}} : {})})
-      .sort({rerunId: -1}).limit(limit).read("primary").readConcern("majority").lean() as RerunRecord[];
+    const cursor = before ? decodeChildCursor(before) : undefined;
+    return await TestRerunModel.find({state: "accepted", "plan.parent.suiteId": suiteId, ...(cursor ? {$or:[{acceptedAt:{$lt:cursor.acceptedAt}},{acceptedAt:cursor.acceptedAt,rerunId:{$lt:cursor.rerunId}}]} : {})})
+      .sort({acceptedAt: -1,rerunId: -1}).limit(limit).read("primary").readConcern("majority").lean() as RerunRecord[];
   },
   async byRequest(requestId) {return await TestRerunModel.findOne({state: "accepted", "plan.members.requestId": requestId})
     .read("primary").readConcern("majority").lean() as RerunRecord | null;},
@@ -151,7 +152,7 @@ export class TestRerunService {
         if (!parsedSource.success) throw new TestRunError(409, "Original exact app artifact is unavailable; choose an explicit replacement artifact");
         source = parsedSource.data;
       }
-      const frozen = await this.dispatch.prepare({requestId, routineId: member.routineId, platform: member.platform, source});
+      const frozen = await this.dispatch.prepare({requestId, routineId: member.routineId, platform: member.platform, source}, selected.source ? undefined : originalBuild);
       if (!selected.source && originalBuild && ["headSha", "archive", "receipt"].some(key =>
         requestInputDigest(frozen.input.build[key] ?? null) !== requestInputDigest(originalBuild![key] ?? null)))
         throw new TestRunError(409, "Resolved original artifact differs from its recorded identity");
@@ -231,14 +232,15 @@ export class TestRerunService {
       latest: (await this.latest(rerunRootKey(parent, m.memberId)))?.attempt ?? null})));
     const children = await this.store.children(suiteId, "", 21);
     return {members: latest, children: children.slice(0,20).map(verified).map(r => ({rerunId: r.rerunId, reason: r.plan.reason, createdAt: r.acceptedAt})),
-      nextChildrenCursor: children.length > 20 ? children[19]!.rerunId : null};
+      nextChildrenCursor: children.length > 20 ? encodeChildCursor(children[19]!) : null};
   }
   async children(suiteId: string, before = "") {
-    if (!frameworkIdentitySchema.safeParse(suiteId).success || before && !frameworkIdentitySchema.safeParse(before).success)
+    if (!frameworkIdentitySchema.safeParse(suiteId).success || before && before.length > 1000)
       throw new TestRunError(400, "Invalid child history page");
+    if (before) decodeChildCursor(before);
     const rows = await this.store.children(suiteId, before, 21);
     return {children: rows.slice(0,20).map(verified).map(r => ({rerunId:r.rerunId,reason:r.plan.reason,createdAt:r.acceptedAt})),
-      nextCursor: rows.length > 20 ? rows[19]!.rerunId : null};
+      nextCursor: rows.length > 20 ? encodeChildCursor(rows[19]!) : null};
   }
   async lineage(requestId: string) {
     if (!frameworkIdentitySchema.safeParse(requestId).success) throw new TestRunError(400, "Invalid request identity");
@@ -248,4 +250,10 @@ export class TestRerunService {
     return {lineage: {parent: stored.plan.parent, memberId: member.memberId, rerunId: stored.rerunId,
       predecessorAttemptId: member.predecessorAttemptId}};
   }
+}
+
+const encodeChildCursor = (row:RerunRecord) => Buffer.from(JSON.stringify({acceptedAt:row.acceptedAt,rerunId:row.rerunId})).toString("base64url");
+function decodeChildCursor(value:string): {acceptedAt:string;rerunId:string} {
+  try {const parsed=JSON.parse(Buffer.from(value,"base64url").toString());if (!Number.isFinite(Date.parse(parsed.acceptedAt)) || !frameworkIdentitySchema.safeParse(parsed.rerunId).success)throw new Error();return parsed;}
+  catch {throw new TestRunError(400,"Invalid child history cursor");}
 }

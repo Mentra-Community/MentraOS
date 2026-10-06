@@ -14,4 +14,4 @@ Spec: [linked-test-reruns](../specs/2026-10-06-linked-test-reruns.md)
 - [x] Verify idempotency, conflicts, partial admission, provenance and UI.
 - [ ] Canonical independent review, required checks and merge.
 
-Framework revision selection/attestation and framework/routine data separation are follow-ups. No hardware dispatch is needed to validate source implementation.
+Actual installed framework identity recording and independent routine source loading and framework/routine data separation are follow-ups. No hardware dispatch is needed to validate source implementation.
