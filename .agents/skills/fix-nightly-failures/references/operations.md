@@ -61,7 +61,8 @@ activation; a label does not authorize unmerged worker code.
 
 ## Held authoring and source activation
 
-Submit interactive work through the built-in machine authoring job. Read the
+After the current suite finishes, submit interactive verification through the
+built-in machine authoring job. Prepare its diagnosis brief while members run. Read the
 private harness [job guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-WORK.md),
 [assigned-agent skill](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/.agents/skills/prepare-routine-work/SKILL.md)
 and selected revision's `contracts/routine-work.ts`. Use the provisioned operator

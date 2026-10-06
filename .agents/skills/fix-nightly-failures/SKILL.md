@@ -80,14 +80,13 @@ authority. Source tests and review remain separate from device verification.
 
 ## Choose the shortest useful verification
 
-Verify at the relevant lane's normal ownership boundary without displacing
-accepted suite work; unrelated members may continue. Harness activation through
-the existing path additionally requires every accepted request, executor and
-reservation depending on the replaced source/shared configuration to settle;
-an idle lane alone does not permit replacing live installed source. Publication
-custody and admission budgets remain enforced. Use reviewed merged harness code
-and the selected PR/channel artifact for app fixes. Do not silently substitute
-today's newest build for the failed build.
+After the current suite finishes, verify at the relevant lane's normal ownership
+boundary. Harness activation through the existing path additionally requires
+every accepted request, executor and reservation depending on the replaced
+source/shared configuration to settle; an idle lane alone does not permit
+replacing live installed source. Publication custody and admission budgets remain
+enforced. Use reviewed merged harness code and the selected PR/channel artifact
+for app fixes. Do not silently substitute today's newest build for the failed build.
 
 Choose the smallest useful verification for each causal group, using judgment:
 
