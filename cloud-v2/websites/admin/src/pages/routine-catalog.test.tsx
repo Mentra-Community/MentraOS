@@ -291,11 +291,20 @@ test("history distinguishes empty data and cached refresh failures while keeping
   expect(render()).toContain("History could not refresh: refresh refused");
   expect(render()).toContain("standalone-run");
   const scope = {channel: "dev", headSha: "b".repeat(40), routineId: "no-glasses"};
-  client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {runs: [historyRun]});
+  client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {pages: [{runs: [historyRun], nextCursor: null}], pageParams: [undefined]});
   const scoped = render(scope);
   expect(scoped).toContain("Filtered routine runs");
   expect(scoped).not.toContain("nightly-two");
   expect(scoped).toContain("dev.577");
+  client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {pages: [{runs: [historyRun], nextCursor: "older"}], pageParams: [undefined]});
+  expect(render(scope)).toContain("More runs");
+  expect(render(scope)).toContain("Showing 1 of 1 loaded runs");
+  client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {pages: [
+    {runs: [historyRun], nextCursor: "older"}, {runs: [{...historyRun, runId: "older-result", requestId: "older-request"}], nextCursor: null}], pageParams: [undefined, "older"]});
+  expect(render(scope)).toContain("older-result");
+  expect(render(scope)).toContain("Showing 2 of 2 loaded runs");
+  expect(render(scope)).not.toContain("More runs");
+
 });
 
 test("initial history failure offers retry instead of claiming empty history", () => {

@@ -1,6 +1,6 @@
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {expect, test, spyOn} from "bun:test";
-import {FrameworkResultConflict, FrameworkResultService, type FrameworkResultRepository} from "./framework-result.service";
+import {FrameworkResultConflict, FrameworkResultService, frameworkResultCursorFilter, type FrameworkResultRepository} from "./framework-result.service";
 import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 import {requestInputDigest} from "./test-request.service";
 import {TestAssetModel, TestRunModel} from "../models/test-run.model";
@@ -124,7 +124,7 @@ test("native result list scopes the archive digest and excludes retained old pay
   }) as any);
   try {
     const service = new FrameworkResultService();
-    expect(await service.list({routineId: "walkthrough", platform: "ios-on-mac", archiveSha256: "a".repeat(64), prNumber: "12", channel: "pr"})).toEqual({runs: []});
+    expect(await service.list({routineId: "walkthrough", platform: "ios-on-mac", archiveSha256: "a".repeat(64), prNumber: "12", channel: "pr"})).toEqual({runs: [], nextCursor: null});
     expect(filter as Record<string, unknown> | null).toEqual({"payload.schemaVersion": 1, routineId: "walkthrough", platform: "ios-on-mac", "payload.build.archive.sha256": "a".repeat(64), "payload.build.prNumber": 12, "payload.build.channel": "pr"});
   } finally {find.mockRestore();}
 });
@@ -151,6 +151,30 @@ test("native run summaries retain build identity and distinct execution and evid
     expect(summary.evidenceStatus).toBe("failed");
     expect(summary.uploadsComplete).toBe(false);
     expect(summary.requestId).toBe("request:mac.v2");
+    const rows = Array.from({length: 101}, (_, index) => {
+      const runId = `run-${String(200 - index).padStart(3, "0")}`;
+      const payload = {...run, requestId: runId, result: {...run.result, runId}};
+      return {runId, requestId: runId, startedAt: new Date(run.startedAt), payloadSha256: requestInputDigest(payload),
+        summaryProjection: createFrameworkRunSummaryProjection(payload, requestInputDigest(payload)), uploadsComplete: false};
+    });
+    const filters: Record<string, unknown>[] = [];
+    find.mockImplementation(((filter: Record<string, unknown>) => {
+      filters.push(filter);
+      return {sort(value: unknown) {expect(value).toEqual({startedAt: -1, runId: -1}); return this;},
+        limit(value: number) {expect(value).toBe(101); return this;}, select() {return this;}, read() {return this;}, readConcern() {return this;},
+        lean: async () => filters.length === 1 ? rows : rows.slice(100)};
+    }) as any);
+    const service = new FrameworkResultService();
+    const scope = {headSha: build.headSha, channel: "dev"};
+    const first = await service.list(scope);
+    expect(first.runs).toHaveLength(100);
+    expect(first.nextCursor).not.toBeNull();
+    const second = await service.list({...scope, cursor: first.nextCursor!});
+    expect(second.runs.map(row => row.runId)).toEqual(["run-100"]);
+    expect(second.nextCursor).toBeNull();
+    expect(filters[1]).toEqual({"payload.schemaVersion": 1, "payload.build.headSha": build.headSha, "payload.build.channel": "dev",
+      $or: [{startedAt: {$lt: new Date(run.startedAt)}}, {startedAt: new Date(run.startedAt), runId: {$lt: "run-101"}}]});
+
   } finally {find.mockRestore();}
 });
 
@@ -412,4 +436,10 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
     await expect(service.upload(run.requestId, final.id, "mini", bad, headers)).rejects.toThrow("SHA256");
     expect((await service.detail(run.requestId)).outcome).toBe("failed");
   } finally {await rm(directory, {recursive: true, force: true});}
+});
+
+test("results cursor validates before querying and handles equal timestamps by run identity", () => {
+  expect(frameworkResultCursorFilter()).toEqual({});
+  for (const cursor of ["invalid", "x".repeat(2001), Buffer.from(JSON.stringify({startedAt: "invalid", runId: "run"})).toString("base64url")])
+    expect(() => frameworkResultCursorFilter(cursor)).toThrow("Invalid routine results cursor");
 });

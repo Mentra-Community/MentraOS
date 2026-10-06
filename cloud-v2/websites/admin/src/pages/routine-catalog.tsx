@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
-import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
+import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
 import type {FrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
 import {RoutineSearch, useRoutineSearch, matchesRoutineSearch, hasRoutineFilters, type RoutineSearchFilters, type SearchableRoutine} from "../components/routine-search";
@@ -358,20 +358,25 @@ function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
   const [filters, setFilters] = useRoutineSearch();
   const catalog = useSearchCatalog();
   const params = new URLSearchParams(scope);
-  const query = useQuery({queryKey: ["framework-runs", params.toString()], queryFn: () => api<{runs: FrameworkRunSummary[]}>(`/api/admin/routine-catalog/results?${params}`), refetchInterval: 15000});
+  const query = useInfiniteQuery({queryKey: ["framework-runs", params.toString()], initialPageParam: undefined as string | undefined,
+    queryFn: ({pageParam, signal}) => api<ScopedRunPage>(`/api/admin/routine-catalog/results?${params}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, {signal, timeoutMs: 30000}),
+    getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 15000});
   if (query.isPending) return <p role="status">Loading runs…</p>;
   if (query.error && !query.data) return <p role="alert">Could not load runs: {query.error.message}</p>;
   const routines = catalog.data?.routines ?? [];
-  const options = query.data.runs.map(run => runSearchMetadata(run, routines));
-  const filtered = query.data.runs.filter(run => matchesRoutineSearch(runSearchMetadata(run, routines), filters));
+  const runs = query.data.pages.flatMap(page => page.runs);
+  const options = runs.map(run => runSearchMetadata(run, routines));
+  const filtered = runs.filter(run => matchesRoutineSearch(runSearchMetadata(run, routines), filters));
   return <section className={PANEL}><h2 className="text-xl font-semibold">Filtered routine runs</h2>
-    <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${query.data.runs.length} runs`} />
+    <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${runs.length} loaded runs`} />
+    <p className="mt-2 text-sm text-[#68746d]">Filters apply to loaded runs for this build. Load more runs to search older results.</p>
     {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <button className="underline" onClick={() => catalog.refetch()}>Retry routine metadata</button></p>}
     {query.error && <p role="alert" className="mt-3">Runs could not refresh: {query.error.message}</p>}
-    {!query.data.runs.length && <p className="mt-3">No routine runs match this build.</p>}
-    {!!query.data.runs.length && !filtered.length && <p className="mt-3">No routine runs match your filters for this build.</p>}
+    {!runs.length && <p className="mt-3">No routine runs match this build.</p>}
+    {!!runs.length && !filtered.length && <p className="mt-3">No loaded routine runs match your filters for this build.</p>}
     <ul className="mt-4 space-y-3">{filtered.map(run => <FrameworkRunListItem key={run.requestId} run={run}/>)}</ul>
+    {query.hasNextPage && <button className="mt-4 underline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>{query.isFetchingNextPage ? "Loading…" : "More runs"}</button>}
   </section>;
 }
 function FrameworkRunListItem({run}: {run: FrameworkRunSummary}) {
