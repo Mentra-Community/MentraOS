@@ -13,6 +13,7 @@ import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
 import { OemModel } from "../models/oem.model";
 import {TestHostStateModel} from "../models/test-host-state.model";
+import {TestRerunModel} from "../models/test-rerun.model";
 import {TestRequestModel} from "../models/test-request.model";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {RoutinePreferenceModel} from "../models/routine-preference.model";
@@ -56,6 +57,8 @@ export async function runStartupMigrations(): Promise<void> {
   // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.
   await TestHostStateModel.createIndexes();
   await TestRequestModel.createIndexes();
+  // Batch successor claims must be unique before admitting any linked rerun.
+  await TestRerunModel.createIndexes();
   // Existing definitions were ordinary enrollments. Candidate metadata is explicit from this rollout onward.
   await RoutineDefinitionModel.updateMany({ordinaryEnrolledAt: {$exists: false}, candidateBindings: {$exists: false}},
     [{$set: {ordinaryEnrolledAt: '$createdAt'}}]);

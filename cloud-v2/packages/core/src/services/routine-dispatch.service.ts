@@ -31,18 +31,25 @@ export class RoutineDispatchService {
       throw new TestRunError(409, "Request retry changed its original routine/platform or exact build source");
     return request;
   }
+  async prepare(input: unknown) {
+    const parsed = routineDispatchSchema.safeParse(input);
+    if (!parsed.success) throw new TestRunError(400, "Invalid exact-source routine request");
+    const selected = parsed.data;
+    const definition = await this.definitions.getCurrent(selected.routineId, selected.platform);
+    if (!definition) throw new TestRunError(409, "Routine is not enrolled for this platform");
+    const binding = this.bindings()[selected.platform];
+    if (!binding) throw new TestRunError(409, `No configured host/lane binding for ${selected.platform}.`);
+    const [build, host] = await Promise.all([this.builds.resolve(selected.source, selected.platform), this.hosts.get(binding.hostId)]);
+    return {hostId: binding.hostId, input: routineAdmissionInput(definition, build, binding, host)};
+  }
   async submit(input: unknown) {
     const parsed = routineDispatchSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "Invalid exact-source routine request");
     const selected = parsed.data, existing = await this.requests.get(selected.requestId);
     if (existing) return this.originalRequest(selected, existing);
     try {
-      const definition = await this.definitions.getCurrent(selected.routineId, selected.platform);
-      if (!definition) throw new TestRunError(409, "Routine is not enrolled for this platform");
-      const binding = this.bindings()[selected.platform];
-      if (!binding) throw new TestRunError(409, `No configured host/lane binding for ${selected.platform}.`);
-      const [build, host] = await Promise.all([this.builds.resolve(selected.source, selected.platform), this.hosts.get(binding.hostId)]);
-      return await this.requests.submit(selected.requestId, binding.hostId, routineAdmissionInput(definition, build, binding, host));
+      const frozen = await this.prepare(selected);
+      return await this.requests.submit(selected.requestId, frozen.hostId, frozen.input);
     } catch (error) {
       // A concurrent caller may have frozen the original request while this caller resolved newer configuration.
       const winner = await this.requests.get(selected.requestId);

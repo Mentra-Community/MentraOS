@@ -1,4 +1,7 @@
 import {frameworkRunHref} from "./routine-catalog";
+import {useState} from "react";
+import {AttemptHistory, AttemptLine, RerunForm} from "./test-reruns";
+import type {RerunAttempt} from "../../../../packages/core/src/types/test-rerun.types";
 import {useQuery} from "@tanstack/react-query";
 import {api} from "../lib/api";
 import {runDuration} from "../lib/run-duration";
@@ -28,6 +31,10 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
   const result = useQuery({queryKey: ["test-suite", suiteId],
     queryFn: () => api<TestSuiteResult>(`/api/admin/test-runs/suites/${encodeURIComponent(suiteId)}`),
     refetchInterval: query => query.state.data?.outcome === "running" ? 15000 : false});
+  const [selected,setSelected] = useState<string[]>([]);
+  const [dispatchMembers,setDispatchMembers] = useState<string[] | null>(null);
+  const progress = useQuery({queryKey:["rerun-progress",suiteId],
+    queryFn:()=>api<{members:{memberId:string;latest:RerunAttempt|null}[];children:{rerunId:string;reason:string}[]}>(`/api/admin/test-runs/reruns/suite/${encodeURIComponent(suiteId)}/progress`),refetchInterval:15000});
   if (result.isPending) return <p role="status">Loading test suite…</p>;
   if (result.error) return <div role="alert" className={panel}><p>Could not load the test suite: {result.error.message}</p><button onClick={() => result.refetch()}>Try again</button></div>;
   const suite = result.data!;
@@ -60,10 +67,17 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
     </div>
     <p className="my-4 text-sm">Started {new Date(suite.startedAt).toLocaleString()}{suite.finishedAt ? ` · Finished ${new Date(suite.finishedAt).toLocaleString()} · ${runDuration(suite.startedAt, suite.finishedAt)}` : " · Refreshes every 15 seconds"}</p>
     {suite.build.producerUrl ? <a className="text-sm underline" href={suite.build.producerUrl} target="_blank" rel="noreferrer">Dispatched job / build in GitHub</a> : null}
-    <div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-[#68746d]"><th className="py-3">Routine</th><th>Lane</th><th>Result</th><th>Started</th><th>Duration</th><th>Recording & steps</th></tr></thead>
+    <div className="my-4 flex gap-4"><button className="underline" disabled={!failedRoutines.length} onClick={()=>setDispatchMembers(members.filter(m=>isFailure(m.status)).map(m=>m.memberId))}>Rerun failures</button>
+      <button className="underline" disabled={!selected.length} onClick={()=>setDispatchMembers(selected)}>Rerun selected ({selected.length})</button></div>
+    {dispatchMembers && <RerunForm key={dispatchMembers.join(",")} suiteId={suiteId} memberIds={dispatchMembers} onClose={()=>setDispatchMembers(null)}/>}
+    {progress.data && <p className="my-3 text-sm">Repair progress: {members.filter(m=>isFailure(m.status)).length} originally failed · {members.filter(m=>isFailure(m.status)&&progress.data.members.some(p=>p.memberId===m.memberId&&p.latest?.status==="pass"&&p.latest.publicationComplete)).length} passed on rerun · {members.filter(m=>isFailure(m.status)&&progress.data.members.some(p=>p.memberId===m.memberId&&["queued","accepted","running","admission-pending"].includes(p.latest?.status??""))).length} pending. Original verdict remains {suite.outcome}.</p>}
+    {progress.error && <p role="alert">Rerun progress unavailable. <button onClick={()=>progress.refetch()}>Retry</button></p>}
+    {progress.data?.children.map(child=><p key={child.rerunId}><a className="underline" href={`/?testRerun=${encodeURIComponent(child.rerunId)}`}>Rerun: {child.reason}</a></p>)}
+    <div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-[#68746d]"><th className="py-3">Routine</th><th>Lane</th><th>Original result</th><th>Latest rerun</th><th>Started</th><th>Duration</th><th>Recording & steps</th></tr></thead>
       <tbody>{members.map(member => <tr key={member.memberId} className="border-b last:border-0"><td className="py-4 font-medium">{member.routineId}</td><td>{member.platform === "ios-on-mac" ? "Mac" : member.platform === "android" ? "Android" : "iOS"}</td>
-        <td className={resultColor(member.status)}>{member.status === "not-run" ? "Did not run" : member.status === "waiting" ? "Awaiting result" : member.status}
+        <td className={resultColor(member.status)}>{member.status === "not-run" ? "Did not run" : member.status === "waiting" ? "Awaiting result" : member.status}<label><input type="checkbox" aria-label={`Select ${member.memberId}`} disabled={!["pass","failed","setup-failed","teardown-failed","not-run","cancelled","incomplete"].includes(member.status)} checked={selected.includes(member.memberId)} onChange={e=>setSelected(old=>e.target.checked?[...old,member.memberId]:old.filter(id=>id!==member.memberId))}/> </label>
           {member.unavailableReason && <p className="mt-1 max-w-sm text-xs">{member.unavailableReason}</p>}</td>
+        <td>{progress.data?.members.find(m=>m.memberId===member.memberId)?.latest ? <AttemptLine attempt={progress.data.members.find(m=>m.memberId===member.memberId)!.latest!}/> : "No reruns"}<AttemptHistory suiteId={suiteId} memberId={member.memberId}/></td>
         <td className="whitespace-nowrap">{member.startedAt ? <time dateTime={member.startedAt}>{new Date(member.startedAt).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})}</time> : "—"}</td>
         <td>{runDuration(member.startedAt, member.finishedAt) ?? "—"}</td><td>{member.runId ? <a className="underline" href={frameworkRunHref(member.runId)}>View run</a> : "Not available yet"}</td></tr>)}</tbody></table></div>
     {failedRoutines.length ? <p className="mt-4 text-sm text-red-700">Failed: {failedRoutines.join(", ")}</p> : null}

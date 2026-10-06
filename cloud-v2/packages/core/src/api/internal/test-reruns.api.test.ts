@@ -1,0 +1,14 @@
+import {expect,test} from 'bun:test';
+import {createTestRerunsApi} from './test-reruns.api';
+import type {TestRerunService} from '../../services/test-rerun.service';
+test('internal mutations and history require the existing ingest capability',async()=>{
+ const saved=process.env.TEST_RUN_INGEST_TOKEN;process.env.TEST_RUN_INGEST_TOKEN='x'.repeat(40);
+ let calls=0;const service={async preview(body:any,actor:string){calls++;return {body,actor}},async history(){calls++;return {attempts:[]}}} as unknown as TestRerunService;
+ const app=createTestRerunsApi(service);
+ try {
+ expect((await app.request('/preview',{method:'POST',body:'{}',headers:{'content-type':'application/json'}})).status).toBe(401);
+ expect((await app.request('/suite/root/members/item/history')).status).toBe(401);expect(calls).toBe(0);
+ const response=await app.request('/preview',{method:'POST',body:'{}',headers:{'content-type':'application/json',authorization:`Bearer ${process.env.TEST_RUN_INGEST_TOKEN}`}});
+ expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('no-store');expect((await response.json() as {actor:string}).actor).toBe('internal:ingest');expect(calls).toBe(1);
+ }finally{if(saved===undefined)delete process.env.TEST_RUN_INGEST_TOKEN;else process.env.TEST_RUN_INGEST_TOKEN=saved}
+});

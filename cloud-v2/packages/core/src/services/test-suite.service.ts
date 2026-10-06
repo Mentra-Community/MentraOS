@@ -26,7 +26,7 @@ function nightlySuiteProjection(suite: TestSuite, plan: NightlyPlan, result: Nig
       || requestInputDigest(receipt.build ?? null) !== requestInputDigest(expected.build ?? null)
       || requestInputDigest(receipt.input ?? null) !== requestInputDigest(expected.input ?? null))
       throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
-    return {...member, status: receipt.status === "incomplete" ? "not-run" : receipt.status,
+    return {...member, ...(expected.build ? {build: expected.build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
       ...(receipt.unavailableReason ? {unavailableReason: receipt.unavailableReason} : {}),
       ...(receipt.runId ? {runId: receipt.runId, startedAt: receipt.runStartedAt, finishedAt: receipt.runFinishedAt} : {})};
@@ -101,6 +101,13 @@ export class TestSuiteService {
     await TestSuiteModel.updateOne({suiteId, finishedAt: {$exists: false}},
       {$set: {finishedAt, completedResult}}, {writeConcern});
     return this.detail(suiteId);
+  }
+  async originalMember(requestId: string) {
+    const rows = await TestSuiteModel.find({"payload.members.requestId": requestId}).select({suiteId:1,"payload.members":1})
+      .limit(2).read("primary").readConcern("majority").lean();
+    if (rows.length > 1) throw new TestRunError(409, "Original request belongs to multiple suites; select an explicit suite member");
+    const row = rows[0], member = (row?.payload as TestSuite | undefined)?.members.find(m=>m.requestId===requestId);
+    return row && member ? {suiteId:row.suiteId,memberId:member.memberId} : null;
   }
   async detail(suiteId: string) {
     if (!frameworkRunIdSchema.safeParse(suiteId).success) throw new TestRunError(400, "invalid suite ID");
