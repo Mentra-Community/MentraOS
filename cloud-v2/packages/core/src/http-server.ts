@@ -1,6 +1,5 @@
 import {frameworkAssetIdSchema} from "./types/framework-run.types";
 import {frameworkIdentitySchema} from "./types/framework-request.types";
-import {ROUTINE_BUNDLE_BODY_BYTES} from './types/framework-version.types';
 
 /** Only authenticated framework asset PUTs need the larger streaming ceiling. */
 export const CORE_REQUEST_BODY_BYTES = 2 * 1024 * 1024 * 1024;
@@ -29,7 +28,9 @@ export function serveCore(fetch: (request: Request) => Response | Promise<Respon
     if (!request.body || isFrameworkAssetUpload(request)) return fetch(request);
     const bundleUpload = request.method === 'POST' &&
       /^\/api\/internal\/routine-definitions\/bundles\/[a-f0-9]{64}$/.test(new URL(request.url).pathname);
-    const limit = bundleUpload ? ROUTINE_BUNDLE_BODY_BYTES : CORE_ORDINARY_BODY_BYTES;
+    // Authenticate bundle streams in Hono before their service performs bounded receipt/hash buffering.
+    if (bundleUpload) return fetch(request);
+    const limit = CORE_ORDINARY_BODY_BYTES;
     const length = request.headers.get("content-length");
     if (length && !request.headers.has("transfer-encoding")) {
       if (Number(length) > limit) {
