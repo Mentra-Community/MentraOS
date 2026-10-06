@@ -1,4 +1,5 @@
 import type {DisplayProfile} from "./types"
+import {normalizeNimoDisplayText} from "../normalization"
 
 /**
  * NIMO Dynamic Layout V1, logical canvas (not the physical framebuffer).
@@ -33,6 +34,7 @@ export const NIMO_PROFILE: DisplayProfile = {
   maxPayloadBytes: 8192,
   // Helper default only; the native transport uses the negotiated write size.
   bleChunkSize: 244,
+  normalizeText: normalizeNimoDisplayText,
 
   fontMetrics: {
     glyphWidths: new Map(
