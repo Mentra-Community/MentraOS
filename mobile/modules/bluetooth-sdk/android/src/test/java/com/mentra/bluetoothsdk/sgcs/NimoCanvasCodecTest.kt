@@ -62,6 +62,11 @@ class NimoCanvasCodecTest {
   }
 
   @Test fun labelUtf8LengthAndErrors() {
+    val dashes = NimoCanvasCodec.label("—é— - –", 0, 0, 100, 20)
+    val expectedText = "-é- - –".toByteArray(Charsets.UTF_8)
+    assertArrayEquals(expectedText, dashes.payload.copyOfRange(14, dashes.payload.size))
+    assertEquals(expectedText.size, dashes.textBytes)
+    assertEquals(expectedText.size, dashes.payload[12].toInt())
     val label = NimoCanvasCodec.label("😀é", 0, 0, 100, 20)
     assertEquals(6, label.textBytes)
     assertEquals(6, label.payload[12].toInt())
@@ -177,12 +182,12 @@ class NimoCanvasCodecTest {
   }
 
   @Test fun sceneCompilerKeepsGeometryOrderAndBorderBeforeText() {
-    val text = NimoCanvasCodec.Element("text", 10, 20, 100, 40, "hello", border = 2, radius = 3)
+    val text = NimoCanvasCodec.Element("text", 10, 20, 100, 40, "hello—world", border = 2, radius = 3)
     val rectangle = NimoCanvasCodec.Element("rect", 100, 100, 50, 20)
     val actual = NimoCanvasCodec.scene(listOf(text, rectangle)) { _, _, _ -> error("Not an image") }
     val expected = NimoCanvasCodec.replace(listOf(
       NimoCanvasCodec.rectangle(10, 20, 100, 40, 2, 3),
-      NimoCanvasCodec.label("hello", 10, 20, 100, 20),
+      NimoCanvasCodec.label("hello-world", 10, 20, 100, 20),
       NimoCanvasCodec.rectangle(100, 100, 50, 20, 1, 0)
     ))
     assertArrayEquals(expected, actual)
