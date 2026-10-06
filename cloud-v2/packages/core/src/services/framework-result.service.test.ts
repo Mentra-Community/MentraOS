@@ -529,6 +529,29 @@ test("result ingestion binds every routine lifecycle action to the complete orde
   expect(stored?.result.teardown.ready).toBe(true);
   expect(stored?.result.teardown.actions?.[0]?.status).toBe("not-run");
 
+  // Fixture providers declared by the routine are routine actions, alongside exact explicit hooks.
+  source.fixtures = [{provider: "notes-data", description: "Owned Notes data", input: {}}];
+  const fixture = {...report({id: "prepare-notes-data", instruction: "Prepare Notes data", expected: "Notes ready"}), fixtureProvider: "notes-data"};
+  const fixtureRun = {...run, result: {...run.result,
+    setup: {...run.result.setup, actions: [shared, fixture, ...setup.map(report)]},
+    teardown: {...run.result.teardown, actions: [...teardown.map(report), {...fixture, id: "cleanup:notes-data"}, shared]}}};
+  await service.ingest(fixtureRun, "mini");
+  expect(stored?.result.setup.actions?.[1]).toEqual(fixture);
+  expect(stored?.result.teardown.actions?.[1]?.fixtureProvider).toBe("notes-data");
+  for (const phase of ["setup", "teardown"] as const) {
+    const actions = fixtureRun.result[phase].actions!;
+    for (const invalid of [
+      actions.map(action => action === actions[1] ? {...action, fixtureProvider: "undeclared"} : action),
+      actions.map(action => "fixtureProvider" in action ? {...action, scope: "shared"} : action),
+      [...actions, {...fixture, id: "duplicate-fixture"}],
+      [...actions, {...fixture, id: source[phase]![0]!.id}],
+    ]) await expect(service.ingest({...fixtureRun, result: {...fixtureRun.result,
+      [phase]: {...fixtureRun.result[phase], actions: invalid}}}, "mini")).rejects.toThrow();
+    // A fixture marker must never excuse a missing explicit lifecycle hook.
+    await expect(service.ingest({...fixtureRun, result: {...fixtureRun.result,
+      [phase]: {...fixtureRun.result[phase], actions: [shared, fixture]}}}, "mini")).rejects.toThrow("complete ordered source");
+  }
+
   // Missing metadata means no routine hooks; explicit arrays from a new producer still work.
   delete source.setup;
   delete source.teardown;

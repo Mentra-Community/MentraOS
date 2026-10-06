@@ -12,7 +12,7 @@ export const frameworkAssetIdSchema = z.string().min(1).max(500)
 const id = frameworkRunIdSchema;
 const ms = z.number().finite().nonnegative();
 const lifecycleAction = z.object({id, instruction: z.string().min(1).max(2000), expected: z.string().min(1).max(2000),
-  scope: z.enum(["shared", "routine"]), status: z.enum(["passed", "failed", "cancelled", "not-run"]), durationMs: ms,
+  scope: z.enum(["shared", "routine"]), fixtureProvider: routineIdentitySchema.optional(), status: z.enum(["passed", "failed", "cancelled", "not-run"]), durationMs: ms,
   startedAt: z.string().datetime({offset: true}).optional(), finishedAt: z.string().datetime({offset: true}).optional(),
   causedBy: id.optional()}).strict();
 const failure = z.object({phase: z.enum(["setup", "test", "teardown", "evidence"]),

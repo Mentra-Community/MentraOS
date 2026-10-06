@@ -409,6 +409,7 @@ test("routine lifecycle rows report real actions without video and keep failures
           {
             id: "prepare-note",
             instruction: "Prepare a note fixture",
+            fixtureProvider: "notes-data",
             expected: "Fixture available",
             scope: "routine",
             status: "passed",
@@ -431,6 +432,7 @@ test("routine lifecycle rows report real actions without video and keep failures
           {
             id: "delete-note",
             instruction: "Remove the note fixture",
+            fixtureProvider: "notes-data",
             expected: "Fixture absent",
             scope: "routine",
             status: "failed",
@@ -481,7 +483,8 @@ test("routine lifecycle rows report real actions without video and keep failures
     html.indexOf('aria-label="Teardown details"'),
     html.indexOf('<h3 class="font-semibold">Evidence</h3>'),
   )
-  expect(setup).toContain("Prepare a note fixture")
+  expect(setup.slice(0, setup.indexOf("<details"))).toContain("Prepare a note fixture")
+  expect(teardown.slice(0, teardown.indexOf("<details"))).toContain("Remove the note fixture")
   expect(setup).toContain("2s")
   expect(setup).toContain("Started ")
   expect(setup).toContain("Shared framework setup")
