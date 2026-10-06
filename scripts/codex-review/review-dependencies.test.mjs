@@ -18,6 +18,9 @@ function fixture() {
 test("compatible package storage resolves external packages while nested links stay in the approved roots", () => {
   const f = fixture(), nested = join(f.storage, "tools/mentra-e2e/node_modules")
   mkdirSync(nested, {recursive: true});mkdirSync(join(f.anchor, "tools/mentra-e2e"), {recursive: true})
+  mkdirSync(join(f.review, "tools/mentra-e2e"), {recursive: true})
+  writeFileSync(join(f.review, "tools/mentra-e2e/package.json"), '{}')
+  writeFileSync(join(f.storage, "tools/mentra-e2e/package.json"), '{}')
   symlinkSync(nested, join(f.anchor, "tools/mentra-e2e/node_modules"))
   const pkg = join(f.storage, "node_modules/external")
   mkdirSync(pkg);writeFileSync(join(pkg, "index.cjs"), 'module.exports = "external package"')

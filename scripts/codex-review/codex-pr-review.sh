@@ -180,6 +180,7 @@ review_dependencies() {
   for name in node_modules tools/mentra-e2e/node_modules; do
     source="$repo_dir/$name"; destination="$wt/$name"
     [[ "$mode" != link || -d "$(dirname "$destination")" ]] || continue
+    [[ "$mode" != link || "$name" != tools/mentra-e2e/node_modules || -f "$wt/tools/mentra-e2e/package.json" ]] || continue
     if [[ -d "$wt" ]]; then
       [[ -z "$(git -C "$wt" ls-files -- "$name")" ]] || fail "review dependency $name overlaps tracked source"
     fi

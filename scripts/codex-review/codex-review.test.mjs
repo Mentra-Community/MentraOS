@@ -164,6 +164,10 @@ describe("codex-pr-review.sh lifecycle", () => {
     writeFileSync(join(f.repo, ".gitignore"), "node_modules\n")
     sh(f.repo, "git add .gitignore && git commit -qm ignore && git push -q origin main")
     sh(f.repo, "git checkout -q feature && git merge -q main && mkdir -p tools/mentra-e2e && touch tools/mentra-e2e/source && git add . && git commit -qm runner && git push -q origin feature && git checkout -q main")
+    writeFileSync(join(shared, "package.json"), '{}')
+    sh(f.repo, "git checkout -q feature")
+    writeFileSync(join(f.repo, "tools/mentra-e2e/package.json"), '{}')
+    sh(f.repo, "git add . && git commit -qm package && git push -q origin feature && git checkout -q main")
     sh(f.origin, 'git update-ref refs/pull/1/head "$(git rev-parse refs/heads/feature)"')
     mkdirSync(join(f.repo, "tools/mentra-e2e"), {recursive: true})
     symlinkSync(realpathSync(shared), join(f.repo, "node_modules"))
@@ -248,6 +252,12 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(result.code, result.out).toBe(0)
     expect(existsSync(join(f.worktree, "tools/mentra-e2e"))).toBe(false)
     expect(codexCalls(f)).toBe(1)
+    expect(run(f, [f.repo, "1"]).code).toBe(0)
+    sh(f.repo, "git checkout -q feature && mkdir -p tools/mentra-e2e && touch tools/mentra-e2e/README.md && git add tools/mentra-e2e/README.md && git commit -qm migration && git push -q origin feature && git checkout -q main")
+    sh(f.origin, 'git update-ref refs/pull/1/head "$(git rev-parse refs/heads/feature)"')
+    const migrated = run(f, [f.repo, "1"])
+    expect(migrated.code, migrated.out).toBe(0)
+    expect(existsSync(join(f.worktree, "tools/mentra-e2e/node_modules"))).toBe(false)
   }, 90_000)
 
   test("the standalone project runner resolves a relative checkout against its caller", () => {
