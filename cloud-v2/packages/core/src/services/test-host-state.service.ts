@@ -236,6 +236,17 @@ export class TestHostStateService {
       } else history.push(interval)
     }
     history.sort((a, b) => a.incarnationGeneration - b.incarnationGeneration)
+    // A late history-bearing restart may already have inserted the successor. Move the process stop
+    // to its applicable interval while preserving the earlier controller replacement boundary.
+    for (let index = 1; index < history.length; index++) {
+      const prior = history[index - 1]!, next = history[index]!
+      if (prior.endReason === 'observed-stop' && Date.parse(prior.endedAt!) >= Date.parse(next.effectiveAt) &&
+        sameStoppedProcess({installationId: prior.binding.installationId, process: prior.process, observedAt: prior.endedAt!},
+          next.binding.installationId, next.process)) {
+        prior.endedAt = next.effectiveAt
+        prior.endReason = 'accepted-replacement'
+      }
+    }
     if (snapshot.frameworkBinding) {
       const last = history.at(-1),
         same =
