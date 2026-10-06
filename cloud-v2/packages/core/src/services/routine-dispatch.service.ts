@@ -41,7 +41,7 @@ export class RoutineDispatchService {
     if (existing) return this.originalRequest(selected, existing);
     try {
       const definition = selected.routineSource
-        ? await this.definitions.getExact(selected.routineId, selected.platform, selected.routineSource.commit)
+        ? await this.definitions.getExact(selected.routineId, selected.platform, selected.routineSource.commit, true)
         : await this.definitions.getCurrent(selected.routineId, selected.platform);
       if (!definition) throw new TestRunError(409, "Routine is not enrolled for this platform");
       if (selected.routineSource) {

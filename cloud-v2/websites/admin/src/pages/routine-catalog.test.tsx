@@ -19,7 +19,7 @@ import {RoutineSearch, EMPTY_ROUTINE_FILTERS} from "../components/routine-search
 import type {TestHistoryEntry} from "../../../../packages/core/src/types/test-history.types"
 import {readTestRunLink} from "../lib/test-run-links"
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types"
-import {frameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types"
+import {frameworkRunSchema, recordedFrameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types"
 
 const routine = routineEnrollmentSchema.parse({
   routineId: "notes-phone",
@@ -45,6 +45,34 @@ const routine = routineEnrollmentSchema.parse({
       path: "routines/notes-phone/routine.ts",
     },
   },
+})
+
+test('historical recorded runs render unknown provenance without fabricating identities', () => {
+  const run = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: 'historical-run', hostId: 'mini', routineId: 'notes-phone',
+    definitionRevision: 'c'.repeat(40), platform: 'ios-on-mac', laneId: 'mac',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: '2026-10-03T19:00:00Z', finishedAt: '2026-10-03T19:01:00Z', assets: [],
+    result: {runId: 'historical-run', finishedAt: '2026-10-03T19:01:00Z', setup: {status: 'passed'}, test: 'passed',
+      steps: [{id: 'observe', status: 'passed', durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [], evidence: [], timing: {startedAt: '2026-10-03T19:00:00Z', setupMs: 0, testMs: 1, teardownMs: 0}}})
+  const client = new QueryClient()
+  client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome: 'pass', uploadsComplete: true, evidenceStatus: 'complete'})
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>)
+  expect(html).toContain('Framework provenance unknown')
+  expect(html).toContain('Routine bundle provenance unknown')
+  expect(html).not.toContain('Routine API 1')
+  expect(run).not.toHaveProperty('routineSource')
+  expect(run).not.toHaveProperty('frameworkBinding')
+})
+
+test('historical request display explicitly reports missing routine archive provenance', () => {
+  const client = new QueryClient()
+  client.setQueryData(['framework-run', 'old-request'], {kind: 'request', request: {requestId: 'old-request', hostId: 'mini',
+    inputSha256: 'd'.repeat(64), routineId: 'old-product', definitionRevision: 'a'.repeat(40), platform: 'android', laneId: 'phone', state: 'terminal', terminalStatus: 'not-run',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)}}})
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId='old-request'/></QueryClientProvider>)
+  expect(html).toContain('Routine bundle provenance unknown')
+  expect(html).not.toContain('Requires routine API')
 })
 
 test("catalog search combines title or description substrings with exact platform and declared glasses models", () => {

@@ -1,3 +1,4 @@
+import {RoutineCollectionModel} from '../models/routine-collection.model';
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {testRoutineSource} from "../testing/framework-fixtures";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
@@ -136,13 +137,13 @@ test('omitting verification cannot make the same unmerged candidate SHA ordinary
 });
 
 test('current default selection waits for a complete published collection', async () => {
-  const find = spyOn(RoutineDefinitionModel, 'findOne').mockReturnValue({sort() {return this;}, select() {return this;},
-    lean: async () => null} as unknown as ReturnType<typeof RoutineDefinitionModel.findOne>);
+  const find = spyOn(RoutineCollectionModel, 'findOne').mockReturnValue({read() {return this;}, readConcern() {return this;}, sort() {return this;}, select() {return this;},
+    lean: async () => null} as unknown as ReturnType<typeof RoutineCollectionModel.findOne>);
   try {
     const service = new RoutineDefinitionService(undefined, undefined, null);
     expect(await service.current()).toEqual([]);
     expect(await service.getCurrent('notes', 'android')).toBeNull();
-    expect(find.mock.calls[0]?.[0]).toEqual({collectionVersion: {$gte: 1}});
+    expect(find).toHaveBeenCalled();
   } finally {find.mockRestore();}
 });
 
@@ -166,39 +167,86 @@ test("lifecycle definitions retain optional hook metadata and unique action IDs 
   ]) await expect(submit(invalid)).rejects.toThrow("Invalid routine definition");
 });
 
-test('complete collection publication is atomic and cannot select a late older source', async () => {
-  const rows = new Map<string, any>();
+test('collection manifest freezes membership, version and rows across retries and concurrent reads', async () => {
+  const rows = new Map<string, any>(), collections = new Map<string, any>();
   const identity = (query: any) => query.routineId + ':' + query.platform + ':' + query.definitionRevision;
   const chain = (get: () => unknown) => ({read() {return this;}, readConcern() {return this;}, sort() {return this;}, select() {return this;}, session() {return this;}, lean: async () => get()});
-  const find = spyOn(RoutineDefinitionModel, 'findOne').mockImplementation((query?: any) => chain(() => query?.collectionVersion
-    ? [...rows.values()].sort((a, b) => b.collectionVersion - a.collectionVersion)[0] ?? null : rows.get(identity(query)) ?? null) as any);
+  const find = spyOn(RoutineDefinitionModel, 'findOne').mockImplementation((query?: any) => chain(() => rows.get(identity(query)) ?? null) as any);
+  const publication = spyOn(RoutineCollectionModel, 'findOne').mockImplementation((query?: any) => chain(() => {
+    const values = [...collections.values()];
+    return query?.$or ? values.find(row => query.$or.some((part: any) => part.commit === row.commit || part.version === row.version)) ?? null
+      : query?.commit ? collections.get(query.commit) ?? null : values.sort((a, b) => b.version - a.version)[0] ?? null;
+  }) as any);
   const all = spyOn(RoutineDefinitionModel, 'find').mockImplementation((query?: any) => chain(() => [...rows.values()]
-    .filter(row => row.collectionVersion === query.collectionVersion).map(row => ({routineId: row.routineId,platform:row.platform,definitionRevision:row.definitionRevision,
-      definitionSha256:row.definitionSha256,definition:row.definition,routineSource:row.routineSource}))) as any);
+    .filter(row => row.definitionRevision === query.definitionRevision && query.$or.some((member: any) => member.routineId === row.routineId && member.platform === row.platform))
+    .map(({ordinaryEnrolledAt: _at, ...row}) => row)) as any);
   const insert = spyOn(RoutineDefinitionModel, 'create').mockImplementation(async (values: any) => {
-    for (const row of values) {rows.set(identity(row), structuredClone(row));}
-    return values;
+    for (const row of values) rows.set(identity(row), structuredClone(row)); return values;
+  });
+  const savePublication = spyOn(RoutineCollectionModel, 'create').mockImplementation(async (values: any) => {
+    for (const row of values) collections.set(row.commit, structuredClone(row)); return values;
   });
   const update = spyOn(RoutineDefinitionModel, 'updateOne').mockImplementation(((query: any, values: any) => {
     Object.assign(rows.get(identity(query)), values.$set); return Promise.resolve({matchedCount: 1});
   }) as any);
-  const transaction = spyOn(RoutineDefinitionModel.db, "transaction").mockImplementation((async (fn: any) => {
-    const before = structuredClone(rows);
-    try {await fn({});} catch (error) {rows.clear(); for (const [key, value] of before) rows.set(key, value); throw error;}
+  const transaction = spyOn(RoutineDefinitionModel.db, 'transaction').mockImplementation((async (fn: any) => {
+    const beforeRows = structuredClone(rows), beforeCollections = structuredClone(collections);
+    try {await fn({});} catch (error) {
+      rows.clear(); for (const [key, value] of beforeRows) rows.set(key, value);
+      collections.clear(); for (const [key, value] of beforeCollections) collections.set(key, value);
+      throw error;
+    }
   }) as any);
   const service = new RoutineDefinitionService(undefined, undefined, null);
-  const at = (revision: string) => {const row = enrollment(), definition = {...row.definition, source: {...row.definition.source, revision}};
-    return {...row, definition, definitionRevision: revision, definitionSha256: requestInputDigest(definition), routineSource: testRoutineSource(revision)};};
+  const at = (revision: string, id = 'no-glasses') => {
+    const row = enrollment(), definition = {...row.definition, id, source: {...row.definition.source, revision, path: `routines/${id}/routine.ts`}};
+    return {...row, routineId: id, definition, definitionRevision: revision,
+      definitionSha256: requestInputDigest(definition), routineSource: testRoutineSource(revision)};
+  };
   try {
-    const newest = at('c'.repeat(40));
-    await service.publishCollection({commit:newest.definitionRevision,version:30,definitions:[newest]});
-    expect((await service.current())[0]?.definitionRevision).toBe(newest.definitionRevision);
-    const old = at('b'.repeat(40));
-    await service.publishCollection({commit:old.definitionRevision,version:20,definitions:[old]});
-    expect((await service.current())[0]?.definitionRevision).toBe(newest.definitionRevision);
-    const conflict = {...newest, routineSource:{...newest.routineSource,bundle:{...newest.routineSource.bundle,sha256:'f'.repeat(64)}}};
-    await expect(service.publishCollection({commit:newest.definitionRevision,version:31,definitions:[conflict]})).rejects.toThrow('conflict');
-    expect((await service.current())[0]?.definitionRevision).toBe(newest.definitionRevision);
-    await expect(service.publishCollection({commit:old.definitionRevision,version:40,definitions:[old,old]})).rejects.toThrow('identity');
-  } finally {find.mockRestore(); all.mockRestore(); insert.mockRestore(); update.mockRestore(); transaction.mockRestore();}
+    const a = at('c'.repeat(40)), b = at(a.definitionRevision, 'notes'), c = at(a.definitionRevision, 'captions');
+    const original = {commit:a.definitionRevision, version:30, definitions:[a,b]};
+    await service.publishCollection(original);
+    expect(await service.current()).toEqual([a,b]);
+    const counts = [insert.mock.calls.length, savePublication.mock.calls.length];
+    await service.publishCollection({...original, definitions:[b,a]});
+    expect([insert.mock.calls.length, savePublication.mock.calls.length]).toEqual(counts);
+    for (const changed of [
+      {...original, definitions:[a,c]}, {...original, definitions:[a]}, {...original, definitions:[a,b,c]},
+      {...original, version:31}, {commit:'b'.repeat(40), version:30, definitions:[at('b'.repeat(40))]},
+    ]) await expect(service.publishCollection(changed)).rejects.toThrow('manifest conflicts');
+    expect(await service.current()).toEqual([a,b]);
+    const conflict = {...a, routineSource:{...a.routineSource,bundle:{...a.routineSource.bundle,sha256:'f'.repeat(64)}}};
+    await expect(service.publishCollection({...original, definitions:[conflict,b]})).rejects.toThrow('manifest conflicts');
+    await expect(service.publishCollection({...original, definitions:[a,a]})).rejects.toThrow('identity');
+    await expect(service.publishCollection({version:-1})).rejects.toThrow('Invalid published collection');
+    await service.publishCollection({commit:'b'.repeat(40), version:20, definitions:[at('b'.repeat(40))]});
+    expect(await service.current()).toEqual([a,b]);
+    const next = at('d'.repeat(40));
+    // A reader which already chose a receipt must still read that exact membership after newer publication.
+    const readRows = all.getMockImplementation()!;
+    all.mockImplementation(((query: any) => chain(async () => {
+      await service.publishCollection({commit:next.definitionRevision, version:40, definitions:[next]});
+      const result = readRows(query) as any; return result.lean();
+    })) as any);
+    expect(await service.current()).toEqual([a,b]);
+    all.mockImplementation(readRows);
+    expect(await service.current()).toEqual([next]);
+    const legacy = at('e'.repeat(40));
+    rows.set(identity(legacy), {...legacy, routineSource: undefined});
+    await expect(service.publishCollection({commit:legacy.definitionRevision, version:50, definitions:[legacy]})).rejects.toThrow('bytes conflict');
+    expect(await service.current()).toEqual([next]);
+  } finally {find.mockRestore(); publication.mockRestore(); all.mockRestore(); insert.mockRestore(); savePublication.mockRestore(); update.mockRestore(); transaction.mockRestore();}
+});
+
+test('exact manual selection requires an ordinary enrollment while candidate readers retain exact source', async () => {
+  const row = enrollment();
+  const find = spyOn(RoutineDefinitionModel, 'findOne').mockImplementation((query?: any) => ({read() {return this;}, readConcern() {return this;}, lean: async () =>
+    query?.ordinaryEnrolledAt ? null : row}) as any);
+  try {
+    const service = new RoutineDefinitionService(undefined, undefined, null);
+    expect(await service.getExact(row.routineId, row.platform, row.definitionRevision)).toEqual(row);
+    expect(await service.getExact(row.routineId, row.platform, row.definitionRevision, true)).toBeNull();
+    expect(find.mock.calls[1]?.[0]).toMatchObject({ordinaryEnrolledAt: {$exists: true}});
+  } finally {find.mockRestore();}
 });

@@ -6,7 +6,7 @@ import type {FrameworkRunPage} from "../types/test-history.types";
 import {z} from "zod";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {TestRequestModel} from "../models/test-request.model";
-import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
+import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema, recordedFrameworkRunSchema, type FrameworkRun, type RecordedFrameworkRun} from "../types/framework-run.types";
 import {requestInputDigest, TestRequestConflict} from "./test-request.service";
 import {frameworkBuildSchema} from "../types/framework-request.types";
 import {TestRunError} from "./test-result-error";
@@ -31,7 +31,7 @@ export interface FrameworkResultRepository {
   getByRun(runId: string): Promise<StoredFrameworkRun | null>;
   getAsset(identity: {requestId: string} | {runId: string}, assetId: string): Promise<StoredFrameworkAsset | null>;
 }
-export interface StoredFrameworkRun {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean}
+export interface StoredFrameworkRun {payload: RecordedFrameworkRun; payloadSha256: string; uploadsComplete: boolean}
 export interface StoredFrameworkAsset {runId: string; asset: FrameworkRun["assets"][number] | null}
 export interface FrameworkUploadAcknowledgements {
   list(runId: string): Promise<Array<{assetId: string; sha256: string; sizeBytes: number}>>;
@@ -52,7 +52,7 @@ const buildDigest = (input: unknown): string | null => {
   try {return requestInputDigest(input);}
   catch (error) {if (error instanceof TestRequestConflict) return null; throw error;}
 };
-const definitionFor = async (run: FrameworkRun): Promise<RoutineEnrollment | null> =>
+const definitionFor = async (run: RecordedFrameworkRun): Promise<RoutineEnrollment | null> =>
   await RoutineDefinitionModel.findOne({routineId: run.routineId, platform: run.platform,
     definitionRevision: run.definitionRevision}).read("primary").readConcern("majority").lean() as RoutineEnrollment | null;
 
@@ -66,11 +66,11 @@ const mongoRepository: FrameworkResultRepository = {
   },
   async getByRequest(requestId) {
     const row = await TestRunModel.findOne({...nativeRunFilter, requestId}).read("primary").readConcern("majority").lean();
-    return row ? {payload: row.payload as FrameworkRun, payloadSha256: row.payloadSha256, uploadsComplete: row.uploadsComplete} : null;
+    return row ? {payload: row.payload as RecordedFrameworkRun, payloadSha256: row.payloadSha256, uploadsComplete: row.uploadsComplete} : null;
   },
   async getByRun(runId) {
     const row = await TestRunModel.findOne({...nativeRunFilter, runId}).read("primary").readConcern("majority").lean();
-    return row ? {payload: row.payload as FrameworkRun, payloadSha256: row.payloadSha256, uploadsComplete: row.uploadsComplete} : null;
+    return row ? {payload: row.payload as RecordedFrameworkRun, payloadSha256: row.payloadSha256, uploadsComplete: row.uploadsComplete} : null;
   },
   async getAsset(identity, assetId) {
     // Read the declaration from the frozen payload without transferring the
@@ -108,7 +108,7 @@ export class FrameworkResultService {
   constructor(private readonly repository: FrameworkResultRepository = mongoRepository,
     private readonly request: (id: string) => Promise<ResultRequestBinding | null> = requestBinding,
     private readonly terminal: (run: FrameworkRun) => Promise<void> = projectTerminal,
-    private readonly definition: (run: FrameworkRun) => Promise<RoutineEnrollment | null> = definitionFor,
+    private readonly definition: (run: RecordedFrameworkRun) => Promise<RoutineEnrollment | null> = definitionFor,
     private readonly assets: TestAssetService = new TestAssetService(),
     private readonly acknowledgements: FrameworkUploadAcknowledgements = uploadAcknowledgements) {}
   async ingest(input: unknown, authenticatedHostId: string) {
@@ -235,8 +235,8 @@ export class FrameworkResultService {
 
   private async describe(stored: StoredFrameworkRun | null) {
     if (!stored) throw new TestRunError(404, "Framework run was not found");
-    const definition = await this.definition(stored.payload);
-    return {run: stored.payload, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(stored.payload), uploadsComplete: stored.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(stored.payload) ? "complete" : "failed"};
+    const run = recordedFrameworkRunSchema.parse(stored.payload), definition = await this.definition(run);
+    return {run, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(run), uploadsComplete: stored.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed"};
   }
 
   async media(requestId: string, assetId: string, request: Request) {

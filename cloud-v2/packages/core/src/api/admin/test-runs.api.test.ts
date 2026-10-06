@@ -219,3 +219,24 @@ test("restoration list has a bounded uncached route outside generic run identiti
   expect(response.status).toBe(200); expect(response.headers.get("Cache-Control")).toBe("no-store");
   expect(await response.json()).toMatchObject({hosts: [], truncated: false});
 });
+
+test('historical request detail preserves an absent routine source and original digest without enabling new admission', async () => {
+  const input = {routineId: 'old-product', definitionRevision: 'a'.repeat(40), platform: 'android', laneId: 'phone', resources: [],
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)}};
+  const inputSha256 = requestInputDigest(input), before = JSON.stringify(input);
+  const row: StoredTestRequest = {requestId: 'old-request', hostId: 'mini', input, inputSha256, state: 'terminal', terminalStatus: 'not-run',
+    hostRejection: {requestId: 'old-request', hostId: 'mini', inputSha256, rejectedAt: '2026-10-03T11:00:00Z', code: 'missing-definition', reason: 'Original source was unavailable.'}};
+  class Results extends FrameworkResultService {
+    override async detailByRun(): Promise<never> {throw new TestRunError(404, 'missing result');}
+    override async detail(): Promise<never> {throw new TestRunError(404, 'missing result');}
+  }
+  class Requests extends TestRequestService {override async get() {return row;}}
+  const response = await createTestRunAdminApi(undefined, undefined, new Results(), new Requests()).request('/old-request');
+  expect(response.status).toBe(200);
+  const body = await response.json() as {request: unknown};
+  expect(body).toMatchObject({kind: 'request', request: {requestId: row.requestId, inputSha256, definitionRevision: input.definitionRevision}});
+  expect(body.request).not.toHaveProperty('routineSource');
+  expect(JSON.stringify(input)).toBe(before);
+  expect(requestInputDigest(input)).toBe(inputSha256);
+  await expect(new Requests().submit('new-request', 'mini', input)).rejects.toMatchObject({status: 400});
+});

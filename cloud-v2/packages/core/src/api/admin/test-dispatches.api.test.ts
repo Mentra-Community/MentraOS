@@ -60,6 +60,20 @@ test("direct admission cannot bypass immutable build resolver or host bindings",
   expect(fresh.admitted()).toBeUndefined();
 })
 
+test("direct admission preserves an explicit framework floor and its immutable retry digest", async () => {
+  const selected = fixture();
+  expect((await post(selected.app, selection)).status).toBe(202);
+  const input = {...selected.admitted()!.input as Record<string, unknown>, minimumFrameworkVersion: 123};
+  const direct = fixture(), request = {requestId: "framework-floor", hostId: "mini", input};
+  expect((await post(direct.app, request, "/test-dispatches")).status).toBe(202);
+  expect(direct.admitted()!.input).toEqual(input);
+  expect(direct.admitted()!.inputSha256).toBe(requestInputDigest(input));
+  expect((await post(direct.app, request, "/test-dispatches")).status).toBe(202);
+  expect((await post(direct.app, {...request, input: {...input, minimumFrameworkVersion: 124}}, "/test-dispatches")).status).toBe(409);
+  const {minimumFrameworkVersion: _minimum, ...noMinimum} = input;
+  expect((await post(direct.app, {...request, input: noMinimum}, "/test-dispatches")).status).toBe(409);
+});
+
 test("dispatch freshness uses Core receipt time rather than a skewed controller clock", async () => {
  for (const skew of [-180000, 86400000]) {
   const live=fixture(false,false,skew);expect((await post(live.app,selection)).status).toBe(202);

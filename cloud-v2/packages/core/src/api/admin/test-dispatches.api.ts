@@ -83,7 +83,7 @@ export function createTestDispatchAdminApi(service = new TestRequestService(), d
     if (!snapshot || Date.now() - Date.parse(snapshot.receivedAt) > HOST_STATE_FRESHNESS_MS || !lane || !execution)
       return c.json({error: "host_unavailable"}, 409);
     const expected = routineAdmissionInput(definition, resolved, {hostId, laneId: input.laneId}, snapshot,
-      Date.now(), {requireAutomatic: false});
+      Date.now(), {requireAutomatic: false, minimumFrameworkVersion: input.minimumFrameworkVersion});
     if (requestInputDigest(expected.build) !== requestInputDigest(input.build))
       return c.json({error: "selected_build_changed"}, 409);
     if (requestInputDigest(expected) !== requestInputDigest(input))

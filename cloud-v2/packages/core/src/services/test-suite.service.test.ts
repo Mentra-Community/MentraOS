@@ -12,6 +12,24 @@ beforeEach(() => {
     read() {return this;}, readConcern() {return this;}, lean: async () => []} as any));
 });
 afterEach(() => {for (const mock of mocks.splice(0)) mock.mockRestore();});
+test('historical suite member results remain readable without routine or framework provenance', async () => {
+  const startedAt = '2026-10-01T11:00:00Z', finishedAt = '2026-10-01T11:01:00Z';
+  const run = {schemaVersion: 1, hostId: 'mini', requestId: 'old-member', routineId: 'notes', definitionRevision: 'a'.repeat(40),
+    platform: 'ios-on-mac', laneId: 'mac', build: {repository: 'Mentra-Community/MentraOS', headSha: 'b'.repeat(40), channel: 'dev'},
+    startedAt, finishedAt, assets: [], result: {runId: 'old-member', finishedAt, setup: {status: 'passed'}, test: 'passed',
+      steps: [{id: 'observe', status: 'passed', durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [], evidence: [], timing: {startedAt, setupMs: 0, testMs: 1, teardownMs: 0}}};
+  const payload = {suiteId: 'historical-suite', channel: 'dev', trigger: 'nightly', startedAt, build: {headSha: 'b'.repeat(40)},
+    members: [{memberId: 'mac', requestId: run.requestId, routineId: 'notes', platform: 'ios-on-mac', definitionRevision: run.definitionRevision}]};
+  const before = JSON.stringify(run);
+  mocks.push(spyOn(TestSuiteModel, 'findOne').mockReturnValue({read() {return this;}, readConcern() {return this;},
+    async lean() {return {payload};}} as any));
+  mocks.push(spyOn(TestRunModel, 'find').mockReturnValue({select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;},
+    async lean() {return [{payload: run, uploadsComplete: true}];}} as any));
+  const result = await new TestSuiteService().detail(payload.suiteId);
+  expect(result.members[0]).toMatchObject({runId: run.requestId, status: 'pass', publicationComplete: true});
+  expect(JSON.stringify(run)).toBe(before);
+});
 test("query overflow refuses a verdict rather than truncating duplicate evidence", async () => {
   mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue({read() {return this;}, readConcern() {return this;}, lean: async () => ({payload: {suiteId: "nightly-1", members: [{memberId: "mac", requestId: "req"}]}})} as any));
   const query = {select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => Array.from({length: 201}, () => ({}))};
@@ -151,7 +169,6 @@ test("persisted suite completion lists passing members with incomplete publicati
 
 test("suite rejection projects the exact request reason without fabricating a run", async () => {
   const input = {
-    routineSource: testRoutineSource(),
     routineId: "another-product",
     platform: "android",
     definitionRevision: "a".repeat(40),

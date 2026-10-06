@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 import {TestRunModel} from "../models/test-run.model";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunSchema} from "../types/framework-run.types";
-import {backfillFrameworkRunSummaries, createFrameworkRunSummaryProjection, readFrameworkRunSummary, startFrameworkRunSummaryBackfill, summarizeFrameworkRun} from "./framework-run-summary.service";
+import {backfillFrameworkRunSummaries, createFrameworkRunSummaryProjection, createRecordedFrameworkRunSummaryProjection, readFrameworkRunSummary, startFrameworkRunSummaryBackfill, summarizeFrameworkRun} from "./framework-run-summary.service";
 import {requestInputDigest} from "./test-request.service";
 import {TestHistoryService, testHistoryQueries} from "./test-history.service";
 import {FrameworkResultService} from "./framework-result.service";
@@ -38,7 +38,7 @@ test("summary projection retains the full validator and digest before deriving a
   expect(() => createFrameworkRunSummaryProjection(run, "f".repeat(64))).toThrow("digest");
   const projection = createFrameworkRunSummaryProjection(run, requestInputDigest(run));
   const {uploadsComplete: _uploads, ...expected} = summarizeFrameworkRun(run, false);
-  expect(projection.summary).toEqual({...expected, platform: run.platform})
+  expect(projection.summary).toEqual({...expected, platform: run.platform, routineSource: run.routineSource, frameworkBinding: run.frameworkBinding})
   expect(projection.summary.routineSource).toEqual(run.routineSource)
   expect(projection.summary.frameworkBinding).toEqual(run.frameworkBinding)
 })
@@ -51,6 +51,51 @@ test("compact summaries count passed and skipped test steps independently of the
   }));
   const projection = createFrameworkRunSummaryProjection(run, requestInputDigest(run));
   expect(projection.summary.stepCounts).toEqual({passed: 1, total: 3, skipped: 1});
+});
+
+test('historical payloads without provenance project without changing bytes or inventing identities', async () => {
+  const {routineSource: _source, frameworkBinding: _binding, ...old} = fixture();
+  const payloadSha256 = requestInputDigest(old), before = JSON.stringify(old);
+  const projection = createRecordedFrameworkRunSummaryProjection(old, payloadSha256);
+  expect(projection.payloadSha256).toBe(payloadSha256);
+  expect(projection.summary).not.toHaveProperty('routineSource');
+  expect(projection.summary).not.toHaveProperty('frameworkBinding');
+  expect(JSON.stringify(old)).toBe(before);
+  expect(requestInputDigest(old)).toBe(payloadSha256);
+  expect(() => createFrameworkRunSummaryProjection(old, payloadSha256)).toThrow();
+  const find = spyOn(TestRunModel, 'findOne').mockReturnValue({select() {return this;}, read() {return this;},
+    readConcern() {return this;}, setOptions() {return this;}, async lean() {return {payload: old, payloadSha256};}} as never);
+  const update = spyOn(TestRunModel, 'updateOne').mockResolvedValue({} as never);
+  try {
+    const summary = await readFrameworkRunSummary({runId: old.requestId, payloadSha256, uploadsComplete: true});
+    expect(summary.outcome).toBe('pass');
+    expect(summary).not.toHaveProperty('routineSource');
+    const updateArguments = update.mock.calls[0] as unknown as unknown[];
+    expect(updateArguments[1]).toEqual({$set: {summaryProjection: projection}});
+    expect(requestInputDigest(old)).toBe(payloadSha256);
+    const history = new TestHistoryService({detail: async () => {throw new Error('not a suite');}}, async () => [[{
+      historyKind: 'run', historyId: old.requestId, historyStartedAt: new Date(old.startedAt), requestId: old.requestId,
+      payloadSha256, summaryProjection: projection, uploadsComplete: true,
+    }], []]);
+    expect((await history.list()).entries[0]).toMatchObject({kind: 'run', runId: old.requestId, outcome: 'pass'});
+    expect((await history.list()).entries[0]).not.toHaveProperty('frameworkBinding');
+  } finally {find.mockRestore(); update.mockRestore();}
+});
+
+test('existing historical summary and digest remain unchanged when provenance and step counts are absent', async () => {
+  const {routineSource: _source, frameworkBinding: _binding, ...old} = fixture();
+  const payloadSha256 = requestInputDigest(old), projection = createRecordedFrameworkRunSummaryProjection(old, payloadSha256);
+  delete projection.summary.stepCounts;
+  projection.summarySha256 = requestInputDigest({summary: projection.summary, definitionRevision: projection.definitionRevision,
+    recordingAssetId: projection.recordingAssetId ?? null});
+  const before = JSON.stringify(projection), find = spyOn(TestRunModel, 'findOne').mockImplementation(() => {throw new Error('must not reload historical projection');});
+  const update = spyOn(TestRunModel, 'updateOne').mockImplementation(() => {throw new Error('must not rewrite historical projection');});
+  try {
+    expect((await readFrameworkRunSummary({runId: old.requestId, payloadSha256, summaryProjection: projection})).outcome).toBe('pass');
+    expect(JSON.stringify(projection)).toBe(before);
+    expect(find).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  } finally {find.mockRestore(); update.mockRestore();}
 });
 
 test("verified older summaries gain step counts from their frozen payload", async () => {

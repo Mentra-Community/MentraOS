@@ -548,7 +548,7 @@ test("result ingestion binds every routine lifecycle action to the complete orde
 
 test("old saved lifecycle omissions remain readable without invented action reports", async () => {
   const {frameworkRunSchema} = await import('../types/framework-run.types');
-  const old = frameworkRunSchema.parse({
+  const {routineSource: _source, frameworkBinding: _binding, ...old} = frameworkRunSchema.parse({
     schemaVersion: 1,
     routineSource: testRoutineSource(),
     frameworkBinding: testFrameworkBinding(),
@@ -567,14 +567,24 @@ test("old saved lifecycle omissions remain readable without invented action repo
       teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [],
       timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}},
   })
-  const service = new FrameworkResultService({async insert() {},
-    async getByRequest() {return {payload: old, payloadSha256: "f".repeat(64), uploadsComplete: true};},
+  const payloadSha256 = requestInputDigest(old), before = JSON.stringify(old);
+  let writes = 0;
+  const service = new FrameworkResultService({async insert() {writes++;},
+    async getByRequest() {return {payload: old, payloadSha256, uploadsComplete: true};},
     async getByRun() {return null;}, async getAsset() {return null;}}, async () => null, async () => {}, async () => null);
   const detail = await service.detail("old-run");
   expect(detail.run).toEqual(old);
   expect(detail.outcome).toBe("pass");
   expect(detail.run.result.setup).not.toHaveProperty("actions");
   expect(detail.run.result.teardown).not.toHaveProperty("actions");
+  expect(detail.run).not.toHaveProperty('routineSource');
+  expect(detail.run).not.toHaveProperty('frameworkBinding');
+  expect(JSON.stringify(old)).toBe(before);
+  expect(requestInputDigest(old)).toBe(payloadSha256);
+  await expect(service.ingest(old, 'mini')).rejects.toMatchObject({status: 400});
+  await expect(service.ingest({...old, routineSource: testRoutineSource()}, 'mini')).rejects.toMatchObject({status: 400});
+  await expect(service.ingest({...old, frameworkBinding: testFrameworkBinding()}, 'mini')).rejects.toMatchObject({status: 400});
+  expect(writes).toBe(0);
 })
 
 test("asset reads project one immutable declaration and preserve missing and unauthorized outcomes", async () => {
