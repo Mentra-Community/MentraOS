@@ -37,7 +37,7 @@ export interface FrameworkUploadAcknowledgements {
   complete(stored: StoredFrameworkRun): Promise<void>;
 }
 export {nativeRunFilter, summarizeFrameworkRun} from "./framework-run-summary.service";
-import {createFrameworkRunSummaryProjection, nativeRunFilter, readFrameworkRunSummary} from "./framework-run-summary.service";
+import {createFrameworkRunSummaryProjection, nativeRunFilter, readFrameworkRunSummary, verifiedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 export interface ResultRequestBinding {hostId: string; catalogEligible?: boolean;
   input: {routineId: string; definitionRevision: string; platform: string; laneId: string; build: unknown; verification?: CandidateVerification}}
 const requestBinding = async (requestId: string): Promise<ResultRequestBinding | null> => {
@@ -193,6 +193,22 @@ export class FrameworkResultService {
 
   async detail(requestId: string) {
     return this.describe(await this.repository.getByRequest(requestId));
+  }
+
+  /** Occurrence polling reads the existing verified verdict without transferring its manifest or execution evidence. */
+  async summary(requestId: string) {
+    const row = await TestRunModel.findOne({...nativeRunFilter, requestId})
+      .select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, "payload.build": 1})
+      .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
+    if (!row) throw new TestRunError(404, "Framework run was not found");
+    // Missing and corrupt projections fail closed here; polling must never fall back to the full payload.
+    const projection = verifiedFrameworkRunSummaryProjection(row), summary = projection.summary;
+    const build = frameworkBuildSchema.safeParse((row.payload as {build?: unknown} | undefined)?.build);
+    if (!build.success || summary.requestId !== requestId || build.data.repository !== summary.build.repository
+      || build.data.channel !== summary.build.channel || build.data.headSha !== summary.build.headSha
+      || build.data.prNumber !== summary.build.prNumber)
+      throw new TestRunError(503, "Frozen result summary build or identity is unavailable");
+    return {...summary, definitionRevision: projection.definitionRevision, build: build.data, uploadsComplete: row.uploadsComplete === true};
   }
 
   /** An assigned supervisor reads its original publication without an admin browser session. */

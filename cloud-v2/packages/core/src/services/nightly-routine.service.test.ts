@@ -43,7 +43,7 @@ function fixture(initial = [row("a-new-routine", "android"), row("different.rout
     {async cancelSubmission(id) {completionEvents.push("cancel:" + id); cancelled.push(id); if (id === cancelFailId) throw new TestRunError(503, "Cancellation storage unavailable."); return {} as any;}, async get(id) {if (requestErrors.has(id)) throw requestErrors.get(id)!; return requestRows.get(id) ?? null;}, async submit(requestId, hostId, input) {if (requestId === failId) throw new Error("queue unavailable"); admitted.push({requestId, hostId, input}); requestRows.set(requestId, {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}); return {} as any;}},
     repository ?? {async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return finished;}, async finish(_id, result) {finished ??= result; return finished;}},
     () => ({android: {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
-    {async detail(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (typeof result === "function") return result(); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
+    {async summary(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (typeof result === "function") return result(); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
     () => clock);
   return {service, admitted, cancelled, completionEvents, buildReads, resultRows, requestRows, requestErrors, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}, set cancelFailId(value: string | undefined) {cancelFailId = value;}};
 }
@@ -106,15 +106,33 @@ test("a missing platform binding retains its expected member and never creates a
 test("result matching refuses changed artifact/source identity and terminal receipts fence later changes", async () => {
   const state = fixture([row("single-routine", "android")]);
   const {plan} = await state.service.start(occurrence), member = plan.members[0]!;
-  state.resultRows.set(member.requestId, {run: {routineId: member.routineId, platform: member.platform, definitionRevision: member.definitionRevision,
-    hostId: member.hostId, laneId: member.input!.laneId, build: {...member.input!.build, source: {channel: "dev", buildRunId: 22, publicationAttempt: 2}}, result: {runId: member.requestId}},
+  state.resultRows.set(member.requestId, {routineId: member.routineId, platform: member.platform, definitionRevision: member.definitionRevision,
+    hostId: member.hostId, laneId: member.input!.laneId, build: {...member.input!.build, source: {channel: "dev", buildRunId: 22, publicationAttempt: 2}}, runId: member.requestId,
     outcome: "pass", uploadsComplete: true, evidenceStatus: "complete"});
   expect((await state.service.detail(occurrence.occurrenceId)).status).toBe("incomplete");
   const final = await state.service.complete(occurrence.occurrenceId);
-  state.resultRows.get(member.requestId).run.build = member.input!.build;
+  state.resultRows.get(member.requestId).build = member.input!.build;
   expect(await state.service.detail(occurrence.occurrenceId)).toEqual(final);
   expect(final.resultUrl).toContain("testRun=");
   expect(final.resultUrl).not.toContain("testSuite=");
+});
+
+test("nightly summary keeps every frozen identity and complete build field in its result match", async () => {
+  const state = fixture([row("single-routine", "android")]);
+  const {plan} = await state.service.start(occurrence), member = plan.members[0]!;
+  const valid = publishedResult(member, true);
+  for (const field of ["routineId", "platform", "definitionRevision", "hostId", "laneId"] as const) {
+    state.resultRows.set(member.requestId, {...valid, [field]: "foreign"});
+    expect((await state.service.detail(occurrence.occurrenceId)).members[0]).toMatchObject({status: "incomplete", publicationComplete: false,
+      unavailableReason: "Result identity differs from the frozen request."});
+  }
+  for (const build of [{...member.input!.build, archive: {sha256: "2".repeat(64)}},
+    {...member.input!.build, source: {channel: "dev", buildRunId: 21, publicationAttempt: 99}}]) {
+    state.resultRows.set(member.requestId, {...valid, build});
+    expect((await state.service.detail(occurrence.occurrenceId)).status).toBe("incomplete");
+  }
+  state.resultRows.set(member.requestId, valid);
+  expect(await state.service.detail(occurrence.occurrenceId)).toMatchObject({status: "pass", passed: 1});
 });
 
 test("failed evidence settles only after captured uploads finish and freezes an honest failed suite", async () => {
@@ -315,7 +333,7 @@ test("deadline fences a concurrent uncertain admission before completion and acr
     const makeService = () => new NightlyRoutineService({async list() {return [row("race-product", "android")];}} as any,
       {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
       {async get() {return host;}}, new TestRequestService(requestRepository), repository,
-      () => ({android: {hostId: "mini", laneId: "android"}}), {async detail() {throw new TestRunError(404, "No framework run");}}, () => clock);
+      () => ({android: {hostId: "mini", laneId: "android"}}), {async summary() {throw new TestRunError(404, "No framework run");}}, () => clock);
     const original = makeService(), admission = original.start(occurrence);
     await inserting;
     clock = now + 3 * 3600_000;
@@ -391,9 +409,9 @@ test("a mismatched platform publication remains expected and missing anchor plat
 });
 
 function publishedResult(member: NightlyPlan["members"][number], uploadsComplete: boolean) {
-  return {run: {routineId: member.routineId, platform: member.platform, definitionRevision: member.definitionRevision,
-    hostId: member.hostId, laneId: member.input!.laneId, build: member.input!.build, result: {runId: member.requestId},
-    startedAt, finishedAt: "2026-10-03T11:01:00Z"},
+  return {routineId: member.routineId, platform: member.platform, definitionRevision: member.definitionRevision,
+    hostId: member.hostId, laneId: member.input!.laneId, build: member.input!.build, runId: member.requestId,
+    startedAt, finishedAt: "2026-10-03T11:01:00Z",
     outcome: "pass", uploadsComplete, evidenceStatus: "complete"};
 }
 
