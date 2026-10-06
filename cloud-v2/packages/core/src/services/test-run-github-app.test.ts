@@ -24,7 +24,7 @@ test("installation tokens use signed short-lived JWTs and explicit separate repo
   expect(bodies).toEqual([
     { repositories: ["MentraOS"], permissions: { actions: "write", contents: "read", pull_requests: "read" } },
     { repositories: ["Mentra-Automated-Testing"], permissions: { actions: "read" } },
-    { repositories: ["MentraOS"], permissions: { issues: "write", pull_requests: "read" } },
+    { repositories: ["MentraOS"], permissions: { pull_requests: "write" } },
   ]);
 });
 
