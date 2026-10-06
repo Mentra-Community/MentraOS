@@ -130,6 +130,11 @@ export function organizationCapabilities(p: CorePrincipal): Set<OrganizationCapa
  * principal's standing decides (see the file header), then `packageName` (a
  * workspace credential restricted to certain packages) and `capability`.
  *
+ * A `capability` is asked for whenever it is present, whatever its value: an
+ * empty or unknown string is never "no capability" and is never granted
+ * (`capability_missing`). The service API refuses a blank one as a malformed
+ * request before it gets here.
+ *
  * A principal with no standing in the workspace (`not_a_member`,
  * `package_out_of_scope`) gets no workspace details back.
  */
@@ -151,8 +156,9 @@ export async function authorize(
   })
 
   const {workspaceId, capability, packageName} = req
+  const capabilityAsked = capability !== undefined && capability !== null
   if (workspaceId === undefined || workspaceId === null) {
-    if (capability) return deny("capability_missing")
+    if (capabilityAsked) return deny("capability_missing")
     return {allowed: true, organizationId: organization, principal: p, capabilities: []}
   }
   // The id goes into a database filter, so anything but a non-empty string is not a workspace.
@@ -183,7 +189,7 @@ export async function authorize(
   }
 
   const capabilities = [...granted]
-  if (capability && !granted.has(capability)) {
+  if (capabilityAsked && !(isWorkspaceCapability(capability) && granted.has(capability))) {
     return deny("capability_missing", {workspace, membership, capabilities})
   }
   return {allowed: true, organizationId: organization, principal: p, workspace, membership, capabilities}

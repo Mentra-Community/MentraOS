@@ -79,6 +79,9 @@ export interface InvitationRow {
  * only the newest link works. `inviteUrl` is built from
  * `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE`, which must contain `{token}`; a
  * missing or unusable template throws a plain `Error` before anything is written.
+ * The template is checked only once the workspace exists and the actor may
+ * invite this role, so a caller who may not invite is refused (404, 410, 403)
+ * whatever the deployment's configuration says.
  */
 export async function createInvitation(
   actor: Actor,
@@ -88,7 +91,6 @@ export async function createInvitation(
   const email = normalizeInviteEmail(input?.email)
   const role = input?.role
   if (!isWorkspaceRole(role)) fail("invalid_role", "role must be a workspace role")
-  const template = inviteUrlTemplate()
 
   const token = randomBytes(32).toString("base64url")
   const tokenHash = hashToken(token)
@@ -98,6 +100,8 @@ export async function createInvitation(
     const workspace = await loadActiveWorkspace(session, workspaceId)
     const actorRole = await requireMembershipManager(session, actor, workspaceId)
     if (!canChangeRole(actorRole, null, role)) fail("forbidden", `a ${actorRole} cannot invite a ${role}`)
+    // Only now, for a caller who may invite: a configuration problem is the operator's to hear about, not a stranger's.
+    const template = inviteUrlTemplate()
     await touchWorkspace(session, workspaceId)
 
     const invitationId = `winv_${ulid()}`
@@ -142,10 +146,10 @@ export async function createInvitation(
       target: {invitationId},
       after: {email, role, expiresAt},
     })
-    return {invitationId, workspaceName: workspace.name}
+    return {invitationId, workspaceName: workspace.name, template}
   })
 
-  const inviteUrl = template.split(TOKEN_PLACEHOLDER).join(token)
+  const inviteUrl = created.template.split(TOKEN_PLACEHOLDER).join(token)
   await sendInvitationEmail({to: email, workspaceName: created.workspaceName, role, inviteUrl, expiresAt})
   return {invitationId: created.invitationId, inviteUrl, expiresAt}
 }

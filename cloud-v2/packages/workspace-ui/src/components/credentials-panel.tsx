@@ -76,9 +76,10 @@ function tomorrow(): string {
 
 // --- The panel ---------------------------------------------------------------
 
-export function WorkspaceCredentialsPanel(props: { api: WorkspaceApi; workspaceId: string }) {
-  // Keyed by workspace so a token shown for one workspace is never carried over to another.
-  return <CredentialsScreen key={props.workspaceId} {...props} />;
+export function WorkspaceCredentialsPanel({ api, workspaceId }: { api: WorkspaceApi; workspaceId: string }) {
+  // Keyed by workspace so a token shown for one workspace is never carried over to another. The screen's
+  // test-only props are not passed through: only `api` and `workspaceId` reach it.
+  return <CredentialsScreen key={workspaceId} api={api} workspaceId={workspaceId} />;
 }
 
 /**

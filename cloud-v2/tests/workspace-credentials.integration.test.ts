@@ -703,6 +703,32 @@ describe("validateCredentialToken", () => {
     }
   })
 
+  test("the lastUsedAt write is atomic: it never overwrites a use another request recorded in between", async () => {
+    const {workspaceId, developer} = await newWorkspace()
+    const {credential, token} = await createWorkspaceCredential(developer, workspaceId, {name: "k"})
+    const lastUsed = async () =>
+      (await AccessCredentialModel.findOne({credentialId: credential.credentialId}).lean())!.lastUsedAt
+    const concurrent = new Date(Date.now() - 1000)
+    const original = AccessCredentialModel.updateOne.bind(AccessCredentialModel)
+    let writes = 0
+    const updateOne = spyOn(AccessCredentialModel, "updateOne").mockImplementation(((...args: [any, any, any]) => {
+      writes += 1
+      // Another request records this key's use after this one decided to, and before its write lands.
+      return AccessCredentialModel.collection
+        .updateOne({credentialId: credential.credentialId}, {$set: {lastUsedAt: concurrent}})
+        .then(() => original(...args))
+    }) as never)
+    try {
+      expect(await validateCredentialToken(token)).not.toBeNull()
+      await waitFor(async () => writes === 1)
+      await new Promise(resolve => setTimeout(resolve, 100))
+      // The guarded write found a use within the last minute and changed nothing.
+      expect((await lastUsed())!.getTime()).toBe(concurrent.getTime())
+    } finally {
+      updateOne.mockRestore()
+    }
+  })
+
   test("a failing lastUsedAt write does not fail validation or leak a rejection", async () => {
     const {workspaceId, developer} = await newWorkspace()
     const {token} = await createWorkspaceCredential(developer, workspaceId, {name: "k"})
@@ -1152,6 +1178,32 @@ describe("listing", () => {
     expect(serialized).not.toContain("hash")
     expect(await listWorkspaceCredentials("ws_missing")).toEqual([])
     expect(await listWorkspaceCredentials("")).toEqual([])
+  })
+
+  test("listing orders by creation time, then id: a backdated key sorts by its own createdAt, not its insertion order", async () => {
+    const {workspaceId, developer} = await newWorkspace()
+    const inserted = []
+    for (const name of ["a", "b", "c"]) inserted.push(await createWorkspaceCredential(developer, workspaceId, {name}))
+    // "b" was inserted after "a" but created (as a migrated key may claim) the longest ago; "a" and "c" tie
+    // on createdAt, so insertion order (the id) breaks the tie, newest first.
+    const created = new Date("2026-01-01T00:00:00.000Z")
+    const [a, b, c] = inserted.map(entry => entry.credential.credentialId)
+    const later = new Date(created.getTime() + 60_000)
+    await AccessCredentialModel.collection.updateOne({credentialId: a}, {$set: {createdAt: later}})
+    await AccessCredentialModel.collection.updateOne({credentialId: b}, {$set: {createdAt: created}})
+    await AccessCredentialModel.collection.updateOne({credentialId: c}, {$set: {createdAt: later}})
+
+    expect((await listWorkspaceCredentials(workspaceId)).map(view => view.name)).toEqual(["c", "a", "b"])
+
+    const keys = []
+    for (const name of ["ops-a", "ops-b"]) {
+      keys.push(await createOperatorKey(orgAdmin, {name, scopes: ["organization.incidents.read"]}))
+    }
+    await AccessCredentialModel.collection.updateOne(
+      {credentialId: keys[1]!.credential.credentialId},
+      {$set: {createdAt: created}},
+    )
+    expect((await listOperatorKeys()).map(view => view.name)).toEqual(["ops-a", "ops-b"])
   })
 
   test("listWorkspaceCredentials shows lastUsedAt once the key has been used", async () => {

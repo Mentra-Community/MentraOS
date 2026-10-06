@@ -23,6 +23,7 @@ const ENV_KEYS = [
   "CLOUD_CORE_FLEET_URL",
   "CLOUD_CORE_FLEET_SECRET",
   "CLOUD_CORE_FLEET_MAX_BODY_BYTES",
+  "CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES",
   "CLOUD_CORE_FLEET_TIMEOUT_MS",
   "CLOUD_CORE_ORGANIZATION_ID",
   "NODE_ENV",
@@ -380,6 +381,15 @@ describe("unsafe paths", () => {
     "/api/client/fleet/a\\b",
     "/api/client/fleet/%zz",
     "/api/client/fleet/a%00b",
+    // Still an escape after one decoding: a Fleet that decodes twice would see a dot segment or a separator.
+    "/api/client/fleet/%252e%252e/b",
+    "/api/client/fleet/%252E%252E",
+    "/api/client/fleet/a%252fb",
+    "/api/client/fleet/a%252Fb",
+    "/api/client/fleet/a%255cb",
+    "/api/client/fleet/a%255Cb",
+    "/api/client/fleet/%252e",
+    "/api/client/fleet/.%252e/b",
   ]
 
   test("a client path with a dot segment, an encoded slash or a bad escape is a 400 and goes nowhere", async () => {
@@ -408,6 +418,14 @@ describe("unsafe paths", () => {
     expect((await phone("/fleet/devices/a%20b/caf%C3%A9%2Bx")).status).toBe(200)
 
     expect(calls[0].pathWithQuery).toBe("/v1/client/devices/a%20b/caf%C3%A9%2Bx")
+  })
+
+  test("an escaped percent sign is fine unless what follows it spells a dot or a separator", async () => {
+    configure()
+
+    expect((await phone("/fleet/devices/50%25/a%2520b/%252x")).status).toBe(200)
+
+    expect(calls[0].pathWithQuery).toBe("/v1/client/devices/50%25/a%2520b/%252x")
   })
 })
 
@@ -512,6 +530,63 @@ describe("limits and failures", () => {
     expect(response.status).toBe(503)
     expect(await response.json()).toEqual({error: "fleet_unavailable"})
     expect(Date.now() - started).toBeLessThan(3000)
+  })
+
+  test("a response over the cap is a 503, whether its length is declared or it just keeps streaming", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: "16"})
+
+    // Declared: a content-length over the cap is refused before any of the body is read.
+    respond = () => new Response("x".repeat(17), {headers: {"content-type": "text/plain"}})
+    const declared = await phone("/fleet/devices")
+    expect(declared.status).toBe(503)
+    expect(await declared.json()).toEqual({error: "fleet_unavailable"})
+
+    // Undeclared: a stream with no length that never ends is cut off once it passes the cap.
+    respond = () =>
+      new Response(
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(new TextEncoder().encode("12345678"))
+            await Bun.sleep(1)
+          },
+        }),
+      )
+    const started = Date.now()
+    const streamed = await phone("/fleet/devices")
+    expect(streamed.status).toBe(503)
+    expect(await streamed.json()).toEqual({error: "fleet_unavailable"})
+    expect(Date.now() - started).toBeLessThan(3000)
+  })
+
+  test("a response exactly at the cap passes through", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: "16"})
+    respond = () => new Response("x".repeat(16), {headers: {"content-type": "text/plain"}})
+
+    const response = await phone("/fleet/devices")
+
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe("x".repeat(16))
+  })
+
+  test("the default cap is 10 MiB, and an unusable value does not lift it", async () => {
+    const MIB10 = 10 * 1024 * 1024
+    for (const value of [undefined, "0", "-5", "abc", "1.5", ""]) {
+      configure(value === undefined ? {} : {CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: value})
+      respond = () => new Response("x".repeat(MIB10), {headers: {"content-type": "text/plain"}})
+      const atCap = await phone("/fleet/devices")
+      expect([value, atCap.status, (await atCap.arrayBuffer()).byteLength]).toEqual([value, 200, MIB10])
+
+      respond = () => new Response("x".repeat(MIB10 + 1), {headers: {"content-type": "text/plain"}})
+      const overCap = await phone("/fleet/devices")
+      expect([value, overCap.status]).toEqual([value, 503])
+    }
+  })
+
+  test("a 204 or a body-less answer is never mistaken for an oversized one", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: "1"})
+    respond = () => new Response(null, {status: 204})
+
+    expect((await phone("/fleet/devices/1", {method: "DELETE"})).status).toBe(204)
   })
 
   test("an upstream 5xx is a 503, never its own answer", async () => {

@@ -119,7 +119,7 @@ program
         }
         const storage = await saveCredentials(credentials);
         console.log(`Signed in as ${token.user.email}`);
-        if (token.organization_id) console.log(`Organization: ${token.organization_id}`);
+        if (token.organization_id) console.log(`WorkOS organization: ${token.organization_id}`);
         if (credentials.workspaceId) console.log(`Workspace: ${credentials.workspaceId}`);
         if (availableWorkspaceCount > 1 && !credentials.workspaceId) {
           console.log("Multiple workspaces are available. Run `mentra workspace list`, then `mentra workspace use <id>`.");
@@ -151,7 +151,7 @@ program
 
     console.log(`Email: ${creds.email}`);
     console.log(`WorkOS user: ${creds.workosUserId}`);
-    if (creds.organizationId) console.log(`Organization: ${creds.organizationId}`);
+    if (creds.organizationId) console.log(`WorkOS organization: ${creds.organizationId}`);
     if (creds.workspaceId) console.log(`Workspace: ${creds.workspaceId}`);
     console.log(`Store: ${creds.storeUrl}`);
     if (creds.expiresAt) console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);

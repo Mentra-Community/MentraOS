@@ -344,6 +344,33 @@ describe("createInvitation", () => {
     expect(created.inviteUrl).toBe(`https://core.example.test/join?code=${token}&again=${token}#x`)
   })
 
+  test("an unusable template never hides who may not invite: unauthorized callers get 403/404/410, not the configuration error", async () => {
+    const ws = await newWorkspace()
+    await addMember(ws, "mu_dev", "developer")
+    const deleted = await newWorkspace("Gone")
+    await deleteWorkspace(user("mu_owner"), deleted, {confirmName: "Gone", ownedPackageCount: async () => 0})
+    delete process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE
+    const input = {email: "x@example.test", role: "member"} as const
+
+    await expectError(() => createInvitation(user("mu_stranger"), ws, input), "forbidden", 403)
+    await expectError(() => createInvitation(user("mu_dev"), ws, input), "forbidden", 403)
+    await expectError(
+      () => createInvitation(user("mu_admin"), ws, {email: "o@example.test", role: "owner"}),
+      "forbidden",
+      403,
+    )
+    await expectError(() => createInvitation(user("mu_owner"), "ws_missing", input), "not_found", 404)
+    await expectError(() => createInvitation(user("mu_owner"), deleted, input), "workspace_deleted", 410)
+    expect(await WorkspaceInvitationModel.countDocuments({})).toBe(0)
+
+    // An authorized caller still gets the configuration error, with nothing written.
+    const err = await thrown(() => createInvitation(user("mu_admin"), ws, input))
+    expect(err).not.toBeInstanceOf(WorkspaceError)
+    expect(err.message).toContain("CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE")
+    expect(await WorkspaceInvitationModel.countDocuments({})).toBe(0)
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "invitation.created"})).toBe(0)
+  })
+
   test("re-inviting the same email revokes the previous token", async () => {
     const ws = await newWorkspace()
     const first = await invite(ws, "dev@example.test", "member")

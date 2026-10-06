@@ -48,6 +48,37 @@ test("organizationId defaults to local outside production", () => {
   expect(organizationId()).toBe("local")
 })
 
+test("organizationId is required for a deployed environment even though deployed Cores never set NODE_ENV=production", () => {
+  for (const environment of ["dev", "staging", "prod", "production", " Prod ", "STAGING"]) {
+    clearEnv()
+    process.env.CLOUD_CORE_ENVIRONMENT = environment
+    expect([environment, thrownMessage(organizationId)]).toEqual([
+      environment,
+      expect.stringContaining("CLOUD_CORE_ORGANIZATION_ID"),
+    ])
+    process.env.CLOUD_CORE_ORGANIZATION_ID = "   "
+    expect(thrownMessage(organizationId)).toContain("CLOUD_CORE_ORGANIZATION_ID")
+    process.env.CLOUD_CORE_ORGANIZATION_ID = "acme-prod"
+    expect(organizationId()).toBe("acme-prod")
+  }
+})
+
+test("organizationId's error names both ways a deployment is recognized", () => {
+  clearEnv()
+  process.env.CLOUD_CORE_ENVIRONMENT = "staging"
+  const message = thrownMessage(organizationId)
+  expect(message).toContain("NODE_ENV=production")
+  expect(message).toContain("CLOUD_CORE_ENVIRONMENT")
+})
+
+test("organizationId still defaults to local for local, test and unlabeled environments", () => {
+  for (const environment of [undefined, "", "   ", "local", "test", "test-env", "development", "dev-2", "my-prod"]) {
+    clearEnv()
+    if (environment !== undefined) process.env.CLOUD_CORE_ENVIRONMENT = environment
+    expect([environment, organizationId()]).toEqual([environment, "local"])
+  }
+})
+
 test("organizationId reads CLOUD_CORE_ORGANIZATION_ID at use time", () => {
   clearEnv()
   process.env.CLOUD_CORE_ORGANIZATION_ID = "acme-prod"

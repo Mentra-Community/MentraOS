@@ -37,7 +37,7 @@ function login(session: Session) {
         if (url === "https://workos.example.test/user_management/authenticate") {
           if (++polls === 1) return Response.json({error: "authorization_pending"}, {status: 400});
           return Response.json({access_token: "fixture-token", refresh_token: "fixture-refresh", expires_in: 3600,
-            user: {id: "fixture-user", email: "fixture@example.test"}});
+            organization_id: "org_workos_fixture", user: {id: "fixture-user", email: "fixture@example.test"}});
         }
         if (url === "https://store.example.test/api/console/auth/me") return Response.json(${JSON.stringify(session)});
         throw new Error("Unexpected network request");
@@ -66,6 +66,9 @@ test("login waits for browser approval, saves the Store session and confirms suc
   expect(result.status).toBe(0);
   expect(result.stderr).toBe("");
   expect(stdout).toContain("Signed in as fixture@example.test");
+  // The id is WorkOS's, not this deployment's organization, so the label says so.
+  expect(stdout).toContain("WorkOS organization: org_workos_fixture\n");
+  expect(stdout).not.toMatch(/^Organization:/m);
   expect(stdout).toContain("Workspace: ws_fixture");
   expect(stdout).toContain("Credentials stored in OS keychain");
   expect(credentials).toMatchObject({storeUrl: "https://store.example.test", workspaceId: "ws_fixture", token: "fixture-token"});

@@ -72,6 +72,22 @@ describe("credentials panel: the token is shown once", () => {
     expect(requests).toEqual([]);
   });
 
+  test("the public panel passes only api and workspaceId on: a smuggled test-only prop never shows a token", () => {
+    const { api } = offlineApi();
+    // The screen's `initialSecret` is for tests; a caller that sneaks it past the types must not reach it.
+    const initialSecret = { status: "shown", name: "Leaked", token: TOKEN };
+    const smuggled = { api, workspaceId: WORKSPACE_ID, initialSecret };
+    const markup = renderSeeded(
+      api,
+      { detail: detailFor("developer"), credentials: CREDENTIALS },
+      <WorkspaceCredentialsPanel {...(smuggled as { api: typeof api; workspaceId: string })} />,
+    );
+    expect(markup).not.toContain(TOKEN);
+    expect(markup).not.toContain("Leaked");
+    expect(markup).not.toMatch(/role="dialog"/);
+    expect(markup).toContain("msk_prod_…abcd");
+  });
+
   test("creating a credential hands the token to the dialog and keeps it out of the query and mutation caches", async () => {
     const client = new QueryClient();
     const api = createWorkspaceApi({ basePath: "/api/workspaces" });

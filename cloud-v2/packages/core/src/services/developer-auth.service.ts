@@ -6,6 +6,11 @@ import {
 } from "@mentra/developer-auth"
 import type {AppContext} from "../types/hono.types"
 
+/** Whether WorkOS sign-in is configured here (API key, client id and cookie password are all set). */
+export function isWorkosConfigured(): boolean {
+  return workosOptions() !== null
+}
+
 /** The WorkOS settings from the environment, or null when WorkOS is not configured here. */
 function workosOptions(): DeveloperAuthOptions | null {
   const apiKey = process.env.WORKOS_API_KEY

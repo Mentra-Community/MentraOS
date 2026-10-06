@@ -230,7 +230,7 @@ console.log = (...args) => appendFileSync(${JSON.stringify(consolePath)}, args.j
     workspaceHeaders,
     env,
     /** Act as a person who has run `mentra login`, optionally with a workspace already selected. */
-    signIn: (workspaceId?: string) => {
+    signIn: (workspaceId?: string, organizationId?: string) => {
       storedLogin = true;
       writeFileSync(
         loginPath,
@@ -241,6 +241,7 @@ console.log = (...args) => appendFileSync(${JSON.stringify(consolePath)}, args.j
           storeUrl: `http://127.0.0.1:${server.port}`,
           storedAt: new Date().toISOString(),
           ...(workspaceId ? { workspaceId } : {}),
+          ...(organizationId ? { organizationId } : {}),
         }),
       );
     },
@@ -387,6 +388,15 @@ test("workspace use stores the selection, which later commands send", async () =
   expect(f.workspaceHeaders.at(-1)).toMatchObject({ path: "/api/console/auth/me", workspaceId: "ws_2" });
   const whoami = await f.cli("whoami");
   expect(whoami.stdout).toContain("Workspace: ws_2");
+});
+
+test("whoami labels the WorkOS organization id as WorkOS's, not as the Core organization", async () => {
+  const f = await fixture(undefined, false, ["ws_1"]);
+  f.signIn("ws_1", "org_workos_fixture");
+  const whoami = await f.cli("whoami");
+  expect(whoami.code).toBe(0);
+  expect(whoami.stdout).toContain("WorkOS organization: org_workos_fixture\n");
+  expect(whoami.stdout).not.toMatch(/^Organization:/m);
 });
 
 test("workspace use refuses a workspace the caller does not belong to", async () => {

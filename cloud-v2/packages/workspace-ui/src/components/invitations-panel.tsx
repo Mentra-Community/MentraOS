@@ -27,9 +27,10 @@ export interface InvitationLink {
   inviteUrl: string;
 }
 
-export function WorkspaceInvitationsPanel(props: { api: WorkspaceApi; workspaceId: string }) {
-  // Keyed by workspace so a link shown for one workspace is never carried over to another.
-  return <InvitationsScreen key={props.workspaceId} {...props} />;
+export function WorkspaceInvitationsPanel({ api, workspaceId }: { api: WorkspaceApi; workspaceId: string }) {
+  // Keyed by workspace so a link shown for one workspace is never carried over to another. The screen's
+  // test-only props are not passed through: only `api` and `workspaceId` reach it.
+  return <InvitationsScreen key={workspaceId} api={api} workspaceId={workspaceId} />;
 }
 
 /**

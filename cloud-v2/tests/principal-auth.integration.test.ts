@@ -17,7 +17,7 @@
 
 import {createHash, randomBytes} from "node:crypto"
 
-import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, spyOn, test} from "bun:test"
 import {Hono} from "hono"
 import {
   principalAuth,
@@ -54,6 +54,9 @@ import {
   type OrganizationCapability,
 } from "../packages/workspace-contract/src/index"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+
+// Index builds and per-test cleanup on a shared, busy local replica set can take longer than the 5 s default.
+setDefaultTimeout(30_000)
 
 const MODELS = [
   AccessCredentialModel,

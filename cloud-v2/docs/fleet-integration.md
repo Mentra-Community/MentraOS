@@ -26,6 +26,9 @@ for every Core variable.
   Required when the URL is set.
 - `CLOUD_CORE_FLEET_MAX_BODY_BYTES`: the largest request body Core forwards.
   Default `1048576`.
+- `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`: the largest response body Core buffers
+  from Fleet. A larger one is a `503 {"error":"fleet_unavailable"}`. Default
+  `10485760` (10 MiB).
 - `CLOUD_CORE_FLEET_TIMEOUT_MS`: how long Fleet has to answer, body included.
   Default `10000`.
 - `CLOUD_CORE_SERVICE_SECRETS`: its `fleet` list holds the secrets Fleet signs its
@@ -67,9 +70,11 @@ surface fixes the principal kind.
 - Core rejects a path with a `.` or `..` segment, an encoded or literal path
   separator (`%2f`, `%5c`, `\`), a control character or a bad escape, with
   `400 {"error":"invalid_path"}`. Each segment is checked after **one** round of
-  decoding, and the path is forwarded exactly as received. **Fleet must decode a
-  path at most once**: a double-encoded `%252e` reaches Fleet as the literal
-  text `%2e`, and decoding it again turns it into a dot segment.
+  decoding, and the path is forwarded exactly as received. A segment that still
+  contains `%2e`, `%2f` or `%5c` (any case) after that decoding, such as a
+  double-encoded `%252e`, is refused the same way, so a Fleet that decodes a
+  second time is never handed a dot segment or a separator. Fleet should still
+  decode a path at most once.
 - Bodies are treated as UTF-8 text (the Fleet API is JSON). Core signs the text
   and sends the same bytes. A body that is not valid UTF-8 is
   `400 {"error":"invalid_body"}`; one over the limit is

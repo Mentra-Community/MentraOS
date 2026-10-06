@@ -14,7 +14,8 @@
  *     {"store": ["s1", "s0"], "fleet": ["f1"]}
  *
  * Status mapping:
- *  - the variable is not valid JSON of that shape: 503
+ *  - the variable is not valid JSON of that shape (a service whose list is empty,
+ *    or holds only blank secrets, is malformed too): 503
  *    `{error: "service_auth_misconfigured"}` for every call. Core cannot tell
  *    who is allowed in, so it lets nobody in, and says why;
  *  - a missing header, a service Core has no secret for (including no
@@ -76,8 +77,15 @@ function parseSecrets(raw: string): ServiceSecrets | null {
   }
   const secrets = new Map<ServiceName, readonly string[]>()
   for (const [name, list] of Object.entries(value)) {
-    if (!Array.isArray(list) || list.length === 0 || list.some(secret => typeof secret !== "string")) {
-      logger.error({service: name}, "CLOUD_CORE_SERVICE_SECRETS must list at least one secret string per service")
+    if (
+      !Array.isArray(list) ||
+      list.some(secret => typeof secret !== "string") ||
+      !list.some(secret => (secret as string).trim())
+    ) {
+      logger.error(
+        {service: name},
+        "CLOUD_CORE_SERVICE_SECRETS must list at least one non-blank secret string per service",
+      )
       return null
     }
     const known = SERVICE_NAMES.find(service => service === name)

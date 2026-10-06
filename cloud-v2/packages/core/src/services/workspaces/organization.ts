@@ -9,16 +9,34 @@
 /** What an organization id may look like. Shared with the migration script so it validates ids the same way. */
 export const ORGANIZATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/
 
+/** The `CLOUD_CORE_ENVIRONMENT` labels of a deployed Core (shared infrastructure, real data). */
+const DEPLOYED_ENVIRONMENTS: ReadonlySet<string> = new Set(["dev", "staging", "prod", "production"])
+
+/**
+ * Whether this process is a deployed Core: `NODE_ENV=production`, or
+ * `CLOUD_CORE_ENVIRONMENT` (case-insensitive, trimmed) is `dev`, `staging`,
+ * `prod` or `production`. Deployed Cores set the label and not `NODE_ENV`, so
+ * the label has to count. Local runs, tests and an unlabeled process are not.
+ */
+export function isDeployedEnvironment(): boolean {
+  if (process.env.NODE_ENV === "production") return true
+  return DEPLOYED_ENVIRONMENTS.has((process.env.CLOUD_CORE_ENVIRONMENT ?? "").trim().toLowerCase())
+}
+
 /**
  * The id of this organization, stamped on workspaces, memberships and audit
- * events. `CLOUD_CORE_ORGANIZATION_ID` is required when `NODE_ENV=production`
- * (this throws at first use, not at import); elsewhere it defaults to `local`.
+ * events. `CLOUD_CORE_ORGANIZATION_ID` is required in a deployed Core
+ * ({@link isDeployedEnvironment}; this throws at first use, not at import);
+ * elsewhere it defaults to `local`.
  */
 export function organizationId(): string {
   const configured = process.env.CLOUD_CORE_ORGANIZATION_ID?.trim()
   if (!configured) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("CLOUD_CORE_ORGANIZATION_ID is required when NODE_ENV=production")
+    if (isDeployedEnvironment()) {
+      throw new Error(
+        "CLOUD_CORE_ORGANIZATION_ID is required when NODE_ENV=production " +
+          "or CLOUD_CORE_ENVIRONMENT is dev, staging, prod or production",
+      )
     }
     return "local"
   }

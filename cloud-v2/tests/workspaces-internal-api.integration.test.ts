@@ -527,6 +527,12 @@ describe("service authentication", () => {
       '{"store":{"a":"b"}}',
       '{"store":[]}',
       '{"store":["store-s1"],"fleet":"f"}',
+      // A list with nothing but blank secrets holds no usable secret: as malformed as an empty list.
+      '{"store":[""]}',
+      '{"store":["  "]}',
+      '{"store":["", "   ", "\\t"]}',
+      '{"store":["store-s1"],"fleet":[" "]}',
+      '{"other":[""],"store":["store-s1"]}',
     ]
     for (const configured of malformed) {
       process.env.CLOUD_CORE_SERVICE_SECRETS = configured
@@ -778,6 +784,52 @@ describe("POST /authorize", () => {
     expect(refused).toMatchObject({allowed: false, reason: "capability_missing"})
   })
 
+  test("a capability Core does not know is never granted: capability_missing, with or without a workspace, even for an Organization Admin", async () => {
+    const {workspaceId, owner, developer} = await newWorkspace()
+    const admin = await person("root-admin", {email: ADMIN_EMAIL})
+    const unknown = ["not.a.capability", "workspace.read ", "WORKSPACE.READ", "__proto__", "constructor", "toString"]
+
+    for (const capability of unknown) {
+      for (const who of [developer, owner, admin]) {
+        const inWorkspace = await raw("POST", `${API}/authorize`, {
+          body: {credential: {type: "bearer", token: who.bearer}, workspaceId, capability},
+        })
+        expect({capability, who: who.email, status: inWorkspace.status, allowed: inWorkspace.json?.allowed}).toEqual({
+          capability,
+          who: who.email,
+          status: 200,
+          allowed: false,
+        })
+        expect(inWorkspace.json.reason).toBe("capability_missing")
+        // The denial still says what the person can do, so a caller can tell a typo from a missing role.
+        expect(inWorkspace.json.capabilities.length).toBeGreaterThan(0)
+        expect(inWorkspace.json.capabilities).not.toContain(capability)
+      }
+      const noWorkspace = await raw("POST", `${API}/authorize`, {
+        body: {credential: {type: "bearer", token: developer.bearer}, capability},
+      })
+      expect({capability, allowed: noWorkspace.json?.allowed, reason: noWorkspace.json?.reason}).toEqual({
+        capability,
+        allowed: false,
+        reason: "capability_missing",
+      })
+      const asUser = await raw("POST", `${API}/authorize`, {
+        body: {credential: {type: "mentra_user", mentraUserId: developer.mentraUserId}, workspaceId, capability},
+      })
+      expect({capability, allowed: asUser.json?.allowed, reason: asUser.json?.reason}).toEqual({
+        capability,
+        allowed: false,
+        reason: "capability_missing",
+      })
+    }
+
+    // A real capability is unaffected.
+    const known = await raw("POST", `${API}/authorize`, {
+      body: {credential: {type: "bearer", token: developer.bearer}, workspaceId, capability: "miniapps.publish"},
+    })
+    expect(known.json).toMatchObject({allowed: true})
+  })
+
   test("a request that is not shaped like an authorize request is 400 invalid_request", async () => {
     const bad: unknown[] = [
       {},
@@ -792,6 +844,11 @@ describe("POST /authorize", () => {
       {credential: {type: "mentra_user", mentraUserId: 7}},
       {credential: {type: "mentra_user", mentraUserId: "mu_1"}, workspaceId: 5},
       {credential: {type: "mentra_user", mentraUserId: "mu_1"}, capability: ["workspace.read"]},
+      // A blank capability is not "no capability": it would otherwise read as an unconditional allow.
+      {credential: {type: "mentra_user", mentraUserId: "mu_1"}, capability: ""},
+      {credential: {type: "mentra_user", mentraUserId: "mu_1"}, capability: "   "},
+      {credential: {type: "mentra_user", mentraUserId: "mu_1"}, workspaceId: "ws_1", capability: ""},
+      {credential: {type: "mentra_user", mentraUserId: "mu_1"}, workspaceId: "ws_1", capability: "\t\n"},
       {credential: {type: "mentra_user", mentraUserId: "mu_1"}, packageName: {}},
     ]
     for (const body of bad) {
@@ -1510,6 +1567,9 @@ describe("POST /credentials", () => {
       {},
       input(workspaceId, {workspaceId: undefined}),
       input(workspaceId, {workspaceId: 5}),
+      input(workspaceId, {workspaceId: ""}),
+      input(workspaceId, {workspaceId: "   "}),
+      input(workspaceId, {workspaceId: "\t\n"}),
       input(workspaceId, {name: undefined}),
       input(workspaceId, {name: ""}),
       input(workspaceId, {packageNames: undefined}),

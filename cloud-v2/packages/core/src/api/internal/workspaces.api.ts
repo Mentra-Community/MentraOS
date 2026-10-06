@@ -186,7 +186,8 @@ app.post("/credentials", requireService("store"), async c => {
   }
 
   const {credential, token} = await mintServiceCredential(service, {
-    workspaceId: requiredString(body, "workspaceId"),
+    // `requiredId`, not `requiredString`: an id of only whitespace names no workspace and is a malformed request.
+    workspaceId: requiredId(body, "workspaceId"),
     name: requiredString(body, "name"),
     packageNames: requiredStringArray(body, "packageNames"),
     actorEmail: requiredString(issuedBy, "actorEmail"),
@@ -228,7 +229,10 @@ function parseCredential(value: unknown): AuthorizeCredential {
   throw new InvalidRequest('credential.type must be "bearer" or "mentra_user"')
 }
 
-/** The optional workspace, capability and package of an authorize request; each must be a string when present. */
+/**
+ * The optional workspace, capability and package of an authorize request; each must be a string when
+ * present, and a capability must not be blank.
+ */
 function authorizeFields(body: JsonObject): {
   workspaceId?: string
   capability?: WorkspaceCapability
@@ -243,9 +247,11 @@ function authorizeFields(body: JsonObject): {
   const workspaceId = optional("workspaceId")
   const capability = optional("capability")
   const packageName = optional("packageName")
+  // A blank capability is a malformed request, not "no capability": taken as the latter it would be an allow.
+  if (capability !== undefined && !capability.trim()) throw new InvalidRequest("capability must be a non-empty string")
   return {
     ...(workspaceId !== undefined ? {workspaceId} : {}),
-    // An unknown capability is not granted to anyone, so `authorize` denies it; no list to keep in step here.
+    // An unknown, non-empty capability is not granted to anyone: `authorize` denies it as capability_missing.
     ...(capability !== undefined ? {capability: capability as WorkspaceCapability} : {}),
     ...(packageName !== undefined ? {packageName} : {}),
   }

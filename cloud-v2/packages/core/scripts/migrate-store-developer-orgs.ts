@@ -863,7 +863,7 @@ export function parseArgs(argv: string[]): CliOptions {
       if (!isLocalMongoUrl(url)) {
         throw new UsageError(
           `--apply refuses a non-local ${flag} (${parts.hosts.join(",")}): both URLs must be mongodb:// on ` +
-            "127.0.0.1, localhost or ::1 without credentials. Operators can pass --i-understand-remote.",
+            "127.0.0.1, localhost or [::1] without credentials. Operators can pass --i-understand-remote.",
         )
       }
     }

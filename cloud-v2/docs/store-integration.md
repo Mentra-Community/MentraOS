@@ -203,7 +203,8 @@ a value in Core's `CLOUD_CORE_SERVICE_SECRETS` (`{"store":["dev-secret"]}`) as t
 Store's `MENTRA_CORE_WORKSPACE_SERVICE_SECRET`, Core's
 `CLOUD_CORE_STORE_SERVICE_SECRET` in the Store's `MENTRA_STORE_CORE_SERVICE_SECRETS`,
 and the Store's `MENTRA_CORE_ORGANIZATION_ID` equal to Core's
-`CLOUD_CORE_ORGANIZATION_ID` (`local` when Core sets none outside production).
+`CLOUD_CORE_ORGANIZATION_ID` (`local` when Core sets none, which only a local
+run or test may do: a deployed Core requires it).
 Core admin remains on 5174 and uses `CORE_URL`.
 
 ## Bundled Store artifact

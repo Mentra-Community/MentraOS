@@ -21,6 +21,7 @@ import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/
 import {createApp} from "./api/app"
 import {runStartupMigrations} from "./migrations/startup.migrations"
 import {startTestFailureDelivery} from "./services/test-failure-delivery.service"
+import {warnIfWorkosIdentitiesStaySeparate} from "./services/workspaces/identity-link.service"
 
 const logger = createLogger("core")
 
@@ -53,6 +54,8 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     })
     throw error
   }
+
+  warnIfWorkosIdentitiesStaySeparate(logger)
 
   const app = createApp({readinessChecks: [mongoReadinessCheck]})
   const server = Bun.serve({port, fetch: app.fetch})

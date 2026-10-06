@@ -28,12 +28,33 @@ import {IdentityLinkModel, type IdentityLinkMethod} from "../../models/identity-
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel} from "../../models/workspace.model"
 import {findUserByEmail, isGotrueAdminConfigured} from "../account/gotrue.client"
+import {isWorkosConfigured} from "../developer-auth.service"
 import {findOrCreateUser} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
+import {isDeployedEnvironment} from "./organization"
 
 const logger = createLogger("core").child({service: "identity-link.service"})
 
 const PROVIDER = "workos"
+
+/**
+ * Warn, once at boot, about a deployed Core that signs people in with WorkOS but has no GoTrue admin
+ * credentials (`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`). Without them there is no Mentra
+ * directory to match, so every first WorkOS sign-in is linked to a separate `workos`-tenant identity
+ * and the person is not the Mentra user their phone and the Store know, for good: the link is never
+ * recomputed. That is right for a private deployment with no Mentra accounts, and a mistake anywhere
+ * else, so it is said out loud rather than found later. Returns whether it warned.
+ */
+export function warnIfWorkosIdentitiesStaySeparate(log: Pick<typeof logger, "warn"> = logger): boolean {
+  if (!isDeployedEnvironment() || isGotrueAdminConfigured() || !isWorkosConfigured()) return false
+  log.warn(
+    {environment: process.env.CLOUD_CORE_ENVIRONMENT ?? null},
+    "WorkOS sign-in is configured but GoTrue admin is not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY): " +
+      "WorkOS sign-ins will link to separate workos-tenant identities " +
+      "instead of matching Mentra accounts by verified email",
+  )
+  return true
+}
 
 export interface WorkosIdentity {
   workosUserId: string

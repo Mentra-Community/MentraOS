@@ -188,6 +188,25 @@ describe("invitations panel", () => {
     ]);
   });
 
+  test("the public panel passes only api and workspaceId on: a smuggled test-only prop never shows a link", () => {
+    const { api } = offlineApi();
+    // The screen's `initialLink` is for tests; a caller that sneaks it past the types must not reach it.
+    const smuggled = {
+      api,
+      workspaceId: WORKSPACE_ID,
+      initialLink: { email: "leak@acme.test", role: "member", inviteUrl: "https://example.test/join#leaked" },
+    };
+    const markup = renderSeeded(
+      api,
+      { detail: detailFor("admin"), invitations: INVITATIONS },
+      <WorkspaceInvitationsPanel {...(smuggled as { api: typeof api; workspaceId: string })} />,
+    );
+    expect(markup).not.toContain("https://example.test/join#leaked");
+    expect(markup).not.toContain("leak@acme.test");
+    expect(markup).not.toContain("Invitation sent to");
+    expect(markup).toContain("newbie@acme.test");
+  });
+
   test("a developer sees no invitation controls", () => {
     const { api } = offlineApi();
     const markup = renderSeeded(

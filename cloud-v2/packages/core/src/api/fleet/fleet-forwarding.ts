@@ -19,21 +19,24 @@
  *    `127.0.0.1`. No credentials, query or fragment.
  *  - `CLOUD_CORE_FLEET_SECRET`: the shared secret that signs what Core sends. Required when the URL
  *    is set.
- *  - `CLOUD_CORE_FLEET_MAX_BODY_BYTES` (default 1048576) and `CLOUD_CORE_FLEET_TIMEOUT_MS` (default
- *    10000): the largest request body Core reads, and how long the upstream answer, body included,
- *    may take. A value that is not a positive integer falls back to the default.
+ *  - `CLOUD_CORE_FLEET_MAX_BODY_BYTES` (default 1048576), `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`
+ *    (default 10485760) and `CLOUD_CORE_FLEET_TIMEOUT_MS` (default 10000): the largest request body
+ *    Core reads, the largest upstream response body Core buffers, and how long the upstream answer,
+ *    body included, may take. A value that is not a positive integer falls back to the default.
  *
  * Outcomes:
  *  - not installed: 404 `{error: "fleet_not_installed"}`;
  *  - the URL is set but unusable or the secret is missing: 503 `{error: "fleet_unavailable"}` and an
  *    error log that names the variable (never its value);
- *  - a network error, a timeout, an upstream 5xx or any upstream 3xx (redirects are never followed):
- *    503 `{error: "fleet_unavailable"}`. Never an empty success;
+ *  - a network error, a timeout, an upstream 5xx, any upstream 3xx (redirects are never followed) or
+ *    an upstream body over `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`: 503 `{error: "fleet_unavailable"}`.
+ *    Never an empty success;
  *  - a body over the limit: 413 `{error: "payload_too_large"}`; a body that is not valid UTF-8: 400
  *    `{error: "invalid_body"}`; a path with a `.` / `..` segment, an encoded or literal separator
  *    (`%2f`, `%5c`, `\`), a control character or a bad escape: 400 `{error: "invalid_path"}`.
- *    Each segment is checked after one decoding and the path is forwarded exactly as received, so
- *    Fleet must decode a path at most once (a double-encoded `%252e` is a literal `%2e` to Core);
+ *    Each segment is checked after one decoding and the path is forwarded exactly as received. A
+ *    segment that is still `%2e`, `%2f` or `%5c` after that decoding (a double-encoded `%252e`) is
+ *    refused too, so a Fleet that decodes a second time cannot be handed a dot segment or a separator;
  *  - any other upstream status and body pass through, with `content-type` and `cache-control` only.
  *
  * What Fleet receives. Core copies the method, the query, the body and the `content-type` and
@@ -83,9 +86,11 @@ export const FLEET_HEADERS = {
 const URL_VARIABLE = "CLOUD_CORE_FLEET_URL"
 const SECRET_VARIABLE = "CLOUD_CORE_FLEET_SECRET"
 const MAX_BODY_VARIABLE = "CLOUD_CORE_FLEET_MAX_BODY_BYTES"
+const MAX_RESPONSE_VARIABLE = "CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES"
 const TIMEOUT_VARIABLE = "CLOUD_CORE_FLEET_TIMEOUT_MS"
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
+const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 10_000
 
 /** The only hosts that may use plain `http` in production. */
@@ -172,6 +177,7 @@ function positiveInteger(name: string, fallback: number): number {
 }
 
 const maxBodyBytes = () => positiveInteger(MAX_BODY_VARIABLE, DEFAULT_MAX_BODY_BYTES)
+const maxResponseBytes = () => positiveInteger(MAX_RESPONSE_VARIABLE, DEFAULT_MAX_RESPONSE_BYTES)
 const timeoutMs = () => positiveInteger(TIMEOUT_VARIABLE, DEFAULT_TIMEOUT_MS)
 
 const unavailable = (c: AppContext) => c.json({error: "fleet_unavailable"}, 503)
@@ -185,9 +191,14 @@ function rawPathAndQuery(url: string): {path: string; query: string} {
   return {path: withoutFragment.slice(0, queryStart) || "/", query: withoutFragment.slice(queryStart)}
 }
 
+/** What a once-decoded segment must not still hold: an escaped dot or separator a second decoding would expose. */
+const STILL_ESCAPED = /%(?:2e|2f|5c)/i
+
 /**
  * Whether a forwarded path is safe to append to Fleet's: no segment may be a dot segment or hold a
- * separator, a control character or a bad escape once decoded, however it is spelled.
+ * separator, a control character or a bad escape once decoded, however it is spelled. A segment that
+ * is still an escaped dot or separator after one decoding is refused as well (double encoding), so
+ * the check does not depend on Fleet decoding only once.
  */
 function isSafeSuffix(suffix: string): boolean {
   for (const segment of suffix.split("/")) {
@@ -198,12 +209,46 @@ function isSafeSuffix(suffix: string): boolean {
       return false
     }
     if (decoded === "." || decoded === ".." || decoded.includes("/") || decoded.includes("\\")) return false
+    if (STILL_ESCAPED.test(decoded)) return false
     for (const char of decoded) {
       const code = char.charCodeAt(0)
       if (code < 0x20 || code === 0x7f) return false
     }
   }
   return true
+}
+
+/**
+ * The body of `upstream` as bytes, or null once it passes `limit`: a declared length over it is refused
+ * before anything is read, and a stream with no (or a wrong) length is cancelled as soon as it is over.
+ */
+async function readCapped(upstream: Response, limit: number): Promise<Uint8Array | null> {
+  const declared = Number(upstream.headers.get("content-length"))
+  if (Number.isFinite(declared) && declared > limit) {
+    await upstream.body?.cancel()
+    return null
+  }
+  const reader = upstream.body?.getReader()
+  if (!reader) return new Uint8Array(0)
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const {done, value} = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > limit) {
+      await reader.cancel()
+      return null
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
 }
 
 /** The caller as Fleet is told about it, or null when the request has none. */
@@ -309,7 +354,7 @@ function forward(audience: Audience): Handler<AppEnv> {
 
     const log = c.get("logger") ?? logger
     let status: number
-    let payload: ArrayBuffer | null = null
+    let payload: Uint8Array | null = null
     let upstreamHeaders: Headers
     try {
       // One signal covers the wait for the answer and the read of its body.
@@ -329,7 +374,11 @@ function forward(audience: Audience): Handler<AppEnv> {
         log.warn({audience, upstreamStatus: status}, "Fleet answered with a failure or a redirect")
         return unavailable(c)
       }
-      payload = await upstream.arrayBuffer()
+      payload = await readCapped(upstream, maxResponseBytes())
+      if (!payload) {
+        log.warn({audience, limit: maxResponseBytes()}, "Fleet answered with a body over the response limit")
+        return unavailable(c)
+      }
     } catch (err) {
       log.warn({audience, reason: err instanceof Error ? err.name : "unknown"}, "Fleet request failed")
       return unavailable(c)

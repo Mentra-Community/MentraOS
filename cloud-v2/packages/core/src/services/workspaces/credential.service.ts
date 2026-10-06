@@ -221,11 +221,11 @@ export async function createOperatorKey(
 
 // --- Listing ---------------------------------------------------------------
 
-/** The workspace's live (not revoked) credentials, newest first. */
+/** The workspace's live (not revoked) credentials, newest first (creation time, then id for a tie). */
 export async function listWorkspaceCredentials(workspaceId: string): Promise<CredentialView[]> {
   if (!isId(workspaceId)) return []
   const rows = await AccessCredentialModel.find({workspaceId, credentialKind: "workspace", revokedAt: null})
-    .sort({_id: -1})
+    .sort({createdAt: -1, _id: -1})
     .lean<CredentialRow[]>()
   return rows.map(toView)
 }
@@ -246,14 +246,14 @@ export async function findCredentialOwner(
   return {credentialKind: row.credentialKind as "workspace" | "organization", workspaceId: row.workspaceId ?? null}
 }
 
-/** This organization's live (not revoked) operator keys, newest first. */
+/** This organization's live (not revoked) operator keys, newest first (creation time, then id for a tie). */
 export async function listOperatorKeys(): Promise<CredentialView[]> {
   const rows = await AccessCredentialModel.find({
     organizationId: organizationId(),
     credentialKind: "organization",
     revokedAt: null,
   })
-    .sort({_id: -1})
+    .sort({createdAt: -1, _id: -1})
     .lean<CredentialRow[]>()
   return rows.map(toView)
 }
@@ -419,14 +419,21 @@ function secretMatches(storedHash: string, secret: string): boolean {
  * Record that the key was used, at most once a minute. Fire-and-forget and
  * outside any transaction: authentication never waits on it and a failed write
  * only logs. `timestamps: false` keeps `updatedAt` meaning "the key changed".
+ *
+ * The throttle is part of the write's filter, not just a check on the row read
+ * earlier, so two requests that both saw a stale `lastUsedAt` cannot both write:
+ * the second finds a use within the last minute and matches nothing.
  */
 function touchLastUsed(row: CredentialRow): void {
-  if (row.lastUsedAt && Date.now() - row.lastUsedAt.getTime() <= LAST_USED_THROTTLE_MS) return
+  const now = Date.now()
+  if (row.lastUsedAt && now - row.lastUsedAt.getTime() <= LAST_USED_THROTTLE_MS) return
+  const cutoff = new Date(now - LAST_USED_THROTTLE_MS)
   void (async () => {
     try {
       await AccessCredentialModel.updateOne(
-        {credentialId: row.credentialId},
-        {$set: {lastUsedAt: new Date()}},
+        // `lastUsedAt: null` also matches a row that never had the field.
+        {credentialId: row.credentialId, $or: [{lastUsedAt: null}, {lastUsedAt: {$lt: cutoff}}]},
+        {$set: {lastUsedAt: new Date(now)}},
         {timestamps: false},
       )
     } catch (err) {
