@@ -253,7 +253,7 @@ export const routineWorkStatusSchema = z
       ctx.addIssue({code: 'custom', message: 'Passed work lacks its current attempt, exact formal review and recorded result links'})
     if (detail.review && detail.sourceRevision !== detail.review.sourceRevision)
       ctx.addIssue({code: 'custom', message: 'Current source differs from its approved review'})
-    if (['failed', 'cancelled'].includes(event.state) && !detail.reason)
+    if (['failed', 'cancelled'].includes(event.state) && !detail.reason && !detail.summary)
       ctx.addIssue({code: 'custom', message: 'Terminal work requires its actual cause'})
   })
 export type RoutineWorkStatus = z.infer<typeof routineWorkStatusSchema>

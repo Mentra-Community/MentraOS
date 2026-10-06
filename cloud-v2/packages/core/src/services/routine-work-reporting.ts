@@ -204,7 +204,7 @@ export function renderRoutineWorkReport(row: RoutineWorkDelivery, kind: 'progres
     if (detail.resultUrl) lines.push(`[Recorded result](${detail.resultUrl})`)
     if (kind === 'final')
       lines.push(
-        `Cause: ${plain(detail.reason ?? 'No precise cause was recorded.')}`,
+        `Cause: ${plain(detail.reason ?? detail.summary ?? 'No precise cause was recorded.')}`,
         `Attempted work: ${plain(detail.summary ?? (items(progress.completed) || 'No completed attempt reported.'))}`,
         `Next action: ${progress.plan.length ? items(progress.plan) : 'Resolve the recorded cause with the machine owner.'}`,
       )
