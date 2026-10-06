@@ -12,6 +12,7 @@ import {
   publishR2Artifact,
   readArtifactIndex,
   readPublicIndex,
+  releaseBodyUpdate,
   releaseDownloadBody,
   resolveArtifactUrl,
   sha256File,
@@ -405,6 +406,14 @@ test("rolling PR artifacts can be replaced atomically and keep their mobile reus
   assert.equal(options.store.uploads, 2)
   assert.equal(result.label, `mobile-v1:${digest}:${result.digest.slice(7)}`)
   await assert.rejects(publishR2Artifact({...options, release}), /Replacement is only allowed/)
+})
+
+test("release body updates keep a draft's tag", () => {
+  assert.deepEqual(releaseBodyUpdate({draft: true}, "mentra-v3.2.1", "notes"), {
+    body: "notes",
+    tag_name: "mentra-v3.2.1",
+  })
+  assert.deepEqual(releaseBodyUpdate({draft: false}, "mentra-v3.2.1", "notes"), {body: "notes"})
 })
 
 test("release notes retain existing text and add one CDN download index link", () => {
