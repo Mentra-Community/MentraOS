@@ -44,12 +44,25 @@ Check whether a variable is set without printing its value. Do not print
 credentials, enable shell tracing, put tokens in committed files, or extract
 browser sessions. If no suitable credential is available, request that the user
 configure `MENTRA_ADMIN_TOKEN` in the environment. Authentication requires an
-admin-allowlisted org API key (`msk_...`) or an admin WorkOS access token.
+operator key (`mak_...`) with the incident read scope
+(`organization.incidents.read`), or the WorkOS access token of an Organization
+Admin. Workspace credentials (`msk_...`) do not work: they carry no
+organization capability.
+
+An operator key belongs to one Core deployment (organization), so keep one per
+backend, which is why `MENTRA_ADMIN_TOKEN_PROD` and `MENTRA_ADMIN_TOKEN_DEV`
+are separate. To create one, an Organization Admin signs in to the admin
+dashboard of that backend, opens **Operator keys**, chooses a name, the
+**Read incident reports** scope and optionally an expiry, and creates the key.
+The token is shown once; store it in the secret manager or shell environment
+under the variable above. Rotate by creating a new key and revoking the old one
+on the same page.
 
 Use the environment from the report notification. Without `--env`, the script
 tries prod, dev, then staging. `MENTRA_CORE_URL` overrides even `--env`; check
 for an unintended override before interpreting a missing report. Distinguish
-401 (rejected credential), 403 (not admin-allowlisted), and 404 (wrong ID,
+401 (rejected credential: revoked, expired, or made on another backend),
+403 (the token lacks the incident read capability), and 404 (wrong ID,
 environment, or unavailable endpoint). Report authentication failures directly;
 do not fall back to console automation.
 

@@ -7,20 +7,20 @@ This replaces the incident tools of the legacy server at `cloud/packages/console
 ## Prerequisites
 
 - [Bun](https://bun.sh) 1.3+
-- An admin bearer token (see below)
+- An operator key or admin bearer token (see below)
 - A core deployment that serves `/api/admin/reports` (the admin report triage API)
 
 ## Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `MENTRA_ADMIN_TOKEN` | Yes (for report tools) | Bearer token for the admin API: an org API key (`msk_...`) whose synthetic email `api-key@{keyId}.local` is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`, or a WorkOS access token of an admin user |
+| `MENTRA_ADMIN_TOKEN` | Yes (for report tools) | Bearer token for the admin API: an operator key (`mak_...`) with the incident read scope (`organization.incidents.read`), created in the admin dashboard under **Operator keys**, or a WorkOS access token of an Organization Admin |
 | `MENTRA_CORE_URL` | No | Core API base URL; overrides `MENTRA_ENV`. Local dev: `http://localhost:3000` |
 | `MENTRA_ENV` | No | `prod` (default) \| `staging` \| `dev` — picks the matching core deployment |
 
 Core hosts: prod `https://core.mentraglass.com`, staging `https://core.staging.us-west-2.mentraglass.com`, dev `https://core.dev.us-west-2.mentraglass.com`.
 
-**Note:** `msk_` API keys are env-pinned — a key minted for prod will not authenticate against staging or dev. Match the key to `MENTRA_ENV`/`MENTRA_CORE_URL`.
+**Note:** An operator key belongs to one Core deployment (organization) — a key created on prod will not authenticate against staging or dev. Match the key to `MENTRA_ENV`/`MENTRA_CORE_URL`. Workspace credentials (`msk_...`) carry no organization capability, so the report routes refuse them.
 
 Only tools whose credentials are configured are registered, plus `console_auth_status` (never prints secrets).
 
@@ -51,7 +51,7 @@ Or pass credentials explicitly in `env`:
       "args": [],
       "env": {
         "MENTRA_ENV": "prod",
-        "MENTRA_ADMIN_TOKEN": "msk_..."
+        "MENTRA_ADMIN_TOKEN": "mak_..."
       }
     }
   }
@@ -66,15 +66,15 @@ Restart Cursor after changing MCP config, then ask the agent to call `console_au
 |---------|-----|
 | MCP server **errored** / `bun: not found` | Use `run-mcp.sh` (not bare `bun`), or set `"env": { "BUN": "/Users/you/.bun/bin/bun" }` |
 | Only `console_auth_status` registered | Set `MENTRA_ADMIN_TOKEN` |
-| 401 unauthorized | Token rejected — check the key isn't revoked and matches the environment (`msk_` keys are env-pinned) |
-| 403 forbidden | Token is valid but its email isn't in `CLOUD_CORE_ADMIN_EMAILS` (for `msk_` keys, allowlist `api-key@{keyId}.local`) |
+| 401 unauthorized | Token rejected — check the key isn't revoked or expired and was created on the Core deployment you are calling |
+| 403 forbidden | Token is valid but lacks the required organization capability — create the operator key with the incident read scope, or use an Organization Admin's WorkOS token |
 | 404 on every report | Wrong id — or this core deployment doesn't serve the admin reports API yet |
 
 ## Run locally
 
 ```bash
 cd cloud-v2/packages/console-mcp
-export MENTRA_ADMIN_TOKEN=msk_...
+export MENTRA_ADMIN_TOKEN=mak_...
 bun run start
 ```
 
@@ -106,7 +106,7 @@ bun test
 
 ```bash
 cd cloud-v2/packages/console-mcp
-export MENTRA_ADMIN_TOKEN=msk_...
+export MENTRA_ADMIN_TOKEN=mak_...
 export MENTRA_ENV=dev            # or MENTRA_CORE_URL=http://localhost:3000
 bun run smoke
 ```

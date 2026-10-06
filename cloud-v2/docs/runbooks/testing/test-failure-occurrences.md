@@ -212,7 +212,7 @@ GET  /api/admin/test-runs/:runId/failures/:occurrenceId/evidence-supplements
 POST /api/admin/test-runs/:runId/failures/:occurrenceId/evidence-supplements
 ```
 
-POST requires the existing admin gate and `application/json`, with body
+POST requires the organization testing capability (`organization.testing.manage`) and `application/json`, with body
 `{confirmation:"append-reviewed-diagnostics", manifest, content:[{assetId,json}]}`.
 `json` is the exact reviewed UTF-8 JSON text, not a file path or URL. The manifest
 binds environment, accepted payload digest, run, occurrence/revision, acknowledged
@@ -258,6 +258,6 @@ bunx tsc -b packages/core --pretty false
 TEST_FAILURE_MONGO_URI=mongodb://127.0.0.1:27017 bun test packages/core/src/services/test-failure.mongo.test.ts
 ```
 
-Coverage includes AI-offline persistence, metadata-plus-intent atomic insertion, legacy replay reconciliation, unchanged failed verdicts, all trigger branch mappings, invalid provenance, scoped asset reads, dropped acknowledgments and idempotent queue delivery, plus reviewed provenance corrections: unchanged originals, idempotent/conflicting submissions, identity/source/evidence/attestation/state refusals, refused incident additions, preserved original incidents, the admin gate, the distinct delivery signature, lost and mismatched correction acknowledgments and terminal refusal. Physical devices and a running model are not needed.
+Coverage includes AI-offline persistence, metadata-plus-intent atomic insertion, legacy replay reconciliation, unchanged failed verdicts, all trigger branch mappings, invalid provenance, scoped asset reads, dropped acknowledgments and idempotent queue delivery, plus reviewed provenance corrections: unchanged originals, idempotent/conflicting submissions, identity/source/evidence/attestation/state refusals, refused incident additions, preserved original incidents, the organization testing capability, the distinct delivery signature, lost and mismatched correction acknowledgments and terminal refusal. Physical devices and a running model are not needed.
 
 The real Mongo suite checks concurrent metadata ingestion, competing acknowledgments, passing runs with no occurrence, reconciliation after a prior accepted row, and concurrent competing corrections resolving to one conditional append beside the untouched payload and occurrence. It refuses non-loopback URLs and always uses its own database.

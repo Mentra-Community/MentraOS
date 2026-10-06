@@ -75,6 +75,62 @@ Core issues an opaque Mentra user id. It retains provider metadata only for host
 integrations such as proving an ACS token belongs to the same Entra employee.
 Miniapp tokens never contain the federated identity.
 
+## Organization, workspaces and credentials
+
+A Private Deployment is one **organization**: this Core deployment and its
+database. Inside it, people belong to **workspaces** with a role (`owner`,
+`admin`, `developer` or `member`). Core owns workspaces, memberships,
+invitations, workspace credentials (`msk_...`) and operator keys (`mak_...`);
+the Store and the optional Fleet integration ask Core through its signed
+internal API (see [Store integration](../docs/store-integration.md) and
+[Fleet integration](../docs/fleet-integration.md)).
+
+An **Organization Admin** is a person whose _verified_ identity email is listed
+in `CLOUD_CORE_ADMIN_EMAILS` or has a domain in `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`
+(comma lists; exact domains, no subdomains). Organization Admins create operator
+keys in the admin dashboard under **Operator keys**. Operator keys carry only
+incident, support-profile and test-run scopes, never workspace administration.
+Core reads the variables below when it uses them, so a changed value takes effect
+on the next request. The values shown are placeholders.
+
+- `CLOUD_CORE_ORGANIZATION_ID` (public): stable id of this organization, matching `^[a-z0-9][a-z0-9-]{1,62}$` (for example `acme-private`). Stamped on every workspace, membership and audit event, and named in every answer the Store and Fleet check. **Required when `NODE_ENV=production`**: Core refuses to use workspaces without it. Elsewhere it defaults to `local`, so set it explicitly in every shared deployment. Never change it once workspaces exist.
+- `CLOUD_CORE_ADMIN_EMAILS`, `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` (public): the Organization Admins, as above.
+- `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` (public): comma list of the environment labels credentials may carry in `msk_<label>_...` and `mak_<label>_...`. New credentials use the first label. Without it Core uses `CLOUD_CORE_ENVIRONMENT`, then `local`. Labels are lowercased and reduced to `[a-z0-9]`. Credentials migrated from the Mentra Store keep their original labels, so list every label they carry (for the Mentra Store, `prod,dev`) or those keys stop validating.
+- `CLOUD_CORE_WORKSPACE_CREATION` (public): `open` (default) lets any signed-in person create a workspace. `organization-admins` limits creation to Organization Admins. Any other value is a configuration error and workspace creation fails.
+- `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE` (public): absolute http(s) URL that contains `{token}`, such as `https://console.example.com/invite/{token}`. It becomes the invitation link in the email and in the inviter's response. Without a usable value, inviting fails rather than minting a link that cannot work.
+- `CLOUD_CORE_SERVICE_SECRETS` (secret): JSON object of service name (`store`, `fleet`) to a list of shared secrets, newest first, for example `{"store":["<new>","<old>"],"fleet":["<secret>"]}`. Core verifies callers of `/api/internal/workspaces/*` with them; list the old secret beside the new one to rotate. Unset means no service can call; a value that is not that shape answers every call 503 `service_auth_misconfigured`. Unknown names are ignored with a warning.
+- `CLOUD_CORE_STORE_SERVICE_SECRET` (secret): the secret Core signs with when it asks the Store (`MENTRA_STORE_INTERNAL_URL`) how many miniapp packages a workspace holds before deleting it. **Required whenever `MENTRA_STORE_INTERNAL_URL` is set**: without it workspace deletion answers 503 `store_unavailable`. The Store must list it in its `MENTRA_STORE_CORE_SERVICE_SECRETS`. With no Store URL, deletion treats the workspace as having no packages.
+- `CLOUD_CORE_FLEET_URL` (public): base URL (optional path prefix) of the optional Fleet integration. Unset or blank means Fleet is not installed. See [Fleet integration](../docs/fleet-integration.md).
+- `CLOUD_CORE_FLEET_SECRET` (secret): the secret that signs what Core forwards to Fleet; required when `CLOUD_CORE_FLEET_URL` is set.
+- `CLOUD_CORE_FLEET_MAX_BODY_BYTES`, `CLOUD_CORE_FLEET_TIMEOUT_MS` (public): the largest request body Core forwards (default `1048576`) and how long Fleet may take to answer (default `10000`). Values that are not positive integers fall back to the defaults.
+
+Example (placeholders only):
+
+```text
+CLOUD_CORE_ORGANIZATION_ID=acme-private
+CLOUD_CORE_CREDENTIAL_ENVIRONMENTS=private
+CLOUD_CORE_WORKSPACE_CREATION=organization-admins
+CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE=https://console.acme.example/invite/{token}
+CLOUD_CORE_SERVICE_SECRETS={"store":["<store-secret>"],"fleet":["<fleet-secret>"]}
+CLOUD_CORE_STORE_SERVICE_SECRET=<core-to-store-secret>
+CLOUD_CORE_FLEET_URL=https://fleet.acme.example
+CLOUD_CORE_FLEET_SECRET=<core-to-fleet-secret>
+```
+
+Invitations and Organization Admin standing follow a person's verified email.
+To match a person's WorkOS sign-in to an existing Mentra account, Core needs its
+GoTrue directory: set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. When they are absent, such
+as in a deployment with no Mentra accounts, Core skips the match and gives each
+WorkOS user an identity of their own. When they are set but GoTrue errors, the
+sign-in fails and can be retried. A WorkOS user is linked once, permanently, on
+first sign-in, so a deployment that should match Mentra accounts must have
+these variables set before anyone signs in. Otherwise those people end up with
+a separate `workos` identity and do not see the memberships of their Mentra
+account.
+
+Migrating existing Store developer organizations into workspaces is a one-time
+operator task; see [Store integration](../docs/store-integration.md#migrating-developer-organizations).
+
 ## Runtime modules
 
 `RUNTIME_SERVICES` is a comma-separated positive allowlist. Unknown names fail
@@ -302,6 +358,7 @@ services:
       MENTRA_MINIAPP_JWT_PRIVATE_KEY: ${MENTRA_MINIAPP_JWT_PRIVATE_KEY:?required}
       MENTRA_MINIAPP_JWT_PUBLIC_KEY: ${MENTRA_MINIAPP_JWT_PUBLIC_KEY:?required}
       CLOUD_CORE_ISSUER: https://core.workspace.example
+      CLOUD_CORE_ORGANIZATION_ID: acme-private
       CLOUD_CORE_OIDC_PROVIDERS: ${CLOUD_CORE_OIDC_PROVIDERS:?required}
     secrets: [mongo_password]
     depends_on: [mongo]

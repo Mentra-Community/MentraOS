@@ -5,7 +5,7 @@
  * or MENTRA_ENV to pick a deployment — defaults to prod).
  *
  * Usage:
- *   export MENTRA_ADMIN_TOKEN=msk_...
+ *   export MENTRA_ADMIN_TOKEN=mak_...
  *   export MENTRA_ENV=dev            # or MENTRA_CORE_URL=http://localhost:3000
  *   bun run scripts/smoke-test.ts
  */

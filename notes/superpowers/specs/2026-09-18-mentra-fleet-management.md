@@ -1,9 +1,11 @@
 ---
-status: active
+status: archived
 owner: aisraelov
 ---
 
 # Mentra Fleet Management
+
+> Superseded by the private specifications repository; see the PR description of MentraOS #4153.
 
 - Original product brief: [Mentra Fleet Management Plan](https://docs.google.com/document/d/1f951XX6q5p_ild8Fj6IlLOvccuXGjocnTCa6mBFRtdU/edit?usp=sharing).
 - Delivery tracking: [Mentra Fleet Management in Linear](https://linear.app/mentralabs/project/mentra-fleet-management-36f3e6c31e4b/issues).
@@ -431,7 +433,7 @@ merge devices from ambiguous old support records.
 | --- | --- |
 | `mobile/modules/engine` | New Fleet collector/queue and lifecycle integration. Existing [glasses facade](../../../mobile/modules/engine/src/facades/glasses.ts), [support sync](../../../mobile/modules/engine/src/services/SupportProfileSync.ts), and [miniapp running registry](../../../mobile/modules/engine/src/services/MiniappRunningRegistry.ts) provide source patterns. |
 | `cloud-v2/packages/cloud-client` | Typed Fleet report client using existing Core auth and transport. See [current support-profile client](../../../cloud-v2/packages/cloud-client/src/modules/core/support-profile.ts). |
-| `cloud-v2/packages/core` | Ingestion, device identity, collections, aggregation, and Fleet routes behind existing admin authentication. See [support-profile service](../../../cloud-v2/packages/core/src/services/support-profile.service.ts) and [admin authentication](../../../cloud-v2/packages/core/src/api/middleware/admin-auth.middleware.ts). |
+| `cloud-v2/packages/core` | Ingestion, device identity, collections, aggregation, and Fleet routes behind existing admin authentication. See [support-profile service](../../../cloud-v2/packages/core/src/services/support-profile.service.ts) and [principal authentication](../../../cloud-v2/packages/core/src/api/middleware/principal.middleware.ts). |
 | `cloud-v2/websites/admin` | Fleet section in the [existing admin panel](../../../cloud-v2/websites/admin/src/App.tsx), using its login and navigation. |
 | Deployment configuration | Customer hosting of the shared admin panel, shared Core admin login, storage retention, and upgrades. See the [private deployment contract](../../../cloud-v2/deploy/private-deployment.md). |
 

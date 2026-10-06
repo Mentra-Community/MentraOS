@@ -14,8 +14,9 @@
  *
  * Configuration (read on use, so a changed value takes effect on the next request):
  *  - `CLOUD_CORE_FLEET_URL`: Fleet's base URL, with an optional path prefix. Unset or blank means
- *    Fleet is not installed. It must be `https`; in production (`NODE_ENV=production`) plain `http`
- *    is accepted only for `localhost` and `127.0.0.1`. No credentials, query or fragment.
+ *    Fleet is not installed. `https` is accepted everywhere. Plain `http` is accepted outside
+ *    production for any host, and in production (`NODE_ENV=production`) only for `localhost` and
+ *    `127.0.0.1`. No credentials, query or fragment.
  *  - `CLOUD_CORE_FLEET_SECRET`: the shared secret that signs what Core sends. Required when the URL
  *    is set.
  *  - `CLOUD_CORE_FLEET_MAX_BODY_BYTES` (default 1048576) and `CLOUD_CORE_FLEET_TIMEOUT_MS` (default
@@ -30,7 +31,9 @@
  *    503 `{error: "fleet_unavailable"}`. Never an empty success;
  *  - a body over the limit: 413 `{error: "payload_too_large"}`; a body that is not valid UTF-8: 400
  *    `{error: "invalid_body"}`; a path with a `.` / `..` segment, an encoded or literal separator
- *    (`%2f`, `%5c`, `\`), a control character or a bad escape: 400 `{error: "invalid_path"}`;
+ *    (`%2f`, `%5c`, `\`), a control character or a bad escape: 400 `{error: "invalid_path"}`.
+ *    Each segment is checked after one decoding and the path is forwarded exactly as received, so
+ *    Fleet must decode a path at most once (a double-encoded `%252e` is a literal `%2e` to Core);
  *  - any other upstream status and body pass through, with `content-type` and `cache-control` only.
  *
  * What Fleet receives. Core copies the method, the query, the body and the `content-type` and

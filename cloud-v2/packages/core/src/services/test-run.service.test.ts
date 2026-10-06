@@ -1544,7 +1544,7 @@ describe("reviewed provenance correction of an existing source-null occurrence",
     expect(repository.runs.get(compiledOnly.run.runId)!.provenanceCorrections).toBeUndefined();
   });
 
-  test("the correction route sits behind the existing admin gate", async () => {
+  test("the correction route sits behind the organization testing capability", async () => {
     const gated = new Hono(); gated.use("*", principalAuth); gated.route("/", adminApp(null));
     const p = await published();
     for (const authorization of [`Bearer ${TOKEN}`, `Bearer ${signTestFailureReadGrant(p.id, "dev", Math.floor(Date.now() / 1000) + 300, secret)}`])

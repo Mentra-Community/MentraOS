@@ -41,8 +41,9 @@ Configure these values on the **Core deployment**, never in the browser bundle:
 The public callback authenticates separately inside GitHub Actions. The worker
 still uses separate `TEST_RUN_CLAIM_TOKEN` and
 `TEST_RUN_INGEST_TOKEN` capabilities. Admin sessions use the existing Mentra
-login and `CLOUD_CORE_ADMIN_EMAILS`/domain authorization; worker tokens cannot
-browse or dispatch from this UI.
+login of an Organization Admin (a verified email on `CLOUD_CORE_ADMIN_EMAILS` or a
+listed domain); an operator key (`mak_`) works with the organization testing
+scopes. Worker tokens cannot browse or dispatch from this UI.
 
 Use one shared Core claim authority across the fleet. This dashboard must point
 to that deployment to show the worker's claims and results. The **source build
