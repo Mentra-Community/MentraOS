@@ -61,8 +61,10 @@ The manual `rerun-device-routines.yml` workflow accepts `parent_suite_id`, eithe
 comma-separated `member_ids` or `statuses`, optional `exclude_member_ids`, `reason`,
 and optional `build_run_id` with its channel/publication/PR coordinates. Blank
 `build_run_id` means original artifacts. Read its current workflow inputs before
-invocation; retry the same workflow run to reconcile uncertain admission. A new
-workflow invocation creates a new attempt. It returns a progress link without
+invocation. Retry the same workflow run to reconcile accepted or uncertain
+admission. If the preview is conclusively unaccepted and expired, a new workflow
+invocation or API rerun ID is needed for a fresh preview. Never replace an
+accepted identity to bypass reconciliation. A new invocation creates a new attempt. It returns a progress link without
 waiting for the full catalog. Individual API previews use the current schema in
 `cloud-v2/packages/core/src/types/test-rerun.types.ts`.
 
