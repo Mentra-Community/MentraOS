@@ -25,7 +25,29 @@ const projection = ({
   createdAt,
   acceptance,
   status,
-}: RoutineWorkDelivery) => ({workId, requestSha256, inputSha256, hostId, request, work, createdAt, acceptance, status})
+  reporting,
+}: RoutineWorkDelivery) => ({
+  workId,
+  requestSha256,
+  inputSha256,
+  hostId,
+  request,
+  work,
+  createdAt,
+  acceptance,
+  status,
+  ...(reporting
+    ? {
+        reporting: {
+          nextProgressAt: reporting.nextProgressAt,
+          history: reporting.history,
+          error: reporting.error,
+          progressCommentId: reporting.progressCommentId,
+          finalCommentId: reporting.finalCommentId,
+        },
+      }
+    : {}),
+})
 export function createRoutineWorkIntakeApi(service = new RoutineWorkService()) {
   const app = new Hono<AppEnv>()
   app.use('*', testRunIngestAuth)
@@ -38,6 +60,11 @@ export function createRoutineWorkIntakeApi(service = new RoutineWorkService()) {
     c.json(projection(await service.submit(await frameworkJson(c))), 202),
   )
   app.get('/:workId', async (c) => c.json(projection(await service.inspect(c.req.param('workId')))))
+  app.post('/:workId/report', async (c) => {
+    const row = await service.inspect(c.req.param('workId'))
+    await service.report(row)
+    return c.json({workId: row.workId, retained: true})
+  })
   return app
 }
 

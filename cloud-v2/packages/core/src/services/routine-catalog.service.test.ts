@@ -1,4 +1,5 @@
-import {expect, test} from "bun:test";
+import {expect, spyOn, test} from "bun:test";
+import {TestRunModel} from '../models/test-run.model';
 import {RoutineCatalogService} from "./routine-catalog.service";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
@@ -8,6 +9,20 @@ const preferences = {async list() {return [];}, async get() {return null;}, asyn
 const example: CatalogExample = {runId: "notes-pass", startedAt: "2026-10-02T18:00:00Z",
   finishedAt: "2026-10-02T18:01:00Z", recordingAssetId: "video", definitionRevision: "a".repeat(40),
   build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
+test('public passing selector excludes verification candidates while retaining prior ordinary examples', async () => {
+  const find = spyOn(TestRunModel, 'findOne').mockReturnValue({sort() {return this;}, select() {return this;},
+    read() {return this;}, readConcern() {return this;}, lean: async () => null} as unknown as ReturnType<typeof TestRunModel.findOne>);
+  const definition = {routineId: 'notes', platform: 'android', definitionRevision: 'c'.repeat(40)} as RoutineEnrollment;
+  try {
+    const service = new RoutineCatalogService({async current() {return [definition];}, async getCurrent() {return definition;}},
+      undefined, preferences);
+    // A history read is separate from eligibility; isolate this selector via a detail with mocked history.
+    const history = spyOn(TestRunModel, 'find').mockReturnValue({sort() {return this;}, limit() {return this;}, select() {return this;},
+      read() {return this;}, readConcern() {return this;}, lean: async () => []} as unknown as ReturnType<typeof TestRunModel.find>);
+    try {expect(await service.list()).toEqual([]);} finally {history.mockRestore();}
+    expect(find.mock.calls[0]?.[0]).toMatchObject({routineId: 'notes', platform: 'android', catalogEligible: {$ne: false}});
+  } finally {find.mockRestore();}
+});
 test("a historical passing example retains catalog membership while new authoring work stays out", async () => {
   const definitions = [{routineId: "notes", platform: "ios-on-mac", definitionRevision: "c".repeat(40)},
     {routineId: "gallery-sync", platform: "android", definitionRevision: "d".repeat(40)}] as RoutineEnrollment[];

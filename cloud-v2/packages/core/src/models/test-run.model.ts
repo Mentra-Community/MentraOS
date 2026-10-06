@@ -11,6 +11,7 @@ const schema = new Schema({
   summaryProjection: {type: Schema.Types.Mixed},
   payloadSha256: {type: String, required: true}, payload: {type: Schema.Types.Mixed, required: true},
   uploadsComplete: {type: Boolean, required: true}, outcome: {type: String, required: true},
+  verification: {type: Schema.Types.Mixed, immutable: true}, catalogEligible: {type: Boolean},
 }, {collection: "test_runs", timestamps: true, autoIndex: false});
 schema.index({requestId: 1}, {unique: true, name: "test_runs_terminal_request",
   partialFilterExpression: {"payload.schemaVersion": 1}});

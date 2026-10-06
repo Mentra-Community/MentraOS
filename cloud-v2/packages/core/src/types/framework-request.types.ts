@@ -1,6 +1,7 @@
 import {z} from "zod";
 import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
 import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./glasses-software.types";
+import {candidateVerificationSchema} from './candidate-verification.types';
 
 export const frameworkIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
 export const frameworkBuildSchema = z.object({
@@ -23,7 +24,10 @@ export const frameworkRequestInputSchema = z.object({
   policy: z.record(z.unknown()).optional(),
   glassesStart: glassesSoftwareRefSchema.optional(),
   glassesReturn: glassesSoftwareRefSchema.optional(),
+  verification: candidateVerificationSchema.optional(),
 }).passthrough().superRefine((input, ctx) => {
+  if (input.verification && input.verification.sourceRevision !== input.definitionRevision)
+    ctx.addIssue({code: 'custom', message: 'Candidate verification source differs from the request'});
   const glasses = input.resources.some(resource => resource.kind === "glasses");
   if (glasses !== (input.glassesStart !== undefined && input.glassesReturn !== undefined) ||
     (input.glassesStart === undefined) !== (input.glassesReturn === undefined))

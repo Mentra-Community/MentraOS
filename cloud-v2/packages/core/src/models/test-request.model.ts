@@ -14,6 +14,7 @@ const schema = new Schema({
   cancellationAcknowledged: {type: Boolean},
   runId: {type: String},
   terminalStatus: {type: String},
+  catalogEligible: {type: Boolean},
 }, {collection: "test_requests", timestamps: true});
 schema.index({state: 1, createdAt: 1, requestId: 1});
 schema.index({hostId: 1, state: 1});

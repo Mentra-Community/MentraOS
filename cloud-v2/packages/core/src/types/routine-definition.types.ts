@@ -1,5 +1,6 @@
 import {z} from "zod";
 import {glassesSoftwareRefSchema} from "./glasses-software.types";
+import {candidateVerificationSchema} from './candidate-verification.types';
 
 const text = z.string().min(1).max(2000);
 export const routineIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/);
@@ -52,9 +53,12 @@ export const publishedRoutineDefinitionSchema = z.object({
 export const routineEnrollmentSchema = z.object({
   routineId: id, platform: routinePlatformSchema, definitionRevision: z.string().regex(/^[a-f0-9]{40}$/),
   definitionSha256: z.string().regex(/^[a-f0-9]{64}$/), definition: publishedRoutineDefinitionSchema,
+  verification: candidateVerificationSchema.optional(),
 }).strict().superRefine((row, ctx) => {
   if (row.routineId !== row.definition.id || row.definitionRevision !== row.definition.source.revision
     || !row.definition.platforms.includes(row.platform))
     ctx.addIssue({code: "custom", message: "Enrollment identity contradicts its definition"});
+  if (row.verification && row.verification.sourceRevision !== row.definitionRevision)
+    ctx.addIssue({code: 'custom', message: 'Candidate verification source differs from its definition'});
 });
 export type RoutineEnrollment = z.infer<typeof routineEnrollmentSchema>;

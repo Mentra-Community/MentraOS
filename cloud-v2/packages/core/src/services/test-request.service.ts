@@ -4,6 +4,8 @@ import {testWriteConcern} from "../models/test-write-concern";
 import {createHash} from "node:crypto";
 import {TestRequestModel} from "../models/test-request.model";
 import {z} from "zod";
+import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
+import {RoutineDefinitionModel} from '../models/routine-definition.model';
 
 export type RequestState = "queued" | "accepted" | "running" | "terminal";
 export interface HostAcceptance {
@@ -35,6 +37,7 @@ export interface StoredTestRequest {
   runId?: string;
   terminalStatus?: string;
   createdAt?: Date;
+  catalogEligible?: boolean;
 }
 export interface TestRequestRepository {
   insert(request: StoredTestRequest): Promise<void>;
@@ -112,8 +115,18 @@ const mongoRepository: TestRequestRepository = {
   },
 };
 
+const enrolledRequest = async (input: z.infer<typeof frameworkRequestInputSchema>) => {
+  const row = await RoutineDefinitionModel.findOne({routineId: input.routineId, platform: input.platform,
+    definitionRevision: input.definitionRevision}).read('primary').readConcern('majority').lean();
+  const permitted = input.verification ? (row?.candidateBindings ?? []).some(value =>
+    requestInputDigest(value) === requestInputDigest(input.verification)) : !!row?.ordinaryEnrolledAt;
+  if (!permitted) throw new TestRequestConflict('Request has no matching ordinary enrollment or candidate authorization');
+};
 export class TestRequestService {
-  constructor(private readonly repository: TestRequestRepository = mongoRepository) {}
+  constructor(private readonly repository: TestRequestRepository = mongoRepository,
+    private readonly candidates: CandidateAuthorization = new CandidateVerificationService(),
+    private readonly enrolled: ((input: z.infer<typeof frameworkRequestInputSchema>) => Promise<void>) | null =
+      repository === mongoRepository ? enrolledRequest : null) {}
 
   get(requestId: string) {return this.repository.get(requestId);}
 
@@ -152,11 +165,18 @@ export class TestRequestService {
     if (!frameworkIdentitySchema.safeParse(requestId).success || !frameworkIdentitySchema.safeParse(hostId).success) throw new TestRequestConflict("Request and assigned host identities are required");
     if (!frameworkRequestInputSchema.safeParse(input).success) throw new TestRunError(400, "Invalid framework request input");
     const inputSha256 = requestInputDigest(input);
-    return {requestId, hostId, input, inputSha256, state: "queued"};
+    return {requestId, hostId, input, inputSha256, state: "queued",
+      ...(frameworkRequestInputSchema.parse(input).verification ? {catalogEligible: false} : {})};
   }
 
-  async submit(requestId: string, hostId: string, input: unknown): Promise<StoredTestRequest> {
+  async submit(requestId: string, hostId: string, input: unknown, authenticatedHostId?: string): Promise<StoredTestRequest> {
     const request = this.submission(requestId, hostId, input);
+    const selected = frameworkRequestInputSchema.parse(input);
+    await this.enrolled?.(selected);
+    if (selected.verification) {
+      if (authenticatedHostId !== hostId) throw new TestRequestConflict('Candidate admission requires the authenticated assigned host');
+      await this.candidates.authorize(selected.verification, authenticatedHostId, selected);
+    }
     try {await this.repository.insert(request); return request;}
     catch (error) {
       // Only duplicate identity is recoverable; outages must not become acceptance.
@@ -194,8 +214,15 @@ export class TestRequestService {
     if (!frameworkIdentitySchema.safeParse(receipt.requestId).success || !frameworkIdentitySchema.safeParse(receipt.hostId).success || receipt.hostId !== authenticatedHostId || !Number.isFinite(Date.parse(receipt.acceptedAt))
       || requestInputDigest(input) !== receipt.inputSha256)
       throw new TestRequestConflict("Local acceptance must match the authenticated host and immutable input");
+    const selected = frameworkRequestInputSchema.parse(input);
+    const original = await this.repository.get(receipt.requestId);
+    if (!original) {
+      await this.enrolled?.(selected);
+      if (selected.verification) await this.candidates.authorize(selected.verification, authenticatedHostId, selected);
+    }
     const row: StoredTestRequest = {requestId: receipt.requestId, hostId: authenticatedHostId, input,
-      inputSha256: receipt.inputSha256, state: "accepted", hostReceipt: receipt};
+      inputSha256: receipt.inputSha256, state: "accepted", hostReceipt: receipt,
+      ...(selected.verification ? {catalogEligible: false} : {})};
     try {await this.repository.insert(row); return row;}
     catch (error) {
       if ((error as {code?: number}).code !== 11000) throw error;

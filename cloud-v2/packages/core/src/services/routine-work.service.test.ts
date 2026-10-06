@@ -134,6 +134,7 @@ test('freezes one exact build and immutable work, without taking a hardware gran
     build: {kind: 'android-apk', source: input.buildSource, headSha: input.origin.headSha},
   })
   expect(row.inputSha256).toBe(requestInputDigest(row.work))
+  expect(row.reporting?.nextProgressAt).toBeInstanceOf(Date)
   expect(await f.service.submit(input)).toEqual(row)
   expect(f.resolves).toBe(1)
   for (const change of [
@@ -280,4 +281,70 @@ test('PR notification failure cannot roll back accepted work; exact retry notifi
   expect(f.rows.get(row.workId)?.status?.sequence).toBe(1)
   await expect(f.service.status(status, row.hostId)).rejects.toMatchObject({status: 503})
   expect(f.rows.get(row.workId)?.statusReceipts).toHaveLength(1)
+})
+
+test('terminal status requires exact reviewed source and recording links and cannot regress after restart', async () => {
+  const f = fixture(),
+    row = await f.service.submit(input)
+  const receipt = {
+    workId: row.workId,
+    hostId: row.hostId,
+    inputSha256: row.inputSha256,
+    acceptedAt: '2026-10-05T10:01:00Z',
+  }
+  await f.service.accept(receipt, row.hostId)
+  const {acceptedAt: _, ...binding} = receipt
+  const state = 'passed' as const,
+    prUrl = 'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/600'
+  const details = {
+    sourceRevision: 'c'.repeat(40),
+    prUrl,
+    requestId: 'candidate-one',
+    resultUrl: 'https://admin.dev.mentraglass.com/?testRun=run-one',
+    completion: {
+      sourceRevision: 'c'.repeat(40),
+      reviewedRevision: 'c'.repeat(40),
+      prUrl,
+      reviewUrl: `${prUrl}#pullrequestreview-21`,
+      resultUrl: 'https://admin.dev.mentraglass.com/?testRun=run-one',
+      summary: 'Recorded steps passed, baseline restored and workspace disposed.',
+    },
+  }
+  const event = {
+    ...binding,
+    eventId: 'terminal-one',
+    sequence: 1,
+    state,
+    details: {...receipt, sequence: 1, state, work: row.work, details, events: []},
+  }
+  for (const invalid of [
+    {...details, completion: undefined},
+    {...details, completion: {...details.completion, reviewedRevision: 'd'.repeat(40)}},
+    {...details, completion: {...details.completion, reviewUrl: `${prUrl}/comments/21`}},
+    {
+      ...details,
+      completion: {
+        ...details.completion,
+        reviewUrl: 'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601#pullrequestreview-21',
+      },
+    },
+  ])
+    await expect(
+      f.service.status({...event, details: {...event.details, details: invalid}}, row.hostId),
+    ).rejects.toMatchObject({status: 400})
+  await f.service.status(event, row.hostId)
+  expect(await f.service.status(event, row.hostId)).toEqual(event)
+  await expect(
+    f.service.status(
+      {
+        ...event,
+        eventId: 'late-progress',
+        sequence: 2,
+        state: 'authoring',
+        details: {...event.details, state: 'authoring', sequence: 2},
+      },
+      row.hostId,
+    ),
+  ).rejects.toThrow('Terminal')
+  expect(f.rows.get(row.workId)?.status?.state).toBe('passed')
 })
