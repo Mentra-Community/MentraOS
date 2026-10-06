@@ -13,6 +13,11 @@ The `routine-fixer` Claude profile loads this skill and `codex-pr-review` at sta
 The case prompt supplies data, not another copy of this process. Read the case's
 saved progress before acting so a restart resumes the existing PR/review/run.
 
+For a nightly suite with multiple failing members, use
+[fix-nightly-failures](../fix-nightly-failures/SKILL.md) to coordinate diagnoses,
+parallel source work and verification without interrupting independent tests.
+This skill remains the per-failure fix/review workflow.
+
 ## Establish evidence and destination
 
 Fetch the assigned run/case packet and linked artifacts through its supplied API.
