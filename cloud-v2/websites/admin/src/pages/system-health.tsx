@@ -4,6 +4,8 @@ import { DISK_FLOOR_BYTES, HOST_COMPONENTS, hostIsFresh, type CleanupHealthEvent
   type HostReason, type TestHostHistory, type TestHostLatest, type TestHostList } from "../../../../packages/core/src/types/test-host-health.types";
 import { api } from "../lib/api";
 import {LaneRestorationPage} from "./lane-restoration";
+import {LaneHistoryPage} from "./lane-history";
+import type {LaneSelection} from "../lib/lane-links";
 import {LaneHealthSection} from "./lane-health";
 
 const elapsed = (at: string, now: number) => `${Math.max(0, Math.floor((now - Date.parse(at)) / 60000))}m`;
@@ -118,8 +120,9 @@ export function CleanupEvents({ events }: { events: CleanupHealthEvent[] }) {
   </details>;
 }
 
-export function SystemHealthPage({restoration = false}: {restoration?: boolean}) {
-  return restoration ? <LaneRestorationPage /> : <SystemHealthDashboard />;
+export function SystemHealthPage({restoration = false, lane = null}: {restoration?: boolean; lane?: LaneSelection | null}) {
+  const now = useClock();
+  return lane ? <LaneHistoryPage key={`${lane.hostId}/${lane.laneId}`} selection={lane} now={now} /> : restoration ? <LaneRestorationPage /> : <SystemHealthDashboard />;
 }
 function SystemHealthDashboard() {
   const query = useHostHealth(), now = useClock(), [hostId, setHostId] = useState<string | null>(null), [days, setDays] = useState<1 | 7>(1);

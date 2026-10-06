@@ -50,14 +50,15 @@ function Attempt({attempt, observedAt}: {attempt: LaneRestorationAttempt; observ
     </details>
   </article>;
 }
-export function RestorationHost({host, fresh}: {host: LaneRestorationHost; fresh: boolean}) {
+export function RestorationHost({host, fresh, laneId}: {host: LaneRestorationHost; fresh: boolean; laneId?: string}) {
+  const lanes = host.lanes.filter(lane => !laneId || lane.id === laneId);
   return <section className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{host.hostId}</h3>
     <p className="text-xs text-[#68746d]">{fresh ? "Controller reporting" : "Current controller state unknown"} · Last received {time(host.receivedAt)}</p></div>
-    <div className="flex flex-wrap gap-2">{host.lanes.map(lane => <a key={lane.id} href={`#lane-${host.hostId}-${lane.id}`} className="rounded-lg border border-[#dfe5dd] px-3 py-2 text-xs text-[#59655e]">
+    <div className="flex flex-wrap gap-2">{lanes.map(lane => <a key={lane.id} href={`#lane-${host.hostId}-${lane.id}`} className="rounded-lg border border-[#dfe5dd] px-3 py-2 text-xs text-[#59655e]">
       {lane.id} · {fresh ? lane.state.replaceAll("-", " ") : `last reported ${lane.state.replaceAll("-", " ")}`} · {lane.dispatchMode}</a>)}</div>
     {!host.restoration ? <p className="rounded-xl bg-[#f5f7f3] p-4 text-sm text-[#68746d]">Restoration attempts and resume receipts are unknown. This controller has not reported restoration records.</p>
-      : !host.restoration.attempts.length ? <p className="text-sm text-[#68746d]">No restoration attempt is present in the controller's retained history.</p>
-      : <>{host.lanes.map(lane => {const attempts = host.restoration!.attempts.filter(row => row.laneId === lane.id); return <div id={`lane-${host.hostId}-${lane.id}`} key={lane.id} className="space-y-3">
+      : !host.restoration.attempts.some(attempt => !laneId || attempt.laneId === laneId) ? <p className="text-sm text-[#68746d]">No restoration attempt is present in the controller's retained history for {laneId ? "this lane" : "these lanes"}.</p>
+      : <>{lanes.map(lane => {const attempts = host.restoration!.attempts.filter(row => row.laneId === lane.id); return <div id={`lane-${host.hostId}-${lane.id}`} key={lane.id} className="space-y-3">
         {attempts.map(attempt => <Attempt key={attempt.executionId} attempt={attempt} observedAt={host.observedAt} />)}</div>;})}</>}
     {host.restoration?.truncated ? <p className="text-xs text-[#a64235]">The controller reports only a bounded portion of its restoration history. Older attempts may be absent.</p> : null}
   </section>;

@@ -1,5 +1,6 @@
 import {useQuery} from "@tanstack/react-query";
 import {restorationHostIsFresh, type LaneRestorationHost, type LaneRestorationList} from "../../../../packages/core/src/types/lane-restoration.types";
+import {laneHistoryHref} from "../lib/lane-links";
 import {api} from "../lib/api";
 
 const states: Record<string, {label: string; style: string}> = {
@@ -14,7 +15,7 @@ const unknown = {label: "Unknown", style: "bg-[#f0f2ef] text-[#59655e]"};
 const modes: Record<string, string> = {automatic: "Automatic", authoring: "Authoring", paused: "Paused"};
 const time = (value: string) => new Date(value).toLocaleString();
 
-export function LaneHealthHost({host, fresh}: {host: LaneRestorationHost; fresh: boolean}) {
+export function LaneHealthHost({host, fresh, linkHistory = true}: {host: LaneRestorationHost; fresh: boolean; linkHistory?: boolean}) {
   return <div className="mt-5">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h3 className="font-semibold text-[#14151b]">{host.hostId}</h3>
@@ -24,12 +25,12 @@ export function LaneHealthHost({host, fresh}: {host: LaneRestorationHost; fresh:
       <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{host.lanes.map(lane => {
         const state = fresh ? states[lane.state] ?? unknown : unknown;
         return <article key={lane.id} className="rounded-xl border border-[#e0e4de] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold text-[#14151b]">{lane.id}</h4>
+          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold text-[#14151b]">{linkHistory ? <a href={laneHistoryHref(host.hostId, lane.id)} className="hover:underline">{lane.id}</a> : lane.id}</h4>
             <span className={`rounded-md px-2 py-1 text-xs font-semibold ${state.style}`}>{state.label}</span></div>
           <p className="mt-2 text-sm text-[#5d6068]">{lane.platform === "android" ? "Android" : "iOS on Mac"}</p>
           <p className="mt-2 text-sm text-[#5d6068]">{fresh ? "Scheduling" : "Last reported scheduling"}: {modes[lane.dispatchMode] ?? "Unknown"}</p>
           {!fresh && <p className="mt-2 text-sm text-[#747780]">Last reported state: {states[lane.state]?.label ?? "Unknown"}. Current lane status is unknown.</p>}
-          <a className="mt-3 inline-block text-sm font-medium text-blue-700 underline" href={`/?systemHealth=1&restoration=1#${encodeURIComponent(`lane-${host.hostId}-${lane.id}`)}`}>Restoration history &amp; resume decisions</a>
+          {linkHistory && <a className="mt-3 inline-block text-sm font-medium text-blue-700 underline" href={laneHistoryHref(host.hostId, lane.id)}>View lane history</a>}
         </article>;
       })}</div>}
   </div>;

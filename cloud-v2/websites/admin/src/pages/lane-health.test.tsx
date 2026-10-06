@@ -19,7 +19,7 @@ test("main System Health shows controller lanes independently of host monitoring
   expect(html).toContain("Device lanes"); expect(html).toContain("mini-mac"); expect(html).toContain("mini-android");
   expect(html).toContain("Idle"); expect(html).toContain("Reserved"); expect(html).toContain("Paused");
   expect(html).toContain("No independent host monitor"); expect(html).toContain("Controller reporting");
-  expect(html).toContain("restoration=1#lane-mini-controller-mini-mac");
+  expect(html).toContain("hostId=mini-controller&amp;laneId=mini-mac");
   client.clear();
 });
 
