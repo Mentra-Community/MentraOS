@@ -122,7 +122,7 @@ export async function selectedRoutineWork({github, context, number}) {
         const {data} = await github.rest.repos.getCollaboratorPermissionLevel({...context.repo, username})
         ensure(data.user?.login?.toLowerCase() === username.toLowerCase() &&
           ['none', 'read', 'write', 'admin'].includes(data.permission), 'Unexpected collaborator permission response')
-        collaborator = data.permission !== 'none'
+        collaborator = ['write', 'admin'].includes(data.permission)
       } catch (error) {
         if (error?.status !== 404) throw new Error('Repository collaborator access could not be verified; retry the same authoring request')
       }

@@ -95,11 +95,13 @@ test('repository access, not credential-dependent comment association, selects t
     assert.deepEqual(calls, [{...context.repo, username: 'colleague'}])
   }
   const comment = {id: 44, body: body(input), author_association: 'MEMBER', user: {type: 'User', login: 'colleague'}}
-  for (const permission of ['read', 'write', 'admin']) {
+  for (const permission of ['write', 'admin']) {
     const selected = await selectedRoutineWork({github: github([comment], pr, async ({username}) => ({data: {permission, user: {login: username}}})), context, number: 12})
     assert.equal(selected.commentId, 44)
   }
-  await assert.rejects(selectedRoutineWork({github: github([comment], pr, async ({username}) => ({data: {permission: 'none', user: {login: username}}})), context, number: 12}), /Exactly one/)
+  for (const permission of ['none', 'read']) {
+    await assert.rejects(selectedRoutineWork({github: github([comment], pr, async ({username}) => ({data: {permission, user: {login: username}}})), context, number: 12}), /Exactly one/)
+  }
   await assert.rejects(selectedRoutineWork({github: github([comment], pr, async () => ({data: {permission: 'admin', user: {login: 'another-user'}}})), context, number: 12}), /access could not be verified/)
   await assert.rejects(selectedRoutineWork({github: github([comment], pr, async () => {
     throw Object.assign(new Error('token permission unavailable'), {status: 403})

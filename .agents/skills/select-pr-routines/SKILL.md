@@ -153,7 +153,7 @@ hardware or implement another authoring workflow.
    gh pr edit PR --repo Mentra-Community/MentraOS --add-label routine-work:edit
    ```
 
-   The comment author must be a human account with repository access, verified
+   The comment author must be a human account with repository write or admin access, verified
    through GitHub's collaborator permission endpoint. Comment association labels
    can vary by credential and do not establish access. An AI using that account's
    `gh` login works; a bot-authored brief does not. For an existing request, edit its comment
