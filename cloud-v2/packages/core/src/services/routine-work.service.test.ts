@@ -270,24 +270,24 @@ test('PR notification failure cannot block durable acceptance or subsequent host
   }
   await f.service.accept(receipt, row.hostId)
   const {acceptedAt: _, ...binding} = receipt
-  const status = {
+  const status = routineWorkStatusSchema.parse({
     ...binding,
     eventId: 'event:failed-notification',
     sequence: 1,
     state: 'authoring',
     details: {...receipt, sequence: 1, state: 'authoring', work: row.work, details: {}, events: []},
-  }
+  })
   expect(await f.service.status(status, row.hostId)).toEqual(status)
   expect(f.rows.get(row.workId)?.status?.sequence).toBe(1)
   expect(await f.service.status(status, row.hostId)).toEqual(status)
   expect(f.rows.get(row.workId)?.statusReceipts).toHaveLength(1)
-  const next = {
+  const next = routineWorkStatusSchema.parse({
     ...status,
     eventId: 'event:later-status-during-outage',
     sequence: 2,
     state: 'awaiting-review',
     details: {...status.details, sequence: 2, state: 'awaiting-review'},
-  }
+  })
   expect(await f.service.status(next, row.hostId)).toEqual(next)
   expect(f.rows.get(row.workId)?.status?.state).toBe('awaiting-review')
   expect(f.rows.get(row.workId)?.statusReceipts).toHaveLength(2)
