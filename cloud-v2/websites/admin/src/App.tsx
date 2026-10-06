@@ -1,9 +1,10 @@
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { AlertCircle, Bug, Check, ClipboardList, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, Bug, Check, ClipboardList, FileText, FlaskConical, History, Home, KeyRound, Loader2, MessageSquareWarning, RefreshCcw, RotateCcw, ShieldCheck, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
+import { resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./lib/admin-access";
 import { api, ApiError } from "./lib/api";
 import {
   readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
@@ -11,16 +12,21 @@ import {
 import { TestRunsPage } from "./pages/test-runs";
 import { FixFlowsPage } from "./pages/fix-flows";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
+import { OperatorKeysPage } from "./pages/operator-keys";
+import { WorkspacesPage } from "./pages/workspaces";
 import { fixFlowHref, readFixFlowLink, type FixFlowLink } from "./lib/fix-flow-links";
+import { readWorkspaceInvite, withoutWorkspaceInvite } from "./lib/workspace-invite-link";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
-type AdminPageKey = "incidents" | "test-runs" | "fix-flows" | "system-health";
 
-const ADMIN_NAV: readonly NavItem[] = [
+/** Every page, in navigation order. What a principal actually sees is `visiblePages(me)`. */
+const ADMIN_NAV: ReadonlyArray<NavItem & { key: AdminPageKey }> = [
   { key: "incidents", label: "Incident system", icon: Bug },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
   { key: "fix-flows", label: "Fix flows", icon: RotateCcw },
   { key: "system-health", label: "System health", icon: ShieldCheck },
+  { key: "workspaces", label: "Workspaces", icon: Users },
+  { key: "operator-keys", label: "Operator keys", icon: KeyRound },
 ];
 
 const PAGE_META: Record<AdminPageKey, { title: string; body: string }> = {
@@ -28,11 +34,10 @@ const PAGE_META: Record<AdminPageKey, { title: string; body: string }> = {
   "system-health": { title: "System health", body: "Host contact, worker status, device lanes and recorded disk space." },
   incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
   "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
+  workspaces: { title: "Workspaces", body: "Members, invitations, keys, settings and the audit log for each workspace." },
+  "operator-keys": { title: "Operator keys", body: "Organization keys for incident, support-profile and test-run tooling." },
 };
-interface AdminUser {
-  developerId: string;
-  email: string;
-}
+const NO_ACCESS_META = { title: "Core admin", body: "Nothing is available to this account yet." };
 
 type ReportKind = "bug" | "feedback" | "automatic";
 type ReportStatus = "collecting" | "ready" | "closed";
@@ -127,11 +132,24 @@ const initialTestRunListScope = readTestRunListScope(window.location.search);
 const initialFixFlowLink = readFixFlowLink(window.location.search);
 const initialFixFlows = new URLSearchParams(window.location.search).get("fixFlows") === "active";
 const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
+// Invitation links point here as /?workspaceInvite=<token>. The token stays in the address bar until the
+// invitation is accepted or the person navigates away, so a sign-in round-trip (LoginGate's return_to)
+// or switching to the invited account still lands back on the accept screen.
+const initialWorkspaceInvite = readWorkspaceInvite(window.location.search);
 
-function AdminPage() {
-  const [page, setPage] = useState<AdminPageKey>(
-    initialSystemHealth ? "system-health" : initialFixFlowLink || initialFixFlows ? "fix-flows" : initialTestRunLink || initialTestRunListScope ? "test-runs" : "incidents",
+export function AdminPage() {
+  const client = useQueryClient();
+  // The page asked for, if any. What shows is `resolvePage(page, visible)`: a page this principal
+  // cannot see (a deep link) falls back to their default page.
+  const [page, setPage] = useState<AdminPageKey | null>(
+    initialSystemHealth ? "system-health"
+      : initialFixFlowLink || initialFixFlows ? "fix-flows"
+      : initialTestRunLink || initialTestRunListScope ? "test-runs"
+      : initialWorkspaceInvite ? "workspaces"
+      : pendingDeepLinkReportId ? "incidents"
+      : null,
   );
+  const [workspaceInvite, setWorkspaceInvite] = useState<string | null>(initialWorkspaceInvite);
   const [fixFlowLink, setFixFlowLink] = useState<FixFlowLink | null>(initialFixFlowLink);
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
@@ -152,7 +170,7 @@ function AdminPage() {
 
   const me = useQuery({
     queryKey: ["admin-me"],
-    queryFn: () => api<{ authenticated: true; admin: true; user: AdminUser | null }>("/api/admin/me"),
+    queryFn: () => api<AdminMe>("/api/admin/me"),
     retry: false,
   });
 
@@ -169,6 +187,9 @@ function AdminPage() {
   }, [me.isSuccess]);
   useEffect(() => {
     const restore = () => {
+      const invite = readWorkspaceInvite(window.location.search);
+      setWorkspaceInvite(invite);
+      if (invite) { setPage("workspaces"); return; }
       if (new URLSearchParams(window.location.search).get("systemHealth") === "1") { setPage("system-health"); return; }
       const fixFlow = readFixFlowLink(window.location.search);
       setFixFlowLink(fixFlow);
@@ -201,25 +222,39 @@ function AdminPage() {
     window.history.replaceState(null, "", testRunListLocation(window.location.href, null));
   }
 
-  if (me.isLoading) return <Splash label="Checking admin session" />;
-  if (me.isError) {
-    // A 403 means the Mentra login itself worked but the account isn't on the
-    // admin allowlist; offering the login button again would be misleading.
-    return <LoginGate denied={me.error instanceof ApiError && me.error.status === 403} />;
+  async function spendWorkspaceInvite() {
+    // Accepting added a workspace. Refresh who this is before forgetting the invitation: until then Workspaces
+    // is open only because of the invitation, and a person in no other workspace would lose it.
+    await client.invalidateQueries({ queryKey: ["admin-me"] });
+    setWorkspaceInvite(null);
+    window.history.replaceState(null, "", withoutWorkspaceInvite(window.location.href));
   }
+
+  if (me.isPending) return <Splash label="Checking admin session" />;
+  if (me.isError) return <SessionFailure error={me.error} onRetry={() => void me.refetch()} />;
+
+  const principal = me.data;
+  const visible = visiblePages(principal, { pendingInvite: workspaceInvite !== null });
+  const active = resolvePage(page, visible);
+  const meta = active ? PAGE_META[active] : NO_ACCESS_META;
 
   return (
     <AppShell
       brandTitle="Core admin"
       brandSubtitle="MentraOS"
       badge={<EnvBadge env={ENVIRONMENT} />}
-      nav={ADMIN_NAV}
-      activeKey={page}
+      nav={ADMIN_NAV.filter(item => visible.includes(item.key))}
+      activeKey={active ?? ""}
       onSelect={key => {
         setPage(key as AdminPageKey);
         setFixFlowLink(null);
         const location = new URL(window.location.href);
         for (const param of ["fixFlows", "fixFlow", "fixFlowRun", "fixStep", "systemHealth"]) location.searchParams.delete(param);
+        // Leaving Workspaces spends the invitation link; staying on it must not.
+        if (key !== "workspaces") {
+          setWorkspaceInvite(null);
+          location.searchParams.delete("workspaceInvite");
+        }
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
@@ -231,24 +266,47 @@ function AdminPage() {
         if (key === "fix-flows") window.history.replaceState(null, "", fixFlowHref(null));
         if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
       }}
-      title={PAGE_META[page].title}
-      description={PAGE_META[page].body}
-      userEmail={me.data?.user?.email ?? "Admin"}
-      accountLabel="Admin"
+      title={meta.title}
+      description={meta.body}
+      userEmail={principal.user?.email ?? "Signed in"}
+      accountLabel={accountLabel(principal)}
       onSignOut={signOut}
       signingOut={signingOut}
     >
       {signOutError ? <ErrorText error={signOutError} /> : null}
-      {page === "incidents" ? <ReportsPage key={deepLinkReportId ?? "reports"} initialReportId={deepLinkReportId} /> : null}
-      {page === "fix-flows" || page === "test-runs" ? <SystemHealthSummary /> : null}
-      {page === "system-health" ? <SystemHealthPage /> : null}
-      {page === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
-      {page === "test-runs" ? (
+      {active === null ? (
+        <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
+          <EmptyState
+            title="Your account has no admin access yet."
+            body="Ask an Organization Admin to add you to a workspace or to give you access, or sign out and switch to an account that has it."
+          />
+        </section>
+      ) : null}
+      {active === "incidents" ? <ReportsPage key={deepLinkReportId ?? "reports"} initialReportId={deepLinkReportId} /> : null}
+      {active === "fix-flows" || active === "test-runs" ? <SystemHealthSummary /> : null}
+      {active === "system-health" ? <SystemHealthPage /> : null}
+      {active === "fix-flows" ? <FixFlowsPage selection={fixFlowLink} onSelect={selectFixFlow} /> : null}
+      {active === "test-runs" ? (
         <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
           scope={testRunListScope} onClearScope={clearTestRunListScope} />
       ) : null}
+      {active === "workspaces" ? (
+        <WorkspacesPage
+          initialWorkspaceId={principal.workspaces[0]?.workspaceId ?? null}
+          canAdminister={principal.organization.capabilities.includes("organization.workspaces.administer")}
+          inviteToken={workspaceInvite}
+          onInviteSpent={spendWorkspaceInvite}
+        />
+      ) : null}
+      {active === "operator-keys" ? <OperatorKeysPage /> : null}
     </AppShell>
   );
+}
+
+/** What the account footer calls this person: an admin, a member of workspaces, or just signed in. */
+function accountLabel(principal: AdminMe): string {
+  if (principal.organization.capabilities.length > 0) return "Admin";
+  return principal.workspaces.length > 0 ? "Workspace member" : "Signed in";
 }
 
 function EnvBadge({ env }: { env: Environment }) {
@@ -657,23 +715,28 @@ function formatDate(value: string | null | undefined): string {
   return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-function LoginGate({ denied = false }: { denied?: boolean }) {
-  // The full URL preserves report and testRun/step deep links through the
-  // login round-trip; safeReturnTo on Core validates the origin either way.
-  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
+/**
+ * What a failed `/api/admin/me` shows. Only a 401 means "not signed in", so only a 401 offers the login
+ * button; any signed-in person gets a 200 (what they may open follows from their capabilities), so another
+ * failure is a server or network problem that signing in again would not fix.
+ */
+export function SessionFailure({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  if (error instanceof ApiError && error.status === 401) return <LoginGate />;
+  return (
+    <main className="grid min-h-screen place-items-center bg-[#f5f7f4] px-5 text-[#14141a]">
+      <div className="w-full max-w-[420px] rounded-[24px] bg-white p-8 text-center shadow-sm ring-1 ring-black/10">
+        <h1 className="font-display text-[22px] font-bold leading-7">Could not check your session</h1>
+        <ErrorText error={error} />
+        <Button className="mt-5" onClick={onRetry}>Try again</Button>
+      </div>
+    </main>
+  );
+}
 
-  const [signingOut, setSigningOut] = useState(false);
-  const [signOutError, setSignOutError] = useState<unknown>(null);
-  async function switchAccount() {
-    setSigningOut(true);
-    setSignOutError(null);
-    try {
-      await signOutOfCore();
-    } catch (error) {
-      setSignOutError(error);
-      setSigningOut(false);
-    }
-  }
+function LoginGate() {
+  // The full URL preserves report, testRun/step and workspace-invite deep links
+  // through the login round-trip; safeReturnTo on Core validates the origin either way.
+  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8f6_100%)] px-5 py-10 text-[#14141a]">
@@ -694,39 +757,25 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
 
             <div className="h-[18px]" />
             <h1 className="font-display text-[26px] font-bold leading-[30px] tracking-[-0.52px] text-[#14141a]">
-              {denied ? "No admin access" : "Sign into Mentra Admin"}
+              Sign into Mentra Admin
             </h1>
 
             <div className="h-2.5" />
             <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
-              {denied
-                ? "You're signed in, but this account isn't on the admin allowlist. Switch accounts, or ask for your email to be added to the Core admin allowlist."
-                : "Investigate reports and manage Core operations."}
+              Manage your workspaces, investigate reports and run Core operations.
             </p>
 
-            {signOutError ? <ErrorText error={signOutError} /> : null}
             <div className="h-8" />
-            {denied ? (
-              <button
-                type="button"
-                className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
-                disabled={signingOut}
-                onClick={switchAccount}
-              >
-                {signingOut ? "Signing out…" : "Sign out and switch account"}
-              </button>
-            ) : (
-              <a
-                className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
-                href={loginUrl}
-              >
-                Continue with Mentra login
-              </a>
-            )}
+            <a
+              className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
+              href={loginUrl}
+            >
+              Continue with Mentra login
+            </a>
 
             <div className="h-5" />
             <p className="font-body text-[11.5px] leading-4 text-[#a6a6ac]">
-              Admin access is limited to configured internal accounts.
+              What you can open depends on your workspaces and admin access.
             </p>
           </div>
         </div>

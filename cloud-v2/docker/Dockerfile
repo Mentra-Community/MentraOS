@@ -22,6 +22,8 @@ COPY cloud-v2/bun.lock cloud-v2/package.json ./
 COPY cloud-v2/packages/shared/package.json ./packages/shared/
 COPY cloud-v2/packages/auth/package.json ./packages/auth/
 COPY cloud-v2/packages/developer-auth/package.json ./packages/developer-auth/
+COPY cloud-v2/packages/workspace-contract/package.json ./packages/workspace-contract/
+COPY cloud-v2/packages/workspace-ui/package.json ./packages/workspace-ui/
 COPY cloud-v2/packages/cli/package.json ./packages/cli/
 COPY cloud-v2/packages/core/package.json ./packages/core/
 COPY cloud-v2/packages/protocol/package.json ./packages/protocol/

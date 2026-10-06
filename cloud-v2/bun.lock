@@ -187,6 +187,8 @@
       "version": "0.1.0",
       "dependencies": {
         "@hono/node-server": "^2.1.1",
+        "@mentra/workspace-contract": "workspace:*",
+        "@mentra/workspace-ui": "workspace:*",
         "@radix-ui/react-label": "^2.1.7",
         "@radix-ui/react-select": "^2.2.6",
         "@radix-ui/react-slot": "^1.2.3",

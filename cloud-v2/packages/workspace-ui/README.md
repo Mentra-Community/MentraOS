@@ -41,6 +41,9 @@ API's `basePath`, so two APIs can share one client without sharing data.
 | `WorkspaceSettingsPanel` (`onDeleted?`, `onLeft?`) | Rename, leave, delete |
 | `WorkspaceAuditPanel` | The workspace's audit log, paged |
 | `InvitationAcceptView` (`token`, `onAccepted(workspaceId)`) | What an invitation link opens |
+| `SecretDialog` (`name`, `token`, `onDone`) | The show-once dialog for a new credential, for other screens that mint one (the admin dashboard's operator keys) |
+| `ConfirmButton` (`label`, `ariaLabel`, `prompt`, `confirmLabel`, `onConfirm`) | A destructive action behind an inline confirm step |
+| `expiryFromDateInput` | The end of a `<input type="date">` day as an ISO string, or null |
 | `effectiveRole`, `assignableRoles`, `can`, `ROLE_LABELS` | The capability helpers the panels use |
 | `errorMessage`, `isWorkspaceChangedError`, `WORKSPACE_CHANGED_MESSAGE` | Error text, and the 409 handling |
 

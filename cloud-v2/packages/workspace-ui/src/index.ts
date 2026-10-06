@@ -15,7 +15,8 @@ export { workspaceKeys } from "./queries";
 export { assignableRoles, can, effectiveRole, ROLE_LABELS } from "./roles";
 
 export { WorkspaceAuditPanel } from "./components/audit-panel";
-export { WorkspaceCredentialsPanel } from "./components/credentials-panel";
+export { ConfirmButton } from "./components/common";
+export { expiryFromDateInput, SecretDialog, WorkspaceCredentialsPanel } from "./components/credentials-panel";
 export { InvitationAcceptView } from "./components/invitation-accept-view";
 export { WorkspaceInvitationsPanel } from "./components/invitations-panel";
 export { WorkspaceMembersPanel } from "./components/members-panel";
