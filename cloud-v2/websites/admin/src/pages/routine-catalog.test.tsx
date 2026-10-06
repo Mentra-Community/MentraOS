@@ -24,7 +24,7 @@ test("catalog tile nightly switch defaults on, preserves the detail link and rep
   expect(render()).toContain('role="switch"');
   expect(render()).toContain('checked=""');
   expect(render(false)).not.toContain('checked=""');
-  expect(render(false)).toContain("Run in nightly");
+  expect(render(false)).toContain("Runs nightly");
   expect(render(false)).toContain("Preference was not saved");
   expect(render(false)).toContain('href="/?routineCatalog=1&amp;routine=notes-phone&amp;platform=ios-on-mac"');
 });
