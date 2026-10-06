@@ -86,8 +86,17 @@ export async function publishNightlyWebhook({result, webhook, attempt, fetchImpl
   const summary = nightlySummary(result)
   requireThat(attempt === 1 && /^https:\/\/hooks\.slack\.com\/services\//.test(webhook ?? ""), "Nightly Slack replay requires reconciliation")
   const escape = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-  const text = [summary.text, ...summary.rows.map(row => `${escape(row[0])} · ${row[1]} — ${row[2]}${row[3] ? ` (${escape(row[3])})` : ""}`),
-    summary.url ? `<${summary.url}|Recorded nightly results>` : "Recorded result URL is unavailable"].join("\n")
+  const ran = result.members.filter(member => member.runId).length
+  const failures = result.members.filter(member => ["failed", "setup-failed", "teardown-failed"].includes(member.status))
+  const build = result.members.find(member => member.build)?.build
+  const buildText = build ? `Build: ${build.releaseIdentity ? `${escape(build.releaseIdentity)} · ` : ""}${escape(build.headSha.slice(0, 10))}` +
+    (positive(build.source?.buildRunId) ? ` · <https://github.com/Mentra-Community/MentraOS/actions/runs/${build.source.buildRunId}|Build job> (publication ${build.source.publicationAttempt})` : "")
+    : "Build: unavailable in the nightly receipt"
+  const text = [buildText, `${ran}/${result.expectedCount} Ran, ${result.expectedCount - ran} skipped`,
+    ...(failures.length ? ["", ...failures.map(member => {
+      const url = member.runId ? `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(member.runId)}` : summary.url
+      return `- ${escape(member.routineId)} (${escape(member.platform)}) - ${url ? `<${url}|View failure>` : "Result link unavailable"}`
+    })] : [])].join("\n")
   let response
   try {response = await fetchImpl(webhook, {method: "POST", redirect: "error", signal: AbortSignal.timeout(30_000),
     headers: {"Content-Type": "application/json"}, body: JSON.stringify({text, unfurl_links: false, unfurl_media: false})})}

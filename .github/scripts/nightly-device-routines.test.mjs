@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import {scheduledOccurrence, githubOccurrence, nightlyApi, reconcileNightlyOccurrence, nightlySummary, publishNightlyWebhook, NIGHTLY_WORKFLOW} from "./nightly-device-routines.mjs"
 const occurrence = {occurrenceId: "nightly-dev-2026-10-03", startedAt: "2026-10-03T11:00:00.000Z", trigger: "nightly"}
 function terminal() {return {...occurrence, suiteId: "nightly-example", finishedAt: "2026-10-03T12:00:00.000Z", status: "pass", expectedCount: 1, passed: 1,
-  resultUrl: "https://admin.dev.mentraglass.com/?testRun=example", members: [{memberId: "example", routineId: "never-listed-check", platform: "android", status: "pass", publicationComplete: true}]}}
+  resultUrl: "https://admin.dev.mentraglass.com/?testRun=example", members: [{memberId: "example", routineId: "never-listed-check", platform: "android", status: "pass", publicationComplete: true, runId: "example"}]}}
 
 test("04 Pacific DST occurrence stays stable through delayed trigger and run attempts", async () => {
   assert.deepEqual(scheduledOccurrence("0 11 * * *", "2026-10-03T11:12:00Z"), occurrence)
@@ -31,11 +31,13 @@ test("dynamic expected members and publication evidence prevent a false pass", (
   result.status = "incomplete"; assert.equal(nightlySummary(result).passed, false)
   result.expectedCount = 2; assert.throws(() => nightlySummary(result), /complete frozen/)
 })
-test("generic Slack summary retains unexpected routine ID and refuses rerun sends", async () => {
+test("Slack summary reports ran and skipped counts and refuses rerun sends", async () => {
   const sends = [], options = {result: terminal(), webhook: "https://hooks.slack.com/services/fixture", attempt: 1,
     fetchImpl: async (_, options) => {sends.push(JSON.parse(options.body)); return new Response("ok")}}
   assert.equal((await publishNightlyWebhook(options)).status, "acknowledged")
-  assert.match(sends[0].text, /never-listed-check/)
+  assert.equal(sends[0].text, "Build: unavailable in the nightly receipt\n1/1 Ran, 0 skipped")
+  assert.equal(sends[0].unfurl_links, false)
+  assert.equal(sends[0].unfurl_media, false)
   await assert.rejects(publishNightlyWebhook({...options, attempt: 2}), /reconciliation/)
   assert.equal(sends.length, 1)
 })
@@ -67,4 +69,53 @@ test("expired trigger reconciles the original occurrence without resetting its s
   assert.equal(result.status, "incomplete")
   assert.deepEqual(JSON.parse(calls[0].options.body), occurrence)
   assert.equal(calls.length, 2)
+})
+
+async function slackText(result) {
+  let body
+  await publishNightlyWebhook({result, webhook: "https://hooks.slack.com/services/fixture", attempt: 1,
+    fetchImpl: async (_, options) => {body = JSON.parse(options.body); return new Response("ok")}})
+  return body.text
+}
+
+test("Slack lists only actual failures with per-run links and counts all recorded attempts", async () => {
+  const members = [
+    {memberId: "pass", routineId: "passing", platform: "android", status: "pass", runId: "pass", publicationComplete: true},
+    {memberId: "failure", routineId: "call", platform: "android", status: "failed", runId: "failed:run/1"},
+    {memberId: "setup", routineId: "ota", platform: "ios-on-mac", status: "setup-failed", runId: "setup"},
+    {memberId: "teardown", routineId: "notes<&>", platform: "android", status: "teardown-failed", runId: "teardown"},
+    {memberId: "cancelled", routineId: "cancelled", platform: "android", status: "cancelled", runId: "cancelled"},
+    {memberId: "not-run", routineId: "no-test-steps", platform: "android", status: "not-run", runId: "not-run"},
+    {memberId: "missing", routineId: "unavailable", platform: "android", status: "incomplete", unavailableReason: "No host"},
+    {memberId: "not-started", routineId: "never-started", platform: "android", status: "not-run"},
+  ]
+  assert.equal(await slackText({...terminal(), status: "incomplete", expectedCount: members.length, members}),
+    "Build: unavailable in the nightly receipt\n6/8 Ran, 2 skipped\n\n" +
+    "- call (android) - <https://admin.dev.mentraglass.com/?testRun=failed%3Arun%2F1|View failure>\n" +
+    "- ota (ios-on-mac) - <https://admin.dev.mentraglass.com/?testRun=setup|View failure>\n" +
+    "- notes&lt;&amp;&gt; (android) - <https://admin.dev.mentraglass.com/?testRun=teardown|View failure>")
+})
+
+test("empty and entirely unrun nightlies have no failure bullets", async () => {
+  assert.equal(await slackText({...terminal(), status: "skipped", expectedCount: 0, passed: 0, members: []}), "Build: unavailable in the nightly receipt\n0/0 Ran, 0 skipped")
+  assert.equal(await slackText({...terminal(), status: "incomplete", passed: 0,
+    members: [{memberId: "missing", routineId: "missing", status: "incomplete"}]}), "Build: unavailable in the nightly receipt\n0/1 Ran, 1 skipped")
+})
+
+test("failure without a run ID uses the occurrence result link without inventing a run", async () => {
+  const result = {...terminal(), status: "failed", passed: 0,
+    members: [{memberId: "failure", routineId: "call", platform: "android", status: "failed"}]}
+  assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n0/1 Ran, 1 skipped\n\n- call (android) - <https://admin.dev.mentraglass.com/?testRun=example|View failure>")
+  result.resultUrl = undefined
+  assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n0/1 Ran, 1 skipped\n\n- call (android) - Result link unavailable")
+})
+
+
+test("Slack identifies the frozen release, commit and producer job", async () => {
+  const result = terminal()
+  result.members[0].build = {releaseIdentity: "dev.559<&>", headSha: "a".repeat(40),
+    source: {channel: "dev", buildRunId: 21, publicationAttempt: 2}}
+  assert.equal(await slackText(result), "Build: dev.559&lt;&amp;&gt; · aaaaaaaaaa · <https://github.com/Mentra-Community/MentraOS/actions/runs/21|Build job> (publication 2)\n1/1 Ran, 0 skipped")
+  delete result.members[0].build.releaseIdentity
+  assert.match(await slackText(result), /^Build: aaaaaaaaaa · <https:\/\/github.com/)
 })
