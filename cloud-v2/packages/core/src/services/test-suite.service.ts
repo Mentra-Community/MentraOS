@@ -12,7 +12,7 @@ import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nig
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
 
 /** Project the occurrence's one terminal authority; never take another evidence snapshot. */
-function nightlySuiteProjection(suite: TestSuite, plan: NightlyPlan, result: NightlyResult): ReturnType<typeof summarizeSuite> {
+export function nightlySuiteProjection(suite: TestSuite, plan: NightlyPlan, result: NightlyResult): ReturnType<typeof summarizeSuite> {
   if (requestInputDigest(suite) !== requestInputDigest(plan.suite) || result.suiteId !== suite.suiteId
     || result.occurrenceId !== plan.occurrenceId || result.startedAt !== plan.startedAt || result.trigger !== plan.trigger
     || result.expectedCount !== suite.members.length || result.members.length !== suite.members.length)
@@ -26,7 +26,7 @@ function nightlySuiteProjection(suite: TestSuite, plan: NightlyPlan, result: Nig
       || requestInputDigest(receipt.build ?? null) !== requestInputDigest(expected.build ?? null)
       || requestInputDigest(receipt.input ?? null) !== requestInputDigest(expected.input ?? null))
       throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
-    return {...member, ...(expected.build ? {build: expected.build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
+    return {...member, ...((expected.input?.build ?? expected.build) ? {build: expected.input?.build ?? expected.build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
       ...(receipt.unavailableReason ? {unavailableReason: receipt.unavailableReason} : {}),
       ...(receipt.runId ? {runId: receipt.runId, startedAt: receipt.runStartedAt, finishedAt: receipt.runFinishedAt} : {})};

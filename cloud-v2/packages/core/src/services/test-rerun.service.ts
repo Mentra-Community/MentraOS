@@ -139,7 +139,7 @@ export class TestRerunService {
       let source = selected.source;
       let originalBuild = member.build;
       if (!source) {
-        if (!originalBuild && member.requestId) {
+        if (member.requestId) {
           const original = await this.requests.get(member.requestId);
           if (original) {
             const parsedInput = frameworkRequestInputSchema.safeParse(original.input);
