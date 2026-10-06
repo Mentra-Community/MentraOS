@@ -1,4 +1,5 @@
-import {expect, test} from 'bun:test'
+import {expect, spyOn, test} from 'bun:test'
+import {RoutineWorkModel} from '../models/routine-work.model'
 import {RoutineWorkService, type RoutineWorkDelivery, type RoutineWorkRepository} from './routine-work.service'
 import {requestInputDigest} from './test-request.service'
 import {routineWorkRequestSchema, routineWorkStatusSchema} from '../types/routine-work.types'
@@ -50,10 +51,11 @@ function fixture(options: {buildHead?: string; noHost?: boolean; notificationFai
       row.acceptance = structuredClone(receipt)
       return structuredClone(row)
     },
-    async updateStatus(event) {
+    async updateStatus(event, previous) {
       const row = rows.get(event.workId)
       if (
         !row ||
+        requestInputDigest(row.status ?? null) !== requestInputDigest(previous ?? null) ||
         row.statusReceipts?.some((value) => value.eventId === event.eventId) ||
         (row.status && row.status.sequence >= event.sequence)
       )
@@ -383,4 +385,88 @@ test('terminal status requires exact reviewed source and recording links and can
   ).rejects.toThrow('Terminal')
   expect(f.rows.get(row.workId)?.status?.state).toBe('passed')
   expect(f.rows.get(row.workId)?.status?.details).toMatchObject({attemptId: 3, details: {review: details.review}})
+  const custody = {...event, eventId: 'terminal-custody', sequence: 2,
+    details: {...event.details, sequence: 2}}
+  expect(await f.service.status(custody, row.hostId)).toEqual(custody)
+  for (const changed of [
+    {...details, requestId: 'different-run'},
+    {...details, resultUrl: 'https://admin.dev.mentraglass.com/?testRun=different',
+      completion: {...details.completion, resultUrl: 'https://admin.dev.mentraglass.com/?testRun=different'}},
+    {...details, review: {...details.review, reviewUrl: `${prUrl}#pullrequestreview-22`},
+      completion: {...details.completion, reviewUrl: `${prUrl}#pullrequestreview-22`}},
+    {...details, completion: {...details.completion, summary: 'Different completion claim'}},
+  ])
+    await expect(f.service.status({...custody, eventId: 'changed-passing-outcome', sequence: 3,
+      details: {...custody.details, sequence: 3, details: changed}}, row.hostId)).rejects.toThrow('Terminal')
+})
+
+test('ordered cancellation custody events retain the original outcome through sequence 13, 14 and 15', async () => {
+  const f = fixture(), row = await f.service.submit(input)
+  const acceptance = {workId: row.workId, hostId: row.hostId, inputSha256: row.inputSha256,
+    acceptedAt: '2026-10-05T10:01:00Z'}
+  await f.service.accept(acceptance, row.hostId)
+  const {acceptedAt: _, ...binding} = acceptance
+  const details = {sourceRevision: 'd'.repeat(40), prUrl: 'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/539',
+    summary: 'Operator cancelled this stopped wording fixture; preserve its unmerged source and dispose its workspace.'}
+  const events: Array<{eventId: string; sequence: number; state: 'cancelled'; at: string; details: typeof details | {}}> = []
+  const submitted = []
+  for (const [sequence, eventId] of [[13, 'operator-cancel'], [14, 'source-preserved'], [15, 'workspace-disposed']] as const) {
+    events.push({eventId, sequence, state: 'cancelled', at: '2026-10-05T10:02:00Z', details: sequence === 13 ? {summary: details.summary} : {}})
+    const event = routineWorkStatusSchema.parse({...binding, eventId, sequence, state: 'cancelled',
+      details: {...acceptance, sequence, state: 'cancelled', attemptId: 1, work: row.work, details, events: structuredClone(events)}})
+    expect(await f.service.status(event, row.hostId)).toEqual(event)
+    submitted.push(event)
+  }
+  expect(f.rows.get(row.workId)?.status?.sequence).toBe(15)
+  expect(f.rows.get(row.workId)?.statusReceipts).toHaveLength(3)
+  for (const event of submitted) expect(await f.service.status(event, row.hostId)).toEqual(event)
+  expect(f.rows.get(row.workId)?.status?.sequence).toBe(15)
+  const latest = submitted.at(-1)!
+  for (const change of [
+    {state: 'failed', details: {...latest.details, state: 'failed'}},
+    {state: 'authoring', details: {...latest.details, state: 'authoring'}},
+    {details: {...latest.details, attemptId: 2}},
+    {details: {...latest.details, attemptId: undefined}},
+    {details: {...latest.details, details: {...details, summary: 'Different cause'}}},
+    {details: {...latest.details, details: {...details, sourceRevision: 'e'.repeat(40)}}},
+    {details: {...latest.details, details: {...details, prUrl: 'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/540'}}},
+    {details: {...latest.details, details: {...details, requestId: 'different-verification'}}},
+    {details: {...latest.details, details: {...details, resultUrl: 'https://admin.dev.mentraglass.com/?testRun=different'}}},
+  ]) {
+    const candidate = {...latest, ...change, eventId: 'changed-terminal', sequence: 16,
+      details: {...(change.details ?? latest.details), sequence: 16}}
+    await expect(f.service.status(candidate, row.hostId)).rejects.toThrow('Terminal')
+  }
+  expect(f.rows.get(row.workId)?.status?.sequence).toBe(15)
+})
+
+test('Mongo status compare-and-swap refuses a terminal outcome raced after the service inspection', async () => {
+  const f = fixture(), row = await f.service.submit(input)
+  const acceptance = {workId: row.workId, hostId: row.hostId, inputSha256: row.inputSha256,
+    acceptedAt: '2026-10-05T10:01:00Z'}
+  await f.service.accept(acceptance, row.hostId)
+  const {acceptedAt: _, ...binding} = acceptance
+  const event = routineWorkStatusSchema.parse({...binding, eventId: 'cancel13', sequence: 13, state: 'cancelled',
+    details: {...acceptance, sequence: 13, state: 'cancelled', attemptId: 1, work: row.work,
+      details: {summary: 'Operator stopped this fixture.'}, events: []}})
+  await f.service.status(event, row.hostId)
+  const candidate = routineWorkStatusSchema.parse({...event, eventId: 'custody14', sequence: 14,
+    details: {...event.details, sequence: 14}})
+  const chain = (read: () => unknown) => ({read() {return this}, readConcern() {return this}, lean: async () => read()})
+  const find = spyOn(RoutineWorkModel, 'findOne').mockImplementation(() => chain(() => structuredClone(f.rows.get(row.workId))) as any)
+  const update = spyOn(RoutineWorkModel, 'findOneAndUpdate').mockImplementation(((filter: any) => {
+    expect(filter.status).toEqual(event)
+    expect(filter['status.state']).toBeUndefined()
+    // Another accepted write wins before this CAS: preserve its different identity.
+    const concurrent = {...event, details: {...event.details, attemptId: 2}}
+    f.rows.get(row.workId)!.status = concurrent
+    expect(requestInputDigest(filter.status)).not.toBe(requestInputDigest(concurrent))
+    return {lean: async () => null}
+  }) as any)
+  try {
+    const service = new RoutineWorkService(undefined, undefined, undefined, {async publish() {}})
+    await expect(service.status(candidate, row.hostId)).rejects.toThrow('stale')
+    expect(f.rows.get(row.workId)?.status?.details.attemptId).toBe(2)
+    expect(f.rows.get(row.workId)?.statusReceipts).toHaveLength(1)
+  } finally {update.mockRestore(); find.mockRestore()}
 })
