@@ -24,7 +24,7 @@
 import {createHash, randomBytes} from "node:crypto"
 import {join} from "node:path"
 
-import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, test} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test} from "bun:test"
 
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
 import {
@@ -43,6 +43,9 @@ import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-me
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+
+// Each apply is several transactions and some tests start subprocesses; a loaded CI machine needs headroom.
+setDefaultTimeout(30_000)
 
 const SCRIPT = join(import.meta.dir, "../packages/core/scripts/migrate-store-developer-orgs.ts")
 
@@ -475,8 +478,10 @@ describe("dry run", () => {
         {orgId: ORG_ACME, keyId: keys.ghostCreator.row.keyId, name: "Unknown creator"},
         {orgId: ORG_GAMMA, keyId: keys.gammaRevoked.row.keyId, name: "Gamma dead key"},
       ],
-      ownerlessOrgs: [ORG_DELTA, ORG_GAMMA],
+      malformedKeys: [],
+      ownerlessOrgs: [ORG_GAMMA],
       synthesizedOwners: [ORG_BETA],
+      promotedOwners: [ORG_DELTA],
       duplicateMemberships: [{orgId: ORG_BETA, userId: U.betaAdmin}],
     })
 
@@ -594,15 +599,61 @@ describe("apply", () => {
     expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ORG_BETA, role: "owner"})).toBe(1)
   })
 
-  test("imports owner-less orgs without inventing an owner", async () => {
+  test("imports an org with no recorded owner as owner-less, without inventing one", async () => {
     await run({apply: true})
 
-    // GAMMA has no members and no creator pointer; DELTA's creator pointer names an admin, who stays an admin.
-    expect(await WorkspaceModel.countDocuments({workspaceId: {$in: [ORG_GAMMA, ORG_DELTA]}})).toBe(2)
+    // GAMMA has no members and no recorded owner.
+    expect(await WorkspaceModel.countDocuments({workspaceId: ORG_GAMMA})).toBe(1)
     expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ORG_GAMMA})).toBe(0)
+  })
+
+  test("promotes the recorded owner when they are an active member with a lower role", async () => {
+    const report = await run({apply: true})
+
+    // DELTA has no owner row, and its recorded owner is an admin: they become the owner (R21).
+    const adminHex = await sourceMembershipHex(U.deltaCreator, ORG_DELTA, "admin")
     const delta = await WorkspaceMembershipModel.find({workspaceId: ORG_DELTA}).lean()
-    expect(delta.map(row => row.role)).toEqual(["admin"])
-    expect(delta.map(row => row.pendingWorkosUserId)).toEqual([U.deltaCreator])
+    expect(delta).toHaveLength(1)
+    expect(delta[0]).toMatchObject({
+      membershipId: `wm_${adminHex}`,
+      pendingWorkosUserId: U.deltaCreator,
+      role: "owner",
+      email: "dana@delta.example",
+      name: "Dana",
+    })
+    expect(report.promotedOwners).toEqual([ORG_DELTA])
+    expect(report.ownerlessOrgs).not.toContain(ORG_DELTA)
+    expect(report.synthesizedOwners).not.toContain(ORG_DELTA)
+  })
+
+  test("does not bring back a recorded owner whose only Store rows are inactive", async () => {
+    const ORG_EPSILON = "dorg_01J8Z3EPSILON000000000000E5"
+    await sourceDb()
+      .collection("developer_orgs")
+      .insertOne({
+        orgId: ORG_EPSILON,
+        ownerUserId: U.acmeRemoved,
+        displayName: "Epsilon Co",
+        createdAt: at("2026-07-10T10:00:00.000Z"),
+        updatedAt: at("2026-07-10T10:00:00.000Z"),
+      })
+    await sourceDb()
+      .collection("developer_org_memberships")
+      .insertMany([
+        {orgId: ORG_EPSILON, userId: U.acmeRemoved, role: "owner", status: "removed", email: "gone@epsilon.example"},
+        {orgId: ORG_EPSILON, userId: U.stranger, role: "member", status: "active", email: "sam@epsilon.example"},
+      ])
+
+    const report = await run({apply: true})
+
+    expect(report.ownerlessOrgs).toEqual([ORG_EPSILON, ORG_GAMMA].sort())
+    expect(report.synthesizedOwners).toEqual([ORG_BETA])
+    expect(report.promotedOwners).toEqual([ORG_DELTA])
+    const epsilon = await WorkspaceMembershipModel.find({workspaceId: ORG_EPSILON}).lean()
+    expect(epsilon.map(row => [row.pendingWorkosUserId, row.role])).toEqual([[U.stranger, "developer"]])
+    expect(await WorkspaceMembershipModel.countDocuments({pendingWorkosUserId: U.acmeRemoved})).toBe(0)
+    // The org itself is still imported.
+    expect(await WorkspaceModel.countDocuments({workspaceId: ORG_EPSILON})).toBe(1)
   })
 
   test("imports only pending, unexpired invitations and maps their inviter", async () => {
@@ -807,6 +858,39 @@ describe("re-running apply", () => {
     expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(eventsBefore)
   })
 
+  test("leaves a claimed membership and a repointed credential alone (first sign-in happened between runs)", async () => {
+    await run({apply: true})
+
+    const devHex = await sourceMembershipHex(U.acmeDev, ORG_ACME, "member")
+    const adminHex = await sourceMembershipHex(U.acmeAdmin, ORG_ACME, "admin")
+    // What first sign-in does: the WorkOS id is replaced by the Mentra user. Then a key is repointed.
+    await WorkspaceMembershipModel.updateOne(
+      {membershipId: `wm_${devHex}`},
+      {$set: {mentraUserId: "mu_dev", pendingWorkosUserId: null}},
+    )
+    await AccessCredentialModel.updateOne(
+      {credentialId: keys.dev.row.keyId},
+      {$set: {createdByMembershipId: `wm_${adminHex}`, createdByMentraUserId: "mu_admin"}},
+    )
+    const before = await snapshotTarget()
+    const countsBefore = await targetCounts()
+
+    await run({apply: true})
+
+    expect(await targetCounts()).toEqual(countsBefore)
+    expect(await snapshotTarget()).toEqual(before)
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${devHex}`}).lean()).toMatchObject({
+      mentraUserId: "mu_dev",
+      pendingWorkosUserId: null,
+    })
+    // No second, pending membership for the person who already signed in.
+    expect(await WorkspaceMembershipModel.countDocuments({pendingWorkosUserId: U.acmeDev})).toBe(0)
+    expect(await AccessCredentialModel.findOne({credentialId: keys.dev.row.keyId}).lean()).toMatchObject({
+      createdByMembershipId: `wm_${adminHex}`,
+      createdByMentraUserId: "mu_admin",
+    })
+  })
+
   test("one org's failure rolls back that org only, and a re-run completes the import", async () => {
     // A Core row already holds BETA's creator as a pending member under another id, so the synthesized
     // owner violates the unique (workspace, pending WorkOS user) index inside BETA's transaction.
@@ -852,6 +936,60 @@ describe("re-running apply", () => {
       expect(err.message).toContain(ORG_GAMMA)
     }
     expect((await targetCounts()).Workspace).toBe(0)
+  })
+})
+
+// --- Malformed keys --------------------------------------------------------
+
+describe("malformed keys", () => {
+  test("skips keys that could never validate as a Core credential, and reports them", async () => {
+    const bad = {
+      id: storeKey({orgId: ORG_ACME, name: "Short id", createdByUserId: U.acmeDev, keyId: "not-a-ulid"}),
+      lowerId: storeKey({
+        orgId: ORG_ACME,
+        name: "Lowercase id",
+        createdByUserId: U.acmeDev,
+        keyId: ulid().toLowerCase(),
+      }),
+      hash: storeKey({orgId: ORG_ACME, name: "Short hash", createdByUserId: U.acmeDev, hash: "abc123"}),
+      upperHash: storeKey({
+        orgId: ORG_ACME,
+        name: "Uppercase hash",
+        createdByUserId: U.acmeDev,
+        hash: sha256Hex("x").toUpperCase(),
+      }),
+      env: storeKey({orgId: ORG_ACME, name: "Bad env", createdByUserId: U.acmeDev, env: "Prod_1"}),
+      noEnv: storeKey({orgId: ORG_ACME, name: "No env", createdByUserId: U.acmeDev, env: undefined}),
+      // Shape is checked for package keys too.
+      app: storeKey({
+        orgId: ORG_ACME,
+        name: "Bad package key",
+        createdByUserId: STAFF_EMAIL,
+        publishingPackage: "com.acme.x",
+        hash: "zz",
+      }),
+    }
+    await sourceDb()
+      .collection("developer_org_api_keys")
+      .insertMany(Object.values(bad).map(key => ({...key.row})))
+
+    const dry = await run()
+    const report = await run({apply: true})
+
+    expect(report).toEqual({...dry, mode: "apply"})
+    expect(report.malformedKeys).toEqual(Object.values(bad).map(key => ({orgId: ORG_ACME, keyId: key.row.keyId})))
+    // They are skipped keys, but they are not "creator missing": that list is unchanged.
+    expect(report.keysWithoutCreator).toHaveLength(3)
+    expect(report.counts).toEqual({orgs: 4, memberships: 7, invitations: 3, credentials: 4, skippedKeys: 3 + 7})
+    expect(await AccessCredentialModel.countDocuments({})).toBe(4)
+    expect(await AccessCredentialModel.countDocuments({name: {$in: Object.values(bad).map(key => key.row.name)}})).toBe(
+      0,
+    )
+  })
+
+  test("a conforming key is not reported", async () => {
+    const report = await run()
+    expect(report.malformedKeys).toEqual([])
   })
 })
 
@@ -973,8 +1111,59 @@ describe("parseArgs", () => {
       "http://127.0.0.1:27017/core",
       "not a url",
       "",
+      // The scheme is matched exactly, so an unusual spelling is never classified.
+      "MONGODB://127.0.0.1:27017/core",
+      "Mongodb://localhost/core",
+      // Loopback must be the whole host: nothing may trail the host or its port.
+      "mongodb://[::1]evil:27017/core",
+      "mongodb://[::1]evil/core",
+      "mongodb://[::2]:27017/core",
+      "mongodb://[::1:27017/core",
+      "mongodb://127.0.0.1:27017\\evil/core",
+      "mongodb://127.0.0.1\\evil:27017/core",
+      "mongodb://127.0.0.1:abc/core",
+      "mongodb://127.0.0.1:/core",
+      "mongodb://127.0.0.1:27017x/core",
+      "mongodb://localhost.:27017/core",
+      "mongodb://localhost.evil.invalid/core",
+      "mongodb:// 127.0.0.1:27017/core",
+      "mongodb://127.0.0.1:27017 /core",
     ]) {
       expect(isLocalMongoUrl(url)).toBe(false)
+    }
+  })
+
+  test("--apply refuses hosts that only look like loopback, and an unusual scheme spelling is not a URL", () => {
+    for (const evil of ["[::1]evil:27017", "127.0.0.1:27017\\evil", "127.0.0.1:abc", "localhost.:27017"]) {
+      const err = thrownSync(() =>
+        parseArgs([
+          "--source",
+          LOCAL_SOURCE,
+          "--target",
+          `mongodb://${evil}/core`,
+          "--organization-id",
+          "acme-org",
+          "--apply",
+        ]),
+      )
+      expect(err).toBeInstanceOf(UsageError)
+      expect(err.message).toContain("--i-understand-remote")
+    }
+    for (const flag of ["--source", "--target"]) {
+      const urls = {"--source": LOCAL_SOURCE, "--target": LOCAL_TARGET, [flag]: "MONGODB://127.0.0.1:27031/other"}
+      const err = thrownSync(() =>
+        parseArgs([
+          "--source",
+          urls["--source"],
+          "--target",
+          urls["--target"],
+          "--organization-id",
+          "acme-org",
+          "--apply",
+        ]),
+      )
+      expect(err).toBeInstanceOf(UsageError)
+      expect(err.message).toContain(flag)
     }
   })
 
@@ -1065,6 +1254,51 @@ describe("command line", () => {
     const second = await runCli(cli)
     expect(second.exitCode).toBe(0)
     expect(await snapshotTarget()).toEqual(afterFirst)
+  }, 60_000)
+
+  test("bad source data leaves a fresh target database without even its collections", async () => {
+    const freshUrl = localTestMongoUrl("core-fresh")
+    const fresh = await openSourceConnection(freshUrl)
+    try {
+      assertConnectedTo(freshUrl, fresh.name)
+      const collections = async () => (await fresh.db!.listCollections().toArray()).map(entry => entry.name).sort()
+      const cli = ["--source", sourceUrl, "--target", freshUrl, "--organization-id", ORGANIZATION]
+      await sourceDb()
+        .collection("developer_org_memberships")
+        .insertOne({orgId: ORG_GAMMA, userId: U.stranger, role: "superuser", status: "active"})
+
+      // The source is validated before the target is connected, so a failed apply creates nothing.
+      const failed = await runCli([...cli, "--apply"])
+      expect(failed.exitCode).not.toBe(0)
+      expect(failed.stderr).toContain("superuser")
+      expect(failed.stdout).toBe("")
+      expect(await collections()).toEqual([])
+
+      await sourceDb().collection("developer_org_memberships").deleteOne({role: "superuser"})
+      // A dry run never connects to the target either.
+      expect((await runCli(cli)).exitCode).toBe(0)
+      expect(await collections()).toEqual([])
+
+      const applied = await runCli([...cli, "--apply"])
+      expect(applied.exitCode).toBe(0)
+      expect(await collections()).toEqual(
+        [
+          "access_credentials",
+          "workspace_audit_counters",
+          "workspace_audit_events",
+          "workspace_invitations",
+          "workspace_memberships",
+          "workspaces",
+        ].sort(),
+      )
+      // The indexes the import relies on were built by the apply.
+      const indexNames = (await fresh.db!.collection("workspace_memberships").indexes()).map(index => index.name)
+      expect(indexNames).toContain("workspaceId_1_pendingWorkosUserId_1")
+    } finally {
+      assertConnectedTo(freshUrl, fresh.name)
+      await fresh.dropDatabase()
+      await fresh.close()
+    }
   }, 60_000)
 
   test("an organization id that differs from CLOUD_CORE_ORGANIZATION_ID exits non-zero", async () => {

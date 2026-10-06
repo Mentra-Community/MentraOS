@@ -26,24 +26,33 @@
  *  - Memberships: `status: "active"` rows only. owner -> owner, admin -> admin,
  *    member -> developer. They keep the WorkOS user id as `pendingWorkosUserId`
  *    and are claimed by the person's first sign-in. A person with several active
- *    rows keeps the highest role. An org with no owner but an `ownerUserId` gets a
- *    pending owner membership for that person (`wm_owner_<orgId>`) unless they
- *    already hold a lower role, which the Store treats as authoritative: that org
- *    is reported as owner-less, and an organization admin can recover it.
+ *    rows keeps the highest role. An org with no owner membership is given one
+ *    from its `ownerUserId` (the recorded owner): a person with an active row is
+ *    promoted to owner (`promotedOwners`), a person with no row at all gets a
+ *    pending owner membership (`wm_owner_<orgId>`, `synthesizedOwners`), and a
+ *    person whose rows are all inactive is not brought back. Any other org is
+ *    reported as owner-less (`ownerlessOrgs`); an organization admin can recover it.
  *  - Invitations: pending and not yet expired. admin -> admin, member -> developer.
  *  - Credentials: every API key, revoked ones included, with their dates. A key
  *    with a `publishingPackage` is a Store-issued package key. Any other key is
  *    bound to its creator's membership; a key whose creator has none is reported
- *    and skipped.
+ *    (`keysWithoutCreator`) and skipped. A key that does not have the shape of a
+ *    Core credential (ULID id, 64-character lowercase hex hash, lowercase
+ *    alphanumeric env) could never validate, so it is reported (`malformedKeys`)
+ *    and skipped too.
  *
  * Keys keep their `env` label, so the Core deployment must list every label in
  * `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` (the script prints the labels it found) or
  * those keys will not validate.
  *
  * Safety: `--apply` refuses unless both URLs are local (`mongodb://` on
- * 127.0.0.1, localhost or ::1, without credentials) or `--i-understand-remote` is
+ * 127.0.0.1, localhost or [::1], without credentials) or `--i-understand-remote` is
  * given. That flag is for the operator running the real cutover; development and
  * tests never use it.
+ *
+ * With `--apply` the command line plans the whole import from the source before it
+ * connects to the target: connecting makes Mongoose create the collections and
+ * indexes, so bad source data aborts without touching the target at all.
  *
  * The report goes to stdout and everything else to stderr, so stdout can be piped.
  */
@@ -122,6 +131,11 @@ const INVITATION_ROLES: Record<Exclude<SourceRole, "owner">, WorkspaceRole> = {a
 /** Higher wins when one person has several active rows in an org. */
 const ROLE_RANK: Record<SourceRole, number> = {member: 0, admin: 1, owner: 2}
 
+/** The parts of a credential token (`msk_<env>_<ulid>.<secret>`), as `validateCredentialToken` reads them. */
+const KEY_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/
+const KEY_HASH_PATTERN = /^[0-9a-f]{64}$/
+const KEY_ENV_PATTERN = /^[a-z0-9]+$/
+
 const PUBLISH_SCOPE = "miniapps.publish"
 const STORE_SERVICE = "store"
 
@@ -156,13 +170,18 @@ export class UsageError extends Error {
 export type MigrationReport = {
   mode: "dry-run" | "apply"
   organizationId: string
+  /** `skippedKeys` is every key not imported: `keysWithoutCreator` plus `malformedKeys`. */
   counts: {orgs: number; memberships: number; invitations: number; credentials: number; skippedKeys: number}
   /** Keys bound to a creator who has no membership in the org: not imported. */
   keysWithoutCreator: Array<{orgId: string; keyId: string; name: string}>
+  /** Keys whose id, hash or env could never validate as a Core credential: not imported. */
+  malformedKeys: Array<{orgId: string; keyId: string}>
   /** Orgs imported with no owner, for an organization admin to recover. */
   ownerlessOrgs: string[]
   /** Orgs whose creator pointer became a pending owner membership. */
   synthesizedOwners: string[]
+  /** Orgs whose recorded owner already had a lower-role membership, promoted to owner. */
+  promotedOwners: string[]
   /** People with several active rows in one org (the highest role was kept). */
   duplicateMemberships: Array<{orgId: string; userId: string}>
 }
@@ -264,8 +283,6 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
   const log = options.log ?? (() => {})
   const {source, apply} = options
 
-  if (apply) await prepareTarget(source)
-
   const [orgs, memberships, invitations, keys] = await Promise.all([
     readAll<SourceOrg>(source, SOURCE.orgs),
     readAll<SourceMembership>(source, SOURCE.memberships),
@@ -284,8 +301,10 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
     organizationId: organization,
     counts: {orgs: 0, memberships: 0, invitations: 0, credentials: 0, skippedKeys: 0},
     keysWithoutCreator: [],
+    malformedKeys: [],
     ownerlessOrgs: [],
     synthesizedOwners: [],
+    promotedOwners: [],
     duplicateMemberships: [],
   }
 
@@ -294,6 +313,8 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
     .map(org => planOrg(org, rows, now, report, log))
 
   if (apply) {
+    // Only now, with the whole source validated, does anything touch the target.
+    await prepareTarget(source)
     for (const plan of plans) await importOrg(plan, organization, log)
   }
 
@@ -327,7 +348,7 @@ function planOrg(
   report.counts.memberships += memberships.length
   report.counts.invitations += invitations.length
   report.counts.credentials += credentials.length
-  report.counts.skippedKeys = report.keysWithoutCreator.length
+  report.counts.skippedKeys = report.keysWithoutCreator.length + report.malformedKeys.length
 
   return {
     orgId,
@@ -387,8 +408,14 @@ function planMemberships(
   })
 
   if (!kept.some(entry => entry.role === "owner")) {
+    // The recorded owner (`ownerUserId`) is the only evidence of who should own the org.
     const ownerUserId = stringOrNull(org.ownerUserId)
-    if (ownerUserId && !byUser.has(ownerUserId)) {
+    const recorded = ownerUserId ? planned.find(membership => membership.sourceUserId === ownerUserId) : undefined
+    if (recorded) {
+      // They are an active member with a lower role: the org has no owner, so they become it.
+      recorded.role = "owner"
+      report.promotedOwners.push(orgId)
+    } else if (ownerUserId && !sourceRows.some(row => row.userId === ownerUserId)) {
       const createdAt = asDate(org.createdAt) ?? now
       planned.push({
         membershipId: `wm_owner_${orgId}`,
@@ -402,8 +429,8 @@ function planMemberships(
       })
       report.synthesizedOwners.push(orgId)
     } else {
-      // No creator pointer, or the person it names already holds a lower role. That role stands: the
-      // pointer is not authoritative for roles, and a second membership for them would be a duplicate.
+      // No recorded owner, or the person it names only has inactive rows (they were removed, and
+      // bringing them back as owner would be wrong).
       report.ownerlessOrgs.push(orgId)
     }
   }
@@ -458,7 +485,11 @@ function planCredentials(
 ): PlannedCredential[] {
   const planned: PlannedCredential[] = []
   for (const row of sourceRows) {
-    const keyId = requireString(row.keyId, `keyId in ${orgId}`)
+    if (!hasCredentialShape(row)) {
+      report.malformedKeys.push({orgId, keyId: typeof row.keyId === "string" ? row.keyId : ""})
+      continue
+    }
+    const keyId = row.keyId
     const creator = stringOrNull(row.createdByUserId)
     const packageName = stringOrNull(row.publishingPackage)
     const member = packageName || !creator ? undefined : membershipByUser.get(creator)
@@ -474,8 +505,8 @@ function planCredentials(
     planned.push({
       credentialId: keyId,
       name: typeof row.name === "string" && row.name.trim() ? row.name : keyId,
-      env: requireString(row.env, `env of key ${keyId}`),
-      hash: requireString(row.hash, `hash of key ${keyId}`),
+      env: row.env,
+      hash: row.hash,
       last4: requireString(row.last4, `last4 of key ${keyId}`),
       packageNames: packageName ? [packageName] : [],
       createdByMembershipId: member?.membershipId ?? null,
@@ -489,6 +520,22 @@ function planCredentials(
     })
   }
   return planned
+}
+
+/**
+ * Whether the key's id, hash and env are what a Core token is made of
+ * (`msk_<env>_<ulid>.<secret>`, hash = SHA-256 hex of the secret). A key that is
+ * not could never validate, whoever created it.
+ */
+function hasCredentialShape(row: SourceApiKey): boolean {
+  return (
+    typeof row.keyId === "string" &&
+    KEY_ID_PATTERN.test(row.keyId) &&
+    typeof row.hash === "string" &&
+    KEY_HASH_PATTERN.test(row.hash) &&
+    typeof row.env === "string" &&
+    KEY_ENV_PATTERN.test(row.env)
+  )
 }
 
 // --- Apply -----------------------------------------------------------------
@@ -743,7 +790,8 @@ Without --apply the script prints a JSON report and writes nothing.
 --apply refuses unless both URLs are local; --i-understand-remote lifts that and is for the operator only.`
 
 const VALUE_FLAGS = {"--source": "source", "--target": "target", "--organization-id": "organizationId"} as const
-const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"])
+/** Exactly a loopback host, with an optional all-digit port: nothing else may follow the host or port. */
+const LOCAL_HOST_PATTERN = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/
 
 type MongoUrlParts = {scheme: string; credentials: boolean; hosts: string[]; database: string}
 
@@ -754,22 +802,16 @@ function splitMongoUrl(value: string): MongoUrlParts | null {
   return {
     scheme: match[1]!,
     credentials: match[2] !== undefined,
-    hosts: match[3]!.split(",").map(host => host.trim().toLowerCase()),
+    hosts: match[3]!.split(",").map(host => host.toLowerCase()),
     database: match[4] ?? "",
   }
 }
 
-/** `127.0.0.1`, `localhost` or `::1` alone (every listed host, with or without a port): `mongodb://`, no credentials. */
+/** `mongodb://` on `127.0.0.1`, `localhost` or `[::1]` only (every listed host, optionally with a numeric port), no credentials. */
 export function isLocalMongoUrl(value: string): boolean {
   const parts = splitMongoUrl(value)
   if (!parts || parts.scheme !== "mongodb" || parts.credentials) return false
-  return parts.hosts.every(host => LOCAL_HOSTS.has(hostWithoutPort(host)))
-}
-
-function hostWithoutPort(host: string): string {
-  if (host.startsWith("[")) return host.slice(0, host.indexOf("]") + 1)
-  const colon = host.lastIndexOf(":")
-  return colon === -1 ? host : host.slice(0, colon)
+  return parts.hosts.every(host => LOCAL_HOST_PATTERN.test(host))
 }
 
 /** Parse the command line, refusing anything unsafe before any connection is opened. */
@@ -858,14 +900,24 @@ async function main(argv: string[]): Promise<void> {
   let source: Connection | undefined
   try {
     source = await openSourceConnection(options.source)
-    // A dry run never connects to the target, so it cannot write to it (connecting would build indexes).
-    if (options.apply) await mongoose.connect(options.target, {serverSelectionTimeoutMS: 10_000})
-    const report = await migrateStoreDeveloperOrgs({
+    // Plan from the source alone first. A dry run stops here and never connects to the target. For an
+    // apply this validates the whole source before the target is touched: connecting makes Mongoose
+    // create the collections and indexes, which bad source data must not leave behind.
+    let report = await migrateStoreDeveloperOrgs({
       source,
       organizationId,
-      apply: options.apply,
-      log: message => console.error(message),
+      apply: false,
+      log: options.apply ? () => {} : message => console.error(message),
     })
+    if (options.apply) {
+      await mongoose.connect(options.target, {serverSelectionTimeoutMS: 10_000})
+      report = await migrateStoreDeveloperOrgs({
+        source,
+        organizationId,
+        apply: true,
+        log: message => console.error(message),
+      })
+    }
     console.log(JSON.stringify(report, null, 2))
   } catch (err) {
     console.error(`error: ${err instanceof Error ? err.message : String(err)}`)
