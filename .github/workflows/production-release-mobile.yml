@@ -36,7 +36,7 @@ env:
 jobs:
   load:
     name: Load frozen production candidate inputs
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       plan_artifact: ${{ steps.inputs.outputs.plan_artifact }}
@@ -112,7 +112,7 @@ jobs:
   approve:
     name: Approve production-signed candidate uploads
     needs: load
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     environment:
       name: production-mobile-candidates
@@ -144,7 +144,7 @@ jobs:
   record:
     name: Record exact uploaded production candidates
     needs: [load, mentra-app]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

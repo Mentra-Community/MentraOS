@@ -53,13 +53,16 @@ permissions:
 jobs:
   detect:
     name: Detect version changes
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       matrix: ${{ steps.info.outputs.matrix }}
       has_publishes: ${{ steps.info.outputs.has_publishes }}
       dry_run: ${{ steps.info.outputs.dry_run }}
       force_release: ${{ steps.info.outputs.force_release }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - name: Checkout source
         uses: actions/checkout@v4
         # Depth 1 is fine: the decision reads the working tree + the npm
@@ -76,7 +79,7 @@ jobs:
     name: Publish ${{ matrix.pkg.name }}@${{ matrix.pkg.version }}
     needs: detect
     if: needs.detect.outputs.has_publishes == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       # Sequential + dependency-ordered: the scaffolder's template pins
       # @mentra/miniapp-cli, so it publishes first.

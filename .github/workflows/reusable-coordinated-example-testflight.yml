@@ -51,7 +51,7 @@ env:
 jobs:
   preflight:
     name: Check example TestFlight distribution availability
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       skip: ${{ steps.preflight.outputs.skip }}
@@ -564,7 +564,7 @@ jobs:
       always() &&
       needs.preflight.result == 'success' &&
       needs.ios.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 70
     outputs:
       result_artifact: ${{ steps.coordinates.outputs.result_artifact }}

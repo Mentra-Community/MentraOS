@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-10-03.1",
+  "contractVersion": "2026-10-05.1",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
@@ -163,6 +163,7 @@
   "optional": [
     "ACS_CONNECTION_STRING",
     "ADMIN_URL",
+    "AUDIO_FRAME_TIMELINE_ENABLED",
     "AUDIO_UDP_PORT",
     "AUDIO_WORKERS",
     "CLOUD_CLIENT_MIN_VERSION",
@@ -211,6 +212,7 @@
     "MENTRA_JWKS_URLS",
     "MENTRA_MINIAPP_TOKEN_TTL_SEC",
     "MENTRA_WORKOS_CLIENT_ID",
+    "NIGHTLY_ROUTINE_LANES",
     "POD_ID",
     "PORT",
     "POSTHOG_API_KEY",
@@ -229,6 +231,7 @@
     "TEAMS_GRAPH_CLIENT_SECRET",
     "TEAMS_GRAPH_ORGANIZER_ID",
     "TEAMS_GRAPH_TENANT_ID",
+    "TEST_HOST_TOKENS",
     "TEST_RUN_CLAIM_TOKEN",
     "TEST_RUN_DISPATCH_CHANNELS",
     "TEST_RUN_DISPATCH_ROUTINES",
