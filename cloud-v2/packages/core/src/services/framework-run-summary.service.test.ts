@@ -28,6 +28,33 @@ test("summary projection retains the full validator and digest before deriving a
   expect(JSON.stringify(projection.summary)).toBe(JSON.stringify(expected));
 });
 
+test("compact summaries count passed and skipped test steps independently of the run verdict", () => {
+  const run = fixture();
+  run.result.test = "failed";
+  run.result.steps = ["passed", "failed", "not-run"].map((status, index) => ({
+    id: `step-${index}`, status: status as "passed" | "failed" | "not-run", durationMs: 0,
+  }));
+  const projection = createFrameworkRunSummaryProjection(run, requestInputDigest(run));
+  expect(projection.summary.stepCounts).toEqual({passed: 1, total: 3, skipped: 1});
+});
+
+test("verified older summaries gain step counts from their frozen payload", async () => {
+  const run = fixture(), payloadSha256 = requestInputDigest(run);
+  const projection = createFrameworkRunSummaryProjection(run, payloadSha256);
+  delete projection.summary.stepCounts;
+  projection.summarySha256 = requestInputDigest({summary: projection.summary, definitionRevision: projection.definitionRevision,
+    recordingAssetId: projection.recordingAssetId ?? null});
+  const find = spyOn(TestRunModel, "findOne").mockReturnValue({select: () => ({read: () => ({readConcern: () => ({setOptions: () => ({
+    lean: async () => ({payload: run, payloadSha256}),
+  })})})})} as never);
+  const update = spyOn(TestRunModel, "updateOne").mockResolvedValue({} as never);
+  try {
+    expect((await readFrameworkRunSummary({runId: run.requestId, payloadSha256, summaryProjection: projection})).stepCounts)
+      .toEqual({passed: 1, total: 1, skipped: 0});
+    expect(update).toHaveBeenCalledTimes(1);
+  } finally {find.mockRestore(); update.mockRestore();}
+});
+
 test("altered or foreign compact summaries fail closed without silently reloading a pass", async () => {
   const run = fixture(), payloadSha256 = requestInputDigest(run);
   const projection = createFrameworkRunSummaryProjection(run, payloadSha256);

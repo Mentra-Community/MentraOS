@@ -12,6 +12,8 @@ export const frameworkRunSummaryProjectionSchema = z.object({
     startedAt: z.string().datetime({offset: true}), finishedAt: z.string().datetime({offset: true}),
     outcome: z.enum(["setup-failed", "failed", "cancelled", "teardown-failed", "pass", "not-run"]),
     evidenceStatus: z.enum(["complete", "failed"]),
+    stepCounts: z.object({passed: z.number().int().nonnegative(), total: z.number().int().nonnegative(),
+      skipped: z.number().int().nonnegative()}).strict().refine(counts => counts.passed + counts.skipped <= counts.total).optional(),
     build: z.object({repository: z.string().regex(/^[\w-]+\/[\w.-]+$/), channel: z.enum(["dev", "staging", "pr", "local"]),
       headSha: sha, prNumber: z.number().int().positive().optional(), release: z.string().optional(), producerUrl: z.string().optional()}).strict(),
   }).strict(),

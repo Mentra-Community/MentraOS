@@ -281,6 +281,23 @@ test("combined history renders chronological suites and standalone runs across l
   expect(html).toContain("Load more history to search older entries");
   expect(html.match(/standalone-run/g)).toHaveLength(2);
 });
+test("history and scoped lists show passed totals and skipped counts", () => {
+  const client = new QueryClient();
+  const counted = {...historyRun, stepCounts: {passed: 2, total: 5, skipped: 1}};
+  client.setQueryData(["test-history"], {pages: [{entries: [counted, {kind: "suite", suiteId: "skipped-suite", channel: "dev",
+    trigger: "nightly", startedAt: historyRun.startedAt, outcome: "failed", expectedCount: 3, passed: 1, skipped: 2,
+    build: historyRun.build}], nextCursor: null}], pageParams: [undefined]});
+  const render = (scope?: Record<string, string>) => renderToStaticMarkup(<QueryClientProvider client={client}>
+    <FrameworkRunsPage scope={scope}/></QueryClientProvider>);
+  expect(render()).toContain("2/5 passed, 1 skipped");
+  expect(render()).toContain("1/3 passed, 2 skipped");
+  const scope = {channel: "dev", headSha: "b".repeat(40)};
+  client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {
+    pages: [{runs: [counted], nextCursor: null}], pageParams: [undefined],
+  });
+  expect(render(scope)).toContain("2/5 passed, 1 skipped");
+  client.clear();
+});
 test("history distinguishes empty data and cached refresh failures while keeping filtered build links scoped", () => {
   const client = new QueryClient();
   const render = (scope?: Record<string, string>) => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage scope={scope}/></QueryClientProvider>);

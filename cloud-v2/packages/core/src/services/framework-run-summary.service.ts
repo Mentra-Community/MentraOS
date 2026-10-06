@@ -20,6 +20,8 @@ export function summarizeFrameworkRun(run: FrameworkRun, uploadsComplete: boolea
   return {runId: run.result.runId, requestId: run.requestId, hostId: run.hostId, routineId: run.routineId,
     platform: run.platform, laneId: run.laneId, startedAt: run.startedAt, finishedAt: run.finishedAt,
     outcome: frameworkRunOutcome(run), uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed",
+    stepCounts: {passed: run.result.steps.filter(step => step.status === "passed").length,
+      total: run.result.steps.length, skipped: run.result.steps.filter(step => step.status === "not-run").length},
     build: {repository: run.build.repository, channel: run.build.channel, headSha: run.build.headSha,
       ...(run.build.prNumber !== undefined ? {prNumber: run.build.prNumber} : {}),
       ...(release ? {release} : {}), ...(producerUrl ? {producerUrl} : {})}};
@@ -50,13 +52,15 @@ export function verifiedFrameworkRunSummaryProjection(row: StoredSummaryRow): Fr
 /** Missing projections during a rolling deployment read only that frozen result; corrupt projections fail closed. */
 export async function readFrameworkRunSummaryProjection(row: StoredSummaryRow): Promise<FrameworkRunSummaryProjection> {
   let projection = row.summaryProjection;
-  if (projection === undefined) {
+  const previous = projection === undefined ? undefined : verifiedFrameworkRunSummaryProjection(row);
+  if (projection === undefined || previous?.summary.stepCounts === undefined) {
     const stored = await TestRunModel.findOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256})
       .select({payload: 1, payloadSha256: 1}).read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
     if (!stored) throw new TestRunError(503, "Frozen result summary is unavailable");
     projection = createFrameworkRunSummaryProjection(stored.payload, stored.payloadSha256);
     // A rolling old writer must not make every refresh transfer this evidence again.
-    await TestRunModel.updateOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256, summaryProjection: {$exists: false}},
+    await TestRunModel.updateOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256,
+      ...(previous ? {"summaryProjection.summarySha256": previous.summarySha256} : {summaryProjection: {$exists: false}})},
       {$set: {summaryProjection: projection}}, {writeConcern: testWriteConcern, timeoutMS: 10_000}).catch(() => {
       logger.warn({runId: row.runId}, "Frozen result summary publication will retry on a later read");
     });
