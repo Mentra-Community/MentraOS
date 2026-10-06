@@ -16,6 +16,14 @@ export function readSuiteId(search: string) {
   return query.getAll("testSuite").length === 1 && id && frameworkIdentitySchema.safeParse(id).success ? id : null;
 }
 const panel = "rounded-2xl border border-[#e0e4de] bg-white p-6";
+const isFailure = (status: string) => ["failed", "setup-failed", "teardown-failed"].includes(status);
+const resultColor = (status: string) => status === "pass" ? "text-green-700" : isFailure(status) ? "text-red-700" : "text-[#68746d]";
+function suitePresentation(suite: TestSuiteResult) {
+  if (suite.outcome === "passed") return {label: "All passed", color: "bg-green-100 text-green-800"};
+  if (suite.members.some(member => isFailure(member.status))) return {label: "Failures", color: "bg-red-100 text-red-800"};
+  if (suite.outcome === "running") return {label: "In progress", color: "bg-blue-100 text-blue-800"};
+  return {label: "Incomplete", color: "bg-gray-100 text-[#68746d]"};
+}
 export function TestSuitePage({suiteId}: {suiteId: string}) {
   const result = useQuery({queryKey: ["test-suite", suiteId],
     queryFn: () => api<TestSuiteResult>(`/api/admin/test-runs/suites/${encodeURIComponent(suiteId)}`),
@@ -23,6 +31,16 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
   if (result.isPending) return <p role="status">Loading test suite…</p>;
   if (result.error) return <div role="alert" className={panel}><p>Could not load the test suite: {result.error.message}</p><button onClick={() => result.refetch()}>Try again</button></div>;
   const suite = result.data!;
+  const presentation = suitePresentation(suite);
+  const members = [...suite.members].sort((a, b) => {
+    const aTime = a.startedAt ? Date.parse(a.startedAt) : NaN;
+    const bTime = b.startedAt ? Date.parse(b.startedAt) : NaN;
+    if (!Number.isFinite(aTime)) return Number.isFinite(bTime) ? 1 : 0;
+    if (!Number.isFinite(bTime)) return -1;
+    return aTime - bTime;
+  });
+  const failedRoutines = [...new Set(members.filter(member => isFailure(member.status)).map(member => member.routineId))];
+  const incompleteRoutines = suite.failedRoutines.filter(id => !failedRoutines.includes(id));
   if (suite.members.length < 2) {
     const member = suite.members[0];
     return <section className={panel}>
@@ -37,17 +55,18 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
     <div className="mt-4 flex items-start justify-between gap-4">
       <div><h2 className="text-xl font-bold">{suite.channel === "dev" ? "Dev" : suite.channel} {suite.trigger} test suite</h2>
         <p className="mt-1 text-sm text-[#68746d]">{suite.build.release ?? suite.build.headSha.slice(0, 10)} · {suite.build.headSha.slice(0, 10)}</p></div>
-      <span className={`rounded-lg px-3 py-2 text-sm font-semibold ${suite.outcome === "passed" ? "bg-green-100 text-green-800" : suite.outcome === "failed" ? "bg-red-100 text-red-800" : "bg-blue-100 text-blue-800"}`}>
-        {suite.outcome === "passed" ? "All passed" : suite.outcome === "failed" ? "Failures" : "In progress"} · {suite.passed}/{suite.members.length} passed</span>
+      <span className={`rounded-lg px-3 py-2 text-sm font-semibold ${presentation.color}`}>
+        {presentation.label} · {suite.passed}/{suite.members.length} passed</span>
     </div>
     <p className="my-4 text-sm">Started {new Date(suite.startedAt).toLocaleString()}{suite.finishedAt ? ` · Finished ${new Date(suite.finishedAt).toLocaleString()} · ${runDuration(suite.startedAt, suite.finishedAt)}` : " · Refreshes every 15 seconds"}</p>
     {suite.build.producerUrl ? <a className="text-sm underline" href={suite.build.producerUrl} target="_blank" rel="noreferrer">Dispatched job / build in GitHub</a> : null}
     <div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-[#68746d]"><th className="py-3">Routine</th><th>Lane</th><th>Result</th><th>Duration</th><th>Recording & steps</th></tr></thead>
-      <tbody>{suite.members.map(member => <tr key={member.memberId} className="border-b last:border-0"><td className="py-4 font-medium">{member.routineId}</td><td>{member.platform === "ios-on-mac" ? "Mac" : member.platform === "android" ? "Android" : "iOS"}</td>
-        <td className={member.status === "pass" ? "text-green-700" : member.status === "waiting" ? "text-[#68746d]" : "text-red-700"}>{member.status === "not-run" ? "Did not run" : member.status === "waiting" ? "Awaiting result" : member.status}
+      <tbody>{members.map(member => <tr key={member.memberId} className="border-b last:border-0"><td className="py-4 font-medium">{member.routineId}</td><td>{member.platform === "ios-on-mac" ? "Mac" : member.platform === "android" ? "Android" : "iOS"}</td>
+        <td className={resultColor(member.status)}>{member.status === "not-run" ? "Did not run" : member.status === "waiting" ? "Awaiting result" : member.status}
           {member.unavailableReason && <p className="mt-1 max-w-sm text-xs">{member.unavailableReason}</p>}</td>
         <td>{runDuration(member.startedAt, member.finishedAt) ?? "—"}</td><td>{member.runId ? <a className="underline" href={frameworkRunHref(member.runId)}>View run</a> : "Not available yet"}</td></tr>)}</tbody></table></div>
-    {suite.failedRoutines.length ? <p className="mt-4 text-sm text-red-700">Failed or incomplete: {suite.failedRoutines.join(", ")}</p> : null}
+    {failedRoutines.length ? <p className="mt-4 text-sm text-red-700">Failed: {failedRoutines.join(", ")}</p> : null}
+    {incompleteRoutines.length ? <p className="mt-4 text-sm text-[#68746d]">Incomplete: {incompleteRoutines.join(", ")}</p> : null}
   </section>;
 }
 export function RecentTestSuites() {
@@ -58,6 +77,6 @@ export function RecentTestSuites() {
   return <section className={panel}><h2 className="text-xl font-bold">Recent test suites</h2><p className="my-2 text-sm text-[#68746d]">One dispatched job, with all of its routine results.</p>
     {result.data.suites.map(suite => <a key={suite.suiteId} className="flex justify-between gap-4 border-b py-3 last:border-0" href={`/?testSuite=${encodeURIComponent(suite.suiteId)}`}>
       <span>{suite.channel} · {suite.trigger} · {suite.build.release ?? suite.build.headSha.slice(0, 10)}<span className="ml-3 text-xs text-[#68746d]">{new Date(suite.startedAt).toLocaleString()}</span></span>
-      <span className={suite.outcome === "passed" ? "text-green-700" : suite.outcome === "failed" ? "text-red-700" : "text-blue-700"}>{suite.outcome} · {suite.passed}/{suite.members.length}</span></a>)}
+      <span className={`rounded-lg px-2 py-1 ${suitePresentation(suite).color}`}>{suitePresentation(suite).label} · {suite.passed}/{suite.members.length}</span></a>)}
   </section>;
 }

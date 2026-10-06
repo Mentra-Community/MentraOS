@@ -18,7 +18,7 @@ test("suite shows missing routines and links to published recordings", () => {
   const client = new QueryClient(); client.setQueryData(["test-suite", suite.suiteId], suite);
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
   expect(html).toContain("1/2 passed"); expect(html).toContain("Did not run");
-  expect(html).toContain("/?testRun=run-one"); expect(html).toContain("Failed or incomplete: ota");
+  expect(html).toContain("/?testRun=run-one"); expect(html).toContain("Incomplete: ota");
 });
 test("recent suite link opens aggregate", () => {
   const client = new QueryClient(); client.setQueryData(["test-suites"], {suites: [suite]});
@@ -53,4 +53,56 @@ test("a rejected suite member displays its admission reason and keeps neighborin
   expect(html).toContain("missing-definition: Selected source is not installed.");
   expect(html).toContain('href="/?testRun=run-one"');
   expect(html).toContain("Did not run");
+});
+
+function renderSuite(value: TestSuiteResult) {
+  const client = new QueryClient();
+  client.setQueryData(["test-suite", value.suiteId], value);
+  return renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={value.suiteId}/></QueryClientProvider>);
+}
+
+test("suite displays chronological execution order with unrun members last and stable ties", () => {
+  const member = suite.members[0]!;
+  const value = {...suite, members: [
+    {...member, memberId: "unrun", routineId: "unrun", status: "not-run", startedAt: undefined},
+    {...member, memberId: "later", routineId: "later", startedAt: "2026-10-01T11:04:00Z"},
+    {...member, memberId: "first", routineId: "first", startedAt: "2026-10-01T04:01:00-07:00"},
+    {...member, memberId: "tie", routineId: "tie", startedAt: "2026-10-01T11:01:00Z"},
+    {...member, memberId: "waiting", routineId: "waiting", status: "waiting", startedAt: undefined},
+  ]};
+  const original = value.members.map(member => member.memberId);
+  const html = renderSuite(value);
+  const order = ["first", "tie", "later", "unrun", "waiting"].map(id => html.indexOf(`font-medium">${id}</td>`));
+  expect(order.every(index => index >= 0)).toBe(true);
+  expect(order).toEqual([...order].sort((a, b) => a - b));
+  expect(value.members.map(member => member.memberId)).toEqual(original);
+});
+
+test("only passing and failure results use green and red; other states remain neutral", () => {
+  for (const status of ["pass", "failed", "setup-failed", "teardown-failed", "not-run", "waiting", "cancelled"]) {
+    const html = renderSuite({...suite, members: [suite.members[0]!, {...suite.members[1]!, status}]});
+    const label = status === "not-run" ? "Did not run" : status === "waiting" ? "Awaiting result" : status;
+    const color = status === "pass" ? "text-green-700" : ["failed", "setup-failed", "teardown-failed"].includes(status) ? "text-red-700" : "text-[#68746d]";
+    expect(html).toContain(`<td class="${color}">${label}`);
+  }
+});
+
+test("missing results make the completed suite incomplete without red in detail or history", () => {
+  const html = renderSuite(suite);
+  expect(html).toContain("Incomplete");
+  expect(html).not.toContain("text-red");
+  expect(html).not.toContain("bg-red");
+  const client = new QueryClient(); client.setQueryData(["test-suites"], {suites: [suite]});
+  const history = renderToStaticMarkup(<QueryClientProvider client={client}><RecentTestSuites/></QueryClientProvider>);
+  expect(history).toContain("Incomplete");
+  expect(history).not.toContain("text-red");
+  expect(history).not.toContain("bg-red");
+});
+
+test("actual failures stay red and incomplete routines have their own neutral summary", () => {
+  const html = renderSuite({...suite, failedRoutines: ["ota", "call"], members: [...suite.members,
+    {...suite.members[0]!, memberId: "call", routineId: "call", status: "failed"}]});
+  expect(html).toContain("bg-red-100 text-red-800");
+  expect(html).toContain('text-red-700">Failed: call');
+  expect(html).toContain('text-[#68746d]">Incomplete: ota');
 });
