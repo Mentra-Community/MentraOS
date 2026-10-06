@@ -62,18 +62,18 @@ class NimoCanvasCodecTest {
   }
 
   @Test fun labelUtf8LengthAndErrors() {
-    val dashes = NimoCanvasCodec.label("—é— - –", 0, 0, 100, 20)
-    val expectedText = "-é- - –".toByteArray(Charsets.UTF_8)
+    val dashes = NimoCanvasCodec.label("—éÆß— - –", 0, 0, 100, 20)
+    val expectedText = "-eAEss- - –".toByteArray(Charsets.UTF_8)
     assertArrayEquals(expectedText, dashes.payload.copyOfRange(14, dashes.payload.size))
     assertEquals(expectedText.size, dashes.textBytes)
     assertEquals(expectedText.size, dashes.payload[12].toInt())
-    val label = NimoCanvasCodec.label("😀é", 0, 0, 100, 20)
-    assertEquals(6, label.textBytes)
-    assertEquals(6, label.payload[12].toInt())
+    val label = NimoCanvasCodec.label("😀界", 0, 0, 100, 20)
+    assertEquals(7, label.textBytes)
+    assertEquals(7, label.payload[12].toInt())
     assertThrows(IllegalArgumentException::class.java) { NimoCanvasCodec.label("a\u0000b", 0, 0, 100, 20) }
     assertThrows(java.nio.charset.CharacterCodingException::class.java) { NimoCanvasCodec.label("\uD800", 0, 0, 100, 20) }
-    assertThrows(IllegalArgumentException::class.java) { NimoCanvasCodec.label("é".repeat(1025), 0, 0, 100, 20) }
-    assertEquals(2048, NimoCanvasCodec.label("é".repeat(1024), 0, 0, 100, 20).textBytes)
+    assertThrows(IllegalArgumentException::class.java) { NimoCanvasCodec.label("界".repeat(683), 0, 0, 100, 20) }
+    assertEquals(2046, NimoCanvasCodec.label("界".repeat(682), 0, 0, 100, 20).textBytes)
   }
 
   @Test fun totalBudgetsAndClear() {
@@ -182,12 +182,12 @@ class NimoCanvasCodecTest {
   }
 
   @Test fun sceneCompilerKeepsGeometryOrderAndBorderBeforeText() {
-    val text = NimoCanvasCodec.Element("text", 10, 20, 100, 40, "hello—world", border = 2, radius = 3)
+    val text = NimoCanvasCodec.Element("text", 10, 20, 100, 40, "héllo—Æsir", border = 2, radius = 3)
     val rectangle = NimoCanvasCodec.Element("rect", 100, 100, 50, 20)
     val actual = NimoCanvasCodec.scene(listOf(text, rectangle)) { _, _, _ -> error("Not an image") }
     val expected = NimoCanvasCodec.replace(listOf(
       NimoCanvasCodec.rectangle(10, 20, 100, 40, 2, 3),
-      NimoCanvasCodec.label("hello-world", 10, 20, 100, 20),
+      NimoCanvasCodec.label("hello-AEsir", 10, 20, 100, 20),
       NimoCanvasCodec.rectangle(100, 100, 50, 20, 1, 0)
     ))
     assertArrayEquals(expected, actual)

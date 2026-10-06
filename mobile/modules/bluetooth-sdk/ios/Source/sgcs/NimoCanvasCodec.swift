@@ -77,8 +77,9 @@ enum NimoCanvasCodec {
     {
         try region(x, y, w, h)
         try require((0 ... 3).contains(font) && (0 ... 20).contains(language) && (0 ... 255).contains(intensity))
-        // NIMO's font lacks the em dash glyph. Normalize before counting wire bytes.
-        let utf8 = Data(text.replacingOccurrences(of: "\u{2014}", with: "-").utf8)
+        // Apply the shared Latin fallback and NIMO's dash fix before counting wire bytes.
+        let displayText = LatinTextSanitizer.sanitizeForDisplay(text).replacingOccurrences(of: "\u{2014}", with: "-")
+        let utf8 = Data(displayText.utf8)
         try require((1 ... 2048).contains(utf8.count) && !utf8.contains(0), "Label exceeds 2048 UTF-8 bytes or contains NUL")
         return Object(type: 3, payload: words(x, y, w, h, language) + bytes(font, intensity) + words(utf8.count) + utf8,
                       textBytes: utf8.count)

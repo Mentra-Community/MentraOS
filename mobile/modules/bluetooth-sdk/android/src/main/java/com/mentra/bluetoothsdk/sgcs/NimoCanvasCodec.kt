@@ -103,8 +103,9 @@ internal object NimoCanvasCodec {
     require(text.length <= 2048 && '\u0000' !in text)
     val encoder = Charsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT)
       .onUnmappableCharacter(CodingErrorAction.REPORT)
-    // NIMO's font lacks the em dash glyph. Normalize before counting wire bytes.
-    val encoded = encoder.encode(CharBuffer.wrap(text.replace('\u2014', '-')))
+    // Apply the shared Latin fallback and NIMO's dash fix before counting wire bytes.
+    val displayText = sanitizeLatinDisplayText(text).replace('\u2014', '-')
+    val encoded = encoder.encode(CharBuffer.wrap(displayText))
     val utf8 = ByteArray(encoded.remaining()).also { encoded.get(it) }
     require(utf8.size in 1..2048) { "Label exceeds 2048 UTF-8 bytes" }
     return Object(3, words(x, y, width, height, language) + bytes(font, intensity) + words(utf8.size) + utf8,
