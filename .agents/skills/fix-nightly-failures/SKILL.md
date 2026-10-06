@@ -11,7 +11,7 @@ lane or passing individual routine is progress; none is an all-passing nightly.
 
 Use the existing `fix-routine-failure`, `create-routine` and `codex-pr-review`
 skills for their respective work. Read [operations](references/operations.md)
-when fetching evidence, dispatching or opening an authoring session; use the
+when fetching evidence, dispatching or submitting authoring work; use the
 current checked-out APIs rather than old temporary scripts or invented flags.
 
 ## Let the current suite finish
@@ -76,13 +76,17 @@ Choose per failure, using judgment:
 | Evidence and remaining work | Next action |
 | --- | --- |
 | Focused fix with strong causal evidence and a high likelihood of passing | Manually dispatch the affected routine through ordinary orchestration; no authoring session needed |
-| Available logs/source are insufficient and device inspection or action iteration is needed | Reserve the compatible lane and start held authoring with the accumulated diagnosis |
+| Available logs/source are insufficient and device inspection or action iteration is needed | Submit a built-in `routine-work` create/edit job with the accumulated diagnosis and exact source/build |
 | Insufficient logs, missing artifact/capability or genuine access gap | Fix the observation/prerequisite or ask for the specific missing input; do not invent a pass or repeatedly retry |
 
-In authoring, inspect or execute the failing action from its existing safe
-prerequisite state. Keep the owner, recorder and proven prefix; retry that saved
-action with a concrete reason instead of reinstalling and repeating the whole
-flow. Use the same saved action replay will use. Finish and release normally;
+The built-in job supervisor owns the workspace, machine agent, reservation and
+held session. Follow the harness [job guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-WORK.md)
+and [assigned-agent skill](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/.agents/skills/prepare-routine-work/SKILL.md).
+The assigned agent inspects or executes the failing saved action from its safe
+prerequisite state, keeping the owner, recorder and proven prefix. Retry with a
+concrete reason instead of reinstalling and repeating the whole flow. Raw author
+commands are inner job operations, not an alternative coordinator runner. Use
+the same saved action replay will use. Finish and return through the job normally;
 authoring sections are not full-run results. A new failure returns to diagnosis,
 not an automatic full-suite retry loop.
 
