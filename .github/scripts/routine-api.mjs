@@ -96,6 +96,15 @@ function boundDispatchIntent(request) {
   return intent
 }
 
+function executableSelection(request) {
+  const input = request.input
+  ensure(requestIdentity(request.requestId) && requestIdentity(request.hostId) && routineId(input?.routineId) &&
+    platforms.includes(input.platform) && routineRevision(input.definitionRevision) && requestIdentity(input.laneId) &&
+    /^[a-f0-9]{64}$/.test(request.inputSha256 ?? "") && requestInputDigest(input) === request.inputSha256,
+    "Executable request differs from its immutable input")
+  return input
+}
+
 export async function routineApi({token, operation, request, requestId = request?.requestId, fetchImpl = fetch}) {
   ensure(token && ["catalog", "dispatch", "detail"].includes(operation), "Routine API capability is missing")
   if (operation !== "catalog") ensure(requestIdentity(requestId), "Invalid routine request identity")
@@ -121,16 +130,13 @@ export async function routineApi({token, operation, request, requestId = request
   const acknowledged = operation === "dispatch" ? result : result.request
   ensure(acknowledged?.requestId === requestId,
     "Routine API acknowledgement differs from its request")
-  const intent = boundDispatchIntent(acknowledged)
-  if (request) ensure(intent.routineId === request.routineId && intent.platform === request.platform &&
-    isDeepStrictEqual(intent.source, exactSource(request.source)) &&
-    (request.routineRevision === undefined || intent.routineRevision === request.routineRevision) &&
-    (request.routineSource === undefined || isDeepStrictEqual(intent.routineSource, request.routineSource)) &&
-    (request.minimumFrameworkVersion === undefined || intent.minimumFrameworkVersion === request.minimumFrameworkVersion),
+  const selection = acknowledged.input ? executableSelection(acknowledged) : boundDispatchIntent(acknowledged)
+  if (request) ensure(selection.routineId === request.routineId && selection.platform === request.platform &&
+    isDeepStrictEqual(acknowledged.input ? selection.build.source : selection.source, exactSource(request.source)) &&
+    (request.routineRevision === undefined || (acknowledged.input ? selection.definitionRevision : selection.routineRevision) === request.routineRevision) &&
+    (request.routineSource === undefined || isDeepStrictEqual(selection.routineSource, request.routineSource)) &&
+    (request.minimumFrameworkVersion === undefined || selection.minimumFrameworkVersion === request.minimumFrameworkVersion),
     "Routine API changed the original routine or source")
-  if (acknowledged.input) ensure(acknowledged.input.routineId === intent.routineId && acknowledged.input.platform === intent.platform &&
-    acknowledged.input.definitionRevision === intent.routineRevision && acknowledged.input.laneId === intent.laneId &&
-    isDeepStrictEqual(acknowledged.input.build, intent.build), "Executable input differs from its dispatch intent")
   return result
 }
 
@@ -162,10 +168,8 @@ export async function submitRoutineRequest({token, request, fetchImpl = fetch}) 
 export function boundRoutineResult(detail) {
   const {request, result} = detail ?? {}, run = result?.run, input = request?.input
   ensure(requestIdentity(request?.requestId), "Missing accepted routine request")
-  const intent = boundDispatchIntent(request)
-  if (input) ensure(input.routineId === intent.routineId && input.platform === intent.platform && input.laneId === intent.laneId &&
-    input.definitionRevision === intent.routineRevision && isDeepStrictEqual(input.build, intent.build) &&
-    requestInputDigest(input) === request.inputSha256, "Executable input differs from its dispatch intent")
+  if (input) executableSelection(request)
+  else boundDispatchIntent(request)
   if (!result) return terminalRequestResult(request)
   ensure(input, "Result has no executable input")
   ensure(run?.requestId === request.requestId && run.result?.runId === request.requestId && run.hostId === request.hostId &&
