@@ -41,7 +41,7 @@ test("run pagination always requests both host and lane and preserves its cursor
   globalThis.fetch = (async input => {url = String(input); return Response.json({runs: [], nextCursor: null});}) as typeof fetch;
   try {
     await (query.options.queryFn as Function)({pageParam: "cursor:next"});
-    expect(url).toBe("/api/admin/test-runs/?hostId=mini&laneId=mac&cursor=cursor%3Anext");
+    expect(url).toBe("/api/admin/test-runs?hostId=mini&laneId=mac&cursor=cursor%3Anext");
   } finally {globalThis.fetch = original; client.clear();}
 });
 test("cached refresh failures keep history but current lane status becomes unknown", () => {

@@ -1,4 +1,5 @@
 import {expect, spyOn, test} from "bun:test";
+import {Hono} from "hono";
 import {createTestRunAdminApi} from "./test-runs.api";
 import {TestHistoryService} from "../../services/test-history.service";
 import {LaneRestorationService} from "../../services/lane-restoration.service";
@@ -8,6 +9,25 @@ import {TestRunError} from "../../services/test-result-error";
 import {requestInputDigest, TestRequestService, type StoredTestRequest, type TestRequestRepository} from "../../services/test-request.service";
 import {routineEnrollmentSchema} from "../../types/routine-definition.types";
 import {frameworkRunSchema} from "../../types/framework-run.types";
+
+test("mounted lane run history forwards host, lane and pagination at the collection URL", async () => {
+  const calls: Record<string, string>[] = [];
+  class Results extends FrameworkResultService {
+    override async list(query: Record<string, string> = {}) {
+      calls.push(query); return {runs: [], nextCursor: null};
+    }
+  }
+  const app = new Hono();
+  app.route("/api/admin/test-runs", createTestRunAdminApi(undefined, undefined, new Results()));
+  for (const suffix of ["", "&cursor=cursor%3Anext"]) {
+    const response = await app.request(`/api/admin/test-runs?hostId=host%3Aone&laneId=lane%3Atwo${suffix}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({runs: [], nextCursor: null});
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  }
+  expect(calls).toEqual([{hostId: "host:one", laneId: "lane:two"},
+    {hostId: "host:one", laneId: "lane:two", cursor: "cursor:next"}]);
+});
 
 test("combined history route forwards pagination outside the generic run ID path", async () => {
   const calls: Record<string, string>[] = [];

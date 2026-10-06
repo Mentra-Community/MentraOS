@@ -10,7 +10,7 @@ export function LaneHistoryPage({selection, now}: {selection: LaneSelection; now
   const {hostId, laneId} = selection;
   const controllers = useQuery({queryKey: ["lane-restoration"], queryFn: () => api<LaneRestorationList>("/api/admin/test-runs/restoration/list"), refetchInterval: 30_000});
   const runs = useInfiniteQuery({queryKey: ["lane-runs", hostId, laneId], initialPageParam: undefined as string | undefined,
-    queryFn: ({pageParam}) => api<FrameworkRunPage>(`/api/admin/test-runs/?hostId=${encodeURIComponent(hostId)}&laneId=${encodeURIComponent(laneId)}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`),
+    queryFn: ({pageParam}) => api<FrameworkRunPage>(`/api/admin/test-runs?hostId=${encodeURIComponent(hostId)}&laneId=${encodeURIComponent(laneId)}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`),
     getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 30_000});
   const host = controllers.data?.hosts.find(host => host.hostId === hostId);
   const lane = host?.lanes.find(lane => lane.id === laneId);
