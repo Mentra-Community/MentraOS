@@ -153,9 +153,10 @@ hardware or implement another authoring workflow.
    gh pr edit PR --repo Mentra-Community/MentraOS --add-label routine-work:edit
    ```
 
-   GitHub must identify the comment author as a human account with `OWNER`,
-   `MEMBER` or `COLLABORATOR` association; an AI using that account's `gh` login
-   works, a bot-authored brief does not. For an existing request, edit its comment
+   The comment author must be a human account with repository access, verified
+   through GitHub's collaborator permission endpoint. Comment association labels
+   can vary by credential and do not establish access. An AI using that account's
+   `gh` login works; a bot-authored brief does not. For an existing request, edit its comment
    by ID instead of posting a second brief. Read back the comment and labels.
    Ordinary `routine:<id>` labels can coexist for other relevant coverage.
 5. Follow the request workflow and its updating status comment. Automatic intake

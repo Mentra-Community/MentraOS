@@ -38,11 +38,11 @@ const context = {
   eventName: 'pull_request_target',
   ref: 'refs/heads/dev',
 }
-function github(comments, pull = pr, checkCollaborator = async ({username}) => {
+function github(comments, pull = pr, getCollaboratorPermissionLevel = async ({username}) => {
   if (username !== 'colleague') throw Object.assign(new Error('not a collaborator'), {status: 404})
-  return {status: 204}
+  return {data: {permission: 'write', user: {login: username}}}
 }) {
-  return {rest: {pulls: {get: async () => ({data: pull})}, issues: {listComments: {}}, repos: {checkCollaborator}}, paginate: async () => comments}
+  return {rest: {pulls: {get: async () => ({data: pull})}, issues: {listComments: {}}, repos: {getCollaboratorPermissionLevel}}, paginate: async () => comments}
 }
 
 test('create/edit briefs retain arbitrary routine IDs and exact source, with no replay-label ambiguity', () => {
@@ -89,12 +89,18 @@ test('repository access, not credential-dependent comment association, selects t
     const comment = {id: 44, body: body(input), author_association: association, user: {type: 'User', login: 'colleague'}}
     const calls = []
     const selected = await selectedRoutineWork({github: github([comment], pr, async params => {
-      calls.push(params); return {status: 204}
+      calls.push(params); return {data: {permission: 'admin', user: {login: params.username}}}
     }), context, number: 12})
     assert.equal(selected.commentId, 44)
     assert.deepEqual(calls, [{...context.repo, username: 'colleague'}])
   }
   const comment = {id: 44, body: body(input), author_association: 'MEMBER', user: {type: 'User', login: 'colleague'}}
+  for (const permission of ['read', 'write', 'admin']) {
+    const selected = await selectedRoutineWork({github: github([comment], pr, async ({username}) => ({data: {permission, user: {login: username}}})), context, number: 12})
+    assert.equal(selected.commentId, 44)
+  }
+  await assert.rejects(selectedRoutineWork({github: github([comment], pr, async ({username}) => ({data: {permission: 'none', user: {login: username}}})), context, number: 12}), /Exactly one/)
+  await assert.rejects(selectedRoutineWork({github: github([comment], pr, async () => ({data: {permission: 'admin', user: {login: 'another-user'}}})), context, number: 12}), /access could not be verified/)
   await assert.rejects(selectedRoutineWork({github: github([comment], pr, async () => {
     throw Object.assign(new Error('token permission unavailable'), {status: 403})
   }), context, number: 12}), /access could not be verified/)
