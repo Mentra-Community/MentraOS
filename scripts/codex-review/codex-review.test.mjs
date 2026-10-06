@@ -220,6 +220,25 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(codexCalls(f)).toBe(0)
   })
 
+  test("workspace links cannot load anchor source during an exact-head review", () => {
+    const f = makeFixture(), shared = join(f.root, "storage/node_modules")
+    mkdirSync(shared, {recursive: true});mkdirSync(join(f.repo, "workspace"))
+    writeFileSync(join(f.repo, "workspace/index.cjs"), 'module.exports = "ANCHOR SOURCE"')
+    sh(f.repo, "git add workspace && git commit -qm anchor && git push -q origin main && git checkout -q feature && git merge -q main")
+    writeFileSync(join(f.repo, "workspace/index.cjs"), 'module.exports = "REVIEW SOURCE"')
+    sh(f.repo, "git add workspace && git commit -qm head && git push -q origin feature && git checkout -q main")
+    sh(f.origin, 'git update-ref refs/pull/1/head "$(git rev-parse refs/heads/feature)"')
+    symlinkSync(realpathSync(join(f.repo, "workspace")), join(shared, "workspace"))
+    symlinkSync(realpathSync(shared), join(f.repo, "node_modules"))
+    const unsafe = spawnSync("node", ["-e", 'process.stdout.write(require(process.argv[1]))', join(f.repo, "node_modules/workspace/index.cjs")], {encoding: "utf8"})
+    expect(unsafe.stdout).toBe("ANCHOR SOURCE")
+    const result = run(f, [f.repo, "1"])
+    expect(result.code).toBe(1);expect(result.out).toContain("escapes external package storage")
+    expect(readFileSync(join(f.worktree, "workspace/index.cjs"), "utf8")).toContain("REVIEW SOURCE")
+    expect(existsSync(join(f.worktree, "node_modules"))).toBe(false)
+    expect(codexCalls(f)).toBe(0)
+  })
+
   test("the standalone project runner resolves a relative checkout against its caller", () => {
     const f = makeFixture()
     const project = join(f.root, "Review project with spaces")

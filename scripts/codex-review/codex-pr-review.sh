@@ -231,6 +231,9 @@ else
   echo "created by codex-pr-review.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ); safe to delete together with $wt" > "$owned"
 fi
 [[ "$(git -C "$wt" rev-parse HEAD)" == "$head_sha" ]] || fail "worktree $wt is not at ${head_sha:0:8}"
+if [[ -d "$repo_dir/node_modules" || -d "$repo_dir/tools/mentra-e2e/node_modules" ]]; then
+  node "$script_dir/review-dependencies.mjs" "$wt" "$repo_dir" || fail "shared dependencies cannot qualify this reviewed source"
+fi
 review_dependencies link
 # Right after the resets above, nothing a previous run left behind can remain, so what
 # `git status` still reports is judged by kind. Untracked files mean the clean failed,
