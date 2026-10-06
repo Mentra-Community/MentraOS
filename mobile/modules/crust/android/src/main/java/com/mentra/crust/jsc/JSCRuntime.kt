@@ -293,10 +293,10 @@ class JSCRuntime private constructor(private val appContext: Context) {
                 runBlocking {
                     installGlobals(qjs, packageName)
                     if (bundle.isNotEmpty()) {
-                        qjs.evaluate<Any?>(bundle, filename = "mentrajs:startup.js")
+                        qjs.evaluateForEffect(bundle, filename = "mentrajs:startup.js")
                     }
                     if (miniappJs.isNotEmpty()) {
-                        qjs.evaluate<Any?>(miniappJs, filename = "mentrajs:miniapp.js")
+                        qjs.evaluateForEffect(miniappJs, filename = "mentrajs:miniapp.js")
                     }
                 }
                 Log.i(TAG, "spawned $packageName")
@@ -420,7 +420,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
                 record.executor.submit {
                     runBlocking {
                         try {
-                            record.qjs.evaluate<Any?>(
+                            record.qjs.evaluateForEffect(
                                 "globalThis.__deliverTimer && globalThis.__deliverTimer($token);",
                                 filename = "mentrajs:timer-$token.js",
                             )
@@ -511,7 +511,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
                 try {
                     val source = "globalThis.__deliver(${jsStringLiteral(envelopeJson)});"
                     runBlocking {
-                        record.qjs.evaluate<Any?>(source, filename = "mentrajs:deliver.js")
+                        record.qjs.evaluateForEffect(source, filename = "mentrajs:deliver.js")
                     }
                 } catch (e: Throwable) {
                     failure = e
@@ -589,6 +589,15 @@ class JSCRuntime private constructor(private val appContext: Context) {
     }
 
     // ------------------------------------------------------------------
+
+    /**
+     * Evaluate for side effects. A completion value is never converted to
+     * Kotlin: quickjs-kt 1.0.15 hangs converting a Set, Map or array that
+     * contains itself, and miniapp code chooses its bundle's last value.
+     */
+    private suspend fun QuickJs.evaluateForEffect(source: String, filename: String) {
+        evaluate<Any?>("$source\n;undefined", filename = filename)
+    }
 
     private fun parseArgsEnvelope(argsJson: String): Pair<List<Any?>, String?> {
         return try {

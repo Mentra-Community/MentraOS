@@ -31,6 +31,13 @@ core-library desugaring. Add it to the host app's Expo config:
 Building with the navigation feature requires a `MAPBOX_DOWNLOADS_TOKEN` in
 the Android build environment (Mapbox's SDK repository is authenticated).
 
+The plugin also raises the host's Android build to Kotlin 2.3.0 (crust's
+QuickJS library, `quickjs-kt` 1.0.15, is compiled with Kotlin 2.4) and pins
+the root Kotlin Gradle plugin to that version. Every native module in the
+host then compiles with Kotlin 2.3. Known incompatibility:
+`react-native-gesture-handler` before 2.31.0 fails to compile; use 2.31.0 or
+later.
+
 At build time the Android side also reads the MentraJS polyfill bundle from
 its [`@mentra/jspolyfill`](https://www.npmjs.com/package/@mentra/jspolyfill)
 sibling, which is declared as a dependency.
