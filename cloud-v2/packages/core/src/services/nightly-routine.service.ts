@@ -76,7 +76,7 @@ export class NightlyRoutineService {
     private readonly requests: Pick<TestRequestService, "cancelSubmission" | "get" | "submit"> = new TestRequestService(),
     private readonly repository: NightlyPlanRepository = nightlyPlanRepository,
     private readonly bindings: () => RoutineLaneBindings = configuredRoutineLanes,
-    private readonly results: Pick<FrameworkResultService, "detail"> = new FrameworkResultService(),
+    private readonly results: Pick<FrameworkResultService, "summary"> = new FrameworkResultService(),
     private readonly now: () => number = Date.now,
     private readonly logSelectionError: (error: unknown, context: {occurrenceId: string; platform: TestBuildPlatform; stage: NightlySelectionError["stage"]}) => void
       = (error, context) => logger.error({err: error, ...context}, "Nightly selection failed")) {}
@@ -223,13 +223,13 @@ export class NightlyRoutineService {
     const members: NightlyResult["members"] = await Promise.all(plan.members.map(async member => {
       if (!member.input) return {...member, status: "incomplete", publicationComplete: false};
       try {
-        const result = await this.results.detail(member.requestId), run = result.run;
+        const result = await this.results.summary(member.requestId), run = result;
         if (run.routineId !== member.routineId || run.platform !== member.platform || run.definitionRevision !== member.definitionRevision
           || run.hostId !== member.hostId || run.laneId !== member.input.laneId || requestInputDigest(run.build) !== requestInputDigest(member.input.build))
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Result identity differs from the frozen request."};
         if (result.uploadsComplete) settledUploads.add(member.requestId);
         return {...member, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete",
-          runId: run.result.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
+          runId: run.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
         if (!(error instanceof TestRunError) || error.status !== 404) return this.unavailableEvidence(member, error, "Result");
         let request;

@@ -129,6 +129,62 @@ test("native result list scopes the archive digest and excludes retained old pay
   } finally {find.mockRestore();}
 });
 
+test("exact-request summary verifies the existing projection and frozen build without loading evidence or a definition", async () => {
+  const {frameworkRunSchema} = await import("../types/framework-run.types");
+  const run = frameworkRunSchema.parse({schemaVersion: 1, hostId: "mini", requestId: "summary:one", routineId: "notes",
+    definitionRevision: "a".repeat(40), platform: "android", laneId: "android",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40),
+      archive: {sha256: "c".repeat(64)}, source: {channel: "dev", buildRunId: 21, publicationAttempt: 2}},
+    startedAt: "2026-10-06T10:00:00Z", finishedAt: "2026-10-06T10:01:00Z",
+    assets: Array.from({length: 2371}, (_, index) => ({id: `diagnostic-${index}`, kind: "diagnostic", path: `private/${index}.json`,
+      sha256: "d".repeat(64), size: 1, mimeType: "application/json"})),
+    result: {runId: "summary:one", finishedAt: "2026-10-06T10:01:00Z", setup: {status: "passed"}, test: "passed",
+      steps: [{id: "required", status: "passed", durationMs: 10}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: "evidence", actionId: "recording", message: "private-evidence-detail"}], evidence: [],
+      timing: {startedAt: "2026-10-06T10:00:00Z", setupMs: 0, testMs: 10, teardownMs: 0}}});
+  const projection = createFrameworkRunSummaryProjection(run, requestInputDigest(run));
+  let row: any = {runId: run.requestId, requestId: run.requestId, payloadSha256: projection.payloadSha256,
+    summaryProjection: projection, uploadsComplete: false, payload: {build: run.build}};
+  let queries = 0;
+  const find = spyOn(TestRunModel, "findOne").mockImplementation(((filter: unknown) => {
+    queries++;
+    expect(filter).toEqual({"payload.schemaVersion": 1, requestId: run.requestId});
+    return {select(fields: unknown) {
+      expect(fields).toEqual({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, "payload.build": 1}); return this;
+    }, read(value: string) {expect(value).toBe("primary"); return this;}, readConcern(value: string) {expect(value).toBe("majority"); return this;},
+    setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 10_000}); return this;}, lean: async () => row};
+  }) as any);
+  try {
+    const service = new FrameworkResultService(undefined, undefined, undefined, async () => {throw Error("Must not fetch a definition");});
+    const summary = await service.summary(run.requestId);
+    expect(summary).toMatchObject({runId: run.requestId, requestId: run.requestId, hostId: run.hostId, routineId: run.routineId,
+      definitionRevision: run.definitionRevision, platform: run.platform, laneId: run.laneId, startedAt: run.startedAt, finishedAt: run.finishedAt,
+      outcome: "pass", evidenceStatus: "failed", uploadsComplete: false, build: run.build});
+    expect(JSON.stringify(summary)).not.toContain("private-evidence-detail");
+    expect(JSON.stringify(summary)).not.toContain("private/0.json");
+    expect(Buffer.byteLength(JSON.stringify(summary))).toBeLessThan(2000);
+    row.uploadsComplete = true;
+    expect(await service.summary(run.requestId)).toMatchObject({outcome: "pass", evidenceStatus: "failed", uploadsComplete: true});
+    const valid = structuredClone(row);
+    const corruptions = [
+      () => {row.summaryProjection = undefined;},
+      () => {row.summaryProjection.summarySha256 = "e".repeat(64);},
+      () => {row.payloadSha256 = "e".repeat(64);},
+      () => {row.requestId = "foreign";},
+      () => {row.runId = "foreign";},
+      () => {row.payload.build.headSha = "e".repeat(40);},
+      () => {row.payload = undefined;},
+    ];
+    for (const corrupt of corruptions) {
+      row = structuredClone(valid); corrupt(); const before = queries;
+      await expect(service.summary(run.requestId)).rejects.toMatchObject({status: 503});
+      expect(queries).toBe(before + 1);
+    }
+    row = null;
+    await expect(service.summary(run.requestId)).rejects.toMatchObject({status: 404});
+  } finally {find.mockRestore();}
+});
+
 test("native run summaries retain build identity and distinct execution and evidence outcomes", async () => {
   const build = {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40),
     releaseIdentity: "2.1.0-dev.42", source: {buildRunId: 1234}};
