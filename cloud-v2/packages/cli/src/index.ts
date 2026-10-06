@@ -17,18 +17,21 @@ import { createHash } from "node:crypto";
 import {
   createApp,
   createRelease,
+  createWorkspace,
   deleteApp,
   getAdminMe,
   getConsoleSession,
-  getOrg,
+  getPublishingProfile,
   listApps,
   listReleases,
   pollLoginToken,
   publishRelease,
   refreshLoginToken,
+  setPackagePrefix,
   startLogin,
   submitRelease,
-  upsertOrg,
+  type CliWorkspace,
+  type ConsoleSessionResponse,
 } from "./api";
 import { getConfig } from "./config";
 import { clearCredentials, loadCredentials, saveCredentials, type CliCredentials } from "./credentials";
@@ -104,22 +107,22 @@ program
           storedAt: storedAt.toISOString(),
           expiresAt: expiresAt?.toISOString(),
         };
-        let availableOrgCount = 0;
+        let availableWorkspaceCount = 0;
         try {
           const session = await getConsoleSession(credentials);
-          availableOrgCount = session.organizations.length;
-          credentials.developerOrgId = session.organizationId ?? session.organizations[0]?.id ?? null;
-          if (session.organizations.length > 1 && !session.organizationId) credentials.developerOrgId = null;
+          availableWorkspaceCount = session.workspaces.length;
+          credentials.workspaceId =
+            session.activeWorkspaceId ?? (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
         } catch {
           // Authentication still succeeded. The first Store command will report
-          // any connectivity or organization-selection problem explicitly.
+          // any connectivity or workspace-selection problem explicitly.
         }
         const storage = await saveCredentials(credentials);
         console.log(`Signed in as ${token.user.email}`);
         if (token.organization_id) console.log(`Organization: ${token.organization_id}`);
-        if (credentials.developerOrgId) console.log(`Developer org: ${credentials.developerOrgId}`);
-        if (availableOrgCount > 1 && !credentials.developerOrgId) {
-          console.log("Multiple developer orgs are available. Run `mentra org list`, then `mentra org use <org-id>`.");
+        if (credentials.workspaceId) console.log(`Workspace: ${credentials.workspaceId}`);
+        if (availableWorkspaceCount > 1 && !credentials.workspaceId) {
+          console.log("Multiple workspaces are available. Run `mentra workspace list`, then `mentra workspace use <id>`.");
         }
         console.log(`Credentials stored in ${storage === "keychain" ? "OS keychain" : "~/.mentra/cli-v2"}`);
         return;
@@ -149,97 +152,106 @@ program
     console.log(`Email: ${creds.email}`);
     console.log(`WorkOS user: ${creds.workosUserId}`);
     if (creds.organizationId) console.log(`Organization: ${creds.organizationId}`);
-    if (creds.developerOrgId) console.log(`Developer org: ${creds.developerOrgId}`);
+    if (creds.workspaceId) console.log(`Workspace: ${creds.workspaceId}`);
     console.log(`Store: ${creds.storeUrl}`);
     if (creds.expiresAt) console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);
   });
 
-const org = program.command("org").description("Manage the current developer organization");
+const workspace = program.command("workspace").description("Manage the active workspace");
 
-org
+workspace
   .command("list")
-  .description("List developer organizations available to this account")
+  .description("List workspaces available to this account")
   .action(async () => {
     const creds = await requireCredentials();
     if (!creds) return;
 
     try {
       const session = await getConsoleSession(creds);
-      if (session.organizations.length === 0) {
-        console.log("No developer organizations yet.");
+      if (session.workspaces.length === 0) {
+        console.log("No workspaces yet. Create one with `mentra workspace create <name>`.");
         return;
       }
-      for (const developerOrg of session.organizations) {
-        const selected = developerOrg.id === creds.developerOrgId || developerOrg.id === session.organizationId;
-        console.log(`${selected ? "*" : " "} ${developerOrg.id}\t${developerOrg.name}\t${developerOrg.packagePrefix}`);
+      const activeId = creds.workspaceId ?? session.activeWorkspaceId;
+      for (const entry of session.workspaces) {
+        console.log(`${entry.workspaceId === activeId ? "*" : " "} ${entry.workspaceId}\t${entry.name}\t${entry.membership.role}`);
       }
     } catch (error) {
       fail(error);
     }
   });
 
-org
+workspace
   .command("use")
-  .argument("<organizationId>", "developer organization id from `mentra org list`")
-  .description("Select the developer organization used by future CLI commands")
-  .action(async (organizationId: string) => {
+  .argument("<workspaceId>", "workspace id from `mentra workspace list`")
+  .description("Select the workspace used by future CLI commands")
+  .action(async (workspaceId: string) => {
     const creds = await requireCredentials();
     if (!creds) return;
 
     try {
       const session = await getConsoleSession(creds);
-      const developerOrg = session.organizations.find(candidate => candidate.id === organizationId);
-      if (!developerOrg) throw new Error("You do not have access to that developer organization");
-      await saveCredentials({...creds, developerOrgId: developerOrg.id});
-      console.log(`Using ${developerOrg.name} (${developerOrg.id})`);
+      const selected = session.workspaces.find(candidate => candidate.workspaceId === workspaceId);
+      if (!selected) throw new Error("You do not have access to that workspace");
+      await saveCredentials({...creds, workspaceId: selected.workspaceId});
+      console.log(`Using ${selected.name} (${selected.workspaceId})`);
     } catch (error) {
       fail(error);
     }
   });
 
-org
+workspace
   .command("show")
-  .description("Show the current developer organization")
+  .description("Show the active workspace and its publishing profile")
   .action(async () => {
     const creds = await requireCredentials();
     if (!creds) return;
 
     try {
-      const { org: developerOrg } = await getOrg(creds);
-      if (!developerOrg) {
-        console.log('No developer org selected. Run `mentra org list`, or create one with `mentra org init --new`.');
+      const session = await getConsoleSession(creds);
+      const active = activeWorkspace(creds, session);
+      if (!active) {
+        if (creds.workspaceId) {
+          throw new Error(`Workspace ${creds.workspaceId} is not available to this account. Run \`mentra workspace list\`, then \`mentra workspace use <id>\`.`);
+        }
+        console.log("No workspace selected. Run `mentra workspace list`, then `mentra workspace use <id>`, or create one with `mentra workspace create <name>`.");
         return;
       }
 
-      console.log(`Name: ${developerOrg.name}`);
-      console.log(`Package prefix: ${developerOrg.packagePrefix}`);
-      console.log(`Prefix status: ${developerOrg.packagePrefixStatus}`);
-      if (developerOrg.workosOrgId) console.log(`WorkOS org: ${developerOrg.workosOrgId}`);
+      console.log(`Workspace: ${active.name} (${active.workspaceId})`);
+      console.log(`Role: ${active.membership.role}`);
+      const profile = await getPublishingProfile({...creds, workspaceId: active.workspaceId});
+      console.log(`Package prefix: ${profile.packagePrefix || "not set"}`);
+      console.log(`Prefix status: ${profile.packagePrefixStatus}`);
     } catch (error) {
       fail(error);
     }
   });
 
-org
-  .command("init")
-  .description("Create or update the current developer organization")
-  .requiredOption("--name <name>", "organization display name")
-  .requiredOption("--prefix <prefix>", "package prefix, e.g. com.example")
-  .option("--new", "create another organization instead of updating the selected organization")
-  .action(async (options: { name: string; prefix: string; new?: boolean }) => {
+workspace
+  .command("create")
+  .argument("<name>", "workspace name")
+  .option("--package-prefix <prefix>", "package prefix for the workspace's miniapps, e.g. com.example")
+  .description("Create a workspace and make it the active one")
+  .action(async (name: string, options: { packagePrefix?: string }) => {
     const creds = await requireCredentials();
     if (!creds) return;
 
     try {
-      const { org: developerOrg } = await upsertOrg(creds, {
-        displayName: options.name,
-        packagePrefix: options.prefix,
-        createNew: options.new === true,
-      });
-      await saveCredentials({...creds, developerOrgId: developerOrg.id});
-      console.log(`Developer org ready: ${developerOrg.name}`);
-      console.log(`Package prefix: ${developerOrg.packagePrefix} (${developerOrg.packagePrefixStatus})`);
-      if (developerOrg.workosOrgId) console.log(`WorkOS org: ${developerOrg.workosOrgId}`);
+      const created = await createWorkspace(creds, name);
+      // Selected before the prefix is set, so a refused prefix still leaves the new workspace active.
+      const next = {...creds, workspaceId: created.workspaceId};
+      await saveCredentials(next);
+      console.log(`Workspace created: ${created.name} (${created.workspaceId})`);
+      if (options.packagePrefix) {
+        try {
+          const profile = await setPackagePrefix(next, options.packagePrefix);
+          console.log(`Package prefix: ${profile.packagePrefix} (${profile.packagePrefixStatus})`);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(`The workspace was created and selected, but its package prefix was not set: ${reason}`);
+        }
+      }
     } catch (error) {
       fail(error);
     }
@@ -309,7 +321,7 @@ miniappKeys
 
 miniapps
   .command("list")
-  .description("List miniapps owned by the current developer org")
+  .description("List miniapps owned by the active workspace")
   .action(async () => {
     const creds = await requireCredentials();
     if (!creds) return;
@@ -701,7 +713,7 @@ async function loadFreshCredentials(config = getConfig()): Promise<CliCredential
       workosUserId: refreshed.user.id,
       email: refreshed.user.email,
       organizationId: refreshed.organization_id,
-      developerOrgId: creds.developerOrgId,
+      workspaceId: creds.workspaceId,
       authenticationMethod: refreshed.authentication_method ?? creds.authenticationMethod,
       storeUrl: creds.storeUrl,
       storedAt: storedAt.toISOString(),
@@ -768,8 +780,17 @@ async function ensureMiniappRecord(
   const { apps } = await listApps(creds);
   const existing = apps.find(app => app.packageName === input.packageName && app.status !== "archived");
   if (!existing) {
-    throw new Error(`Package ${input.packageName} is already claimed by another developer org.`);
+    throw new Error(`Package ${input.packageName} is already claimed by another workspace.`);
   }
+}
+
+/** The workspace commands act in: the saved selection, else the Store's active one, else the account's only one. */
+function activeWorkspace(creds: CliCredentials, session: ConsoleSessionResponse): CliWorkspace | null {
+  const id =
+    creds.workspaceId ??
+    session.activeWorkspaceId ??
+    (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
+  return session.workspaces.find(candidate => candidate.workspaceId === id) ?? null;
 }
 
 function fail(error: unknown): void {

@@ -5,7 +5,7 @@ Mentra miniapps against the independently deployed Mentra Miniapp Store.
 
 It wraps [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-cli)
 (the `dev` / `build` / `pack` author flow) and adds account and store operations:
-`login`, `whoami`, `org`, `miniapps`, `releases`, and `publish`.
+`login`, `whoami`, `workspace`, `miniapps`, `releases`, and `publish`.
 
 > **Bun-only.** This CLI ships as TypeScript and runs under [Bun](https://bun.sh)
 > (`#!/usr/bin/env bun`). Use `bun` / `bunx`, not `npx`/Node.
@@ -31,24 +31,34 @@ mentra dev                # local dev server with a signed Cloud V2 identity
 mentra build              # build the current miniapp
 mentra pack               # build and pack locally (use --sign to sign)
 mentra publish --no-submit # build and upload an unsigned draft
-mentra miniapps list      # miniapps owned by your org
+mentra miniapps list      # miniapps owned by your workspace
 mentra releases submit    # submit an uploaded release for review
 ```
 
-The CLI keeps publishing scoped to one developer organization. When an account
-belongs to more than one, select it explicitly:
+The CLI keeps publishing scoped to one workspace: a group of people who share
+miniapps, credentials, and a package prefix. `mentra login` selects your workspace
+automatically when you belong to only one. When an account belongs to more than
+one, select it explicitly:
 
 ```bash
-mentra org list
-mentra org use dorg_...
+mentra workspace list          # * marks the active workspace
+mentra workspace use ws_...
+mentra workspace show          # the active workspace and its package prefix
 ```
 
-To create an additional publisher organization after joining an existing team,
-use:
+Without a selection, a command that needs a workspace stops and asks you to run
+`mentra workspace use <id>`, listing the ids you can choose from.
+
+To create another workspace, optionally with its package prefix:
 
 ```bash
-mentra org init --new --name "Your Org" --prefix com.example
+mentra workspace create "Your Team" --package-prefix com.example
 ```
+
+The new workspace becomes the active one. `MENTRA_CLI_WORKSPACE_ID` selects a
+workspace for a run that authenticates with `MENTRA_CLI_TOKEN`. A workspace
+credential (`msk_...`) already carries its workspace, so CI that publishes with
+one needs no selection.
 
 ## Optional publisher signatures
 
@@ -130,7 +140,7 @@ after automated validation. Use `--no-submit` when preparing either kind.
 ## Manage a Store listing from the terminal
 
 The Developer Console is optional. Keep listing text in a JSON file, then apply
-it to the selected organization's miniapp:
+it to the active workspace's miniapp:
 
 ```json
 {
@@ -170,12 +180,14 @@ rm ./store-token
 ```
 
 This credential can only manage that miniapp's listing and releases. It cannot
-manage the organization, access other miniapps, issue credentials, change app
+manage the workspace, access other miniapps, issue credentials, change app
 visibility, or use administrator endpoints. Grant it only to a repository whose
 production branch is trusted to approve releases. Revoke it with
-`mentra tokens list` and `mentra tokens revoke TOKEN_ID` using an org owner/admin
-login. Ordinary org credentials can be created with
-`mentra tokens create --name NAME --output ./token`.
+`mentra tokens list` and `mentra tokens revoke CREDENTIAL_ID` using a workspace
+owner/admin login. Ordinary workspace credentials are created with
+`mentra tokens create --name NAME --output ./token`; add `--package PACKAGE`
+(repeatable) to limit one to specific miniapps and `--expires 2030-01-01T00:00:00Z`
+to make it expire. The secret is written to the new file and never printed.
 
 In CI, pass the secret as `MENTRA_CLI_TOKEN` and explicitly set `MENTRA_STORE_URL`.
 Build/check the production ZIP first, then run:

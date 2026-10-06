@@ -3,14 +3,15 @@ import { createHash } from "node:crypto";
 import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import {
-  createApiToken,
   createPublishingToken,
+  createWorkspaceCredential,
   deleteListingAsset,
   getListing,
-  listApiTokens,
+  listWorkspaceCredentials,
   publishRelease,
+  resolveWorkspaceId,
   reviewRelease,
-  revokeApiToken,
+  revokeWorkspaceCredential,
   updateListing,
   uploadListingAsset,
   type StoreAsset,
@@ -128,22 +129,63 @@ export function registerStoreCommands(program: Command, requireCredentials: () =
         print({ id: token.id, permissions: token.permissions, secretFile: options.output });
       }),
     );
-  const tokens = program.command("tokens").description("Manage developer API credentials");
-  tokens.command("list").action(run(async (creds) => print(await listApiTokens(creds))));
+  const tokens = program.command("tokens").description("Manage the active workspace's miniapp publishing credentials");
+  tokens.command("list").action(
+    run(async (creds) => {
+      const workspaceId = await resolveWorkspaceId(creds);
+      print(await listWorkspaceCredentials({ ...creds, workspaceId }, workspaceId));
+    }),
+  );
   tokens
     .command("create")
     .requiredOption("--name <name>", "credential name")
+    .option("--package <packageName>", "restrict the credential to this miniapp package (repeatable)", collect)
+    .option("--expires <date>", "ISO 8601 date after which the credential stops working")
     .requiredOption("--output <path>", "write the secret to a new private file")
     .action(
       run(async (creds, options) => {
-        const token = await writeTokenFile(
-          options.output,
-          async () => (await createApiToken(creds, options.name)).token,
-        );
-        print({ id: token.id, secretFile: options.output });
+        const expiresAt = parseExpiry(options.expires);
+        const workspaceId = await resolveWorkspaceId(creds);
+        const input = {
+          name: options.name as string,
+          ...(options.package ? { packageNames: options.package as string[] } : {}),
+          ...(expiresAt ? { expiresAt } : {}),
+        };
+        const { credential } = await writeTokenFile(options.output, async () => {
+          const created = await createWorkspaceCredential({ ...creds, workspaceId }, workspaceId, input);
+          return { ...created, value: created.token };
+        });
+        print({
+          credentialId: credential.credentialId,
+          name: credential.name,
+          display: credential.display,
+          packageNames: credential.packageNames,
+          expiresAt: credential.expiresAt,
+          secretFile: options.output,
+        });
       }),
     );
-  tokens.command("revoke <tokenId>").action(run(async (creds, tokenId) => print(await revokeApiToken(creds, tokenId))));
+  tokens.command("revoke <credentialId>").action(
+    run(async (creds, credentialId) => {
+      const workspaceId = await resolveWorkspaceId(creds);
+      await revokeWorkspaceCredential({ ...creds, workspaceId }, workspaceId, credentialId);
+      print({ ok: true, credentialId });
+    }),
+  );
+}
+
+function collect(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+
+/** An ISO 8601 date or date-time as the UTC ISO string Core expects, checked before anything is reserved or minted. */
+function parseExpiry(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const time = ISO_DATE.test(value) ? Date.parse(value) : Number.NaN;
+  if (Number.isNaN(time)) throw new Error("--expires must be an ISO 8601 date, e.g. 2030-01-01T00:00:00Z");
+  return new Date(time).toISOString();
 }
 
 async function writeTokenFile<T extends { value: string }>(path: string, issue: () => Promise<T>): Promise<T> {

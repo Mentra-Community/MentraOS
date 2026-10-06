@@ -21,7 +21,8 @@ export interface CliCredentials {
   workosUserId: string
   email: string
   organizationId?: string | null
-  developerOrgId?: string | null
+  /** The workspace the CLI acts in: sent as `x-mentra-workspace-id` and used by `mentra workspace` and `tokens`. */
+  workspaceId?: string | null
   authenticationMethod?: string
   storeUrl: string
   storedAt: string
@@ -67,7 +68,7 @@ export async function loadCredentials(storeUrl = getConfig().storeUrl): Promise<
       workosUserId: process.env.MENTRA_CLI_WORKOS_USER_ID || "unknown",
       email: process.env.MENTRA_CLI_EMAIL || "unknown",
       organizationId: process.env.MENTRA_CLI_ORGANIZATION_ID,
-      developerOrgId: process.env.MENTRA_CLI_DEVELOPER_ORG_ID,
+      workspaceId: process.env.MENTRA_CLI_WORKSPACE_ID || undefined,
       storeUrl: targetStoreUrl,
       storedAt: new Date().toISOString(),
     }

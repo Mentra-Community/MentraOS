@@ -20,7 +20,7 @@ beforeEach(() => {
 afterEach(() => {
   get.mockRestore()
   set.mockRestore()
-  for (const key of ["MENTRA_CLI_TOKEN", "MENTRA_CORE_URL", "MENTRA_STORE_URL", "WORKOS_CLIENT_ID", "MENTRA_WORKOS_CLIENT_ID"]) {
+  for (const key of ["MENTRA_CLI_TOKEN", "MENTRA_CLI_WORKSPACE_ID", "MENTRA_CLI_DEVELOPER_ORG_ID", "MENTRA_CORE_URL", "MENTRA_STORE_URL", "WORKOS_CLIENT_ID", "MENTRA_WORKOS_CLIENT_ID"]) {
     if (saved[key] === undefined) delete process.env[key]
     else process.env[key] = saved[key]
   }
@@ -87,5 +87,29 @@ describe("Store-scoped saved logins", () => {
     await saveCredentials(credentials(url))
     for (const key of secrets.keys()) secrets.set(key, JSON.stringify(credentials("https://other.example.test")))
     expect(await loadCredentials(url)).toBeNull()
+  })
+})
+
+describe("active workspace", () => {
+  test("an explicit token takes its workspace from MENTRA_CLI_WORKSPACE_ID", async () => {
+    process.env.MENTRA_CLI_TOKEN = "explicit-ci-token"
+    process.env.MENTRA_CLI_WORKSPACE_ID = "ws_ci"
+    expect(await loadCredentials()).toMatchObject({token: "explicit-ci-token", workspaceId: "ws_ci"})
+  })
+  test("the retired MENTRA_CLI_DEVELOPER_ORG_ID selects nothing", async () => {
+    process.env.MENTRA_CLI_TOKEN = "explicit-ci-token"
+    delete process.env.MENTRA_CLI_WORKSPACE_ID
+    process.env.MENTRA_CLI_DEVELOPER_ORG_ID = "dorg_old"
+    const loaded = await loadCredentials()
+    expect(loaded?.workspaceId).toBeUndefined()
+    expect(loaded).not.toHaveProperty("developerOrgId")
+  })
+  test("the selected workspace persists with the Store login", async () => {
+    await saveCredentials({...credentials(DEFAULT_STORE_URL), workspaceId: "ws_selected"})
+    expect(await loadCredentials()).toMatchObject({workspaceId: "ws_selected"})
+  })
+  test("a login saved before workspaces has no active workspace", async () => {
+    await saveCredentials({...credentials(DEFAULT_STORE_URL), developerOrgId: "dorg_old"} as CliCredentials)
+    expect((await loadCredentials())?.workspaceId).toBeUndefined()
   })
 })

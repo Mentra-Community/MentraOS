@@ -4,7 +4,9 @@ import {mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 
-test("login waits for browser approval, saves the Store session and confirms success", () => {
+type Session = {user: {id: string; email: string}; workspaces: Array<{workspaceId: string; name: string}>; activeWorkspaceId: string | null};
+
+function login(session: Session) {
   const dir = mkdtempSync(join(tmpdir(), "mentra-cli-login-"));
   const stdoutPath = join(dir, "stdout.txt");
   try {
@@ -37,9 +39,7 @@ test("login waits for browser approval, saves the Store session and confirms suc
           return Response.json({access_token: "fixture-token", refresh_token: "fixture-refresh", expires_in: 3600,
             user: {id: "fixture-user", email: "fixture@example.test"}});
         }
-        if (url === "https://store.example.test/api/console/auth/me") return Response.json({
-          organizationId: "dorg_fixture", organizations: [{id: "dorg_fixture"}],
-        });
+        if (url === "https://store.example.test/api/console/auth/me") return Response.json(${JSON.stringify(session)});
         throw new Error("Unexpected network request");
       };
     `);
@@ -50,15 +50,42 @@ test("login waits for browser approval, saves the Store session and confirms suc
         WORKOS_API_BASE_URL: "https://workos.example.test", MENTRA_CLI_TOKEN: ""},
       encoding: "utf8", timeout: 2000,
     });
-    expect(result.error).toBeUndefined();
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(readFileSync(stdoutPath, "utf8")).toContain("Signed in as fixture@example.test");
-    expect(readFileSync(stdoutPath, "utf8")).toContain("Credentials stored in OS keychain");
-    expect(JSON.parse(readFileSync(saved, "utf8"))).toMatchObject({
-      storeUrl: "https://store.example.test", developerOrgId: "dorg_fixture", token: "fixture-token",
-    });
+    return {result, stdout: readFileSync(stdoutPath, "utf8"), credentials: JSON.parse(readFileSync(saved, "utf8"))};
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
+}
+
+const user = {id: "mentra_user_fixture", email: "fixture@example.test"};
+
+test("login waits for browser approval, saves the Store session and confirms success", () => {
+  const {result, stdout, credentials} = login({
+    user, workspaces: [{workspaceId: "ws_fixture", name: "Fixture"}], activeWorkspaceId: "ws_fixture",
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(stdout).toContain("Signed in as fixture@example.test");
+  expect(stdout).toContain("Workspace: ws_fixture");
+  expect(stdout).toContain("Credentials stored in OS keychain");
+  expect(credentials).toMatchObject({storeUrl: "https://store.example.test", workspaceId: "ws_fixture", token: "fixture-token"});
+});
+
+test("login selects the only workspace when the Store reports no active one", () => {
+  const {stdout, credentials} = login({
+    user, workspaces: [{workspaceId: "ws_only", name: "Only"}], activeWorkspaceId: null,
+  });
+  expect(credentials).toMatchObject({workspaceId: "ws_only"});
+  expect(stdout).toContain("Workspace: ws_only");
+});
+
+test("login leaves the workspace unselected when several are available", () => {
+  const {stdout, credentials} = login({
+    user,
+    workspaces: [{workspaceId: "ws_1", name: "One"}, {workspaceId: "ws_2", name: "Two"}],
+    activeWorkspaceId: null,
+  });
+  expect(credentials.workspaceId ?? null).toBeNull();
+  expect(stdout).not.toContain("Workspace: ws_");
+  expect(stdout).toContain("Multiple workspaces are available. Run `mentra workspace list`, then `mentra workspace use <id>`.");
 });
