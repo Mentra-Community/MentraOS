@@ -31,7 +31,7 @@ jobs:
     name: Post PR comment
     # Only run for pull_request events (avoids noise/errors on push)
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - name: Post comment to PR
         uses: actions/github-script@v7

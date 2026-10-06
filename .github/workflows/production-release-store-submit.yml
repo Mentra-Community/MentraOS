@@ -28,7 +28,7 @@ env:
 jobs:
   submit:
     name: Submit exact accepted candidates without public release
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 45
     environment:
       name: production-store-submission

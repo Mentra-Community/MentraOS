@@ -17,7 +17,7 @@ Store the token there; it does not need a repository-secret slot. Allow the
 `dev` and `staging` branches. Leave required reviewers and wait timers off for
 unattended notifications.
 
-Three GitHub-hosted jobs select this environment: `coordinated-release.yml`'s
+Three Linux jobs on ephemeral Blacksmith runners select this environment: `coordinated-release.yml`'s
 `notify-slack`, and `notify-release-routine.yml`'s `resolve` and `update`. The
 resolver needs it because it checks token availability before producing work.
 These are ordinary jobs, not `workflow_call` jobs: GitHub resolves the secret
@@ -32,8 +32,8 @@ their existing workflows and webhook configuration.
 
 Invite that bot to both existing channels. The same bot must author and update
 the post. Do not use the reports bot merely because its token already exists.
-No Slack history permission is required. The token is used only by GitHub-hosted
-notification jobs, never by the hardware worker.
+No Slack history permission is required. The token is used only by those ephemeral cloud
+notification jobs, never by the hardware worker or a self-hosted machine.
 
 Without this configuration, the existing incoming webhook still delivers the
 release post and says **Terminal Slack updates unavailable; use the results

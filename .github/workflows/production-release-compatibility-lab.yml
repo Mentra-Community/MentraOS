@@ -29,7 +29,7 @@ env:
 jobs:
   load:
     name: Load frozen Mobile N compatibility inputs
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
     outputs:
       source_commit: ${{ steps.inputs.outputs.source_commit }}
@@ -116,7 +116,7 @@ jobs:
   approve:
     name: Approve non-promotable compatibility-lab uploads
     needs: load
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     environment:
       name: production-compatibility-lab
@@ -143,7 +143,7 @@ jobs:
   record:
     name: Record exact non-promotable lab distributions
     needs: [load, mentra-app]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

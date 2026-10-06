@@ -30,7 +30,7 @@ env:
 jobs:
   plan:
     name: Allocate immutable release identity
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       source_commit: ${{ steps.release.outputs.source_commit }}
@@ -450,7 +450,7 @@ jobs:
       needs.sdk-native.result == 'success' &&
       needs.mobile.result == 'success' &&
       needs.engine-consumer.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -698,7 +698,7 @@ jobs:
     name: Publish versioned release download page
     needs: [plan, finalize]
     if: needs.plan.outputs.dry_run != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -727,7 +727,7 @@ jobs:
     name: Start independent example and docs release
     needs: [plan, finalize]
     if: needs.plan.outputs.dry_run != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       actions: write
@@ -761,7 +761,7 @@ jobs:
         dispatch-examples,
       ]
     if: always() && github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 

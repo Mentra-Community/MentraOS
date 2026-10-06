@@ -41,7 +41,7 @@ jobs:
       github.repository == 'Mentra-Community/MentraOS' &&
       ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev') ||
        (github.event_name == 'pull_request_target' && vars.DEVICE_ROUTINE_PR_DISPATCH_ENABLED == 'true' && github.event.pull_request.head.repo.full_name == github.repository))
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

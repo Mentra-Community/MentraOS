@@ -32,7 +32,7 @@ jobs:
   plan:
     name: Load the exact finalized core release
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       source_commit: ${{ steps.load.outputs.source_commit }}
@@ -132,7 +132,7 @@ jobs:
       needs.starter-kit.result == 'success' &&
       needs.example-testflight.result == 'success' &&
       needs.example-google-play.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
     outputs:
       record_url: ${{ steps.results.outputs.record_url }}
@@ -264,7 +264,7 @@ jobs:
     name: Publish release-matched documentation
     needs: [plan, starter-kit, example-testflight]
     if: ${{ !cancelled() && needs.plan.result == 'success' && needs.starter-kit.result == 'success' && needs.example-testflight.result == 'success' && needs.plan.outputs.dry_run != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     outputs:
       docs_url: ${{ steps.target.outputs.docs_url }}
@@ -445,7 +445,7 @@ jobs:
     name: Notify release Slack channel
     needs: [plan, starter-kit, example-testflight, example-google-play, finalize-example, docs]
     if: always() && github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
