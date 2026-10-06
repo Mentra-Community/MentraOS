@@ -38,8 +38,11 @@ const context = {
   eventName: 'pull_request_target',
   ref: 'refs/heads/dev',
 }
-function github(comments, pull = pr) {
-  return {rest: {pulls: {get: async () => ({data: pull})}, issues: {listComments: {}}}, paginate: async () => comments}
+function github(comments, pull = pr, getCollaboratorPermissionLevel = async ({username}) => {
+  if (username !== 'colleague') throw Object.assign(new Error('not a collaborator'), {status: 404})
+  return {data: {permission: 'write', user: {login: username}}}
+}) {
+  return {rest: {pulls: {get: async () => ({data: pull})}, issues: {listComments: {}}, repos: {getCollaboratorPermissionLevel}}, paginate: async () => comments}
 }
 
 test('create/edit briefs retain arbitrary routine IDs and exact source, with no replay-label ambiguity', () => {
@@ -57,14 +60,14 @@ test('create/edit briefs retain arbitrary routine IDs and exact source, with no 
 })
 
 test('only one collaborator request brief and one work label can be selected', async () => {
-  const comment = {id: 44, body: body(input), author_association: 'MEMBER', user: {type: 'User'}}
+  const comment = {id: 44, body: body(input), author_association: 'MEMBER', user: {type: 'User', login: 'colleague'}}
   assert.deepEqual((await selectedRoutineWork({github: github([comment]), context, number: 12})).brief, input)
   assert.equal(
     await selectedRoutineWork({github: github([], {...pr, labels: [{name: 'routine:existing'}]}), context, number: 12}),
     null,
   )
   await assert.rejects(
-    selectedRoutineWork({github: github([{...comment, author_association: 'NONE'}]), context, number: 12}),
+    selectedRoutineWork({github: github([{...comment, user: {type: 'User', login: 'outsider'}}]), context, number: 12}),
     /collaborator/,
   )
   await assert.rejects(
@@ -79,6 +82,32 @@ test('only one collaborator request brief and one work label can be selected', a
     }),
     /exactly one/,
   )
+})
+
+test('repository access, not credential-dependent comment association, selects the authoring brief', async () => {
+  for (const association of ['MEMBER', 'CONTRIBUTOR', 'NONE']) {
+    const comment = {id: 44, body: body(input), author_association: association, user: {type: 'User', login: 'colleague'}}
+    const calls = []
+    const selected = await selectedRoutineWork({github: github([comment], pr, async params => {
+      calls.push(params); return {data: {permission: 'admin', user: {login: params.username}}}
+    }), context, number: 12})
+    assert.equal(selected.commentId, 44)
+    assert.deepEqual(calls, [{...context.repo, username: 'colleague'}])
+  }
+  const comment = {id: 44, body: body(input), author_association: 'MEMBER', user: {type: 'User', login: 'colleague'}}
+  for (const permission of ['write', 'admin']) {
+    const selected = await selectedRoutineWork({github: github([comment], pr, async ({username}) => ({data: {permission, user: {login: username}}})), context, number: 12})
+    assert.equal(selected.commentId, 44)
+  }
+  for (const permission of ['none', 'read']) {
+    await assert.rejects(selectedRoutineWork({github: github([comment], pr, async ({username}) => ({data: {permission, user: {login: username}}})), context, number: 12}), /Exactly one/)
+  }
+  await assert.rejects(selectedRoutineWork({github: github([comment], pr, async () => ({data: {permission: 'admin', user: {login: 'another-user'}}})), context, number: 12}), /access could not be verified/)
+  await assert.rejects(selectedRoutineWork({github: github([comment], pr, async () => {
+    throw Object.assign(new Error('token permission unavailable'), {status: 403})
+  }), context, number: 12}), /access could not be verified/)
+  await assert.rejects(selectedRoutineWork({github: github([comment], pr, async () => {throw new Error('transport failed')}), context, number: 12}), /access could not be verified/)
+  await assert.rejects(selectedRoutineWork({github: github([{...comment, user: {type: 'Bot', login: 'colleague'}}]), context, number: 12}), /Exactly one/)
 })
 
 test('stable work IDs preserve retries and change for a new brief, app head or publication', () => {
