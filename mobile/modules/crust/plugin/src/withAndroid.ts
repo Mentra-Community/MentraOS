@@ -30,10 +30,14 @@ const MAPBOX_REPO = [
 // root plugin maps to a KSP version.
 const MIN_KOTLIN_VERSION = "2.3.0"
 // The template's unversioned classpath entry resolves to the Kotlin Gradle
-// plugin React Native's Gradle plugin depends on (2.1.20 on RN 0.83), not the
-// `android.kotlinVersion` that expo-build-properties writes to the catalog.
+// plugin React Native's Gradle plugin depends on (2.1.20 on RN 0.83), whatever
+// `android.kotlinVersion` says; Expo fixes that only in SDK 58
+// (expo/expo#49668). SDK 56 also never copies the property into Expo's catalog,
+// so pin both the compiler and the root `kotlinVersion` to the property itself.
 const UNVERSIONED_KOTLIN_PLUGIN = "classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')"
-const CATALOG_KOTLIN_PLUGIN = 'classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:${expoLibs.versions.kotlin.get()}")'
+const PINNED_KOTLIN_PLUGIN = `classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:\${findProperty('android.kotlinVersion')}")`
+const KOTLIN_VERSION_MARKER = "kotlinVersion from android.kotlinVersion (injected by @mentra/crust)"
+const EXPO_ROOT_PROJECT = 'apply plugin: "expo-root-project"'
 
 function isOlderVersion(version: string, minimum: string) {
   const actual = version.split(".").map(Number)
@@ -64,7 +68,13 @@ function withCrustProjectGradle(config: Parameters<ConfigPlugin>[0]) {
   return withProjectBuildGradle(config, (cfg) => {
     let gradle = cfg.modResults.contents
 
-    gradle = gradle.replace(UNVERSIONED_KOTLIN_PLUGIN, CATALOG_KOTLIN_PLUGIN)
+    gradle = gradle.replace(UNVERSIONED_KOTLIN_PLUGIN, PINNED_KOTLIN_PLUGIN)
+    if (!gradle.includes(KOTLIN_VERSION_MARKER)) {
+      gradle = gradle.replace(
+        EXPO_ROOT_PROJECT,
+        `// ${KOTLIN_VERSION_MARKER}\next.kotlinVersion = findProperty('android.kotlinVersion')\n${EXPO_ROOT_PROJECT}`,
+      )
+    }
 
     // Mapbox Downloads repo, inserted at the top of allprojects.repositories.
     if (!gradle.includes(MAPBOX_REPO_MARKER)) {
