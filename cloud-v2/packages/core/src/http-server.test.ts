@@ -103,7 +103,7 @@ test('Core listener admits authenticated routine archives above ordinary limit a
       if (withLength) headers['content-length'] = String(size)
       const response = await fetch(url, {method: 'POST', headers, body: stream(size)})
       expect(response.status).toBe(200)
-      expect((await response.json()).bundle.size).toBe(size)
+      expect(((await response.json()) as {bundle: {size: number}}).bundle.size).toBe(size)
       expect(uploaded).toBe(size)
       if (withLength) headers['content-length'] = String(ROUTINE_BUNDLE_BODY_BYTES + 1)
       const oversized = await fetch(url, {method: 'POST', headers, body: stream(ROUTINE_BUNDLE_BODY_BYTES + 1)})
