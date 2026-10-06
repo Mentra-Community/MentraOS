@@ -61,27 +61,33 @@ activation; a label does not authorize unmerged worker code.
 
 ## Held authoring and source activation
 
-Use `create-routine` for detailed authoring schemas. In the private harness,
-`orchestration/README.md`, `orchestration/controller.ts`,
-`framework/authoring/session.ts` and `contracts/controller.ts` define the current
-interfaces. Run the provisioned client in that checkout:
+Submit interactive work through the built-in machine authoring job. Read the
+private harness [job guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-WORK.md),
+[assigned-agent skill](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/.agents/skills/prepare-routine-work/SKILL.md)
+and selected revision's `contracts/routine-work.ts`. Use the provisioned operator
+connection in the harness checkout:
 
 ```sh
-bun run mentra-test lane request @reservation.json
-bun run mentra-test lane wait @wait.json
-bun run mentra-test author start @start.json
-bun run mentra-test author command @command.json
-bun run mentra-test author inspect @scope.json
-bun run mentra-test lane give-back @give-back.json
+bun run mentra-test routine-work submit @work.json
+bun run mentra-test routine-work inspect @work-id.json
 ```
 
-Wait for a granted reservation and use returned IDs/generations. Normal author
-start performs setup once; `setupMode: "manual"` exposes lifecycle actions when
-diagnosing setup. Inspect `actions` for the failing phase, then execute the
-returned action ID. Supported granular commands are not a guarantee that a
-provider's internal subactions are individually callable. If a real adapter gap
-prevents inspecting the needed state, extend that shared entry point rather than
-creating another runner or manufacturing a cleanup/resume receipt.
+`work.json` supplies `schemaVersion: 1`, stable `workId`, `kind: "create" | "edit"`,
+`routineId`, English `brief` (`goal`, `stepsOrChanges`, `expected`), exact harness
+`source`, published `build`, enrolled `target` and `requirements`. Local submissions
+omit `origin`; inspect with `{workId}`. Use `edit` for an existing routine and
+`create` for a new one; there is no diagnosis job type. Put the recorded failure,
+needed observation and any capability gap in the brief without inventing a patch.
+
+The supervisor creates the workspace and machine agent, supplies its scoped
+connection, and binds the job's reservation and held session. The assigned agent
+uses `create-routine` and its inner `lane`/`author` commands; the coordinator does
+not start a parallel reservation or session. Normal author start performs setup
+once; the job agent may use `setupMode: "manual"` and returned lifecycle action IDs
+when diagnosing setup. Provider subactions may still be monolithic. Report a
+demonstrated adapter gap through the job and assign its shared fix; do not create
+another runner or manufacture a cleanup/resume receipt. Ordinary targeted runs
+remain separate and need no authoring job when the evidence supports that choice.
 
 Use the host's existing installation/source-verification operations for merged
 harness activation. Do not rewrite live candidate/release files or mutate

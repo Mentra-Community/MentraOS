@@ -38,7 +38,13 @@ source enrollment discovers definitions; published passing runs supply examples.
 
 ## Hold one session and verify the saved actions
 
-Use the provisioned `MENTRA_TEST_CLIENT_CONFIG` and the current `mentra-test` CLI:
+Start through the built-in machine `routine-work` create/edit job described in the
+harness [job guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-WORK.md)
+and [assigned-agent skill](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/.agents/skills/prepare-routine-work/SKILL.md).
+The supervisor owns the workspace, machine agent, reservation and held session.
+The following are inner operations for that assigned agent, using its provisioned
+`MENTRA_TEST_CLIENT_CONFIG` and the current `mentra-test` CLI; they are not a
+parallel coordinator authoring path:
 
 ```sh
 bun run mentra-test lane request @reservation.json
