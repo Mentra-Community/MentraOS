@@ -2,6 +2,10 @@ import {z} from "zod";
 import {glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
 
+/** Host audio, fixture data and external windows are validated by their lane providers, not physical glasses. */
+export const routineGlassesCapabilities = (requires: readonly string[]) =>
+  requires.filter(capability => capability !== "audio" && capability !== "fixture-data" && capability !== "external-window");
+
 const text = z.string().min(1).max(2000);
 export const routineIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/);
 const id = routineIdentitySchema;

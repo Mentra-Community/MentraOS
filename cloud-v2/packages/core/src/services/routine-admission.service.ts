@@ -1,6 +1,6 @@
 import {z} from "zod";
 import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
-import type {RoutineEnrollment} from "../types/routine-definition.types";
+import {routineGlassesCapabilities, type RoutineEnrollment} from "../types/routine-definition.types";
 import {firmwareManifestSchema, selectedBuildInput, type GlassesSoftwareRef, type TestBuild} from "../types/test-build.types";
 import type {ReceivedTestHostState} from "./test-host-state.service";
 import {TestRunError} from "./test-result-error";
@@ -43,7 +43,7 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     if (execution.resourceKinds.filter(kind => kind === "glasses").length !== 1)
       throw new TestRunError(409, "Glasses routine must declare its single glasses execution resource.");
     const offered = lane.glasses?.filter(value => glassesRequirement.models.includes(value.model)
-      && definition.definition.requires.every(capability => value.capabilities.includes(capability))) ?? [];
+      && routineGlassesCapabilities(definition.definition.requires).every(capability => value.capabilities.includes(capability))) ?? [];
     if (offered.length !== 1) throw new TestRunError(409, "Configured lane has no unique compatible glasses model and provider capabilities.");
     glassesResourceId = offered[0]!.resourceId;
     if (offered[0]!.model !== "mentra-live") throw new TestRunError(409, "Selected glasses model has no supported software selection contract.");
