@@ -2,15 +2,13 @@ package com.mentra.bluetoothsdk.sgcs
 
 import java.text.Normalizer
 
-private val G1_COMBINING_MARKS = Regex("\\p{M}+")
+private val LATIN_COMBINING_MARKS = Regex("\\p{M}+")
 
-/**
- * Converts text to the base Latin glyphs available in the Even Realities G1 firmware.
- *
- * G1 does not ship glyphs for combining diacritics. Normalize at the device boundary so
- * miniapps can retain the real text everywhere else and newer glasses receive it unchanged.
- */
-internal fun sanitizeG1DisplayText(text: String): String {
+/** G1 uses the shared Latin fallback without applying other devices' punctuation fixes. */
+internal fun sanitizeG1DisplayText(text: String): String = sanitizeLatinDisplayText(text)
+
+/** Converts accented and extended Latin letters to base glyphs at the device boundary. */
+internal fun sanitizeLatinDisplayText(text: String): String {
     val expanded = buildString(text.length) {
         text.forEach { character ->
             when (character) {
@@ -34,5 +32,5 @@ internal fun sanitizeG1DisplayText(text: String): String {
     }
 
     return Normalizer.normalize(expanded, Normalizer.Form.NFD)
-        .replace(G1_COMBINING_MARKS, "")
+        .replace(LATIN_COMBINING_MARKS, "")
 }
