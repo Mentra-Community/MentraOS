@@ -335,6 +335,68 @@ test("controller and updater history writes use one row CAS instead of losing ob
     f.stop()
   }
 })
+test('stop received before delayed startup is retained and closes the subsequently accepted exact process', async () => {
+  const f = fixture()
+  try {
+    await f.service.report(snapshot(1, 1), 'mini')
+    const stopped = {installationId: 'release-1', process: accepted(1, 1).frameworkProcess, observedAt: '2026-10-03T01:00:02Z'}
+    await f.service.reportDeployment(observation(1, {stopped}), 'mini')
+    expect(f.row().frameworkHistory).toEqual([])
+    expect(f.row().frameworkStopReceipts).toEqual([stopped])
+    await f.service.report(accepted(1, 2), 'mini')
+    expect((await f.service.get('mini'))!.frameworkHistory).toMatchObject([
+      {binding: binding(1), endedAt: stopped.observedAt, endReason: 'observed-stop'},
+    ])
+    await expect(f.service.report(accepted(1, 3), 'mini')).rejects.toThrow('observed stopped')
+    await f.service.reportDeployment(observation(2, {stopped}), 'mini')
+    expect(f.row().frameworkStopReceipts).toHaveLength(1)
+  } finally {f.stop()}
+})
+test('unmatched stop receipt reconciles delayed offline history without closing a reused PID or current framework', async () => {
+  const f = fixture()
+  try {
+    await f.service.report(accepted(3, 1), 'mini')
+    const stopped = {installationId: 'release-1', process: accepted(1, 1).frameworkProcess, observedAt: '2026-10-03T01:00:01.500Z'}
+    await f.service.reportDeployment(observation(1, {stopped}), 'mini')
+    await f.service.reportDeployment(observation(2, {stopped: {installationId: 'release-3',
+      process: {...accepted(3, 1).frameworkProcess, startedAt: 'reused-pid'}, observedAt: '2026-10-03T01:00:04Z'}}), 'mini')
+    const interval = {binding: binding(1), incarnation: 'boot-1', incarnationGeneration: 1,
+      process: accepted(1, 1).frameworkProcess, effectiveAt: accepted(1, 1).frameworkAcceptedAt,
+      observedAt: accepted(1, 1).frameworkAcceptedAt, endedAt: accepted(3, 1).frameworkAcceptedAt, endReason: 'accepted-replacement'}
+    await f.service.report({...accepted(3, 2), frameworkHistory: [interval]}, 'mini')
+    expect(f.row().frameworkHistory.find((value: any) => value.incarnation === 'boot-1')).toMatchObject({
+      endedAt: stopped.observedAt, endReason: 'observed-stop',
+    })
+    expect(f.row().frameworkHistory.at(-1).endedAt).toBeUndefined()
+  } finally {f.stop()}
+})
+test('unmatched observed stop receipts retain a bounded recent history', async () => {
+  const f = fixture()
+  try {
+    await f.service.report(snapshot(1, 1), 'mini')
+    for (let version = 1; version <= 105; version++)
+      await f.service.reportDeployment(observation(version, {stopped: {installationId: `release-${version}`,
+        process: {pid: version + 100, startedAt: `process-${version}`}, observedAt: '2026-10-03T01:00:02Z'}}), 'mini')
+    expect(f.row().frameworkStopReceipts).toHaveLength(100)
+    expect(f.row().frameworkStopReceipts[0].installationId).toBe('release-6')
+    expect(f.row().frameworkStopReceipts.at(-1).installationId).toBe('release-105')
+  } finally {f.stop()}
+})
+test('startup winning the shared CAS forces stop retry, which preserves the same exact ending', async () => {
+  const f = fixture()
+  try {
+    await f.service.report(snapshot(1, 1), 'mini')
+    const stopped = {installationId: 'release-1', process: accepted(1, 1).frameworkProcess, observedAt: '2026-10-03T01:00:02Z'}
+    const results = await Promise.allSettled([
+      f.service.report(accepted(1, 2), 'mini'),
+      f.service.reportDeployment(observation(1, {stopped}), 'mini'),
+    ])
+    expect(results.map(value => value.status)).toEqual(['fulfilled', 'rejected'])
+    await f.service.reportDeployment(observation(1, {stopped}), 'mini')
+    expect(f.row().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: 'observed-stop'})
+    expect(f.row().frameworkStopReceipts).toEqual([stopped])
+  } finally {f.stop()}
+})
 test("compact installation history caps accepted intervals without discarding current identity", async () => {
   const f = fixture()
   try {

@@ -16,6 +16,7 @@ export const frameworkBindingSchema = z.object({
 }).strict()
 export type FrameworkBinding = z.infer<typeof frameworkBindingSchema>
 
+export const ROUTINE_BUNDLE_BODY_BYTES = 256 * 1024 ** 2
 /** Exact routine-owned source and its declared public API requirement. */
 export const routineSourceRefSchema = z.object({
   repository: z.literal('Mentra-Community/Mentra-Automated-Testing'),
@@ -23,7 +24,7 @@ export const routineSourceRefSchema = z.object({
   bundle: z.object({
     url: z.string().url().refine(value => {const url=new URL(value); return url.protocol==='https:' && !url.username && !url.password && !url.hash}, 'Routine archive requires HTTPS without embedded credentials'),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    size: z.number().int().positive().max(256 * 1024 ** 2).safe(),
+    size: z.number().int().positive().max(ROUTINE_BUNDLE_BODY_BYTES).safe(),
   }).strict(),
   minimumRoutineApiVersion: z.number().int().positive().safe(),
 }).strict()

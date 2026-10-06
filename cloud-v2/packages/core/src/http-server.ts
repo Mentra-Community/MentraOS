@@ -1,5 +1,6 @@
 import {frameworkAssetIdSchema} from "./types/framework-run.types";
 import {frameworkIdentitySchema} from "./types/framework-request.types";
+import {ROUTINE_BUNDLE_BODY_BYTES} from './types/framework-version.types';
 
 /** Only authenticated framework asset PUTs need the larger streaming ceiling. */
 export const CORE_REQUEST_BODY_BYTES = 2 * 1024 * 1024 * 1024;
@@ -26,9 +27,12 @@ function isFrameworkAssetUpload(request: Request): boolean {
 export function serveCore(fetch: (request: Request) => Response | Promise<Response>, port: number) {
   return Bun.serve({port, maxRequestBodySize: CORE_REQUEST_BODY_BYTES, async fetch(request) {
     if (!request.body || isFrameworkAssetUpload(request)) return fetch(request);
+    const bundleUpload = request.method === 'POST' &&
+      /^\/api\/internal\/routine-definitions\/bundles\/[a-f0-9]{64}$/.test(new URL(request.url).pathname);
+    const limit = bundleUpload ? ROUTINE_BUNDLE_BODY_BYTES : CORE_ORDINARY_BODY_BYTES;
     const length = request.headers.get("content-length");
     if (length && !request.headers.has("transfer-encoding")) {
-      if (Number(length) > CORE_ORDINARY_BODY_BYTES) {
+      if (Number(length) > limit) {
         // Bun 1.3.14 must finish the HTTP body framing before responding, or
         // unread bytes can stall or corrupt the next keep-alive request.
         for await (const _chunk of request.body) { /* Discard without buffering. */ }
@@ -43,7 +47,7 @@ export function serveCore(fetch: (request: Request) => Response | Promise<Respon
         const {done, value} = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > CORE_ORDINARY_BODY_BYTES) {
+        if (size > limit) {
           chunks.length = 0;
           while (!(await reader.read()).done) { /* Finish framing without retaining rejected bytes. */ }
           return Response.json({error: "body_too_large"}, {status: 413});
