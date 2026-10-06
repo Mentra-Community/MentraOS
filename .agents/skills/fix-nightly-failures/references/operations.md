@@ -5,7 +5,14 @@ Mentra-Automated-Testing revision. Read their current source/help before acting;
 the installed worker can differ from the newest branch. Keep credentials in the
 provisioned environment/configuration and private diagnostics outside Git.
 
-## Observe and retrieve evidence
+## Discover access and read evidence
+
+Discover the current repository guidance, installed harness CLI/help, available
+connectors and provisioned Core/operator configuration before constructing calls.
+Use existing credentials privately; inspect only safe endpoint/path fields and
+never print tokens. A suite URL identifies its environment; do not assume prod
+or today's installed source. Missing provisioned access is a specific dependency,
+not a reason to require an Admin browser login or a running coordinator.
 
 GitHub shows request/notification delivery; Core and the host controller show
 device execution. Start with the suite result URL and the source workflow:
@@ -14,7 +21,7 @@ device execution. Start with the suite result URL and the source workflow:
 gh run view RUN_ID --repo Mentra-Community/MentraOS --json status,conclusion,headSha,jobs
 ```
 
-The existing Admin API, with the supplied admin credential, exposes:
+The existing Admin API, when an admin credential is provisioned, exposes:
 
 - `GET /api/admin/test-runs/suites/{suiteId}`: selected members and suite results.
 - `GET /api/admin/test-runs/{runId}`: immutable result, definition, asset manifest
@@ -26,23 +33,18 @@ Use the result's declared asset IDs, not guessed filenames. Fetch only useful
 diagnostics, impose a size limit and verify declared size/digest. Read the first
 failure's framework result and relevant setup/teardown journal before expanding
 to a recording or command log. Prefer the available API credential over making
-a Mini agent sign in to Admin. Host inspection is read-only; controller
-mutations use its public API/CLI. Root/coordinator owns hosted Admin verification.
+a Mini agent sign in to Admin. The host-authenticated `GET /api/internal/framework-results/:requestId` returns
+the full run, definition, outcome and `uploadsComplete` for its authorized request.
+Use the actual request ID from suite/controller receipts, not a guessed mapping
+from run ID. The provisioned Core host credential can read this evidence without
+Admin browser access. Read current API source/schema if a response differs.
+Controller mutations use its public API/CLI within task authority.
 
-## Dispatch a fresh suite or one affected routine
+## Targeted verification
 
-Manual nightly uses the same catalog/build selection as the scheduled workflow:
-
-```sh
-gh workflow run nightly-device-routines.yml --repo Mentra-Community/MentraOS --ref dev
-```
-
-Resolve and record the actual acknowledged workflow and Core occurrence before
-another dispatch. In `.github/scripts/nightly-device-routines.mjs`, Core freezes
-catalog preferences, definitions, builds and requests once per occurrence.
-Reconcile delivery using the original IDs; an uncertain acknowledgement is not
-a reason to start another suite. Inspect that workflow's result and Slack
-receipt artifacts. Do not replay an uncertain Slack webhook send.
+Deployment and a new full suite are outside this skill's default scope. Reuse
+accepted equivalent runs; an uncertain acknowledgement is not a reason to
+redispatch. Record the actual request, exact source/build and result.
 
 For targeted verification, inspect the current inputs of
 `.github/workflows/request-e2e-routine.yml`. The current request is:
@@ -59,10 +61,10 @@ verified publication coordinates. Adopt an existing equivalent request rather
 than duplicating it. A private harness fix runs only after trusted merged-worker
 activation; a label does not authorize unmerged worker code.
 
-## Held authoring and source activation
+## Built-in authoring
 
-After the current suite finishes, submit interactive verification through the
-built-in machine authoring job. Prepare its diagnosis brief while members run. Read the
+When interactive verification is needed, use the built-in machine authoring job
+without displacing accepted work. Prepare its diagnosis brief while members run. Read the
 private harness [job guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/docs/ROUTINE-WORK.md),
 [assigned-agent skill](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/.agents/skills/prepare-routine-work/SKILL.md)
 and selected revision's `contracts/routine-work.ts`. Use the provisioned operator
@@ -95,14 +97,48 @@ demonstrated adapter gap through the job and assign its shared fix; do not creat
 another runner or manufacture a cleanup/resume receipt. Ordinary targeted runs
 remain separate and need no authoring job when the evidence supports that choice.
 
-Use the host's existing installation/source-verification operations for merged
-harness activation. Do not rewrite live candidate/release files or mutate
-controller SQLite. Keep source preparation separate from activation; verify the
-accepted requests/executors, authoring reservations and owned resources affected
-by the replaced source/shared configuration have settled at the normal boundary,
-then record the exact new installed source. An idle lane is insufficient when
-another lane's accepted work still depends on that installation. If no provisioned
-framework activation operation is available, report that capability gap and own
-its resolution. `source.enroll` registers definitions; an authoring-job candidate
-installer is not a generic framework-release activation command. Do not invent a
-job or edit installation state to substitute for the missing operation.
+If the selected source is not installed, record the exact source and deployment
+owner as a device-verification prerequisite. Do not mutate live candidate/release
+files, controller SQLite or installation state. Source preparation, PR review
+and merge continue independently. `source.enroll` and candidate installation are
+not generic framework deployment operations.
+
+## Review and merge
+
+Read the owning repository's `codex-pr-review` skill and invoke its existing
+`scripts/codex-review/codex-pr-review.sh <repo-dir> <pr-number> [extra-prompt-file]`
+launcher. Follow its lifecycle, watchdog and receipt checks; never launch a bare
+`codex exec` reviewer. Preserve the PR/head and canonical review receipt. A
+successful process alone is insufficient: inspect whether the verdict approves
+or requests changes and that it applies to the current head.
+
+Read PR comments, review threads and required CI checks. After addressing relevant
+findings, push the corrected head and run the canonical review again. Before
+merge, re-read the current head, verify exact-head approval and passing required
+checks, and use the normal GitHub merge operation with an expected head SHA where
+supported. An uncertain merge requires reading the PR's state and merge commit
+before any retry. Record approved merged PR links and merge commits in the ledger.
+
+## Wait without losing the task
+
+Save phase, stable IDs, next action and prerequisite in existing task state before
+an asynchronous wait. Adopt accepted work on resume rather than duplicating it.
+Prefer controller completion events or a durable task/thread wakeup that can
+resume this owner. Verify registration with its receipt, trigger and completion
+or cancellation condition. Notification-only timers, agents elsewhere and queued
+outbound messages do not prove this chat will resume.
+
+Use small terminal counts, changed failures, ownership/publication state and PR
+review/check status. Expand evidence only for a changed cause or prerequisite.
+For a three-hour suite, sparse five-to-fifteen-minute status checks are a reasonable
+fallback when events are unavailable; adjust to actual duration and actionable
+boundaries. Use supported asynchronous waits, not a multi-hour shell sleep or a
+new controller runner. Keep useful independent source work moving and stay quiet
+on unchanged observations. Deduplicate wakeups by stable action identity and
+remove temporary monitors when the task completes or is cancelled.
+
+If an actual external prerequisite remains, name its owner and required receipt;
+track acknowledgement separately from completion. Ask only for that prerequisite
+and continue unrelated diagnoses. If no verified wakeup is available, report the
+capability gap with the saved resume instruction; do not claim unattended
+continuation is installed or that the requested fixes are complete.
