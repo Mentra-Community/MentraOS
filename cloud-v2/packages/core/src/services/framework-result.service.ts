@@ -2,7 +2,8 @@ import {testWriteConcern} from "../models/test-write-concern";
 import {TestAssetModel} from "../models/test-run.model";
 import {TestRunModel} from "../models/test-run.model";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
-import type {FrameworkRunSummary} from "../types/test-history.types";
+import type {FrameworkRunPage} from "../types/test-history.types";
+import {z} from "zod";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
 import {TestRequestModel} from "../models/test-request.model";
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
@@ -13,6 +14,16 @@ import {TestAssetService, type TestAsset} from "./test-asset.service";
 import type {CandidateVerification} from '../types/candidate-verification.types';
 
 export class FrameworkResultConflict extends Error {}
+const resultCursorSchema = z.object({startedAt: z.string().datetime({offset: true}), runId: z.string().min(1).max(240)}).strict();
+export function frameworkResultCursorFilter(cursor?: string): Record<string, unknown> {
+  if (!cursor) return {};
+  try {
+    if (cursor.length > 2000) throw new Error("Cursor too long");
+    const after = resultCursorSchema.parse(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")));
+    const startedAt = new Date(after.startedAt);
+    return {$or: [{startedAt: {$lt: startedAt}}, {startedAt, runId: {$lt: after.runId}}]};
+  } catch {throw new TestRunError(400, "Invalid routine results cursor");}
+}
 export interface FrameworkResultRepository {
   insert(run: FrameworkRun, payloadSha256: string, metadata?: {verification: CandidateVerification; catalogEligible: boolean}): Promise<void>;
   getByRequest(requestId: string): Promise<StoredFrameworkRun | null>;
@@ -165,17 +176,19 @@ export class FrameworkResultService {
       manifestSha256: requestInputDigest(stored.payload.assets)};
   }
 
-  async list(scope: Record<string, string> = {}): Promise<{runs: FrameworkRunSummary[]}> {
-    const filter: Record<string, unknown> = {...nativeRunFilter};
+  async list(scope: Record<string, string> = {}): Promise<FrameworkRunPage> {
+    const filter: Record<string, unknown> = {...nativeRunFilter, ...frameworkResultCursorFilter(scope.cursor)};
     for (const field of ["routineId", "platform", "hostId", "laneId"])
       if (scope[field]) filter[field] = scope[field];
     if (scope.archiveSha256) filter["payload.build.archive.sha256"] = scope.archiveSha256;
     for (const field of ["repository", "headSha", "channel", "prNumber"])
       if (scope[field]) filter[`payload.build.${field}`] = field === "prNumber" ? Number(scope[field]) : scope[field];
     const rows = await TestRunModel.find(filter)
-      .sort({startedAt: -1, runId: -1}).limit(100).select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1})
+      .sort({startedAt: -1, runId: -1}).limit(101).select({runId: 1, startedAt: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1})
       .read("primary").readConcern("majority").lean();
-    return {runs: await Promise.all(rows.map(row => readFrameworkRunSummary(row)))};
+    const page = rows.slice(0, 100), last = page.at(-1);
+    const nextCursor = rows.length > 100 && last ? Buffer.from(JSON.stringify({startedAt: last.startedAt.toISOString(), runId: last.runId})).toString("base64url") : null;
+    return {runs: await Promise.all(page.map(row => readFrameworkRunSummary(row))), nextCursor};
   }
 
   async detail(requestId: string) {

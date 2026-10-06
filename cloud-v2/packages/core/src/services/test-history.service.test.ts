@@ -47,11 +47,11 @@ test("suite backfill recomputes its budget before the second database command", 
 test("history suite summaries retain the reader's frozen failed outcome and declared count", async () => {
   const suite = {suiteId: "suite:completed.v2", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T19:00:00Z",
     finishedAt: "2026-10-03T19:01:00Z", outcome: "failed", passed: 1, build: {headSha: "a".repeat(40), release: "dev.42"},
-    members: [{memberId: "published", status: "pass"}, {memberId: "unstarted", status: "not-run"}]} as any;
+    members: [{memberId: "published", routineId: "notes-phone", platform: "ios-on-mac", status: "pass"}, {memberId: "unstarted", routineId: "camera", platform: "android", status: "not-run"}]} as any;
   const rows: StoredHistoryRow[] = [{historyKind: "suite", historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt)}];
   const service = new TestHistoryService({detail: async () => suite}, async () => [[], rows]);
   expect(await service.list()).toEqual({entries: [{kind: "suite", suiteId: suite.suiteId, channel: "dev", trigger: "nightly",
-    startedAt: suite.startedAt, finishedAt: suite.finishedAt, outcome: "failed", passed: 1, expectedCount: 2, build: suite.build}], nextCursor: null});
+    startedAt: suite.startedAt, finishedAt: suite.finishedAt, outcome: "failed", passed: 1, expectedCount: 2, build: suite.build, members: [{routineId: "notes-phone", platform: "ios-on-mac"}, {routineId: "camera", platform: "android"}]}], nextCursor: null});
 });
 
 test("one unavailable row preserves its page slot and cursor without failing neighboring entries", async () => {

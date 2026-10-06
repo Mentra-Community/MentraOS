@@ -1,7 +1,9 @@
 import {expect, test} from "bun:test";
 import {renderToStaticMarkup} from "react-dom/server";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
-import {FrameworkRunPage, FrameworkRunsPage, RoutineCatalogCard, RoutineCatalogList, frameworkRunHref, frameworkRunRefetchInterval, routineHref, matchesCatalogSearch, matchesStepSearch, recordingOffset} from "./routine-catalog";
+import {FrameworkRunPage, FrameworkRunsPage, RoutineCatalogCard, RoutineCatalogList, frameworkRunHref, frameworkRunRefetchInterval, routineHref, matchesCatalogSearch, matchesHistorySearch, matchesStepSearch, recordingOffset} from "./routine-catalog";
+import {RoutineSearch, EMPTY_ROUTINE_FILTERS} from "../components/routine-search";
+import type {TestHistoryEntry} from "../../../../packages/core/src/types/test-history.types";
 import {readTestRunLink} from "../lib/test-run-links";
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types";
 import {frameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types";
@@ -233,7 +235,35 @@ test("step search matches recorded identity and English definition text without 
   expect(recordingOffset(59999)).toBe("00:59");
 });
 
-const historyRun = {kind: "run" as const, runId: "standalone-run", requestId: "standalone-request", hostId: "mini", routineId: "no-glasses", platform: "ios-on-mac", laneId: "mac", startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z", outcome: "pass", evidenceStatus: "complete", uploadsComplete: true, build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40), release: "dev.577"}};
+const historyRun: Extract<TestHistoryEntry, {kind: "run"}> = {kind: "run" as const, runId: "standalone-run", requestId: "standalone-request", hostId: "mini", routineId: "no-glasses", platform: "ios-on-mac", laneId: "mac", startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z", outcome: "pass", evidenceStatus: "complete", uploadsComplete: true, build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40), release: "dev.577"}};
+test("history matches a single suite member against all filters and treats missing metadata as unknown", () => {
+  const camera = {...routine, routineId: "camera", platform: "android" as const,
+    definition: {...routine.definition, title: "Camera settings", purpose: "Verify photo sizes", glasses: {models: ["mentra-live"]}}};
+  const suite: TestHistoryEntry = {kind: "suite", suiteId: "nightly", channel: "dev", trigger: "nightly", startedAt: historyRun.startedAt,
+    outcome: "passed", expectedCount: 2, passed: 2, build: historyRun.build,
+    members: [{routineId: routine.routineId, platform: routine.platform}, {routineId: camera.routineId, platform: camera.platform}]};
+  const filters = {search: " PHOTO ", platform: "android", glasses: "mentra-live"};
+  expect(matchesHistorySearch(suite, [routine, camera], filters)).toBe(true);
+  expect(matchesHistorySearch(suite, [routine, camera], {...filters, search: "note"})).toBe(false);
+  expect(matchesHistorySearch(suite, [routine, camera], {search: "note", platform: "ios-on-mac", glasses: "no-glasses"})).toBe(true);
+  expect(matchesHistorySearch({...historyRun, routineId: "camera", platform: "android"}, [camera], filters)).toBe(true);
+  expect(matchesHistorySearch(historyRun, [], {search: "no-glass", platform: "ios-on-mac", glasses: ""})).toBe(true);
+  expect(matchesHistorySearch(historyRun, [], {...EMPTY_ROUTINE_FILTERS, glasses: "no-glasses"})).toBe(false);
+  expect(matchesHistorySearch({...suite, members: undefined}, [routine], filters)).toBe(false);
+  const unavailable: TestHistoryEntry = {kind: "unavailable", sourceKind: "run", id: "missing", startedAt: historyRun.startedAt, message: "Details unavailable."};
+  expect(matchesHistorySearch(unavailable, [], EMPTY_ROUTINE_FILTERS)).toBe(true);
+  expect(matchesHistorySearch(unavailable, [], filters)).toBe(false);
+});
+
+test("shared filters preserve selected options through refresh and expose clearing", () => {
+  const html = renderToStaticMarkup(<RoutineSearch filters={{search: "photo", platform: "android", glasses: "mentra-live"}} onChange={() => {}}
+    routines={[]} countLabel="Showing 0 of 3 loaded entries" />);
+  expect(html).toContain('value="android" selected=""');
+  expect(html).toContain('value="mentra-live" selected=""');
+  expect(html).toContain("Clear filters");
+  expect(html).toContain("Showing 0 of 3 loaded entries");
+});
+
 test("combined history renders chronological suites and standalone runs across loaded pages", () => {
   const client = new QueryClient();
   client.setQueryData(["test-history"], {pages: [
@@ -246,6 +276,9 @@ test("combined history renders chronological suites and standalone runs across l
   expect(html).toContain("1/2 passed");
   expect(html).toContain("dev.577");
   expect(html).toContain("More history");
+  expect(html).toContain('role="search" aria-label="Search routines"');
+  expect(html).toContain("Showing 2 of 2 loaded entries");
+  expect(html).toContain("Load more history to search older entries");
   expect(html.match(/standalone-run/g)).toHaveLength(2);
 });
 test("history distinguishes empty data and cached refresh failures while keeping filtered build links scoped", () => {
@@ -258,11 +291,20 @@ test("history distinguishes empty data and cached refresh failures while keeping
   expect(render()).toContain("History could not refresh: refresh refused");
   expect(render()).toContain("standalone-run");
   const scope = {channel: "dev", headSha: "b".repeat(40), routineId: "no-glasses"};
-  client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {runs: [historyRun]});
+  client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {pages: [{runs: [historyRun], nextCursor: null}], pageParams: [undefined]});
   const scoped = render(scope);
   expect(scoped).toContain("Filtered routine runs");
   expect(scoped).not.toContain("nightly-two");
   expect(scoped).toContain("dev.577");
+  client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {pages: [{runs: [historyRun], nextCursor: "older"}], pageParams: [undefined]});
+  expect(render(scope)).toContain("More runs");
+  expect(render(scope)).toContain("Showing 1 of 1 loaded runs");
+  client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {pages: [
+    {runs: [historyRun], nextCursor: "older"}, {runs: [{...historyRun, runId: "older-result", requestId: "older-request"}], nextCursor: null}], pageParams: [undefined, "older"]});
+  expect(render(scope)).toContain("older-result");
+  expect(render(scope)).toContain("Showing 2 of 2 loaded runs");
+  expect(render(scope)).not.toContain("More runs");
+
 });
 
 test("initial history failure offers retry instead of claiming empty history", () => {
