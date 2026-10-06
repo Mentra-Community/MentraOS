@@ -36,7 +36,7 @@ export function LaneHistoryPage({selection, now}: {selection: LaneSelection; now
       {runs.hasNextPage && <button className="mt-4 text-sm font-medium text-blue-700 underline disabled:opacity-60" disabled={runs.isFetchingNextPage} onClick={() => void runs.fetchNextPage()}>{runs.isFetchingNextPage ? "Loading…" : "More runs"}</button>}
     </section>
     <section className="rounded-2xl border border-[#dfe5dd] bg-white p-5"><h3 className="mb-4 text-lg font-semibold">Restoration history &amp; resume decisions</h3>
-      {host && lane ? <RestorationHost host={host} fresh={fresh} laneId={laneId} /> : <p className="text-sm text-[#747780]">Restoration history is unavailable for this lane.</p>}
+      {host && lane ? <RestorationHost host={host} fresh={fresh} laneId={laneId} /> : <p role={controllers.isPending ? "status" : undefined} className="text-sm text-[#747780]">{controllers.isPending ? "Loading restoration history…" : "Restoration history is unavailable for this lane."}</p>}
     </section>
   </div>;
 }

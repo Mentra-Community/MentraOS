@@ -55,3 +55,15 @@ test("an unknown lane cannot display another lane's restoration history", () => 
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={{hostId: "mini", laneId: "missing"}} now={now}/></QueryClientProvider>);
   expect(html).toContain("No controller report is available for this lane"); expect(html).not.toContain("resume:mac"); client.clear();
 });
+
+test("a fresh lane visit shows restoration loading until controller reports settle", () => {
+  const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
+  const render = () => renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={selection} now={now}/></QueryClientProvider>);
+  const loading = render();
+  expect(loading).toContain("Loading restoration history…");
+  expect(loading).not.toContain("Restoration history is unavailable for this lane.");
+  client.setQueryData(["lane-restoration"], {hosts: [], freshForMs: 120000});
+  expect(render()).toContain("Restoration history is unavailable for this lane.");
+  expect(render()).not.toContain("Loading restoration history…");
+  client.clear();
+});
