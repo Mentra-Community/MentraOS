@@ -1,5 +1,5 @@
 import {expect, test} from "bun:test";
-import {RoutineDispatchService} from "./routine-dispatch.service";
+import {RoutineDispatchService, recordedRoutineBuild} from "./routine-dispatch.service";
 import {routineEnrollmentSchema} from "../types/routine-definition.types";
 import {requestInputDigest, TestRequestService, type StoredTestRequest, type TestRequestRepository} from "./test-request.service";
 import {TestRunError} from "./test-result-error";
@@ -87,4 +87,13 @@ test("a concurrent changed source cannot borrow the winning request", async () =
   expect(results[1].status).toBe("rejected");
   if (results[1].status === "rejected") expect(results[1].reason).toMatchObject({status: 409, message: expect.stringContaining("changed")});
   expect((await state.requests.get(selected.requestId))?.input).toMatchObject({build: {source}});
+});
+
+test("recorded historical PR artifact reuse bypasses current PR inventory and retains exact digests", async () => {
+  const f=fixture(); const original=await f.service.prepare(selected);
+  const before=f.resolves;
+  const reused=await f.service.prepare({...selected,requestId:"historical"},original.input.build);
+  expect(f.resolves).toBe(before);expect(reused.input.build).toEqual(original.input.build);
+  expect(()=>recordedRoutineBuild({...original.input.build,archive:undefined},source,"android")).toThrow("incomplete");
+  expect(()=>recordedRoutineBuild(original.input.build,{...source,buildRunId:56},"android")).toThrow("incomplete");
 });
