@@ -57,14 +57,29 @@ export const frameworkRunSchema = z.object({
   if (run.recordingAssetId && (assets.get(run.recordingAssetId)?.kind !== "recording"
     || assets.get(run.recordingAssetId)?.mimeType !== "video/mp4")) problem("Recording is not a declared MP4 recording");
   if (run.result.evidence.some(assetId => !assets.has(assetId))) problem("Evidence identity is not declared");
-  for (const step of run.result.steps) {
+  // The recorder assigns original step offsets before finalization can reject its public video.
+  // Retain those observations when the matching cleaned recorder reports that evidence failure.
+  const sameFailure = (left: z.infer<typeof failure>, right: z.infer<typeof failure>) =>
+    left.phase === right.phase && left.actionId === right.actionId && left.message === right.message;
+  const failedRecordingFinalization = run.result.teardown.actions?.some(action => action.scope === 'shared'
+    && action.status === 'failed' && action.id.startsWith('cleanup:')
+    && run.result.teardown.outcomes.some(outcome => outcome.state === 'cleaned'
+      && outcome.resourceId === action.id.slice('cleanup:'.length) && outcome.errors?.some(error =>
+        error.phase === 'evidence' && error.actionId === 'finalize-recording'
+        && run.result.teardown.errors.some(flattened => sameFailure(error, flattened))
+        && run.result.failures.some(flattened => sameFailure(error, flattened)))));
+  for (const [index, step] of run.result.steps.entries()) {
     if (step.status === "not-run" && (step.startedAt || step.finishedAt || step.recordingLocation))
       problem("Unexecuted step cannot have execution or recording timing");
     if (step.finishedAt && (!step.startedAt || Date.parse(step.finishedAt) < Date.parse(step.startedAt)))
       problem("Step finish precedes its execution start");
-    if (step.recordingLocation && (assets.get(step.recordingLocation.assetId)?.kind !== "recording"
-      || (step.recordingLocation.endOffsetMs !== undefined && step.recordingLocation.endOffsetMs < step.recordingLocation.startOffsetMs)))
-      problem("Step recording location is invalid or undeclared");
+    const location = step.recordingLocation;
+    const diagnosedMissingRecording = location?.assetId === 'recording' && !assets.has(location.assetId)
+      && !run.recordingAssetId && failedRecordingFinalization;
+    if (location && (assets.get(location.assetId)?.kind !== 'recording' && !diagnosedMissingRecording
+      || (location.endOffsetMs !== undefined && location.endOffsetMs < location.startOffsetMs)))
+      ctx.addIssue({code: 'custom', message: 'Step recording location is invalid or undeclared',
+        path: ['result', 'steps', index, 'recordingLocation']});
   }
   if (new Set(run.result.steps.map(step => step.id)).size !== run.result.steps.length) problem("Duplicate step identity");
   for (const phase of ["setup", "teardown"] as const) {
@@ -87,8 +102,6 @@ export const frameworkRunSchema = z.object({
     problem("Ready teardown contradicts routine teardown actions");
   if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.length === 0 || run.result.failures.some(failure => failure.phase === "setup" || failure.phase === "test") || run.result.steps.some(step => step.status !== "passed")))
     problem("Passing test contradicts setup or steps");
-  const sameFailure = (left: z.infer<typeof failure>, right: z.infer<typeof failure>) =>
-    left.phase === right.phase && left.actionId === right.actionId && left.message === right.message;
   const reportedCleanupFailure = (error: z.infer<typeof failure>) => (error.phase === "teardown" || error.phase === "evidence")
     && run.result.teardown.errors.some(flattened => sameFailure(error, flattened))
     && run.result.failures.some(flattened => sameFailure(error, flattened));
