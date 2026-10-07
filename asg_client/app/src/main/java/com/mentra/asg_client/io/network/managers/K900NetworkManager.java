@@ -232,6 +232,7 @@ public class K900NetworkManager extends BaseNetworkManager {
 
     @Override
     public void startHotspot() {
+        systemController.cancelPendingWifiConnection();
         final int generation;
         synchronized (mHotspotLock) {
             if (isHotspotEnabled || mHotspotStarting) {
@@ -485,6 +486,7 @@ public class K900NetworkManager extends BaseNetworkManager {
         Log.d(TAG, "📶 Password: " + (password != null ? "***" : "null"));
 
         try {
+            systemController.cancelPendingWifiConnection();
             boolean nativeConnectStarted = false;
             if (isSystemApp) {
                 try {
@@ -629,12 +631,13 @@ public class K900NetworkManager extends BaseNetworkManager {
         Log.d(TAG, "📶 =========================================");
 
         try {
+            systemController.cancelPendingWifiConnection();
             if (isSystemApp && wifiManager != null) {
                 wifiManager.disconnect();
                 Log.i(TAG, "📶 ✅ WiFi disconnected via WifiManager");
             } else {
                 Log.d(TAG, "📶 📡 Disconnecting from WiFi via SysControl...");
-                SystemControllerFactory.get(context).disconnectFromWifi();
+                systemController.disconnectFromWifi();
                 Log.i(TAG, "📶 ✅ WiFi disconnect command sent via SysControl");
             }
             notificationManager.showDebugNotification(
@@ -793,6 +796,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     @Override
     public void shutdown() {
         Log.d(TAG, "Shutting down K900NetworkManager");
+        systemController.cancelPendingWifiConnection();
         OtaSessionManager otaSession = new OtaSessionManager(context);
         if (otaSession.shouldPreserveHotspotOnShutdown()) {
             synchronized (mHotspotLock) {

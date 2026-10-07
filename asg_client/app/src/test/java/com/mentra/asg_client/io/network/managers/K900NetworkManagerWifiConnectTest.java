@@ -10,7 +10,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.robolectric.Shadows.shadowOf;
 
+import android.app.Application;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.pm.ApplicationInfo;
@@ -18,10 +20,12 @@ import android.content.pm.PackageManager;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
+import android.os.Looper;
 
 import androidx.test.core.app.ApplicationProvider;
 
 import com.mentra.asg_client.service.system.interfaces.ISystemController;
+import com.mentra.asg_client.service.system.managers.MentraLiveSystemController;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -30,10 +34,13 @@ import org.mockito.ArgumentCaptor;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
+import java.time.Duration;
 import java.util.Collections;
 
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = {30, 33})
+@Config(
+        application = Application.class,
+        sdk = {30, 33})
 public class K900NetworkManagerWifiConnectTest {
     private final String mSsid = "Test network";
     private final String mPassword = "test-password";
@@ -92,7 +99,7 @@ public class K900NetworkManagerWifiConnectTest {
                 .isTrue();
         verify(mWifiManager).enableNetwork(7, true);
         verify(mWifiManager).reconnect();
-        verifyNoInteractions(mSystemController);
+        verify(mSystemController, never()).connectToWifiWithCredentialRefresh(any(), any());
     }
 
     @Test
@@ -107,7 +114,7 @@ public class K900NetworkManagerWifiConnectTest {
 
         assertThat(captureConfiguration().allowedKeyManagement.get(WifiConfiguration.KeyMgmt.SAE))
                 .isTrue();
-        verifyNoInteractions(mSystemController);
+        verify(mSystemController, never()).connectToWifiWithCredentialRefresh(any(), any());
     }
 
     @Test
@@ -204,7 +211,50 @@ public class K900NetworkManagerWifiConnectTest {
         verify(mWifiManager, times(2)).disconnect();
         verify(mWifiManager).enableNetwork(7, true);
         verify(mWifiManager).reconnect();
-        verifyNoInteractions(mSystemController);
+        verify(mSystemController, times(2)).cancelPendingWifiConnection();
+        verify(mSystemController, never()).connectToWifiWithCredentialRefresh(any(), any());
+    }
+
+    @Test
+    public void nativeRetryCancelsDelayedVendorRefreshFromEarlierAttempt() {
+        Application application = ApplicationProvider.getApplicationContext();
+        K900NetworkManager manager =
+                new K900NetworkManager(mContext, new MentraLiveSystemController(application));
+        when(mWifiManager.addNetwork(any(WifiConfiguration.class))).thenReturn(-1, 7);
+
+        manager.connectToWifi("Old AP", "old-password");
+        manager.connectToWifi("New AP", "new-password");
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1));
+
+        assertThat(shadowOf(application).getBroadcastIntents())
+                .filteredOn(
+                        intent ->
+                                "connectwifi".equals(intent.getStringExtra("cmd"))
+                                        || "disconnectwifi".equals(intent.getStringExtra("cmd")))
+                .extracting(intent -> intent.getStringExtra("ssid"))
+                .containsExactly("Old AP");
+        verify(mWifiManager).enableNetwork(7, true);
+    }
+
+    @Test
+    public void nativeDisconnectCancelsDelayedVendorReconnect() {
+        Application application = ApplicationProvider.getApplicationContext();
+        K900NetworkManager manager =
+                new K900NetworkManager(mContext, new MentraLiveSystemController(application));
+        when(mWifiManager.addNetwork(any(WifiConfiguration.class))).thenReturn(-1);
+
+        manager.connectToWifi(mSsid, mPassword);
+        manager.disconnectFromWifi();
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1));
+
+        assertThat(shadowOf(application).getBroadcastIntents())
+                .filteredOn(
+                        intent ->
+                                "connectwifi".equals(intent.getStringExtra("cmd"))
+                                        || "disconnectwifi".equals(intent.getStringExtra("cmd")))
+                .extracting(intent -> intent.getStringExtra("cmd"))
+                .containsExactly("connectwifi");
+        verify(mWifiManager).disconnect();
     }
 
     private WifiConfiguration captureConfiguration() {
