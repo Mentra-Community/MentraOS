@@ -68,7 +68,10 @@ test("pointer names the immutable release bytes, image and install command", () 
   assert.equal(value.image, image)
   assert.equal(value.imageTag, "ghcr.io/mentra-community/mentra-cloud:3.3.0-dev.711")
   assert.deepEqual(value.managedMiniapps, [{packageName: "com.mentra.call", version: "2.1.38"}])
-  assert.equal(value.installCommand, `curl -fsSL ${base}/private-cloud/dev/install.sh | bash`)
+  assert.equal(
+    value.installCommand,
+    `curl -fsSLo mentra-install.sh ${base}/private-cloud/dev/install.sh && bash mentra-install.sh`,
+  )
   assert.deepEqual(channelUrls(repository, "dev"), {
     install: `${base}/private-cloud/dev/install.sh`,
     latest: `${base}/private-cloud/dev/latest.json`,

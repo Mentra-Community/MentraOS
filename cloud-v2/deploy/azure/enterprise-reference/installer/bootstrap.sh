@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Download the Mentra Private Cloud installer for Azure.
 #
-#   curl -fsSL https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/private-cloud/CHANNEL/install.sh | bash
+#   curl -fsSLo mentra-install.sh https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/private-cloud/CHANNEL/install.sh \
+#     && bash mentra-install.sh
 #
 # Runs in Azure Cloud Shell (Bash) from any browser, or any Bash terminal with
 # Azure CLI and Python 3. It downloads the latest published release, verifies

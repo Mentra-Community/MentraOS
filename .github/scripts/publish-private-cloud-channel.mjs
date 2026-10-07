@@ -70,7 +70,8 @@ export function buildPointer({repository, version, sha256, release, publishedAt}
     imageTag: `ghcr.io/mentra-community/mentra-cloud:${version}`,
     sourceCommit: release.installerSourceCommit,
     managedMiniapps: (release.managedMiniapps || []).map(({packageName, version}) => ({packageName, version})),
-    installCommand: `curl -fsSL ${channelUrls(repository, channel).install} | bash`,
+    // Download before running: with `curl | bash`, a failed download still exits 0.
+    installCommand: `curl -fsSLo mentra-install.sh ${channelUrls(repository, channel).install} && bash mentra-install.sh`,
     publishedAt,
   }
 }

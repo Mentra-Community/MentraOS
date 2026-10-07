@@ -8,7 +8,8 @@ ACS, and ACR.
 
 - Official signed Mentra App through the customer's Android/iOS channel.
 - Public `mentra-cloud` image pinned by digest, with signed provenance and SBOM.
-- Stable per-channel install command, `curl -fsSL https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/private-cloud/<channel>/install.sh | bash`.
+- Stable per-channel install command, `curl -fsSLo mentra-install.sh https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/private-cloud/<channel>/install.sh && bash mentra-install.sh`.
+  It downloads before running so a failed download exits nonzero (`curl | bash` would report success).
   It reads that channel's `latest.json`, verifies the installer archive's SHA-256 and unpacks it into
   `~/mentra-install/packages/<version>/`, linked as `~/mentra-install/mentra-private-cloud`. Set
   `MENTRA_VERSION` to install an exact release. CI advances the dev pointer only after the reference
