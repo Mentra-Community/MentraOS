@@ -27,7 +27,9 @@ total, and retries once unless the verdict was already posted. Never launch a ba
 ## What the script does
 
 - Fetches the PR head into the sibling worktree `<repo-dir>-pr-<n>`, so the main checkout is
-  never touched. The tool marks worktrees it created with a `<repo-dir>-pr-<n>.codex-review-owned`
+  never touched. If GitHub has not advertised the PR's Git pull ref yet, it fetches the
+  exact head from the PR API and rechecks that head before starting the review. It never
+  substitutes a moving branch tip. The tool marks worktrees it created with a `<repo-dir>-pr-<n>.codex-review-owned`
   sentinel; on reruns it resets and cleans only those (ignored files such as `node_modules`
   are kept) and refuses a path at that location it did not create. A per-PR lock refuses a
   second concurrent run; a lock whose owner is dead is reclaimed through a short-lived

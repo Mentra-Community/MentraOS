@@ -48,6 +48,8 @@ const ReportSchema = new Schema(
     report: { type: Schema.Types.Mixed, default: null },
     feedback: { type: Schema.Types.Mixed, default: null },
     context: { type: Schema.Types.Mixed, required: true },
+    // Native completion retries own notification delivery; no separate worker or queue.
+    slackDelivery: { type: Schema.Types.Mixed },
     artifacts: { type: [ReportArtifactSchema], default: [] },
     status: {
       type: String,
@@ -62,6 +64,7 @@ const ReportSchema = new Schema(
 ReportSchema.index({ mentraUserId: 1, createdAt: -1 });
 // Admin triage lists reports newest-first across all users.
 ReportSchema.index({ createdAt: -1 });
+ReportSchema.index({ "slackDelivery.nextAttemptAt": 1 });
 
 export type Report = InferSchemaType<typeof ReportSchema>;
 export const ReportModel = registerModel("Report", ReportSchema);

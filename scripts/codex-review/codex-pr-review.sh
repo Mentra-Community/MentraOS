@@ -71,7 +71,7 @@ head_sha=$(git -C "$repo_dir" ls-remote origin "refs/pull/${pr}/head" | cut -f1)
 # Right after a push the pull ref can lag the branch by a few seconds; when the PR branch lives
 # on origin, wait (bounded) until they agree so the review targets the commit just pushed.
 branch_sha=$(git -C "$repo_dir" ls-remote origin "refs/heads/${head_branch}" | cut -f1)
-if [[ -n "$branch_sha" && "$branch_sha" != "$head_sha" ]]; then
+if [[ -n "$head_sha" && -n "$branch_sha" && "$branch_sha" != "$head_sha" ]]; then
   for _ in $(seq 1 12); do
     sleep 5
     head_sha=$(git -C "$repo_dir" ls-remote origin "refs/pull/${pr}/head" | cut -f1)
@@ -79,7 +79,14 @@ if [[ -n "$branch_sha" && "$branch_sha" != "$head_sha" ]]; then
   done
   [[ "$head_sha" == "$branch_sha" ]] || echo "codex-pr-review: warning: pull ref ${head_sha:0:8} still differs from branch ${branch_sha:0:8}; reviewing the pull ref" >&2
 fi
-[[ -n "$head_sha" ]] || head_sha=$(gh pr view "$pr" -R "$slug" --json headRefOid -q .headRefOid)
+missing_pull_ref=""
+if [[ -z "$head_sha" ]]; then
+  # GitHub can expose a new PR through its API before advertising its Git pull
+  # ref. Fetch the API's exact commit, never substitute the moving branch tip.
+  missing_pull_ref=1
+  head_sha=$(gh api "repos/$slug/pulls/$pr" --jq .head.sha) || fail "cannot resolve the exact PR head"
+  [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || fail "GitHub returned an invalid PR head"
+fi
 if [[ -z "${GH_ACCOUNT:-}" ]]; then
   me=$(gh api user -q .login) || fail "cannot identify the GitHub user; select GH_ACCOUNT=own to use configured installation credentials"
   if [[ "$author" == "$me" ]]; then GH_ACCOUNT=app; else GH_ACCOUNT=own; fi
@@ -163,7 +170,14 @@ take_lock() {
   release_reclaim
 }
 take_lock
-git -C "$repo_dir" fetch -q origin "$base" "pull/${pr}/head"
+if [[ -n "$missing_pull_ref" ]]; then
+  git -C "$repo_dir" fetch -q origin "$base" "$head_sha" \
+    || fail "cannot fetch exact PR head ${head_sha:0:8} while its pull ref is unavailable"
+  current_head=$(gh api "repos/$slug/pulls/$pr" --jq .head.sha) || fail "cannot recheck the PR head after fetching"
+  [[ "$current_head" == "$head_sha" ]] || fail "PR head changed while fetching; rerun the review on its new head"
+else
+  git -C "$repo_dir" fetch -q origin "$base" "pull/${pr}/head"
+fi
 # The branch ref can be ahead of GitHub's pull ref right after a push; fetch it when it exists on origin.
 git -C "$repo_dir" ls-remote --exit-code origin "refs/heads/${head_branch}" >/dev/null 2>&1 \
   && git -C "$repo_dir" fetch -q origin "refs/heads/${head_branch}"

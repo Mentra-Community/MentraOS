@@ -444,3 +444,23 @@ test('later cancellation custody refreshes the same final marker after a lost up
   await f.notification().tick()
   expect(f.row.reporting).toEqual(completed)
 })
+
+test('existing reporting timer shares and drains the bounded incident retry hook', async () => {
+  let authoring = 0, reports = 0, release!: () => void;
+  const held = new Promise<void>(resolve => {release = resolve;});
+  const stop = startRoutineWorkReporting({async tick() {authoring++;}} as RoutineWorkNotification, 10,
+    async () => {reports++; await held;});
+  expect(authoring).toBe(1); expect(reports).toBe(1);
+  let drained = false; const stopped = stop().then(() => {drained = true;});
+  await Promise.resolve(); expect(drained).toBe(false); release(); await stopped; expect(drained).toBe(true);
+});
+
+test('a failed authoring tick still drains active incident reporting before shutdown', async () => {
+  let release!: () => void;
+  const held = new Promise<void>(resolve => {release = resolve;});
+  const stop = startRoutineWorkReporting({async tick() {throw Error('Authoring unavailable');}} as unknown as RoutineWorkNotification, 10,
+    async () => held);
+  let drained = false; const stopped = stop().then(() => {drained = true;});
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); expect(drained).toBe(false);
+  release(); await stopped; expect(drained).toBe(true);
+});

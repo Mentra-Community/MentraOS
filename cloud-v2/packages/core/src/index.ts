@@ -23,6 +23,7 @@ import {runStartupMigrations} from "./migrations/startup.migrations"
 import {createCoreStop, serveCore} from "./http-server"
 import {startFrameworkRunSummaryBackfill} from "./services/framework-run-summary.service"
 import {startRoutineWorkReporting} from "./services/routine-work-notification"
+import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
 
 const logger = createLogger("core")
 
@@ -60,7 +61,8 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const server = serveCore(app.fetch, port)
   const boundPort = server.port!
   const stopSummaryBackfill = startFrameworkRunSummaryBackfill()
-  const stopRoutineWorkReporting = startRoutineWorkReporting()
+  const reportNotifications = new ReportSlackDeliveryService()
+  const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, undefined, () => reportNotifications.tick())
 
   logger.info({port: boundPort}, "cloud-v2 core listening")
 

@@ -536,3 +536,35 @@ function restoreEnv(key: string, value: string | undefined): void {
     process.env[key] = value;
   }
 }
+
+describe('native delivery acknowledgement', () => {
+  test('returns exact Slack receipt and stable marker only for confirmed writes', async () => {
+    configureBot();
+    const delivery = {clientMessageId: '00000000-0000-4000-8000-000000000000'};
+    const result = await notifyReportSlack(bugNotification(), delivery);
+    expect(result).toEqual({ok: true, receipt: {channel: CHANNEL_ID, ts: '1.2'}});
+    const posted = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(posted.client_msg_id).toBe(delivery.clientMessageId);
+    expect(posted.metadata.event_payload.report_id).toBe('rep_TEST123');
+    expect(fetchMock.mock.calls[0]![1]!.signal).toBeInstanceOf(AbortSignal);
+    fetchMock.mockImplementation(async () => Response.json({ok: false, error: 'not_in_channel'}));
+    expect(await notifyReportSlack(bugNotification(), delivery)).toEqual({ok: false, retryable: true});
+    fetchMock.mockImplementation(async () => Response.json({}));
+    expect(await notifyReportSlack(bugNotification(), delivery)).toEqual({ok: false, retryable: false});
+  });
+  test('reconciles a lost response by exact marker and never claims unavailable or ambiguous history', async () => {
+    const {reconcileReportSlack} = await import('./report-slack.service');
+    configureBot(); process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING = 'C0TESTTESTING';
+    const match = {ts: '5.6', client_msg_id: 'same-id'};
+    fetchMock.mockImplementation(async () => Response.json({ok: true, messages: [match]}));
+    expect(await reconcileReportSlack('rep_TEST123', 'same-id', '2026-10-07T10:00:00Z')).toEqual({ok: true, receipt: {channel: 'C0TESTTESTING', ts: '5.6'}});
+    const requested = new URL(fetchMock.mock.calls[0]![0] as URL);
+    expect(requested.pathname).toBe('/api/conversations.history'); expect(requested.searchParams.get('limit')).toBe('100');
+    fetchMock.mockImplementation(async () => Response.json({ok: true, messages: [], has_more: false}));
+    expect(await reconcileReportSlack('rep_TEST123', 'same-id', '2026-01-01T10:00:00Z')).toEqual({ok: false, retryable: true});
+    for (const body of [{ok: false, error: 'missing_scope'}, {ok: true, messages: [], has_more: true}, {ok: true, messages: [match, match]}]) {
+      fetchMock.mockImplementation(async () => Response.json(body));
+      expect(await reconcileReportSlack('rep_TEST123', 'same-id', '2026-10-07T10:00:00Z')).toEqual({ok: false});
+    }
+  });
+});
