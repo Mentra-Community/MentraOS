@@ -108,6 +108,15 @@ test("empty selection is neutral and unfinished members are listed", async () =>
     members: [{memberId: "missing", routineId: "missing", platform: "android", status: "incomplete"}]}), "Build: unavailable in the nightly receipt\n0/1 Ran, 1 skipped\n\n- missing (android) · incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
 })
 
+test("Slack names execution passes with unpublished evidence as unsuccessful members", async () => {
+  for (const publicationComplete of [false, undefined]) {
+    const result = {...terminal(), status: "incomplete", passed: 0,
+      members: [{...terminal().members[0], publicationComplete}]}
+    assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n1/1 Ran, 0 skipped\n\n" +
+      "- never-listed-check (android) · execution passed; evidence incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
+  }
+})
+
 test("failure without a run ID uses the occurrence result link without inventing a run", async () => {
   const result = {...terminal(), status: "failed", passed: 0,
     members: [{memberId: "failure", routineId: "call", platform: "android", status: "failed"}]}
