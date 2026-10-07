@@ -94,7 +94,15 @@ export class ReportSlackDeliveryService {
   async complete(notification: ReportSlackNotification): Promise<ReportSlackDelivery> {
     const previous = await this.store.read(notification.reportId)
     if (previous?.state === "uncertain" || previous?.state === "sending") {
-      if (previous.destination !== this.destination()) return previous
+      if (previous.destination !== this.destination()) {
+        const deferred = {
+          ...previous,
+          nextAttemptAt: new Date(this.now() + 60_000).toISOString(),
+          error: "Slack destination changed; the original delivery remains unconfirmed.",
+        }
+        if (await this.store.claim(notification.reportId, previous, deferred)) return deferred
+        return (await this.store.read(notification.reportId)) ?? previous
+      }
     }
     if (previous?.state === "sent") return previous
     if (previous?.state === "sending" && Date.parse(previous.leaseUntil ?? "") > this.now()) return previous

@@ -151,3 +151,66 @@ test("an uncertain post cannot be reconciled or reposted to a changed configured
   expect(reads).toBe(0)
   expect(repository.row?.destination).toBe("C-original")
 })
+
+test("ten destination-blocked overdue intents defer durably so later pending reports progress", async () => {
+  const rows = new Map<string, ReportSlackDelivery>()
+  let now = 120_000,
+    sends = 0,
+    reads = 0
+  for (let index = 0; index < 10; index++)
+    rows.set(`old-${index}`, {
+      state: "uncertain",
+      destination: "C-old",
+      startedAt: new Date(0).toISOString(),
+      nextAttemptAt: new Date(0).toISOString(),
+    })
+  rows.set("later-report", {state: "pending", nextAttemptAt: new Date(1000).toISOString()})
+  const repository = {
+    async read(id: string) {
+      return rows.get(id)
+    },
+    async claim(id: string, previous: ReportSlackDelivery | undefined, value: ReportSlackDelivery) {
+      if (JSON.stringify(rows.get(id)) !== JSON.stringify(previous)) return false
+      rows.set(id, value)
+      return true
+    },
+    async settle(id: string, attempt: string, value: ReportSlackDelivery) {
+      if (rows.get(id)?.attemptId !== attempt) return false
+      rows.set(id, value)
+      return true
+    },
+    async due() {
+      return [...rows]
+        .filter(([, row]) => Date.parse(row.nextAttemptAt ?? "") <= now)
+        .sort((a, b) => a[1].nextAttemptAt!.localeCompare(b[1].nextAttemptAt!))
+        .slice(0, 10)
+        .map(([reportId]) => ({...notification, reportId}))
+    },
+  }
+  const service = () =>
+    new ReportSlackDeliveryService(
+      repository,
+      async () => {
+        sends++
+        return {ok: true, receipt: {channel: "C-new", ts: "1.2"}}
+      },
+      async () => {
+        reads++
+        return {ok: false}
+      },
+      () => now,
+      () => "C-new",
+    )
+  await service().tick()
+  expect(sends).toBe(0)
+  expect(rows.get("old-0")).toMatchObject({
+    state: "uncertain",
+    destination: "C-old",
+    nextAttemptAt: new Date(180_000).toISOString(),
+  })
+  now += 30_000
+  await service().tick()
+  expect(rows.get("later-report")?.state).toBe("sent")
+  expect(sends).toBe(1)
+  expect(reads).toBe(0)
+})
