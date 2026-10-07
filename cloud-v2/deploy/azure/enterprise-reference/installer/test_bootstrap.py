@@ -113,6 +113,32 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn('./packages/3.3.0-dev.711/mentra-private-cloud/setup.sh upgrade --directory ./mentra-state '
                       '--previous-package ./packages/3.3.0-dev.700/mentra-private-cloud --backup-confirmed', result.stdout)
 
+    def test_interrupted_upgrade_relinks_even_after_a_newer_release(self):
+        self.publish('3.3.0-dev.700')
+        self.publish('3.3.0-dev.711')
+        self.assertEqual(self.run_bootstrap(MENTRA_VERSION='3.3.0-dev.700').returncode, 0)
+        self.assertEqual(self.run_bootstrap(MENTRA_VERSION='3.3.0-dev.711').returncode, 0)
+        (self.install / 'mentra-private-cloud').unlink()
+        (self.install / 'mentra-private-cloud').symlink_to('packages/3.3.0-dev.700/mentra-private-cloud')
+        # upgrade to 711 ran, the relink did not, and the channel moved on to 712.
+        self.save_state('3.3.0-dev.711', 'upgrade_ready')
+        self.publish('3.3.0-dev.712')
+        result = self.run_bootstrap()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.active(), 'packages/3.3.0-dev.711/mentra-private-cloud')
+        self.assertIn('An upgrade to 3.3.0-dev.711 is in progress', result.stdout)
+        self.assertIn('setup.sh resume --directory ./mentra-state', result.stdout)
+        self.assertIn('upgrade to 3.3.0-dev.712', result.stdout)
+
+    def test_pinning_an_older_release_never_suggests_a_downgrade(self):
+        self.publish('3.3.0-dev.700')
+        result = self.install_then_publish('3.3.0-dev.711', 'infrastructure_verified', new_version='3.3.0-dev.711')
+        result = self.run_bootstrap(MENTRA_VERSION='3.3.0-dev.700')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.active(), 'packages/3.3.0-dev.711/mentra-private-cloud')
+        self.assertIn('downgrades are not supported', result.stdout)
+        self.assertNotIn('setup.sh upgrade', result.stdout)
+
     def test_older_default_state_folder_is_detected(self):
         self.publish('3.3.0-dev.700')
         self.assertEqual(self.run_bootstrap().returncode, 0)

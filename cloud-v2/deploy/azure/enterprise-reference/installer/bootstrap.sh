@@ -144,28 +144,20 @@ def main():
         download(package, version, url, checksum)
 
     link = home / 'mentra-private-cloud'
-    target = f'packages/{version}/mentra-private-cloud'
     # Packages before 3.3.0-dev.712 default the state folder to mentra-setup.
     state_dir = next((home / name for name in ('mentra-state', 'mentra-setup') if (home / name / 'state.json').exists()),
                      home / 'mentra-state')
-    step = deployment_step(home, package, state_dir)
-    if isinstance(step, str):
-        print('\n' + step)
-        return
+    active, message = deployment_plan(home, package, state_dir)
     if link.exists() and not link.is_symlink():
-        print(f'\n{link} already exists and was left unchanged. The new package is in {home / target}.')
+        print(f'\n{link} already exists and was left unchanged. The new package is in {package}.')
         return
-    if not link.is_symlink() or os.readlink(link) != target:
+    target = f'packages/{active.name}/mentra-private-cloud' if active else None
+    if target and (not link.is_symlink() or os.readlink(link) != target):
         temporary = home / '.mentra-private-cloud.link'
         temporary.unlink(missing_ok=True)
         temporary.symlink_to(target)
         temporary.replace(link)
-    print(f'''
-Mentra Private Cloud {version} is ready in {home}.
-Next, run:
-
-  cd {home}
-  ./mentra-private-cloud/setup.sh {step[0]} --directory ./{state_dir.name}''')
+    print('\n' + message.replace('STATE', f'./{state_dir.name}').replace('HOME', str(home)))
 
 
 def release_hash(package):
@@ -173,43 +165,66 @@ def release_hash(package):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
 
-def deployment_step(home, package, state_dir):
-    """Mirror the installer's own rules: saved state is bound to one release.
+def order(version):
+    # Same ordering as the installer's release_version(): a release follows its prereleases.
+    base, _, suffix = version.partition('-')
+    parts = tuple((0, int(x)) if x.isdigit() else (1, x) for x in suffix.split('.')) if suffix else ()
+    return tuple(int(x) for x in base.split('.')) + ((0, parts) if suffix else (1, ()))
 
-    Returns (next command,) when the new package may become active, or a
-    message explaining why the active package stays unchanged.
+
+def ready(version, command):
+    return f'''Mentra Private Cloud {version} is ready in HOME.
+Next, run:
+
+  cd HOME
+  ./mentra-private-cloud/setup.sh {command} --directory STATE'''
+
+
+def deployment_plan(home, package, state_dir):
+    """Mirror the installer's rule that saved state belongs to one release.
+
+    Returns the package the link must point at (None leaves it alone) and
+    what to tell the operator about the newly downloaded package.
     """
     if not (state_dir / 'state.json').exists():
-        return ('init',)
+        return package, ready(package.name, 'init')
     try:
         state = json.loads((state_dir / 'state.json').read_text())
         pending = json.loads((state_dir / 'upgrade.pending.json').read_text()) \
             if (state_dir / 'upgrade.pending.json').exists() else {}
     except (OSError, ValueError):
-        return f'Cannot read {state_dir}; the active package was left unchanged.'
-    new = release_hash(package)
-    if new in (state.get('releaseHash'), pending.get('targetReleaseHash')):
-        # This release is already selected, e.g. upgrade ran but the link did not move.
-        return ('status',) if state.get('phase') == 'infrastructure_verified' and not pending else ('resume',)
-    current = next((p for p in sorted((home / 'packages').iterdir())
-                    if release_hash(p) == state.get('releaseHash')), None)
+        return None, f'Cannot read {state_dir}; the active package was left unchanged.'
+    # The only package that can operate this state, including a pending upgrade's target.
+    required = pending.get('targetReleaseHash') or state.get('releaseHash')
+    current = next((p for p in sorted((home / 'packages').iterdir()) if release_hash(p) == required), None)
     if current is None:
-        return (f'The package for the deployment in {state_dir} is not in {home / "packages"}, '
-                'so the active package was left unchanged.')
-    previous = f'packages/{current.name}/mentra-private-cloud'
+        return None, (f'The package for the deployment in {state_dir} is not in {home / "packages"}, '
+                      'so the active package was left unchanged.')
+    upgrading = bool(pending) or state.get('phase') == 'upgrade_ready'
+    settled = state.get('phase') == 'infrastructure_verified' and not pending
+    if current == package:
+        return current, ready(current.name, 'status' if settled else 'resume')
+    newer = order(package.name) > order(current.name)
+    if upgrading:
+        return current, (f'An upgrade to {current.name} is in progress; mentra-private-cloud now points at it.\n'
+                         f'Finish it with `./mentra-private-cloud/setup.sh resume --directory STATE`, then `verify`.'
+                         + (f'\nRerun this command afterwards to upgrade to {package.name}.' if newer else ''))
+    if not newer:
+        return current, (f'The deployment in {state_dir} already runs {current.name}, which is not older than '
+                         f'{package.name}. Nothing was changed; downgrades are not supported.')
+    if not settled:
+        return current, (f'Setup in {state_dir} is still in progress with {current.name} (step: {state.get("phase")}).\n'
+                         f'Finish it with the current package, which stays active. Upgrading to {package.name} works once\n'
+                         '`verify` succeeds: then rerun this command for the exact upgrade commands.')
     upgrade_target = f'packages/{package.name}/mentra-private-cloud'
-    if state.get('phase') != 'infrastructure_verified':
-        return (f'Setup in {state_dir} is still in progress with {current.name} (step: {state.get("phase")}).\n'
-                f'Finish it with the current package, which stays active. Upgrading to {package.name} works once\n'
-                '`verify` succeeds: then rerun this command for the exact upgrade commands.')
-    return f'''A deployment in {state_dir} runs {current.name}. The active package was left unchanged.
+    return current, f'''A deployment in {state_dir} runs {current.name}, which stays active.
 To upgrade it to {package.name}, first back up as described under "Upgrades" in the IT guide, then run:
 
-  cd {home}
-  ./{upgrade_target}/setup.sh upgrade --directory ./{state_dir.name} --previous-package ./{previous} --backup-confirmed
+  cd HOME
+  ./{upgrade_target}/setup.sh upgrade --directory STATE --previous-package ./packages/{current.name}/mentra-private-cloud --backup-confirmed
   ln -sfn {upgrade_target} mentra-private-cloud
-  ./mentra-private-cloud/setup.sh resume --directory ./{state_dir.name}
-  ./mentra-private-cloud/setup.sh verify --directory ./{state_dir.name}
+  ./mentra-private-cloud/setup.sh resume --directory STATE
+  ./mentra-private-cloud/setup.sh verify --directory STATE
 
 If the session disconnects after `upgrade`, rerun the install command; it finishes switching packages.'''
 
