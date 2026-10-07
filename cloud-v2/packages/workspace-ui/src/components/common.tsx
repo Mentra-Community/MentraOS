@@ -184,7 +184,7 @@ export function ConfirmButton({
 }
 
 /** Copies `text` to the clipboard and says whether it worked. */
-export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+export function CopyButton({ text, label = "Copy", ariaLabel }: { text: string; label?: string; ariaLabel?: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -202,7 +202,7 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
   }
 
   return (
-    <Button type="button" variant="outline" size="sm" onClick={copy}>
+    <Button type="button" variant="outline" size="sm" aria-label={ariaLabel} onClick={copy}>
       {state === "copied" ? (
         <>
           <CheckIcon /> Copied

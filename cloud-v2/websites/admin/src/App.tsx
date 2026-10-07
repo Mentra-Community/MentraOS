@@ -18,7 +18,7 @@ import { OperatorKeysPage } from "./pages/operator-keys";
 import { WorkspacesPage } from "./pages/workspaces";
 import {readLaneSelection} from "./lib/lane-links";
 import { RecordingVideo } from "./components/recording-video";
-import { readWorkspaceInvite, withoutWorkspaceInvite } from "./lib/workspace-invite-link";
+import { readWorkspaceInvite, removeWorkspaceInvite, withoutWorkspaceInvite } from "./lib/workspace-invite-link";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 
@@ -138,11 +138,12 @@ const initialTestRunListScope = readTestRunListScope(window.location.search);
 const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
 const initialRestoration = new URLSearchParams(window.location.search).get("restoration") === "1";
 const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
-// Invitation links point here as /?workspaceInvite=<token>. The token stays in the address bar until the
+// Invitation links point here as /?workspaceInvite=<token> (or /invite/<token>, which the server redirects
+// to the query form). The token stays in the address bar until the
 // invitation is accepted or the person navigates away, so a sign-in round-trip (LoginGate's return_to)
 // or switching to the invited account still lands back on the accept screen. Like the report id above,
 // the module copy only seeds the first mount and is cleared once the invitation is spent.
-let pendingWorkspaceInvite = readWorkspaceInvite(window.location.search);
+let pendingWorkspaceInvite = readWorkspaceInvite(window.location.search, window.location.pathname);
 
 export function AdminPage() {
   const client = useQueryClient();
@@ -198,7 +199,7 @@ export function AdminPage() {
   }, [me.isSuccess]);
   useEffect(() => {
     const restore = () => {
-      const invite = readWorkspaceInvite(window.location.search);
+      const invite = readWorkspaceInvite(window.location.search, window.location.pathname);
       pendingWorkspaceInvite = invite;
       setWorkspaceInvite(invite);
       if (invite) { setPage("workspaces"); return; }
@@ -268,7 +269,7 @@ export function AdminPage() {
         if (key !== "workspaces") {
           pendingWorkspaceInvite = null;
           setWorkspaceInvite(null);
-          location.searchParams.delete("workspaceInvite");
+          removeWorkspaceInvite(location);
         }
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident

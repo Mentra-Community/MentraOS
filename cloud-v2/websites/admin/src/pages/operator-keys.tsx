@@ -122,8 +122,9 @@ export function OperatorKeysPage() {
         <div className="border-b border-[#eceeeb] p-5">
           <h2 className="text-xl font-bold">Create an operator key</h2>
           <p className="mt-1 text-sm text-[#68746d]">
-            An operator key belongs to this organization, not to a person or a workspace. It carries only the scopes you
-            choose, and it cannot administer workspaces or other keys.
+            An operator key acts for this organization, not for a workspace. It carries only the scopes you choose, and
+            it cannot administer workspaces or other keys. A key works only while the Organization Admin who created it
+            remains one, so create shared or automation keys from an admin who will stay.
           </p>
         </div>
         <div className="p-5">

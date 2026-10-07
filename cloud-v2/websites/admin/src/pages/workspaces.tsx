@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { WorkspaceSummary } from "@mentra/workspace-contract";
 import {
   createWorkspaceApi,
@@ -9,6 +9,7 @@ import {
   WorkspaceMembersPanel,
   WorkspacePicker,
   WorkspaceSettingsPanel,
+  workspaceDetailQuery,
   workspaceKeys,
 } from "@mentra/workspace-ui";
 import { Loader2 } from "lucide-react";
@@ -111,6 +112,7 @@ export function WorkspacesPage({
       <div ref={tabsTop} className="scroll-mt-24 space-y-4">
         {workspaceId ? (
           <>
+            <OpenWorkspaceHeading workspaceId={workspaceId} />
             <div role="tablist" aria-label="Workspace sections" className="flex flex-wrap items-center gap-1 rounded-[18px] border border-[#e0e4de] bg-[#f7f8f6] p-1">
               {TABS.map(([key, label]) => (
                 <button
@@ -130,7 +132,10 @@ export function WorkspacesPage({
               ))}
             </div>
             <div role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-${tab}`} key={workspaceId}>
-              {tab === "members" ? <WorkspaceMembersPanel api={workspaceApi} workspaceId={workspaceId} /> : null}
+              {tab === "members" ? (
+                // Organization Admins see user ids: "Recover ownership" below asks for one.
+                <WorkspaceMembersPanel api={workspaceApi} workspaceId={workspaceId} showUserIds={canAdminister} />
+              ) : null}
               {tab === "invitations" ? <WorkspaceInvitationsPanel api={workspaceApi} workspaceId={workspaceId} /> : null}
               {tab === "keys" ? <WorkspaceCredentialsPanel api={workspaceApi} workspaceId={workspaceId} /> : null}
               {tab === "settings" ? (
@@ -153,6 +158,20 @@ export function WorkspacesPage({
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The name of the workspace the panels below show. An Organization Admin can open a workspace they are not
+ * in, which the picker cannot name, so the page names it here. Shares the panels' cached detail query.
+ */
+function OpenWorkspaceHeading({ workspaceId }: { workspaceId: string }) {
+  const detail = useQuery(workspaceDetailQuery(workspaceApi, workspaceId));
+  return (
+    <div className="px-1">
+      <h2 className="text-xl font-bold">{detail.data?.name ?? "Workspace"}</h2>
+      <div className="truncate font-mono text-xs text-[#a0a3aa]">{workspaceId}</div>
     </div>
   );
 }

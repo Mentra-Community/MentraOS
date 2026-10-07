@@ -11,7 +11,7 @@ export type {
   WorkspaceListItem,
 } from "./api";
 export { errorMessage, isWorkspaceChangedError, WORKSPACE_CHANGED_MESSAGE, WorkspaceApiError } from "./errors";
-export { workspaceKeys } from "./queries";
+export { workspaceDetailQuery, workspaceKeys } from "./queries";
 export { assignableRoles, can, effectiveRole, ROLE_LABELS } from "./roles";
 
 export { WorkspaceAuditPanel } from "./components/audit-panel";

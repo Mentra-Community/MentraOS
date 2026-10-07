@@ -35,7 +35,7 @@ API's `basePath`, so two APIs can share one client without sharing data.
 | --- | --- |
 | `createWorkspaceApi({basePath, fetch?, credentials?})` | Typed client for every route; throws `WorkspaceApiError` |
 | `WorkspacePicker` | Choose among your workspaces; optionally create one |
-| `WorkspaceMembersPanel` | Members, role changes, removal |
+| `WorkspaceMembersPanel` (`showUserIds?`) | Members, role changes, removal; `showUserIds` adds each member's copyable Mentra user id (for Organization Admins, who need it to recover ownership) |
 | `WorkspaceInvitationsPanel` | Pending invitations, invite by email |
 | `WorkspaceCredentialsPanel` | `msk_` credentials; the token is shown once, with a copy button |
 | `WorkspaceSettingsPanel` (`onDeleted?`, `onLeft?`) | Rename, leave, delete |
@@ -53,6 +53,9 @@ API's `basePath`, so two APIs can share one client without sharing data.
   shows only what the viewer's capabilities allow. Role selectors offer exactly the
   transitions `canChangeRole` allows. The server still checks every request, so this is
   about not offering what would be refused, not about security.
+- **Nobody changes their own role here.** The viewer's own row has no role selector, so
+  one stray keystroke cannot demote an owner. Another owner or an Organization Admin
+  changes it.
 - **The viewer's role comes from their capabilities, not their membership.** An
   organization admin acts as an owner whether or not they are a member.
 - **Stale views end in a refetch.** Changes carry the workspace revision the viewer last
@@ -63,7 +66,8 @@ API's `basePath`, so two APIs can share one client without sharing data.
   workspace name).
 - **Secrets are shown once and never cached.** A credential's token and an invitation
   link live in the panel's state until dismissed. They are not in the query or mutation
-  cache and not in any URL (invitation tokens travel in POST bodies). They stay on screen
+  cache and never in API paths: invitation tokens travel in POST bodies. (The invitation
+  link itself carries its token in the invitee's page URL, by design.) They stay on screen
   even if a background refetch fails: a failed refetch keeps the data already loaded, and
   only a query that has never loaded shows an error.
 - **Credentials need a member who can publish.** Core ties a credential to its creator's

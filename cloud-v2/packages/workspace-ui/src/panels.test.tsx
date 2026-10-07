@@ -81,7 +81,7 @@ describe("members panel: role controls follow the viewer's role", () => {
     expect(markup).toContain("Adam Admin");
   });
 
-  test("an owner sees all four roles on every row", () => {
+  test("an owner sees all four roles on every row but their own", () => {
     const { api } = offlineApi();
     const detail = detailFor("owner");
     const markup = renderSeeded(
@@ -91,7 +91,7 @@ describe("members panel: role controls follow the viewer's role", () => {
     );
     const selects = selectOptions(markup, "Role");
     expect(Object.keys(selects).sort()).toEqual(
-      ["Adam Admin", "Dana Developer", "Max Member", "Olivia Owner", "Sam Self", "pending@acme.test"].sort(),
+      ["Adam Admin", "Dana Developer", "Max Member", "Olivia Owner", "pending@acme.test"].sort(),
     );
     for (const options of Object.values(selects)) expect(options).toEqual(ALL_ROLES);
     expect(labelsStartingWith(markup, "Remove ")).toEqual([
@@ -125,6 +125,46 @@ describe("members panel: role controls follow the viewer's role", () => {
       <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} />,
     );
     for (const options of Object.values(selectOptions(markup, "Role"))) expect(options).toEqual(ALL_ROLES);
+  });
+
+  test("the viewer's own row has no role selector: another owner or an organization admin changes it", () => {
+    const { api } = offlineApi();
+    for (const role of ["owner", "admin"] as const) {
+      const detail = detailFor(role);
+      const markup = renderSeeded(
+        api,
+        { detail, members: membersFor(detail) },
+        <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} />,
+      );
+      expect(selectOptions(markup, "Role")).not.toHaveProperty("Sam Self");
+      expect(markup).toContain("Sam Self");
+    }
+  });
+
+  test("with showUserIds each member's Mentra user id is shown with a copy button", () => {
+    const { api } = offlineApi();
+    const detail = organizationAdminDetail();
+    const shown = renderSeeded(
+      api,
+      { detail, members: membersFor(detail) },
+      <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} showUserIds />,
+    );
+    expect(shown).toContain(">u_1<");
+    expect(labelsStartingWith(shown, "Copy the Mentra user id of ")).toEqual([
+      "Copy the Mentra user id of Olivia Owner",
+      "Copy the Mentra user id of Adam Admin",
+      "Copy the Mentra user id of Dana Developer",
+      "Copy the Mentra user id of Max Member",
+    ]);
+
+    // Without it (the Developer Console, any viewer who is not an Organization Admin) ids stay hidden.
+    const hidden = renderSeeded(
+      api,
+      { detail, members: membersFor(detail) },
+      <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} />,
+    );
+    expect(hidden).not.toContain(">u_1<");
+    expect(labelsStartingWith(hidden, "Copy the Mentra user id")).toEqual([]);
   });
 
   test("marks the viewer's own row and pending members", () => {

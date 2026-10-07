@@ -107,6 +107,13 @@ describe("operator keys page", () => {
     expect(markup).not.toContain("Confirm revoke");
   });
 
+  test("says a key works only while its creator stays an Organization Admin", () => {
+    const html = render();
+    expect(html).toContain("A key works only while the Organization Admin who created it remains one");
+    expect(html).toContain("create shared or automation keys from an admin who will stay");
+    expect(html).not.toContain("not to a person");
+  });
+
   test("an empty list says so and still offers the form", () => {
     const markup = render([]);
     expect(markup).toContain("No operator keys yet.");

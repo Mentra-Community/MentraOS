@@ -3,8 +3,13 @@
  *
  * Role selectors offer only the transitions `canChangeRole` allows the viewer, and Remove only appears
  * where removal is theirs to do. The API enforces the same rules; this just never offers a control
- * that is certain to be refused. Each change carries the revision the viewer last saw, so a stale view
+ * that is certain to be refused. The viewer's own row never has a role selector: a select commits on
+ * change, and one stray keystroke must not demote an owner, so their role is changed by another owner
+ * or an Organization Admin. Each change carries the revision the viewer last saw, so a stale view
  * ends in "This workspace changed" and a refetch rather than in an overwrite.
+ *
+ * `showUserIds` shows each member's Mentra user id with a copy button, for Organization Admins who need
+ * it to recover a workspace's ownership. Leave it off anywhere else.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -14,9 +19,18 @@ import { formatDate } from "../lib/format";
 import { membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { can, canRemoveRole, effectiveRole, ROLE_LABELS, roleOptions } from "../roles";
 import { NativeSelect } from "../ui/native-select";
-import { Badge, ConfirmButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
+import { Badge, ConfirmButton, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
 
-export function WorkspaceMembersPanel({ api, workspaceId }: { api: WorkspaceApi; workspaceId: string }) {
+export function WorkspaceMembersPanel({
+  api,
+  workspaceId,
+  showUserIds = false,
+}: {
+  api: WorkspaceApi;
+  workspaceId: string;
+  /** Show each member's Mentra user id (Organization Admins, for ownership recovery). */
+  showUserIds?: boolean;
+}) {
   const detailResult = useQuery(workspaceDetailQuery(api, workspaceId));
   const membersResult = useQuery({
     ...membersQuery(api, workspaceId),
@@ -45,6 +59,7 @@ export function WorkspaceMembersPanel({ api, workspaceId }: { api: WorkspaceApi;
                 <MembersTable
                   detail={detail}
                   members={members}
+                  showUserIds={showUserIds}
                   busy={changeRole.isPending || remove.isPending}
                   onChangeRole={(membershipId, role) => {
                     remove.reset();
@@ -68,12 +83,14 @@ export function WorkspaceMembersPanel({ api, workspaceId }: { api: WorkspaceApi;
 function MembersTable({
   detail,
   members,
+  showUserIds,
   busy,
   onChangeRole,
   onRemove,
 }: {
   detail: WorkspaceDetail;
   members: MemberView[];
+  showUserIds: boolean;
   busy: boolean;
   onChangeRole(membershipId: string, role: WorkspaceRole): void;
   onRemove(membershipId: string): void;
@@ -100,7 +117,7 @@ function MembersTable({
           {members.map((member) => {
             const label = member.name ?? member.email ?? "Unnamed member";
             const isSelf = member.membershipId === ownMembershipId;
-            const options = canManage ? roleOptions(viewer, member.role) : [];
+            const options = canManage && !isSelf ? roleOptions(viewer, member.role) : [];
             return (
               <tr key={member.membershipId} className="border-t">
                 <td className="py-2 pr-4">
@@ -111,6 +128,16 @@ function MembersTable({
                   </div>
                   {member.name && member.email ? (
                     <div className="text-muted-foreground text-xs">{member.email}</div>
+                  ) : null}
+                  {showUserIds && member.mentraUserId ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <code className="text-muted-foreground font-mono text-xs select-all">{member.mentraUserId}</code>
+                      <CopyButton
+                        text={member.mentraUserId}
+                        label="Copy id"
+                        ariaLabel={`Copy the Mentra user id of ${label}`}
+                      />
+                    </div>
                   ) : null}
                 </td>
                 <td className="py-2 pr-4">

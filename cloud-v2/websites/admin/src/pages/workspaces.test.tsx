@@ -46,6 +46,8 @@ const everyone: WorkspaceSummary[] = [
 
 interface Seed {
   list?: WorkspaceDetail[];
+  /** Workspaces the viewer can open without being in their list (an Organization Admin opening any). */
+  details?: WorkspaceDetail[];
   members?: MemberView[];
   everyone?: { items: WorkspaceSummary[]; next: string | null };
   preview?: { workspaceName: string; email: string; role: "member" | "developer" | "admin" | "owner" };
@@ -54,7 +56,9 @@ interface Seed {
 function render(ui: ReactElement, seed: Seed = {}): string {
   const client = new QueryClient();
   if (seed.list) client.setQueryData(workspaceKeys.list(api), seed.list);
-  for (const workspace of seed.list ?? []) client.setQueryData(workspaceKeys.detail(api, workspace.workspaceId), workspace);
+  for (const workspace of [...(seed.list ?? []), ...(seed.details ?? [])]) {
+    client.setQueryData(workspaceKeys.detail(api, workspace.workspaceId), workspace);
+  }
   if (seed.members) client.setQueryData(workspaceKeys.members(api, ACME), seed.members);
   if (seed.everyone) client.setQueryData(ORGANIZATION_WORKSPACES_KEY, { pages: [seed.everyone], pageParams: [undefined] });
   if (seed.preview) client.setQueryData(workspaceKeys.invitationPreview(api, INVITE_TOKEN), seed.preview);
@@ -93,6 +97,25 @@ describe("workspaces page", () => {
     expect(markup).toContain('role="tablist"');
     expect(markup).toContain("olivia@acme.test");
     expect(markup).not.toContain("All workspaces");
+  });
+
+  test("names the open workspace above the tabs, even one the viewer is not a member of", () => {
+    const orphan: WorkspaceDetail = { ...acme, workspaceId: "ws_orphan", name: "Orphaned Lab", membership: null };
+    const markup = render(page({ initialWorkspaceId: "ws_orphan", canAdminister: true }), {
+      list: [],
+      details: [orphan],
+      everyone: { items: [], next: null },
+    });
+    const heading = markup.indexOf("Orphaned Lab");
+    expect(heading).toBeGreaterThan(-1);
+    expect(heading).toBeLessThan(markup.indexOf('role="tablist"'));
+    expect(markup).toContain("ws_orphan");
+  });
+
+  test("an Organization Admin sees members' Mentra user ids, which Recover ownership asks for; others do not", () => {
+    const seed = { list: [acme], members, everyone: { items: everyone, next: null } };
+    expect(render(page({ initialWorkspaceId: ACME, canAdminister: true }), seed)).toContain(">u_1<");
+    expect(render(page({ initialWorkspaceId: ACME }), seed)).not.toContain(">u_1<");
   });
 
   test("offers creating a workspace", () => {
