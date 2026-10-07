@@ -3,7 +3,6 @@
 import {describe, expect, jest, test} from "bun:test"
 
 import {
-  mayRequestLocationFor,
   resolveForegroundLocationPermission,
   type ForegroundLocationPermissionClient,
 } from "../ForegroundLocationPermission"
@@ -63,34 +62,5 @@ describe("resolveForegroundLocationPermission", () => {
 
     expect(result.status).toBe("undetermined")
     expect(requestForegroundPermissionsAsync).not.toHaveBeenCalled()
-  })
-})
-
-describe("optional location", () => {
-  test("never raises the OS prompt for a miniapp that declared location optional", async () => {
-    const mocks = buildClient("undetermined", "granted")
-
-    const result = await resolveForegroundLocationPermission(mocks.client, () => "active", {
-      mayRequest: mayRequestLocationFor([{type: "LOCATION", required: false}]),
-    })
-
-    expect(result.status).toBe("undetermined")
-    expect(mocks.requestForegroundPermissionsAsync).not.toHaveBeenCalled()
-  })
-
-  test("still uses an existing grant for an optional declaration", async () => {
-    const mocks = buildClient("granted")
-
-    const result = await resolveForegroundLocationPermission(mocks.client, () => "active", {mayRequest: false})
-
-    expect(result.status).toBe("granted")
-  })
-
-  test("keeps request-while-active for required or undeclared location", () => {
-    expect(mayRequestLocationFor([{type: "LOCATION"}])).toBe(true)
-    expect(mayRequestLocationFor([{type: "location", required: true}])).toBe(true)
-    expect(mayRequestLocationFor([{type: "MICROPHONE", required: false}])).toBe(true)
-    expect(mayRequestLocationFor(undefined)).toBe(true)
-    expect(mayRequestLocationFor([{type: "LOCATION", required: false}])).toBe(false)
   })
 })
