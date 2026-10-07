@@ -4,6 +4,8 @@ import {frameworkIdentitySchema} from "./types/framework-request.types";
 /** Only authenticated framework asset PUTs need the larger streaming ceiling. */
 export const CORE_REQUEST_BODY_BYTES = 2 * 1024 * 1024 * 1024;
 export const CORE_ORDINARY_BODY_BYTES = 128 * 1024 * 1024;
+/** Allow bounded storage, Mongo and incident work to finish before sending its acknowledgement. */
+export const CORE_HTTP_IDLE_TIMEOUT_SECONDS = 60;
 
 /** Keep dependencies alive until admitted HTTP requests finish, even on repeated signals. */
 export function createCoreStop(server: {stop(): Promise<void>}, disconnect: () => Promise<void>): () => Promise<void> {
@@ -24,7 +26,7 @@ function isFrameworkAssetUpload(request: Request): boolean {
 }
 
 export function serveCore(fetch: (request: Request) => Response | Promise<Response>, port: number) {
-  return Bun.serve({port, maxRequestBodySize: CORE_REQUEST_BODY_BYTES, async fetch(request) {
+  return Bun.serve({port, idleTimeout: CORE_HTTP_IDLE_TIMEOUT_SECONDS, maxRequestBodySize: CORE_REQUEST_BODY_BYTES, async fetch(request) {
     if (!request.body || isFrameworkAssetUpload(request)) return fetch(request);
     const bundleUpload = request.method === 'POST' &&
       /^\/api\/internal\/routine-definitions\/bundles\/[a-f0-9]{64}$/.test(new URL(request.url).pathname);
