@@ -110,7 +110,7 @@ it("logs the native load error while preserving the existing stress event and lo
       nativeEvent: {
         domain: "NSURLErrorDomain",
         code: -1009,
-        description: "Could not load https://example.com/?access_token=private",
+        description: "Could not load https://example.com/private'copy/private-account?access_token=private",
         url: "https://example.com/?access_token=private",
       },
     })
