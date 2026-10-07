@@ -294,13 +294,28 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
   unavailable?: FrameworkRun["result"]["teardown"]["unavailableResources"];
 }) {
   const title = phase === "setup" ? "Setup" : "Teardown";
-  const routine = actions?.filter(action => action.scope === "routine");
-  const shared = actions?.filter(action => action.scope === "shared");
-  const actionList = (items: LifecycleAction[]) => <ol className="mt-3 space-y-2">{items.map((action, index) => <li key={action.id}
-    className="flex gap-3 rounded-lg border border-[#e0e4de] p-3">
-    <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
+  const stageLabels: Record<NonNullable<LifecycleAction["stage"]>, string> = {
+    validation: "Validate inputs", "before-entry": "Before entry", entry: "Establish entry",
+    "after-entry": "After entry", recording: phase === "setup" ? "Start recording" : "Finish recording",
+    "teardown-actions": "Teardown actions", "resource-cleanup": "Resource cleanup",
+  };
+  // Preserve recorded order, including mixed ownership and repeated stage boundaries.
+  const groups: Array<{stage: LifecycleAction["stage"]; start: number; actions: LifecycleAction[]}> = [];
+  for (const [index, action] of (actions ?? []).entries()) {
+    const previous = groups.at(-1);
+    if (previous && previous.stage === action.stage) previous.actions.push(action);
+    else groups.push({stage: action.stage, start: index, actions: [action]});
+  }
+  const lastFailure = (actions ?? []).reduce((last, action, index) => action.status === "failed"
+    || failures.some(failure => failure.actionId === action.id) || status === "failed" && actionId === action.id ? index : last, -1);
+  const actionList = (items: LifecycleAction[], start: number) => <ol start={start + 1} className="mt-3 space-y-2">{items.map((action, index) => <li key={action.id}
+    className={`flex gap-3 rounded-lg border border-l-4 p-3 ${action.scope === "routine"
+      ? "border-[#bbd4c2] border-l-[#3b7650] bg-[#f3f8f4]" : "border-[#d9dfe5] border-l-[#778493] bg-[#f7f8fa]"}`}>
+    <span aria-hidden="true" className="w-7 shrink-0 text-right">{start + index + 1}.</span>
     <div className="min-w-0 flex-1"><p>{action.instruction} <StepStatus status={action.status} />
       {action.status !== "not-run" && ` · ${elapsedDuration(action.durationMs)}`}</p>
+      <span className={`mt-1 inline-block rounded px-2 py-0.5 text-xs font-semibold ${action.scope === "routine"
+        ? "bg-[#dcecdf] text-[#285538]" : "bg-[#e5e9ee] text-[#455160]"}`}>{action.scope === "routine" ? "Routine" : "Framework"}</span>
       <p className="mt-1 text-sm text-[#68746d]">Expected: {action.expected}</p>
       {action.startedAt && <p className="mt-1 text-sm">Started {new Date(action.startedAt).toLocaleTimeString()}
         {action.finishedAt && ` · Finished ${new Date(action.finishedAt).toLocaleTimeString()}`}</p>}
@@ -310,10 +325,12 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
   return <section aria-label={`${title} details`} className={PANEL}>
     <h3 className="font-semibold">{title} <StepStatus status={status} /> · {elapsedDuration(durationMs)}</h3>
     {actionId && <p className="mt-2 text-sm">Stopped at: {actionId}</p>}
-    <h4 className="mt-4 text-sm font-semibold">Routine {phase}</h4>
-    {routine === undefined ? <p className="mt-2 text-sm text-[#68746d]">Routine-specific {phase} details were not recorded for this run.</p>
-      : routine.length ? actionList(routine) : <p className="mt-2 text-sm text-[#68746d]">No routine-specific {phase} steps.</p>}
-    {!!shared?.length && <details className="mt-4"><summary className="cursor-pointer text-sm font-semibold">Shared framework {phase} · {shared.length} {shared.length === 1 ? "action" : "actions"}</summary>{actionList(shared)}</details>}
+    {actions === undefined ? <p className="mt-2 text-sm text-[#68746d]">{title} action details were not recorded for this run.</p>
+      : !actions.length ? <p className="mt-2 text-sm text-[#68746d]">No {phase} actions recorded.</p>
+      : groups.map(group => <details key={group.start} className="mt-4" open={group.start <= lastFailure} aria-label={`${title}: ${group.stage ? stageLabels[group.stage] : "Stage not recorded"}`}>
+        <summary className="cursor-pointer text-sm font-semibold">{group.stage ? stageLabels[group.stage] : "Stage not recorded"} · {group.actions.length} {group.actions.length === 1 ? "action" : "actions"}</summary>
+        {actionList(group.actions, group.start)}
+      </details>)}
     {failures.map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
     {unavailable.map(resource => <p role="alert" className="mt-2 whitespace-pre-wrap" key={resource.resource}>{resource.resource}: {resource.cause}. Next action: {resource.nextAction}</p>)}
   </section>;
