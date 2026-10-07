@@ -149,3 +149,10 @@ test("PR builds show the PR link followed by the recorded commit link", () => {
   expect(html).toContain(`href="https://github.com/Mentra-Community/MentraOS/commit/${run.build.headSha}"`);
   expect(html).not.toContain("actions/runs/123");
 });
+
+test("a suite without a recorded repository does not invent a commit destination", () => {
+  const html = renderToStaticMarkup(<TestHistoryTable entries={[{...suite, channel: "pr"}]} routines={[]}/>);
+  expect(html).toContain("PR number unavailable");
+  expect(html).toContain(suite.build.headSha.slice(0, 10));
+  expect(html).not.toContain("github.com/Mentra-Community/MentraOS/commit/");
+});

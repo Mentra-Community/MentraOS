@@ -43,12 +43,12 @@ export function runDisplayStatus(outcome: string, evidenceStatus: string, upload
 }
 
 function HistoryBuild({build}: {build: {channel?: string; repository?: string; headSha: string; prNumber?: number; release?: string; producerUrl?: string}}) {
-  const repository = build.repository ?? "Mentra-Community/MentraOS";
-  const commit = /^[\w-]+\/[\w.-]+$/.test(repository) && /^[a-f0-9]{40}$/.test(build.headSha)
+  const repository = build.repository;
+  const commit = repository && /^[\w-]+\/[\w.-]+$/.test(repository) && /^[a-f0-9]{40}$/.test(build.headSha)
     ? `https://github.com/${repository}/commit/${build.headSha}` : null;
   const producer = build.producerUrl && /^https:\/\/github\.com\/Mentra-Community\//.test(build.producerUrl) ? build.producerUrl : null;
   if (build.channel === "pr") {
-    const pr = Number.isSafeInteger(build.prNumber) && build.prNumber! > 0 && /^[\w-]+\/[\w.-]+$/.test(repository)
+    const pr = Number.isSafeInteger(build.prNumber) && build.prNumber! > 0 && repository && /^[\w-]+\/[\w.-]+$/.test(repository)
       ? `https://github.com/${repository}/pull/${build.prNumber}` : null;
     return <div className="whitespace-nowrap">
       {pr ? <a className={LINK} href={pr} target="_blank" rel="noreferrer">#{build.prNumber}</a> : <span className="text-[#656d76]">PR number unavailable</span>}
