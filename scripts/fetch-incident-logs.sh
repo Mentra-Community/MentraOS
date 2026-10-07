@@ -136,7 +136,7 @@ fail_for_status() {
   local status="$1" body="$2" what="$3"
   case "$status" in
     2??) return 0 ;;
-    401) err "unauthorized (401) fetching $what — MENTRA_ADMIN_TOKEN was rejected" ;;
+    401) err "unauthorized (401) fetching $what — MENTRA_ADMIN_TOKEN was rejected (revoked, expired, made on another backend, or its creator is no longer an Organization Admin)" ;;
     403) err "forbidden (403) fetching $what — token is valid but lacks the required organization capability (an operator key needs the incident read scope)" ;;
     404) err "not found (404) fetching $what — wrong report id, or this environment does not serve the admin reports API yet" ;;
     *) err "HTTP $status fetching $what" ;;

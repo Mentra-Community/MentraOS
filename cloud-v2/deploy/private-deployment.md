@@ -90,14 +90,19 @@ in `CLOUD_CORE_ADMIN_EMAILS` or has a domain in `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`
 (comma lists; exact domains, no subdomains). Organization Admins create operator
 keys in the admin dashboard under **Operator keys**. Operator keys carry only
 incident, support-profile and test-run scopes, never workspace administration.
+An operator key works only while the Organization Admin who created it remains
+one: Core checks the creator's email against the allowlist on every request, so
+removing that person from `CLOUD_CORE_ADMIN_EMAILS` (or their domain from
+`CLOUD_CORE_ADMIN_EMAIL_DOMAINS`) ends every key they created. Create shared and
+automation keys from an admin who will stay.
 Core reads the variables below when it uses them, so a changed value takes effect
 on the next request. The values shown are placeholders.
 
-- `CLOUD_CORE_ORGANIZATION_ID` (public): stable id of this organization, matching `^[a-z0-9][a-z0-9-]{1,62}$` (for example `acme-private`). Stamped on every workspace, membership and audit event, and named in every answer the Store and Fleet check. **Required when `NODE_ENV=production` or `CLOUD_CORE_ENVIRONMENT` is `dev`, `staging`, `prod` or `production`**: Core refuses to use workspaces without it. Elsewhere (local runs and tests) it defaults to `local`, so set it explicitly in every shared deployment. Never change it once workspaces exist.
+- `CLOUD_CORE_ORGANIZATION_ID` (public): stable id of this organization, matching `^[a-z0-9][a-z0-9-]{1,62}$` (for example `acme-private`). Stamped on every workspace, membership and audit event, and named in every answer the Store and Fleet check. **Required when `NODE_ENV=production` or `CLOUD_CORE_ENVIRONMENT` is `dev`, `staging`, `prod` or `production`**: such a Core checks it at boot and refuses to start without a valid value, so the deploy fails its health check. (Every identity-bearing path needs it: admin sign-in and every signed-in admin request, the workspace and organization APIs, the internal service API and `/api/client/capabilities`.) Elsewhere (local runs and tests) it defaults to `local`, so set it explicitly in every shared deployment. Never change it once workspaces exist.
 - `CLOUD_CORE_ADMIN_EMAILS`, `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` (public): the Organization Admins, as above.
 - `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` (public): comma list of the environment labels credentials may carry in `msk_<label>_...` and `mak_<label>_...`. New credentials use the first label. Without it Core uses `CLOUD_CORE_ENVIRONMENT`, then `local`. Labels are lowercased and reduced to `[a-z0-9]`. Credentials migrated from the Mentra Store keep their original labels, so list every label they carry (for the Mentra Store, `prod,dev`) or those keys stop validating.
 - `CLOUD_CORE_WORKSPACE_CREATION` (public): `open` (default) lets any signed-in person create a workspace. `organization-admins` limits creation to Organization Admins. Any other value is a configuration error and workspace creation fails.
-- `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE` (public): absolute http(s) URL that contains `{token}`, such as `https://console.example.com/invite/{token}`. It becomes the invitation link in the email and in the inviter's response. Without a usable value, inviting fails rather than minting a link that cannot work.
+- `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE` (public): absolute http(s) URL that contains `{token}`. It becomes the invitation link in the email and in the inviter's response, so it must open a page that accepts invitations. Two forms work: the admin dashboard's `https://<admin-host>/?workspaceInvite={token}` (it also accepts `https://<admin-host>/invite/{token}`), and the Developer Console's `https://<console-host>/invite/{token}`. A Private Deployment runs the admin dashboard and no Developer Console, so use the admin form. Without a usable value, inviting fails rather than minting a link that cannot work.
 - `CLOUD_CORE_SERVICE_SECRETS` (secret): JSON object of service name (`store`, `fleet`) to a list of shared secrets, newest first, for example `{"store":["<new>","<old>"],"fleet":["<secret>"]}`. Core verifies callers of `/api/internal/workspaces/*` with them; list the old secret beside the new one to rotate. Unset means no service can call; a value that is not that shape (including a service whose list is empty or holds only blank secrets) answers every call 503 `service_auth_misconfigured`. Unknown names are ignored with a warning.
 - `CLOUD_CORE_STORE_SERVICE_SECRET` (secret): the secret Core signs with when it asks the Store (`MENTRA_STORE_INTERNAL_URL`) how many miniapp packages a workspace holds before deleting it. **Required whenever `MENTRA_STORE_INTERNAL_URL` is set**: without it workspace deletion answers 503 `store_unavailable`. The Store must list it in its `MENTRA_STORE_CORE_SERVICE_SECRETS`. With no Store URL, deletion treats the workspace as having no packages.
 - `CLOUD_CORE_FLEET_URL` (public): base URL (optional path prefix) of the optional Fleet integration. Unset or blank means Fleet is not installed. See [Fleet integration](../docs/fleet-integration.md).
@@ -110,7 +115,7 @@ Example (placeholders only):
 CLOUD_CORE_ORGANIZATION_ID=acme-private
 CLOUD_CORE_CREDENTIAL_ENVIRONMENTS=private
 CLOUD_CORE_WORKSPACE_CREATION=organization-admins
-CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE=https://console.acme.example/invite/{token}
+CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE=https://admin.acme.example/?workspaceInvite={token}
 CLOUD_CORE_SERVICE_SECRETS={"store":["<store-secret>"],"fleet":["<fleet-secret>"]}
 CLOUD_CORE_STORE_SERVICE_SECRET=<core-to-store-secret>
 CLOUD_CORE_FLEET_URL=https://fleet.acme.example
@@ -161,7 +166,7 @@ only Core-issued tokens:
 
 ```text
 CLOUD_RUNTIME_AUTH_AUDIENCE=cloud-runtime
-CLOUD_RUNTIME_AUTH_ISSUERS=[{"issuer":"https://core.workspace.example","jwksUrl":"https://core.workspace.example/.well-known/jwks.json","userIdClaim":"sub","tenantIdClaim":"tenant_id","algorithms":["EdDSA"]}]
+CLOUD_RUNTIME_AUTH_ISSUERS=[{"issuer":"https://core.acme.example","jwksUrl":"https://core.acme.example/.well-known/jwks.json","userIdClaim":"sub","tenantIdClaim":"tenant_id","algorithms":["EdDSA"]}]
 ```
 
 The authenticated credential endpoint is `POST /api/meetings/acs/token`. An
@@ -287,8 +292,8 @@ backend dedicated to one Private Deployment verifies them locally with
 ```ts
 const auth = createMentraAuth({
   packageName: "com.example.remoteassist",
-  issuer: "https://core.workspace.example",
-  jwksUrl: "https://core.workspace.example/.well-known/jwks.json",
+  issuer: "https://core.acme.example",
+  jwksUrl: "https://core.acme.example/.well-known/jwks.json",
 })
 ```
 
@@ -357,7 +362,7 @@ services:
       MENTRA_JWT_PUBLIC_KEY: ${MENTRA_JWT_PUBLIC_KEY:?required}
       MENTRA_MINIAPP_JWT_PRIVATE_KEY: ${MENTRA_MINIAPP_JWT_PRIVATE_KEY:?required}
       MENTRA_MINIAPP_JWT_PUBLIC_KEY: ${MENTRA_MINIAPP_JWT_PUBLIC_KEY:?required}
-      CLOUD_CORE_ISSUER: https://core.workspace.example
+      CLOUD_CORE_ISSUER: https://core.acme.example
       CLOUD_CORE_ORGANIZATION_ID: acme-private
       CLOUD_CORE_OIDC_PROVIDERS: ${CLOUD_CORE_OIDC_PROVIDERS:?required}
     secrets: [mongo_password]
@@ -390,13 +395,13 @@ secrets:
 ## Validation, upgrades, and rollback
 
 ```bash
-curl --fail https://core.workspace.example/healthz | jq
-curl --fail https://core.workspace.example/ready | jq
-curl --fail https://core.workspace.example/.well-known/jwks.json | jq
-curl --fail https://workspace.example/healthz | jq
-curl --fail https://workspace.example/ready | jq
-curl --fail https://workspace.example/api/client/min-version | jq
-curl --fail https://workspace.example/.well-known/mentra-deployment.json | jq
+curl --fail https://core.acme.example/healthz | jq
+curl --fail https://core.acme.example/ready | jq
+curl --fail https://core.acme.example/.well-known/jwks.json | jq
+curl --fail https://cloud.acme.example/healthz | jq
+curl --fail https://cloud.acme.example/ready | jq
+curl --fail https://cloud.acme.example/api/client/min-version | jq
+curl --fail https://cloud.acme.example/.well-known/mentra-deployment.json | jq
 ```
 
 Upgrade Core and Runtime to the same new digest while preserving Mongo, secrets,

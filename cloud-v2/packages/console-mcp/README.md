@@ -20,7 +20,7 @@ This replaces the incident tools of the legacy server at `cloud/packages/console
 
 Core hosts: prod `https://core.mentraglass.com`, staging `https://core.staging.us-west-2.mentraglass.com`, dev `https://core.dev.us-west-2.mentraglass.com`.
 
-**Note:** An operator key belongs to one Core deployment (organization) — a key created on prod will not authenticate against staging or dev. Match the key to `MENTRA_ENV`/`MENTRA_CORE_URL`. Workspace credentials (`msk_...`) carry no organization capability, so the report routes refuse them.
+**Note:** An operator key belongs to one Core deployment (organization) — a key created on prod will not authenticate against staging or dev. Match the key to `MENTRA_ENV`/`MENTRA_CORE_URL`. Workspace credentials (`msk_...`) carry no organization capability, so the report routes refuse them. A key works only while the Organization Admin who created it remains one, so create a key for a shared or long-lived MCP config from an admin who will stay.
 
 Only tools whose credentials are configured are registered, plus `console_auth_status` (never prints secrets).
 
@@ -66,7 +66,7 @@ Restart Cursor after changing MCP config, then ask the agent to call `console_au
 |---------|-----|
 | MCP server **errored** / `bun: not found` | Use `run-mcp.sh` (not bare `bun`), or set `"env": { "BUN": "/Users/you/.bun/bin/bun" }` |
 | Only `console_auth_status` registered | Set `MENTRA_ADMIN_TOKEN` |
-| 401 unauthorized | Token rejected — check the key isn't revoked or expired and was created on the Core deployment you are calling |
+| 401 unauthorized | Token rejected — check the key isn't revoked or expired, was created on the Core deployment you are calling, and that its creator is still an Organization Admin |
 | 403 forbidden | Token is valid but lacks the required organization capability — create the operator key with the incident read scope, or use an Organization Admin's WorkOS token |
 | 404 on every report | Wrong id — or this core deployment doesn't serve the admin reports API yet |
 

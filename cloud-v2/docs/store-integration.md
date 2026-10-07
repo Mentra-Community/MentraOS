@@ -62,7 +62,11 @@ organization it is bound to.
 
 - `POST /authorize`: may a person (a bearer token, or a Mentra user id the Store
   vouches for) do `capability` in `workspaceId`, for `packageName`? Returns the
-  decision, the reason when denied, the membership and the capabilities.
+  decision, the reason when denied, the membership and the capabilities. A
+  credential restricted to certain packages is refused for any other package,
+  but only when `packageName` is sent: without it the capability is granted
+  workspace-wide. Send `packageName` on every route that reads or changes one
+  package, and filter package lists by the principal's `packageNames`.
 - `POST /principal`: resolves a bearer token (a WorkOS access token or a Core
   credential) to its principal and workspaces; `401 invalid_token` when it is not
   valid.
@@ -76,7 +80,10 @@ organization it is bound to.
 
 Core's public workspace API (`/api/workspaces`, `/api/organization`) is what
 people use through the dashboard, the CLI and the Store proxy. Core credentials
-(`msk_`, `mak_`) are refused on those administration routes; people administer.
+(`msk_`, `mak_`) are refused on every `/api/workspaces` route and on the
+`/api/organization` administration routes; people administer. The one exception
+is `GET /api/organization`, which any caller, a credential included, may use to
+learn the organization id and which organization capabilities it holds.
 
 ### Secret pairing
 
@@ -95,6 +102,20 @@ The Store also needs `MENTRA_CORE_INTERNAL_URL` (Core's origin) and
 `CLOUD_CORE_ORGANIZATION_ID`. Without all three the Store fails closed: Console
 requests answer `503 core_unavailable` and nothing is authorized.
 
+### Same WorkOS client and environment
+
+Core and the Store must use the same WorkOS client (`WORKOS_CLIENT_ID`) in the
+same WorkOS environment. Two things depend on it:
+
+- The Store forwards the person's WorkOS access token to Core (`POST /principal`,
+  `POST /authorize` and the proxy). Core verifies it against the JWKS of its own
+  `WORKOS_CLIENT_ID`. A token from another client or environment never verifies,
+  so every Console request is unauthenticated.
+- Migrated memberships are keyed by the WorkOS user ids the Store knew
+  (`pendingWorkosUserId`). A person's first sign-in to Core claims them only if
+  Core sees the same WorkOS user id, which another environment never issues. Those
+  memberships would stay pending for good.
+
 `CLOUD_CORE_STORE_SERVICE_SECRET` is **required whenever Core has
 `MENTRA_STORE_INTERNAL_URL`**. Core asks the Store
 (`GET /api/internal/workspaces/:workspaceId/package-count`) before it deletes a
@@ -112,15 +133,28 @@ above) and is unchanged.
 
 The Developer Console and the CLI reach workspaces through the Store, so people
 sign in once. The Console's `/api/console/workspaces/*` routes proxy Core's
-`/api/workspaces` API. The Store resolves the caller with `POST /principal`, takes
-the selected workspace from the Console's selection cookie, and checks
-capabilities through `POST /authorize`. `GET /api/console/auth/me` lists the
-person's workspaces and `POST /api/console/auth/workspace` selects one; a person
-in several workspaces with none selected receives `409 workspace_selection_required`
-from routes that need one. The Console embeds the shared `@mentra/workspace-ui`
-screens (members, invitations, credentials, settings, audit) and adds a
-publishing card for the package prefix. Invitation links open `/invite/:token`
-and are configured in Core with `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE`.
+`/api/workspaces` API: the Store forwards the person's WorkOS access token to
+Core as it is, and Core authenticates and authorizes the request itself. The
+workspace is the one named in the path, not the selected one.
+
+The Store's own console routes (the publishing profile, apps, listings and releases) work in
+one workspace at a time. The Store resolves the caller with `POST /principal` and
+checks capabilities through `POST /authorize`. It takes the workspace from the
+`x-mentra-workspace-id` header first (the CLI and each Console tab send it), then
+from the Console's selection cookie, then the person's only workspace.
+`GET /api/console/auth/me` lists the person's workspaces and
+`POST /api/console/auth/workspace` selects one. A route that needs a workspace
+answers:
+
+- `428 workspace_required` when the person has no workspace at all (create or
+  join one first);
+- `409 workspace_selection_required` when the person is in several and none is
+  selected.
+
+The Console embeds the shared `@mentra/workspace-ui` screens (members,
+invitations, credentials, settings, audit) and adds a publishing card for the
+package prefix. Invitation links open `/invite/:token` and are configured in Core
+with `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE`.
 
 Credentials restricted to certain packages stay confined to the publishing flow
 (create the app for that package, listing, assets, releases, submit) on top of
@@ -153,8 +187,9 @@ Existing Store developer organizations, their members, pending invitations and
 `cloud-v2` after Core is deployed with its new environment:
 
 ```sh
-# Dry run (the default). Reads the Store database only, does not connect to the
-# target, writes nothing, and prints a JSON report to stdout.
+# Dry run (the default). Reads the Store database, reads the target through a
+# read-only connection (so a re-run can report what it would change), writes
+# nothing, and prints a JSON report to stdout.
 bun packages/core/scripts/migrate-store-developer-orgs.ts \
   --source "$STORE_MONGO_URL" --target "$CORE_MONGO_URL" --organization-id "$CLOUD_CORE_ORGANIZATION_ID"
 
@@ -187,9 +222,25 @@ developer. Invitations are those still pending and unexpired; keys are imported
 with their dates, revoked ones included. The source is only read. Each
 organization imports in one short transaction with an audit event, and a re-run is
 safe: it adds rows it has not seen, never overwrites a change made in Core since,
-and never revives an ended membership or a revoked key. It does not carry later
-changes made in the old Store, such as a key revoked after the first apply, so
-keep the interval between apply and Store cutover short.
+and never revives an ended membership or a revoked key.
+
+A re-run does carry access the old Store has taken away since the last run, and
+the report lists it (the dry run lists what an apply would do):
+
+- `revokedCredentials`: keys revoked in the Store, now revoked in Core;
+- `removedMemberships`: members removed in the Store who had not signed in to
+  Core yet, now removed in Core with the keys they created;
+- `revokedInvitations`: invitations revoked, accepted or otherwise no longer
+  pending in the Store, now revoked in Core;
+- `claimedMembershipDrift`: members removed in the Store who have already signed
+  in to Core. These are not changed; remove them in Core if that is still wanted;
+- `pendingCollisions`: memberships not imported because the person already holds
+  another unclaimed membership in that workspace, with the keys skipped with them;
+- `skippedWorkspaces`: organizations whose workspace was deleted in Core. Nothing
+  is imported into them.
+
+Other later Store changes (a new role, a renamed organization) are not carried.
+Run apply again immediately before the Store cutover so Core is current.
 
 ## Local development
 
