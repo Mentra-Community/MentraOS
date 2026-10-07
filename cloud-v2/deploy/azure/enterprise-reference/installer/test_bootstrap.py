@@ -88,17 +88,65 @@ class BootstrapTests(unittest.TestCase):
         self.assertFalse((self.install / 'mentra-private-cloud').exists())
         self.assertEqual(list((self.install / 'packages').iterdir()), [])
 
-    def test_existing_deployment_is_not_switched_without_upgrade(self):
+    def save_state(self, version, phase, pending_version=None):
+        state = self.install / 'mentra-state'
+        state.mkdir(exist_ok=True)
+        (state / 'state.json').write_text(json.dumps({'phase': phase, 'releaseHash': self.release_hash(version)}))
+        if pending_version:
+            (state / 'upgrade.pending.json').write_text(json.dumps({'targetReleaseHash': self.release_hash(pending_version)}))
+
+    def release_hash(self, version):
+        return hashlib.sha256(json.dumps({'releaseTag': version}).encode()).hexdigest()
+
+    def install_then_publish(self, deployed_version, phase, new_version='3.3.0-dev.711', **state):
+        self.publish(deployed_version)
+        self.assertEqual(self.run_bootstrap().returncode, 0)
+        self.save_state(deployed_version, phase, **state)
+        self.publish(new_version)
+        result = self.run_bootstrap()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def test_verified_deployment_gets_upgrade_commands_not_a_switch(self):
+        result = self.install_then_publish('3.3.0-dev.700', 'infrastructure_verified')
+        self.assertEqual(self.active(), 'packages/3.3.0-dev.700/mentra-private-cloud')
+        self.assertIn('./packages/3.3.0-dev.711/mentra-private-cloud/setup.sh upgrade --directory ./mentra-state '
+                      '--previous-package ./packages/3.3.0-dev.700/mentra-private-cloud --backup-confirmed', result.stdout)
+
+    def test_older_default_state_folder_is_detected(self):
         self.publish('3.3.0-dev.700')
         self.assertEqual(self.run_bootstrap().returncode, 0)
-        (self.install / 'mentra-state').mkdir()
-        (self.install / 'mentra-state/state.json').write_text('{}')
+        state = self.install / 'mentra-setup'
+        state.mkdir()
+        (state / 'state.json').write_text(json.dumps({'phase': 'infrastructure_verified',
+                                                      'releaseHash': self.release_hash('3.3.0-dev.700')}))
         self.publish('3.3.0-dev.711')
         result = self.run_bootstrap()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.active(), 'packages/3.3.0-dev.700/mentra-private-cloud')
-        self.assertIn('./packages/3.3.0-dev.711/mentra-private-cloud/setup.sh upgrade --directory ./mentra-state '
-                      '--previous-package ./packages/3.3.0-dev.700/mentra-private-cloud --backup-confirmed', result.stdout)
+        self.assertIn('setup.sh upgrade --directory ./mentra-setup', result.stdout)
+
+    def test_setup_in_progress_finishes_on_its_own_release(self):
+        # upgrade requires a verified deployment, so mid-setup must not print it.
+        result = self.install_then_publish('3.3.0-dev.700', 'identity_configured')
+        self.assertEqual(self.active(), 'packages/3.3.0-dev.700/mentra-private-cloud')
+        self.assertIn('still in progress with 3.3.0-dev.700', result.stdout)
+        self.assertNotIn('setup.sh upgrade', result.stdout)
+
+    def test_interrupted_upgrade_relinks_and_resumes(self):
+        self.publish('3.3.0-dev.700')
+        self.publish('3.3.0-dev.711')
+        self.assertEqual(self.run_bootstrap(MENTRA_VERSION='3.3.0-dev.700').returncode, 0)
+        for state in ({'version': '3.3.0-dev.711', 'phase': 'upgrade_ready'},
+                      {'version': '3.3.0-dev.700', 'phase': 'infrastructure_verified', 'pending_version': '3.3.0-dev.711'}):
+            (self.install / 'mentra-private-cloud').unlink()
+            (self.install / 'mentra-private-cloud').symlink_to('packages/3.3.0-dev.700/mentra-private-cloud')
+            self.save_state(state['version'], state['phase'], state.get('pending_version'))
+            result = self.run_bootstrap()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.active(), 'packages/3.3.0-dev.711/mentra-private-cloud')
+            self.assertIn('setup.sh resume --directory ./mentra-state', result.stdout)
+            (self.install / 'mentra-state/upgrade.pending.json').unlink(missing_ok=True)
 
     def test_newer_release_replaces_link_before_deployment(self):
         self.publish('3.3.0-dev.700')

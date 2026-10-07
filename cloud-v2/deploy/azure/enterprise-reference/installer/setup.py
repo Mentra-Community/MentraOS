@@ -879,7 +879,7 @@ def configure_entra(args, directory, config, state):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'configure-azure-dns', 'check-teams', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'upgrade', 'diagnostics'))
-    parser.add_argument('--directory', default='./mentra-setup', help='Persistent state and secret directory outside the installer package')
+    parser.add_argument('--directory', default='./mentra-state', help='Persistent state and secret directory outside the installer package')
     parser.add_argument('--config', help='JSON answers for init; otherwise edit deployment.config.json')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--dns-ready', action='store_true')
@@ -895,7 +895,7 @@ def main():
     directory = Path(args.directory).resolve()
     try:
         if directory.is_relative_to(ROOT):
-            raise SetupError('Keep setup state outside the extracted installer package; use --directory ../mentra-setup.')
+            raise SetupError('Keep setup state outside the installer package; from ~/mentra-install use --directory ./mentra-state.')
         with locked(directory):
             if args.command == 'init':
                 init(args, directory)
