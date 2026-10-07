@@ -91,31 +91,42 @@ jobs:
         # process-global fetch implementation.
         run: bun test --max-concurrency=1 packages
 
+      # The website steps below run even when an earlier step failed (the job still
+      # fails), so a package-test failure does not hide whether the dashboard tests,
+      # typechecks and builds pass. A cancelled run skips them.
       - name: Run admin dashboard tests
+        if: ${{ !cancelled() }}
         working-directory: cloud-v2
         # Server-rendered page, lib and shell tests: no browser and no external
         # service. `bun test packages` above already covers packages/workspace-ui.
-        # websites/admin/src/index.test.ts is left out on purpose: it runs a real S3
-        # client and proxy against local servers, has never run in CI, and is not part
-        # of the dashboard UI.
-        run: >-
-          bun test --max-concurrency=1
-          websites/admin/src/pages
-          websites/admin/src/lib
-          websites/admin/src/app-nav.test.tsx
-          websites/admin/src/report-artifact-view.test.tsx
+        # Every test file under websites/admin/src runs, so a new one is picked up
+        # without editing this list, except src/index.test.ts: it runs a real S3
+        # client and proxy against local servers, has never run in CI, and is not
+        # part of the dashboard UI. An empty list would make `bun test` run every
+        # test in cloud-v2, so it fails instead.
+        run: |
+          files=()
+          while IFS= read -r file; do files+=("$file"); done < <(
+            find ./websites/admin/src \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' \) \
+              ! -path ./websites/admin/src/index.test.ts | sort
+          )
+          if [ "${#files[@]}" -eq 0 ]; then echo "no admin dashboard tests found" >&2; exit 1; fi
+          bun test --max-concurrency=1 "${files[@]}"
 
       - name: Typecheck backend packages
+        if: ${{ !cancelled() }}
         working-directory: cloud-v2
         run: bun run typecheck
 
       - name: Typecheck websites
+        if: ${{ !cancelled() }}
         working-directory: cloud-v2
         run: |
           bun run typecheck:admin
           bun run typecheck:portal
 
       - name: Build websites
+        if: ${{ !cancelled() }}
         working-directory: cloud-v2
         run: |
           bun run build:admin
