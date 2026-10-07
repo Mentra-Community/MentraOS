@@ -141,3 +141,11 @@ test("terminal evidence failure is distinct from pending uploads on an otherwise
   expect(pending).toContain("Evidence upload pending");
   expect(pending).not.toContain("Evidence failed");
 });
+
+test("PR builds show the PR link followed by the recorded commit link", () => {
+  const html = renderToStaticMarkup(<TestHistoryTable entries={[{...run, build: {...run.build, channel: "pr", prNumber: 698, producerUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/123"}}]} routines={[]}/>);
+  expect(html).toContain('href="https://github.com/Mentra-Community/MentraOS/pull/698"');
+  expect(html).toContain('>#698</a>');
+  expect(html).toContain(`href="https://github.com/Mentra-Community/MentraOS/commit/${run.build.headSha}"`);
+  expect(html).not.toContain("actions/runs/123");
+});

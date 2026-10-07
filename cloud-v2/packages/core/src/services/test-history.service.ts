@@ -1,6 +1,10 @@
 import type {PipelineStage} from "mongoose";
 import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
+import {TestRequestModel} from "../models/test-request.model";
+import {recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
+import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
+import {requestInputDigest} from "./test-request.service";
 import {TestRerunModel} from "../models/test-rerun.model";
 import {TestRunModel} from "../models/test-run.model";
 import {TestSuiteModel} from "../models/test-suite.model";
@@ -125,6 +129,11 @@ export class TestHistoryService {
       || (a.historyId < b.historyId ? 1 : a.historyId > b.historyId ? -1 : 0));
     const page = rows.slice(0, query.data.limit);
     const suiteSummaries = await this.suites.summaries(page.filter(row => row.historyKind === "suite").map(row => row.historyId), deadline);
+    const prRequestIds = [...new Set([...suiteSummaries.values()].flatMap(suite => suite && !(suite instanceof Error) && suite.channel === "pr"
+      ? suite.members.flatMap(member => member.requestId ? [member.requestId] : []) : []))];
+    const prRequests = prRequestIds.length ? await TestRequestModel.find({requestId: {$in: prRequestIds}})
+      .select({requestId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1}).limit(prRequestIds.length + 1)
+      .read("primary").readConcern("majority").setOptions({timeoutMS: remainingQueryTime(deadline)}).lean() : [];
     const entries = await Promise.all(page.map(async (row): Promise<TestHistoryEntry> => {
       try {
         if (row.historyKind === "run") {
@@ -143,7 +152,7 @@ export class TestHistoryService {
         });
         return {kind: "suite", suiteId: suite.suiteId, channel: suite.channel, trigger: suite.trigger,
           startedAt: suite.startedAt, ...(suite.finishedAt ? {finishedAt: suite.finishedAt} : {}),
-          outcome: suite.outcome, expectedCount: suite.members.length, passed: suite.passed, build: suite.build,
+          outcome: suite.outcome, expectedCount: suite.members.length, passed: suite.passed, build: historySuiteBuild(suite, prRequests),
           skipped: suite.members.filter(member => member.status === "not-run").length,
           rerunCount: row.rerunCount ?? 0,
           failedCount: suite.members.filter(member => ["failed", "setup-failed", "teardown-failed"].includes(member.status)).length,
@@ -163,4 +172,25 @@ export class TestHistoryService {
     } satisfies HistoryCursor)).toString("base64url") : null;
     return {entries, nextCursor};
   }
+}
+
+/** Only a digest-verified, member-bound request can supply a missing PR identity. */
+export function historySuiteBuild(suite: {channel: string; build: {headSha: string}; members: {requestId?: string; routineId: string; platform: string; headSha?: string; definitionRevision?: string}[]}, requests: {requestId: string; input?: unknown; inputSha256?: unknown; dispatchIntent?: unknown; dispatchIntentSha256?: unknown}[]) {
+  if (suite.channel !== "pr") return suite.build;
+  const builds = suite.members.flatMap(member => {
+    const rows = requests.filter(request => request.requestId === member.requestId);
+    if (rows.length !== 1) return [];
+    const request = rows[0];
+    const parsed = request.input !== undefined ? recordedFrameworkRequestInputSchema.safeParse(request.input) : routineDispatchIntentSchema.safeParse(request.dispatchIntent);
+    const digest = request.input !== undefined ? request.inputSha256 : request.dispatchIntentSha256;
+    if (!parsed.success || requestInputDigest(parsed.data) !== digest
+      || "requestId" in parsed.data && parsed.data.requestId !== request.requestId
+      || member.definitionRevision && ("definitionRevision" in parsed.data ? parsed.data.definitionRevision : parsed.data.routineRevision) !== member.definitionRevision
+      || parsed.data.routineId !== member.routineId
+      || parsed.data.platform !== member.platform || parsed.data.build.channel !== "pr"
+      || parsed.data.build.headSha !== (member.headSha ?? suite.build.headSha)) return [];
+    return [parsed.data.build];
+  });
+  const numbers = [...new Set(builds.map(build => build.prNumber))];
+  return numbers.length === 1 && numbers[0] ? {...suite.build, repository: builds[0].repository, prNumber: numbers[0]} : suite.build;
 }

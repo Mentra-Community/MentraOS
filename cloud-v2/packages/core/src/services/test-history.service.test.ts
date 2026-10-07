@@ -8,7 +8,7 @@ import {TestRequestModel} from "../models/test-request.model";
 import {backfillTestSuiteStartedAt, TEST_SUITE_HISTORY_INDEX, TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
 import type {TestSuite} from "../types/test-suite.types";
-import {TestHistoryService, testHistoryQueries, type StoredHistoryRow} from "./test-history.service";
+import {TestHistoryService, testHistoryQueries, historySuiteBuild, type StoredHistoryRow} from "./test-history.service";
 import {TestSuiteService, type SuiteSummaryRead} from "./test-suite.service";
 import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 import {requestInputDigest} from "./test-request.service";
@@ -559,3 +559,17 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     expect(page.nextCursor).toBeNull();
   })
 })
+
+test("suite PR identity comes only from a verified bound request at the tested commit", () => {
+  const source = {channel: "pr", prNumber: 698, buildRunId: 10, publicationAttempt: 1};
+  const asset = {url: "https://artifactscdn.mentraglass.com/fixture", size: 100, sha256: "a".repeat(64)};
+  const intent = {requestId: "request", routineId: "notes", platform: "android", laneId: "android", routineRevision: "b".repeat(40), source,
+    build: {repository: "Mentra-Community/MentraOS", channel: "pr", prNumber: 698, headSha: "c".repeat(40), kind: "android-apk", source, archive: {...asset, name: "app.apk"}, receipt: asset}};
+  const suite = {channel: "pr", build: {headSha: "c".repeat(40)}, members: [{requestId: "request", routineId: "notes", platform: "android"}]};
+  const request = {requestId: "request", dispatchIntent: intent, dispatchIntentSha256: requestInputDigest(intent)};
+  expect(historySuiteBuild(suite, [request])).toEqual({...suite.build, repository: "Mentra-Community/MentraOS", prNumber: 698});
+  expect(historySuiteBuild(suite, [{...request, dispatchIntentSha256: "d".repeat(64)}])).toEqual(suite.build);
+  expect(historySuiteBuild(suite, [request, request])).toEqual(suite.build);
+  expect(historySuiteBuild({...suite, build: {headSha: "e".repeat(40)}}, [request])).toEqual({headSha: "e".repeat(40)});
+  expect(historySuiteBuild(suite, [])).toEqual(suite.build);
+});
