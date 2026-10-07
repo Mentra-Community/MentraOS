@@ -89,7 +89,9 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
         <thead className="bg-[#f6f8fa]"><tr className="border-b text-xs font-medium text-[#747780]"><th>Started</th><th>Name</th><th>Duration</th><th>Lane</th><th>Tested build</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
         <tbody>{members.map(member => <tr key={member.memberId} className="border-b last:border-0 hover:bg-[#fafbfa]">
           <td className="whitespace-nowrap tabular-nums">{member.startedAt ? <time dateTime={member.startedAt}>{new Date(member.startedAt).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})}</time> : "—"}</td>
-          <td className="min-w-48"><a className={TESTING_LINK} href={member.runId ? frameworkRunHref(member.runId) : member.requestId ? frameworkRunHref(member.requestId) : undefined}>{member.routineId.replace(/[-_]+/g, " ")}</a>
+          <td className="min-w-48">{member.runId || member.requestId
+            ? <a className={TESTING_LINK} href={frameworkRunHref(member.runId ?? member.requestId!)}>{member.routineId.replace(/[-_]+/g, " ")}</a>
+            : <><span className="font-medium">{member.routineId.replace(/[-_]+/g, " ")}</span><p className="mt-1 text-xs text-[#747780]">Not available yet</p></>}
             {member.runId && <a className={`${TESTING_LINK} mt-1 block text-xs`} href={frameworkRunHref(member.runId)}>View run</a>}
             {latestAttempt(member.memberId) && <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Latest rerun · {memberStatus({...member, ...latestAttempt(member.memberId)!}).replaceAll("-", " ")}</summary>
               <AttemptLine attempt={latestAttempt(member.memberId)!}/><AttemptHistory suiteId={suiteId} memberId={member.memberId}/>

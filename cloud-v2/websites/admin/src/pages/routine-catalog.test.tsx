@@ -902,3 +902,27 @@ test('preparing request detail explains exact source custody without calling it 
   const html=renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId='preparing-source'/></QueryClientProvider>);
   expect(html).toContain('new-main: preparing');expect(html).toContain('The exact routine source is being prepared');expect(html).toContain('Waiting for installed routine API.');expect(html).not.toContain('this historical request');
 });
+
+
+test("run header qualifies a pass only after evidence is complete", () => {
+  const run = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: "evidence-run", hostId: "mini", routineId: "notes-phone",
+    definitionRevision: "c".repeat(40), platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z", assets: [],
+    result: {runId: "evidence-run", finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed"}, test: "passed", steps: [{id: "observe", status: "passed", durationMs: 1}],
+      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [],
+      timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 0, testMs: 1, teardownMs: 0}}})
+  for (const [evidenceStatus, uploadsComplete, label, color] of [
+    ["complete", true, "Passed", "text-[#1a7f37]"],
+    ["complete", false, "Evidence pending", "text-[#656d76]"],
+    ["failed", false, "Evidence failed", "text-[#cf222e]"],
+  ] as const) {
+    const client = new QueryClient()
+    client.setQueryData(["framework-run", "evidence-run"], {run, definition: null, outcome: "pass", evidenceStatus, uploadsComplete})
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId="evidence-run"/></QueryClientProvider>)
+    const header = html.slice(html.indexOf('<h2'), html.indexOf('</h2>') + 800)
+    expect(header).toContain(`>${label}</span>`)
+    expect(header).toContain(color)
+    if (!uploadsComplete) expect(header).not.toContain(">Passed</span>")
+    client.clear()
+  }
+})

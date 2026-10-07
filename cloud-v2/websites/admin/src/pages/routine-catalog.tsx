@@ -1,4 +1,4 @@
-import {HistoryStatus} from "../components/test-history-table";
+import {HistoryStatus, runDisplayStatus} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {RunRerunLinks} from "./test-reruns";
@@ -236,12 +236,13 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     <a className={TESTING_LINK} href={routineHref(run.routineId, run.platform)}>Back to routine</a>
     {result.error && <p role="alert">Run could not refresh: {result.error.message}</p>}
     <section className={PANEL}>
-      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">{definition?.title ?? run.routineId}</h2><HistoryStatus outcome={outcome}/></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">{definition?.title ?? run.routineId}</h2><HistoryStatus outcome={runDisplayStatus(outcome, evidenceStatus, uploadsComplete)}/></div>
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-[#747780]">
         <span>{new Date(run.startedAt).toLocaleString()} · {runDuration(run.startedAt, run.finishedAt) ?? "Duration unknown"}</span>
         <span>{run.hostId} / {run.laneId} · {run.platform === "ios-on-mac" ? "iOS on Mac" : run.platform}</span>
         <span>Setup {elapsedDuration(run.result.timing.setupMs)} · Test {elapsedDuration(run.result.timing.testMs)} · Teardown {elapsedDuration(run.result.timing.teardownMs)}</span>
       </div>
+      <p className="mt-3 text-sm">Execution: {outcome === "pass" ? "Passed" : outcome.replaceAll("-", " ")}</p>
       <p className="mt-3 text-sm"><BuildIdentity build={run.build} /></p>
       <RunRerunLinks requestId={run.requestId}/>
       <details className="mt-3 border-t border-[#eceeeb] pt-3 text-xs text-[#747780]"><summary className="cursor-pointer font-medium">Run provenance</summary>

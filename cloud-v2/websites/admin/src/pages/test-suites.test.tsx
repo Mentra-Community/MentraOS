@@ -172,3 +172,11 @@ test("suite actions replace selection, keep status read-only and disable active 
   expect(html).toContain('disabled="">Rerun failures</button>');
   expect(html).toContain('Attempt 1 · running');
 });
+
+
+test("unbound suite members use plain names and explain missing detail links", () => {
+  const html = renderSuite({...suite, members: [suite.members[0]!, {...suite.members[1]!, routineId: "unbound", runId: undefined, requestId: undefined}]})
+  expect(html).toContain('<span class="font-medium">unbound</span>')
+  expect(html).toContain("Not available yet")
+  expect(html).not.toMatch(/<a[^>]*>unbound<\/a>/)
+})
