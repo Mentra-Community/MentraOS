@@ -55,13 +55,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-cloud-v2-
 
-      - name: Install dependencies
-        working-directory: cloud-v2
-        run: bun install --frozen-lockfile
-
+      # The SDK's workspaces include ../cloud-v2/packages/*, so its install relinks those
+      # packages' node_modules into the SDK's store. Install it first and Cloud V2 last,
+      # so Cloud V2's packages resolve one copy of each dependency (two copies of the
+      # React types break the website typecheck).
       - name: Install Miniapp CLI dependencies
         working-directory: sdk
         run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Install dependencies
+        working-directory: cloud-v2
+        run: bun install --frozen-lockfile
 
       - name: Test enterprise deployment helpers
         working-directory: cloud-v2
