@@ -485,12 +485,17 @@ public class K900NetworkManager extends BaseNetworkManager {
         Log.d(TAG, "📶 Password: " + (password != null ? "***" : "null"));
 
         try {
+            boolean nativeConnectStarted = false;
             if (isSystemApp) {
-                connectToWifiNative(ssid, password);
-            } else {
+                try {
+                    nativeConnectStarted = connectToWifiNative(ssid, password);
+                } catch (Exception e) {
+                    Log.w(TAG, "Native WiFi connection failed; trying SysControl", e);
+                }
+            }
+            if (!nativeConnectStarted) {
                 Log.d(TAG, "📶 📡 Connecting to WiFi via SysControl (with credential refresh)...");
-                SystemControllerFactory.get(context)
-                        .connectToWifiWithCredentialRefresh(ssid, password);
+                systemController.connectToWifiWithCredentialRefresh(ssid, password);
                 Log.i(TAG, "📶 ✅ WiFi connect command sent for SSID: " + ssid);
             }
             notificationManager.showDebugNotification("WiFi Connection", "Connecting to: " + ssid);
@@ -502,12 +507,12 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     @SuppressWarnings("deprecation")
-    private void connectToWifiNative(String ssid, String password) {
+    private boolean connectToWifiNative(String ssid, String password) {
         Log.d(TAG, "📶 📡 Connecting via native WifiManager (system app)...");
 
         if (wifiManager == null) {
             Log.e(TAG, "📶 💥 WifiManager is null");
-            return;
+            return false;
         }
 
         // Remove any existing config for this SSID (ensures fresh credentials)
@@ -566,12 +571,19 @@ public class K900NetworkManager extends BaseNetworkManager {
             Log.e(TAG, "📶 💥 addNetwork failed for: " + ssid);
             notificationManager.showDebugNotification(
                     "WiFi Error", "addNetwork failed for: " + ssid);
-            return;
+            return false;
         }
 
         wifiManager.disconnect();
         boolean enabled = wifiManager.enableNetwork(netId, true);
-        wifiManager.reconnect();
+        if (!enabled) {
+            Log.w(TAG, "Native WiFi enableNetwork rejected the connection request");
+            return false;
+        }
+        if (!wifiManager.reconnect()) {
+            Log.w(TAG, "Native WiFi reconnect rejected the connection request");
+            return false;
+        }
 
         Log.i(
                 TAG,
@@ -582,6 +594,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                         + ", netId="
                         + netId
                         + ")");
+        return true;
     }
 
     /**
