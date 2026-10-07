@@ -83,8 +83,8 @@ export async function readFrameworkRunSummaryProjection(row: StoredSummaryRow, d
   return verifiedFrameworkRunSummaryProjection({...row, summaryProjection: projection});
 }
 
-export async function readFrameworkRunSummary(row: StoredSummaryRow): Promise<FrameworkRunSummary> {
-  const projection = await readFrameworkRunSummaryProjection(row);
+export async function readFrameworkRunSummary(row: StoredSummaryRow, deadline = Date.now() + 10_000): Promise<FrameworkRunSummary> {
+  const projection = await readFrameworkRunSummaryProjection(row, deadline);
   return {...projection.summary, uploadsComplete: row.uploadsComplete === true};
 }
 

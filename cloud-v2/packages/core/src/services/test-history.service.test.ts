@@ -271,6 +271,33 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     expect((await new TestHistoryService().list()).entries[0]).toMatchObject({kind: "unavailable", id: payload.suiteId});
   });
 
+  test("standalone missing and enriched projections retain the remaining page deadline", async () => {
+    const payload = run("deadline-run"), payloadSha256 = requestInputDigest(payload);
+    let now = Date.parse(at);
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const budgets: number[] = [];
+    const find = spyOn(TestRunModel, "findOne").mockReturnValue({select() {return this;}, read() {return this;}, readConcern() {return this;},
+      setOptions(options: {timeoutMS: number}) {budgets.push(options.timeoutMS); return this;}, async lean() {now += 200; return {payload, payloadSha256};}} as any);
+    const update = spyOn(TestRunModel, "updateOne").mockImplementation((async (_filter: unknown, _value: unknown, options: {timeoutMS: number}) => {
+      budgets.push(options.timeoutMS); return {};
+    }) as any);
+    try {
+      for (const enrichment of [false, true]) {
+        now = Date.parse(at); budgets.length = 0;
+        const projection = createFrameworkRunSummaryProjection(payload, payloadSha256);
+        delete projection.summary.stepCounts;
+        projection.summarySha256 = requestInputDigest({summary: projection.summary, definitionRevision: projection.definitionRevision, recordingAssetId: null});
+        const service = new TestHistoryService({summaries: async () => new Map()}, async () => {
+          now += 9000;
+          return [[{historyKind: "run", historyId: payload.requestId, historyStartedAt: new Date(at), requestId: payload.requestId,
+            payloadSha256, uploadsComplete: true, ...(enrichment ? {summaryProjection: projection} : {})}], []];
+        });
+        expect((await service.list()).entries[0]).toMatchObject({kind: "run", outcome: "pass"});
+        expect(budgets).toEqual([1000, 800]);
+      }
+    } finally {clock.mockRestore(); find.mockRestore(); update.mockRestore();}
+  });
+
   test("accepted reruns are excluded before page and cursor selection, counted as jobs, and shown on request", async () => {
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
     const parent = {...plan("suite:rerun-parent", [member("original-a"), member("original-b")]), startedAt: "2026-10-03T18:00:00Z"};

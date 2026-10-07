@@ -128,7 +128,7 @@ export class TestHistoryService {
     const entries = await Promise.all(page.map(async (row): Promise<TestHistoryEntry> => {
       try {
         if (row.historyKind === "run") {
-          return {kind: "run", ...await readFrameworkRunSummary({...row, runId: row.historyId} as StoredSummaryRow),
+          return {kind: "run", ...await readFrameworkRunSummary({...row, runId: row.historyId} as StoredSummaryRow, deadline),
             ...(row.rerun ? {rerun: row.rerun} : {})};
         }
         // The existing reader preserves frozen completions and computes current waiting members.
