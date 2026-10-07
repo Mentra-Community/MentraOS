@@ -25,10 +25,6 @@ services:
     ramMegabytes: 1024
     domains:
       - name: core.us-west-2.dev.mentraglass.com
-    env:
-      PORT: "3000"
-      LOG_STDOUT_JSON: "true"
-      SERVICE_NAME: "core"
     livenessCheck:
       enabled: true
       httpPath: /healthz
@@ -59,12 +55,6 @@ services:
     ramMegabytes: 2048
     domains:
       - name: runtime.us-west-2.dev.mentraglass.com
-    env:
-      PORT: "3001"
-      AUDIO_UDP_PORT: "8000"
-      LOG_STDOUT_JSON: "true"
-      SERVICE_NAME: "runtime"
-      AUDIO_WORKERS: "1"
     livenessCheck:
       enabled: true
       httpPath: /healthz

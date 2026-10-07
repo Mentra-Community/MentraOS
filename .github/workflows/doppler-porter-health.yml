@@ -1,0 +1,49 @@
+name: Doppler Porter health
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/scripts/porter-doppler-health*"
+      - ".github/scripts/porter-doppler-source*"
+      - "cloud-v2/porter*.yaml"
+      - ".github/production-release/doppler-porter-contract.json"
+      - ".github/workflows/doppler-porter-health.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doppler-porter-health
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Test audit failure detection
+        run: node --test .github/scripts/porter-doppler-{health,source}.test.mjs
+      - name: Reject deployment source overrides
+        run: node .github/scripts/porter-doppler-source.mjs
+  check:
+    needs: test
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: porter-dev/setup-porter@v0.1.0
+      - name: Check sync freshness and configuration ownership
+        run: node .github/scripts/porter-doppler-health.mjs
