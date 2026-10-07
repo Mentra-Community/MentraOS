@@ -55,7 +55,15 @@ To create another workspace, optionally with its package prefix:
 mentra workspace create "Your Team" --package-prefix com.example
 ```
 
-The new workspace becomes the active one. `MENTRA_CLI_WORKSPACE_ID` selects a
+The new workspace becomes the active one. To set or change the package prefix of
+the active workspace later (or in the Developer Console):
+
+```bash
+mentra workspace set-prefix com.example
+```
+
+`mentra workspace show` says "not set" while a workspace has no prefix, and "not
+visible to your role" to a member, who cannot publish. `MENTRA_CLI_WORKSPACE_ID` selects a
 workspace for a run that authenticates with `MENTRA_CLI_TOKEN`. A workspace
 credential (`msk_...`) already carries its workspace, so CI that publishes with
 one needs no selection.

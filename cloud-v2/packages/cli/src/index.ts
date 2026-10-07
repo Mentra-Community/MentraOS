@@ -21,12 +21,13 @@ import {
   deleteApp,
   getAdminMe,
   getConsoleSession,
-  getPublishingProfile,
   listApps,
   listReleases,
   pollLoginToken,
   publishRelease,
+  readPublishingProfile,
   refreshLoginToken,
+  resolveWorkspaceId,
   setPackagePrefix,
   startLogin,
   submitRelease,
@@ -220,9 +221,35 @@ workspace
 
       console.log(`Workspace: ${active.name} (${active.workspaceId})`);
       console.log(`Role: ${active.membership.role}`);
-      const profile = await getPublishingProfile({...creds, workspaceId: active.workspaceId});
-      console.log(`Package prefix: ${profile.packagePrefix || "not set"}`);
-      console.log(`Prefix status: ${profile.packagePrefixStatus}`);
+      const profile = await readPublishingProfile({...creds, workspaceId: active.workspaceId});
+      if (profile.state === "hidden") {
+        console.log("Package prefix: not visible to your role");
+      } else if (profile.state === "not_set" || !profile.profile.packagePrefix) {
+        console.log("Package prefix: not set");
+        console.log(
+          "Set one with `mentra workspace set-prefix <prefix>` (for example com.example) or in the Developer Console.",
+        );
+      } else {
+        console.log(`Package prefix: ${profile.profile.packagePrefix}`);
+        console.log(`Prefix status: ${profile.profile.packagePrefixStatus}`);
+      }
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+workspace
+  .command("set-prefix")
+  .argument("<prefix>", "package prefix for the workspace's miniapps, e.g. com.example")
+  .description("Set the package prefix of the active workspace")
+  .action(async (prefix: string) => {
+    const creds = await requireCredentials();
+    if (!creds) return;
+
+    try {
+      const workspaceId = await resolveWorkspaceId(creds);
+      const profile = await setPackagePrefix({...creds, workspaceId}, prefix);
+      console.log(`Package prefix: ${profile.packagePrefix} (${profile.packagePrefixStatus})`);
     } catch (error) {
       fail(error);
     }

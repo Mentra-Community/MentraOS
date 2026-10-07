@@ -270,6 +270,23 @@ export async function getPublishingProfile(credentials: CliCredentials): Promise
   return storeRequest(credentials, "/api/console/publishing-profile");
 }
 
+/**
+ * The publishing profile as `workspace show` reports it. The Store answers 404 `not_found` for a
+ * workspace that has no package prefix yet and 403 to a role that cannot publish; neither is a
+ * failure of the command.
+ */
+export async function readPublishingProfile(
+  credentials: CliCredentials,
+): Promise<{ state: "set"; profile: PublishingProfile } | { state: "not_set" } | { state: "hidden" }> {
+  try {
+    return { state: "set", profile: await getPublishingProfile(credentials) };
+  } catch (error) {
+    if (error instanceof StoreRequestError && error.status === 404 && error.code === "not_found") return { state: "not_set" };
+    if (error instanceof StoreRequestError && error.status === 403) return { state: "hidden" };
+    throw error;
+  }
+}
+
 export async function setPackagePrefix(credentials: CliCredentials, packagePrefix: string): Promise<PublishingProfile> {
   return storeRequest(credentials, "/api/console/publishing-profile", {
     method: "PUT",
@@ -404,12 +421,24 @@ function storeFetch(credentials: CliCredentials, path: string, init?: RequestIni
   });
 }
 
+/** The Store refused a request. `code` is its `error` field, when it sent one. */
+export class StoreRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string | null,
+    message: string,
+  ) {
+    super(message);
+    this.name = "StoreRequestError";
+  }
+}
+
 async function storeError(credentials: CliCredentials, response: Response): Promise<Error> {
   const body = await errorBody(response);
   if (response.status === 409 && body.error === "workspace_selection_required") {
     return new WorkspaceSelectionRequiredError(await availableWorkspaces(credentials));
   }
-  return new Error(errorText(body, response.status));
+  return new StoreRequestError(response.status, body.error ?? null, errorText(body, response.status));
 }
 
 /** Best effort: the instruction is still useful without the ids, so a failed lookup must not replace it. */

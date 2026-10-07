@@ -130,14 +130,20 @@ export function registerStoreCommands(program: Command, requireCredentials: () =
       }),
     );
   const tokens = program.command("tokens").description("Manage the active workspace's miniapp publishing credentials");
-  tokens.command("list").action(
-    run(async (creds) => {
-      const workspaceId = await resolveWorkspaceId(creds);
-      print(await listWorkspaceCredentials({ ...creds, workspaceId }, workspaceId));
-    }),
-  );
+  tokens
+    .command("list")
+    .description(
+      "List the active workspace's live credentials (admins and owners see every key; developers see the keys they created)",
+    )
+    .action(
+      run(async (creds) => {
+        const workspaceId = await resolveWorkspaceId(creds);
+        print(await listWorkspaceCredentials({ ...creds, workspaceId }, workspaceId));
+      }),
+    );
   tokens
     .command("create")
+    .description("Create a publishing credential in the active workspace and write its secret to a new private file")
     .requiredOption("--name <name>", "credential name")
     .option("--package <packageName>", "restrict the credential to this miniapp package (repeatable)", collect)
     .option("--expires <date>", "ISO 8601 date after which the credential stops working")
@@ -165,13 +171,16 @@ export function registerStoreCommands(program: Command, requireCredentials: () =
         });
       }),
     );
-  tokens.command("revoke <credentialId>").action(
-    run(async (creds, credentialId) => {
-      const workspaceId = await resolveWorkspaceId(creds);
-      await revokeWorkspaceCredential({ ...creds, workspaceId }, workspaceId, credentialId);
-      print({ ok: true, credentialId });
-    }),
-  );
+  tokens
+    .command("revoke <credentialId>")
+    .description("Revoke a credential of the active workspace (your own, or any as an admin or owner)")
+    .action(
+      run(async (creds, credentialId) => {
+        const workspaceId = await resolveWorkspaceId(creds);
+        await revokeWorkspaceCredential({ ...creds, workspaceId }, workspaceId, credentialId);
+        print({ ok: true, credentialId });
+      }),
+    );
 }
 
 function collect(value: string, previous: string[] = []): string[] {

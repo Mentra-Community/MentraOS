@@ -42,12 +42,18 @@ async function fixture(status?: string, differentBytes = false, workspaceIds = [
   // The workspace each request selected, kept apart from `requests` so those stay {method, path, body}.
   const workspaceHeaders: Array<{ method: string; path: string; workspaceId: string | null }> = [];
   const workspaces = workspaceIds.map((workspaceId) => ({ workspaceId, name: `Team ${workspaceId}` }));
+  // The caller's role per workspace (owner unless a test says otherwise).
+  const roles = new Map<string, string>();
+  // Publishing profiles as the Store keeps them: the seeded workspaces have one, a new workspace has none.
+  const profiles = new Map<string, { packagePrefix: string; packagePrefixStatus: string }>(
+    workspaceIds.map((workspaceId) => [workspaceId, { packagePrefix: "com.example", packagePrefixStatus: "verified" }]),
+  );
   const workspaceSummary = (workspace: { workspaceId: string; name: string }) => ({
     organizationId: "org_core",
     ...workspace,
     status: "active",
     authorizationRevision: 1,
-    membership: { membershipId: `mem_${workspace.workspaceId}`, role: "owner" },
+    membership: { membershipId: `mem_${workspace.workspaceId}`, role: roles.get(workspace.workspaceId) ?? "owner" },
     capabilities: ["miniapps.credentials.create"],
   });
   let failNextTokenMint = false;
@@ -124,11 +130,19 @@ async function fixture(status?: string, differentBytes = false, workspaceIds = [
       if (path.startsWith("/api/console/") && !activeWorkspaceId)
         return Response.json({ error: "workspace_selection_required" }, { status: 409 });
       if (path === "/api/console/publishing-profile") {
-        const profile = { workspaceId: activeWorkspaceId, packagePrefix: "", packagePrefixStatus: "unverified" };
-        if (request.method === "GET") return Response.json({ ...profile, packagePrefix: "com.example", packagePrefixStatus: "verified" });
+        // Like the Store: reading or setting the prefix needs miniapps.publish, which a member lacks.
+        if (roles.get(activeWorkspaceId!) === "member") return Response.json({ error: "forbidden" }, { status: 403 });
+        if (request.method === "GET") {
+          const profile = profiles.get(activeWorkspaceId!);
+          if (!profile)
+            return Response.json({ error: "not_found", error_description: "this workspace has no package prefix yet" }, { status: 404 });
+          return Response.json({ workspaceId: activeWorkspaceId, ...profile });
+        }
         const packagePrefix = (body as { packagePrefix: string }).packagePrefix;
         if (packagePrefix === "taken.example") return Response.json({ error: "package_prefix_taken" }, { status: 409 });
-        return Response.json({ ...profile, packagePrefix });
+        const profile = { packagePrefix, packagePrefixStatus: "unverified" };
+        profiles.set(activeWorkspaceId!, profile);
+        return Response.json({ workspaceId: activeWorkspaceId, ...profile });
       }
       if (path === "/api/console/apps") return Response.json({ app: {} });
       if (path.endsWith("/releases"))
@@ -248,6 +262,14 @@ console.log = (...args) => appendFileSync(${JSON.stringify(consolePath)}, args.j
     savedLogin: () => JSON.parse(readFileSync(loginPath, "utf8")) as { workspaceId?: string; token: string },
     failTokenMint: () => {
       failNextTokenMint = true;
+    },
+    /** The caller's role in `workspaceId`. */
+    setRole: (workspaceId: string, role: string) => {
+      roles.set(workspaceId, role);
+    },
+    /** `workspaceId` has no publishing profile yet, as for a workspace created without a prefix. */
+    clearProfile: (workspaceId: string) => {
+      profiles.delete(workspaceId);
     },
   };
 }
@@ -423,6 +445,58 @@ test("workspace show prints the workspace with its publishing profile", async ()
   });
 });
 
+test("workspace show says a workspace without a package prefix has none, and how to set one", async () => {
+  const f = await fixture();
+  f.clearProfile("ws_1");
+  f.signIn("ws_1");
+  const result = await f.cli("workspace", "show");
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("Workspace: Team ws_1 (ws_1)");
+  expect(result.stdout).toContain("Package prefix: not set");
+  expect(result.stdout).toContain("mentra workspace set-prefix <prefix>");
+  expect(result.stdout).toContain("Developer Console");
+  expect(result.stdout).not.toContain("Prefix status");
+  expect(result.stderr).toBe("");
+});
+
+test("workspace show says the prefix is not visible to a member instead of failing", async () => {
+  const f = await fixture();
+  f.setRole("ws_1", "member");
+  f.signIn("ws_1");
+  const result = await f.cli("workspace", "show");
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("Role: member");
+  expect(result.stdout).toContain("Package prefix: not visible to your role");
+  expect(result.stderr).toBe("");
+});
+
+test("a workspace created without a prefix shows none, and set-prefix sets it", async () => {
+  const f = await fixture();
+  f.signIn("ws_1");
+  expect((await f.cli("workspace", "create", "New Team")).code).toBe(0);
+  expect((await f.cli("workspace", "show")).stdout).toContain("Package prefix: not set");
+
+  const set = await f.cli("workspace", "set-prefix", "com.neworg");
+  expect(set.code).toBe(0);
+  expect(set.stdout).toContain("Package prefix: com.neworg (unverified)");
+  expect(f.requests.filter((request) => request.method === "PUT")).toEqual([
+    { method: "PUT", path: "/api/console/publishing-profile", body: { packagePrefix: "com.neworg" } },
+  ]);
+  expect(f.workspaceHeaders.find((request) => request.method === "PUT")?.workspaceId).toBe("ws_new");
+
+  const shown = await f.cli("workspace", "show");
+  expect(shown.stdout).toContain("Package prefix: com.neworg");
+  expect(shown.stdout).toContain("Prefix status: unverified");
+});
+
+test("workspace set-prefix reports a refused prefix and exits non-zero", async () => {
+  const f = await fixture();
+  f.signIn("ws_1");
+  const result = await f.cli("workspace", "set-prefix", "taken.example");
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain("package_prefix_taken");
+});
+
 test("workspace show asks for a selection instead of guessing among several workspaces", async () => {
   const f = await fixture(undefined, false, ["ws_1", "ws_2"]);
   f.signIn();
@@ -473,6 +547,16 @@ test("workspace create keeps the new workspace selected when its prefix is refus
   expect(result.stderr).toContain("package prefix was not set");
   expect(result.stderr).toContain("package_prefix_taken");
   expect(f.savedLogin().workspaceId).toBe("ws_new");
+});
+
+test("tokens help describes list, create and revoke", async () => {
+  const f = await fixture();
+  // Without a subcommand commander prints the help on stderr, which the fixture captures.
+  const result = await f.cli("tokens");
+  const help = result.stdout + result.stderr;
+  expect(help).toMatch(/list\s+List the active workspace's live credentials/);
+  expect(help).toMatch(/create \[options\]\s+Create a publishing credential/);
+  expect(help).toMatch(/revoke <credentialId>\s+Revoke a credential of the active workspace/);
 });
 
 test("tokens list, create and revoke go through the active workspace's credentials", async () => {
