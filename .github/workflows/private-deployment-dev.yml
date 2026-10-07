@@ -269,6 +269,7 @@ jobs:
           # Wait before any HTTP probes: the previous revision can return a
           # healthy 200 while still serving the previous manifest and Call ZIP.
           # Only verify the contract after both services run this run's image.
+          source .github/scripts/azure-readiness-diagnostics.sh
           ready_revision_for_image() {
             local app="$1" attempt revision image latest
             for attempt in $(seq 1 30); do
@@ -294,6 +295,7 @@ jobs:
               sleep 10
             done
             echo "$app has no ready revision running $expected_image" >&2
+            readiness_diagnostics "$app" "$latest" "$revision"
             return 1
           }
 

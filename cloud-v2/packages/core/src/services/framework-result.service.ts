@@ -1,4 +1,5 @@
 import {testWriteConcern} from "../models/test-write-concern";
+import {FailedFrameworkRunReportService} from './failed-framework-run-report.service';
 import {TestAssetModel} from "../models/test-run.model";
 import {TestRunModel} from "../models/test-run.model";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
@@ -110,7 +111,8 @@ export class FrameworkResultService {
     private readonly terminal: (run: FrameworkRun) => Promise<void> = projectTerminal,
     private readonly definition: (run: RecordedFrameworkRun) => Promise<RoutineEnrollment | null> = definitionFor,
     private readonly assets: TestAssetService = new TestAssetService(),
-    private readonly acknowledgements: FrameworkUploadAcknowledgements = uploadAcknowledgements) {}
+    private readonly acknowledgements: FrameworkUploadAcknowledgements = uploadAcknowledgements,
+    private readonly incidents: Pick<FailedFrameworkRunReportService, 'complete'> = new FailedFrameworkRunReportService()) {}
   async ingest(input: unknown, authenticatedHostId: string) {
     const parsed = frameworkRunSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, `Invalid frozen framework result: ${parsed.error.issues.slice(0, 5)
@@ -185,8 +187,11 @@ export class FrameworkResultService {
       })) throw new FrameworkResultConflict("Required manifest uploads are not acknowledged for this host");
       await this.acknowledgements.complete(stored);
     }
+    // Assets/verdict are already durable. Report evidence is acknowledged before
+    // disposal; Core reporting owns any pending Slack intent independently.
+    const incident = await this.incidents.complete(stored.payload, stored.payloadSha256);
     return {entityId: stored.payload.result.runId, payloadSha256: stored.payloadSha256,
-      manifestSha256: requestInputDigest(stored.payload.assets)};
+      manifestSha256: requestInputDigest(stored.payload.assets), ...(incident ? {incident} : {})};
   }
 
   async list(scope: Record<string, string> = {}): Promise<FrameworkRunPage> {

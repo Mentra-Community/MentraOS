@@ -1,7 +1,7 @@
 import {miniappHistoryBridge} from "./historyBridge"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {AppState, findNodeHandle, Platform, View, type AppStateStatus} from "react-native"
-import {WebView, type WebViewMessageEvent} from "react-native-webview"
+import {WebView, type WebViewMessageEvent, type WebViewProps} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
 import {translate} from "@/i18n"
@@ -23,6 +23,7 @@ import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {getStreamPreviewCoordinator, STREAM_PREVIEW_BIND_TIMEOUT_MS} from "@/services/streamPreview"
+import {getWebViewLoadErrorDiagnostics} from "./webViewLoadErrorDiagnostics"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -587,14 +588,21 @@ function LocalMiniappView({
     onExitRef.current()
   }, [packageName])
 
-  const handleError = useCallback(() => {
-    if (!packageName) return
-    useStressTestStore.getState().recordEvent({
-      packageName,
-      at: Date.now(),
-      kind: "error",
-    })
-  }, [packageName])
+  const handleError = useCallback<NonNullable<WebViewProps["onError"]>>(
+    (event) => {
+      if (!packageName) return
+      console.warn(
+        `[LocalMiniappView:${packageName}] WebView load error`,
+        getWebViewLoadErrorDiagnostics(event.nativeEvent),
+      )
+      useStressTestStore.getState().recordEvent({
+        packageName,
+        at: Date.now(),
+        kind: "error",
+      })
+    },
+    [packageName],
+  )
 
   // Dev hot-reload: when the dev server signals a reload for THIS miniapp
   // (e.g. a file under src/ui/ changed), refresh the WebView. Because the dev

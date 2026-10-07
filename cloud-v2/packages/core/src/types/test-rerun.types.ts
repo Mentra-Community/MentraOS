@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {frameworkIdentitySchema, frameworkRequestInputSchema} from "./framework-request.types";
+import {frameworkIdentitySchema, frameworkRequestInputSchema, recordedFrameworkRequestInputSchema} from "./framework-request.types";
 import {testBuildSourceSchema} from "./test-build.types";
 import {routineDispatchIntentSchema} from './routine-dispatch.types';
 
@@ -35,6 +35,13 @@ export const rerunPlanSchema = z.object({rerunId: frameworkIdentitySchema, paren
 export type RerunPreviewInput = z.infer<typeof rerunPreviewSchema>;
 export type RerunPlan = z.infer<typeof rerunPlanSchema>;
 export type RerunMember = RerunPlan["members"][number];
+/** Read immutable plans written before dispatch preparation; never use these for new admission. */
+const recordedInputPlanSchema = rerunPlanSchema.omit({routineRevision: true}).extend({members: z.array(
+  rerunPlanSchema.shape.members.element.omit({dispatchIntent: true}).extend({input: recordedFrameworkRequestInputSchema}),
+).min(1).max(100)});
+export const recordedRerunPlanSchema = z.union([rerunPlanSchema, recordedInputPlanSchema]);
+export type RecordedRerunPlan = z.infer<typeof recordedRerunPlanSchema>;
+export type RecordedRerunMember = RecordedRerunPlan["members"][number];
 export interface RerunAttempt {
   attemptId: string; attemptNumber: number; rerunId?: string; requestId?: string; runId?: string;
   status: string; publicationComplete: boolean; createdAt?: string; startedAt?: string; finishedAt?: string;

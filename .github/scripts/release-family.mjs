@@ -2,8 +2,8 @@ import {existsSync, readFileSync} from "node:fs"
 import {createHash} from "node:crypto"
 import path from "node:path"
 
-import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
 import {validatePrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
+import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
 import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
 import {validateMentraosTestflightDistribution} from "./mentraos-testflight-distribution.mjs"
 
@@ -598,14 +598,10 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
   const cloud = validateCloudV2DeploymentRecord({plan, record: results.cloud})
   const runtimeImage =
     plan.channel === "production" ? undefined : validateRuntimeImageRecord({plan, record: results.runtimeImage})
-  const privateDeployment =
-    plan.channel === "dev"
-      ? validatePrivateDeploymentRecord({
-          plan,
-          record: results.privateDeployment,
-          runtimeImage,
-        })
-      : undefined
+
+  // Preserve a recorded deployment when reading an immutable manifest; new releases do not require one.
+  const privateDeployment = results.privateDeployment === undefined ? undefined
+    : validatePrivateDeploymentRecord({plan, record: results.privateDeployment, runtimeImage})
 
   let promotion
   if (plan.channel === "production") {

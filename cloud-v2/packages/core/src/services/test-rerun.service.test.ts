@@ -3,8 +3,63 @@ import {TestRerunService,type RerunRepository,type RerunRecord} from './test-rer
 import {requestInputDigest} from './test-request.service';
 import {TestRunError} from './test-result-error';
 import {testRoutineSource} from '../testing/framework-fixtures';
+import {nightlySuiteProjection} from './test-suite.service';
 const source={channel:'dev' as const,buildRunId:123,publicationAttempt:1};
 const nativeInput={routineId:'captions',routineSource:testRoutineSource(),platform:'android' as const,definitionRevision:'a'.repeat(40),laneId:'android',resources:[{id:'app',kind:'app' as const}],build:{repository:'Mentra-Community/MentraOS',headSha:'b'.repeat(40),channel:'dev' as const,kind:'android-apk' as const,source,archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:10,sha256:'d'.repeat(64)}}};
+
+async function recordedFixture() {
+ const f=fixture(), preview=await f.preview('recorded',{memberIds:['member-20']});
+ const {routineSource: _source,...input}=structuredClone(nativeInput);
+ const row=f.rows.get('recorded')!, member=preview.plan.members[0]!;
+ const {dispatchIntent: _intent,...identity}=member;
+ row.plan={...preview.plan,members:[{...identity,input}]};
+ row.previewDigest=requestInputDigest(row.plan);row.state='accepted';row.acceptedAt='2026-10-06T12:00:00Z';
+ f.requests.set(member.requestId,{requestId:member.requestId,hostId:member.hostId,input,inputSha256:requestInputDigest(input),state:'terminal'});
+ f.results.set(member.requestId,{...input,runId:'recorded-run',outcome:'pass',uploadsComplete:true,evidenceStatus:'complete'});
+ const originalMembers=f.members.slice(20,22).map(({routineSource: _bundle,...m})=>({...m,platform:input.platform,definitionRevision:input.definitionRevision,definitionSha256:'d'.repeat(64),hostId:'mini',build:input.build,input}));
+ for(const m of originalMembers)f.requests.set(m.requestId,{requestId:m.requestId,hostId:'mini',input,inputSha256:requestInputDigest(input),state:'terminal'});
+ const suite={suiteId:'nightly',channel:'dev' as const,trigger:'nightly' as const,startedAt:'2026-10-06T11:00:00Z',build:{headSha:input.build.headSha},members:originalMembers};
+ const plan={occurrenceId:'recorded-occurrence',suiteId:'nightly',startedAt:suite.startedAt,trigger:'nightly' as const,suite,members:originalMembers};
+ const result={...plan,members:structuredClone(plan.members),expectedCount:2,passed:0,status:'failed',finishedAt:'2026-10-06T11:30:00Z'};
+ (f.service as any).suites={async detail(){return nightlySuiteProjection(suite,plan,result)}};
+ return {f,row,member,plan,result,suite,input};
+}
+
+test('recorded nightly and input-based rerun history remain readable and the successor uses new preparation',async()=>{
+ const {f,row,member,plan,result}=await recordedFixture();
+ const before=JSON.stringify({row,plan,result}), executions=f.executions;
+ expect((await f.service.detail('recorded')).attempts[0]).toMatchObject({requestId:member.requestId,status:'pass',publicationComplete:true,build:nativeInput.build});
+ const history=await f.service.history({suiteId:'nightly'},'member-20');
+ expect(history.original).toMatchObject({status:'failed',attemptNumber:0});expect(history.attempts[0]!.attemptNumber).toBe(1);
+ expect((await f.service.progress('nightly')).members[0]!.latest!.requestId).toBe(member.requestId);
+ expect((await f.service.children('nightly')).children[0]!.rerunId).toBe('recorded');
+ expect((await f.service.lineage(member.requestId)).lineage!.predecessorAttemptId).toBe('original-20');
+ await expect(f.service.submit({rerunId:'recorded',previewDigest:row.previewDigest})).rejects.toThrow('read-only');
+ expect(f.executions).toBe(executions);
+ const successor=await f.service.preview({rerunId:'successor',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},routineRevision:'f'.repeat(40),reason:'Verify corrected source'},'admin');
+ expect(successor.plan.members[0]).toMatchObject({predecessorAttemptId:member.requestId,attemptNumber:2,dispatchIntent:{routineRevision:'f'.repeat(40),build:nativeInput.build}});
+ expect(successor.plan.members[0]).not.toHaveProperty('input');
+ await f.service.submit({rerunId:'successor',previewDigest:successor.previewDigest});
+ expect(f.requests.get(successor.plan.members[0]!.requestId).state).toBe('preparing');
+ expect(JSON.stringify({row,plan,result})).toBe(before);
+});
+
+test('recorded history still rejects tampered plan, request and nightly receipt identities',async()=>{
+ for(const target of ['plan','request','nightly'] as const){
+  const {f,row,member,result}=await recordedFixture();
+  if(target==='plan')row.plan.reason='changed';
+  if(target==='request')f.requests.get(member.requestId).inputSha256='0'.repeat(64);
+  if(target==='nightly')result.members[0]={...result.members[0]!,definitionSha256:'e'.repeat(64)};
+  await expect(target==='nightly'?f.service.progress('nightly'):f.service.detail('recorded')).rejects.toThrow();
+ }
+});
+
+test('new preparation records still require routine bundle provenance when read',async()=>{
+ const f=fixture(),p=await f.preview('new',{memberIds:['member-20']});
+ await f.service.submit({rerunId:'new',previewDigest:p.previewDigest});f.complete(p.plan.members[0]!.requestId);
+ const request=f.requests.get(p.plan.members[0]!.requestId);delete request.input.routineSource;request.inputSha256=requestInputDigest(request.input);
+ await expect(f.service.detail('new')).rejects.toThrow('frozen input');
+});
 function fixture(){
  const rows=new Map<string,RerunRecord>(),claims=new Set<string>(),requests=new Map<string,any>(),results=new Map<string,any>();
  let time=Date.parse('2026-10-06T12:00:00Z'),prepared=0,failId='',executions=0;

@@ -7,6 +7,7 @@ import type {FrameworkRun, RecordedFrameworkRun} from "../../../../packages/core
 import {api} from "../lib/api";
 import {RoutineSearch, useRoutineSearch, matchesRoutineSearch, hasRoutineFilters, type RoutineSearchFilters, type SearchableRoutine} from "../components/routine-search";
 import {RecordingVideo} from "../components/recording-video";
+import {TestHistoryTable} from "../components/test-history-table";
 import {testRunLocation} from "../lib/test-run-links";
 import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
 import type {FrameworkRequestDisplay} from "../../../../packages/core/src/types/framework-request.types";
@@ -341,43 +342,41 @@ export function FrameworkRunsPage({scope}: {scope?: Record<string, string>}) {
 }
 function TestHistoryList() {
   const [filters, setFilters] = useRoutineSearch();
+  const [includeReruns, setIncludeReruns] = useState(false);
   const catalog = useSearchCatalog();
-  const history = useInfiniteQuery({queryKey: ["test-history"], initialPageParam: undefined as string | undefined,
-    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(`/api/admin/test-runs/history/list?limit=25${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, {signal, timeoutMs: 30000}),
+  const history = useInfiniteQuery({queryKey: ["test-history", includeReruns], initialPageParam: undefined as string | undefined,
+    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(testHistoryListPath(includeReruns, pageParam), {signal, timeoutMs: 30000}),
     getNextPageParam: page => page.nextCursor ?? undefined, retry: false, retryOnMount: false,
     refetchInterval: query => query.state.error ? false : 15000});
-  if (history.isPending) return <p role="status">Loading test history…</p>;
-  if (history.error && !history.data) return <section className={PANEL} role="alert"><p>Could not load test history: {history.error.message}</p>
-    <button className="mt-3 underline" onClick={() => history.refetch()}>Retry</button></section>;
-  const entries = history.data.pages.flatMap(page => page.entries);
+  const entries = history.data?.pages.flatMap(page => page.entries) ?? [];
   const routines = catalog.data?.routines ?? [];
   const filtered = entries.filter(entry => matchesHistorySearch(entry, routines, filters));
   const members = entries.flatMap<{routineId: string; platform: string}>(entry => entry.kind === "suite" ? entry.members ?? [] : entry.kind === "run" ? [entry] : []);
   const options = [...routines.map(searchableRoutine), ...members.map(member => runSearchMetadata(member, routines))];
-  return <section className={PANEL}><h2 className="text-xl font-semibold">Test history</h2>
+  return <section className={PANEL}>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Test history</h2>
+      <button type="button" role="switch" aria-checked={includeReruns} onClick={() => setIncludeReruns(value => !value)}
+        className="inline-flex items-center gap-2 rounded-md py-1 text-sm text-[#57606a] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0969da]">
+        <span aria-hidden="true" className={`relative h-5 w-9 rounded-full transition-colors ${includeReruns ? "bg-[#0969da]" : "bg-[#d0d7de]"}`}><span className={`absolute top-0.5 size-4 rounded-full bg-white transition-transform ${includeReruns ? "translate-x-[18px]" : "translate-x-0.5"}`}/></span>Show reruns
+      </button>
+    </div>
     <p className="mt-2 text-sm text-[#68746d]">Dispatched test suites and standalone routine runs, newest first.</p>
     <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${entries.length} loaded entries`} />
     <p className="mt-2 text-sm text-[#68746d]">Filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p>
     {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <button className="underline" onClick={() => catalog.refetch()}>Retry routine metadata</button></p>}
-    {history.error && <p role="alert" className="mt-3">History could not refresh: {history.error.message} <button className="underline" onClick={() => history.refetch()}>Retry</button></p>}
-    {!entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
-    {!!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches your filters.</p>}
-    <ul className="mt-4 space-y-3">{filtered.map(entry => <TestHistoryItem key={entry.kind === "unavailable" ? `${entry.sourceKind}:${entry.id}` : `${entry.kind}:${entry.kind === "suite" ? entry.suiteId : entry.runId}`} entry={entry}/>)}</ul>
+    {history.isPending && <p role="status" className="mt-3">Loading test history…</p>}
+    {history.error && <p role="alert" className="mt-3">{history.data ? "History could not refresh" : "Could not load test history"}: {history.error.message} <button className="underline" onClick={() => history.refetch()}>Retry</button></p>}
+    {history.data && !entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
+    {history.data && !!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches your filters.</p>}
+    {!!filtered.length && <TestHistoryTable entries={filtered} routines={routines}/>}
     {history.hasNextPage && <button className="mt-4 underline" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? "Loading…" : "More history"}</button>}
   </section>;
 }
-function TestHistoryItem({entry}: {entry: TestHistoryEntry}) {
-  if (entry.kind === "unavailable") return <li className="rounded-lg border border-[#e0e4de] p-4">
-    <a className="font-semibold underline" href={entry.sourceKind === "run" ? frameworkRunHref(entry.id) : `/?testSuite=${encodeURIComponent(entry.id)}`}>{entry.sourceKind === "run" ? "Routine run" : "Test suite"} · {entry.id} · {new Date(entry.startedAt).toLocaleString()}</a>
-    <p role="alert" className="mt-1 text-sm">{entry.message}</p>
-  </li>;
-  if (entry.kind === "run") return <FrameworkRunListItem run={entry}/>;
-  return <li className="rounded-lg border border-[#e0e4de] p-4">
-    <a className="font-semibold underline" href={`/?testSuite=${encodeURIComponent(entry.suiteId)}`}>{entry.channel} {entry.trigger} suite · {new Date(entry.startedAt).toLocaleString()}</a> · {entry.outcome} · {`${entry.passed}/${entry.expectedCount} passed${entry.skipped === undefined ? "" : `, ${entry.skipped} skipped`}`}
-    <p className="mt-1 text-sm">Suite <code>{entry.suiteId}</code>{entry.finishedAt ? ` · Finished ${new Date(entry.finishedAt).toLocaleString()}` : " · In progress"}</p>
-    <p className="mt-1 text-sm"><BuildIdentity build={{...entry.build, channel: entry.channel}}/></p>
-  </li>;
+export function testHistoryListPath(includeReruns: boolean, cursor?: string) {
+  const query = new URLSearchParams({limit: "25", includeReruns: String(includeReruns)});
+  if (cursor) query.set("cursor", cursor);
+  return `/api/admin/test-runs/history/list?${query}`;
 }
 function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
   const [filters, setFilters] = useRoutineSearch();
@@ -400,21 +399,10 @@ function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
     {query.error && <p role="alert" className="mt-3">Runs could not refresh: {query.error.message}</p>}
     {!runs.length && <p className="mt-3">No routine runs match this build.</p>}
     {!!runs.length && !filtered.length && <p className="mt-3">No loaded routine runs match your filters for this build.</p>}
-    <ul className="mt-4 space-y-3">{filtered.map(run => <FrameworkRunListItem key={run.requestId} run={run}/>)}</ul>
+    {!!filtered.length && <TestHistoryTable entries={filtered.map(run => ({kind: "run" as const, ...run}))} routines={routines}/>}
     {query.hasNextPage && <button className="mt-4 underline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>{query.isFetchingNextPage ? "Loading…" : "More runs"}</button>}
   </section>;
 }
-function FrameworkRunListItem({run}: {run: FrameworkRunSummary}) {
-  return <li className="rounded-lg border border-[#e0e4de] p-4">
-    <a className="font-semibold underline" href={frameworkRunHref(run.runId)}>{run.routineId} · {run.platform} · {new Date(run.startedAt).toLocaleString()}</a> · {run.outcome} · {runDuration(run.startedAt, run.finishedAt) ?? "Duration unknown"}
-    {run.stepCounts && <p className="mt-1 text-sm">{`${run.stepCounts.passed}/${run.stepCounts.total} passed, ${run.stepCounts.skipped} skipped`}</p>}
-    <p className="mt-1 text-sm">Run <code>{run.runId}</code> · {run.hostId}/{run.laneId}</p><p className="mt-1 text-sm"><BuildIdentity build={run.build}/></p>
-    {!run.frameworkBinding && <p className="mt-1 text-sm">Framework provenance unknown</p>}
-    {!run.routineSource && <p className="mt-1 text-sm">Routine bundle provenance unknown</p>}
-    {run.evidenceStatus === "failed" && <p className="mt-1">Evidence failed</p>}{!run.uploadsComplete && <p className="mt-1">Evidence upload pending</p>}
-  </li>;
-}
-
 export function recordingOffset(ms: number) {
   const seconds = Math.floor(ms / 1000);
   return `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;

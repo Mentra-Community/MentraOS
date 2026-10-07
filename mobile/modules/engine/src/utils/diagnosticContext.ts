@@ -5,9 +5,9 @@ import {Platform} from "react-native"
 import type {ReportContext} from "@mentra/cloud-client"
 
 import appRegistry from "../services/AppRegistry"
+import {cloudClientService} from "../services/CloudClientService"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
 import {getLastOpenTime, useAppStatusStore} from "../stores/apps"
-import {useConnectionStore} from "../stores/connection"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
@@ -47,15 +47,18 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
   const appletState = useAppStatusStore.getState()
   const settingsState = useSettingsStore.getState()
   const {setCoreInfo: _setCoreInfo, reset: _resetBluetooth, ...coreState} = useCoreStore.getState()
-  const {
-    setStatus: _setConnectionStatus,
-    setUrl: _setConnectionUrl,
-    setError: _setConnectionError,
-    incrementReconnectAttempts: _incrementReconnectAttempts,
-    resetReconnectAttempts: _resetReconnectAttempts,
-    reset: _resetConnection,
-    ...connectionState
-  } = useConnectionStore.getState()
+  const {status, audioTransport} = cloudClientService.getStatus()
+  const audioPosition = cloudClientService.getAudioPosition()
+  // Project only current Cloud V2 metadata. The old connection store lost its
+  // writer with Cloud V1; neither subscription intent nor this submitted-audio
+  // cursor proves that the cloud received or transcribed a frame.
+  const connectionState = {
+    status,
+    audioTransport,
+    handshakeComplete: cloudClientService.isConnected(),
+    hasDesiredAudioSubscriptions: cloudClientService.hasAudioSubscriptions(),
+    audioPosition: audioPosition ? {sessionTag: audioPosition.sessionTag, offsetMs: audioPosition.offsetMs} : null,
+  }
   const {
     setGlassesInfo: _setGlassesInfo,
     setBatteryInfo: _setBatteryInfo,

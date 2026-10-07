@@ -3,16 +3,16 @@ import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {TestRerunModel} from "../models/test-rerun.model";
 import {testWriteConcern} from "../models/test-write-concern";
 import {testBuildSourceSchema} from "../types/test-build.types";
-import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
-import {individualRerunSchema, rerunPlanSchema, rerunPreviewSchema, rerunSubmitSchema,
-  rerunTerminalStatuses, type RerunPlan, type RerunMember, type RerunAttempt} from "../types/test-rerun.types";
+import {frameworkIdentitySchema, frameworkRequestInputSchema, recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
+import {individualRerunSchema, rerunPlanSchema, recordedRerunPlanSchema, rerunPreviewSchema, rerunSubmitSchema,
+  rerunTerminalStatuses, type RerunPlan, type RerunMember, type RecordedRerunPlan, type RecordedRerunMember, type RerunAttempt} from "../types/test-rerun.types";
 import {TestSuiteService} from "./test-suite.service";
 import {RoutineDispatchService} from "./routine-dispatch.service";
 import {TestRequestService, requestInputDigest, isExecutableRequest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
 
-export interface RerunRecord {rerunId: string; inputDigest: string; previewDigest: string; plan: RerunPlan;
+export interface RerunRecord {rerunId: string; inputDigest: string; previewDigest: string; plan: RecordedRerunPlan;
   state: "preview" | "accepted"; acceptedAt?: string}
 export interface RerunRepository {
   get(id: string): Promise<RerunRecord | null>;
@@ -52,7 +52,7 @@ const terminal = (status: string) => (rerunTerminalStatuses as readonly string[]
 export const rerunRootKey = (parent: RerunPlan["parent"], memberId: string) => requestInputDigest({parent, memberId});
 const originalId = (rootKey: string, requestId?: string) => requestId ?? `original-${rootKey}`;
 const verified = (row: RerunRecord): RerunRecord => {
-  const plan = rerunPlanSchema.safeParse(row.plan);
+  const plan = recordedRerunPlanSchema.safeParse(row.plan);
   if (!plan.success || row.rerunId !== plan.data.rerunId || requestInputDigest(plan.data) !== row.previewDigest)
     throw new TestRunError(503, "Rerun plan integrity is unavailable");
   return {...row, plan: plan.data};
@@ -68,12 +68,16 @@ export class TestRerunService {
     private readonly now: () => number = Date.now) {}
 
   private async requestAttempt(requestId: string, identity: Pick<RerunAttempt, "parent" | "memberId" | "attemptNumber" | "attemptId">,
-    frozen?: RerunMember): Promise<RerunAttempt> {
+    frozen?: RecordedRerunMember): Promise<RerunAttempt> {
     const request = await this.requests.get(requestId);
+    const intent = frozen && 'dispatchIntent' in frozen ? frozen.dispatchIntent : undefined;
+    const recordedInput = frozen && 'input' in frozen ? frozen.input : undefined;
     if (!request) return {...identity, requestId, status: "admission-pending", publicationComplete: false,
-      ...(frozen ? {build: frozen.dispatchIntent.build, definitionRevision: frozen.dispatchIntent.routineRevision} : {})};
-    if (frozen && (request.hostId !== frozen.hostId || request.dispatchIntentSha256 !== requestInputDigest(frozen.dispatchIntent)))
-      throw new TestRunError(503, 'Rerun request differs from its frozen dispatch intent');
+      ...(frozen ? {build: intent?.build ?? recordedInput!.build, definitionRevision: intent?.routineRevision ?? recordedInput!.definitionRevision} : {})};
+    if (frozen && (request.hostId !== frozen.hostId || (intent
+      ? request.dispatchIntentSha256 !== requestInputDigest(intent)
+      : !isExecutableRequest(request) || request.inputSha256 !== requestInputDigest(recordedInput))))
+      throw new TestRunError(503, 'Rerun request differs from its frozen provenance');
     if (!isExecutableRequest(request)) {
       const intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
       if (!intent.success || requestInputDigest(intent.data) !== request.dispatchIntentSha256)
@@ -82,20 +86,20 @@ export class TestRerunService {
         build: intent.data.build, definitionRevision: intent.data.routineRevision,
         ...(request.preparationRejection ? {reason: request.preparationRejection.reason, preparationDisposition: request.preparationRejection.disposition} : {})};
     }
-    const input = frameworkRequestInputSchema.safeParse(request.input);
-    if (!input.success || requestInputDigest(input.data) !== request.inputSha256 || frozen &&
-      (input.data.routineId !== frozen.dispatchIntent.routineId || input.data.platform !== frozen.dispatchIntent.platform ||
-        input.data.definitionRevision !== frozen.dispatchIntent.routineRevision || input.data.laneId !== frozen.dispatchIntent.laneId ||
-        input.data.minimumFrameworkVersion !== frozen.dispatchIntent.minimumFrameworkVersion ||
-        frozen.dispatchIntent.routineSource && requestInputDigest(input.data.routineSource) !== requestInputDigest(frozen.dispatchIntent.routineSource) ||
-        requestInputDigest(input.data.build) !== requestInputDigest(frozen.dispatchIntent.build)))
+    const input = (request.dispatchIntent ? frameworkRequestInputSchema : recordedFrameworkRequestInputSchema).safeParse(request.input);
+    if (!input.success || requestInputDigest(input.data) !== request.inputSha256 || intent &&
+      (input.data.routineId !== intent.routineId || input.data.platform !== intent.platform ||
+        input.data.definitionRevision !== intent.routineRevision || input.data.laneId !== intent.laneId ||
+        input.data.minimumFrameworkVersion !== intent.minimumFrameworkVersion ||
+        intent.routineSource && requestInputDigest(input.data.routineSource ?? null) !== requestInputDigest(intent.routineSource) ||
+        requestInputDigest(input.data.build) !== requestInputDigest(intent.build)))
       throw new TestRunError(503, "Rerun request differs from its frozen input");
     let result;
     try {result = await this.results.summary(requestId);} catch (error) {
       if (!(error instanceof TestRunError && error.status === 404)) throw error;
     }
     if (result && (result.routineId !== input.data.routineId || result.platform !== input.data.platform ||
-      result.definitionRevision !== input.data.definitionRevision || requestInputDigest(result.routineSource) !== requestInputDigest(input.data.routineSource) || requestInputDigest(result.build) !== requestInputDigest(input.data.build)))
+      result.definitionRevision !== input.data.definitionRevision || requestInputDigest(result.routineSource ?? null) !== requestInputDigest(input.data.routineSource ?? null) || requestInputDigest(result.build) !== requestInputDigest(input.data.build)))
       throw new TestRunError(503, "Rerun result differs from its admitted app or definition");
     return {...identity, requestId, status: result?.outcome ?? request.terminalStatus ?? request.state,
       publicationComplete: result?.uploadsComplete === true && result.evidenceStatus === "complete", build: input.data.build, definitionRevision: input.data.definitionRevision,
@@ -111,7 +115,7 @@ export class TestRerunService {
     const request = await this.requests.get(parent.requestId);
     if (!request) throw new TestRunError(404, "Original test request was not found");
     const intent = !isExecutableRequest(request) ? routineDispatchIntentSchema.parse(request.dispatchIntent) : undefined;
-    const input = isExecutableRequest(request) ? frameworkRequestInputSchema.parse(request.input) : undefined;
+    const input = isExecutableRequest(request) ? recordedFrameworkRequestInputSchema.parse(request.input) : undefined;
     const attempt = await this.requestAttempt(parent.requestId, {parent, memberId: parent.requestId, attemptNumber: 0, attemptId: parent.requestId});
     return [{...attempt, memberId: parent.requestId, routineId: input?.routineId ?? intent!.routineId, platform: input?.platform ?? intent!.platform,
       routineSource: input?.routineSource ?? intent?.routineSource, routineRevision: input?.definitionRevision ?? intent!.routineRevision}];
@@ -122,7 +126,7 @@ export class TestRerunService {
     const row = verified(rows[0]!); const member = row.plan.members.find(m => m.rootKey === rootKey)!;
     return {row, member, attempt: await this.attempt(row, member)};
   }
-  private async attempt(row: RerunRecord, member: RerunMember): Promise<RerunAttempt> {
+  private async attempt(row: RerunRecord, member: RecordedRerunMember): Promise<RerunAttempt> {
     return {...await this.requestAttempt(member.requestId, {attemptId: member.requestId, attemptNumber: member.attemptNumber,
       parent: row.plan.parent, memberId: member.memberId}, member), rerunId: row.rerunId,
       predecessorAttemptId: member.predecessorAttemptId, createdAt: row.acceptedAt, reason: row.plan.reason};
@@ -134,9 +138,11 @@ export class TestRerunService {
     const old = await this.store.get(selected.rerunId);
     if (old) {
       const row = verified(old);
+      const currentPlan = rerunPlanSchema.safeParse(row.plan);
+      if (!currentPlan.success) throw new TestRunError(409, 'Recorded reruns are read-only; use a new rerun ID');
       if (row.inputDigest !== inputDigest) throw new TestRunError(409, "Rerun ID already has a different selection or app source");
       if (row.state === "preview" && Date.parse(row.plan.expiresAt) <= this.now()) throw new TestRunError(409, "Preview expired; use a new rerun ID");
-      return {rerunId: row.rerunId, previewDigest: row.previewDigest, plan: row.plan, state: row.state};
+      return {rerunId: row.rerunId, previewDigest: row.previewDigest, plan: currentPlan.data, state: row.state};
     }
     const parentMembers = await this.parentMembers(selected.parent);
     const selection = selected.selection;
@@ -171,7 +177,7 @@ export class TestRerunService {
           originalBuild = original.dispatchIntent.build;
           originalBinding = {hostId: original.hostId, laneId: original.dispatchIntent.laneId};
         } else if (original) {
-          const parsedInput = frameworkRequestInputSchema.safeParse(original.input);
+          const parsedInput = (original.dispatchIntent ? frameworkRequestInputSchema : recordedFrameworkRequestInputSchema).safeParse(original.input);
           if (!parsedInput.success || requestInputDigest(parsedInput.data) !== original.inputSha256)
             throw new TestRunError(503, 'Original routine provenance is unavailable');
           routineSource = parsedInput.data.routineSource;
@@ -183,7 +189,7 @@ export class TestRerunService {
         if (member.requestId) {
           const original = await this.requests.get(member.requestId);
           if (original && isExecutableRequest(original)) {
-            const parsedInput = frameworkRequestInputSchema.safeParse(original.input);
+            const parsedInput = (original.dispatchIntent ? frameworkRequestInputSchema : recordedFrameworkRequestInputSchema).safeParse(original.input);
             if (!parsedInput.success || requestInputDigest(parsedInput.data) !== original.inputSha256)
               throw new TestRunError(503, "Original app provenance is unavailable");
             originalBuild = parsedInput.data.build;
@@ -216,6 +222,8 @@ export class TestRerunService {
     let row = await this.store.get(parsed.data.rerunId);
     if (!row) throw new TestRunError(404, "Preview was not found");
     row = verified(row);
+    const currentPlan = rerunPlanSchema.safeParse(row.plan);
+    if (!currentPlan.success) throw new TestRunError(409, 'Recorded reruns are read-only; use a new rerun ID');
     if (row.previewDigest !== parsed.data.previewDigest) throw new TestRunError(409, "Preview digest changed");
     if (row.state === "preview") {
       if (Date.parse(row.plan.expiresAt) <= this.now()) throw new TestRunError(409, "Preview expired; use a new rerun ID");
@@ -230,7 +238,7 @@ export class TestRerunService {
       if (row.state !== "accepted") throw new TestRunError(409, "Rerun acceptance is unavailable");
     }
     const admissions = [];
-    for (const member of row.plan.members) {
+    for (const member of currentPlan.data.members) {
       try {await this.requests.prepare(member.hostId, member.dispatchIntent); admissions.push({requestId: member.requestId, admitted: true});}
       catch {admissions.push({requestId: member.requestId, admitted: false, reason: "Admission unavailable; retry this same rerun ID and preview digest"});}
     }

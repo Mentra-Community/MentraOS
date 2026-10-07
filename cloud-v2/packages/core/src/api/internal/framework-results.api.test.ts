@@ -114,6 +114,7 @@ test("a 2437-asset frozen result publishes unchanged through the authenticated r
     async () => ({definition: {steps: [{id: "OTA-04-requested"}]}}) as unknown as RoutineEnrollment,
     undefined,
     {async list() {return [];}, async complete() {throw Error("Incomplete uploads cannot be acknowledged");}},
+    {async complete() {return undefined;}},
   )
   const token = "synthetic-controller-credential-" + "x".repeat(32);
   const api = createFrameworkResultsApi(service, () => JSON.stringify({mini: token}));

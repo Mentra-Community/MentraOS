@@ -3,6 +3,7 @@ import {afterAll, beforeAll, describe, expect, spyOn, test} from "bun:test";
 import {randomUUID} from "node:crypto";
 import mongoose from "mongoose";
 import {TestRunModel, TEST_RUN_NATIVE_HISTORY_INDEX} from "../models/test-run.model";
+import {TestRerunModel} from "../models/test-rerun.model";
 import {backfillTestSuiteStartedAt, TEST_SUITE_HISTORY_INDEX, TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
 import type {TestSuite} from "../types/test-suite.types";
@@ -15,10 +16,28 @@ import {TestRunError} from "./test-result-error";
 test("history validates cursor and page limits before querying", async () => {
   let reads = 0;
   const service = new TestHistoryService({detail: async () => {throw new Error("not used");}}, async () => {reads++; return [];});
-  const invalid: Record<string, string>[] = [{cursor: "invalid"}, {limit: "0"}, {limit: "101"}, {limit: "2.5"}, {scope: "unexpected"}];
+  const invalid: Record<string, string>[] = [{cursor: "invalid"}, {limit: "0"}, {limit: "101"}, {limit: "2.5"},
+    {includeReruns: "1"}, {includeReruns: "TRUE"}, {includeReruns: ""}, {scope: "unexpected"}];
   for (const query of invalid)
     await expect(service.list(query)).rejects.toMatchObject({status: 400});
   expect(reads).toBe(0);
+});
+
+test("history hides accepted reruns by default and validates the explicit toggle", async () => {
+  const flags: boolean[] = [];
+  const service = new TestHistoryService({detail: async () => {throw new Error("not used");}}, async query => {
+    flags.push(query.includeReruns); return [];
+  });
+  await service.list(); await service.list({includeReruns: "false"}); await service.list({includeReruns: "true"});
+  expect(flags).toEqual([false, false, true]);
+  const queries = testHistoryQueries(null, 2);
+  const rerunLookup = queries.runs.find(stage => "$lookup" in stage && stage.$lookup.from === TestRerunModel.collection.name);
+  expect(rerunLookup).toMatchObject({$lookup: {localField: "payload.requestId", foreignField: "plan.members.requestId",
+    pipeline: [{$match: {state: "accepted"}}, {$limit: 1}, {$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId"}}]}});
+  const summary = queries.runs.at(-1) as any;
+  expect(summary.$project.historySuppressed.$or).toContainEqual({$gt: [{$size: "$historyReruns"}, 0]});
+  const shown = testHistoryQueries(null, 2, true).runs.at(-1) as any;
+  expect(shown.$project.historySuppressed.$or).not.toContainEqual({$gt: [{$size: "$historyReruns"}, 0]});
 });
 
 test("a database execution timeout is a retryable history error", async () => {
@@ -52,7 +71,28 @@ test("history suite summaries retain the reader's frozen failed outcome and decl
   const rows: StoredHistoryRow[] = [{historyKind: "suite", historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt)}];
   const service = new TestHistoryService({detail: async () => suite}, async () => [[], rows]);
   expect(await service.list()).toEqual({entries: [{kind: "suite", suiteId: suite.suiteId, channel: "dev", trigger: "nightly",
-    startedAt: suite.startedAt, finishedAt: suite.finishedAt, outcome: "failed", passed: 1, skipped: 1, expectedCount: 2, build: suite.build, members: [{routineId: "notes-phone", platform: "ios-on-mac"}, {routineId: "camera", platform: "android"}]}], nextCursor: null});
+    startedAt: suite.startedAt, finishedAt: suite.finishedAt, outcome: "failed", passed: 1, skipped: 1, expectedCount: 2, build: suite.build,
+    rerunCount: 0, failedCount: 0, lanes: [], members: [{routineId: "notes-phone", platform: "ios-on-mac"}, {routineId: "camera", platform: "android"}]}], nextCursor: null});
+});
+
+test("suite history retains accepted job count and exact distinct host/lane pairs", async () => {
+  const suite = {suiteId: "suite:lanes", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T19:00:00Z",
+    outcome: "running", passed: 0, build: {headSha: "a".repeat(40)}, members: [
+      {routineId: "notes", platform: "ios-on-mac", hostId: "mini", dispatchIntent: {laneId: "mac"}},
+      {routineId: "settings", platform: "ios-on-mac", hostId: "mini", laneId: "mac"},
+      {routineId: "camera", platform: "android", hostId: "other", laneId: "android"},
+      {routineId: "historical", platform: "android"},
+    ]} as any;
+  const service = new TestHistoryService({detail: async () => suite}, async () => [[], [
+    {historyKind: "suite", historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt), rerunCount: 5},
+  ]]);
+  expect((await service.list()).entries[0]).toMatchObject({kind: "suite", rerunCount: 5,
+    lanes: [{hostId: "mini", laneId: "mac"}, {hostId: "other", laneId: "android"}],
+    members: [{routineId: "notes", hostId: "mini", laneId: "mac"}, {routineId: "settings", hostId: "mini", laneId: "mac"},
+      {routineId: "camera", hostId: "other", laneId: "android"}, {routineId: "historical"}],
+  });
+  expect(testHistoryQueries(null, 1).suites).toContainEqual({$lookup: {from: TestRerunModel.collection.name,
+    localField: "suiteId", foreignField: "plan.parent.suiteId", pipeline: [{$match: {state: "accepted"}}, {$count: "count"}], as: "historyReruns"}});
 });
 
 test("one unavailable row preserves its page slot and cursor without failing neighboring entries", async () => {
@@ -87,7 +127,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
       throw new Error("History integration tests require plain loopback Mongo");
     url.pathname = `/test_history_${randomUUID().replaceAll("-", "")}`;
     await mongoose.connect(url.href, {autoIndex: false, serverSelectionTimeoutMS: 5000}); connected = true;
-    await TestRunModel.createIndexes(); await TestSuiteModel.createIndexes();
+    await TestRunModel.createIndexes(); await TestSuiteModel.createIndexes(); await TestRerunModel.createIndexes();
   });
   afterAll(async () => {
     if (connected) {await mongoose.connection.dropDatabase(); await mongoose.disconnect();}
@@ -119,6 +159,36 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     payload, payloadSha256: requestInputDigest(payload), summaryProjection: createFrameworkRunSummaryProjection(payload, requestInputDigest(payload)), outcome: "pass", uploadsComplete: true});
   const saveSuite = async (payload: TestSuite) => TestSuiteModel.collection.insertOne({suiteId: payload.suiteId, payload,
     startedAt: new Date(payload.startedAt)});
+
+  test("accepted reruns are excluded before page and cursor selection, counted as jobs, and shown on request", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
+    const parent = {...plan("suite:rerun-parent", [member("original-a"), member("original-b")]), startedAt: "2026-10-03T18:00:00Z"};
+    await saveSuite(parent);
+    const hidden = Array.from({length: 30}, (_, index) => `ordinary-request-${index.toString().padStart(2, "0")}`);
+    await Promise.all(hidden.map(id => saveRun(run(id))));
+    await saveRun(run("rerun-visible-standalone"));
+    await saveRun(run("preview-member"));
+    await TestRerunModel.collection.insertMany([
+      {rerunId: "accepted-many", state: "accepted", plan: {parent: {suiteId: parent.suiteId}, members: hidden.map(requestId => ({requestId}))}},
+      {rerunId: "accepted-unpublished", state: "accepted", plan: {parent: {suiteId: parent.suiteId}, members: [{requestId: "not-published"}]}},
+      {rerunId: "preview-only", state: "preview", plan: {parent: {suiteId: parent.suiteId}, members: [{requestId: "preview-member"}]}},
+    ]);
+    const history = new TestHistoryService();
+    const first = await history.list({limit: "1"});
+    expect(first.entries.map(entry => entry.kind === "run" ? entry.runId : "unexpected")).toEqual(["rerun-visible-standalone"]);
+    expect(JSON.parse(Buffer.from(first.nextCursor!, "base64url").toString()).id).toBe("rerun-visible-standalone");
+    const second = await history.list({limit: "1", cursor: first.nextCursor!});
+    expect(second.entries.map(entry => entry.kind === "run" ? entry.runId : "unexpected")).toEqual(["preview-member"]);
+    const third = await history.list({limit: "1", cursor: second.nextCursor!});
+    expect(third.entries[0]).toMatchObject({kind: "suite", suiteId: parent.suiteId, rerunCount: 2});
+    expect(third.nextCursor).toBeNull();
+    const shown = await history.list({limit: "100", includeReruns: "true"});
+    expect(shown.entries.filter(entry => entry.kind === "run")).toHaveLength(32);
+    expect(shown.entries.find(entry => entry.kind === "run" && entry.runId === hidden[0])).toMatchObject({kind: "run",
+      rerun: {rerunId: "accepted-many", parentSuiteId: parent.suiteId}});
+    expect(shown.entries.find(entry => entry.kind === "run" && entry.runId === "preview-member")).not.toHaveProperty("rerun");
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
+  });
 
   test("groups many exact members before pagination, keeps single jobs and mismatches, and orders equal times deterministically", async () => {
     const grouped = Array.from({length: 100}, (_, index) => `member-${index.toString().padStart(3, "0")}`);
@@ -202,7 +272,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
       definitionSha256: "c".repeat(64),
       hostId: "mini",
       input: {
-        routineSource: testRoutineSource(),
+        routineSource: testRoutineSource("b".repeat(40)),
         routineId: selected.routineId,
         platform: selected.platform,
         definitionRevision: "b".repeat(40),

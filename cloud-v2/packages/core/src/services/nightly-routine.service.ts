@@ -20,6 +20,8 @@ import {configuredRoutineLanes, type RoutineLaneBindings} from "./routine-admiss
 export const nightlyOccurrenceSchema = z.object({occurrenceId: frameworkIdentitySchema,
   startedAt: z.string().datetime({offset: true}), trigger: z.enum(["nightly", "manual"])}).strict();
 type Occurrence = z.infer<typeof nightlyOccurrenceSchema>;
+const nightlyCancellationSchema = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict();
+export type NightlyCancellation = z.infer<typeof nightlyCancellationSchema>;
 type RequestInput = z.infer<typeof frameworkRequestInputSchema>;
 export interface NightlySelectionError {stage: "build" | "host" | "admission"; status?: number; message: string}
 type PlatformSelection = {build?: TestBuild; host?: ReceivedTestHostState | null; errors: NightlySelectionError[]};
@@ -36,10 +38,12 @@ export interface NightlyPlanRepository {
   freeze(plan: NightlyPlan): Promise<NightlyPlan>;
   completed(suiteId: string): Promise<NightlyResult | null>;
   finish(suiteId: string, result: NightlyResult): Promise<NightlyResult>;
+  cancellation(suiteId: string): Promise<NightlyCancellation | null>;
+  requestCancellation(suiteId: string, cancellation: NightlyCancellation): Promise<NightlyCancellation>;
 }
 export interface NightlyResult {occurrenceId: string; suiteId: string; startedAt: string; trigger: Occurrence["trigger"];
   members: (NightlyMember & {input?: RequestInput; inputSha256?: string; status: string; publicationComplete: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string})[];
-  expectedCount: number; passed: number; status: string; resultUrl?: string; finishedAt?: string}
+  expectedCount: number; passed: number; status: string; resultUrl?: string; finishedAt?: string; cancellation?: NightlyCancellation}
 export const nightlyPlanRepository: NightlyPlanRepository = {
   async get(suiteId) {
     const row = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
@@ -62,6 +66,17 @@ export const nightlyPlanRepository: NightlyPlanRepository = {
       {$set: {nightlyResult: result, finishedAt: result.finishedAt}}, {writeConcern: testWriteConcern});
     const saved = await this.completed(suiteId);
     if (!saved) throw new TestRunError(503, "Nightly terminal receipt was not retained");
+    return saved;
+  },
+  async cancellation(suiteId) {
+    const row = await TestSuiteModel.findOne({suiteId}).read("primary").readConcern("majority").lean();
+    return row?.nightlyCancellation ? nightlyCancellationSchema.parse(row.nightlyCancellation) : null;
+  },
+  async requestCancellation(suiteId, cancellation) {
+    await TestSuiteModel.updateOne({suiteId, nightlyPlan: {$exists: true}, nightlyCancellation: {$exists: false}},
+      {$set: {nightlyCancellation: nightlyCancellationSchema.parse(cancellation)}}, {writeConcern: testWriteConcern});
+    const saved = await this.cancellation(suiteId);
+    if (!saved) throw new TestRunError(503, "Nightly cancellation intent was not retained");
     return saved;
   },
 };
@@ -112,8 +127,9 @@ export class NightlyRoutineService {
     if (requestInputDigest({occurrenceId: plan.occurrenceId, startedAt: plan.startedAt, trigger: plan.trigger}) !== requestInputDigest(occurrence))
       throw new TestRunError(409, "Occurrence retry changed its original trigger or boundary");
     // Each member is independent. A failed queue write is retried with its original immutable request ID/intent.
-    if (await this.repository.completed(suiteId) || this.now() >= Date.parse(plan.startedAt) + 3 * 3600_000) {
-      await this.cancelAdmissions(plan);
+    const cancellation = await this.repository.cancellation(suiteId);
+    if (cancellation || await this.repository.completed(suiteId) || this.now() >= Date.parse(plan.startedAt) + 3 * 3600_000) {
+      await this.cancelAdmissions(plan, cancellation);
       return {plan, admissions: []};
     }
     const admissions = await Promise.all(plan.members.map(async member => {
@@ -123,9 +139,10 @@ export class NightlyRoutineService {
         try {request = await this.requests.prepare(member.hostId, member.dispatchIntent);}
         finally {
           // A lost insert acknowledgement is still an attempted admission, not proof that no request exists.
-          if (await this.repository.completed(suiteId) || this.now() >= Date.parse(plan!.startedAt) + 3 * 3600_000)
+          const cancellation = await this.repository.cancellation(suiteId);
+          if (cancellation || await this.repository.completed(suiteId) || this.now() >= Date.parse(plan!.startedAt) + 3 * 3600_000)
             request = await this.requests.cancelPreparationSubmission(member.requestId, member.hostId, member.dispatchIntent,
-              new Date(this.now()).toISOString(), "Nightly occurrence reached its completion boundary.");
+              cancellation?.requestedAt ?? new Date(this.now()).toISOString(), cancellation?.reason ?? "Nightly occurrence reached its completion boundary.");
         }
       }
       catch {unavailable = true;}
@@ -218,17 +235,30 @@ export class NightlyRoutineService {
     return plan;
   }
 
-  private async cancelAdmissions(plan: NightlyPlan) {
+  async cancel(occurrenceId: string, input: unknown) {
+    const parsed = z.object({reason: z.string().min(1).max(2000)}).strict().safeParse(input);
+    if (!parsed.success) throw new TestRunError(400, "Invalid nightly cancellation");
+    const plan = await this.plan(occurrenceId);
+    // Persist the occurrence fence before any member writes. A lost acknowledgement or process restart retries the same intent.
+    const cancellation = await this.repository.requestCancellation(plan.suiteId,
+      {requestedAt: new Date(this.now()).toISOString(), reason: parsed.data.reason});
+    await this.cancelAdmissions(plan, cancellation);
+    // Custody acknowledges cooperative cancellation; actual executor/writer settlement remains the controller's responsibility.
+    return {occurrenceId: plan.occurrenceId, suiteId: plan.suiteId, cancellation, requestsCancellationRecorded: true};
+  }
+
+  private async cancelAdmissions(plan: NightlyPlan, cancellation?: NightlyCancellation | null) {
     // Retain a cancellation record for absent and uncertain admissions before freezing the occurrence.
-    const cancellationAt = new Date(this.now()).toISOString(), eligible = plan.members.filter(member => member.dispatchIntent);
+    const cancellationAt = cancellation?.requestedAt ?? new Date(this.now()).toISOString(), eligible = plan.members.filter(member => member.dispatchIntent);
     const cancellations = await Promise.allSettled(eligible.map(member =>
       this.requests.cancelPreparationSubmission(member.requestId, member.hostId!, member.dispatchIntent, cancellationAt,
-        "Nightly occurrence reached its completion boundary.")));
+        cancellation?.reason ?? "Nightly occurrence reached its completion boundary.")));
     cancellations.forEach((result, index) => {
       if (result.status === "rejected") logger.error({err: result.reason, requestId: eligible[index]!.requestId}, "Nightly deadline cancellation failed");
     });
     if (cancellations.some(result => result.status === "rejected"))
-      throw new TestRunError(503, "Nightly deadline cancellation is unavailable; retry this occurrence completion.");
+      throw new TestRunError(503, cancellation ? "Nightly cancellation is unavailable; retry this occurrence cancellation."
+        : "Nightly deadline cancellation is unavailable; retry this occurrence completion.");
   }
 
   private unavailableEvidence(member: NightlyMember, error: unknown, source: "Result" | "Request"): NightlyResult["members"][number] {
@@ -243,7 +273,8 @@ export class NightlyRoutineService {
     const plan = await this.plan(occurrenceId);
     const completed = await this.repository.completed(plan.suiteId);
     if (completed) return completed;
-    return this.snapshot(plan);
+    const detail = await this.snapshot(plan), cancellation = await this.repository.cancellation(plan.suiteId);
+    return cancellation ? {...detail, cancellation} : detail;
   }
 
   private async snapshot(plan: NightlyPlan): Promise<NightlyResult> {
@@ -306,22 +337,23 @@ export class NightlyRoutineService {
   }
 
   async complete(occurrenceId: string) {
-    const plan = await this.plan(occurrenceId), completed = await this.repository.completed(plan.suiteId);
-    if (completed) {await this.cancelAdmissions(plan); return completed;}
+    const plan = await this.plan(occurrenceId), completed = await this.repository.completed(plan.suiteId),
+      cancellation = await this.repository.cancellation(plan.suiteId);
+    if (completed) {await this.cancelAdmissions(plan, cancellation); return completed;}
     const deadline = Date.parse(plan.startedAt) + 3 * 3600_000;
     let deadlineReached = this.now() >= deadline;
-    if (deadlineReached) await this.cancelAdmissions(plan);
+    if (deadlineReached || cancellation) await this.cancelAdmissions(plan, cancellation);
     const detail = await this.snapshot(plan);
     // Reads may cross the deadline. Finish cancellation custody before returning or freezing their snapshot.
     if (!deadlineReached && this.now() >= deadline) {
       deadlineReached = true;
-      await this.cancelAdmissions(plan);
+      await this.cancelAdmissions(plan, cancellation);
     }
-    if (detail.status === "running" && !deadlineReached) return detail;
-    if (!deadlineReached) await this.cancelAdmissions(plan);
+    if (detail.status === "running" && !deadlineReached) return cancellation ? {...detail, cancellation} : detail;
+    if (!deadlineReached && !cancellation) await this.cancelAdmissions(plan);
     const finishedAt = new Date(this.now()).toISOString();
     // The occurrence receipt is the only frozen verdict. Admin derives its suite projection from it.
-    return this.repository.finish(plan.suiteId, finite({...detail, finishedAt,
+    return this.repository.finish(plan.suiteId, finite({...detail, finishedAt, ...(cancellation ? {cancellation} : {}),
       status: detail.status === "running" ? "incomplete" : detail.status,
       members: detail.members.map(member => member.status === "waiting" ? {...member, status: "incomplete",
         unavailableReason: member.unavailableReason ?? "No complete result was published before the occurrence deadline."} : member)}));

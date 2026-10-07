@@ -13,8 +13,11 @@ import { createHash } from "node:crypto";
 import { createLogger } from "@mentra/cloud-shared";
 import { ReportModel } from "../models/report.model";
 import { ReportAssetModel } from "../models/report-asset.model";
+import { TestAssetModel } from "../models/test-run.model";
+import type { RecordedFrameworkRun } from "../types/framework-run.types";
 import { notifyReportSlack } from "./report-slack.service";
 import { REPORT_TESTING_SOURCE, type ReportCategory } from "./report-category";
+import type {ReportSlackDelivery} from './report-slack-delivery.service';
 import { UserModel } from "../models/user.model";
 import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
 import { configuredAdminAllowlist, isConfiguredOrganizationAdminEmail } from "./workspaces/organization";
@@ -116,13 +119,15 @@ function stableReportId(prefix: "rep" | "art", binding: string): string {
 
 /** Server-owned incident for a published run without a device-filed report. The unique
  * reportId deduplicates concurrent creation and retries without changing the TestRun. */
-export async function ensureTestRunReport(testRunId: string, payloadSha256: string) {
+export async function ensureTestRunReport(testRunId: string, payloadSha256: string,
+  details?: {actualBehavior: string; expectedBehavior: string; context: Record<string, unknown>}) {
   const reportId = stableReportId("rep", `test-run\n${testRunId}\n${payloadSha256}`);
   const mentraUserId = "automation:test-run";
   const document = { reportId, mentraUserId, kind: "automatic", status: "collecting", artifacts: [],
-    trigger: { type: "automatic", source: REPORT_TESTING_SOURCE, reason: "worker-diagnostics" },
-    report: { actualBehavior: "Automation worker diagnostics for a completed test run." },
-    context: { testRunId, payloadSha256 } };
+    trigger: { type: "automatic", source: REPORT_TESTING_SOURCE, reason: details ? "routine-run-failed" : "worker-diagnostics" },
+    report: details ? {actualBehavior: details.actualBehavior, expectedBehavior: details.expectedBehavior} :
+      { actualBehavior: "Automation worker diagnostics for a completed test run." },
+    context: { ...details?.context, testRunId, payloadSha256 } };
   try {
     await ReportModel.updateOne({ reportId }, { $setOnInsert: document }, { upsert: true, writeConcern: attachmentWriteConcern });
   } catch (error) { if ((error as { code?: number }).code !== 11000) throw error; }
@@ -131,7 +136,7 @@ export async function ensureTestRunReport(testRunId: string, payloadSha256: stri
   if (!row || row.mentraUserId !== mentraUserId || row.kind !== "automatic"
     || context?.testRunId !== testRunId || context.payloadSha256 !== payloadSha256)
     throw new ReportArtifactError(409, "automation incident binding conflicts");
-  return { reportId, mentraUserId };
+  return { reportId, mentraUserId, ...(details ? {context: context!, report: row.report as {actualBehavior: string; expectedBehavior: string}} : {}) };
 }
 
 /**
@@ -235,6 +240,41 @@ export async function addLogArtifact(input: {
       },
     ],
   });
+}
+
+/** Attach all already-acknowledged native diagnostic bytes by reference, never
+ * copying recordings or reading unbounded device output into the report. */
+export async function referenceTestRunDiagnostics(owner: {reportId: string; mentraUserId: string}, run: RecordedFrameworkRun) {
+  const declared = run.assets.filter(asset => asset.kind === "diagnostic" || asset.kind === "report");
+  if (!declared.length) return 0;
+  const stored = await TestAssetModel.find({runId: run.result.runId, assetId: {$in: declared.map(asset => asset.id)}})
+    .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
+  const byId = new Map(stored.map(asset => [asset.assetId, asset]));
+  const references = declared.map(asset => {
+    const blob = byId.get(asset.id);
+    if (!blob || blob.sha256 !== asset.sha256 || blob.sizeBytes !== asset.size)
+      throw new ReportArtifactError(503, "Routine diagnostic custody differs from its frozen manifest");
+    return {artifactId: stableReportId("art", `${owner.reportId}\nnative-diagnostic\n${asset.id}`), ...owner,
+      storageKey: blob.storageKey, sourceTestRunId: run.result.runId, sourceTestAssetId: asset.id, fileName: asset.path.split('/').at(-1),
+      contentType: asset.mimeType, sizeBytes: asset.size, sha256: asset.sha256};
+  });
+  await ReportAssetModel.bulkWrite(references.map(reference => ({updateOne: {filter: {artifactId: reference.artifactId},
+    update: {$setOnInsert: reference}, upsert: true}})), {writeConcern: attachmentWriteConcern, ordered: false, timeoutMS: 10_000});
+  const rows = await ReportAssetModel.find({reportId: owner.reportId, artifactId: {$in: references.map(reference => reference.artifactId)}})
+    .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
+  const metadata = references.map(reference => {
+    const row = rows.find(row => row.artifactId === reference.artifactId);
+    if (!row || row.mentraUserId !== owner.mentraUserId || row.storageKey !== reference.storageKey
+      || row.sha256 !== reference.sha256 || row.sizeBytes !== reference.sizeBytes || row.sourceTestRunId !== run.result.runId
+      || row.sourceTestAssetId !== reference.sourceTestAssetId)
+      throw new ReportArtifactError(409, "Routine diagnostic reference already binds different content");
+    return {artifactId: row.artifactId, type: "state_snapshot", source: "framework-diagnostic", filename: row.fileName,
+      contentType: row.contentType, sizeBytes: row.sizeBytes, createdAt: row.createdAt};
+  });
+  const result = await ReportModel.updateOne(owner, {$addToSet: {artifacts: {$each: metadata}}},
+    {writeConcern: attachmentWriteConcern, timeoutMS: 10_000});
+  if (result.matchedCount !== 1) throw new ReportArtifactError(503, "Routine incident is unavailable");
+  return metadata.length;
 }
 
 /** Worker retry path through the same report/asset models and blob provider. Reserve the
@@ -473,6 +513,7 @@ export interface AdminReportSummary {
 
 export interface AdminReportDetail extends AdminReportSummary {
   context: Record<string, unknown>;
+  slackDelivery?: ReportSlackDelivery;
 }
 
 export interface AdminReportAsset {
@@ -556,6 +597,7 @@ export async function getReport(
     report: {
       ...serializeReportSummary(row),
       context: (row.context ?? {}) as Record<string, unknown>,
+      ...(row.slackDelivery ? {slackDelivery: row.slackDelivery as ReportSlackDelivery} : {}),
     },
     assets: assets.map((asset) => ({
       artifactId: asset.artifactId,
@@ -640,6 +682,8 @@ function toIso(value: Date | null | undefined): string | null {
 async function discardReportAssets(reportId: string, assets: StoredReportAsset[]): Promise<void> {
   for (const asset of assets) {
     try {
+      // Native references share test-owned blobs. Rollback must preserve them.
+      if (await ReportAssetModel.exists({artifactId: asset.artifactId, sourceTestRunId: {$exists: true}})) continue;
       await getStorage().deleteObject(asset.storageKey);
     } catch (cleanupError) {
       logger.error(

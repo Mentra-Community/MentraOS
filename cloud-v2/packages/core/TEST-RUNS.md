@@ -87,3 +87,19 @@ token holds both; an operator key (`mak_`) holds the scopes it was created with.
 
 Installing this code does not itself enroll a host, publish a passing recording,
 enable a routine or establish a successful nightly run.
+
+## Cancelling a superseded nightly
+
+Use the existing `TEST_RUN_INGEST_TOKEN` capability with
+`POST /api/internal/nightly-routines/:occurrenceId/cancel` and JSON `{reason}`.
+The endpoint retains the first occurrence cancellation intent before recording
+cancellation for every frozen member. Retrying the same occurrence resumes failed
+writes without changing its plan, selected builds or original cancellation reason.
+
+Only a `202` response with `requestsCancellationRecorded: true` confirms that
+Core has retained all member cancellation custody. The GitHub watcher can then
+be cancelled without losing that custody. Host controllers continue the existing
+cooperative cancellation, cleanup and publication path; this acknowledgement does
+not assert that an executor or native writer has settled. Inspect the controller
+and request receipts for actual settlement. Cancelling only the GitHub run does
+not cancel the Core occurrence.

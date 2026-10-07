@@ -20,9 +20,11 @@ export interface FrameworkRunSummary {
   build: Pick<FrameworkRun["build"], "repository" | "channel" | "headSha" | "prNumber"> & {release?: string; producerUrl?: string};
 }
 export interface FrameworkRunPage {runs: FrameworkRunSummary[]; nextCursor: string | null}
-export type TestHistoryEntry = ({kind: "run"} & FrameworkRunSummary) | {
+export type TestHistoryEntry = ({kind: "run"; rerun?: {rerunId: string; parentSuiteId?: string}} & FrameworkRunSummary) | {
   kind: "suite"; suiteId: string; channel: TestSuite["channel"]; trigger: TestSuite["trigger"];
   startedAt: string; finishedAt?: string; outcome: string; expectedCount: number; passed: number; skipped?: number; build: TestSuite["build"];
-  members?: Pick<TestSuite["members"][number], "routineId" | "platform">[];
+  /** Accepted child rerun jobs, independent of the current history page and member count. */
+  rerunCount: number; failedCount: number; lanes: {hostId: string; laneId: string}[];
+  members?: (Pick<TestSuite["members"][number], "routineId" | "platform"> & {laneId?: string; hostId?: string})[];
 } | {kind: "unavailable"; sourceKind: "run" | "suite"; id: string; startedAt: string; message: "Details unavailable."};
 export interface TestHistoryPage {entries: TestHistoryEntry[]; nextCursor: string | null}

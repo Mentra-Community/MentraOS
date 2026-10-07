@@ -8,6 +8,7 @@ import {
   stopGlassesStatusProjection,
 } from "../../../modules/engine/src/services/GlassesStatusProjection"
 import {useCoreStore} from "../../../modules/engine/src/stores/core"
+import {useConnectionStore, WebSocketStatus} from "../../../modules/engine/src/stores/connection"
 import {useSettingsStore} from "../../../modules/engine/src/stores/settings"
 
 // Only external/native boundaries are replaced; the collector, stores, status
@@ -25,6 +26,10 @@ jest.mock("../../../modules/engine/src/services/CloudClientService", () => ({
     hasCore: jest.fn(() => true),
     getCoreUrl: jest.fn(() => "https://core.example"),
     syncCoreTokenToBluetooth: jest.fn(),
+    getStatus: jest.fn(),
+    getAudioPosition: jest.fn(),
+    isConnected: jest.fn(),
+    hasAudioSubscriptions: jest.fn(),
   },
 }))
 
@@ -57,6 +62,7 @@ const STALE_NATIVE_AUTH_TOKEN = "STALE_NATIVE_AUTH_TOKEN_SENTINEL"
 const CURRENT_SETTINGS_EMAIL = "current-settings-sentinel@example.invalid"
 const CURRENT_SETTINGS_CORE_TOKEN = "CURRENT_SETTINGS_CORE_TOKEN_SENTINEL"
 const CURRENT_SETTINGS_AUTH_TOKEN = "CURRENT_SETTINGS_AUTH_TOKEN_SENTINEL"
+const CLOUD_CREDENTIAL = "CLOUD_CREDENTIAL_SENTINEL"
 const SECRET_VALUES = [
   STALE_NATIVE_EMAIL,
   STALE_NATIVE_CORE_TOKEN,
@@ -64,11 +70,14 @@ const SECRET_VALUES = [
   CURRENT_SETTINGS_EMAIL,
   CURRENT_SETTINGS_CORE_TOKEN,
   CURRENT_SETTINGS_AUTH_TOKEN,
+  CLOUD_CREDENTIAL,
 ]
 
 const ORDINARY_NATIVE_STATUS = {
   searching: true,
   currentMic: "phone",
+  micRanking: ["phone", "glasses"],
+  systemMicUnavailable: false,
   otherBtConnected: true,
   lastLog: ["ordinary-core-log-sentinel"],
 }
@@ -89,14 +98,32 @@ const SETTINGS_ACCOUNT = {
 const submitMock = cloudClientService.core.reports.submit as jest.Mock
 const addLogsMock = cloudClientService.core.reports.addLogs as jest.Mock
 const completeMock = cloudClientService.core.reports.complete as jest.Mock
+const getStatusMock = cloudClientService.getStatus as jest.Mock
+const getAudioPositionMock = cloudClientService.getAudioPosition as jest.Mock
+const isConnectedMock = cloudClientService.isConnected as jest.Mock
+const hasAudioSubscriptionsMock = cloudClientService.hasAudioSubscriptions as jest.Mock
 
 describe("report diagnostic context redaction", () => {
   let originalSettings: Record<string, unknown>
+  let originalConnection: ReturnType<typeof useConnectionStore.getState>
 
   beforeEach(async () => {
     submitMock.mockReset().mockResolvedValue({reportId: "report-redaction", status: "collecting"})
     addLogsMock.mockReset().mockResolvedValue({stored: 1})
     completeMock.mockReset().mockResolvedValue({status: "ready"})
+    getStatusMock.mockReset().mockReturnValue({status: "connected", audioTransport: "udp", token: CLOUD_CREDENTIAL})
+    getAudioPositionMock.mockReset().mockReturnValue({sessionTag: 41, offsetMs: 1250, encryptionKey: CLOUD_CREDENTIAL})
+    isConnectedMock.mockReset().mockReturnValue(true)
+    hasAudioSubscriptionsMock.mockReset().mockReturnValue(true)
+
+    // Obsolete Cloud V1 state must not override the current Cloud V2 snapshot
+    // or contribute its raw URL/error fields to a report.
+    originalConnection = useConnectionStore.getState()
+    useConnectionStore.setState({
+      status: WebSocketStatus.ERROR,
+      url: `https://legacy.example/?token=${CLOUD_CREDENTIAL}`,
+      error: CLOUD_CREDENTIAL,
+    })
 
     originalSettings = useSettingsStore.getState().settings
     useSettingsStore.setState({settings: {...originalSettings, ...SETTINGS_ACCOUNT}})
@@ -113,6 +140,7 @@ describe("report diagnostic context redaction", () => {
     resetBluetoothSdkMock()
     useCoreStore.getState().reset()
     useSettingsStore.setState({settings: originalSettings})
+    useConnectionStore.setState(originalConnection)
   })
 
   it("omits native and settings account credentials from a submitted bug report", async () => {
@@ -130,7 +158,7 @@ describe("report diagnostic context redaction", () => {
 
     expect(submitMock).toHaveBeenCalledTimes(1)
     const context = submitMock.mock.calls[0][0].context
-    const runtime = context.runtime as {core: Record<string, unknown>}
+    const runtime = context.runtime as {core: Record<string, unknown>; connection: Record<string, unknown>}
 
     for (const key of ["auth_email", "core_token", "auth_token"]) {
       expect(runtime.core).not.toHaveProperty(key)
@@ -143,10 +171,39 @@ describe("report diagnostic context redaction", () => {
 
     // Ordinary Bluetooth runtime status and the caller's overlay survive.
     expect(runtime.core).toMatchObject(ORDINARY_NATIVE_STATUS)
+    expect(runtime.connection).toEqual({
+      status: "connected",
+      audioTransport: "udp",
+      handshakeComplete: true,
+      hasDesiredAudioSubscriptions: true,
+      audioPosition: {sessionTag: 41, offsetMs: 1250},
+    })
     expect(context.reporting).toEqual(reporting)
 
     // Redaction is report-only: the source stores keep their values.
     expect(useCoreStore.getState()).toMatchObject(NATIVE_STATUS_WITH_ACCOUNT)
     expect(useSettingsStore.getState().settings).toMatchObject(SETTINGS_ACCOUNT)
+  })
+
+  it.each([
+    {status: "connected", audioTransport: "ws", handshakeComplete: true, hasDesiredAudioSubscriptions: true},
+    {status: "reconnecting", audioTransport: "none", handshakeComplete: false, hasDesiredAudioSubscriptions: true},
+    {status: "disconnected", audioTransport: "none", handshakeComplete: false, hasDesiredAudioSubscriptions: false},
+  ])("captures $status Cloud V2 state without a positioned audio session", async (connection) => {
+    getStatusMock.mockReturnValue({status: connection.status, audioTransport: connection.audioTransport})
+    getAudioPositionMock.mockReturnValue(null)
+    isConnectedMock.mockReturnValue(connection.handshakeComplete)
+    hasAudioSubscriptionsMock.mockReturnValue(connection.hasDesiredAudioSubscriptions)
+
+    await expect(
+      reports.submit({
+        kind: "bug",
+        trigger: {type: "manual", source: "sentinel_source", reason: "manual_bug_report"},
+        report: {actualBehavior: "Sentinel report"},
+      }),
+    ).resolves.toMatchObject({status: "submitted"})
+
+    const context = submitMock.mock.calls[0][0].context
+    expect(context.runtime.connection).toEqual({...connection, audioPosition: null})
   })
 })

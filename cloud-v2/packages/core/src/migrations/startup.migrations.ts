@@ -12,6 +12,8 @@ import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.m
 import {reconcileTestRunIndexes, TestAssetModel, TestRunModel} from "../models/test-run.model"
 import {TestDispatchModel} from "../models/test-dispatch.model"
 import {TestHostLatestModel, TestHostSampleModel} from "../models/test-host-health.model"
+import {ReportModel} from "../models/report.model"
+import {ReportAssetModel} from "../models/report-asset.model"
 import {AccessCredentialModel} from "../models/access-credential.model"
 import {IdentityLinkModel} from "../models/identity-link.model"
 import {WorkspaceAuditCounterModel} from "../models/workspace-audit-counter.model"
@@ -53,6 +55,9 @@ export async function runStartupMigrations(): Promise<void> {
   await backfillTestSuiteStartedAt()
   await TestSuiteModel.createIndexes()
   await TestAssetModel.createIndexes()
+  // Native incident creation and shared diagnostic references must dedupe before completion ACK.
+  await ReportModel.createIndexes()
+  await ReportAssetModel.createIndexes()
   // No device execution grant is safe until request IDs are unique across all Core instances.
   // The send receipt must be unique before any admin can submit a device request.
   await TestDispatchModel.createIndexes()

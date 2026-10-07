@@ -436,15 +436,13 @@ jobs:
   finalize:
     name: Finalize immutable release bill of materials
     # A Mentra beta (Cloud V2, Mentra App, Engine, Bluetooth SDK) is complete
-    # when these succeed. The separate examples workflow consumes this record.
-    needs: [plan, cloud-v2, runtime-image, private-deployment, ota, npm, sdk-native, mobile, engine-consumer]
+    # when these succeed. Examples and the enterprise demo deploy independently.
+    needs: [plan, cloud-v2, runtime-image, ota, npm, sdk-native, mobile, engine-consumer]
     if: >-
       always() &&
       needs.plan.result == 'success' &&
       needs.cloud-v2.result == 'success' &&
       needs.runtime-image.result == 'success' &&
-      (needs.private-deployment.result == 'success' ||
-        (needs.plan.outputs.cloud_environment != 'dev' && needs.private-deployment.result == 'skipped')) &&
       needs.ota.result == 'success' &&
       needs.npm.result == 'success' &&
       needs.sdk-native.result == 'success' &&
@@ -517,12 +515,6 @@ jobs:
           path: release-input/runtime-image
 
       - uses: actions/download-artifact@v4
-        if: steps.restore-result.outputs.restored != 'true' && needs.plan.outputs.cloud_environment == 'dev'
-        with:
-          name: ${{ needs.private-deployment.outputs.result_artifact }}
-          path: release-input/private-deployment
-
-      - uses: actions/download-artifact@v4
         if: steps.restore-result.outputs.restored != 'true'
         with:
           name: ${{ needs.ota.outputs.result_artifact }}
@@ -576,12 +568,6 @@ jobs:
             test -f "$asg_selection"
             engine_package=$(find release-input/npm -type f -name 'mentra-engine-*.tgz' -print -quit)
             test -n "$engine_package"
-            private_deployment_args=()
-            if [[ "${{ needs.plan.outputs.cloud_environment }}" == "dev" ]]; then
-              private_deployment_args=(
-                --private-deployment release-input/private-deployment/private-deployment.json
-              )
-            fi
             node .github/scripts/assemble-coordinated-release-results.mjs \
               --plan "$plan" \
               --ota release-input/ota/ota-result.json \
@@ -590,7 +576,6 @@ jobs:
               --mobile release-input/mobile/mobile-publications.json \
               --cloud release-input/cloud-v2/cloud-v2-deployment.json \
               --runtime-image release-input/runtime-image/runtime-image-publication.json \
-              "${private_deployment_args[@]}" \
               --asg-selection "$asg_selection" \
               --engine-package "$engine_package" \
               --release-asset-base-url "https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag" \
@@ -684,9 +669,6 @@ jobs:
             echo "- Source: \`${{ needs.plan.outputs.source_commit }}\`"
             echo "- Cloud deployment: \`$(jq -er .cloud.deploymentId finalized-release/publication-results.json 2>/dev/null || echo validated-only)\`"
             echo "- Runtime image: \`$(jq -er '.runtimeImage.reference // "validated-only"' finalized-release/publication-results.json)\`"
-            if [[ "${{ needs.plan.outputs.cloud_environment }}" == "dev" ]]; then
-              echo "- Private deployment Runtime: \`$(jq -er '.privateDeployment.azure.revision // "validated-only"' finalized-release/publication-results.json)\`"
-            fi
             echo "- OTA manifest: ${{ needs.ota.outputs.manifest_url }}"
             echo "- Dry run: \`${{ needs.plan.outputs.dry_run }}\`"
             if [[ "${{ needs.plan.outputs.dry_run }}" != "true" ]]; then
