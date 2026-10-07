@@ -364,7 +364,7 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
 export function FrameworkRunsPage({scope, historySource}: {scope?: Record<string, string>; historySource?: HistoryOrigin}) {
   return scope ? <FilteredFrameworkRunsPage scope={scope}/> : <TestHistoryList initialOrigin={historySource}/>;
 }
-export const HISTORY_ORIGINS = [["pr", "Pull requests"], ["branch", "Nightly"], ["manual", "Other"]] as const;
+export const HISTORY_ORIGINS = [["pr", "Pull Requests"], ["branch", "Nightly"], ["manual", "Other"]] as const;
 export type HistoryOrigin = typeof HISTORY_ORIGINS[number][0];
 export function historyOrigin(entry: TestHistoryEntry): HistoryOrigin {
   if (entry.kind === "unavailable") return "manual";
