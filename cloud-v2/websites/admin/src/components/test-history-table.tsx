@@ -18,7 +18,7 @@ function StartedAt({value}: {value: string}) {
   if (Number.isNaN(date.getTime())) return <span className="text-[#656d76]">Unknown</span>;
   return <time dateTime={value} title={date.toLocaleString(undefined, {dateStyle: "full", timeStyle: "long"})} className="whitespace-nowrap tabular-nums">
     <span>{date.toLocaleDateString(undefined, {month: "short", day: "numeric"})}</span>
-    <span className={`block ${MUTED}`}>{date.toLocaleTimeString(undefined, {hour: "2-digit", minute: "2-digit", second: "2-digit"})}</span>
+    <span className={`block ${MUTED}`}>{date.toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})}</span>
   </time>;
 }
 
