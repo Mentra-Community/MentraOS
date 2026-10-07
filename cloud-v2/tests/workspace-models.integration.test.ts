@@ -27,6 +27,7 @@ import { WorkspaceAuditEventModel } from "../packages/core/src/models/workspace-
 import { WorkspaceInvitationModel } from "../packages/core/src/models/workspace-invitation.model";
 import { WorkspaceMembershipModel } from "../packages/core/src/models/workspace-membership.model";
 import { WorkspaceModel } from "../packages/core/src/models/workspace.model";
+import { runStartupMigrations } from "../packages/core/src/migrations/startup.migrations";
 import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
 
 const MODELS = [
@@ -536,6 +537,26 @@ describe("workspace models (local replica set)", () => {
       );
       expect(err.code).toBe(11000);
       expect(await WorkspaceModel.countDocuments({ workspaceId: "ws_new" })).toBe(0);
+    });
+  });
+
+  describe("startup migrations", () => {
+    test("build every workspace and identity-link index before Core serves, not in the background", async () => {
+      // Drop the collections, and with them the indexes autoIndex built when the models were initialised.
+      assertConnectedTo(databaseUrl, WorkspaceModel.db.name);
+      for (const model of MODELS) await model.collection.drop().catch(() => undefined);
+
+      await runStartupMigrations();
+
+      for (const model of MODELS) {
+        const built = (await model.collection.indexes()).map(index => JSON.stringify(index.key));
+        for (const [fields] of model.schema.indexes()) {
+          expect({ model: model.modelName, has: built.includes(JSON.stringify(fields)) }).toEqual({
+            model: model.modelName,
+            has: true,
+          });
+        }
+      }
     });
   });
 });

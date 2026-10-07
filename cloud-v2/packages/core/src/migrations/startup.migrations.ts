@@ -12,6 +12,13 @@ import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.m
 import {reconcileTestRunIndexes, TestAssetModel, TestRunModel} from "../models/test-run.model"
 import {TestDispatchModel} from "../models/test-dispatch.model"
 import {TestHostLatestModel, TestHostSampleModel} from "../models/test-host-health.model"
+import {AccessCredentialModel} from "../models/access-credential.model"
+import {IdentityLinkModel} from "../models/identity-link.model"
+import {WorkspaceAuditCounterModel} from "../models/workspace-audit-counter.model"
+import {WorkspaceAuditEventModel} from "../models/workspace-audit-event.model"
+import {WorkspaceInvitationModel} from "../models/workspace-invitation.model"
+import {WorkspaceMembershipModel} from "../models/workspace-membership.model"
+import {WorkspaceModel} from "../models/workspace.model"
 
 const logger = createLogger("core").child({component: "startup-migrations"})
 const USERS = "users"
@@ -52,6 +59,24 @@ export async function runStartupMigrations(): Promise<void> {
   // Passive host observations require idempotent identity and indexed, expiring history before ingestion.
   await TestHostSampleModel.createIndexes()
   await TestHostLatestModel.createIndexes()
+  // Workspaces rely on unique indexes (one active membership per person, one identity link per
+  // account, gap-free audit sequence numbers). Build them, and their collections, before serving:
+  // autoIndex runs in the background and a failed build would only be logged, and a request in the
+  // first moments after boot must not create a collection inside a transaction.
+  await Promise.all(
+    [
+      WorkspaceModel,
+      WorkspaceMembershipModel,
+      WorkspaceInvitationModel,
+      AccessCredentialModel,
+      WorkspaceAuditEventModel,
+      WorkspaceAuditCounterModel,
+      IdentityLinkModel,
+    ].map(async model => {
+      await model.createCollection()
+      await model.createIndexes()
+    }),
+  )
   await ensureMentraAccountOem()
 }
 
