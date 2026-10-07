@@ -4,7 +4,7 @@ import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
 import {readSuiteId, TestSuitePage, RecentTestSuites, type TestSuiteResult} from "./test-suites";
 const suite: TestSuiteResult = {suiteId: "nightly-123", channel: "dev", trigger: "nightly", startedAt: "2026-10-01T11:00:00Z",
   finishedAt: "2026-10-01T11:05:00Z", build: {headSha: "a".repeat(40), release: "dev.123"}, outcome: "failed", passed: 1,
-  failedRoutines: ["ota"], members: [{memberId: "mac-captions", requestId: "req1", routineId: "captions-phone", platform: "ios-on-mac", status: "pass", runId: "run-one"},
+  failedRoutines: ["ota"], members: [{memberId: "mac-captions", requestId: "req1", routineId: "captions-phone", platform: "ios-on-mac", status: "pass", publicationComplete: true, runId: "run-one"},
     {memberId: "android-ota", requestId: "req2", routineId: "ota", platform: "android", status: "not-run"}]};
 test("suite link survives as a validated distinct URL", () => {
   expect(readSuiteId("?testSuite=nightly-123")).toBe("nightly-123");
@@ -80,8 +80,8 @@ test("suite displays chronological execution order with unrun members last and s
 
 test("only passing and failure results use green and red; other states remain neutral", () => {
   for (const status of ["pass", "failed", "setup-failed", "teardown-failed", "not-run", "waiting", "cancelled"]) {
-    const html = renderSuite({...suite, members: [suite.members[0]!, {...suite.members[1]!, status}]});
-    const label = status === "not-run" ? "Did not run" : status === "waiting" ? "Awaiting result" : status;
+    const html = renderSuite({...suite, members: [suite.members[0]!, {...suite.members[1]!, status, publicationComplete: true}]});
+    const label = status === "pass" ? "Passed" : status === "not-run" ? "Did not run" : status === "waiting" ? "Awaiting result" : status;
     const color = status === "pass" ? "text-green-700" : ["failed", "setup-failed", "teardown-failed"].includes(status) ? "text-red-700" : "text-[#68746d]";
     expect(html).toContain(`<td class="${color}">${label}`);
   }
@@ -111,14 +111,63 @@ test("actual failures stay red and incomplete routines have their own neutral su
 test("suite rows show compact 12-hour start times and retain the full suite date", () => {
   const startedAt = "2026-10-01T11:01:23Z";
   const html = renderSuite({...suite, members: [{...suite.members[0]!, startedAt}, suite.members[1]!]});
-  expect(html).toContain('<th class="py-3">Started</th><th>Routine</th><th>Lane</th><th>Duration</th><th>Recording &amp; steps</th><th class="min-w-[320px]">Latest rerun</th><th>Status</th>');
+  expect(html).toContain('<th class="py-3">Started</th><th>Routine</th><th>Lane</th><th>Duration</th><th>Recording &amp; steps</th><th class="min-w-[320px]">Latest rerun</th><th>Status</th><th>Actions</th>');
   expect(html).toContain(`<time dateTime="${startedAt}">${new Date(startedAt).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})}</time>`);
   expect(html).toContain(`Started ${new Date(suite.startedAt).toLocaleString()}`);
   const rows = html.match(/<tbody>(.*?)<\/tbody>/)?.[1].match(/<tr[^>]*>(.*?)<\/tr>/g) ?? [];
   expect(rows).toHaveLength(2);
   expect(rows[0]).toContain('<td class="whitespace-nowrap py-4"><time');
-  expect(rows[0]).toMatch(/<td class="text-green-700">pass<label>.*<\/label><\/td><\/tr>$/);
-  expect(rows[1]).toMatch(/<td class="text-\[#68746d\]">Did not run<label>.*<\/label><\/td><\/tr>$/);
+  expect(rows[0]).toContain('<td class="text-green-700">Passed</td>');
+  expect(rows[1]).toContain('<td class="text-[#68746d]">Did not run</td>');
   expect(html.match(/<time /g)).toHaveLength(1);
   expect(html).toContain('<td class="whitespace-nowrap py-4">—</td>');
+});
+
+test.each([false, undefined])("a passed run with unpublished evidence stays neutral and does not inflate the qualified header; complete=%s", publicationComplete => {
+  const value: TestSuiteResult = {...suite, finishedAt: undefined, outcome: "running", passed: 1, failedRoutines: ["ota"],
+    members: [suite.members[0]!, {...suite.members[1]!, status: "pass", publicationComplete, runId: "uploading-run"}]};
+  const before = JSON.stringify(value);
+  const html = renderSuite(value);
+  expect(html).toContain("1/2 passed with complete evidence");
+  expect(html).toContain("Only passes with complete, uploaded evidence count in the header.");
+  expect(html).toContain("1 passed run has pending evidence.");
+  expect(html).toContain('<td class="text-[#68746d]">Passed · evidence pending</td>');
+  expect(html.match(/<td class="text-green-700">Passed<\/td>/g)).toHaveLength(1);
+  expect(html).toContain('href="/?testRun=uploading-run"');
+  const client = new QueryClient(); client.setQueryData(["test-suites"], {suites: [value]});
+  const recent = renderToStaticMarkup(<QueryClientProvider client={client}><RecentTestSuites/></QueryClientProvider>);
+  expect(recent).toContain("1/2 passed with complete evidence · 1 passed with pending evidence");
+  expect(JSON.stringify(value)).toBe(before);
+  const published = renderSuite({...value, passed: 2, members: value.members.map(member => ({...member, publicationComplete: true}))});
+  expect(published).toContain("2/2 passed with complete evidence");
+  expect(published).not.toContain("Passed · evidence pending");
+});
+
+
+test("suite actions replace selection, keep status read-only and disable active originals or reruns", () => {
+  const client = new QueryClient();
+  const base = suite.members[0]!;
+  const value: TestSuiteResult = {...suite, members: [
+    {...base, memberId: "finished", routineId: "finished"},
+    {...base, memberId: "waiting", routineId: "waiting", status: "waiting"},
+    {...base, memberId: "retrying", routineId: "retrying", status: "failed"},
+    {...base, memberId: "unknown", routineId: "unknown"},
+  ]};
+  client.setQueryData(["test-suite", value.suiteId], value);
+  client.setQueryData(["rerun-progress", value.suiteId], {members: [
+    {memberId: "finished", latest: null}, {memberId: "waiting", latest: null},
+    {memberId: "retrying", latest: {attemptId: "active", memberId: "retrying", attemptNumber: 1, parent: {suiteId: value.suiteId}, status: "running", publicationComplete: false}},
+  ], children: []});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={value.suiteId}/></QueryClientProvider>);
+  expect(html).toContain("<th>Status</th><th>Actions</th>");
+  expect(html).not.toContain('type="checkbox"');
+  expect(html).not.toContain("Rerun selected");
+  expect(html).not.toContain("No reruns");
+  const buttons = html.match(/<button[^>]*title="Rerun"[^>]*>/g) ?? [];
+  expect(buttons).toHaveLength(4);
+  expect(buttons[0]).toContain('aria-label="Rerun finished (ios-on-mac)"');
+  expect(buttons[0]).not.toContain('disabled=""');
+  for (const button of buttons.slice(1)) expect(button).toContain('disabled=""');
+  expect(html).toContain('disabled="">Rerun failures</button>');
+  expect(html).toContain('Attempt 1 · running');
 });
