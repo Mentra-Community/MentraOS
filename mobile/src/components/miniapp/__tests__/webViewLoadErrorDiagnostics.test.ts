@@ -28,6 +28,8 @@ it("retains the original native cause and excludes unselected event fields", () 
 it.each([
   "Could not load https://example.com/private?access_token=private#fragment",
   "Could not load file:///private/miniapps/com.mentra.notes/ui/index.html",
+  "Could not load https://example.com/private_(copy)/private-account",
+  "Could not load ?path=private_(copy)/private-account",
   "Could not load ?access_token=private",
   "Could not load about:blank",
   "Could not load data:text/html,private",

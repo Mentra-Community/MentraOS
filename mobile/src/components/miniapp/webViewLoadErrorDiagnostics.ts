@@ -1,12 +1,14 @@
 import {redactSecrets} from "@mentra/engine-host-internal"
-import type {WebViewError} from "react-native-webview"
+import type {WebViewProps} from "react-native-webview"
+
+type WebViewError = Parameters<NonNullable<WebViewProps["onError"]>>[0]["nativeEvent"]
 
 const MAX_ERROR_TEXT_LENGTH = 512
 
 function safeErrorText(value: string): string {
   const text = value
-    .replace(/\b(?:[a-z][a-z0-9+.-]*:\/\/|(?:data|about|blob):)[^\s"'<>)]*/gi, "[REDACTED]")
-    .replace(/[?#][^\s"'<>)]*/g, "[REDACTED]")
+    .replace(/\b(?:[a-z][a-z0-9+.-]*:\/\/|(?:data|about|blob):)[^\s"'<>]*/gi, "[REDACTED]")
+    .replace(/[?#][^\s"'<>]*/g, "[REDACTED]")
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED]")
   // Normalize credential-label separators for the existing conservative redactor.
   if (redactSecrets(text.replace(/[_-]/g, " ")) === "[REDACTED]") return "[REDACTED]"

@@ -1,7 +1,7 @@
 import {miniappHistoryBridge} from "./historyBridge"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {AppState, findNodeHandle, Platform, View, type AppStateStatus} from "react-native"
-import {WebView, type WebViewErrorEvent, type WebViewMessageEvent} from "react-native-webview"
+import {WebView, type WebViewMessageEvent, type WebViewProps} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
 import {translate} from "@/i18n"
@@ -588,8 +588,8 @@ function LocalMiniappView({
     onExitRef.current()
   }, [packageName])
 
-  const handleError = useCallback(
-    (event: WebViewErrorEvent) => {
+  const handleError = useCallback<NonNullable<WebViewProps["onError"]>>(
+    (event) => {
       if (!packageName) return
       console.warn(
         `[LocalMiniappView:${packageName}] WebView load error`,
