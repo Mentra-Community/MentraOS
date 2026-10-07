@@ -18,5 +18,7 @@ export function createNightlyRoutinesApi(service = new NightlyRoutineService()) 
   app.post("/", frameworkBodyLimit(4096), async c => c.json(await service.start(await frameworkJson(c)), 202));
   app.get("/:occurrenceId", async c => c.json(await service.detail(c.req.param("occurrenceId"))));
   app.post("/:occurrenceId/complete", async c => c.json(await service.complete(c.req.param("occurrenceId"))));
+  app.post("/:occurrenceId/cancel", frameworkBodyLimit(4096), async c =>
+    c.json(await service.cancel(c.req.param("occurrenceId"), await frameworkJson(c)), 202));
   return app;
 }

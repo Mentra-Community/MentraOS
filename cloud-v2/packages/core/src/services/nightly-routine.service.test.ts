@@ -1,6 +1,6 @@
 import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {expect, spyOn, test} from "bun:test";
-import {NightlyRoutineService as ActualNightlyRoutineService, nightlyPlanRepository, type NightlyPlan, type NightlyResult, type NightlyPlanRepository} from "./nightly-routine.service";
+import {NightlyRoutineService as ActualNightlyRoutineService, nightlyPlanRepository, type NightlyPlan, type NightlyResult, type NightlyPlanRepository, type NightlyCancellation} from "./nightly-routine.service";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRequestModel} from "../models/test-request.model";
 import type {RoutineCatalogService} from "./routine-catalog.service";
@@ -64,6 +64,10 @@ const build = (platform: "android" | "ios-on-mac"): TestBuild => ({source: {chan
 const host: ReceivedTestHostState = {hostId: "mini", incarnation: "one", incarnationGeneration: 1, sequence: 1, observedAt: startedAt, receivedAt: startedAt,
   lanes: ["android", "ios-on-mac"].map(platform => ({id: platform, platform: platform as "android" | "ios-on-mac", dispatchMode: "automatic", state: "running",
     resources: [{id: `app:${platform}`, kind: "app"}]}))};
+function cancellationRepository() {
+  let saved: NightlyCancellation | null = null;
+  return {async cancellation() {return saved;}, async requestCancellation(_id: string, value: NightlyCancellation) {saved ??= structuredClone(value); return saved;}};
+}
 function fixture(
   initial = [row("a-new-routine", "android"), row("different.routine", "ios-on-mac"), row("disabled-routine", "android", false)],
   repository?: NightlyPlanRepository,
@@ -84,7 +88,7 @@ function fixture(
     {async cancelPreparationSubmission(id) {completionEvents.push("cancel:" + id); cancelled.push(id); if (id === cancelFailId) throw new TestRunError(503, "Cancellation storage unavailable."); return {} as any;}, async get(id) {if (requestErrors.has(id)) throw requestErrors.get(id)!; return requestRows.get(id) ?? null;}, async prepare(hostId, value) {const input = routineDispatchIntentSchema.parse(value), requestId = input.requestId; if (requestId === failId) throw new Error("queue unavailable"); admitted.push({requestId, hostId, input});
       const request = autoPrepare ? preparedRequest(hostId, input) : {requestId, hostId, dispatchIntent: input, dispatchIntentSha256: requestInputDigest(input), state: "preparing"};
       requestRows.set(requestId, request); return request as any;}},
-    repository ?? {async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return finished;}, async finish(_id, result) {finished ??= result; return finished;}},
+    repository ?? {...cancellationRepository(), async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return finished;}, async finish(_id, result) {finished ??= result; return finished;}},
     () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
     {async summary(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (typeof result === "function") return result(); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
     () => clock,
@@ -142,7 +146,7 @@ test("a missing platform binding retains its expected member and never creates a
   const service = new NightlyRoutineService({async list() {return [row("unbound-routine", "android")];}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}}, {async get() {throw new Error("must not look up an unbound fleet");}},
     {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare() {throw new Error("must not submit");}},
-    {async get() {return plan;}, async freeze(next) {plan = next; return next;}, async completed() {return null;}, async finish(_id, value) {return value;}},
+    {...cancellationRepository(), async get() {return plan;}, async freeze(next) {plan = next; return next;}, async completed() {return null;}, async finish(_id, value) {return value;}},
     () => ({}), undefined, () => now);
   const result = await service.start(occurrence);
   expect(result.plan.members).toHaveLength(1);
@@ -331,6 +335,48 @@ test("one failed cancellation write still reconciles neighboring requests and mu
   expect(state.cancelled).toEqual([...plan.members, ...plan.members].map(member => member.requestId));
 });
 
+test("early cancellation retains its fence before failed member writes and preserves the exact frozen plan", async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence), digest = requestInputDigest(plan);
+  state.clock = now + 60_000; state.cancelFailId = plan.members[0]!.requestId;
+  await expect(state.service.cancel(occurrence.occurrenceId, {reason: "Superseded by latest passing build"})).rejects.toThrow("retry this occurrence cancellation");
+  expect(state.cancelled).toEqual(plan.members.map(member => member.requestId));
+  const detail = await state.service.detail(occurrence.occurrenceId);
+  expect(detail.cancellation).toEqual({requestedAt: "2026-10-03T11:01:00.000Z", reason: "Superseded by latest passing build"});
+  expect(detail.finishedAt).toBeUndefined();
+  state.cancelFailId = undefined; state.clock = now + 120_000;
+  const receipt = await state.service.cancel(occurrence.occurrenceId, {reason: "Retry must keep the first reason"});
+  expect(receipt).toEqual({occurrenceId: occurrence.occurrenceId, suiteId: plan.suiteId,
+    cancellation: detail.cancellation!, requestsCancellationRecorded: true});
+  expect((await state.service.start(occurrence)).admissions).toEqual([]);
+  expect(state.admitted).toHaveLength(2);
+  expect(requestInputDigest(state.plan)).toBe(digest);
+  expect((await state.service.complete(occurrence.occurrenceId)).finishedAt).toBeUndefined();
+  await expect(state.service.cancel(occurrence.occurrenceId, {reason: "", startedAt})).rejects.toThrow("Invalid nightly cancellation");
+});
+
+test("occurrence cancellation survives lost storage acknowledgement without rewriting the plan or completed result", async () => {
+  const cancellation = {requestedAt: "2026-10-03T11:01:00Z", reason: "Superseded"};
+  const plan = {suiteId: "nightly-test"}, result = {status: "pass", finishedAt: startedAt};
+  const stored: any = {nightlyPlan: plan, nightlyResult: result};
+  const query = {read() {return this;}, readConcern() {return this;}, lean: async () => stored};
+  const find = spyOn(TestSuiteModel, "findOne").mockReturnValue(query as any);
+  let ackLost = false;
+  const update = spyOn(TestSuiteModel, "updateOne").mockImplementation((async (filter: any, change: any, options: any) => {
+    expect(filter).toEqual({suiteId: "nightly-test", nightlyPlan: {$exists: true}, nightlyCancellation: {$exists: false}});
+    expect(options.writeConcern).toBeDefined();
+    expect(Object.keys(change.$set)).toEqual(["nightlyCancellation"]);
+    stored.nightlyCancellation ??= structuredClone(change.$set.nightlyCancellation);
+    if (!ackLost) {ackLost = true; throw new Error("Cancellation ACK lost after durable write");}
+    return {modifiedCount: 0};
+  }) as any);
+  try {
+    await expect(nightlyPlanRepository.requestCancellation("nightly-test", cancellation)).rejects.toThrow("ACK lost");
+    expect(await nightlyPlanRepository.cancellation("nightly-test")).toEqual(cancellation);
+    expect(await nightlyPlanRepository.requestCancellation("nightly-test", {...cancellation, reason: "Retry"})).toEqual(cancellation);
+    expect(stored.nightlyPlan).toBe(plan); expect(stored.nightlyResult).toBe(result);
+  } finally {update.mockRestore(); find.mockRestore();}
+});
+
 test("an admission completing across the deadline is cancelled through the ordinary request path", async () => {
   let clock = now, saved: NightlyPlan | null = null;
   const cancelled: string[] = [];
@@ -338,14 +384,14 @@ test("an admission completing across the deadline is cancelled through the ordin
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     {async get() {return host;}}, {async get() {return null;}, async prepare() {clock = now + 3 * 3600_000; return {} as any;},
       async cancelPreparationSubmission(id) {cancelled.push(id); return {} as any;}},
-    {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+    {...cancellationRepository(), async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
     () => ({android: {hostId: "mini", laneId: "android"}}), undefined, () => clock);
   const {plan} = await service.start(occurrence);
   expect(cancelled).toEqual([plan.members[0]!.requestId]);
 });
 
-test("deadline fences a concurrent uncertain admission before completion and across service restart", async () => {
-  for (const insertFirst of [false, true]) {
+test("deadline and early cancellation fence uncertain admissions across service restart", async () => {
+  for (const early of [false, true]) for (const insertFirst of [false, true]) {
     const rows = new Map<string, StoredRequest>();
     let release!: () => void, entered!: () => void;
     const paused = new Promise<void>(resolve => {release = resolve;}), inserting = new Promise<void>(resolve => {entered = resolve;});
@@ -379,7 +425,7 @@ test("deadline fences a concurrent uncertain admission before completion and acr
       async acknowledgeCancellation() {throw new Error("unused acknowledgement");}, async cancellations() {return [];},
     };
     let saved: NightlyPlan | null = null, completed: NightlyResult | null = null, clock = now;
-    const repository: NightlyPlanRepository = {async get() {return saved;}, async freeze(plan) {saved ??= plan; return saved;},
+    const repository: NightlyPlanRepository = {...cancellationRepository(), async get() {return saved;}, async freeze(plan) {saved ??= plan; return saved;},
       async completed() {return completed;}, async finish(_id, result) {completed ??= result; return completed;}};
     const makeService = () => new NightlyRoutineService({async list() {return [row("race-product", "android")];}} as any,
       {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
@@ -387,18 +433,20 @@ test("deadline fences a concurrent uncertain admission before completion and acr
       () => ({android: {hostId: "mini", laneId: "android"}}), {async summary() {throw new TestRunError(404, "No framework run");}}, () => clock);
     const original = makeService(), admission = original.start(occurrence);
     await inserting;
-    clock = now + 3 * 3600_000;
+    clock = now + (early ? 60_000 : 3 * 3600_000);
+    const reason = early ? "Superseded by latest passing build" : "Nightly occurrence reached its completion boundary.";
+    if (early) expect(await makeService().cancel(occurrence.occurrenceId, {reason})).toMatchObject({requestsCancellationRecorded: true});
     const terminal = await makeService().complete(occurrence.occurrenceId);
     const member = saved!.members[0]!, cancelled = rows.get(member.requestId)!;
     expect(terminal).toMatchObject({status: "incomplete", expectedCount: 1});
     expect(cancelled).toMatchObject({hostId: member.hostId, dispatchIntent: member.dispatchIntent, dispatchIntentSha256: requestInputDigest(member.dispatchIntent),
-      state: "terminal", terminalStatus: "cancelled", preparationCancellation: {requestedAt: "2026-10-03T14:00:00.000Z"}});
+      state: "terminal", terminalStatus: "cancelled", preparationCancellation: {requestedAt: new Date(clock).toISOString(), reason}});
     // A replacement process reconciles the retained fence while the original insert is still unacknowledged.
     expect((await makeService().start(occurrence)).admissions).toEqual([]);
     expect(await makeService().complete(occurrence.occurrenceId)).toEqual(terminal);
     release();
     expect((await admission).admissions).toEqual([{memberId: member.memberId, admitted: false,
-      reason: "Nightly occurrence reached its completion boundary."}]);
+      reason}]);
     expect(await makeService().complete(occurrence.occurrenceId)).toEqual(terminal);
     expect(rows.get(member.requestId)).toEqual(cancelled);
     expect((await new TestRequestService(requestRepository).queued("mini", undefined, 100)).requests).toEqual([]);
@@ -419,7 +467,7 @@ test("admission receipts distinguish unexecuted cancellation and rejection from 
           ...(status === "cancelled" ? {hostCancellation: {requestId, hostId, inputSha256: requestInputDigest(input), requestedAt: startedAt,
             reason: "Cancelled by the occurrence boundary."}} : {}),
           ...(["pass", "failed"].includes(status) ? {runId: requestId} : {})};}},
-      {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+      {...cancellationRepository(), async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
       () => ({android: {hostId: "mini", laneId: "android"}}), undefined, () => now);
     const [admission] = (await service.start(occurrence)).admissions;
     expect(admission!.admitted).toBe(["pass", "failed"].includes(status));
@@ -441,7 +489,7 @@ test("a mismatched platform publication remains expected and missing anchor plat
             : variant === "platform" ? {platform: "android" as const} : variant === "release" ? {release: "dev.21"} : {})};}},
       {async get() {return host;}},
       {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare() {return {} as any;}},
-      {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+      {...cancellationRepository(), async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
       () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
       undefined,
       () => now,
@@ -530,7 +578,7 @@ test("selection retains independently resolved artifacts and safe original typed
         return host;
       }},
       {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare() {return {} as any;}},
-      {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+      {...cancellationRepository(), async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
       () => ({
         "android": {hostId: "mini", laneId: "android"},
         "ios-on-mac": {hostId: "desktop-host", laneId: "ios-on-mac"},
@@ -573,7 +621,7 @@ test("automatic lanes prepare through repair/offline states and resource selecti
         {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
         {async get() {return observed;}},
         {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare(_hostId, input) {submitted.push(routineDispatchIntentSchema.parse(input).requestId); return {} as any;}},
-        {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+        {...cancellationRepository(), async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
         () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
         undefined,
         () => now,
@@ -600,7 +648,7 @@ test("lane-specific exact-definition availability never disables the healthy sib
       {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
       {async get() {return observed;}},
       {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare(_hostId, input) {submitted.push(routineDispatchIntentSchema.parse(input).requestId); return {} as any;}},
-      {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+      {...cancellationRepository(), async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
       () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
       undefined,
       () => now,
@@ -650,7 +698,7 @@ test("unavailable main source cannot fall back to an old enrolled definition", a
   const service = new NightlyRoutineService({async list() {return [row("known-product", "android")];}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
     {async get() {return host;}}, {async get() {return null;}, async prepare() {preparations++; return {} as any;}, async cancelPreparationSubmission() {return {} as any;}},
-    {async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+    {...cancellationRepository(), async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
     () => ({android: {hostId: "mini", laneId: "android"}}), undefined, () => now, undefined,
     {async resolve() {sourceReads++; if (!available) throw new TestRunError(503, "Routine main source unavailable"); return mainRevision;}});
   await expect(service.start(occurrence)).rejects.toThrow("main source unavailable");

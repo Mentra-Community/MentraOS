@@ -7,6 +7,7 @@ const schema = new Schema({
   payload: {type: Schema.Types.Mixed},
   payloadSha256: {type: String},
   nightlyPlan: {type: Schema.Types.Mixed, immutable: true},
+  nightlyCancellation: {type: Schema.Types.Mixed},
   nightlyResult: {type: Schema.Types.Mixed},
   startedAt: {type: Date},
   finalizingAt: {type: String},
