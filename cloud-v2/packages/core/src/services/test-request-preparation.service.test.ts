@@ -38,3 +38,21 @@ test('Mongo completion uses one absent-input CAS and preserves immutable selecti
     expect((cas.mock.calls[0] as unknown as unknown[])[2]).toMatchObject({returnDocument:'after',writeConcern:{w:'majority',j:true}});
   }finally{find.mockRestore();cas.mockRestore()}
 });
+
+
+test('ordinary preparation polls yield beyond one hundred waiting sources without changing their intent',async()=>{
+  const rows=Array.from({length:102},(_,index)=>{const selected={...intent,requestId:`source-${String(index).padStart(3,'0')}`};return {requestId:selected.requestId,hostId:'mini',state:'preparing',dispatchIntent:selected,dispatchIntentSha256:requestInputDigest(selected),createdAt:new Date(index),preparationCheckedAt:undefined as Date|undefined}});
+  const digests=rows.map(row=>row.dispatchIntentSha256);let sort:unknown,limit=0;
+  const find=spyOn(TestRequestModel,'find').mockImplementation(((query:any)=>({
+    sort(value:unknown){sort=value;return this},limit(value:number){limit=value;return this},read(){return this},readConcern(){return this},
+    async lean(){if(query.state==='queued')return [];return rows.filter(row=>row.hostId===query.hostId&&row.state===query.state).sort((left,right)=>(left.preparationCheckedAt?.valueOf()??0)-(right.preparationCheckedAt?.valueOf()??0)||left.createdAt.valueOf()-right.createdAt.valueOf()||left.requestId.localeCompare(right.requestId)).slice(0,limit).map(row=>structuredClone(row))},
+  }) as any) as any);
+  const update=spyOn(TestRequestModel,'updateMany').mockImplementation((async(query:any,value:any)=>{for(const row of rows)if(row.hostId===query.hostId&&row.state===query.state&&query.requestId.$in.includes(row.requestId))row.preparationCheckedAt=value.$set.preparationCheckedAt;return {matchedCount:query.requestId.$in.length} as any}) as any);
+  try {
+    const service=new TestRequestService(undefined,undefined,null);
+    const first=await service.queued('mini',undefined,100);expect(first.preparations).toHaveLength(100);expect(first.preparations.some(row=>row.requestId==='source-101')).toBe(false);
+    const second=await service.queued('mini',undefined,100);expect(second.preparations.some(row=>row.requestId==='source-101')).toBe(true);
+    expect(sort).toEqual({preparationCheckedAt:1,createdAt:1,requestId:1});expect(rows.map(row=>row.dispatchIntentSha256)).toEqual(digests);
+    expect(update.mock.calls[0]?.[0]).toMatchObject({hostId:'mini',state:'preparing'});expect(update.mock.calls[0]?.[2]).toMatchObject({writeConcern:{w:'majority',j:true}});
+  } finally {find.mockRestore();update.mockRestore()}
+});
