@@ -29,7 +29,32 @@ export function serveCore(fetch: (request: Request) => Response | Promise<Respon
     const bundleUpload = request.method === 'POST' &&
       /^\/api\/internal\/routine-definitions\/bundles\/[a-f0-9]{64}$/.test(new URL(request.url).pathname);
     // Authenticate bundle streams in Hono before their service performs bounded receipt/hash buffering.
-    if (bundleUpload) return fetch(request);
+    if (bundleUpload) {
+      const response = await fetch(request);
+      // Bun 1.3.14 needs rejected bodies framed before reusing their connection.
+      // Discard without buffering, bounded by the listener's native byte ceiling
+      // and a deadline; authentication has already run before this work begins.
+      if (response.status >= 400 && !request.bodyUsed) {
+        const reader = request.body.getReader();
+        let discarded = 0;
+        const deadline = setTimeout(() => {void reader.cancel().catch(() => undefined);}, 10_000);
+        try {
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            discarded += chunk.value.byteLength;
+            if (discarded > CORE_REQUEST_BODY_BYTES) {
+              await reader.cancel();
+              break;
+            }
+          }
+        } finally {clearTimeout(deadline); reader.releaseLock();}
+        const headers = new Headers(response.headers);
+        headers.set("Connection", "close");
+        return new Response(response.body, {status: response.status, statusText: response.statusText, headers});
+      }
+      return response;
+    }
     const limit = CORE_ORDINARY_BODY_BYTES;
     const length = request.headers.get("content-length");
     if (length && !request.headers.has("transfer-encoding")) {

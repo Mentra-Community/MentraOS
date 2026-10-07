@@ -7,7 +7,7 @@ import {LaneRestorationService} from "../../services/lane-restoration.service";
 import {TestHostHealthService} from "../../services/test-host-health.service";
 import {FrameworkResultService, type StoredFrameworkRun} from "../../services/framework-result.service";
 import {TestRunError} from "../../services/test-result-error";
-import {requestInputDigest, TestRequestService, type StoredTestRequest, type TestRequestRepository} from "../../services/test-request.service";
+import {requestInputDigest, TestRequestService, type StoredTestRequest, type StoredPreparingRequest, type TestRequestRepository} from "../../services/test-request.service";
 import {routineEnrollmentSchema} from "../../types/routine-definition.types";
 import {frameworkRunSchema} from "../../types/framework-run.types";
 
@@ -73,7 +73,10 @@ test("the existing result route prefers actual runs and otherwise shows exact re
     platform: "android",
     laneId: "phone",
     resources: [],
-    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40), kind: 'android-apk',
+      source: {channel: 'dev', buildRunId: 1, publicationAttempt: 1},
+      archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 100, sha256: 'c'.repeat(64)},
+      receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 10, sha256: 'd'.repeat(64)}},
   }
   const inputSha256 = requestInputDigest(input);
   class Results extends FrameworkResultService {
@@ -124,7 +127,10 @@ test("a cancelled request read reconciles late host custody and then its real re
     platform: "android",
     laneId: "phone",
     resources: [],
-    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40), kind: 'android-apk',
+      source: {channel: 'dev', buildRunId: 1, publicationAttempt: 1},
+      archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 100, sha256: 'c'.repeat(64)},
+      receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 10, sha256: 'd'.repeat(64)}},
   }
   let row: StoredTestRequest | null = null, storedRun: StoredFrameworkRun | null = null;
   const repository = {
@@ -239,4 +245,28 @@ test('historical request detail preserves an absent routine source and original 
   expect(JSON.stringify(input)).toBe(before);
   expect(requestInputDigest(input)).toBe(inputSha256);
   await expect(new Requests().submit('new-request', 'mini', input)).rejects.toMatchObject({status: 400});
+});
+
+
+test('activity and detail show input-free exact source preparation with its observed wait reason', async () => {
+  const {TestRequestModel} = await import('../../models/test-request.model');
+  const source = {channel: 'dev' as const, buildRunId: 1, publicationAttempt: 1};
+  const intent = {requestId: 'waiting-main', routineId: 'new-main-routine', platform: 'android' as const, routineRevision: 'a'.repeat(40), laneId: 'phone', source,
+    build: {repository: 'Mentra-Community/MentraOS' as const, channel: 'dev' as const, kind: 'android-apk' as const, headSha: 'b'.repeat(40), source,
+      archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 100, sha256: 'c'.repeat(64)}, receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 10, sha256: 'd'.repeat(64)}}};
+  const row: StoredPreparingRequest = {requestId: intent.requestId, hostId: 'mini', state: 'preparing', dispatchIntent: intent, dispatchIntentSha256: requestInputDigest(intent),
+    preparation: {code: 'minimum-routine-api', reason: 'Waiting for the required routine API installation.', observedAt: '2026-10-06T12:00:00Z'}};
+  let selected: unknown;
+  const find = spyOn(TestRequestModel, 'find').mockReturnValue({sort(){return this},limit(){return this},select(value: unknown){selected=value;return this},read(){return this},readConcern(){return this},lean:async()=>[row]} as any);
+  class Results extends FrameworkResultService {override async detailByRun(): Promise<never> {throw new TestRunError(404,'missing')};override async detail(): Promise<never> {throw new TestRunError(404,'missing')}}
+  class Requests extends TestRequestService {override async get() {return row}}
+  try {
+    const api = createTestRunAdminApi(undefined,undefined,new Results(),new Requests());
+    const activity = await (await api.request('/activity')).json() as {requests: unknown[]};
+    const detail = await (await api.request('/waiting-main')).json() as {request: unknown};
+    expect(activity.requests).toEqual([detail.request]);
+    expect(detail.request).toMatchObject({routineId:'new-main-routine',platform:'android',laneId:'phone',state:'preparing',definitionRevision:intent.routineRevision,reason:row.preparation!.reason});
+    expect(detail.request).not.toHaveProperty('input');expect(detail.request).not.toHaveProperty('inputSha256');
+    expect(selected).toMatchObject({dispatchIntent:1,dispatchIntentSha256:1,preparation:1});
+  } finally {find.mockRestore()}
 });

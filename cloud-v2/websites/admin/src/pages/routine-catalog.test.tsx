@@ -336,8 +336,8 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
   expect(html.indexOf('aria-label="Teardown details"')).toBeLessThan(
     html.indexOf('<h3 class="font-semibold">Evidence</h3>'),
   )
-  expect(html).toContain("Routine-specific setup details were not recorded for this run.")
-  expect(html).toContain("Routine-specific teardown details were not recorded for this run.")
+  expect(html).toContain("Setup action details were not recorded for this run.")
+  expect(html).toContain("Teardown action details were not recorded for this run.")
   expect(html.match(/Watch this step/g)).toHaveLength(71)
   expect(html).toContain("Search steps")
   expect(html).toContain("Watch this step · 01:10")
@@ -349,7 +349,7 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
   expect(html.match(/class="w-7 shrink-0 text-right"/g)).toHaveLength(71)
   expect(html).toContain('class="w-7 shrink-0 text-right">71.</span>')
   expect(html).toContain("Started ")
-  expect(html).toContain("Setup 1.0 seconds · Test 71.0 seconds · Teardown 1.0 seconds")
+  expect(html).toContain("Setup 1s · Test 1m 11s · Teardown 1s")
   expect(html).toContain("/api/admin/routine-catalog/results/by-run/saved-run/assets/recording")
   const pending = render(false)
   expect(pending).toContain("Evidence upload pending")
@@ -369,7 +369,7 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
       </QueryClientProvider>,
     )
     expect(legacy).toContain("Stopped at: legacy-entry")
-    expect(legacy).toContain("Routine-specific setup details were not recorded")
+    expect(legacy).toContain("Setup action details were not recorded")
     expect(legacy).toContain(status === "cancelled" ? "Cancelled" : "failed")
   }
 })
@@ -400,6 +400,7 @@ test("routine lifecycle rows report real actions without video and keep failures
         actions: [
           {
             id: "install",
+            stage: "before-entry",
             instruction: "Install the selected Mentra App",
             expected: "Requested build installed",
             scope: "shared",
@@ -408,7 +409,9 @@ test("routine lifecycle rows report real actions without video and keep failures
           },
           {
             id: "prepare-note",
+            stage: "after-entry",
             instruction: "Prepare a note fixture",
+            fixtureProvider: "notes-data",
             expected: "Fixture available",
             scope: "routine",
             status: "passed",
@@ -430,7 +433,9 @@ test("routine lifecycle rows report real actions without video and keep failures
         actions: [
           {
             id: "delete-note",
+            stage: "resource-cleanup",
             instruction: "Remove the note fixture",
+            fixtureProvider: "notes-data",
             expected: "Fixture absent",
             scope: "routine",
             status: "failed",
@@ -438,6 +443,7 @@ test("routine lifecycle rows report real actions without video and keep failures
           },
           {
             id: "stop-audio",
+            stage: "resource-cleanup",
             instruction: "Stop fixture audio",
             expected: "Audio stopped",
             scope: "routine",
@@ -447,6 +453,7 @@ test("routine lifecycle rows report real actions without video and keep failures
           },
           {
             id: "uninstall",
+            stage: "resource-cleanup",
             instruction: "Uninstall the Mentra App",
             expected: "Test app absent",
             scope: "shared",
@@ -482,13 +489,23 @@ test("routine lifecycle rows report real actions without video and keep failures
     html.indexOf('<h3 class="font-semibold">Evidence</h3>'),
   )
   expect(setup).toContain("Prepare a note fixture")
-  expect(setup).toContain("1.5 seconds")
-  expect(setup).toContain("Started ")
-  expect(setup).toContain("Shared framework setup")
   expect(teardown).toContain("Remove the note fixture")
-  expect(teardown).toContain("2.5 seconds")
+  expect(setup).toContain('aria-label="Setup: Before entry"')
+  expect(setup).toContain('aria-label="Setup: After entry"')
+  expect(teardown.match(/aria-label="Teardown: Resource cleanup"/g)).toHaveLength(1)
+  expect(teardown.indexOf("Remove the note fixture")).toBeLessThan(teardown.indexOf("Uninstall the Mentra App"))
+  expect(setup).toContain("2s")
+  expect(setup).toContain("Started ")
+  expect(setup).toContain("<details")
+  expect(setup).not.toContain('open=""')
+  expect(teardown).toContain('open=""')
+  expect(setup).toContain("Framework</span>")
+  expect(setup).toContain("Routine</span>")
+  expect(setup.indexOf("Install the selected Mentra App")).toBeLessThan(setup.indexOf("Prepare a note fixture"))
+  expect(teardown).toContain("Remove the note fixture")
+  expect(teardown).toContain("3s")
   expect(teardown).toContain("Not run")
-  expect(teardown).not.toContain("0.0 seconds")
+  expect(teardown).not.toContain("0s")
   expect(teardown).toContain("lost-ownership")
   expect(teardown).toContain("Fixture removal failed")
   for (const phase of [setup, teardown]) {
@@ -497,6 +514,29 @@ test("routine lifecycle rows report real actions without video and keep failures
   }
   expect(teardown).not.toContain("Log upload unavailable")
   expect(html.slice(html.indexOf('<h3 class="font-semibold">Evidence</h3>'))).toContain("Log upload unavailable")
+  // Expand stages up to the last failure, independently for setup and teardown.
+  for (const phase of ["setup", "teardown"] as const) for (const failed of [[], [3], [0, 4]]) {
+    const candidate = structuredClone(run);
+    const stages = phase === "setup" ? ["before-entry", "entry", "after-entry"] as const
+      : ["recording", "teardown-actions", "resource-cleanup"] as const;
+    candidate.result[phase].actions = stages.flatMap((stage, group) => [0, 1].map(offset => {
+      const index = group * 2 + offset;
+      return {id: `action-${index}`, instruction: `Chronological action ${index}`, expected: "Ready", stage,
+        scope: offset ? "routine" as const : "shared" as const,
+        status: failed.includes(index) ? "failed" as const : "passed" as const, durationMs: 100};
+    }));
+    candidate.result.failures = [];
+    candidate.result.setup.status = phase === "setup" && failed.length ? "failed" : "passed";
+    candidate.result.teardown.ready = phase !== "teardown" || !failed.length;
+    client.setQueryData(["framework-run", "lifecycle-run"], {run: candidate, definition: routine.definition,
+      outcome: failed.length ? `${phase}-failed` : "pass", uploadsComplete: true, evidenceStatus: "complete"});
+    const rendered = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId="lifecycle-run" /></QueryClientProvider>);
+    const title = phase === "setup" ? "Setup" : "Teardown";
+    const sections = [...rendered.matchAll(/<details\b([^>]*)>/g)].filter(match => match[1]!.includes(`aria-label="${title}:`));
+    expect(sections).toHaveLength(3);
+    expect(sections.map(match => match[1]!.includes('open=""'))).toEqual(stages.map((_, index) => failed.length > 0 && index <= Math.floor(Math.max(...failed) / 2)));
+    for (let index = 1; index < 6; index++) expect(rendered.indexOf(`Chronological action ${index - 1}`)).toBeLessThan(rendered.indexOf(`Chronological action ${index}`));
+  }
   run.result.setup.actions = []
   run.result.teardown.actions = []
   client.setQueryData(["framework-run", "lifecycle-run"], {
@@ -511,8 +551,8 @@ test("routine lifecycle rows report real actions without video and keep failures
       <FrameworkRunPage runId="lifecycle-run" />
     </QueryClientProvider>,
   )
-  expect(empty).toContain("No routine-specific setup steps.")
-  expect(empty).toContain("No routine-specific teardown steps.")
+  expect(empty).toContain("No setup actions recorded.")
+  expect(empty).toContain("No teardown actions recorded.")
 })
 
 test("catalog run links use the result route understood by the Admin shell", () => {
@@ -828,3 +868,11 @@ test("unavailable history details retain their links without hiding neighboring 
   expect(html.indexOf("standalone-run")).toBeLessThan(html.indexOf("unreadable-run"))
   expect(html.indexOf("unreadable-suite")).toBeLessThan(html.indexOf("older-suite"))
 })
+
+
+test('preparing request detail explains exact source custody without calling it historical', () => {
+  const client=new QueryClient();
+  client.setQueryData(['framework-run','preparing-source'],{kind:'request',request:{requestId:'preparing-source',hostId:'mini',dispatchIntentSha256:'d'.repeat(64),routineId:'new-main',definitionRevision:'a'.repeat(40),platform:'android',laneId:'phone',state:'preparing',reason:'Waiting for installed routine API.',build:{repository:'Mentra-Community/MentraOS',channel:'dev',headSha:'b'.repeat(40)}}});
+  const html=renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId='preparing-source'/></QueryClientProvider>);
+  expect(html).toContain('new-main: preparing');expect(html).toContain('The exact routine source is being prepared');expect(html).toContain('Waiting for installed routine API.');expect(html).not.toContain('this historical request');
+});

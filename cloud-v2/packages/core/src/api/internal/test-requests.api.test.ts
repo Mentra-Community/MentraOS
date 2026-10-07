@@ -11,7 +11,7 @@ test("delivery scopes queue and acceptance to authenticated controller", async (
   class Service extends TestRequestService {
     override async queued(host: string, cursor: string | undefined, limit: number) {
       calls.push({host, cursor, limit});
-      return {requests: [], nextCursor: null};
+      return {requests: [], preparations: [], nextCursor: null};
     }
     override async accept(receipt: HostAcceptance, host: string) {
       if (receipt.hostId !== host) throw new TestRequestConflict("wrong host");

@@ -1,3 +1,4 @@
+import {runDuration} from "../lib/run-duration";
 import {useQuery} from "@tanstack/react-query";
 import {useEffect, useState} from "react";
 import type {LaneRestorationAttempt, LaneRestorationHost, LaneRestorationList} from "../../../../packages/core/src/types/lane-restoration.types";
@@ -13,8 +14,7 @@ export function restorationElapsed(attempt: LaneRestorationAttempt, observedAt: 
   const start = attempt.startedAt;
   const finish = attempt.finishedAt ?? observedAt;
   if (!start || !attempt.current && !attempt.finishedAt || !Number.isFinite(Date.parse(start)) || !Number.isFinite(Date.parse(finish)) || Date.parse(finish) < Date.parse(start)) return "Duration unknown";
-  const seconds = Math.floor((Date.parse(finish) - Date.parse(start)) / 1000);
-  const duration = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  const duration = runDuration(start, finish);
   return attempt.finishedAt ? duration : `${duration} at last observation`;
 }
 export function restorationOutcome(attempt: LaneRestorationAttempt) {

@@ -130,7 +130,15 @@ export class FrameworkResultService {
       throw new FrameworkResultConflict("Result must contain the complete ordered source step list");
     for (const phase of ["setup", "teardown"] as const) {
       const declared = definition.definition[phase], reported = run.result[phase].actions;
-      const routineActions = reported?.filter(action => action.scope === "routine") ?? [];
+      // Fixture actions execute routine-owned code but are separate from explicit lifecycle hooks.
+      // Bind them to declared providers; keep the existing exact hook-list validation below.
+      const fixtureActions = reported?.filter(action => action.fixtureProvider !== undefined) ?? [];
+      const providers = new Set(definition.definition.fixtures?.map(fixture => fixture.provider) ?? []);
+      if (fixtureActions.some(action => action.scope !== "routine" || !providers.has(action.fixtureProvider!)
+          || declared?.some(hook => hook.id === action.id))
+        || new Set(fixtureActions.map(action => action.fixtureProvider)).size !== fixtureActions.length)
+        throw new FrameworkResultConflict(`Result ${phase} fixture actions must belong to distinct declared routine fixtures`);
+      const routineActions = reported?.filter(action => action.scope === "routine" && action.fixtureProvider === undefined) ?? [];
       if ((declared !== undefined && reported === undefined) || routineActions.length !== (declared?.length ?? 0)
         || routineActions.some((action, index) => action.id !== declared?.[index]?.id
           || action.instruction !== declared?.[index]?.instruction || action.expected !== declared?.[index]?.expected))

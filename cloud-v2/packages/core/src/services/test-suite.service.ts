@@ -7,7 +7,7 @@ import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSui
 import {TestRunError} from "./test-result-error";
 import {hostRejectionSchema, requestInputDigest} from "./test-request.service";
 import {recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
-import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
+import {NightlyRoutineService, nightlyPreparedInput, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
 
@@ -22,11 +22,15 @@ export function nightlySuiteProjection(suite: TestSuite, plan: NightlyPlan, resu
     const receipt = result.members.find(receipt => receipt.memberId === member.memberId);
     if (!expected || !receipt || receipt.requestId !== expected.requestId || receipt.routineId !== expected.routineId
       || receipt.platform !== expected.platform || receipt.definitionRevision !== expected.definitionRevision
-      || receipt.definitionSha256 !== expected.definitionSha256 || receipt.hostId !== expected.hostId
+      || receipt.routineRevision !== expected.routineRevision || receipt.hostId !== expected.hostId
       || requestInputDigest(receipt.build ?? null) !== requestInputDigest(expected.build ?? null)
-      || requestInputDigest(receipt.input ?? null) !== requestInputDigest(expected.input ?? null))
+      || requestInputDigest(receipt.dispatchIntent ?? null) !== requestInputDigest(expected.dispatchIntent ?? null)
+      || (receipt.input === undefined) !== (receipt.inputSha256 === undefined)
+      || receipt.publicationComplete && !receipt.input)
       throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
-    return {...member, ...((expected.input?.build ?? expected.build) ? {build: expected.input?.build ?? expected.build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
+    const input = receipt.input ? nightlyPreparedInput(expected, receipt.input, receipt.inputSha256) : undefined;
+    return {...member, routineRevision: expected.routineRevision, ...(expected.dispatchIntent ? {dispatchIntent: expected.dispatchIntent} : {}),
+      ...(input ? {routineSource: input.routineSource} : {}), ...(expected.build ? {build: expected.build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
       ...(receipt.unavailableReason ? {unavailableReason: receipt.unavailableReason} : {}),
       ...(receipt.runId ? {runId: receipt.runId, startedAt: receipt.runStartedAt, finishedAt: receipt.runFinishedAt} : {})};

@@ -18,7 +18,7 @@ test("a resume intention and stopped agent do not become successful scheduling",
   const markup = render();
   expect(markup).toContain("Stopped before resumption"); expect(markup).toContain("intention to resume");
   expect(markup).toContain("Resume call and acceptance: unknown"); expect(markup).not.toContain("Scheduling resumed");
-  expect(markup).toContain("2m 3s"); expect(markup).toContain("testRun=nightly%3Afirst");
+  expect(markup).toContain("2m 03s"); expect(markup).toContain("testRun=nightly%3Afirst");
 });
 test("accepted receipt, refusal and human question stay separate", () => {
   const resumed = {...attempt, state: "resumed" as const, resume: {status: "accepted" as const, decisionId: "resume:one", calledAt: at, reason: null}};
@@ -35,7 +35,7 @@ test("missing records, stale host and unfinished durations remain honest", () =>
   expect(render(host, false)).toContain("Current controller state unknown");
   expect(render(host, false)).toContain("last reported in repair");
   expect(restorationElapsed({...attempt, startedAt: null, assignedAt: null}, at)).toBe("Duration unknown");
-  expect(restorationElapsed({...attempt, finishedAt: null}, "2026-10-05T01:03:00Z")).toBe("3m 0s at last observation");
+  expect(restorationElapsed({...attempt, finishedAt: null}, "2026-10-05T01:03:00Z")).toBe("3m 00s at last observation");
   expect(restorationElapsed({...attempt, current: false, finishedAt: null}, "2026-10-05T01:03:00Z")).toBe("Duration unknown");
   expect(restorationElapsed({...attempt, startedAt: "invalid"}, at)).toBe("Duration unknown");
   expect(render({...host, restoration: {...host.restoration!, attempts: [{...attempt, actionsTruncated: true}]}})).toContain("additional operations omitted");

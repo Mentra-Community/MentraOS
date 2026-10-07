@@ -54,10 +54,11 @@ export const recordedFrameworkRequestInputSchema = recordedInputSchema.superRefi
 
 /** Admin delivery projection; it describes a request without claiming execution evidence. */
 export interface FrameworkRequestDisplay {
-  requestId: string; hostId: string; inputSha256: string; routineId: string; platform: string;
+  requestId: string; hostId: string; inputSha256?: string; dispatchIntentSha256?: string; routineId: string; platform: string;
   definitionRevision: string; routineSource?: z.infer<typeof routineSourceRefSchema>; minimumFrameworkVersion?: number;
   laneId: string; build: z.infer<typeof frameworkBuildSchema>;
-  state: "queued" | "accepted" | "running" | "terminal"; terminalStatus?: string;
+  state: "preparing" | "queued" | "accepted" | "running" | "terminal"; terminalStatus?: string;
   createdAt?: string; acceptedAt?: string; reason?: string; reasonAt?: string;
   cancellationRequested?: boolean; cancellationAcknowledged?: boolean;
+  preparationDisposition?: 'not-run' | 'not-applicable';
 }

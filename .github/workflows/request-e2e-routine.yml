@@ -3,11 +3,11 @@ on:
   workflow_dispatch:
     inputs:
       routine:
-        description: Enrolled routine ID from the Core catalog
+        description: Routine ID from the Harness repository
         type: string
         required: true
       platform:
-        description: Enrolled execution platform
+        description: Requested execution platform
         type: choice
         options: [android, ios-on-mac]
         required: true
@@ -28,6 +28,10 @@ on:
         description: Original publication attempt
         type: string
         required: true
+      routine_revision:
+        description: Optional exact Harness commit (defaults to main)
+        type: string
+        required: false
   pull_request_target:
     types: [opened, reopened, synchronize, labeled]
 permissions:
@@ -51,13 +55,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Queue selected enrolled routines through Core
+      - name: Prepare selected routines through Core
         id: queue
         uses: actions/github-script@v7
         env:
           TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
           REQUEST_ROUTINE: ${{ inputs.routine }}
           REQUEST_PLATFORM: ${{ inputs.platform }}
+          ROUTINE_REVISION: ${{ inputs.routine_revision }}
           REQUEST_CHANNEL: ${{ inputs.channel }}
           REQUEST_PR: ${{ inputs.pr || github.event.pull_request.number }}
           SOURCE_BUILD_RUN_ID: ${{ inputs.source_build_run_id }}
@@ -73,7 +78,8 @@ jobs:
               ...(process.env.REQUEST_CHANNEL === 'pr' ? {prNumber: Number(process.env.REQUEST_PR)} : {}),
             } : undefined;
             const result = await createRoutineRequests({github, context, token: process.env.TEST_RUN_INGEST_TOKEN,
-              routine: process.env.REQUEST_ROUTINE, platform: process.env.REQUEST_PLATFORM, source, number: Number(process.env.REQUEST_PR)});
+              routine: process.env.REQUEST_ROUTINE, platform: process.env.REQUEST_PLATFORM, source, number: Number(process.env.REQUEST_PR),
+              ...(process.env.ROUTINE_REVISION ? {routineRevision: process.env.ROUTINE_REVISION} : {})});
             const {writeFile} = await import('node:fs/promises');
             await writeFile('routine-dispatches.json', JSON.stringify({requestIds: result.requestIds, outcomes: result.outcomes}));
             core.setOutput('persisted', 'true');

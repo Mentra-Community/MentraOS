@@ -4,7 +4,7 @@ import {createHash} from "node:crypto"
 import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
-import {routineApi, routineLabelIds, selectedCatalog} from "./routine-api.mjs"
+import {routineLabelIds} from "./routine-api.mjs"
 import {slackRoutineSection, slackRoutineText} from "./slack-routine-section.mjs"
 
 export function iosBuildRequired(files) {
@@ -180,26 +180,20 @@ export function routineResultsUrl({repository, pr, sha, archiveSha256, routineId
   return url.href
 }
 
-async function requestedRoutineLinks({context, pr, sha, ios, android, requested, fetchImpl, token}) {
-  if (!requested.length) return []
+function requestedRoutineLinks({context, pr, sha, ios, android, requested, androidAvailable}) {
   const repository = `${context.repo.owner}/${context.repo.repo}`
-  const workflow = "request-e2e-routine.yml"
   const result = {
-    pipelineUrl: `https://github.com/${repository}/actions/workflows/${workflow}`,
+    pipelineUrl: `https://github.com/${repository}/actions/workflows/request-e2e-routine.yml`,
     pipelineLabel: "Request pipeline (workflow)",
   }
-  let definitions
-  try {definitions = selectedCatalog(await routineApi({token, operation: "catalog", fetchImpl}), requested)}
-  catch {
-    return requested.map(id => ({...result, id, title: id,
-      resultsUnavailable: "The current routine catalog could not resolve this selection. Inspect the request pipeline; no execution result is inferred."}))
-  }
-  return definitions.map(definition => ({...result, id: definition.routineId, title: definition.title, platform: definition.platform,
-    definitionRevision: definition.definitionRevision,
-    ...(definition.platform === "android" && android.receiptUnavailable
+  // Platform labels name published app builds, not inferred routine support or execution.
+  const platforms = [...(androidAvailable ? ["android"] : []), ...(ios.assets ? ["ios-on-mac"] : [])]
+  return requested.flatMap(id => platforms.length ? platforms.map(platform => ({...result, id, title: id, platform,
+    ...(platform === "android" && android.receiptUnavailable
       ? {resultsUnavailable: "Android receipt unavailable; rerun the build notification to retry the results link."} : {}),
-    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha, archiveSha256: definition.platform === "android" ? android.archiveSha256 : ios.archiveSha256,
-      routineId: definition.routineId, platform: definition.platform})}))
+    resultsUrl: routineResultsUrl({repository, pr: pr.number, sha,
+      archiveSha256: platform === "android" ? android.archiveSha256 : ios.archiveSha256, routineId: id, platform})}))
+    : [{...result, id, title: id, resultsUnavailable: "No published app platform is available for this build; no execution is inferred."}])
 }
 
 export function matchingBuildRun(runs, pr, sha) {
@@ -425,10 +419,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   // Selected routines are part of the delivered post, so a label added to the same
   // publications posts their requested tests and result links once.
   const requested = routineLabelIds(pr)
-  let routines = await requestedRoutineLinks({github, context, pr, sha, ios, android, core, requested, fetchImpl,
-    token: process.env.TEST_RUN_INGEST_TOKEN || process.env.TEST_RUN_INGEST_TOKEN_DEV})
+  let routines = requestedRoutineLinks({context, pr, sha, ios, android, requested, androidAvailable: !error})
   const selectionIdentity = requested.length ? createHash("sha256").update(JSON.stringify(routines.map(row =>
-    [row.id, row.platform ?? "unavailable", row.definitionRevision ?? "", row.title]))).digest("hex") : undefined
+    [row.id, row.platform ?? "unavailable"]))).digest("hex") : undefined
   const buildIdentity = `${sha}:${incomplete ? "incomplete" : "ready"}:${publicationIdentity}${
     selectionIdentity ? `:routines-${selectionIdentity}` : ""}`
   if (android.receiptUnavailable) {

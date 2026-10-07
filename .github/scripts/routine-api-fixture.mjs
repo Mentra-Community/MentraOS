@@ -9,6 +9,9 @@ export function routineFixture({routineId = "example.screen-check", platform = "
   const request = {requestId: "example-request", hostId: "example-host", state: "accepted", input: {routineId,
     platform, definitionRevision: enrollment.definitionRevision, laneId: "example-lane", build}}
   request.inputSha256 = requestInputDigest(request.input)
+  request.dispatchIntent = {requestId: request.requestId, routineId, platform, routineRevision: enrollment.definitionRevision,
+    laneId: request.input.laneId, source, build: structuredClone(build)}
+  request.dispatchIntentSha256 = requestInputDigest(request.dispatchIntent)
   const run = {requestId: request.requestId, hostId: request.hostId, routineId, platform, definitionRevision: enrollment.definitionRevision,
     laneId: request.input.laneId, build: structuredClone(build), finishedAt: "2026-10-03T12:01:00.000Z",
     result: {runId: request.requestId, test: "passed", setup: {status: "passed"}, steps: [{id: "example-step", status: "passed"}], teardown: {ready: true}}}
@@ -16,15 +19,35 @@ export function routineFixture({routineId = "example.screen-check", platform = "
   const calls = []
   const fetchImpl = async (url, options) => {
     calls.push({url, options})
-    if (url.endsWith("/routine-catalog")) return Response.json({routines: [enrollment]})
+    if (url.endsWith("/routine-catalog")) return Response.json({routineRevision: enrollment.definitionRevision, routines: [{routineId}]})
     if (options.method === "POST") {
       const submitted = JSON.parse(options.body)
-      return Response.json({...request, requestId: submitted.requestId, input: {...request.input, routineId: submitted.routineId,
-        platform: submitted.platform, build: {...build, source: submitted.source}}})
+      const intent = {...request.dispatchIntent, requestId: submitted.requestId, routineId: submitted.routineId,
+        platform: submitted.platform, routineRevision: submitted.routineRevision ?? enrollment.definitionRevision,
+        source: submitted.source, build: {...build, source: submitted.source}}
+      return Response.json({requestId: submitted.requestId, hostId: request.hostId, state: "preparing", dispatchIntent: intent,
+        dispatchIntentSha256: requestInputDigest(intent)})
     }
     return Response.json(detail)
   }
   return {definition, enrollment, source, build, request, run, detail, fetchImpl, calls}
+}
+
+export function preparingRoutineFixture({status, ...options} = {}) {
+  const fixture = routineFixture(options), {request} = fixture
+  delete request.input; delete request.inputSha256
+  request.state = status ? "terminal" : "preparing"
+  fixture.detail.result = null
+  if (status === "cancelled") {
+    request.terminalStatus = "cancelled"
+    request.preparationCancellation = {requestedAt: "2026-10-03T12:01:00.000Z", reason: "Cancelled before source preparation"}
+  } else if (status) {
+    request.terminalStatus = "not-run"
+    request.preparationRejection = {dispatchIntentSha256: request.dispatchIntentSha256, code: status === "skipped" ? "unsupported-platform" : "invalid-definition",
+      reason: status === "skipped" ? "The routine does not support this platform" : "Source description failed",
+      rejectedAt: "2026-10-03T12:01:00.000Z", disposition: status === "skipped" ? "not-applicable" : "not-run"}
+  }
+  return fixture
 }
 
 export function terminalRoutineFixture({status = "not-run", ...options} = {}) {
