@@ -11,8 +11,16 @@ import {NightlyRoutineService, nightlyPreparedInput, type NightlyPlan, type Nigh
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
 
+type RecordedInput = z.infer<typeof recordedFrameworkRequestInputSchema>;
+type InputNightlyMember = Omit<NightlyPlan["members"][number], "routineRevision" | "dispatchIntent"> & {
+  definitionSha256: string; input?: RecordedInput;
+};
+type RecordedNightlyPlan = Omit<NightlyPlan, "members"> & {members: (NightlyPlan["members"][number] | InputNightlyMember)[]};
+type RecordedNightlyResult = Omit<NightlyResult, "members"> & {members: (NightlyResult["members"][number] |
+  (InputNightlyMember & Omit<NightlyResult["members"][number], "routineRevision" | "dispatchIntent" | "input" | "inputSha256">))[]};
+
 /** Project the occurrence's one terminal authority; never take another evidence snapshot. */
-export function nightlySuiteProjection(suite: TestSuite, plan: NightlyPlan, result: NightlyResult): ReturnType<typeof summarizeSuite> {
+export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPlan, result: RecordedNightlyResult): ReturnType<typeof summarizeSuite> {
   if (requestInputDigest(suite) !== requestInputDigest(plan.suite) || result.suiteId !== suite.suiteId
     || result.occurrenceId !== plan.occurrenceId || result.startedAt !== plan.startedAt || result.trigger !== plan.trigger
     || result.expectedCount !== suite.members.length || result.members.length !== suite.members.length)
@@ -22,15 +30,36 @@ export function nightlySuiteProjection(suite: TestSuite, plan: NightlyPlan, resu
     const receipt = result.members.find(receipt => receipt.memberId === member.memberId);
     if (!expected || !receipt || receipt.requestId !== expected.requestId || receipt.routineId !== expected.routineId
       || receipt.platform !== expected.platform || receipt.definitionRevision !== expected.definitionRevision
-      || receipt.routineRevision !== expected.routineRevision || receipt.hostId !== expected.hostId
-      || requestInputDigest(receipt.build ?? null) !== requestInputDigest(expected.build ?? null)
-      || requestInputDigest(receipt.dispatchIntent ?? null) !== requestInputDigest(expected.dispatchIntent ?? null)
-      || (receipt.input === undefined) !== (receipt.inputSha256 === undefined)
-      || receipt.publicationComplete && !receipt.input)
+      || receipt.hostId !== expected.hostId
+      || requestInputDigest(receipt.build ?? null) !== requestInputDigest(expected.build ?? null))
       throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
-    const input = receipt.input ? nightlyPreparedInput(expected, receipt.input, receipt.inputSha256) : undefined;
-    return {...member, routineRevision: expected.routineRevision, ...(expected.dispatchIntent ? {dispatchIntent: expected.dispatchIntent} : {}),
-      ...(input ? {routineSource: input.routineSource} : {}), ...(expected.build ? {build: expected.build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
+    let input: RecordedInput | undefined;
+    if ("routineRevision" in expected) {
+      if (!("routineRevision" in receipt) || receipt.routineRevision !== expected.routineRevision
+        || requestInputDigest(receipt.dispatchIntent ?? null) !== requestInputDigest(expected.dispatchIntent ?? null)
+        || (receipt.input === undefined) !== (receipt.inputSha256 === undefined)
+        || receipt.publicationComplete && !receipt.input)
+        throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
+      input = receipt.input ? nightlyPreparedInput(expected, receipt.input, receipt.inputSha256) : undefined;
+    } else {
+      // Historical occurrences froze the complete input in both plan and receipt.
+      // Validate those original bytes; never manufacture a new dispatch intent.
+      if ("routineRevision" in receipt || "dispatchIntent" in expected || "dispatchIntent" in receipt || "inputSha256" in receipt
+        || receipt.definitionSha256 !== expected.definitionSha256
+        || requestInputDigest(receipt.input ?? null) !== requestInputDigest(expected.input ?? null))
+        throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
+      if (expected.input) {
+        const parsed = recordedFrameworkRequestInputSchema.safeParse(expected.input);
+        if (!parsed.success || parsed.data.routineId !== expected.routineId || parsed.data.platform !== expected.platform
+          || parsed.data.definitionRevision !== expected.definitionRevision)
+          throw new TestRunError(503, "Recorded nightly input provenance is unavailable");
+        input = parsed.data;
+      }
+    }
+    const build = input?.build ?? expected.build;
+    return {...member, routineRevision: "routineRevision" in expected ? expected.routineRevision : expected.definitionRevision,
+      ...("dispatchIntent" in expected && expected.dispatchIntent ? {dispatchIntent: expected.dispatchIntent} : {}),
+      ...(input?.routineSource ? {routineSource: input.routineSource} : {}), ...(build ? {build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
       ...(receipt.unavailableReason ? {unavailableReason: receipt.unavailableReason} : {}),
       ...(receipt.runId ? {runId: receipt.runId, startedAt: receipt.runStartedAt, finishedAt: receipt.runFinishedAt} : {})};
