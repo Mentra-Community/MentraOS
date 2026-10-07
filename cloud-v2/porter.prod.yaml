@@ -52,8 +52,6 @@ services:
     domains:
       - name: runtime.us-west-2.mentraglass.com
       - name: runtime.mentraglass.com
-    env:
-      AUDIO_WORKERS: "1"
     livenessCheck:
       enabled: true
       httpPath: /healthz

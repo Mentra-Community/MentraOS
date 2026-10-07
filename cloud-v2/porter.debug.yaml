@@ -44,8 +44,6 @@ services:
     ramMegabytes: 2048
     domains:
       - name: runtime.debug.us-west-2.mentraglass.com
-    env:
-      AUDIO_WORKERS: "1"
     livenessCheck:
       enabled: true
       httpPath: /healthz
