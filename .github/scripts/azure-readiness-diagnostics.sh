@@ -3,10 +3,22 @@
 
 startup_failure_codes() {
   local log="$1" matched=false
-  local code operation phase
+  local code operation phase index_name
   for code in 2 9 13 26 50 67 85 86 115 11000 16500 16501; do
     if grep -Eiq "code[^0-9]{0,12}${code}([^0-9]|$)" "$log"; then
       echo "Azure startup hint: mongo-code-$code" >&2
+      matched=true
+    fi
+  done
+  # Index names are public schema constants, not arbitrary application output.
+  # Keep this finite so a database error cannot expose a private log message.
+  for index_name in tenantId_1_tenantUserId_1 expiresAt_1 prevTokenHash_1 altTokenHash_1 \
+    hostId_1 requestId_1 state_1_createdAt_1_requestId_1 hostId_1_state_1 \
+    hostId_1_state_1_preparationCheckedAt_1_createdAt_1_requestId_1 \
+    rerunId_1 claimKeys_1 routineId_1_platform_1_definitionRevision_1 \
+    startedAt_-1_runId_-1 test_runs_native_history test_runs_terminal_request test_runs_completed_at; do
+    if grep -Eq "(^|[^[:alnum:]_])${index_name}([^[:alnum:]_]|$)" "$log"; then
+      echo "Azure startup hint: mongo-index-$index_name" >&2
       matched=true
     fi
   done

@@ -22,7 +22,15 @@ test("startup classification emits only known codes, operations and migration na
     assert.match(result.stderr, /migration-runStartupMigrations/)
     assert.match(result.stderr, /mongo-server-error/)
     assert.doesNotMatch(result.stdout + result.stderr, /private-token|CannotCreateIndex|console\.json/)
-    writeFileSync(file, 'private-token-must-not-print code: 999999 arbitraryMigration arbitraryOperation')
+    writeFileSync(file, JSON.stringify({Log: 'private-token-must-not-print MongoServerError code: 85 index "test_runs_native_history" already exists as "startedAt_-1_runId_-1"'}))
+    const conflict = spawnSync("bash", ["-c", `${functions}\nstartup_failure_codes "$SAMPLE"`], {
+      env: {...process.env, SAMPLE: file}, encoding: "utf8",
+    })
+    assert.match(conflict.stderr, /mongo-code-85/)
+    assert.match(conflict.stderr, /mongo-index-test_runs_native_history/)
+    assert.match(conflict.stderr, /mongo-index-startedAt_-1_runId_-1/)
+    assert.doesNotMatch(conflict.stdout + conflict.stderr, /private-token|already exists/)
+    writeFileSync(file, 'private-token-must-not-print code: 999999 arbitraryMigration arbitraryOperation private_test_runs_native_history_suffix')
     const unknown = spawnSync("bash", ["-c", `${functions}\nstartup_failure_codes "$SAMPLE"`], {
       env: {...process.env, SAMPLE: file}, encoding: "utf8",
     })
