@@ -29,10 +29,18 @@
   },
   "appUpdates": {
     "mode": "managed",
-    "storeUrls": {"android": null, "ios": null},
-    "reviewUrls": {"android": null, "ios": null}
+    "storeUrls": {
+      "android": null,
+      "ios": null
+    },
+    "reviewUrls": {
+      "android": null,
+      "ios": null
+    }
   },
-  "content": {"wallpaperUrls": []},
+  "content": {
+    "wallpaperUrls": []
+  },
   "links": {
     "privacyPolicyUrl": "https://mentra.acmeworkspace.com/legal/privacy",
     "termsOfServiceUrl": "https://mentra.acmeworkspace.com/legal/terms",
@@ -46,14 +54,16 @@
     "managed": [
       {
         "packageName": "com.mentra.call",
-        "version": "2.1.50",
-        "bundleUrl": "https://mentra.acmeworkspace.com/miniapps/com.mentra.call-2.1.50.zip",
-        "sha256": "4cd37ecf5bbf1fa7bd49fb90c53605ef9735795cb353a82ee6eefe48c778f289"
+        "version": "2.1.51",
+        "bundleUrl": "https://mentra.acmeworkspace.com/miniapps/com.mentra.call-2.1.51.zip",
+        "sha256": "d8603fbb09713542304212882718b5a388ec4a5bbfef65eb80ddfd334c4132b7"
       }
     ],
     "configuration": {}
   },
-  "glasses": {"allowedModelsOverride": ["mentra-live"]},
+  "glasses": {
+    "allowedModelsOverride": ["mentra-live"]
+  },
   "features": {
     "runtimeRealtimeSession": false,
     "managedStreams": false,
