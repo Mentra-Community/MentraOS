@@ -1211,3 +1211,46 @@ test("cache scope receives the generated public runtime environment, including i
   assert.match(result.stdout, /EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/staging.example/)
   assert.doesNotMatch(result.stdout, /PRIVATE_TOKEN/)
 })
+
+test("app cache inputs do not gate coordinated dev and staging cloud deployments", () => {
+  const coordinator = workflow("coordinated-release.yml")
+  const push = coordinator.split("  push:\n")[1].split("  workflow_dispatch:\n")[0]
+  assert.match(push, /branches: \[dev, staging\]/)
+  assert.doesNotMatch(push, /paths(?:-ignore)?:/)
+  const cloud = jobBlock(coordinator, "cloud-v2")
+  assert.match(cloud, /uses: \.\/\.github\/workflows\/reusable-coordinated-cloud-v2.yml/)
+  assert.match(cloud, /source_commit: \$\{\{ needs.plan.outputs.source_commit \}\}/)
+  assert.match(cloud, /deployment_environment: \$\{\{ needs.plan.outputs.cloud_environment \}\}/)
+  assert.doesNotMatch(cloud, /\n    if:/)
+  const mobile = jobBlock(coordinator, "mobile")
+  assert.match(mobile, /needs: \[plan, ota, cloud-v2\]/)
+  assert.doesNotMatch(mobile, /\n    if:/)
+})
+
+test("coordinated compiler reuse still generates the current app identity and signs a fresh build", () => {
+  const mobile = workflow("reusable-coordinated-mobile.yml")
+  for (const platform of ["android", "ios"]) {
+    const job = jobBlock(mobile, platform)
+    const metadata = job.split("      - name: Generate exact mobile environment and package metadata\n")[1]
+      .split("\n      - name:")[0]
+    assert.match(metadata, /prepare-mobile-release-env.mjs/)
+    assert.match(metadata, /--plan release-intent\/release-plan.json/)
+    for (const key of ["release-identity", "release-set-id", "source-commit", "ota-manifest-url", "ota-manifest-sha256"]) {
+      assert.ok(metadata.includes(`--${key} "\${{ `), `${platform}: ${key}`)
+    }
+    assert.match(metadata, /write-release-metadata.mjs/)
+    assert.match(metadata, /MENTRAOS_PINNED_BUILD_NUMBER/)
+    assert.ok(job.includes(`bun run release:${platform}`))
+    assert.doesNotMatch(job, /cache-hit/)
+  }
+  const android = jobBlock(mobile, "android")
+  assert.match(android, /gradle\/actions\/setup-gradle@v4/)
+  assert.match(android, /cache-read-only: false/)
+  assert.doesNotMatch(android, /hashFiles|cloud-v2\/\*\*/)
+  assert.match(android, /Verify Android native version and production signature/)
+  assert.match(mobileScript("release-android.mjs"), /assembleRelease[^\n]*--build-cache/)
+  assert.match(mobileScript("release-android.mjs"), /bundleRelease[^\n]*--build-cache/)
+  const ios = jobBlock(mobile, "ios")
+  assert.match(ios, /mobile\/build\/CompilationCache\n\s+mobile\/build\/DerivedData\/SourcePackages/)
+  assert.match(ios, /Install iOS signing assets/)
+})

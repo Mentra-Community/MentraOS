@@ -69,9 +69,22 @@ test("real git fingerprint inputs exclude glasses sources but include shared mob
   write("asg_client/ota_manifests/firmware_live.json", "new firmware")
   git("add", ".")
   assert.equal(original, tree())
+  for (const file of ["cloud-v2/websites/admin/src/page.tsx", "cloud-v2/packages/core/src/service.ts", "cloud-v2/packages/runtime/src/server.ts",
+    "cloud-v2/packages/cloud-client/node/index.ts"]) {
+    const before = tree()
+    write(file, "server-only change")
+    git("add", ".")
+    assert.equal(before, tree(), file)
+  }
   for (const file of [
     "mobile/bun.lock",
+    "cloud-v2/bun.lock",
     "cloud-v2/packages/protocol/src/index.ts",
+    "cloud-v2/packages/protocol/package.json",
+    "cloud-v2/packages/cloud-client/src/client.ts",
+    "cloud-v2/packages/cloud-client/react-native/transports.ts",
+    "cloud-v2/packages/cloud-client/package.json",
+    "cloud-v2/packages/runtime/src/protocol/index.ts",
     "android_core/lib.java",
     "package.json",
     ".github/scripts/ios-xcodebuild-attempt.sh",
@@ -173,8 +186,22 @@ test("every producer trigger path is a shared mobile PR path, and every shared p
     assert.deepEqual(MOBILE_PR_PATHS.filter(path => !triggers.includes(path)), [], `${name} misses shared paths`)
     assert.deepEqual(triggers, MOBILE_PR_PATHS)
   }
-  for (const path of [".github/scripts/pr-android-artifacts*", ".github/scripts/ensure-android-ndk*", ".github/scripts/ios-*", ".github/actions/disk-guard/**"])
+  for (const path of [".github/scripts/mobile-build-inputs*", ".github/scripts/pr-android-artifacts*", ".github/scripts/ensure-android-ndk*", ".github/scripts/ios-*", ".github/actions/disk-guard/**"])
     assert.ok(MOBILE_PR_PATHS.includes(path))
+})
+
+test("standalone push compile checks use the app input boundary while coordinated releases still deploy every dev/staging push", () => {
+  for (const name of ["mentra-app-android-build.yml", "mentra-app-ios-build.yml", "mentra-asg-client-build.yml"]) {
+    const workflow = readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
+    const push = workflow.split("\n  push:\n")[1].split("\n  workflow_dispatch:")[0]
+    const triggers = push.split("    paths:\n")[1].split("\n").map(line => /^      - "([^"]+)"$/.exec(line)?.[1])
+    assert.deepEqual(triggers, MOBILE_PR_PATHS)
+  }
+  const release = readFileSync(new URL("../workflows/coordinated-release.yml", import.meta.url), "utf8")
+  const push = release.split("\n  push:\n")[1].split("\n  workflow_dispatch:")[0]
+  assert.match(push, /branches: \[dev, staging\]/)
+  assert.doesNotMatch(push, /paths:/)
+  assert.match(release, /uses: \.\/\.github\/workflows\/reusable-coordinated-cloud-v2\.yml/)
 })
 
 test("iOS selection skips corrupt candidates, verifies signature/provenance and falls back to compilation", async () => {
