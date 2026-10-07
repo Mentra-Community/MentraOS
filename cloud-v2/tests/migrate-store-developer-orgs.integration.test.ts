@@ -9,8 +9,10 @@
  *
  * Pinned here: a dry run writes nothing; apply maps every field as specified;
  * apply twice changes nothing (and records no second audit event); a re-run
- * never overwrites later Core changes; migrated keys validate before their
- * creator has ever signed in; and `--apply` refuses a remote database.
+ * never overwrites later Core changes, but does carry access removals made in
+ * the Store since (revoked keys and invitations, removed members who have not
+ * signed in yet) and reports drift it does not change; migrated keys validate
+ * before their creator has ever signed in; and `--apply` refuses a remote database.
  *
  * Safety: both URLs come from `localTestMongoUrl` (loopback only, random
  * database names, ignores `MONGO_URL`) and the live connections are asserted
@@ -396,6 +398,17 @@ async function sourceMembershipHex(sourceUserId: string, orgId: string, role: st
   return String(row._id)
 }
 
+/** Run `fn` with a separate read-only connection to the target, as a dry run on the command line gets. */
+async function withReadOnlyTarget<T>(fn: (target: Awaited<ReturnType<typeof openSourceConnection>>) => Promise<T>) {
+  const target = await openSourceConnection(targetUrl)
+  try {
+    assertConnectedTo(targetUrl, target.name)
+    return await fn(target)
+  } finally {
+    await target.close()
+  }
+}
+
 function run(overrides: Partial<Parameters<typeof migrateStoreDeveloperOrgs>[0]> = {}) {
   return migrateStoreDeveloperOrgs({source, organizationId: ORGANIZATION, apply: false, now: NOW, ...overrides})
 }
@@ -483,6 +496,13 @@ describe("dry run", () => {
       synthesizedOwners: [ORG_BETA],
       promotedOwners: [ORG_DELTA],
       duplicateMemberships: [{orgId: ORG_BETA, userId: U.betaAdmin}],
+      targetCompared: false,
+      skippedWorkspaces: [],
+      revokedCredentials: [],
+      removedMemberships: [],
+      revokedInvitations: [],
+      claimedMembershipDrift: [],
+      pendingCollisions: [],
     })
 
     expect(await targetCounts()).toEqual({
@@ -501,7 +521,8 @@ describe("dry run", () => {
 
 describe("apply", () => {
   test("reports the same thing as the dry run, with mode apply", async () => {
-    const dry = await run()
+    const dry = await withReadOnlyTarget(target => run({target}))
+    expect(dry.targetCompared).toBe(true)
     const applied = await run({apply: true})
     expect(applied).toEqual({...dry, mode: "apply"})
   })
@@ -892,16 +913,17 @@ describe("re-running apply", () => {
   })
 
   test("one org's failure rolls back that org only, and a re-run completes the import", async () => {
-    // A Core row already holds BETA's creator as a pending member under another id, so the synthesized
-    // owner violates the unique (workspace, pending WorkOS user) index inside BETA's transaction.
-    await WorkspaceMembershipModel.create({
-      membershipId: "wm_preexisting",
+    // A Core row already holds a pending invitation for BETA's invitee under another id, so BETA's
+    // invitation violates the unique (workspace, email) pending-invitation index inside BETA's transaction.
+    await WorkspaceInvitationModel.create({
+      invitationId: "winv_preexisting",
       organizationId: ORGANIZATION,
       workspaceId: ORG_BETA,
-      pendingWorkosUserId: U.betaOwner,
-      role: "member",
-      status: "active",
-      startedAt: NOW,
+      email: "friend@beta.example",
+      role: "developer",
+      tokenHash: sha256Hex("preexisting"),
+      status: "pending",
+      expiresAt: at("2026-10-20T12:00:00.000Z"),
     })
 
     const err = await thrown(() => run({apply: true}))
@@ -910,13 +932,13 @@ describe("re-running apply", () => {
 
     // ACME (processed first) committed whole; BETA left nothing behind, not even an audit event.
     expect(await WorkspaceModel.find({}).distinct("workspaceId")).toEqual([ORG_ACME])
-    expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ORG_BETA})).toBe(1)
-    expect(await WorkspaceInvitationModel.countDocuments({workspaceId: ORG_BETA})).toBe(0)
+    expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ORG_BETA})).toBe(0)
+    expect(await WorkspaceInvitationModel.countDocuments({workspaceId: ORG_BETA})).toBe(1)
     expect(await AccessCredentialModel.countDocuments({workspaceId: ORG_BETA})).toBe(0)
     expect(await WorkspaceAuditEventModel.find({}).distinct("workspaceId")).toEqual([ORG_ACME])
     expect(await WorkspaceAuditCounterModel.findOne({_id: ORGANIZATION}).lean()).toMatchObject({seq: 1})
 
-    await WorkspaceMembershipModel.deleteOne({membershipId: "wm_preexisting"})
+    await WorkspaceInvitationModel.deleteOne({invitationId: "winv_preexisting"})
     await run({apply: true})
 
     expect(await WorkspaceModel.countDocuments({})).toBe(4)
@@ -936,6 +958,212 @@ describe("re-running apply", () => {
       expect(err.message).toContain(ORG_GAMMA)
     }
     expect((await targetCounts()).Workspace).toBe(0)
+  })
+})
+
+// --- Access removals on re-run ---------------------------------------------
+
+describe("re-running apply carries access removals made in the Store", () => {
+  /** The rows the re-run is allowed to change, keyed for comparison. */
+  const auditActions = async () =>
+    (await WorkspaceAuditEventModel.find({}).sort({seq: 1}).lean()).map(event => ({
+      action: event.action,
+      workspaceId: event.workspaceId,
+      actor: event.actor,
+      target: event.target,
+    }))
+
+  test("a key revoked in the Store stops validating, and the dry run reports it first without writing", async () => {
+    await run({apply: true})
+    expect(await validateCredentialToken(keys.dev.token)).not.toBeNull()
+
+    const revokedAt = at("2026-10-05T09:00:00.000Z")
+    await sourceDb()
+      .collection("developer_org_api_keys")
+      .updateOne({keyId: keys.dev.row.keyId}, {$set: {revokedAt}})
+
+    const before = await snapshotTarget()
+    const dry = await withReadOnlyTarget(target => run({target}))
+    expect(dry.targetCompared).toBe(true)
+    expect(dry.revokedCredentials).toEqual([{orgId: ORG_ACME, credentialId: keys.dev.row.keyId}])
+    expect(await snapshotTarget()).toEqual(before)
+    expect(await validateCredentialToken(keys.dev.token)).not.toBeNull()
+
+    const applied = await run({apply: true})
+    expect(applied).toEqual({...dry, mode: "apply"})
+    expect(await validateCredentialToken(keys.dev.token)).toBeNull()
+    expect((await AccessCredentialModel.findOne({credentialId: keys.dev.row.keyId}).lean())?.revokedAt).toEqual(
+      revokedAt,
+    )
+    const revokedEvents = await WorkspaceAuditEventModel.find({action: "credential.revoked"}).lean()
+    expect(revokedEvents).toHaveLength(1)
+    expect(revokedEvents[0]).toMatchObject({
+      workspaceId: ORG_ACME,
+      actor: {kind: "system"},
+      target: {credentialId: keys.dev.row.keyId, workspaceId: ORG_ACME},
+    })
+    // Revoking a key does not invalidate everyone's pending role change.
+    expect((await WorkspaceModel.findOne({workspaceId: ORG_ACME}).lean())?.authorizationRevision).toBe(0)
+
+    // Nothing left to carry: a third run changes nothing and reports nothing.
+    const settled = await snapshotTarget()
+    const third = await run({apply: true})
+    expect(third.revokedCredentials).toEqual([])
+    expect(await snapshotTarget()).toEqual(settled)
+  })
+
+  test("a member removed in the Store before signing in is removed in Core, with their keys", async () => {
+    await run({apply: true})
+    const devHex = await sourceMembershipHex(U.acmeDev, ORG_ACME, "member")
+    expect(await validateCredentialToken(keys.dev.token)).not.toBeNull()
+
+    await sourceDb()
+      .collection("developer_org_memberships")
+      .updateOne({orgId: ORG_ACME, userId: U.acmeDev}, {$set: {status: "removed"}})
+    // A source row that disappeared altogether counts as removed too.
+    await sourceDb().collection("developer_org_memberships").deleteOne({orgId: ORG_ACME, userId: U.acmeUndated})
+    const undated = await WorkspaceMembershipModel.findOne({pendingWorkosUserId: U.acmeUndated}).lean()
+
+    const report = await run({apply: true})
+
+    expect(report.removedMemberships).toEqual(
+      [
+        {orgId: ORG_ACME, membershipId: `wm_${devHex}`, revokedCredentialIds: [keys.dev.row.keyId]},
+        {orgId: ORG_ACME, membershipId: undated!.membershipId, revokedCredentialIds: []},
+      ].sort((a, b) => (a.membershipId < b.membershipId ? -1 : 1)),
+    )
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${devHex}`}).lean()).toMatchObject({
+      status: "ended",
+      endedReason: "removed",
+    })
+    expect(await validateCredentialToken(keys.dev.token)).toBeNull()
+    // Membership changes bump the revision once, so a pending change in the console has to reload.
+    expect((await WorkspaceModel.findOne({workspaceId: ORG_ACME}).lean())?.authorizationRevision).toBe(1)
+    const removed = (await auditActions()).filter(event => event.action === "membership.removed")
+    expect(removed).toHaveLength(2)
+    expect(removed.every(event => event.actor.kind === "system")).toBe(true)
+    const devEvent = await WorkspaceAuditEventModel.findOne({
+      action: "membership.removed",
+      "target.membershipId": `wm_${devHex}`,
+    }).lean()
+    expect(devEvent?.after).toMatchObject({status: "ended", endedReason: "removed", revokedCredentialIds: [keys.dev.row.keyId]})
+  })
+
+  test("a member removed in the Store after signing in is reported, not changed", async () => {
+    await run({apply: true})
+    const devHex = await sourceMembershipHex(U.acmeDev, ORG_ACME, "member")
+    await WorkspaceMembershipModel.updateOne(
+      {membershipId: `wm_${devHex}`},
+      {$set: {mentraUserId: "mu_dev", pendingWorkosUserId: null}},
+    )
+    await sourceDb()
+      .collection("developer_org_memberships")
+      .updateOne({orgId: ORG_ACME, userId: U.acmeDev}, {$set: {status: "removed"}})
+    const before = await snapshotTarget()
+
+    const report = await run({apply: true})
+
+    expect(report.claimedMembershipDrift).toEqual([{orgId: ORG_ACME, membershipId: `wm_${devHex}`, mentraUserId: "mu_dev"}])
+    expect(report.removedMemberships).toEqual([])
+    expect(await snapshotTarget()).toEqual(before)
+    expect(await validateCredentialToken(keys.dev.token)).not.toBeNull()
+  })
+
+  test("an invitation revoked in the Store is revoked in Core", async () => {
+    await run({apply: true})
+    await sourceDb()
+      .collection("developer_org_invitations")
+      .updateOne({invitationId: invitationIds.acmeAdmin}, {$set: {status: "revoked"}})
+
+    const report = await run({apply: true})
+
+    expect(report.revokedInvitations).toEqual([{orgId: ORG_ACME, invitationId: invitationIds.acmeAdmin}])
+    expect(await WorkspaceInvitationModel.findOne({invitationId: invitationIds.acmeAdmin}).lean()).toMatchObject({
+      status: "revoked",
+    })
+    expect(await WorkspaceAuditEventModel.findOne({action: "invitation.revoked"}).lean()).toMatchObject({
+      workspaceId: ORG_ACME,
+      actor: {kind: "system"},
+      target: {invitationId: invitationIds.acmeAdmin},
+    })
+  })
+
+  test("a person removed and re-added in the Store gets their new membership in place of the old one", async () => {
+    await run({apply: true})
+    const devHex = await sourceMembershipHex(U.acmeDev, ORG_ACME, "member")
+    await sourceDb()
+      .collection("developer_org_memberships")
+      .updateOne({orgId: ORG_ACME, userId: U.acmeDev}, {$set: {status: "removed"}})
+    const {insertedId} = await sourceDb()
+      .collection("developer_org_memberships")
+      .insertOne(membership({orgId: ORG_ACME, userId: U.acmeDev, role: "admin", email: "dev@acme.example"}))
+
+    const report = await run({apply: true})
+
+    expect(report.pendingCollisions).toEqual([])
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${devHex}`}).lean()).toMatchObject({
+      status: "ended",
+    })
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${String(insertedId)}`}).lean()).toMatchObject({
+      status: "active",
+      role: "admin",
+      pendingWorkosUserId: U.acmeDev,
+    })
+  })
+
+  test("a membership that collides with an unclaimed one is reported and the rest of the org still imports", async () => {
+    // A Core row already holds BETA's creator as a pending member under another id, so the synthesized
+    // owner would violate the unique (workspace, pending WorkOS user) index.
+    await WorkspaceMembershipModel.create({
+      membershipId: "wm_preexisting",
+      organizationId: ORGANIZATION,
+      workspaceId: ORG_BETA,
+      pendingWorkosUserId: U.betaOwner,
+      role: "member",
+      status: "active",
+      startedAt: NOW,
+    })
+
+    const dry = await withReadOnlyTarget(target => run({target}))
+    const report = await run({apply: true})
+
+    const collision = {
+      orgId: ORG_BETA,
+      membershipId: `wm_owner_${ORG_BETA}`,
+      userId: U.betaOwner,
+      skippedCredentialIds: [keys.betaOwner.row.keyId],
+    }
+    expect(dry.pendingCollisions).toEqual([collision])
+    expect(report.pendingCollisions).toEqual([collision])
+    expect(await WorkspaceModel.find({}).distinct("workspaceId")).toEqual([ORG_ACME, ORG_BETA, ORG_DELTA, ORG_GAMMA])
+    expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ORG_BETA, status: "active"})).toBe(2)
+    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_owner_${ORG_BETA}`}).lean()).toBeNull()
+    expect(await AccessCredentialModel.findOne({credentialId: keys.betaOwner.row.keyId}).lean()).toBeNull()
+    // The row the migration did not create is left alone.
+    expect(await WorkspaceMembershipModel.findOne({membershipId: "wm_preexisting"}).lean()).toMatchObject({
+      status: "active",
+    })
+  })
+
+  test("a workspace deleted in Core is skipped and reported, and its keys stop validating", async () => {
+    await run({apply: true})
+    await WorkspaceModel.updateOne({workspaceId: ORG_ACME}, {$set: {status: "deleted", deletedAt: NOW}})
+    const late = storeKey({orgId: ORG_ACME, name: "Late key", createdByUserId: U.acmeOwner})
+    await sourceDb().collection("developer_org_api_keys").insertOne({...late.row})
+    await sourceDb()
+      .collection("developer_org_memberships")
+      .insertOne(membership({orgId: ORG_ACME, userId: U.stranger, role: "member"}))
+    const before = await snapshotTarget()
+
+    const dry = await withReadOnlyTarget(target => run({target}))
+    const report = await run({apply: true})
+
+    expect(dry.skippedWorkspaces).toEqual([{orgId: ORG_ACME, status: "deleted"}])
+    expect(report.skippedWorkspaces).toEqual([{orgId: ORG_ACME, status: "deleted"}])
+    expect(await snapshotTarget()).toEqual(before)
+    // A service key and a member key of a deleted workspace do not resolve to a principal.
+    expect(await validateCredentialToken(keys.app.token)).toBeNull()
+    expect(await validateCredentialToken(keys.dev.token)).toBeNull()
   })
 })
 
@@ -973,7 +1201,7 @@ describe("malformed keys", () => {
       .collection("developer_org_api_keys")
       .insertMany(Object.values(bad).map(key => ({...key.row})))
 
-    const dry = await run()
+    const dry = await withReadOnlyTarget(target => run({target}))
     const report = await run({apply: true})
 
     expect(report).toEqual({...dry, mode: "apply"})
@@ -1227,9 +1455,11 @@ describe("command line", () => {
 
     expect(result.exitCode).toBe(0)
     const report = JSON.parse(result.stdout)
-    expect(report).toEqual(
-      JSON.parse(JSON.stringify(await migrateStoreDeveloperOrgs({source, organizationId: ORGANIZATION, apply: false}))),
+    const expected = await withReadOnlyTarget(target =>
+      migrateStoreDeveloperOrgs({source, target, organizationId: ORGANIZATION, apply: false}),
     )
+    expect(report).toEqual(JSON.parse(JSON.stringify(expected)))
+    expect(report.targetCompared).toBe(true)
     expect(report.mode).toBe("dry-run")
     expect(report.counts).toEqual({orgs: 4, memberships: 7, invitations: 3, credentials: 4, skippedKeys: 3})
     expect(await targetCounts()).toEqual({
@@ -1275,7 +1505,7 @@ describe("command line", () => {
       expect(await collections()).toEqual([])
 
       await sourceDb().collection("developer_org_memberships").deleteOne({role: "superuser"})
-      // A dry run never connects to the target either.
+      // A dry run only reads the target, so it creates nothing there either.
       expect((await runCli(cli)).exitCode).toBe(0)
       expect(await collections()).toEqual([])
 

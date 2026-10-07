@@ -12,8 +12,9 @@
  * which must equal `CLOUD_CORE_ORGANIZATION_ID` when that is set, because the
  * change feed only serves the deployment's own organization.
  *
- * Without `--apply` this prints a JSON report and writes nothing. It does not even
- * connect to the target, so there is nothing for it to write to. With `--apply`
+ * Without `--apply` this prints a JSON report and writes nothing. It reads the
+ * target through a separate read-only connection (no models, no collection or
+ * index creation) so the report can say what a re-run would change. With `--apply`
  * it imports one developer org at a time, each in one short transaction holding
  * the workspace, its memberships, invitations and credentials and one
  * `workspace.imported` audit event. Every row is an upsert keyed on a stable id
@@ -21,6 +22,28 @@
  * sets fields on insert, so a re-run is safe: it never overwrites a change made in
  * Core since, never revives an ended membership or a revoked key, and records the
  * audit event only for a workspace it has just inserted.
+ *
+ * A re-run does carry one kind of change: access the Store has taken away since
+ * the last run, because that can only reduce what a key or person may do.
+ *  - A Store key that is now revoked, and still live in Core, is revoked in Core
+ *    (`revokedCredentials`, one `credential.revoked` event each, as the system).
+ *  - A Store membership that is gone or no longer active, whose Core membership is
+ *    still unclaimed (nobody has signed in with it), is ended as `removed` and the
+ *    keys it created are revoked, as `endMembership` does (`removedMemberships`,
+ *    one `membership.removed` event each, as the system). The synthesized owner
+ *    (`wm_owner_<orgId>`) counts as gone once the Store no longer gives that person
+ *    access to the org at all.
+ *  - A Store invitation that is no longer pending, and is still pending in Core, is
+ *    revoked in Core (`revokedInvitations`, one `invitation.revoked` event each).
+ *  - A claimed membership (the person has signed in) is never changed: drift on one
+ *    is reported (`claimedMembershipDrift`) for an admin to act on in Core.
+ * Run apply again immediately before the Store cutover so Core is current.
+ *
+ * Two things are reported instead of imported. An org whose Core workspace exists
+ * but is not active (deleted in Core) is skipped whole (`skippedWorkspaces`). A
+ * membership whose person already holds a different unclaimed membership in that
+ * workspace (the pending-member unique index would refuse it) is skipped with the
+ * keys bound to it (`pendingCollisions`); the rest of the org still imports.
  *
  * What is imported:
  *  - Memberships: `status: "active"` rows only. owner -> owner, admin -> admin,
@@ -60,14 +83,21 @@
 import type {WorkspaceRole} from "@mentra/workspace-contract"
 import mongoose, {type AnyBulkWriteOperation, type ClientSession, type Connection, type Model} from "mongoose"
 import {withTransaction} from "../src/connections/mongo.connection"
-import {AccessCredentialModel} from "../src/models/access-credential.model"
+import {AccessCredentialModel, type AccessCredentialRow} from "../src/models/access-credential.model"
 import {WorkspaceAuditCounterModel} from "../src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../src/models/workspace-membership.model"
 import {WorkspaceModel} from "../src/models/workspace.model"
 import {recordWorkspaceEvent} from "../src/services/workspaces/audit.service"
+import {markRevoked} from "../src/services/workspaces/credential.service"
 import {ORGANIZATION_ID_PATTERN} from "../src/services/workspaces/organization"
+import {
+  bumpRevision,
+  endMembership,
+  touchWorkspace,
+  type MembershipRow,
+} from "../src/services/workspaces/workspace.service"
 
 // --- Source schema ---------------------------------------------------------
 
@@ -138,6 +168,9 @@ const KEY_ENV_PATTERN = /^[a-z0-9]+$/
 
 const PUBLISH_SCOPE = "miniapps.publish"
 const STORE_SERVICE = "store"
+/** A Core membership id made from a Store membership row's ObjectId (`wm_<24 hex>`). */
+const SOURCE_ROW_MEMBERSHIP_ID = /^wm_[0-9a-f]{24}$/
+const SYSTEM_ACTOR = {kind: "system"} as const
 
 /** The Core collections this script writes, initialised (collections and indexes) before an apply. */
 const TARGET_MODELS = [
@@ -184,11 +217,33 @@ export type MigrationReport = {
   promotedOwners: string[]
   /** People with several active rows in one org (the highest role was kept). */
   duplicateMemberships: Array<{orgId: string; userId: string}>
+  /**
+   * Whether the target was read: always for an apply, and for a dry run given a target. The lists
+   * below compare the source with the target, so they are empty when it was not.
+   */
+  targetCompared: boolean
+  /** Orgs whose Core workspace exists but is not active (deleted in Core): nothing imported or changed. */
+  skippedWorkspaces: Array<{orgId: string; status: string}>
+  /** Live Core credentials revoked because their Store key is revoked. */
+  revokedCredentials: Array<{orgId: string; credentialId: string}>
+  /** Unclaimed migrated memberships ended because their Store membership is gone, with the keys they took along. */
+  removedMemberships: Array<{orgId: string; membershipId: string; revokedCredentialIds: string[]}>
+  /** Pending Core invitations revoked because their Store invitation is no longer pending. */
+  revokedInvitations: Array<{orgId: string; invitationId: string}>
+  /** Claimed (signed-in) memberships whose Store membership is gone: reported, never changed. */
+  claimedMembershipDrift: Array<{orgId: string; membershipId: string; mentraUserId: string}>
+  /** Memberships not imported because the person already holds another unclaimed one there, with their skipped keys. */
+  pendingCollisions: Array<{orgId: string; membershipId: string; userId: string; skippedCredentialIds: string[]}>
 }
 
 export type MigrationOptions = {
   /** The Store database. Only read. */
   source: Connection
+  /**
+   * A dry run only: a read-only connection to the target (Core) database, so the report says what
+   * an apply would change there. Never written to. An apply uses the default mongoose connection.
+   */
+  target?: Connection
   organizationId: string
   apply: boolean
   /** The instant "now" for expiry checks and missing dates; tests pin it. */
@@ -244,6 +299,15 @@ type OrgPlan = {
   memberships: PlannedMembership[]
   invitations: PlannedInvitation[]
   credentials: PlannedCredential[]
+  /** What a re-run compares with Core, from every source row of the org (inactive ones too). */
+  source: {
+    /** Core membership ids of the org's Store membership rows, and whether each row is active. */
+    membershipActive: Map<string, boolean>
+    /** Store keys of the org that are revoked, by key id, with when. */
+    revokedKeys: Map<string, Date>
+    /** Store invitation statuses of the org, by invitation id. */
+    invitationStatus: Map<string, string>
+  }
 }
 
 type SourceRows = {
@@ -274,8 +338,10 @@ export function resolveMigrationOrganizationId(value: string): string {
 /**
  * Plan (and with `apply`, perform) the import. The target is the default
  * mongoose connection, because that is where Core's models live; `source` must be
- * a different connection. The returned report is computed from the source alone,
- * so a dry run and an apply report the same thing.
+ * a different connection. The counts and source findings are computed from the
+ * source alone; the re-run lists compare it with the target (read inside each
+ * org's transaction for an apply, or through `target` for a dry run), so a dry
+ * run given a target and an apply of the same data report the same thing.
  */
 export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Promise<MigrationReport> {
   const organization = resolveMigrationOrganizationId(options.organizationId)
@@ -306,6 +372,13 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
     synthesizedOwners: [],
     promotedOwners: [],
     duplicateMemberships: [],
+    targetCompared: apply || options.target !== undefined,
+    skippedWorkspaces: [],
+    revokedCredentials: [],
+    removedMemberships: [],
+    revokedInvitations: [],
+    claimedMembershipDrift: [],
+    pendingCollisions: [],
   }
 
   const plans = [...orgs]
@@ -315,7 +388,13 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
   if (apply) {
     // Only now, with the whole source validated, does anything touch the target.
     await prepareTarget(source)
-    for (const plan of plans) await importOrg(plan, organization, log)
+    for (const plan of plans) recordReconciliation(report, plan.orgId, await importOrg(plan, organization, log))
+  } else if (options.target) {
+    const db = options.target.db
+    if (!db) throw new MigrationError("the target connection is not open")
+    for (const plan of plans) {
+      recordReconciliation(report, plan.orgId, reconcile(plan, await readTargetState(db, plan)))
+    }
   }
 
   const labels = [...new Set(plans.flatMap(plan => plan.credentials.map(credential => credential.env)))].sort()
@@ -358,7 +437,26 @@ function planOrg(
     memberships,
     invitations,
     credentials,
+    source: sourceState(orgId, rows),
   }
+}
+
+/** The org's source rows as a re-run compares them with Core. */
+function sourceState(orgId: string, rows: SourceRows): OrgPlan["source"] {
+  const membershipActive = new Map<string, boolean>()
+  for (const row of rows.memberships.get(orgId) ?? []) {
+    membershipActive.set(`wm_${String(row._id)}`, (row.status ?? "active") === "active")
+  }
+  const revokedKeys = new Map<string, Date>()
+  for (const row of rows.keys.get(orgId) ?? []) {
+    const revokedAt = asDate(row.revokedAt)
+    if (typeof row.keyId === "string" && revokedAt) revokedKeys.set(row.keyId, revokedAt)
+  }
+  const invitationStatus = new Map<string, string>()
+  for (const row of rows.invitations.get(orgId) ?? []) {
+    if (typeof row.invitationId === "string") invitationStatus.set(row.invitationId, String(row.status))
+  }
+  return {membershipActive, revokedKeys, invitationStatus}
 }
 
 function planMemberships(
@@ -538,10 +636,208 @@ function hasCredentialShape(row: SourceApiKey): boolean {
   )
 }
 
+// --- Compare with the target ------------------------------------------------
+
+/** What the target holds for one org, read before anything is written. */
+type TargetState = {
+  /** The Core workspace's status, or null when it does not exist yet. */
+  workspaceStatus: string | null
+  /** The workspace's active memberships. */
+  memberships: Array<{membershipId: string; mentraUserId: string | null; pendingWorkosUserId: string | null}>
+  /** The workspace's live (not revoked) credentials. */
+  liveCredentials: Array<{credentialId: string; createdByMembershipId: string | null}>
+  /** The workspace's pending invitations. */
+  pendingInvitationIds: string[]
+  /** Planned membership and credential ids that already exist in Core, in any state. */
+  existingMembershipIds: Set<string>
+  existingCredentialIds: Set<string>
+}
+
+/** What a run does to one org beyond inserting what is missing. */
+type Reconciliation = {
+  /** Set when the Core workspace exists but is not active: the org is skipped whole. */
+  skippedStatus: string | null
+  revokeCredentials: Array<{credentialId: string; revokedAt: Date}>
+  endMemberships: Array<{membershipId: string; revokedCredentialIds: string[]}>
+  revokeInvitationIds: string[]
+  claimedDrift: Array<{membershipId: string; mentraUserId: string}>
+  collisions: Array<{membershipId: string; userId: string; skippedCredentialIds: string[]}>
+}
+
+/** Read what the target holds for `plan`'s org: raw documents, so a read-only connection works too. */
+async function readTargetState(
+  db: NonNullable<Connection["db"]>,
+  plan: OrgPlan,
+  session?: ClientSession,
+): Promise<TargetState> {
+  const options = session ? {session} : {}
+  const collection = (model: {collection: {collectionName: string}}) => db.collection(model.collection.collectionName)
+  const workspaceId = plan.orgId
+  const [workspace, memberships, credentials, invitations, existingMemberships, existingCredentials] =
+    await Promise.all([
+      collection(WorkspaceModel).findOne({workspaceId}, {...options, projection: {status: 1}}),
+      collection(WorkspaceMembershipModel)
+        .find(
+          {workspaceId, status: "active"},
+          {...options, projection: {membershipId: 1, mentraUserId: 1, pendingWorkosUserId: 1}},
+        )
+        .toArray(),
+      collection(AccessCredentialModel)
+        .find({workspaceId, revokedAt: null}, {...options, projection: {credentialId: 1, createdByMembershipId: 1}})
+        .toArray(),
+      collection(WorkspaceInvitationModel)
+        .find({workspaceId, status: "pending"}, {...options, projection: {invitationId: 1}})
+        .toArray(),
+      collection(WorkspaceMembershipModel)
+        .find(
+          {membershipId: {$in: plan.memberships.map(membership => membership.membershipId)}},
+          {...options, projection: {membershipId: 1}},
+        )
+        .toArray(),
+      collection(AccessCredentialModel)
+        .find(
+          {credentialId: {$in: plan.credentials.map(credential => credential.credentialId)}},
+          {...options, projection: {credentialId: 1}},
+        )
+        .toArray(),
+    ])
+  return {
+    workspaceStatus: workspace ? String(workspace.status) : null,
+    memberships: memberships.map(row => ({
+      membershipId: String(row.membershipId),
+      mentraUserId: stringOrNull(row.mentraUserId),
+      pendingWorkosUserId: stringOrNull(row.pendingWorkosUserId),
+    })),
+    liveCredentials: credentials.map(row => ({
+      credentialId: String(row.credentialId),
+      createdByMembershipId: stringOrNull(row.createdByMembershipId),
+    })),
+    pendingInvitationIds: invitations.map(row => String(row.invitationId)),
+    existingMembershipIds: new Set(existingMemberships.map(row => String(row.membershipId))),
+    existingCredentialIds: new Set(existingCredentials.map(row => String(row.credentialId))),
+  }
+}
+
+/**
+ * Decide, from the plan and what the target holds, what this run changes besides inserting what is
+ * missing (see the file header). Pure, so a dry run and an apply decide the same way.
+ */
+function reconcile(plan: OrgPlan, target: TargetState): Reconciliation {
+  const result: Reconciliation = {
+    skippedStatus: null,
+    revokeCredentials: [],
+    endMemberships: [],
+    revokeInvitationIds: [],
+    claimedDrift: [],
+    collisions: [],
+  }
+  if (target.workspaceStatus !== null && target.workspaceStatus !== "active") {
+    return {...result, skippedStatus: target.workspaceStatus}
+  }
+
+  let remaining = target.memberships
+  // Removals only apply to a workspace an earlier run imported.
+  if (target.workspaceStatus === "active") {
+    const ownerId = `wm_owner_${plan.orgId}`
+    const plannedIds = new Set(plan.memberships.map(membership => membership.membershipId))
+    const plannedUsers = new Set(plan.memberships.map(membership => membership.sourceUserId))
+    /** A membership this script made from a Store row or from the org's recorded owner. */
+    const fromSource = (id: string) =>
+      id === ownerId || plan.source.membershipActive.has(id) || SOURCE_ROW_MEMBERSHIP_ID.test(id)
+    /** Whether the Store still gives this membership's person access through it. */
+    const stillGranted = (membership: TargetState["memberships"][number]) =>
+      plannedIds.has(membership.membershipId) ||
+      (membership.membershipId === ownerId
+        ? membership.pendingWorkosUserId !== null && plannedUsers.has(membership.pendingWorkosUserId)
+        : plan.source.membershipActive.get(membership.membershipId) === true)
+
+    result.revokeCredentials = target.liveCredentials
+      .filter(credential => plan.source.revokedKeys.has(credential.credentialId))
+      .map(credential => ({
+        credentialId: credential.credentialId,
+        revokedAt: plan.source.revokedKeys.get(credential.credentialId)!,
+      }))
+      .sort((a, b) => compareStrings(a.credentialId, b.credentialId))
+    const alreadyRevoked = new Set(result.revokeCredentials.map(credential => credential.credentialId))
+
+    remaining = []
+    for (const membership of [...target.memberships].sort((a, b) => compareStrings(a.membershipId, b.membershipId))) {
+      if (!fromSource(membership.membershipId) || stillGranted(membership)) {
+        remaining.push(membership)
+      } else if (membership.mentraUserId) {
+        // The person has signed in: the membership is theirs in Core now, so only report it.
+        result.claimedDrift.push({membershipId: membership.membershipId, mentraUserId: membership.mentraUserId})
+        remaining.push(membership)
+      } else if (membership.pendingWorkosUserId) {
+        result.endMemberships.push({
+          membershipId: membership.membershipId,
+          revokedCredentialIds: target.liveCredentials
+            .filter(
+              credential =>
+                credential.createdByMembershipId === membership.membershipId &&
+                !alreadyRevoked.has(credential.credentialId),
+            )
+            .map(credential => credential.credentialId)
+            .sort(compareStrings),
+        })
+      } else {
+        remaining.push(membership)
+      }
+    }
+
+    result.revokeInvitationIds = target.pendingInvitationIds
+      .filter(id => {
+        const status = plan.source.invitationStatus.get(id)
+        return status !== undefined && status !== "pending"
+      })
+      .sort(compareStrings)
+  }
+
+  // A new membership for someone who already holds an unclaimed one would break the pending-member
+  // unique index and abort the org, so it is reported and left out with the keys bound to it.
+  const pendingUsers = new Set(
+    remaining.flatMap(membership =>
+      !membership.mentraUserId && membership.pendingWorkosUserId ? [membership.pendingWorkosUserId] : [],
+    ),
+  )
+  for (const membership of [...plan.memberships].sort((a, b) => compareStrings(a.membershipId, b.membershipId))) {
+    if (target.existingMembershipIds.has(membership.membershipId) || !pendingUsers.has(membership.sourceUserId)) continue
+    result.collisions.push({
+      membershipId: membership.membershipId,
+      userId: membership.sourceUserId,
+      skippedCredentialIds: plan.credentials
+        .filter(
+          credential =>
+            credential.createdByMembershipId === membership.membershipId &&
+            !target.existingCredentialIds.has(credential.credentialId),
+        )
+        .map(credential => credential.credentialId)
+        .sort(compareStrings),
+    })
+  }
+  return result
+}
+
+function recordReconciliation(report: MigrationReport, orgId: string, result: Reconciliation): void {
+  if (result.skippedStatus !== null) report.skippedWorkspaces.push({orgId, status: result.skippedStatus})
+  for (const {credentialId} of result.revokeCredentials) report.revokedCredentials.push({orgId, credentialId})
+  for (const entry of result.endMemberships) report.removedMemberships.push({orgId, ...entry})
+  for (const invitationId of result.revokeInvitationIds) report.revokedInvitations.push({orgId, invitationId})
+  for (const entry of result.claimedDrift) report.claimedMembershipDrift.push({orgId, ...entry})
+  for (const entry of result.collisions) report.pendingCollisions.push({orgId, ...entry})
+}
+
 // --- Apply -----------------------------------------------------------------
 
 /** What one org's import inserted; a re-run inserts nothing. */
-type ImportResult = {workspace: boolean; memberships: number; invitations: number; credentials: number}
+type ImportResult = {
+  skipped: boolean
+  workspace: boolean
+  memberships: number
+  invitations: number
+  credentials: number
+  reconciliation: Reconciliation
+}
 
 /** The default mongoose connection must be the target, and a different database from the source. */
 async function prepareTarget(source: Connection): Promise<void> {
@@ -560,15 +856,25 @@ async function prepareTarget(source: Connection): Promise<void> {
 }
 
 /**
- * Import one org in one transaction. Everything is an upsert that only sets
- * fields on insert, and the audit event is the last write and is recorded only
- * when this run inserted the workspace.
+ * Import one org in one transaction. It first compares the org with what Core
+ * holds and carries access removals (see the file header), then inserts what is
+ * missing: everything is an upsert that only sets fields on insert. The
+ * `workspace.imported` audit event is the last write and is recorded only when
+ * this run inserted the workspace. Returns what it decided, for the report.
  */
-async function importOrg(plan: OrgPlan, organization: string, log: (message: string) => void): Promise<void> {
+async function importOrg(plan: OrgPlan, organization: string, log: (message: string) => void): Promise<Reconciliation> {
   const {orgId} = plan
   let result: ImportResult
   try {
     result = await withTransaction(async session => {
+      const reconciliation = reconcile(plan, await readTargetState(mongoose.connection.db!, plan, session))
+      if (reconciliation.skippedStatus !== null) {
+        return {skipped: true, workspace: false, memberships: 0, invitations: 0, credentials: 0, reconciliation}
+      }
+      await applyRemovals(session, orgId, reconciliation)
+
+      const skippedMemberships = new Set(reconciliation.collisions.map(collision => collision.membershipId))
+      const skippedCredentials = new Set(reconciliation.collisions.flatMap(collision => collision.skippedCredentialIds))
       const workspace = await WorkspaceModel.bulkWrite(
         [
           insertOnly(
@@ -591,26 +897,28 @@ async function importOrg(plan: OrgPlan, organization: string, log: (message: str
 
       const memberships = await bulkInsertOnly(
         WorkspaceMembershipModel,
-        plan.memberships.map(membership =>
-          insertOnly(
-            {membershipId: membership.membershipId},
-            {
-              organizationId: organization,
-              workspaceId: orgId,
-              mentraUserId: null,
-              pendingWorkosUserId: membership.sourceUserId,
-              email: membership.email,
-              name: membership.name,
-              role: membership.role,
-              status: "active",
-              startedAt: membership.startedAt,
-              endedAt: null,
-              endedReason: null,
-              createdAt: membership.createdAt,
-              updatedAt: membership.updatedAt,
-            },
+        plan.memberships
+          .filter(membership => !skippedMemberships.has(membership.membershipId))
+          .map(membership =>
+            insertOnly(
+              {membershipId: membership.membershipId},
+              {
+                organizationId: organization,
+                workspaceId: orgId,
+                mentraUserId: null,
+                pendingWorkosUserId: membership.sourceUserId,
+                email: membership.email,
+                name: membership.name,
+                role: membership.role,
+                status: "active",
+                startedAt: membership.startedAt,
+                endedAt: null,
+                endedReason: null,
+                createdAt: membership.createdAt,
+                updatedAt: membership.updatedAt,
+              },
+            ),
           ),
-        ),
         session,
       )
       const invitations = await bulkInsertOnly(
@@ -625,7 +933,10 @@ async function importOrg(plan: OrgPlan, organization: string, log: (message: str
               role: invitation.role,
               tokenHash: invitation.tokenHash,
               status: "pending",
-              invitedByMembershipId: invitation.invitedByMembershipId,
+              invitedByMembershipId:
+                invitation.invitedByMembershipId && !skippedMemberships.has(invitation.invitedByMembershipId)
+                  ? invitation.invitedByMembershipId
+                  : null,
               expiresAt: invitation.expiresAt,
               acceptedMembershipId: null,
               createdAt: invitation.createdAt,
@@ -637,32 +948,34 @@ async function importOrg(plan: OrgPlan, organization: string, log: (message: str
       )
       const credentials = await bulkInsertOnly(
         AccessCredentialModel,
-        plan.credentials.map(credential =>
-          insertOnly(
-            {credentialId: credential.credentialId},
-            {
-              prefix: "msk",
-              credentialKind: "workspace",
-              organizationId: organization,
-              workspaceId: orgId,
-              name: credential.name,
-              env: credential.env,
-              hash: credential.hash,
-              last4: credential.last4,
-              scopes: [PUBLISH_SCOPE],
-              packageNames: credential.packageNames,
-              createdByMembershipId: credential.createdByMembershipId,
-              createdByMentraUserId: null,
-              createdByEmail: credential.createdByEmail,
-              issuedByService: credential.issuedByService,
-              expiresAt: null,
-              lastUsedAt: credential.lastUsedAt,
-              revokedAt: credential.revokedAt,
-              createdAt: credential.createdAt,
-              updatedAt: credential.updatedAt,
-            },
+        plan.credentials
+          .filter(credential => !skippedCredentials.has(credential.credentialId))
+          .map(credential =>
+            insertOnly(
+              {credentialId: credential.credentialId},
+              {
+                prefix: "msk",
+                credentialKind: "workspace",
+                organizationId: organization,
+                workspaceId: orgId,
+                name: credential.name,
+                env: credential.env,
+                hash: credential.hash,
+                last4: credential.last4,
+                scopes: [PUBLISH_SCOPE],
+                packageNames: credential.packageNames,
+                createdByMembershipId: credential.createdByMembershipId,
+                createdByMentraUserId: null,
+                createdByEmail: credential.createdByEmail,
+                issuedByService: credential.issuedByService,
+                expiresAt: null,
+                lastUsedAt: credential.lastUsedAt,
+                revokedAt: credential.revokedAt,
+                createdAt: credential.createdAt,
+                updatedAt: credential.updatedAt,
+              },
+            ),
           ),
-        ),
         session,
       )
 
@@ -671,24 +984,96 @@ async function importOrg(plan: OrgPlan, organization: string, log: (message: str
           organizationId: organization,
           workspaceId: orgId,
           action: "workspace.imported",
-          actor: {kind: "system"},
+          actor: SYSTEM_ACTOR,
           target: {workspaceId: orgId},
           after: {name: plan.name, memberships, invitations, credentials},
         })
       }
-      return {workspace: inserted, memberships, invitations, credentials}
+      return {skipped: false, workspace: inserted, memberships, invitations, credentials, reconciliation}
     })
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     throw new MigrationError(`importing ${orgId} failed and was rolled back: ${reason}`, {cause: err})
   }
 
+  const {reconciliation} = result
+  if (result.skipped) {
+    log(`${orgId}: skipped, its Core workspace is ${reconciliation.skippedStatus}`)
+    return reconciliation
+  }
   log(
     result.workspace
       ? `${orgId}: imported (${result.memberships} memberships, ${result.invitations} invitations, ${result.credentials} credentials)`
       : `${orgId}: already imported (${result.memberships} memberships, ${result.invitations} invitations, ` +
           `${result.credentials} credentials added since)`,
   )
+  const removals = [
+    reconciliation.revokeCredentials.length && `${reconciliation.revokeCredentials.length} key(s) revoked`,
+    reconciliation.endMemberships.length && `${reconciliation.endMemberships.length} membership(s) removed`,
+    reconciliation.revokeInvitationIds.length && `${reconciliation.revokeInvitationIds.length} invitation(s) revoked`,
+  ].filter(Boolean)
+  if (removals.length > 0) log(`${orgId}: carried from the Store: ${removals.join(", ")}`)
+  if (reconciliation.claimedDrift.length > 0) {
+    log(`${orgId}: ${reconciliation.claimedDrift.length} signed-in membership(s) no longer in the Store were left as they are`)
+  }
+  if (reconciliation.collisions.length > 0) {
+    log(`${orgId}: ${reconciliation.collisions.length} membership(s) skipped: the person already has an unclaimed one`)
+  }
+  return reconciliation
+}
+
+/**
+ * Carry the Store's access removals into Core inside the org's transaction, as the system: revoke
+ * keys, end unclaimed memberships (with the keys they created) and revoke invitations, recording an
+ * audit event for each. The workspace document is written first, as every Core mutation does:
+ * ending memberships bumps `authorizationRevision`; revoking keys or invitations only touches it.
+ */
+async function applyRemovals(session: ClientSession, workspaceId: string, reconciliation: Reconciliation): Promise<void> {
+  const {revokeCredentials, endMemberships, revokeInvitationIds} = reconciliation
+  if (revokeCredentials.length + endMemberships.length + revokeInvitationIds.length === 0) return
+
+  const workspace =
+    endMemberships.length > 0 ? await bumpRevision(session, workspaceId, undefined) : null
+  if (!workspace) await touchWorkspace(session, workspaceId)
+
+  for (const {credentialId, revokedAt} of revokeCredentials) {
+    const row = await AccessCredentialModel.findOne({credentialId, workspaceId, revokedAt: null})
+      .session(session)
+      .lean<AccessCredentialRow>()
+    if (row) await markRevoked(session, row, SYSTEM_ACTOR, revokedAt)
+  }
+
+  for (const {membershipId} of endMemberships) {
+    const membership = await WorkspaceMembershipModel.findOne({membershipId, workspaceId, status: "active"})
+      .session(session)
+      .lean<MembershipRow>()
+    if (!membership) continue
+    await endMembership(session, {
+      workspace: workspace!,
+      actor: SYSTEM_ACTOR,
+      membership,
+      reason: "removed",
+      action: "membership.removed",
+    })
+  }
+
+  for (const invitationId of revokeInvitationIds) {
+    const invitation = await WorkspaceInvitationModel.findOneAndUpdate(
+      {invitationId, workspaceId, status: "pending"},
+      {$set: {status: "revoked"}},
+      {session},
+    ).lean()
+    if (!invitation) continue
+    await recordWorkspaceEvent(session, {
+      organizationId: invitation.organizationId,
+      workspaceId,
+      action: "invitation.revoked",
+      actor: SYSTEM_ACTOR,
+      target: {invitationId},
+      before: {status: "pending", role: invitation.role},
+      after: {status: "revoked"},
+    })
+  }
 }
 
 /** An upsert on `filter` that sets `fields` only when the row is inserted, leaving existing rows untouched. */
@@ -716,7 +1101,10 @@ async function bulkInsertOnly(
 
 // --- Source reading --------------------------------------------------------
 
-/** Open the source connection. Read-only by use: nothing here ever writes, and no model is attached to it. */
+/**
+ * Open a read-only connection: the source, or the target for a dry run. Read-only by use: nothing
+ * here ever writes, no model is attached to it, and it never creates a collection or an index.
+ */
 export async function openSourceConnection(url: string): Promise<Connection> {
   return mongoose
     .createConnection(url, {serverSelectionTimeoutMS: 10_000, autoIndex: false, autoCreate: false})
@@ -786,7 +1174,8 @@ export type CliOptions = {
 const USAGE = `Usage: bun packages/core/scripts/migrate-store-developer-orgs.ts \\
   --source <mongo-url> --target <mongo-url> --organization-id <id> [--apply]
 
-Without --apply the script prints a JSON report and writes nothing.
+Without --apply the script prints a JSON report and writes nothing; it reads the target to report what
+a re-run would change (revocations and removals carried from the Store, drift, skipped workspaces).
 --apply refuses unless both URLs are local; --i-understand-remote lifts that and is for the operator only.`
 
 const VALUE_FLAGS = {"--source": "source", "--target": "target", "--organization-id": "organizationId"} as const
@@ -898,23 +1287,30 @@ async function main(argv: string[]): Promise<void> {
   }
 
   let source: Connection | undefined
+  let readOnlyTarget: Connection | undefined
   try {
     source = await openSourceConnection(options.source)
-    // Plan from the source alone first. A dry run stops here and never connects to the target. For an
-    // apply this validates the whole source before the target is touched: connecting makes Mongoose
-    // create the collections and indexes, which bad source data must not leave behind.
-    let report = await migrateStoreDeveloperOrgs({
-      source,
-      organizationId,
-      apply: false,
-      log: options.apply ? () => {} : message => console.error(message),
-    })
+    let report: MigrationReport
     if (options.apply) {
+      // Plan from the source alone first: this validates the whole source before the target is
+      // touched, because connecting makes Mongoose create the collections and indexes, which bad
+      // source data must not leave behind.
+      await migrateStoreDeveloperOrgs({source, organizationId, apply: false})
       await mongoose.connect(options.target, {serverSelectionTimeoutMS: 10_000})
       report = await migrateStoreDeveloperOrgs({
         source,
         organizationId,
         apply: true,
+        log: message => console.error(message),
+      })
+    } else {
+      // A dry run reads the target through its own read-only connection and never writes to it.
+      readOnlyTarget = await openSourceConnection(options.target)
+      report = await migrateStoreDeveloperOrgs({
+        source,
+        target: readOnlyTarget,
+        organizationId,
+        apply: false,
         log: message => console.error(message),
       })
     }
@@ -924,6 +1320,7 @@ async function main(argv: string[]): Promise<void> {
     process.exitCode = 1
   } finally {
     await source?.close()
+    await readOnlyTarget?.close()
     await mongoose.disconnect()
   }
 }
