@@ -1,7 +1,7 @@
 import {expect,test} from 'bun:test';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
-import {readRerunId,AttemptLine,AttemptHistory,RerunForm,TestRerunPage} from './test-reruns';
+import {readRerunId,AttemptLine,AttemptHistory,AttemptHistoryView,RerunForm,TestRerunPage} from './test-reruns';
 import {TestSuitePage} from './test-suites';
 const attempt={attemptId:'request',requestId:'request',attemptNumber:1,status:'pass',publicationComplete:false,parent:{suiteId:'nightly'},memberId:'item',rerunId:'repair',build:{headSha:'b'.repeat(40),channel:'dev' as const,repository:'Mentra-Community/MentraOS',source:{channel:'dev' as const,buildRunId:123,publicationAttempt:1}}};
 const render=(element:any,client=new QueryClient())=>renderToStaticMarkup(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
@@ -31,4 +31,19 @@ test('attempt history stays hidden without reruns and preserves original/latest 
  client.setQueryData(key,{original:{...attempt,attemptNumber:0},attempts:[attempt],nextBefore:null});
  const html=render(<AttemptHistory suiteId="nightly" memberId="item"/>,client);
  expect(html).toContain('Attempt history');expect(html).toContain('Original · pass');expect(html).toContain('Attempt 1 · pass');expect(html).toContain('Evidence pending');
+});
+
+
+test('older history loading and errors keep disclosure, previous attempts and latest navigation',()=>{
+ const page={original:{...attempt,attemptNumber:0},attempts:[attempt],nextBefore:1 as number|null};
+ const view=(before:number|null,loading=false,error?:Error,pageData=page)=>render(<AttemptHistoryView page={pageData} before={before} loading={loading} error={error} onOpen={()=>{}} onBefore={()=>{}} onRetry={()=>{}}/>);
+ for(const html of [view(2,true),view(2,false,new Error('network'))]) {
+  expect(html).toContain('Attempt history');expect(html).toContain('Latest attempts');expect(html).toContain('Original · pass');expect(html).toContain('Attempt 1 · pass');
+ }
+ expect(view(2,true)).toContain('Loading attempts');
+ expect(view(2,false,new Error('network'))).toContain('Retry');
+ const olderEmpty={...page,attempts:[],nextBefore:null};
+ expect(view(2,false,undefined,olderEmpty)).toContain('Latest attempts');
+ expect(view(null,false,undefined,olderEmpty)).toBe('');
+ expect(view(null)).toContain('Older attempts');
 });
