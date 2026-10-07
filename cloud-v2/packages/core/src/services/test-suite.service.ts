@@ -136,8 +136,9 @@ const compactNightlyMember = {
   hostId: "$$member.hostId", laneId: {$ifNull: ["$$member.dispatchIntent.laneId", "$$member.input.laneId"]},
   preparedLaneId: "$$member.input.laneId", status: "$$member.status", publicationComplete: "$$member.publicationComplete",
   runId: "$$member.runId", runStartedAt: "$$member.runStartedAt", runFinishedAt: "$$member.runFinishedAt",
-  build: {$let: {vars: {build: {$ifNull: ["$$member.build", "$$member.input.build"]}}, in: {
-    repository: "$$build.repository", channel: "$$build.channel", headSha: "$$build.headSha", prNumber: "$$build.prNumber"}}},
+  build: {$let: {vars: {build: {$ifNull: ["$$member.build", "$$member.input.build"]}},
+    in: {$cond: [{$eq: [{$ifNull: ["$$build", null]}, null]}, "$$REMOVE",
+      {repository: "$$build.repository", channel: "$$build.channel", headSha: "$$build.headSha", prNumber: "$$build.prNumber"}]}}},
 };
 const compactNightly = (field: string, open = false) => ({suiteId: `$${field}.suiteId`, occurrenceId: `$${field}.occurrenceId`,
   startedAt: `$${field}.startedAt`, trigger: `$${field}.trigger`, finishedAt: `$${field}.finishedAt`,
@@ -149,7 +150,7 @@ export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId
 }};
 interface CompactNightlyMember {
   memberId: string; requestId: string; routineId: string; platform: string; definitionRevision: string; routineRevision?: string;
-  hostId?: string; laneId?: string; preparedLaneId?: string; build: {repository?: string; channel?: string; headSha?: string; prNumber?: number};
+  hostId?: string; laneId?: string; preparedLaneId?: string; build?: {repository?: string; channel?: string; headSha?: string; prNumber?: number};
   status?: string; publicationComplete?: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string;
 }
 interface CompactNightlyReceipt {suiteId: string; occurrenceId: string; startedAt: string; trigger: string;
@@ -272,8 +273,8 @@ export class TestSuiteService {
             const result = {...snapshot, members: snapshot.members.map(member => ({...member,
               laneId: (member as unknown as CompactNightlyMember).laneId ?? member.dispatchIntent?.laneId ?? member.input?.laneId,
               preparedLaneId: member.input?.laneId,
-              build: {repository: member.build?.repository, channel: member.build?.channel,
-                headSha: member.build?.headSha, prNumber: member.build?.prNumber}}))};
+              ...(member.build ? {build: {repository: member.build.repository, channel: member.build.channel,
+                headSha: member.build.headSha, ...(member.build.prNumber !== undefined ? {prNumber: member.build.prNumber} : {})}} : {})}))};
             summaries.set(row.suiteId, nightlyHistorySummary(suite, plan as unknown as CompactNightlyReceipt, result));
           }
           continue;

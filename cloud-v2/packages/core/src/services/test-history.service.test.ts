@@ -234,6 +234,30 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     }
   });
 
+  test("open and terminal build-selection failures stay readable without a fabricated build", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRequestModel.deleteMany({}); await TestRerunModel.deleteMany({});
+    const {requestId: _missingRequest, ...missing} = member("missing-b");
+    const payload = plan("missing-build-suite", [member("available-a"), missing]);
+    const input = {routineId: "notes", platform: "ios-on-mac", definitionRevision: "b".repeat(40), routineSource: testRoutineSource("b".repeat(40)),
+      laneId: "mac", resources: [], build: run("available-a").build};
+    const dispatchIntent = {requestId: "available-a", routineId: input.routineId, platform: input.platform, routineRevision: input.definitionRevision,
+      laneId: input.laneId, build: input.build, source: {channel: "dev", buildRunId: 42}};
+    const members = payload.members.map(selected => ({...selected, requestId: selected.memberId, definitionRevision: input.definitionRevision,
+      routineRevision: input.definitionRevision, ...(selected.memberId === "available-a" ? {hostId: "mini", build: input.build, dispatchIntent} : {})}));
+    const nightlyPlan = {suiteId: payload.suiteId, occurrenceId: "missing-build-occurrence", startedAt: at, trigger: "nightly", suite: payload, members};
+    await TestSuiteModel.collection.insertOne({suiteId: payload.suiteId, payload, nightlyPlan, startedAt: new Date(at)});
+    await TestRequestModel.collection.insertOne({requestId: "available-a", hostId: "mini", input, inputSha256: requestInputDigest(input),
+      dispatchIntent, dispatchIntentSha256: requestInputDigest(dispatchIntent), state: "running"});
+    await saveRun(run("available-a"));
+    const history = new TestHistoryService();
+    expect((await history.list()).entries[0]).toMatchObject({kind: "suite", outcome: "running", passed: 1, skipped: 1, lanes: [{hostId: "mini", laneId: "mac"}]});
+    const nightlyResult = {...nightlyPlan, expectedCount: 2, finishedAt: "2026-10-03T20:00:00Z", members: members.map(selected => ({...selected,
+      status: selected.memberId === "available-a" ? "pass" : "incomplete", publicationComplete: selected.memberId === "available-a",
+      ...(selected.memberId === "available-a" ? {input, runId: selected.memberId, runStartedAt: at, runFinishedAt: "2026-10-03T19:01:00Z"} : {})}))};
+    await TestSuiteModel.collection.updateOne({suiteId: payload.suiteId}, {$set: {nightlyResult}});
+    expect((await history.list()).entries[0]).toMatchObject({kind: "suite", outcome: "failed", passed: 1, skipped: 1, lanes: [{hostId: "mini", laneId: "mac"}]});
+  });
+
   test("accepted reruns are excluded before page and cursor selection, counted as jobs, and shown on request", async () => {
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
     const parent = {...plan("suite:rerun-parent", [member("original-a"), member("original-b")]), startedAt: "2026-10-03T18:00:00Z"};
