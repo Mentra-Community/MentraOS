@@ -22,7 +22,6 @@ import {
   revokeCredential,
 } from "../../services/workspaces/credential.service"
 import {organizationCapabilities} from "../../services/workspaces/authorization.service"
-import {organizationId} from "../../services/workspaces/organization"
 import {fail} from "../../services/workspaces/workspace-error"
 import {listAllWorkspaces, recoverOwnership} from "../../services/workspaces/workspace.service"
 import {getUser} from "../../services/user.service"
@@ -43,7 +42,6 @@ app.get("/", principalAuth, (c) => {
   if (!principal) return c.json({error: "unauthorized"}, 401)
   const held = organizationCapabilities(principal)
   const view: OrganizationView = {
-    organizationId: organizationId(),
     capabilities: ORGANIZATION_CAPABILITIES.filter((capability) => held.has(capability)),
   }
   return c.json(view)

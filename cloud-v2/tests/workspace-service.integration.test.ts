@@ -18,7 +18,7 @@ import {afterAll, beforeAll, beforeEach, describe, expect, test} from "bun:test"
 
 import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
-import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
+import {WORKSPACE_AUDIT_COUNTER_ID, WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -91,7 +91,6 @@ async function addMember(
   const membershipId = `wm_${nextId()}`
   await WorkspaceMembershipModel.create({
     membershipId,
-    organizationId: "local",
     workspaceId,
     mentraUserId,
     email: `${mentraUserId}@example.test`,
@@ -121,7 +120,6 @@ async function seedCredential(workspaceId: string, createdByMembershipId: string
     credentialId,
     prefix: "msk",
     credentialKind: "workspace",
-    organizationId: "local",
     workspaceId,
     name: "key",
     env: "local",
@@ -182,7 +180,6 @@ describe("createWorkspace", () => {
     const summary = await createWorkspace(creator, {name: "  Acme Labs  "})
 
     expect(summary).toEqual({
-      organizationId: "local",
       workspaceId: expect.stringMatching(/^ws_[0-9A-HJKMNP-TV-Z]{26}$/),
       name: "Acme Labs",
       status: "active",
@@ -194,7 +191,6 @@ describe("createWorkspace", () => {
       role: "owner",
       status: "active",
       email: "mu_creator@example.test",
-      organizationId: "local",
     })
     expect(membership!.membershipId).toMatch(/^wm_[0-9A-HJKMNP-TV-Z]{26}$/)
 
@@ -213,7 +209,6 @@ describe("createWorkspace", () => {
     expect(audit).toHaveLength(1)
     expect(audit[0]).toMatchObject({
       action: "workspace.created",
-      organizationId: "local",
       actor: {kind: "user", mentraUserId: "mu_creator", email: "mu_creator@example.test"},
       target: {workspaceId: summary.workspaceId, membershipId: membership!.membershipId},
     })
@@ -568,7 +563,7 @@ describe("recoverOwnership", () => {
     expect(summary.authorizationRevision).toBe(before + 1)
     expect(await countActiveOwners(ws)).toBe(1)
     const membership = await getActiveMembership(ws, "mu_new_owner")
-    expect(membership).toMatchObject({role: "owner", status: "active", organizationId: "local"})
+    expect(membership).toMatchObject({role: "owner", status: "active"})
     expect(membership!.membershipId).toMatch(/^wm_/)
     expect((await listWorkspacesForUser("mu_new_owner"))[0]!.membership.role).toBe("owner")
     expect((await listWorkspaceAudit(ws, {limit: 1}))[0]).toMatchObject({
@@ -701,7 +696,6 @@ describe("deleteWorkspace", () => {
     const invite = (invitationId: string, email: string, status: string) =>
       WorkspaceInvitationModel.create({
         invitationId,
-        organizationId: "local",
         workspaceId: ws,
         email,
         role: "member",
@@ -807,7 +801,6 @@ describe("queries", () => {
 
     expect(listed.map(item => item.workspaceId)).toEqual([second])
     expect(listed[0]).toMatchObject({
-      organizationId: "local",
       name: "Second",
       status: "active",
       authorizationRevision: 0,
@@ -868,7 +861,6 @@ describe("audit", () => {
       for (let i = 0; i < 50; i++) {
         issued.push(
           await recordWorkspaceEvent(session, {
-            organizationId: "local",
             workspaceId: "ws_ids",
             action: "test.event",
             actor: {kind: "system"},
@@ -911,7 +903,6 @@ describe("audit", () => {
     // and one that belongs to the organization rather than a workspace.
     await withTransaction(async session => {
       await recordWorkspaceEvent(session, {
-        organizationId: "local",
         workspaceId: ws,
         action: "invitation.created",
         actor: {kind: "user", mentraUserId: "mu_owner", email: "mu_owner@example.test"},
@@ -926,7 +917,6 @@ describe("audit", () => {
         requestId: "req_1",
       })
       await recordWorkspaceEvent(session, {
-        organizationId: "local",
         workspaceId: null,
         action: "credential.revoked",
         actor: {kind: "service", service: "store"},
@@ -969,12 +959,10 @@ describe("audit", () => {
         "action",
         "eventId",
         "occurredAt",
-        "organizationId",
         "seq",
         "target",
         "workspaceId",
       ])
-      expect(event.organizationId).toBe("local")
       expect(new Date(event.occurredAt).toISOString()).toBe(event.occurredAt)
     }
     expect(collected[0]!.workspaceId).toBe(ws)
@@ -1013,43 +1001,48 @@ describe("audit", () => {
     }
   })
 
-  test("seq is issued per organization and listChanges serves only this organization's events", async () => {
-    const record = (organization: string, n: number) =>
+  test("seq is one sequence across every workspace and organization-level event, all served in order", async () => {
+    const record = (workspaceId: string | null, n: number) =>
       withTransaction(session =>
         recordWorkspaceEvent(session, {
-          organizationId: organization,
-          workspaceId: null,
+          workspaceId,
           action: `test.${n}`,
           actor: {kind: "system"},
           target: {n},
         }),
       )
-    await record("local", 1)
-    await record("other-org", 2)
-    await record("other-org", 3)
-    await record("local", 4)
+    await record(null, 1)
+    await record("ws_a", 2)
+    await record("ws_b", 3)
+    await record(null, 4)
 
-    const seqs = async (organization: string) =>
-      (await WorkspaceAuditEventModel.find({organizationId: organization}).sort({seq: 1}).lean()).map(row => row.seq)
-    expect(await seqs("local")).toEqual([1, 2])
-    expect(await seqs("other-org")).toEqual([1, 2])
+    const rows = await WorkspaceAuditEventModel.find({}).sort({seq: 1}).lean()
+    expect(rows.map(row => [row.workspaceId, row.seq])).toEqual([
+      [null, 1],
+      ["ws_a", 2],
+      ["ws_b", 3],
+      [null, 4],
+    ])
+    expect(await WorkspaceAuditCounterModel.countDocuments({})).toBe(1)
+    expect((await WorkspaceAuditCounterModel.findById(WORKSPACE_AUDIT_COUNTER_ID).lean())!.seq).toBe(4)
     const feed = await listChanges(null, 10)
     expect(feed.events.map(event => [event.action, event.seq])).toEqual([
       ["test.1", 1],
-      ["test.4", 2],
+      ["test.2", 2],
+      ["test.3", 3],
+      ["test.4", 4],
     ])
   })
 
-  test("the first event of an organization retries instead of failing when its counter appears mid-transaction", async () => {
+  test("the first event ever recorded retries instead of failing when the counter appears mid-transaction", async () => {
     let attempts = 0
     await withTransaction(async session => {
       attempts++
       // Take this transaction's snapshot while the counter does not exist yet.
       await WorkspaceModel.findOne({workspaceId: "ws_none"}).session(session)
       // Another writer creates the counter and commits during the first attempt.
-      if (attempts === 1) await WorkspaceAuditCounterModel.create({_id: "local", seq: 5})
+      if (attempts === 1) await WorkspaceAuditCounterModel.create({_id: WORKSPACE_AUDIT_COUNTER_ID, seq: 5})
       await recordWorkspaceEvent(session, {
-        organizationId: "local",
         workspaceId: null,
         action: "test.first",
         actor: {kind: "system"},
@@ -1059,12 +1052,11 @@ describe("audit", () => {
 
     expect(attempts).toBe(2)
     expect((await WorkspaceAuditEventModel.find({}).lean()).map(row => row.seq)).toEqual([6])
-    expect((await WorkspaceAuditCounterModel.findById("local").lean())!.seq).toBe(6)
+    expect((await WorkspaceAuditCounterModel.findById(WORKSPACE_AUDIT_COUNTER_ID).lean())!.seq).toBe(6)
   })
 
   test("interleaved transactions: a later-committing event never gets a lower seq, so a poller cannot skip it", async () => {
     const event = (n: number) => ({
-      organizationId: "local",
       workspaceId: "ws_gate",
       action: `test.${n}`,
       actor: {kind: "system" as const},
@@ -1145,7 +1137,6 @@ describe("audit", () => {
         withTransaction(async session => {
           for (let i = 0; i < perWriter; i++) {
             await recordWorkspaceEvent(session, {
-              organizationId: "local",
               workspaceId: `ws_${writer}`,
               action: "test.concurrent",
               actor: {kind: "system"},

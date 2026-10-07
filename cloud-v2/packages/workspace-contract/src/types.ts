@@ -4,7 +4,6 @@ import type {OrganizationCapability, WorkspaceCapability, WorkspaceRole} from ".
 export type CorePrincipal =
   | {
       kind: "user"
-      organizationId: string
       mentraUserId: string
       email: string | null
       emailVerified: boolean
@@ -15,7 +14,6 @@ export type CorePrincipal =
     }
   | {
       kind: "credential"
-      organizationId: string
       credentialId: string
       credentialKind: "workspace" | "organization"
       workspaceId: string | null
@@ -30,7 +28,6 @@ export type CorePrincipal =
     }
 
 export interface WorkspaceSummary {
-  organizationId: string
   workspaceId: string
   name: string
   status: "active" | "deleted"
@@ -72,7 +69,6 @@ export type DenyReason =
 export interface AuthorizeResponse {
   allowed: boolean
   reason?: DenyReason
-  organizationId: string
   principal: CorePrincipal | null
   workspace?: WorkspaceSummary | null
   membership?: MembershipSummary | null
@@ -91,26 +87,23 @@ export interface MembershipCheckEntry {
 
 /** Response of `POST /memberships/check`: one entry per requested workspace, null for a non-member. */
 export interface MembershipCheckResponse {
-  organizationId: string
   memberships: Record<string, MembershipCheckEntry | null>
 }
 
 /** Response of `POST /credentials`. The token is shown once. */
 export interface ServiceCredentialResponse {
-  organizationId: string
   credentialId: string
   token: string
 }
 
 /**
  * One entry of Core's change feed. `eventId` identifies the event; `seq` is its position in the
- * organization's feed, assigned in commit order with no gaps, and is the only thing to page by: pass the
+ * feed, assigned in commit order with no gaps, and is the only thing to page by: pass the
  * last `seq` you processed (as a decimal string) as the next request's `after`.
  */
 export interface WorkspaceChangeEvent {
   eventId: string
   seq: number
-  organizationId: string
   workspaceId: string | null
   action: string
   occurredAt: string
@@ -197,8 +190,7 @@ export interface AuditEventView {
   occurredAt: string
 }
 
-/** `GET /api/organization`: this deployment and what the caller may do to it. */
+/** `GET /api/organization`: what the caller may do to this deployment (the organization). */
 export interface OrganizationView {
-  organizationId: string
   capabilities: OrganizationCapability[]
 }

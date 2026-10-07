@@ -60,7 +60,6 @@ const TOKEN_PLACEHOLDER = "{token}"
 /** An invitation as listed to administrators. It never includes the token or its hash. */
 export interface InvitationRow {
   invitationId: string
-  organizationId: string
   workspaceId: string
   email: string
   role: WorkspaceRole
@@ -120,7 +119,6 @@ export async function createInvitation(
       [
         {
           invitationId,
-          organizationId: workspace.organizationId,
           workspaceId,
           email,
           role,
@@ -135,7 +133,6 @@ export async function createInvitation(
 
     if (superseded) {
       await recordWorkspaceEvent(session, {
-        organizationId: workspace.organizationId,
         workspaceId,
         action: "invitation.revoked",
         actor: auditActor(actor),
@@ -145,7 +142,6 @@ export async function createInvitation(
       })
     }
     await recordWorkspaceEvent(session, {
-      organizationId: workspace.organizationId,
       workspaceId,
       action: "invitation.created",
       actor: auditActor(actor),
@@ -172,7 +168,6 @@ export async function listPendingInvitations(workspaceId: string): Promise<Invit
   // later (the token hash is one) cannot leak through this list.
   return rows.map(row => ({
     invitationId: row.invitationId,
-    organizationId: row.organizationId,
     workspaceId: row.workspaceId,
     email: row.email,
     role: row.role as WorkspaceRole,
@@ -192,7 +187,7 @@ export async function listPendingInvitations(workspaceId: string): Promise<Invit
  */
 export async function revokeInvitation(actor: Actor, workspaceId: string, invitationId: string): Promise<void> {
   await withTransaction(async session => {
-    const workspace = await loadActiveWorkspace(session, workspaceId)
+    await loadActiveWorkspace(session, workspaceId)
     const actorRole = await requireMembershipManager(session, actor, workspaceId)
     const invitation = await WorkspaceInvitationModel.findOne({invitationId, workspaceId, status: "pending"})
       .session(session)
@@ -208,7 +203,6 @@ export async function revokeInvitation(actor: Actor, workspaceId: string, invita
     )
     if (revoked.modifiedCount !== 1) fail("invitation_not_found", "invitation not found")
     await recordWorkspaceEvent(session, {
-      organizationId: workspace.organizationId,
       workspaceId,
       action: "invitation.revoked",
       actor: auditActor(actor),
@@ -268,7 +262,7 @@ export async function acceptInvitation(
       .session(session)
       .lean<WorkspaceInvitationRow>()
     if (!invitation) fail("invitation_not_found", "invitation not found")
-    const workspace = await loadActiveWorkspace(session, invitation.workspaceId)
+    await loadActiveWorkspace(session, invitation.workspaceId)
 
     if (invitation.expiresAt.getTime() <= Date.now()) fail("invitation_expired", "this invitation has expired")
     if (actor.emailVerified !== true || normalizeAddress(actor.email) !== invitation.email) {
@@ -297,7 +291,6 @@ export async function acceptInvitation(
       [
         {
           membershipId,
-          organizationId: workspace.organizationId,
           workspaceId: invitation.workspaceId,
           mentraUserId: actor.mentraUserId,
           email: actor.email?.trim() || null,
@@ -311,7 +304,6 @@ export async function acceptInvitation(
     )
 
     await recordWorkspaceEvent(session, {
-      organizationId: workspace.organizationId,
       workspaceId: invitation.workspaceId,
       action: "invitation.accepted",
       actor: auditActor(actor),
@@ -320,7 +312,6 @@ export async function acceptInvitation(
       after: {status: "accepted"},
     })
     await recordWorkspaceEvent(session, {
-      organizationId: workspace.organizationId,
       workspaceId: invitation.workspaceId,
       action: "membership.added",
       actor: auditActor(actor),

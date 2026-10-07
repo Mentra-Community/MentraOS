@@ -7,7 +7,7 @@ export interface AdminMe {
   authenticated: true;
   user: { mentraUserId: string; email: string | null } | null;
   credential: { credentialId: string; label: string } | null;
-  organization: { organizationId: string; capabilities: OrganizationCapability[] };
+  organization: { capabilities: OrganizationCapability[] };
   workspaces: PrincipalResponse["workspaces"];
 }
 

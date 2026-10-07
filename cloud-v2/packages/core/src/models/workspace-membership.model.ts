@@ -23,7 +23,6 @@ const WorkspaceMembershipSchema = new Schema(
   {
     /** `wm_<ulid>`. */
     membershipId: {type: String, required: true, unique: true},
-    organizationId: {type: String, required: true, index: true},
     workspaceId: {type: String, required: true, index: true},
     mentraUserId: {type: String, default: null},
     /** Migrated rows only: WorkOS user id, replaced by `mentraUserId` on first sign-in. */

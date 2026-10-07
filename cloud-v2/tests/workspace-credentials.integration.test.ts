@@ -108,7 +108,6 @@ async function addMember(
   const membershipId = `wm_${nextId()}`
   await WorkspaceMembershipModel.create({
     membershipId,
-    organizationId: "local",
     workspaceId,
     mentraUserId,
     email: `${mentraUserId ?? "pending"}@example.test`,
@@ -161,7 +160,6 @@ async function seedKey(fields: Record<string, unknown> = {}) {
     credentialId,
     prefix,
     credentialKind: prefix === "mak" ? "organization" : "workspace",
-    organizationId: "local",
     name: "seeded",
     env,
     hash: sha256Hex(secret),
@@ -261,7 +259,6 @@ describe("createWorkspaceCredential", () => {
     expect(row).toMatchObject({
       prefix: "msk",
       credentialKind: "workspace",
-      organizationId: "local",
       workspaceId,
       name: "CI key",
       env: "local",
@@ -279,7 +276,6 @@ describe("createWorkspaceCredential", () => {
 
     expect(await validateCredentialToken(token)).toEqual({
       kind: "credential",
-      organizationId: "local",
       credentialId: parts.credentialId,
       credentialKind: "workspace",
       workspaceId,
@@ -302,7 +298,6 @@ describe("createWorkspaceCredential", () => {
     const events = (await listWorkspaceAudit(workspaceId, {limit: 50})).filter(e => e.action === "credential.created")
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
-      organizationId: "local",
       workspaceId,
       actor: {kind: "user", mentraUserId: "mu_developer", email: "mu_developer@example.test"},
       target: {credentialId: credential.credentialId, prefix: "msk", workspaceId},
@@ -600,7 +595,6 @@ describe("validateCredentialToken", () => {
 
     expect(await validateCredentialToken(token)).toEqual({
       kind: "credential",
-      organizationId: "local",
       credentialId,
       credentialKind: "workspace",
       workspaceId,
@@ -657,7 +651,6 @@ describe("validateCredentialToken", () => {
 
     expect(await validateCredentialToken(token)).toEqual({
       kind: "credential",
-      organizationId: "local",
       credentialId: credential.credentialId,
       credentialKind: "workspace",
       workspaceId,
@@ -873,7 +866,6 @@ describe("createOperatorKey", () => {
     expect(await AccessCredentialModel.findOne({credentialId: parts.credentialId}).lean()).toMatchObject({
       prefix: "mak",
       credentialKind: "organization",
-      organizationId: "local",
       workspaceId: null,
       hash: sha256Hex(parts.secret),
       createdByMentraUserId: "mu_org_admin",
@@ -884,7 +876,6 @@ describe("createOperatorKey", () => {
 
     expect(await validateCredentialToken(token)).toEqual({
       kind: "credential",
-      organizationId: "local",
       credentialId: parts.credentialId,
       credentialKind: "organization",
       workspaceId: null,
@@ -903,7 +894,6 @@ describe("createOperatorKey", () => {
     const events = await WorkspaceAuditEventModel.find({action: "credential.created"}).lean()
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
-      organizationId: "local",
       workspaceId: null,
       actor: {kind: "user", mentraUserId: "mu_org_admin", email: ADMIN_EMAIL},
       target: {credentialId: credential.credentialId, prefix: "mak"},

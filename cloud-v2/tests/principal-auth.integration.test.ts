@@ -75,7 +75,6 @@ const ENV_KEYS = [
   "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
   "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
   "CLOUD_CORE_ENVIRONMENT",
-  "CLOUD_CORE_ORGANIZATION_ID",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "WORKOS_API_KEY",
@@ -154,7 +153,6 @@ async function addMember(workspaceId: string, p: Person, role: string, fields: R
   const membershipId = `wm_test_${membershipCounter++}`
   await WorkspaceMembershipModel.create({
     membershipId,
-    organizationId: "local",
     workspaceId,
     mentraUserId: p.mentraUserId,
     email: p.email,
@@ -193,7 +191,6 @@ async function seedKey(fields: Record<string, unknown> = {}) {
     credentialId,
     prefix,
     credentialKind: prefix === "mak" ? "organization" : "workspace",
-    organizationId: "local",
     name: "seeded",
     env: "local",
     hash: createHash("sha256").update(secret).digest("hex"),
@@ -277,7 +274,6 @@ beforeEach(async () => {
   delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS
   delete process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS
   delete process.env.CLOUD_CORE_ENVIRONMENT
-  delete process.env.CLOUD_CORE_ORGANIZATION_ID
   // No GoTrue: a first sign-in links to a `workos` tenant user.
   delete process.env.SUPABASE_URL
   delete process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -327,7 +323,6 @@ describe("principalAuth", () => {
     expect(await response.json()).toEqual({
       principal: {
         kind: "user",
-        organizationId: "local",
         mentraUserId: owner.mentraUserId,
         email: owner.email,
         emailVerified: true,
@@ -372,7 +367,6 @@ describe("principalAuth", () => {
     identities.set("tok-migrated", {id: "workos_migrated", email: "migrated@example.test", emailVerified: true})
     await WorkspaceMembershipModel.create({
       membershipId: "wm_migrated",
-      organizationId: "local",
       workspaceId,
       mentraUserId: null,
       pendingWorkosUserId: "workos_migrated",
@@ -663,16 +657,9 @@ describe("authorize", () => {
     expect(await authorize(null, {workspaceId, capability: "workspace.read"})).toEqual({
       allowed: false,
       reason: "unauthenticated",
-      organizationId: "local",
       principal: null,
       capabilities: [],
     })
-  })
-
-  test("reports the organization's id", async () => {
-    process.env.CLOUD_CORE_ORGANIZATION_ID = "acme-prod"
-
-    expect((await authorize(null, {})).organizationId).toBe("acme-prod")
   })
 
   test("without a workspace, any principal is allowed and echoed with no capabilities", async () => {
@@ -681,7 +668,6 @@ describe("authorize", () => {
 
     expect(await authorize(principal, {})).toEqual({
       allowed: true,
-      organizationId: "local",
       principal,
       capabilities: [],
     })
@@ -703,7 +689,6 @@ describe("authorize", () => {
     expect(await authorize(principal, {workspaceId: "ws_unknown", capability: "workspace.read"})).toEqual({
       allowed: false,
       reason: "workspace_not_found",
-      organizationId: "local",
       principal,
       workspace: null,
       capabilities: [],
@@ -734,7 +719,6 @@ describe("authorize", () => {
 
       expect(result).toMatchObject({
         allowed: true,
-        organizationId: "local",
         principal,
         workspace,
         membership: {role: "developer", membershipId: expect.stringMatching(/^wm_/)},
@@ -772,7 +756,6 @@ describe("authorize", () => {
       expect(result).toEqual({
         allowed: false,
         reason: "not_a_member",
-        organizationId: "local",
         principal,
         capabilities: [],
       })
@@ -1007,7 +990,6 @@ describe("requireWorkspaceCapability", () => {
     const body = (await response.json()) as any
     expect(body.authorization).toMatchObject({
       allowed: true,
-      organizationId: "local",
       workspace,
       membership: {role: "developer"},
       principal: {kind: "user", mentraUserId: developer.mentraUserId},

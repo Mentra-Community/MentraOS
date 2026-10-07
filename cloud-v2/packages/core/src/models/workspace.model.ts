@@ -17,7 +17,6 @@ const WorkspaceSchema = new Schema(
   {
     /** `ws_<ulid>`. Migrated enterprise orgs keep their original `dorg_<ulid>` id. */
     workspaceId: {type: String, required: true, unique: true},
-    organizationId: {type: String, required: true, index: true},
     name: {type: String, required: true},
     status: {type: String, enum: WORKSPACE_STATUSES, default: "active", index: true},
     authorizationRevision: {type: Number, default: 0},

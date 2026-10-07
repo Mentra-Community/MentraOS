@@ -228,7 +228,6 @@ async function claimPendingMemberships(
     )
     const repointedCredentialIds = await repointCredentials(session, duplicate, kept.membershipId)
     await recordWorkspaceEvent(session, {
-      organizationId: duplicate.organizationId,
       workspaceId: duplicate.workspaceId,
       action: "membership.merged_duplicate",
       actor: {kind: "system"},
@@ -262,7 +261,6 @@ async function claimPendingMemberships(
     )
     if (claimed.modifiedCount !== 1) continue
     await recordWorkspaceEvent(session, {
-      organizationId: row.organizationId,
       workspaceId: row.workspaceId,
       action: "membership.claimed",
       actor: {kind: "system"},

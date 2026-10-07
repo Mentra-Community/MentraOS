@@ -35,7 +35,6 @@ afterEach(() => {
 function person(isOrganizationAdmin: boolean): CorePrincipal {
   return {
     kind: "user",
-    organizationId: "local",
     mentraUserId: "mu_1",
     email: "person@example.test",
     emailVerified: true,
@@ -48,7 +47,6 @@ function person(isOrganizationAdmin: boolean): CorePrincipal {
 function key(credentialKind: "organization" | "workspace", scopes: string[]): CorePrincipal {
   return {
     kind: "credential",
-    organizationId: "local",
     credentialId: "01HZKEY",
     credentialKind,
     workspaceId: credentialKind === "workspace" ? "ws_1" : null,
@@ -229,10 +227,7 @@ describe("GET /api/admin/me", () => {
         authenticated: true,
         user: null,
         credential: {credentialId: "01HZKEY", label: "ci key"},
-        organization: {
-          organizationId: "local",
-          capabilities: ["organization.incidents.read", "organization.testing.read"],
-        },
+        organization: {capabilities: ["organization.incidents.read", "organization.testing.read"]},
         workspaces: [],
       },
     })
@@ -246,7 +241,7 @@ describe("GET /api/admin/me", () => {
         authenticated: true,
         user: null,
         credential: {credentialId: "01HZKEY", label: "ci key"},
-        organization: {organizationId: "local", capabilities: []},
+        organization: {capabilities: []},
         workspaces: [],
       },
     })

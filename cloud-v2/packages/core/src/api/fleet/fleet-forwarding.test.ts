@@ -25,7 +25,6 @@ const ENV_KEYS = [
   "CLOUD_CORE_FLEET_MAX_BODY_BYTES",
   "CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES",
   "CLOUD_CORE_FLEET_TIMEOUT_MS",
-  "CLOUD_CORE_ORGANIZATION_ID",
   "CLOUD_CORE_ENVIRONMENT",
   "NODE_ENV",
   "WORKOS_API_KEY",
@@ -89,7 +88,6 @@ afterAll(() => {
 function person(isOrganizationAdmin: boolean): CorePrincipal {
   return {
     kind: "user",
-    organizationId: "local",
     mentraUserId: "mu_1",
     email: "person@example.test",
     emailVerified: true,
@@ -102,7 +100,6 @@ function person(isOrganizationAdmin: boolean): CorePrincipal {
 function key(credentialKind: "organization" | "workspace", scopes: string[]): CorePrincipal {
   return {
     kind: "credential",
-    organizationId: "local",
     credentialId: "01HZKEY",
     credentialKind,
     workspaceId: credentialKind === "workspace" ? "ws_1" : null,
@@ -167,8 +164,8 @@ function rawUrlRequest(rawUrl: string, headers: Record<string, string>): Request
 
 const decodePrincipal = (header: string | null) => JSON.parse(Buffer.from(header ?? "", "base64url").toString())
 
-const principalSignature = (secret: string, timestamp: string, organization: string, principal: string) =>
-  createHmac("sha256", secret).update(`${timestamp}\n${organization}\n${principal}`).digest("base64url")
+const principalSignature = (secret: string, timestamp: string, principal: string) =>
+  createHmac("sha256", secret).update(`${timestamp}\n${principal}`).digest("base64url")
 
 function serviceSignatureVerifies(call: Captured): boolean {
   return verifyServiceRequest({
@@ -184,12 +181,11 @@ function serviceSignatureVerifies(call: Captured): boolean {
 
 function principalSignatureVerifies(
   call: Captured,
-  swap: {organization?: string; principal?: string; timestamp?: string} = {},
+  swap: {principal?: string; timestamp?: string} = {},
 ): boolean {
   const expected = principalSignature(
     SECRET,
     swap.timestamp ?? call.headers.get(SERVICE_HEADERS.timestamp) ?? "",
-    swap.organization ?? call.headers.get(FLEET_HEADERS.organizationId) ?? "",
     swap.principal ?? call.headers.get(FLEET_HEADERS.principal) ?? "",
   )
   return expected === call.headers.get(FLEET_HEADERS.principalSignature)
@@ -197,7 +193,7 @@ function principalSignatureVerifies(
 
 describe("what Core sends to Fleet", () => {
   test("a phone request reaches /v1/client with a valid service signature and its principal", async () => {
-    configure({CLOUD_CORE_ORGANIZATION_ID: "acme"})
+    configure()
     respond = () => Response.json({devices: []}, {headers: {"cache-control": "no-store"}})
 
     const response = await phone("/fleet/devices/42?state=online&label=a%20b", {headers: {accept: "application/json"}})
@@ -210,7 +206,6 @@ describe("what Core sends to Fleet", () => {
     expect(call.pathWithQuery).toBe("/v1/client/devices/42?state=online&label=a%20b")
     expect(call.headers.get("accept")).toBe("application/json")
     expect(call.headers.get(SERVICE_HEADERS.service)).toBe("core")
-    expect(call.headers.get(FLEET_HEADERS.organizationId)).toBe("acme")
     expect(decodePrincipal(call.headers.get(FLEET_HEADERS.principal))).toEqual({
       kind: "phone",
       mentraUserId: "mu_phone",
@@ -283,7 +278,7 @@ describe("what Core sends to Fleet", () => {
   })
 
   test("a client-sent identity never reaches upstream; Core's own does", async () => {
-    configure({CLOUD_CORE_ORGANIZATION_ID: "acme"})
+    configure()
 
     const response = await phone("/fleet/devices", {
       headers: {
@@ -291,7 +286,6 @@ describe("what Core sends to Fleet", () => {
         "cookie": "session=secret",
         "x-mentra-principal": "forged",
         "x-mentra-principal-signature": "forged",
-        "x-mentra-organization-id": "someone-else",
         "x-mentra-service": "store",
         "x-mentra-service-timestamp": "1",
         "x-mentra-service-signature": "forged",
@@ -307,7 +301,6 @@ describe("what Core sends to Fleet", () => {
     expect(call.headers.get("x-test-phone")).toBeNull()
     expect([...call.headers.keys()].filter((name) => name.startsWith("x-mentra-")).sort()).toEqual(
       [
-        FLEET_HEADERS.organizationId,
         FLEET_HEADERS.principal,
         FLEET_HEADERS.principalSignature,
         SERVICE_HEADERS.service,
@@ -315,7 +308,6 @@ describe("what Core sends to Fleet", () => {
         SERVICE_HEADERS.timestamp,
       ].sort(),
     )
-    expect(call.headers.get(FLEET_HEADERS.organizationId)).toBe("acme")
     expect(call.headers.get(SERVICE_HEADERS.service)).toBe("core")
     expect(decodePrincipal(call.headers.get(FLEET_HEADERS.principal))).toMatchObject({
       kind: "phone",
@@ -325,8 +317,8 @@ describe("what Core sends to Fleet", () => {
     expect(principalSignatureVerifies(call)).toBe(true)
   })
 
-  test("the principal signature binds the identity: a swapped principal, organization or timestamp fails", async () => {
-    configure({CLOUD_CORE_ORGANIZATION_ID: "acme"})
+  test("the principal signature binds the identity: a swapped principal or timestamp fails", async () => {
+    configure()
 
     await phone("/fleet/devices", {headers: {"x-test-phone": "mu_a"}})
     await phone("/fleet/devices", {headers: {"x-test-phone": "mu_b"}})
@@ -337,7 +329,6 @@ describe("what Core sends to Fleet", () => {
     // The service signature does not cover the identity headers; only the principal signature binds them.
     expect(serviceSignatureVerifies(a)).toBe(true)
     expect(principalSignatureVerifies(a, {principal: b.headers.get(FLEET_HEADERS.principal) ?? ""})).toBe(false)
-    expect(principalSignatureVerifies(a, {organization: "other-org"})).toBe(false)
     expect(
       principalSignatureVerifies(a, {timestamp: String(Number(a.headers.get(SERVICE_HEADERS.timestamp)) + 1)}),
     ).toBe(false)
@@ -349,7 +340,6 @@ describe("what Core sends to Fleet", () => {
       principalSignature(
         "another-secret",
         a.headers.get(SERVICE_HEADERS.timestamp) ?? "",
-        "acme",
         a.headers.get(FLEET_HEADERS.principal) ?? "",
       ),
     ).not.toBe(a.headers.get(FLEET_HEADERS.principalSignature))
@@ -756,7 +746,7 @@ describe("configuration", () => {
   })
 
   test("production requires https, except for http on localhost and 127.0.0.1", async () => {
-    configure({NODE_ENV: "production", CLOUD_CORE_ORGANIZATION_ID: "acme"})
+    configure({NODE_ENV: "production"})
     const installed = async (url: string) => {
       process.env.CLOUD_CORE_FLEET_URL = url
       const response = await phone("/capabilities")
@@ -777,17 +767,18 @@ describe("configuration", () => {
   })
 
   test("production forwards to a loopback http Fleet", async () => {
-    configure({NODE_ENV: "production", CLOUD_CORE_ORGANIZATION_ID: "acme"})
+    configure({NODE_ENV: "production"})
 
     const response = await phone("/fleet/devices")
 
     expect(response.status).toBe(200)
-    expect(calls[0].headers.get(FLEET_HEADERS.organizationId)).toBe("acme")
+    expect(serviceSignatureVerifies(calls[0])).toBe(true)
+    expect(principalSignatureVerifies(calls[0])).toBe(true)
   })
 
   test("a deployed Core requires https too, even without NODE_ENV=production", async () => {
     // Deployed Cores set CLOUD_CORE_ENVIRONMENT, not NODE_ENV.
-    configure({CLOUD_CORE_ENVIRONMENT: "dev", CLOUD_CORE_ORGANIZATION_ID: "acme"})
+    configure({CLOUD_CORE_ENVIRONMENT: "dev"})
     const installed = async (url: string) => {
       process.env.CLOUD_CORE_FLEET_URL = url
       return ((await (await phone("/capabilities")).json()) as {fleet: {installed: boolean}}).fleet.installed
@@ -803,31 +794,31 @@ describe("configuration", () => {
 
     const response = await phone("/capabilities")
 
-    expect(await response.json()).toEqual({organizationId: "local", fleet: {installed: true}})
+    expect(await response.json()).toEqual({fleet: {installed: true}})
   })
 })
 
 describe("GET /api/client/capabilities", () => {
-  test("reports the organization and whether Fleet is installed", async () => {
-    configure({CLOUD_CORE_ORGANIZATION_ID: "acme"})
+  test("reports whether Fleet is installed", async () => {
+    configure()
 
     const response = await phone("/capabilities")
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({organizationId: "acme", fleet: {installed: true}})
+    expect(await response.json()).toEqual({fleet: {installed: true}})
   })
 
   test("says installed: false when Fleet is not configured or is misconfigured", async () => {
     const unset = await phone("/capabilities")
-    expect(await unset.json()).toEqual({organizationId: "local", fleet: {installed: false}})
+    expect(await unset.json()).toEqual({fleet: {installed: false}})
 
     process.env.CLOUD_CORE_FLEET_URL = upstreamUrl()
     const noSecret = await phone("/capabilities")
-    expect(await noSecret.json()).toEqual({organizationId: "local", fleet: {installed: false}})
+    expect(await noSecret.json()).toEqual({fleet: {installed: false}})
 
     configure({CLOUD_CORE_FLEET_URL: "not a url"})
     const badUrl = await phone("/capabilities")
-    expect(await badUrl.json()).toEqual({organizationId: "local", fleet: {installed: false}})
+    expect(await badUrl.json()).toEqual({fleet: {installed: false}})
   })
 
   test("never contacts Fleet", async () => {
@@ -841,7 +832,7 @@ describe("GET /api/client/capabilities", () => {
 
 describe("the admin surface", () => {
   test("a workspace user who is not an Organization Admin reaches Fleet; upstream decides", async () => {
-    configure({CLOUD_CORE_ORGANIZATION_ID: "acme"})
+    configure()
     respond = () => Response.json({error: "forbidden"}, {status: 403})
     const member = as("member", person(false))
 
@@ -852,7 +843,6 @@ describe("the admin surface", () => {
     expect(calls).toHaveLength(1)
     const [call] = calls
     expect(call.pathWithQuery).toBe("/v1/admin/devices?page=2")
-    expect(call.headers.get(FLEET_HEADERS.organizationId)).toBe("acme")
     expect(decodePrincipal(call.headers.get(FLEET_HEADERS.principal))).toEqual({
       kind: "user",
       mentraUserId: "mu_1",

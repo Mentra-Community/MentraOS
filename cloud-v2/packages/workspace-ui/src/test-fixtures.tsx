@@ -47,7 +47,6 @@ export function offlineApi() {
 /** The detail the API answers for a member holding `role`, with the caller's own membership. */
 export function detailFor(role: WorkspaceRole, extra: WorkspaceCapability[] = []): WorkspaceDetail {
   return {
-    organizationId: "org_test",
     workspaceId: WORKSPACE_ID,
     name: WORKSPACE_NAME,
     status: "active",

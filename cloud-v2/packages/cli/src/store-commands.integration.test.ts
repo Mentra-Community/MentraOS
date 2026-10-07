@@ -49,7 +49,6 @@ async function fixture(status?: string, differentBytes = false, workspaceIds = [
     workspaceIds.map((workspaceId) => [workspaceId, { packagePrefix: "com.example", packagePrefixStatus: "verified" }]),
   );
   const workspaceSummary = (workspace: { workspaceId: string; name: string }) => ({
-    organizationId: "org_core",
     ...workspace,
     status: "active",
     authorizationRevision: 1,

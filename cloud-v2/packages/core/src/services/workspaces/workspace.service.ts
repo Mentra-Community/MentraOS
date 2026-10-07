@@ -41,7 +41,6 @@ import {WorkspaceInvitationModel} from "../../models/workspace-invitation.model"
 import {WorkspaceMembershipModel, type WorkspaceMembershipRow} from "../../models/workspace-membership.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
-import {organizationId} from "./organization"
 import {fail, WorkspaceError, type WorkspaceErrorCode} from "./workspace-error"
 
 const logger = createLogger("core").child({service: "workspace.service"})
@@ -168,7 +167,6 @@ export async function createWorkspace(actor: Actor & {kind: "user"}, input: {nam
   if (creationPolicy() === "organization-admins" && !actor.isOrganizationAdmin) {
     fail("forbidden", "only organization admins can create workspaces")
   }
-  const organization = organizationId()
   return withTransaction(async session => {
     const workspaceId = `ws_${ulid()}`
     const membershipId = `wm_${ulid()}`
@@ -177,7 +175,6 @@ export async function createWorkspace(actor: Actor & {kind: "user"}, input: {nam
       [
         {
           workspaceId,
-          organizationId: organization,
           name,
           status: "active",
           authorizationRevision: 0,
@@ -190,7 +187,6 @@ export async function createWorkspace(actor: Actor & {kind: "user"}, input: {nam
       [
         {
           membershipId,
-          organizationId: organization,
           workspaceId,
           mentraUserId: actor.mentraUserId,
           email: actor.email,
@@ -203,14 +199,13 @@ export async function createWorkspace(actor: Actor & {kind: "user"}, input: {nam
       {session},
     )
     await recordWorkspaceEvent(session, {
-      organizationId: organization,
       workspaceId,
       action: "workspace.created",
       actor: auditActor(actor),
       target: {workspaceId, membershipId},
       after: {name, role: "owner"},
     })
-    return {organizationId: organization, workspaceId, name, status: "active", authorizationRevision: 0}
+    return {workspaceId, name, status: "active", authorizationRevision: 0}
   })
 }
 
@@ -232,7 +227,6 @@ export async function renameWorkspace(
 
     const updated = await bumpRevision(session, workspaceId, expectedRevision, {name: newName})
     await recordWorkspaceEvent(session, {
-      organizationId: workspace.organizationId,
       workspaceId,
       action: "workspace.renamed",
       actor: auditActor(actor),
@@ -288,7 +282,6 @@ export async function deleteWorkspace(
     await AccessCredentialModel.updateMany({workspaceId, revokedAt: null}, {$set: {revokedAt: now}}, {session})
     await WorkspaceInvitationModel.updateMany({workspaceId, status: "pending"}, {$set: {status: "revoked"}}, {session})
     await recordWorkspaceEvent(session, {
-      organizationId: workspace.organizationId,
       workspaceId,
       action: "workspace.deleted",
       actor: auditActor(actor),
@@ -342,7 +335,6 @@ export async function changeRole(
     )
     if (changed.modifiedCount !== 1) fail("membership_changed")
     await recordWorkspaceEvent(session, {
-      organizationId: workspace.organizationId,
       workspaceId,
       action: "membership.role_changed",
       actor: auditActor(actor),
@@ -436,7 +428,6 @@ export async function recoverOwnership(
         [
           {
             membershipId,
-            organizationId: workspace.organizationId,
             workspaceId,
             mentraUserId: target,
             role: "owner",
@@ -448,7 +439,6 @@ export async function recoverOwnership(
       )
     }
     await recordWorkspaceEvent(session, {
-      organizationId: workspace.organizationId,
       workspaceId,
       action: "membership.ownership_recovered",
       actor: auditActor(actor),
@@ -466,10 +456,9 @@ export async function recoverOwnership(
 // `credential.service`, which follow the same mutation shape.
 
 function toSummary(
-  row: Pick<WorkspaceRow, "organizationId" | "workspaceId" | "name" | "status" | "authorizationRevision">,
+  row: Pick<WorkspaceRow, "workspaceId" | "name" | "status" | "authorizationRevision">,
 ): WorkspaceSummary {
   return {
-    organizationId: row.organizationId,
     workspaceId: row.workspaceId,
     name: row.name,
     status: row.status as WorkspaceSummary["status"],
@@ -649,7 +638,6 @@ export async function endMembership(
   }
 
   await recordWorkspaceEvent(session, {
-    organizationId: workspace.organizationId,
     workspaceId: workspace.workspaceId,
     action,
     actor: auditActor(actor),

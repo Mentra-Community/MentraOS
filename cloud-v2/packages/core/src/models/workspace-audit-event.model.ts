@@ -3,9 +3,9 @@
  * workspace administration (membership, invitation and credential changes).
  *
  * `eventId` is a ULID and identifies the event. `seq` is the event's position in
- * the organization's change feed: it is issued inside the recording transaction
- * from a per-organization counter (see `workspace-audit-counter.model.ts`), so
- * it follows commit order and is the feed cursor. `workspaceId` is null for
+ * the change feed: it is issued inside the recording transaction from the
+ * single feed counter (see `workspace-audit-counter.model.ts`), so it follows
+ * commit order and is the feed cursor. `workspaceId` is null for
  * organization-level events. `target`, `before` and `after` are free-form
  * snapshots whose shape depends on `action`.
  */
@@ -30,8 +30,7 @@ const ActorSchema = new Schema(
 const WorkspaceAuditEventSchema = new Schema(
   {
     eventId: {type: String, required: true, unique: true},
-    organizationId: {type: String, required: true},
-    /** Position in the organization's change feed; unique per organization. */
+    /** Position in the change feed; unique. */
     seq: {type: Number, required: true},
     workspaceId: {type: String, default: null},
     /** e.g. `"workspace.created"`, `"membership.role_changed"`, `"credential.revoked"`. */
@@ -46,8 +45,8 @@ const WorkspaceAuditEventSchema = new Schema(
   {timestamps: true, collection: "workspace_audit_events"},
 )
 
-// The change feed: events of one organization in `seq` order.
-WorkspaceAuditEventSchema.index({organizationId: 1, seq: 1}, {unique: true})
+// The change feed: every event in `seq` order.
+WorkspaceAuditEventSchema.index({seq: 1}, {unique: true})
 // One workspace's audit page, newest first.
 WorkspaceAuditEventSchema.index({workspaceId: 1, eventId: -1})
 

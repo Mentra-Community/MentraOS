@@ -26,7 +26,6 @@ afterAll(() => {
 
 // Synthetic principals only; nothing is fetched.
 const workspace: PrincipalResponse["workspaces"][number] = {
-  organizationId: "org_test",
   workspaceId: "ws_acme",
   name: "Acme Robotics",
   status: "active",
@@ -40,7 +39,7 @@ function me(capabilities: OrganizationCapability[], workspaces: AdminMe["workspa
     authenticated: true,
     user: { mentraUserId: "u_self", email: "sam@acme.test" },
     credential: null,
-    organization: { organizationId: "org_test", capabilities },
+    organization: { capabilities },
     workspaces,
   };
 }

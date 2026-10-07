@@ -26,7 +26,6 @@ const AccessCredentialSchema = new Schema(
     credentialId: {type: String, required: true, unique: true},
     prefix: {type: String, enum: ACCESS_CREDENTIAL_PREFIXES, required: true},
     credentialKind: {type: String, enum: ACCESS_CREDENTIAL_KINDS, required: true},
-    organizationId: {type: String, required: true},
     workspaceId: {type: String, default: null, index: true},
     name: {type: String, required: true},
     env: {type: String, required: true},

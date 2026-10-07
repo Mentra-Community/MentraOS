@@ -22,7 +22,7 @@ import {
 } from "../packages/core/src/connections/mongo.connection";
 import { AccessCredentialModel } from "../packages/core/src/models/access-credential.model";
 import { IdentityLinkModel } from "../packages/core/src/models/identity-link.model";
-import { WorkspaceAuditCounterModel } from "../packages/core/src/models/workspace-audit-counter.model";
+import { WORKSPACE_AUDIT_COUNTER_ID, WorkspaceAuditCounterModel } from "../packages/core/src/models/workspace-audit-counter.model";
 import { WorkspaceAuditEventModel } from "../packages/core/src/models/workspace-audit-event.model";
 import { WorkspaceInvitationModel } from "../packages/core/src/models/workspace-invitation.model";
 import { WorkspaceMembershipModel } from "../packages/core/src/models/workspace-membership.model";
@@ -263,7 +263,6 @@ describe("workspace models (local replica set)", () => {
 
   const membership = (overrides: Record<string, unknown> = {}) => ({
     membershipId: `wm_${Math.random().toString(36).slice(2)}`,
-    organizationId: "org_1",
     workspaceId: "ws_1",
     mentraUserId: "mu_1",
     role: "member",
@@ -273,7 +272,7 @@ describe("workspace models (local replica set)", () => {
 
   describe("workspaces", () => {
     test("applies defaults and timestamps", async () => {
-      const row = await WorkspaceModel.create({ workspaceId: "ws_1", organizationId: "org_1", name: "Acme" });
+      const row = await WorkspaceModel.create({ workspaceId: "ws_1", name: "Acme" });
       expect(row.status).toBe("active");
       expect(row.authorizationRevision).toBe(0);
       expect(row.createdByMentraUserId).toBeNull();
@@ -283,10 +282,10 @@ describe("workspace models (local replica set)", () => {
     });
 
     test("enforces a unique workspaceId and the status enum", async () => {
-      await WorkspaceModel.create({ workspaceId: "ws_1", organizationId: "org_1", name: "A" });
-      expect((await thrown(() => WorkspaceModel.create({ workspaceId: "ws_1", organizationId: "org_1", name: "B" }))).code).toBe(11000);
+      await WorkspaceModel.create({ workspaceId: "ws_1", name: "A" });
+      expect((await thrown(() => WorkspaceModel.create({ workspaceId: "ws_1", name: "B" }))).code).toBe(11000);
       const invalid = await thrown(() =>
-        WorkspaceModel.create({ workspaceId: "ws_2", organizationId: "org_1", name: "C", status: "archived" }),
+        WorkspaceModel.create({ workspaceId: "ws_2", name: "C", status: "archived" }),
       );
       expect(invalid.name).toBe("ValidationError");
     });
@@ -365,7 +364,6 @@ describe("workspace models (local replica set)", () => {
   describe("workspace invitations", () => {
     const invitation = (overrides: Record<string, unknown> = {}) => ({
       invitationId: `winv_${Math.random().toString(36).slice(2)}`,
-      organizationId: "org_1",
       workspaceId: "ws_1",
       email: "Dev@Example.com",
       role: "developer",
@@ -400,7 +398,6 @@ describe("workspace models (local replica set)", () => {
         credentialId: "01HZ0000000000000000000001",
         prefix: "msk",
         credentialKind: "workspace",
-        organizationId: "org_1",
         workspaceId: "ws_1",
         name: "ci",
         env: "dev",
@@ -416,7 +413,6 @@ describe("workspace models (local replica set)", () => {
         credentialId: "01HZ0000000000000000000002",
         prefix: "mak",
         credentialKind: "organization",
-        organizationId: "org_1",
         name: "ops",
         env: "dev",
         hash: "h2",
@@ -426,7 +422,7 @@ describe("workspace models (local replica set)", () => {
     });
 
     test("enforces a unique credentialId and the prefix and kind enums", async () => {
-      const base = { prefix: "msk", credentialKind: "workspace", organizationId: "org_1", name: "n", env: "dev", hash: "h", last4: "1234" };
+      const base = { prefix: "msk", credentialKind: "workspace", name: "n", env: "dev", hash: "h", last4: "1234" };
       await AccessCredentialModel.create({ ...base, credentialId: "cred_1" });
       expect((await thrown(() => AccessCredentialModel.create({ ...base, credentialId: "cred_1" }))).code).toBe(11000);
       expect((await thrown(() => AccessCredentialModel.create({ ...base, credentialId: "cred_2", prefix: "xyz" }))).name).toBe("ValidationError");
@@ -438,7 +434,6 @@ describe("workspace models (local replica set)", () => {
     test("stores the actor, mixed payloads, and a unique event id", async () => {
       const row = await WorkspaceAuditEventModel.create({
         eventId: "01HZ0000000000000000000010",
-        organizationId: "org_1",
         seq: 1,
         workspaceId: "ws_1",
         action: "membership.role_changed",
@@ -454,39 +449,36 @@ describe("workspace models (local replica set)", () => {
       expect(stored?.before).toEqual({ role: "member" });
       expect(stored?.after).toEqual({ role: "admin" });
       expect(stored?.target).toEqual({ membershipId: "wm_a" });
-      expect((await thrown(() => WorkspaceAuditEventModel.create({ eventId: "01HZ0000000000000000000010", organizationId: "org_1", seq: 99, action: "workspace.created", actor: { kind: "system" }, occurredAt: new Date() }))).code).toBe(11000);
+      expect((await thrown(() => WorkspaceAuditEventModel.create({ eventId: "01HZ0000000000000000000010", seq: 99, action: "workspace.created", actor: { kind: "system" }, occurredAt: new Date() }))).code).toBe(11000);
     });
 
-    test("enforces a unique seq per organization, requires it, and indexes the workspace audit page", async () => {
-      const event = { organizationId: "org_1", action: "workspace.created", actor: { kind: "system" }, occurredAt: new Date() };
+    test("enforces a unique seq across the feed, requires it, and indexes the workspace audit page", async () => {
+      const event = { action: "workspace.created", actor: { kind: "system" }, occurredAt: new Date() };
       await WorkspaceAuditEventModel.create({ ...event, eventId: "01HZ0000000000000000000020", seq: 1 });
-      // The same position in the same organization is refused, whatever the event id.
+      // The same position is refused, whatever the event id.
       expect((await thrown(() => WorkspaceAuditEventModel.create({ ...event, eventId: "01HZ0000000000000000000021", seq: 1 }))).code).toBe(11000);
-      // Another organization has its own sequence.
-      await WorkspaceAuditEventModel.create({ ...event, organizationId: "org_2", eventId: "01HZ0000000000000000000022", seq: 1 });
       expect((await thrown(() => WorkspaceAuditEventModel.create({ ...event, eventId: "01HZ0000000000000000000023" }))).name).toBe("ValidationError");
       const indexes = await WorkspaceAuditEventModel.collection.indexes();
-      expect(indexes.find((index) => JSON.stringify(index.key) === JSON.stringify({ organizationId: 1, seq: 1 }))?.unique).toBe(true);
+      expect(indexes.find((index) => JSON.stringify(index.key) === JSON.stringify({ seq: 1 }))?.unique).toBe(true);
       expect(indexes.some((index) => JSON.stringify(index.key) === JSON.stringify({ workspaceId: 1, eventId: -1 }))).toBe(true);
     });
 
-    test("keeps one change-feed counter per organization, keyed by the organization id", async () => {
-      await WorkspaceAuditCounterModel.create({ _id: "org_1" });
-      expect((await WorkspaceAuditCounterModel.findById("org_1").lean())?.seq).toBe(0);
-      expect((await thrown(() => WorkspaceAuditCounterModel.create({ _id: "org_1" }))).code).toBe(11000);
+    test("keeps a single change-feed counter under its fixed id", async () => {
+      await WorkspaceAuditCounterModel.create({ _id: WORKSPACE_AUDIT_COUNTER_ID });
+      expect((await WorkspaceAuditCounterModel.findById(WORKSPACE_AUDIT_COUNTER_ID).lean())?.seq).toBe(0);
+      expect((await thrown(() => WorkspaceAuditCounterModel.create({ _id: WORKSPACE_AUDIT_COUNTER_ID }))).code).toBe(11000);
     });
 
     test("allows organization-level events without a workspace and validates the actor kind", async () => {
       const row = await WorkspaceAuditEventModel.create({
         eventId: "01HZ0000000000000000000011",
-        organizationId: "org_1",
         seq: 2,
         action: "credential.revoked",
         actor: { kind: "service", service: "store" },
         occurredAt: new Date(),
       });
       expect(row.workspaceId).toBeNull();
-      expect((await thrown(() => WorkspaceAuditEventModel.create({ eventId: "01HZ0000000000000000000012", organizationId: "org_1", seq: 3, action: "x", actor: { kind: "robot" }, occurredAt: new Date() }))).name).toBe("ValidationError");
+      expect((await thrown(() => WorkspaceAuditEventModel.create({ eventId: "01HZ0000000000000000000012", seq: 3, action: "x", actor: { kind: "robot" }, occurredAt: new Date() }))).name).toBe("ValidationError");
     });
   });
 
@@ -505,8 +497,8 @@ describe("workspace models (local replica set)", () => {
   describe("withTransaction", () => {
     test("commits every write and returns the callback result", async () => {
       const result = await withTransaction(async session => {
-        await WorkspaceModel.create([{ workspaceId: "ws_tx1", organizationId: "org_1", name: "One" }], { session });
-        await WorkspaceModel.create([{ workspaceId: "ws_tx2", organizationId: "org_1", name: "Two" }], { session });
+        await WorkspaceModel.create([{ workspaceId: "ws_tx1", name: "One" }], { session });
+        await WorkspaceModel.create([{ workspaceId: "ws_tx2", name: "Two" }], { session });
         return "done";
       });
       expect(result).toBe("done");
@@ -517,7 +509,7 @@ describe("workspace models (local replica set)", () => {
       const boom = new Error("rollback please");
       const err = await thrown(() =>
         withTransaction(async session => {
-          await WorkspaceModel.create([{ workspaceId: "ws_tx1", organizationId: "org_1", name: "One" }], { session });
+          await WorkspaceModel.create([{ workspaceId: "ws_tx1", name: "One" }], { session });
           await WorkspaceMembershipModel.create([membership({ membershipId: "wm_tx1", workspaceId: "ws_tx1" })], { session });
           throw boom;
         }),
@@ -528,11 +520,11 @@ describe("workspace models (local replica set)", () => {
     });
 
     test("rolls back earlier writes when a later write violates a unique index", async () => {
-      await WorkspaceModel.create({ workspaceId: "ws_dup", organizationId: "org_1", name: "Existing" });
+      await WorkspaceModel.create({ workspaceId: "ws_dup", name: "Existing" });
       const err = await thrown(() =>
         withTransaction(async session => {
-          await WorkspaceModel.create([{ workspaceId: "ws_new", organizationId: "org_1", name: "New" }], { session });
-          await WorkspaceModel.create([{ workspaceId: "ws_dup", organizationId: "org_1", name: "Dup" }], { session });
+          await WorkspaceModel.create([{ workspaceId: "ws_new", name: "New" }], { session });
+          await WorkspaceModel.create([{ workspaceId: "ws_dup", name: "Dup" }], { session });
         }),
       );
       expect(err.code).toBe(11000);

@@ -66,7 +66,6 @@ const ENV_KEYS = [
   "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
   "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
   "CLOUD_CORE_ENVIRONMENT",
-  "CLOUD_CORE_ORGANIZATION_ID",
   "CLOUD_CORE_WORKSPACE_CREATION",
   "CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE",
   "RESEND_API_KEY",
@@ -249,7 +248,6 @@ beforeEach(async () => {
   delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS
   delete process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS
   delete process.env.CLOUD_CORE_ENVIRONMENT
-  delete process.env.CLOUD_CORE_ORGANIZATION_ID
   delete process.env.CLOUD_CORE_WORKSPACE_CREATION
   delete process.env.RESEND_API_KEY
   process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE = `${INVITE_PREFIX}{token}`
@@ -290,7 +288,7 @@ describe("GET /api/admin/me", () => {
       authenticated: true,
       user: {mentraUserId: admin.mentraUserId, email: ADMIN_EMAIL},
       credential: null,
-      organization: {organizationId: "local", capabilities: [...ORGANIZATION_CAPABILITIES].sort()},
+      organization: {capabilities: [...ORGANIZATION_CAPABILITIES].sort()},
       workspaces: [],
     })
   })
@@ -307,7 +305,7 @@ describe("GET /api/admin/me", () => {
       authenticated: true,
       user: {mentraUserId: owner.mentraUserId, email: owner.email},
       credential: null,
-      organization: {organizationId: "local", capabilities: []},
+      organization: {capabilities: []},
     })
     expect(reply.json.workspaces).toHaveLength(1)
     expect(reply.json.workspaces[0]).toMatchObject({
@@ -339,7 +337,6 @@ describe("GET /api/admin/me", () => {
       user: null,
       credential: {credentialId: key.credentialId, label: "ops"},
       organization: {
-        organizationId: "local",
         capabilities: ["organization.incidents.read", "organization.testing.read"],
       },
       workspaces: [],
@@ -357,7 +354,7 @@ describe("GET /api/admin/me", () => {
       authenticated: true,
       user: null,
       credential: {credentialId: ws.credentialId, label: "ci"},
-      organization: {organizationId: "local", capabilities: []},
+      organization: {capabilities: []},
       workspaces: [],
     })
     expect(reply.text).not.toContain(ws.token)

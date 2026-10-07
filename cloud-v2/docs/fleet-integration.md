@@ -42,9 +42,8 @@ with `CLOUD_CORE_FLEET_SECRET`; Fleet signs its calls to Core with a secret from
 the `fleet` list. They may hold the same value.
 
 A phone learns whether Fleet exists from `GET /api/client/capabilities`, which
-returns `{"organizationId": "...", "fleet": {"installed": true | false}}` for a
-signed-in user. `installed` is true only when the URL and secret are both
-usable.
+returns `{"fleet": {"installed": true | false}}` for a signed-in user.
+`installed` is true only when the URL and secret are both usable.
 
 ## Forwarding paths
 
@@ -94,22 +93,22 @@ With `<ts>` the request time in milliseconds, Core adds:
 - `x-mentra-service-timestamp`: `<ts>`.
 - `x-mentra-service-signature`: HMAC-SHA256, base64url, over
   `<ts>\n<METHOD>\n<path with query as sent, prefix included>\n<sha256 hex of the body>`.
-- `x-mentra-organization-id`: this Core's organization id.
 - `x-mentra-principal`: the caller, as base64url JSON (shapes below).
 - `x-mentra-principal-signature`: HMAC-SHA256, base64url, keyed with the same
-  secret, over `<ts>\n<x-mentra-organization-id value>\n<x-mentra-principal value>`.
+  secret, over `<ts>\n<x-mentra-principal value>`.
 
 The first three are `signServiceRequest` / `verifyServiceRequest` from
 `@mentra/workspace-contract/server`. Verification allows 60 seconds of clock
 skew and accepts a list of secrets, newest first, so a secret can be rotated.
 
-The service signature does **not** cover the two identity headers. Without the
-principal signature, anyone who captured one signed request could replay it with
-another identity inside the skew window. **Fleet must verify both signatures
-before it trusts either header**, using the same `<ts>` for both. The two signed
-strings cannot be mistaken for each other: the service one contains three
-newlines and this one two, and neither a header value nor a path can contain a
-newline.
+No header names the organization: Fleet knows which Core is calling from the
+secret it shares with that Core. The service signature does **not** cover the
+principal header. Without the principal signature, anyone who captured one
+signed request could replay it with another identity inside the skew window.
+**Fleet must verify both signatures before it trusts the principal**, using the
+same `<ts>` for both. The two signed strings cannot be mistaken for each other:
+the service one contains three newlines and this one a single newline, and
+neither a header value nor a path can contain a newline.
 
 ```ts
 import {createHmac, timingSafeEqual} from "node:crypto"
@@ -120,7 +119,6 @@ function principalFrom(
   secrets: string[],
 ) {
   const timestamp = request.header(SERVICE_HEADERS.timestamp)!
-  const organization = request.header("x-mentra-organization-id")!
   const principal = request.header("x-mentra-principal")!
   const serviceOk =
     request.header(SERVICE_HEADERS.service) === "core" &&
@@ -136,16 +134,14 @@ function principalFrom(
   const given = Buffer.from(request.header("x-mentra-principal-signature") ?? "")
   const principalOk = secrets.some((secret) => {
     const expected = Buffer.from(
-      createHmac("sha256", secret).update(`${timestamp}\n${organization}\n${principal}`).digest("base64url"),
+      createHmac("sha256", secret).update(`${timestamp}\n${principal}`).digest("base64url"),
     )
     return expected.length === given.length && timingSafeEqual(expected, given)
   })
   if (!serviceOk || !principalOk) return null
-  return {organization, principal: JSON.parse(Buffer.from(principal, "base64url").toString())}
+  return JSON.parse(Buffer.from(principal, "base64url").toString())
 }
 ```
-
-Also check that `x-mentra-organization-id` is the organization Fleet is bound to.
 
 ### Principal shapes
 
@@ -177,7 +173,7 @@ Fleet calls Core's internal workspace API at
 `/api/internal/workspaces/*`, signing each request as service `fleet` with a
 secret listed under `fleet` in `CLOUD_CORE_SERVICE_SECRETS`. The client
 `createCoreWorkspaceClient` in `@mentra/workspace-contract/server` speaks it and
-refuses any answer that names a different organization.
+refuses an answer that does not have the documented shape.
 
 - `POST /authorize`: may this caller do `capability` in `workspaceId`? For a user
   principal send

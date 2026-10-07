@@ -45,7 +45,7 @@ app.get("/me", async c => {
     authenticated: true
     user: {mentraUserId: string; email: string | null} | null
     credential: {credentialId: string; label: string} | null
-    organization: {organizationId: string; capabilities: OrganizationCapability[]}
+    organization: {capabilities: OrganizationCapability[]}
     workspaces: PrincipalResponse["workspaces"]
   } = {
     authenticated: true,
@@ -53,7 +53,6 @@ app.get("/me", async c => {
     credential:
       principal.kind === "credential" ? {credentialId: principal.credentialId, label: principal.label} : null,
     organization: {
-      organizationId: principal.organizationId,
       // Sorted so the answer does not depend on how the set was built.
       capabilities: [...organizationCapabilities(principal)].sort(),
     },

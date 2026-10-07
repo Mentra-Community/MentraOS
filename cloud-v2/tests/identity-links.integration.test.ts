@@ -117,7 +117,6 @@ function identity(overrides: Partial<WorkosIdentity> = {}): WorkosIdentity {
 async function seedMembership(fields: Record<string, unknown>) {
   return WorkspaceMembershipModel.create({
     membershipId: `wm_${Math.random().toString(36).slice(2)}`,
-    organizationId: "local",
     workspaceId: "ws_1",
     mentraUserId: null,
     pendingWorkosUserId: null,
@@ -142,7 +141,6 @@ async function seedCredential(fields: {workspaceId: string; createdByMembershipI
     credentialId,
     prefix: "msk",
     credentialKind: "workspace",
-    organizationId: "local",
     name: "migrated key",
     env: "local",
     hash: createHash("sha256").update(secret).digest("hex"),
@@ -584,13 +582,12 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
   test("a duplicate of an active membership the user already holds is ended and audited", async () => {
     directoryUsers = [{id: "gotrue-frank", email: "frank@example.test", confirmed: true}]
     const frank = await UserModel.create({mentraUserId: "mu_frank", tenantId: "mentra", tenantUserId: "gotrue-frank"})
-    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One"})
+    await WorkspaceModel.create({workspaceId: "ws_1", name: "One"})
     const held = await seedMembership({workspaceId: "ws_1", mentraUserId: frank.mentraUserId, role: "admin"})
     const duplicate = await seedMembership({
       workspaceId: "ws_1",
       pendingWorkosUserId: "user_workos_1",
       role: "developer",
-      organizationId: "acme",
     })
     const fresh = await seedMembership({workspaceId: "ws_2", pendingWorkosUserId: "user_workos_1", role: "member"})
 
@@ -627,7 +624,6 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
     const events = await WorkspaceAuditEventModel.find({action: "membership.merged_duplicate"}).lean()
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
-      organizationId: "acme",
       workspaceId: "ws_1",
       action: "membership.merged_duplicate",
       actor: {kind: "system"},
@@ -642,13 +638,12 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
   test("a duplicate's keys are repointed to the surviving membership, so migrated keys stay valid", async () => {
     directoryUsers = [{id: "gotrue-gina", email: "gina@example.test", confirmed: true}]
     await UserModel.create({mentraUserId: "mu_gina", tenantId: "mentra", tenantUserId: "gotrue-gina"})
-    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One"})
+    await WorkspaceModel.create({workspaceId: "ws_1", name: "One"})
     const held = await seedMembership({workspaceId: "ws_1", mentraUserId: "mu_gina", role: "developer"})
     const duplicate = await seedMembership({
       workspaceId: "ws_1",
       pendingWorkosUserId: "user_workos_1",
       role: "developer",
-      organizationId: "acme",
     })
     const other = await seedMembership({
       workspaceId: "ws_1",
@@ -700,7 +695,7 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
   })
 
   test("a key created by a pending membership that is simply claimed keeps validating", async () => {
-    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One"})
+    await WorkspaceModel.create({workspaceId: "ws_1", name: "One"})
     const pending = await seedMembership({workspaceId: "ws_1", pendingWorkosUserId: "user_workos_1", role: "developer"})
     const key = await seedCredential({workspaceId: "ws_1", createdByMembershipId: pending.membershipId})
     expect(await validateCredentialToken(key.token)).not.toBeNull()
@@ -720,14 +715,13 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
 
   test("a repointed key follows the surviving membership's role", async () => {
     const first = await resolveWorkosUser(identity())
-    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One"})
+    await WorkspaceModel.create({workspaceId: "ws_1", name: "One"})
     // The held row is only a member, but the pending row (and its key) belonged to a developer.
     await seedMembership({workspaceId: "ws_1", mentraUserId: first.mentraUserId, role: "member"})
     const duplicate = await seedMembership({
       workspaceId: "ws_1",
       pendingWorkosUserId: "user_workos_1",
       role: "developer",
-      organizationId: "acme",
     })
     const key = await seedCredential({workspaceId: "ws_1", createdByMembershipId: duplicate.membershipId})
 
@@ -740,13 +734,12 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
   test("a duplicate never drops a higher role: pending owner over a held member leaves an owner", async () => {
     directoryUsers = [{id: "gotrue-lena", email: "lena@example.test", confirmed: true}]
     await UserModel.create({mentraUserId: "mu_lena", tenantId: "mentra", tenantUserId: "gotrue-lena"})
-    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One", authorizationRevision: 4})
+    await WorkspaceModel.create({workspaceId: "ws_1", name: "One", authorizationRevision: 4})
     const held = await seedMembership({workspaceId: "ws_1", mentraUserId: "mu_lena", role: "member"})
     const duplicate = await seedMembership({
       workspaceId: "ws_1",
       pendingWorkosUserId: "user_workos_1",
       role: "owner",
-      organizationId: "acme",
     })
 
     await resolveWorkosUser(identity({email: "lena@example.test"}))
@@ -833,13 +826,12 @@ describe("resolveWorkosUser: claiming on every sign-in", () => {
 
   test("a duplicate of a held membership is merged on the existing-link path too", async () => {
     const first = await resolveWorkosUser(identity())
-    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One"})
+    await WorkspaceModel.create({workspaceId: "ws_1", name: "One"})
     const held = await seedMembership({workspaceId: "ws_1", mentraUserId: first.mentraUserId, role: "member"})
     const duplicate = await seedMembership({
       workspaceId: "ws_1",
       pendingWorkosUserId: "user_workos_1",
       role: "admin",
-      organizationId: "acme",
     })
     const fresh = await seedMembership({workspaceId: "ws_2", pendingWorkosUserId: "user_workos_1", role: "member"})
 
@@ -872,8 +864,8 @@ describe("resolveWorkosUser: claiming on every sign-in", () => {
   test("ending a duplicate always bumps the workspace revision, even when no role is raised", async () => {
     const first = await resolveWorkosUser(identity())
     // Not raised: the pending role is lower in one workspace and equal in the other.
-    await WorkspaceModel.create({workspaceId: "ws_1", organizationId: "acme", name: "One", authorizationRevision: 7})
-    await WorkspaceModel.create({workspaceId: "ws_2", organizationId: "acme", name: "Two", authorizationRevision: 0})
+    await WorkspaceModel.create({workspaceId: "ws_1", name: "One", authorizationRevision: 7})
+    await WorkspaceModel.create({workspaceId: "ws_2", name: "Two", authorizationRevision: 0})
     const heldAdmin = await seedMembership({workspaceId: "ws_1", mentraUserId: first.mentraUserId, role: "admin"})
     await seedMembership({workspaceId: "ws_1", pendingWorkosUserId: "user_workos_1", role: "member"})
     const heldOwner = await seedMembership({workspaceId: "ws_2", mentraUserId: first.mentraUserId, role: "owner"})
@@ -903,7 +895,6 @@ describe("resolveWorkosUser: claiming on every sign-in", () => {
       workspaceId: "ws_1",
       pendingWorkosUserId: "user_workos_1",
       role: "developer",
-      organizationId: "acme",
     })
     const fresh = await seedMembership({workspaceId: "ws_2", pendingWorkosUserId: "user_workos_1", role: "member"})
 

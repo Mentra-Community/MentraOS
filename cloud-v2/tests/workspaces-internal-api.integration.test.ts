@@ -73,7 +73,6 @@ const ENV_KEYS = [
   "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
   "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
   "CLOUD_CORE_ENVIRONMENT",
-  "CLOUD_CORE_ORGANIZATION_ID",
   "CLOUD_CORE_SERVICE_SECRETS",
   "MENTRA_SERVICE_AUTH_SECRET",
   "SUPABASE_URL",
@@ -157,7 +156,6 @@ async function addMember(workspaceId: string, p: Person, role: string, fields: R
   const membershipId = `wm_test_${membershipCounter++}`
   await WorkspaceMembershipModel.create({
     membershipId,
-    organizationId: "local",
     workspaceId,
     mentraUserId: p.mentraUserId,
     email: p.email,
@@ -211,15 +209,11 @@ function unvouchedNewcomer(token: string) {
 const coreFetch = ((input: string | URL | Request, init?: RequestInit) =>
   Promise.resolve(app.fetch(new Request(input, init)))) as typeof fetch
 
-function clientFor(
-  service: "store" | "fleet" | string,
-  options: {secret?: string; expectedOrganizationId?: string} = {},
-): CoreWorkspaceClient {
+function clientFor(service: "store" | "fleet" | string, options: {secret?: string} = {}): CoreWorkspaceClient {
   return createCoreWorkspaceClient({
     baseUrl: BASE,
     service,
     secret: options.secret ?? secretFor(service),
-    expectedOrganizationId: options.expectedOrganizationId ?? "local",
     fetch: coreFetch,
   })
 }
@@ -346,7 +340,6 @@ beforeEach(async () => {
   delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS
   delete process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS
   delete process.env.CLOUD_CORE_ENVIRONMENT
-  delete process.env.CLOUD_CORE_ORGANIZATION_ID
   delete process.env.MENTRA_SERVICE_AUTH_SECRET
   process.env.CLOUD_CORE_SERVICE_SECRETS = JSON.stringify(SERVICE_SECRETS)
   // No GoTrue: a first sign-in links to a `workos` tenant user.
@@ -631,17 +624,15 @@ describe("POST /authorize", () => {
     })
 
     expect(decision.allowed).toBe(true)
-    expect(decision.organizationId).toBe("local")
     expect(decision.principal).toMatchObject({
       kind: "user",
-      organizationId: "local",
       mentraUserId: developer.mentraUserId,
       email: developer.email,
       emailVerified: true,
       workosUserId: developer.workosUserId,
       isOrganizationAdmin: false,
     })
-    expect(decision.workspace).toMatchObject({organizationId: "local", workspaceId, name: "Acme", status: "active"})
+    expect(decision.workspace).toMatchObject({workspaceId, name: "Acme", status: "active"})
     expect(decision.membership).toEqual({membershipId: expect.stringMatching(/^wm_/), role: "developer"})
     expect([...decision.capabilities].sort()).toEqual([...capabilitiesForRole("developer")].sort())
   })
@@ -708,7 +699,7 @@ describe("POST /authorize", () => {
     expect(unknownWorkos).toMatchObject({allowed: false, reason: "unauthenticated", principal: null})
     expect(blank).toMatchObject({allowed: false, reason: "unauthenticated", principal: null})
     expect(credential).toMatchObject({allowed: false, reason: "credential_invalid", principal: null})
-    for (const decision of [unknownWorkos, blank, credential]) expect(decision.organizationId).toBe("local")
+    for (const decision of [unknownWorkos, blank, credential]) expect(decision.capabilities).toEqual([])
   })
 
   test("a mentra_user credential authorizes as that user's membership, as a plain user", async () => {
@@ -727,7 +718,6 @@ describe("POST /authorize", () => {
     expect(decision.allowed).toBe(true)
     expect(decision.principal).toEqual({
       kind: "user",
-      organizationId: "local",
       mentraUserId: admin.mentraUserId,
       email: null,
       emailVerified: false,
@@ -884,38 +874,25 @@ describe("POST /authorize", () => {
     )
   })
 
-  test("a client bound to another organization rejects the response with organization_mismatch", async () => {
+  test("an authorize answer has exactly the contract's fields, at every level", async () => {
     const {workspaceId, developer} = await newWorkspace()
 
-    await expectClientError(
-      clientFor("store", {expectedOrganizationId: "some-other-org"}).authorize({
-        credential: {type: "mentra_user", mentraUserId: developer.mentraUserId},
-        workspaceId,
-      }),
-      "organization_mismatch",
-    )
-  })
-
-  test("the deployment's organization id is on every response", async () => {
-    process.env.CLOUD_CORE_ORGANIZATION_ID = "acme-corp"
-    const owner = await person("acme-owner")
-    const workspace = await createWorkspace(actorOf(owner), {name: "Acme"})
-    const client = clientFor("store", {expectedOrganizationId: "acme-corp"})
-
-    const decision = await client.authorize({
-      credential: {type: "mentra_user", mentraUserId: owner.mentraUserId},
-      workspaceId: workspace.workspaceId,
+    const reply = await raw("POST", `${API}/authorize`, {
+      body: {credential: {type: "bearer", token: developer.bearer}, workspaceId},
     })
 
-    expect(decision.organizationId).toBe("acme-corp")
-    expect(decision.principal?.organizationId).toBe("acme-corp")
-    expect(decision.workspace?.organizationId).toBe("acme-corp")
-    await expectClientError(
-      clientFor("store", {expectedOrganizationId: "local"}).authorize({
-        credential: {type: "mentra_user", mentraUserId: owner.mentraUserId},
-      }),
-      "organization_mismatch",
-    )
+    expect(reply.status).toBe(200)
+    expect(Object.keys(reply.json).sort()).toEqual(["allowed", "capabilities", "membership", "principal", "workspace"])
+    expect(Object.keys(reply.json.principal).sort()).toEqual([
+      "email",
+      "emailVerified",
+      "isOrganizationAdmin",
+      "kind",
+      "mentraUserId",
+      "name",
+      "workosUserId",
+    ])
+    expect(Object.keys(reply.json.workspace).sort()).toEqual(["authorizationRevision", "name", "status", "workspaceId"])
   })
 
   test("the Fleet service may authorize too", async () => {
@@ -944,14 +921,12 @@ describe("POST /principal", () => {
 
     expect(resolved?.principal).toMatchObject({
       kind: "user",
-      organizationId: "local",
       mentraUserId: developer.mentraUserId,
       email: developer.email,
       isOrganizationAdmin: false,
     })
     expect(resolved?.workspaces.map(workspace => workspace.workspaceId)).toEqual([workspaceId, other.workspaceId])
     expect(resolved?.workspaces[0]).toMatchObject({
-      organizationId: "local",
       name: "Acme",
       status: "active",
       membership: {membershipId: expect.stringMatching(/^wm_/), role: "developer"},
@@ -1047,7 +1022,7 @@ describe("POST /memberships/check", () => {
     expect(memberships.ws_unknown).toBeNull()
   })
 
-  test("the response carries the organization id and the raw map", async () => {
+  test("the response is the raw map", async () => {
     const {workspaceId, member} = await newWorkspace()
 
     const reply = await raw("POST", `${API}/memberships/check`, {
@@ -1056,7 +1031,6 @@ describe("POST /memberships/check", () => {
 
     expect(reply.status).toBe(200)
     expect(reply.json).toEqual({
-      organizationId: "local",
       memberships: {[workspaceId]: {role: "member", capabilities: expect.arrayContaining(["workspace.read"])}},
     })
   })
@@ -1066,7 +1040,6 @@ describe("POST /memberships/check", () => {
     await leaveWorkspace(actorOf(member), workspaceId)
     await WorkspaceMembershipModel.create({
       membershipId: "wm_pending",
-      organizationId: "local",
       workspaceId,
       mentraUserId: null,
       pendingWorkosUserId: "workos_pending",
@@ -1138,13 +1111,6 @@ describe("POST /memberships/check", () => {
       expect({body, status: reply.status}).toEqual({body, status: 400})
     }
   })
-
-  test("a bound client rejects a response for another organization", async () => {
-    await expectClientError(
-      clientFor("store", {expectedOrganizationId: "elsewhere"}).checkMemberships("mu_1", []),
-      "organization_mismatch",
-    )
-  })
 })
 
 // --- GET /workspaces/:workspaceId ------------------------------------------
@@ -1154,7 +1120,6 @@ describe("GET /workspaces/:workspaceId", () => {
     const {workspaceId, workspace} = await newWorkspace()
 
     expect(await store().getWorkspace(workspaceId)).toEqual({
-      organizationId: "local",
       workspaceId,
       name: "Acme",
       status: "active",
@@ -1184,22 +1149,12 @@ describe("GET /workspaces/:workspaceId", () => {
     const odd = "ws/odd id?x=1"
     await WorkspaceModel.create({
       workspaceId: odd,
-      organizationId: "local",
       name: "Odd",
       status: "active",
       authorizationRevision: 0,
     })
 
     expect(await store().getWorkspace(odd)).toMatchObject({workspaceId: odd, name: "Odd"})
-  })
-
-  test("a bound client rejects a workspace of another organization", async () => {
-    const {workspaceId} = await newWorkspace()
-
-    await expectClientError(
-      clientFor("store", {expectedOrganizationId: "elsewhere"}).getWorkspace(workspaceId),
-      "organization_mismatch",
-    )
   })
 
   test("the Fleet service may read it too", async () => {
@@ -1211,11 +1166,10 @@ describe("GET /workspaces/:workspaceId", () => {
 
 // --- GET /changes ----------------------------------------------------------
 
-async function seedEvents(count: number, organizationId = "local", firstSeq = 1) {
+async function seedEvents(count: number, firstSeq = 1) {
   await WorkspaceAuditEventModel.insertMany(
     Array.from({length: count}, (_, index) => ({
-      eventId: `evt_${organizationId}_${String(firstSeq + index).padStart(5, "0")}`,
-      organizationId,
+      eventId: `evt_${String(firstSeq + index).padStart(5, "0")}`,
       seq: firstSeq + index,
       workspaceId: null,
       action: "test.event",
@@ -1234,7 +1188,7 @@ describe("GET /changes", () => {
     const all = await store().listChanges(null, 500)
     expect(all.events.map(event => event.action)).toEqual(["workspace.created", "credential.created"])
     expect(all.events.map(event => event.seq)).toEqual([1, 2])
-    expect(all.events[0]).toMatchObject({organizationId: "local", workspaceId})
+    expect(all.events[0]).toMatchObject({workspaceId})
     expect(all.next).toBeNull()
 
     const first = await store().listChanges(null, 1)
@@ -1249,7 +1203,7 @@ describe("GET /changes", () => {
 
     const first = await raw("GET", `${API}/changes`)
     expect(first.status).toBe(200)
-    expect(first.json.organizationId).toBe("local")
+    expect(Object.keys(first.json).sort()).toEqual(["events", "next"])
     expect(first.json.events).toHaveLength(100)
     expect(first.json.next).toBe("100")
 
@@ -1260,15 +1214,6 @@ describe("GET /changes", () => {
     const rest = await raw("GET", `${API}/changes?after=500&limit=500`)
     expect(rest.json.events.map((event: {seq: number}) => event.seq)).toEqual([501, 502, 503, 504, 505])
     expect(rest.json.next).toBeNull()
-  })
-
-  test("only this organization's events are served", async () => {
-    await seedEvents(2)
-    await seedEvents(3, "another-org", 100)
-
-    const feed = await store().listChanges(null)
-
-    expect(feed.events.map(event => event.organizationId)).toEqual(["local", "local"])
   })
 
   test("a credential's token and hash never appear in the feed", async () => {
@@ -1334,7 +1279,6 @@ describe("GET /workspaces/:workspaceId/memberships/history", () => {
     await WorkspaceMembershipModel.create([
       {
         membershipId: "wm_old_b",
-        organizationId: "local",
         workspaceId,
         mentraUserId: member.mentraUserId,
         role: "member",
@@ -1345,7 +1289,6 @@ describe("GET /workspaces/:workspaceId/memberships/history", () => {
       },
       {
         membershipId: "wm_old_a",
-        organizationId: "local",
         workspaceId,
         mentraUserId: member.mentraUserId,
         role: "developer",
@@ -1360,7 +1303,6 @@ describe("GET /workspaces/:workspaceId/memberships/history", () => {
 
     expect(reply.status).toBe(200)
     expect(reply.json).toEqual({
-      organizationId: "local",
       items: [
         {membershipId: "wm_old_a", role: "developer", startedAt: first.toISOString(), endedAt: firstEnd.toISOString()},
         {
@@ -1380,7 +1322,6 @@ describe("GET /workspaces/:workspaceId/memberships/history", () => {
     await addMember(otherWorkspace.workspaceId, member, "owner")
     await WorkspaceMembershipModel.create({
       membershipId: "wm_unclaimed",
-      organizationId: "local",
       workspaceId,
       mentraUserId: null,
       pendingWorkosUserId: "workos_pending",
@@ -1403,9 +1344,9 @@ describe("GET /workspaces/:workspaceId/memberships/history", () => {
     const missing = await history("ws_missing", stranger.mentraUserId)
 
     expect(none.status).toBe(200)
-    expect(none.json).toEqual({organizationId: "local", items: []})
+    expect(none.json).toEqual({items: []})
     expect(missing.status).toBe(200)
-    expect(missing.json).toEqual({organizationId: "local", items: []})
+    expect(missing.json).toEqual({items: []})
   })
 
   test("only the Fleet service may ask: the Store is 403 forbidden", async () => {
@@ -1488,15 +1429,14 @@ describe("POST /credentials", () => {
     })
   })
 
-  test("the response is {organizationId, credentialId, token}, created and never cached", async () => {
+  test("the response is {credentialId, token}, created and never cached", async () => {
     const {workspaceId} = await newWorkspace()
 
     const reply = await raw("POST", `${API}/credentials`, {body: input(workspaceId)})
 
     expect(reply.status).toBe(201)
     expect(reply.headers.get("cache-control")).toBe("no-store")
-    expect(Object.keys(reply.json).sort()).toEqual(["credentialId", "organizationId", "token"])
-    expect(reply.json.organizationId).toBe("local")
+    expect(Object.keys(reply.json).sort()).toEqual(["credentialId", "token"])
   })
 
   test("the audit trail names the authenticated service and the person who asked", async () => {
@@ -1605,19 +1545,5 @@ describe("POST /credentials", () => {
     expect(deleted.status).toBe(410)
     expect(deleted.json.error).toBe("workspace_deleted")
     expect(await AccessCredentialModel.countDocuments({})).toBe(0)
-  })
-
-  test("a bound client rejects a credential response for another organization", async () => {
-    const {workspaceId} = await newWorkspace()
-
-    await expectClientError(
-      clientFor("store", {expectedOrganizationId: "elsewhere"}).mintServiceCredential({
-        workspaceId,
-        name: "Store package key",
-        packageNames: ["com.acme.app"],
-        issuedBy: {service: "store", actorEmail: "staff@example.test"},
-      }),
-      "organization_mismatch",
-    )
   })
 })

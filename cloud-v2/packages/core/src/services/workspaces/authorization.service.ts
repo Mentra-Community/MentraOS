@@ -45,7 +45,7 @@ import type {AppContext} from "../../types/hono.types"
 import {authenticateDeveloperAccessToken, authenticateDeveloperRequest} from "../developer-auth.service"
 import {isCredentialToken, validateCredentialToken} from "./credential.service"
 import {resolveWorkosUser} from "./identity-link.service"
-import {isOrganizationAdminEmail, organizationId} from "./organization"
+import {isOrganizationAdminEmail} from "./organization"
 import {getActiveMembership, getWorkspace, isWorkspaceRole} from "./workspace.service"
 
 // --- Principals ------------------------------------------------------------
@@ -88,7 +88,6 @@ async function userPrincipal(auth: DeveloperAuthResult): Promise<CorePrincipal |
   })
   return {
     kind: "user",
-    organizationId: organizationId(),
     mentraUserId,
     email,
     emailVerified,
@@ -142,14 +141,10 @@ export async function authorize(
   p: CorePrincipal | null,
   req: {workspaceId?: string; capability?: WorkspaceCapability; packageName?: string},
 ): Promise<AuthorizeResponse> {
-  const organization = organizationId()
-  if (!p) {
-    return {allowed: false, reason: "unauthenticated", organizationId: organization, principal: null, capabilities: []}
-  }
+  if (!p) return {allowed: false, reason: "unauthenticated", principal: null, capabilities: []}
   const deny = (reason: DenyReason, extra: Partial<AuthorizeResponse> = {}): AuthorizeResponse => ({
     allowed: false,
     reason,
-    organizationId: organization,
     principal: p,
     capabilities: [],
     ...extra,
@@ -159,7 +154,7 @@ export async function authorize(
   const capabilityAsked = capability !== undefined && capability !== null
   if (workspaceId === undefined || workspaceId === null) {
     if (capabilityAsked) return deny("capability_missing")
-    return {allowed: true, organizationId: organization, principal: p, capabilities: []}
+    return {allowed: true, principal: p, capabilities: []}
   }
   // The id goes into a database filter, so anything but a non-empty string is not a workspace.
   if (typeof workspaceId !== "string" || !workspaceId.trim()) return deny("workspace_not_found", {workspace: null})
@@ -192,7 +187,7 @@ export async function authorize(
   if (capabilityAsked && !(isWorkspaceCapability(capability) && granted.has(capability))) {
     return deny("capability_missing", {workspace, membership, capabilities})
   }
-  return {allowed: true, organizationId: organization, principal: p, workspace, membership, capabilities}
+  return {allowed: true, principal: p, workspace, membership, capabilities}
 }
 
 function isWorkspaceCapability(value: string): value is WorkspaceCapability {

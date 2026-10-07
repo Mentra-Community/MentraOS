@@ -10,14 +10,15 @@
  * | --------------------------------------------------- | ------- | -------------------------------------------- |
  * | `POST /authorize`                                   | any     | `AuthorizeResponse`                          |
  * | `POST /principal`                                   | any     | `PrincipalResponse`, or 401 `invalid_token`  |
- * | `POST /memberships/check`                           | any     | `{organizationId, memberships}`              |
+ * | `POST /memberships/check`                           | any     | `{memberships}`                              |
  * | `GET /workspaces/:workspaceId`                      | any     | `WorkspaceSummary`, or 404                   |
- * | `GET /changes?after=&limit=`                        | any     | `{organizationId, events, next}`             |
- * | `GET /workspaces/:workspaceId/memberships/history`  | fleet   | `{organizationId, items}`                    |
- * | `POST /credentials`                                 | store   | `{organizationId, credentialId, token}`      |
+ * | `GET /changes?after=&limit=`                        | any     | `{events, next}`                             |
+ * | `GET /workspaces/:workspaceId/memberships/history`  | fleet   | `{items}`                                    |
+ * | `POST /credentials`                                 | store   | `{credentialId, token}`                      |
  *
- * Every response a client checks names the organization (`organizationId()`), so
- * a client bound to another deployment refuses it.
+ * A service knows which organization it is talking to from the Core URL it is
+ * configured with, and the shared secret proves both sides, so no response
+ * names the organization.
  *
  * Failures: a service that may not call a route is 403 `{error: "forbidden"}`; a
  * body or query that is not what the route takes is 400 `invalid_request`; a
@@ -48,7 +49,6 @@ import {authorize, principalFromToken} from "../../services/workspaces/authoriza
 import {listChanges} from "../../services/workspaces/audit.service"
 import {isCredentialToken, mintServiceCredential} from "../../services/workspaces/credential.service"
 import {IdentityUnavailableError} from "../../services/workspaces/identity-link.service"
-import {organizationId} from "../../services/workspaces/organization"
 import {getWorkspace, listMembershipHistory, listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidRequest} from "../../types/oauth.types"
@@ -126,7 +126,6 @@ app.post("/memberships/check", async c => {
   // deleted, not a member, left) is null.
   const held = new Map((await listWorkspacesForUser(mentraUserId)).map(entry => [entry.workspaceId, entry]))
   const checked: MembershipCheckResponse = {
-    organizationId: organizationId(),
     // `fromEntries` defines each id as an own property, so an id such as `__proto__` is just a key.
     memberships: Object.fromEntries(
       workspaceIds.map(id => {
@@ -151,7 +150,6 @@ app.get("/workspaces/:workspaceId/memberships/history", requireService("fleet"),
   // A workspace that does not exist simply has no history for anyone.
   const rows = await listMembershipHistory(c.req.param("workspaceId"), mentraUserId)
   return c.json({
-    organizationId: organizationId(),
     items: rows.map(row => ({
       membershipId: row.membershipId,
       role: row.role,
@@ -165,7 +163,7 @@ app.get("/workspaces/:workspaceId/memberships/history", requireService("fleet"),
 
 app.get("/changes", async c => {
   const {events, next} = await listChanges(c.req.query("after") ?? null, changesLimit(c.req.query("limit")))
-  return c.json({organizationId: organizationId(), events, next})
+  return c.json({events, next})
 })
 
 // --- Credentials -----------------------------------------------------------
@@ -194,11 +192,7 @@ app.post("/credentials", requireService("store"), async c => {
   })
   // The token is shown once.
   c.header("cache-control", "no-store")
-  const minted: ServiceCredentialResponse = {
-    organizationId: organizationId(),
-    credentialId: credential.credentialId,
-    token,
-  }
+  const minted: ServiceCredentialResponse = {credentialId: credential.credentialId, token}
   return c.json(minted, 201)
 })
 
@@ -261,7 +255,6 @@ function authorizeFields(body: JsonObject): {
 function mentraUserPrincipal(credential: Extract<AuthorizeCredential, {type: "mentra_user"}>): CorePrincipal {
   return {
     kind: "user",
-    organizationId: organizationId(),
     mentraUserId: credential.mentraUserId,
     email: null,
     emailVerified: false,

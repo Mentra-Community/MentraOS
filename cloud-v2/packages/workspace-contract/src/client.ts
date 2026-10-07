@@ -14,8 +14,6 @@ const API_PREFIX = "/api/internal/workspaces"
 const DEFAULT_TIMEOUT_MS = 5_000
 
 export type CoreWorkspaceClientErrorCode =
-  /** A response carried an organizationId other than the one this client is bound to. */
-  | "organization_mismatch"
   /** Core could not be reached, timed out, or answered with a 5xx. */
   | "core_unavailable"
   /** Core rejected this service's signature or secret (HTTP 401 `service_unauthorized`). */
@@ -68,8 +66,6 @@ export interface CoreWorkspaceClientOptions {
   /** Sent as `x-mentra-service`; must be a service Core has a secret for. */
   service: string
   secret: string
-  /** Every response that names an organization must name this one. */
-  expectedOrganizationId: string
   fetch?: typeof fetch
   timeoutMs?: number
 }
@@ -87,20 +83,23 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
   const badResponse = (path: string, detail: string) =>
     new CoreWorkspaceClientError("bad_response", `Core ${path} returned an invalid response: ${detail}`)
 
-  function checkOrganization(path: string, value: unknown, what: string) {
-    if (typeof value !== "string") throw badResponse(path, `${what} has no organizationId`)
-    if (value !== opts.expectedOrganizationId) {
-      throw new CoreWorkspaceClientError(
-        "organization_mismatch",
-        `Core ${path} returned ${what} for organization ${value}, expected ${opts.expectedOrganizationId}`,
-      )
-    }
+  function checkRecord(path: string, value: unknown, what: string): Json {
+    if (!isRecord(value)) throw badResponse(path, `${what} is not an object`)
+    return value
   }
 
-  function checkOwned(path: string, value: unknown, what: string): Json {
-    if (!isRecord(value)) throw badResponse(path, `${what} is not an object`)
-    checkOrganization(path, value.organizationId, what)
-    return value
+  function checkPrincipal(path: string, value: unknown): Json {
+    const principal = checkRecord(path, value, "the principal")
+    if (principal.kind !== "user" && principal.kind !== "credential") {
+      throw badResponse(path, "the principal is neither a user nor a credential")
+    }
+    return principal
+  }
+
+  function checkWorkspace(path: string, value: unknown, what: string): Json {
+    const workspace = checkRecord(path, value, what)
+    if (typeof workspace.workspaceId !== "string") throw badResponse(path, `${what} has no workspaceId`)
+    return workspace
   }
 
   /** Sends one signed request. Resolves to the parsed JSON body, or null when `nullOn` accepts the failure. */
@@ -180,12 +179,12 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
   return {
     async authorize(req) {
       const path = `${API_PREFIX}/authorize`
-      const body = checkOwned(path, await call("POST", path, req), "the authorize response")
+      const body = checkRecord(path, await call("POST", path, req), "the authorize response")
       if (typeof body.allowed !== "boolean" || !Array.isArray(body.capabilities)) {
         throw badResponse(path, "missing allowed or capabilities")
       }
-      if (body.principal !== null && body.principal !== undefined) checkOwned(path, body.principal, "the principal")
-      if (body.workspace !== null && body.workspace !== undefined) checkOwned(path, body.workspace, "the workspace")
+      if (body.principal !== null && body.principal !== undefined) checkPrincipal(path, body.principal)
+      if (body.workspace !== null && body.workspace !== undefined) checkWorkspace(path, body.workspace, "the workspace")
       return body as unknown as AuthorizeResponse
     },
 
@@ -199,14 +198,14 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       )
       if (raw === null) return null
       if (!isRecord(raw) || !Array.isArray(raw.workspaces)) throw badResponse(path, "missing principal or workspaces")
-      checkOwned(path, raw.principal, "the principal")
-      for (const workspace of raw.workspaces) checkOwned(path, workspace, "a workspace")
+      checkPrincipal(path, raw.principal)
+      for (const workspace of raw.workspaces) checkWorkspace(path, workspace, "a workspace")
       return raw as unknown as PrincipalResponse
     },
 
     async checkMemberships(mentraUserId, workspaceIds) {
       const path = `${API_PREFIX}/memberships/check`
-      const raw = checkOwned(path, await call("POST", path, {mentraUserId, workspaceIds}), "the membership check")
+      const raw = checkRecord(path, await call("POST", path, {mentraUserId, workspaceIds}), "the membership check")
       if (!isRecord(raw.memberships)) throw badResponse(path, "the memberships are not an object")
       return raw.memberships as Record<string, MembershipCheckEntry | null>
     },
@@ -220,7 +219,7 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         (status, error) => status === 404 && error === WORKSPACE_NOT_FOUND_ERROR,
       )
       if (raw === null) return null
-      return checkOwned(path, raw, "the workspace") as unknown as WorkspaceSummary
+      return checkWorkspace(path, raw, "the workspace") as unknown as WorkspaceSummary
     },
 
     async listChanges(after, limit) {
@@ -232,13 +231,18 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       const raw = await call("GET", path)
       if (!isRecord(raw) || !Array.isArray(raw.events)) throw badResponse(path, "missing events")
       if (raw.next !== null && typeof raw.next !== "string") throw badResponse(path, "next is not a string or null")
-      for (const event of raw.events) checkOwned(path, event, "an event")
+      for (const event of raw.events) {
+        const checked = checkRecord(path, event, "an event")
+        if (typeof checked.eventId !== "string" || typeof checked.seq !== "number") {
+          throw badResponse(path, "an event has no eventId or seq")
+        }
+      }
       return {events: raw.events as WorkspaceChangeEvent[], next: raw.next}
     },
 
     async mintServiceCredential(input) {
       const path = `${API_PREFIX}/credentials`
-      const raw = checkOwned(path, await call("POST", path, input), "the credential")
+      const raw = checkRecord(path, await call("POST", path, input), "the credential")
       if (typeof raw.credentialId !== "string" || typeof raw.token !== "string") {
         throw badResponse(path, "missing credentialId or token")
       }

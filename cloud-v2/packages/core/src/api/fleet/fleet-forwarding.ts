@@ -52,7 +52,6 @@
  *    `signServiceRequest` from `@mentra/workspace-contract/server` over `<ts>`, the method, the
  *    upstream path with its query (as sent, prefix included) and the body. Verify it with
  *    `verifyServiceRequest`;
- *  - `x-mentra-organization-id`: this Core's organization id;
  *  - `x-mentra-principal`: who is calling, as base64url JSON, one of
  *      `{kind: "phone", mentraUserId, tenantId, sessionId}`,
  *      `{kind: "user", mentraUserId, email, emailVerified, isOrganizationAdmin}` or
@@ -62,13 +61,14 @@
  *    Fleet cannot ask Core's `/authorize` about it (Core never forwards the bearer), so it must apply
  *    that restriction itself;
  *  - `x-mentra-principal-signature`: base64url HMAC-SHA256, keyed with the same secret, of
- *    `<ts>\n<x-mentra-organization-id value>\n<x-mentra-principal value>`, using the same `<ts>`.
+ *    `<ts>\n<x-mentra-principal value>`, using the same `<ts>`.
  *
- * The service signature does not cover the two identity headers, so without the principal signature
- * anyone who captured one signed request could replay it with another identity inside the skew
- * window. Fleet must verify both signatures before it trusts either header. The two signed strings
- * cannot be mistaken for each other: the service one has three newlines, this one has two, and
- * neither a header value nor a path can contain a newline.
+ * Fleet knows which organization is calling from the secret it shares with that Core, so no header
+ * names the organization. The service signature does not cover the identity header, so without the
+ * principal signature anyone who captured one signed request could replay it with another identity
+ * inside the skew window. Fleet must verify both signatures before it trusts the principal. The two
+ * signed strings cannot be mistaken for each other: the service one has three newlines, this one has
+ * one, and neither a header value nor a path can contain a newline.
  *
  * Request bodies are treated as UTF-8 text (the Fleet API is JSON): the signature covers the text
  * and the same bytes are sent.
@@ -79,14 +79,13 @@ import {createLogger} from "@mentra/cloud-shared"
 import {SERVICE_HEADERS, signServiceRequest} from "@mentra/workspace-contract/server"
 import {Hono, type Handler, type MiddlewareHandler} from "hono"
 import {bodyLimit} from "hono/body-limit"
-import {isDeployedEnvironment, organizationId} from "../../services/workspaces/organization"
+import {isDeployedEnvironment} from "../../services/workspaces/organization"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 
 const logger = createLogger("core").child({service: "fleet-forwarding"})
 
 /** Headers Core adds beyond `SERVICE_HEADERS`, for the Fleet service to read and verify. */
 export const FLEET_HEADERS = {
-  organizationId: "x-mentra-organization-id",
   principal: "x-mentra-principal",
   principalSignature: "x-mentra-principal-signature",
 } as const
@@ -333,7 +332,6 @@ function forward(audience: Audience): Handler<AppEnv> {
     const method = c.req.method
     const timestampMs = Date.now()
     const timestamp = String(timestampMs)
-    const organization = organizationId()
     const principalHeader = Buffer.from(JSON.stringify(principal)).toString("base64url")
 
     const headers = new Headers()
@@ -353,12 +351,11 @@ function forward(audience: Audience): Handler<AppEnv> {
         timestampMs,
       }),
     )
-    headers.set(FLEET_HEADERS.organizationId, organization)
     headers.set(FLEET_HEADERS.principal, principalHeader)
     headers.set(
       FLEET_HEADERS.principalSignature,
       createHmac("sha256", fleet.secret)
-        .update(`${timestamp}\n${organization}\n${principalHeader}`)
+        .update(`${timestamp}\n${principalHeader}`)
         .digest("base64url"),
     )
 
@@ -413,7 +410,7 @@ export const clientFleetApi = new Hono<AppEnv>()
 
 clientFleetApi.get("/capabilities", (c) => {
   if (!c.get("user")) return c.json({error: "unauthorized"}, 401)
-  return c.json({organizationId: organizationId(), fleet: {installed: fleetConfig().state === "ready"}})
+  return c.json({fleet: {installed: fleetConfig().state === "ready"}})
 })
 clientFleetApi.all("/fleet/*", limitBody, forward("client"))
 

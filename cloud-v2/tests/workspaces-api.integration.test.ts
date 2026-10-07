@@ -55,7 +55,6 @@ const ENV_KEYS = [
   "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
   "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
   "CLOUD_CORE_ENVIRONMENT",
-  "CLOUD_CORE_ORGANIZATION_ID",
   "CLOUD_CORE_STORE_SERVICE_SECRET",
   "CLOUD_CORE_WORKSPACE_CREATION",
   "CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE",
@@ -285,7 +284,6 @@ beforeEach(async () => {
   delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS
   delete process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS
   delete process.env.CLOUD_CORE_ENVIRONMENT
-  delete process.env.CLOUD_CORE_ORGANIZATION_ID
   delete process.env.CLOUD_CORE_STORE_SERVICE_SECRET
   delete process.env.CLOUD_CORE_WORKSPACE_CREATION
   delete process.env.MENTRA_STORE_INTERNAL_URL
@@ -319,7 +317,6 @@ describe("owner journey", () => {
     const created = await call("POST", "/api/workspaces", {as: owner, body: {name: "  Acme  "}})
     expect(created.status).toBe(201)
     expect(created.json).toMatchObject({
-      organizationId: "local",
       name: "Acme",
       status: "active",
       authorizationRevision: 0,
@@ -491,11 +488,11 @@ describe("authentication", () => {
 
     const asWorkspaceKey = await call("GET", "/api/organization", {as: workspaceKey})
     expect(asWorkspaceKey.status).toBe(200)
-    expect(asWorkspaceKey.json).toEqual({organizationId: "local", capabilities: []})
+    expect(asWorkspaceKey.json).toEqual({capabilities: []})
 
     const asOperatorKey = await call("GET", "/api/organization", {as: operatorKey})
     expect(asOperatorKey.status).toBe(200)
-    expect(asOperatorKey.json).toEqual({organizationId: "local", capabilities: ["organization.incidents.read"]})
+    expect(asOperatorKey.json).toEqual({capabilities: ["organization.incidents.read"]})
   })
 
   test("a signed-in person sees their organization capabilities", async () => {
@@ -504,10 +501,10 @@ describe("authentication", () => {
 
     const asAdmin = await call("GET", "/api/organization", {as: admin})
     expect(asAdmin.status).toBe(200)
-    expect(asAdmin.json).toEqual({organizationId: "local", capabilities: [...ORGANIZATION_CAPABILITIES]})
+    expect(asAdmin.json).toEqual({capabilities: [...ORGANIZATION_CAPABILITIES]})
     expect(await call("GET", "/api/organization", {as: other})).toMatchObject({
       status: 200,
-      json: {organizationId: "local", capabilities: []},
+      json: {capabilities: []},
     })
   })
 
@@ -563,7 +560,6 @@ describe("workspaces", () => {
     const asDeveloper = await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.developer})
     expect(asDeveloper.status).toBe(200)
     expect(asDeveloper.json).toMatchObject({
-      organizationId: "local",
       workspaceId: ws.workspaceId,
       name: "Acme",
       status: "active",
@@ -815,7 +811,6 @@ describe("members", () => {
     // A migrated member who has not signed in yet is listed, marked pending.
     await WorkspaceMembershipModel.create({
       membershipId: "wm_pending",
-      organizationId: "local",
       workspaceId: ws.workspaceId,
       mentraUserId: null,
       pendingWorkosUserId: "workos_not_yet",
@@ -1286,7 +1281,6 @@ describe("audit", () => {
     const ws = await newWorkspace()
     await WorkspaceAuditEventModel.create({
       eventId: "01ZZZZZZZZZZZZZZZZZZZZZZZZ",
-      organizationId: "local",
       seq: 1_000_000,
       workspaceId: ws.workspaceId,
       action: "credential.created",
@@ -1353,7 +1347,6 @@ describe("organization workspaces", () => {
     ])
     expect(all.json.next).toBeNull()
     expect(all.json.items[0]).toEqual({
-      organizationId: "local",
       workspaceId: three.workspaceId,
       name: "Three",
       status: "active",

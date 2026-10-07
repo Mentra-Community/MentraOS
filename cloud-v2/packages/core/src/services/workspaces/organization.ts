@@ -1,13 +1,12 @@
 /**
- * @fileoverview Organization identity for this Core deployment.
+ * @fileoverview Organization configuration for this Core deployment.
  *
  * An organization is one Core deployment (a cloud instance and its database).
- * Everything here is read from the environment at use time, so a changed
- * allowlist or label takes effect on the next call and tests can set it freely.
+ * It has no id of its own: a service knows which organization it talks to from
+ * the Core URL it is configured with. Everything here is read from the
+ * environment at use time, so a changed allowlist or label takes effect on the
+ * next call and tests can set it freely.
  */
-
-/** What an organization id may look like. Shared with the migration script so it validates ids the same way. */
-export const ORGANIZATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/
 
 /** The `CLOUD_CORE_ENVIRONMENT` labels of a deployed Core (shared infrastructure, real data). */
 const DEPLOYED_ENVIRONMENTS: ReadonlySet<string> = new Set(["dev", "staging", "prod", "production"])
@@ -21,29 +20,6 @@ const DEPLOYED_ENVIRONMENTS: ReadonlySet<string> = new Set(["dev", "staging", "p
 export function isDeployedEnvironment(): boolean {
   if (process.env.NODE_ENV === "production") return true
   return DEPLOYED_ENVIRONMENTS.has((process.env.CLOUD_CORE_ENVIRONMENT ?? "").trim().toLowerCase())
-}
-
-/**
- * The id of this organization, stamped on workspaces, memberships and audit
- * events. `CLOUD_CORE_ORGANIZATION_ID` is required in a deployed Core
- * ({@link isDeployedEnvironment}; this throws at first use, not at import);
- * elsewhere it defaults to `local`.
- */
-export function organizationId(): string {
-  const configured = process.env.CLOUD_CORE_ORGANIZATION_ID?.trim()
-  if (!configured) {
-    if (isDeployedEnvironment()) {
-      throw new Error(
-        "CLOUD_CORE_ORGANIZATION_ID is required when NODE_ENV=production " +
-          "or CLOUD_CORE_ENVIRONMENT is dev, staging, prod or production",
-      )
-    }
-    return "local"
-  }
-  if (!ORGANIZATION_ID_PATTERN.test(configured)) {
-    throw new Error(`CLOUD_CORE_ORGANIZATION_ID must match ${ORGANIZATION_ID_PATTERN}`)
-  }
-  return configured
 }
 
 export interface OrganizationAdminAllowlist {

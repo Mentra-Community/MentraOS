@@ -88,7 +88,6 @@ async function addMember(workspaceId: string, mentraUserId: string, role: string
   const membershipId = `wm_${nextId()}`
   await WorkspaceMembershipModel.create({
     membershipId,
-    organizationId: "local",
     workspaceId,
     mentraUserId,
     email: `${mentraUserId}@example.test`,
@@ -201,7 +200,6 @@ describe("createInvitation", () => {
     const token = tokenOf(created.inviteUrl)
     const row = (await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!
     expect(row).toMatchObject({
-      organizationId: "local",
       workspaceId: ws,
       email: "dev@example.test",
       role: "developer",
@@ -560,7 +558,6 @@ describe("listPendingInvitations", () => {
     expect(rows.map(row => row.invitationId)).toEqual([pending.invitationId, second.invitationId])
     expect(rows[0]).toEqual({
       invitationId: pending.invitationId,
-      organizationId: "local",
       workspaceId: ws,
       email: "pending@example.test",
       role: "member",
@@ -705,7 +702,6 @@ describe("acceptInvitation", () => {
     expect(result.membershipId).toMatch(/^wm_[0-9A-HJKMNP-TV-Z]{26}$/)
     const membership = (await WorkspaceMembershipModel.findOne({membershipId: result.membershipId}).lean())!
     expect(membership).toMatchObject({
-      organizationId: "local",
       workspaceId: ws,
       mentraUserId: "mu_dev",
       email: "Dev@Example.TEST",

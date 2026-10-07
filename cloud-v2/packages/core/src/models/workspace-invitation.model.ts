@@ -17,7 +17,6 @@ const WorkspaceInvitationSchema = new Schema(
   {
     /** `winv_<ulid>`. */
     invitationId: {type: String, required: true, unique: true},
-    organizationId: {type: String, required: true},
     workspaceId: {type: String, required: true, index: true},
     email: {type: String, required: true, lowercase: true, trim: true},
     role: {type: String, enum: WORKSPACE_ROLES, required: true},

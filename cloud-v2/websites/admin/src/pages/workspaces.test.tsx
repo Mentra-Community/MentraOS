@@ -24,7 +24,6 @@ const ACME = "ws_acme";
 const INVITE_TOKEN = "SYNTHETICINVITETOKEN0000000000000000000000000";
 
 const acme: WorkspaceDetail = {
-  organizationId: "org_test",
   workspaceId: ACME,
   name: "Acme Robotics",
   status: "active",
@@ -39,9 +38,9 @@ const members: MemberView[] = [
 ];
 
 const everyone: WorkspaceSummary[] = [
-  { organizationId: "org_test", workspaceId: "ws_acme", name: "Acme Robotics", status: "active", authorizationRevision: 4 },
-  { organizationId: "org_test", workspaceId: "ws_orphan", name: "Orphaned Lab", status: "active", authorizationRevision: 9 },
-  { organizationId: "org_test", workspaceId: "ws_gone", name: "Closed Down", status: "deleted", authorizationRevision: 2 },
+  { workspaceId: "ws_acme", name: "Acme Robotics", status: "active", authorizationRevision: 4 },
+  { workspaceId: "ws_orphan", name: "Orphaned Lab", status: "active", authorizationRevision: 9 },
+  { workspaceId: "ws_gone", name: "Closed Down", status: "deleted", authorizationRevision: 2 },
 ];
 
 interface Seed {

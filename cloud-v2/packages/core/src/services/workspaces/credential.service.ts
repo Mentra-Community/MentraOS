@@ -50,7 +50,7 @@ import {AccessCredentialModel, type AccessCredentialRow} from "../../models/acce
 import {WorkspaceMembershipModel, type WorkspaceMembershipRow} from "../../models/workspace-membership.model"
 import {WorkspaceModel} from "../../models/workspace.model"
 import {recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
-import {credentialEnvironmentLabels, isOrganizationAdminEmail, organizationId} from "./organization"
+import {credentialEnvironmentLabels, isOrganizationAdminEmail} from "./organization"
 import {fail} from "./workspace-error"
 import {
   actingRole,
@@ -103,7 +103,7 @@ export async function createWorkspaceCredential(
   const env = issuingEnvironment()
 
   return withTransaction(async session => {
-    const workspace = await loadActiveWorkspace(session, workspaceId)
+    await loadActiveWorkspace(session, workspaceId)
     const role = await actingRole(session, actor, workspaceId)
     if (!role || !capabilitiesForRole(role).has("miniapps.credentials.create")) {
       fail("forbidden", "creating credentials requires the developer role")
@@ -121,7 +121,6 @@ export async function createWorkspaceCredential(
     const {row, token} = await insertCredential(session, {
       prefix: "msk",
       credentialKind: "workspace",
-      organizationId: workspace.organizationId,
       workspaceId,
       name,
       env,
@@ -161,12 +160,11 @@ export async function mintServiceCredential(
   const env = issuingEnvironment()
 
   return withTransaction(async session => {
-    const workspace = await loadActiveWorkspace(session, workspaceId)
+    await loadActiveWorkspace(session, workspaceId)
     await touchWorkspace(session, workspaceId)
     const {row, token} = await insertCredential(session, {
       prefix: "msk",
       credentialKind: "workspace",
-      organizationId: workspace.organizationId,
       workspaceId,
       name,
       env,
@@ -202,13 +200,11 @@ export async function createOperatorKey(
   const scopes = validateOperatorScopes(input?.scopes)
   const expiresAt = validateExpiry(input?.expiresAt)
   const env = issuingEnvironment()
-  const organization = organizationId()
 
   return withTransaction(async session => {
     const {row, token} = await insertCredential(session, {
       prefix: "mak",
       credentialKind: "organization",
-      organizationId: organization,
       workspaceId: null,
       name,
       env,
@@ -266,7 +262,6 @@ export async function findCredentialOwner(
 /** This organization's live (not revoked) operator keys, newest first (creation time, then id for a tie). */
 export async function listOperatorKeys(): Promise<CredentialView[]> {
   const rows = await AccessCredentialModel.find({
-    organizationId: organizationId(),
     credentialKind: "organization",
     revokedAt: null,
   })
@@ -339,7 +334,6 @@ export async function markRevoked(
   )
   if (revoked.modifiedCount !== 1) return
   await recordWorkspaceEvent(session, {
-    organizationId: row.organizationId,
     workspaceId: row.workspaceId ?? null,
     action: "credential.revoked",
     actor,
@@ -391,7 +385,6 @@ export async function validateCredentialToken(token: string): Promise<ValidatedC
   touchLastUsed(row)
   return {
     kind: "credential",
-    organizationId: row.organizationId,
     credentialId: row.credentialId,
     credentialKind: row.credentialKind as ValidatedCredential["credentialKind"],
     workspaceId: row.workspaceId ?? null,
@@ -481,7 +474,6 @@ type NewCredential = Pick<
   AccessCredentialRow,
   | "prefix"
   | "credentialKind"
-  | "organizationId"
   | "workspaceId"
   | "name"
   | "env"
@@ -517,7 +509,6 @@ async function recordCreated(
   actor: WorkspaceAuditEventInput["actor"],
 ): Promise<void> {
   await recordWorkspaceEvent(session, {
-    organizationId: row.organizationId,
     workspaceId: row.workspaceId ?? null,
     action: "credential.created",
     actor,

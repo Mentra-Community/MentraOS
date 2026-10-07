@@ -11,7 +11,6 @@ const names = [
   "WORKOS_COOKIE_PASSWORD",
   "ADMIN_URL",
   "CLOUD_CORE_ADMIN_EMAILS",
-  "CLOUD_CORE_ORGANIZATION_ID",
   "NODE_ENV",
 ] as const
 const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]))
@@ -43,8 +42,6 @@ beforeEach(async () => {
   process.env.WORKOS_COOKIE_PASSWORD = "cookie-contract-password-at-least-32-characters"
   process.env.ADMIN_URL = origin
   process.env.CLOUD_CORE_ADMIN_EMAILS = user.email
-  // Required in production, and the principal carries it.
-  process.env.CLOUD_CORE_ORGANIZATION_ID = "contract"
   process.env.NODE_ENV = "production"
   linking = spyOn(identityLinks, "resolveWorkosUser").mockResolvedValue({mentraUserId: "mu_cookie_contract"})
   listing = spyOn(workspaces, "listWorkspacesForUser").mockResolvedValue([])
@@ -134,7 +131,7 @@ test("Core's actual WorkOS callback cookie authenticates /me through the shared 
     authenticated: true,
     user: {mentraUserId: "mu_cookie_contract", email: user.email},
     credential: null,
-    organization: {organizationId: "contract", capabilities: [...ORGANIZATION_CAPABILITIES].sort()},
+    organization: {capabilities: [...ORGANIZATION_CAPABILITIES].sort()},
     workspaces: [],
   })
   expect(linking).toHaveBeenCalledWith(expect.objectContaining({workosUserId: user.id, email: user.email, emailVerified: true}))

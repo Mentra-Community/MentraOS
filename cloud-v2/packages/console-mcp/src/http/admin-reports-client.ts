@@ -105,7 +105,7 @@ export function createAdminReportsClient(config: ConsoleMcpConfig) {
         authenticated: boolean;
         user: Record<string, unknown> | null;
         credential: Record<string, unknown> | null;
-        organization: { organizationId: string; capabilities: string[] };
+        organization: { capabilities: string[] };
       }>(
         "/api/admin/me",
         "admin identity",

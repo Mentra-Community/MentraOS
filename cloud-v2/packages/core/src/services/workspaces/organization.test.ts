@@ -3,14 +3,13 @@ import {
   configuredAdminAllowlist,
   credentialEnvironmentLabels,
   isConfiguredOrganizationAdminEmail,
+  isDeployedEnvironment,
   isOrganizationAdminEmail,
-  organizationId,
 } from "./organization"
 
 const ENV_NAMES = [
   "CLOUD_CORE_ADMIN_EMAILS",
   "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
-  "CLOUD_CORE_ORGANIZATION_ID",
   "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
   "CLOUD_CORE_ENVIRONMENT",
   "NODE_ENV",
@@ -28,85 +27,30 @@ function clearEnv() {
   for (const name of ENV_NAMES) delete process.env[name]
 }
 
-function thrownMessage(fn: () => unknown): string {
-  try {
-    fn()
-  } catch (err) {
-    return (err as Error).message
-  }
-  throw new Error("expected the call to throw")
-}
+// --- isDeployedEnvironment --------------------------------------------------
 
-// --- organizationId ---------------------------------------------------------
-
-test("organizationId defaults to local outside production", () => {
-  clearEnv()
-  expect(organizationId()).toBe("local")
-  process.env.NODE_ENV = "development"
-  expect(organizationId()).toBe("local")
-  process.env.CLOUD_CORE_ORGANIZATION_ID = "   "
-  expect(organizationId()).toBe("local")
-})
-
-test("organizationId is required for a deployed environment even though deployed Cores never set NODE_ENV=production", () => {
+test("a deployed environment is recognized by its label even though deployed Cores never set NODE_ENV=production", () => {
   for (const environment of ["dev", "staging", "prod", "production", " Prod ", "STAGING"]) {
     clearEnv()
     process.env.CLOUD_CORE_ENVIRONMENT = environment
-    expect([environment, thrownMessage(organizationId)]).toEqual([
-      environment,
-      expect.stringContaining("CLOUD_CORE_ORGANIZATION_ID"),
-    ])
-    process.env.CLOUD_CORE_ORGANIZATION_ID = "   "
-    expect(thrownMessage(organizationId)).toContain("CLOUD_CORE_ORGANIZATION_ID")
-    process.env.CLOUD_CORE_ORGANIZATION_ID = "acme-prod"
-    expect(organizationId()).toBe("acme-prod")
+    expect([environment, isDeployedEnvironment()]).toEqual([environment, true])
   }
 })
 
-test("organizationId's error names both ways a deployment is recognized", () => {
+test("NODE_ENV=production alone makes a deployed environment", () => {
   clearEnv()
-  process.env.CLOUD_CORE_ENVIRONMENT = "staging"
-  const message = thrownMessage(organizationId)
-  expect(message).toContain("NODE_ENV=production")
-  expect(message).toContain("CLOUD_CORE_ENVIRONMENT")
+  process.env.NODE_ENV = "production"
+  expect(isDeployedEnvironment()).toBe(true)
+  process.env.NODE_ENV = "development"
+  expect(isDeployedEnvironment()).toBe(false)
 })
 
-test("organizationId still defaults to local for local, test and unlabeled environments", () => {
+test("local, test and unlabeled environments are not deployed", () => {
   for (const environment of [undefined, "", "   ", "local", "test", "test-env", "development", "dev-2", "my-prod"]) {
     clearEnv()
     if (environment !== undefined) process.env.CLOUD_CORE_ENVIRONMENT = environment
-    expect([environment, organizationId()]).toEqual([environment, "local"])
+    expect([environment, isDeployedEnvironment()]).toEqual([environment, false])
   }
-})
-
-test("organizationId reads CLOUD_CORE_ORGANIZATION_ID at use time", () => {
-  clearEnv()
-  process.env.CLOUD_CORE_ORGANIZATION_ID = "acme-prod"
-  expect(organizationId()).toBe("acme-prod")
-  process.env.CLOUD_CORE_ORGANIZATION_ID = " acme-2 "
-  expect(organizationId()).toBe("acme-2")
-  process.env.CLOUD_CORE_ORGANIZATION_ID = "a1"
-  expect(organizationId()).toBe("a1")
-  process.env.CLOUD_CORE_ORGANIZATION_ID = "a".repeat(63)
-  expect(organizationId()).toBe("a".repeat(63))
-})
-
-test("organizationId rejects values outside /^[a-z0-9][a-z0-9-]{1,62}$/", () => {
-  clearEnv()
-  for (const bad of ["a", "-acme", "Acme", "acme_prod", "acme.prod", "acme prod", "a".repeat(64), "acmé"]) {
-    process.env.CLOUD_CORE_ORGANIZATION_ID = bad
-    expect(thrownMessage(organizationId)).toContain("CLOUD_CORE_ORGANIZATION_ID")
-  }
-})
-
-test("organizationId is required in production and throws at first use, not at import", () => {
-  clearEnv()
-  process.env.NODE_ENV = "production"
-  expect(thrownMessage(organizationId)).toContain("CLOUD_CORE_ORGANIZATION_ID")
-  process.env.CLOUD_CORE_ORGANIZATION_ID = ""
-  expect(thrownMessage(organizationId)).toContain("CLOUD_CORE_ORGANIZATION_ID")
-  process.env.CLOUD_CORE_ORGANIZATION_ID = "acme-prod"
-  expect(organizationId()).toBe("acme-prod")
 })
 
 // --- Organization Admin matching (ported from the former admin-email-policy tests) -----------

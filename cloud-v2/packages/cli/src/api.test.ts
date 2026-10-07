@@ -110,7 +110,6 @@ describe("startLogin", () => {
 
 function workspaceSummary(workspaceId: string, name: string): CliWorkspace {
   return {
-    organizationId: "org_core",
     workspaceId,
     name,
     status: "active",

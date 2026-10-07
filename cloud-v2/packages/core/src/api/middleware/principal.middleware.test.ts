@@ -25,7 +25,6 @@ import {
 function user(overrides: Partial<Extract<CorePrincipal, {kind: "user"}>> = {}): CorePrincipal {
   return {
     kind: "user",
-    organizationId: "local",
     mentraUserId: "mu_1",
     email: "dev@example.test",
     emailVerified: true,
@@ -39,7 +38,6 @@ function user(overrides: Partial<Extract<CorePrincipal, {kind: "user"}>> = {}): 
 function credential(overrides: Partial<Extract<CorePrincipal, {kind: "credential"}>> = {}): CorePrincipal {
   return {
     kind: "credential",
-    organizationId: "local",
     credentialId: "01HZ",
     credentialKind: "workspace",
     workspaceId: "ws_1",
