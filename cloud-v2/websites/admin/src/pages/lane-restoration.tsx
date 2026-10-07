@@ -1,3 +1,4 @@
+import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {runDuration} from "../lib/run-duration";
 import {useQuery} from "@tanstack/react-query";
 import {useEffect, useState} from "react";
@@ -22,7 +23,7 @@ export function restorationOutcome(attempt: LaneRestorationAttempt) {
 }
 function Attempt({attempt, observedAt}: {attempt: LaneRestorationAttempt; observedAt: string}) {
   const outcome = restorationOutcome(attempt), successful = attempt.resume.status === "accepted";
-  return <article id={`restoration-${attempt.executionId}`} className="rounded-xl border border-[#dfe5dd] bg-white p-4">
+  return <article id={`restoration-${attempt.executionId}`} className={TESTING_PANEL}>
     <div className="flex flex-wrap items-start justify-between gap-3"><div>
       <h4 className="font-semibold text-[#202820]">{attempt.laneId}</h4>
       <span className={`mt-2 inline-block rounded-md px-2 py-1 text-xs font-semibold ${successful ? "bg-[#e6f5ed] text-[#087d50]" : ["stopped", "halted", "needs-input"].includes(attempt.state) ? "bg-[#fff0e9] text-[#a64235]" : "bg-[#f0f2ef] text-[#59655e]"}`}>{outcome}</span>
@@ -39,9 +40,9 @@ function Attempt({attempt, observedAt}: {attempt: LaneRestorationAttempt; observ
     </div>
     {attempt.actions.length || attempt.actionsTruncated ? <p className="mt-3 text-xs text-[#68746d]">Recorded cleanup operations: {attempt.actions.map(action => `${action.resourceId ?? "unknown resource"}: ${action.state}`).join(" · ")}{attempt.actionsTruncated ? " · additional operations omitted" : ""}</p> : null}
     <div className="mt-3 flex flex-wrap gap-3 text-xs font-medium text-[#087d50]">
-      {attempt.runId ? <a className="underline" href={`/?testRun=${encodeURIComponent(attempt.runId)}`}>Open run</a>
-        : attempt.requestId ? <a className="underline" href={`/?testRun=${encodeURIComponent(attempt.requestId)}`}>Open request</a> : <span className="font-normal text-[#68746d]">Run link unknown</span>}
-      {attempt.incidentId ? <a className="underline" href={`/?report=${encodeURIComponent(attempt.incidentId)}`}>Open incident</a> : <span className="font-normal text-[#68746d]">Incident link unknown</span>}
+      {attempt.runId ? <a className={TESTING_LINK} href={`/?testRun=${encodeURIComponent(attempt.runId)}`}>Open run</a>
+        : attempt.requestId ? <a className={TESTING_LINK} href={`/?testRun=${encodeURIComponent(attempt.requestId)}`}>Open request</a> : <span className="font-normal text-[#68746d]">Run link unknown</span>}
+      {attempt.incidentId ? <a className={TESTING_LINK} href={`/?report=${encodeURIComponent(attempt.incidentId)}`}>Open incident</a> : <span className="font-normal text-[#68746d]">Incident link unknown</span>}
     </div>
     <details className="mt-3 text-xs text-[#68746d]"><summary className="cursor-pointer">Recorded identities</summary>
       <dl className="mt-2 space-y-1 break-all"><div>Interruption: {attempt.interruptionId}</div><div>Agent execution: {attempt.executionId}</div>
@@ -68,13 +69,13 @@ export function LaneRestorationPage() {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {const id = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(id);}, []);
   return <div className="space-y-5"><div className="flex flex-wrap items-start justify-between gap-3"><div>
-    <h2 className="text-xl font-semibold">Lane restoration</h2><p className="mt-1 text-sm text-[#68746d]">Controller-recorded agent attempts and scheduling decisions. A stopped agent or a request for help is not successful restoration.</p>
-    <a href="/?systemHealth=1" className="mt-2 inline-block text-sm font-medium text-[#087d50] underline">Back to System health</a></div>
-    <button className="text-sm font-medium text-[#087d50] underline" onClick={() => void query.refetch()}>Refresh</button></div>
+    <h2 className="text-xl font-semibold">Lane restoration</h2><details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">About state repair</summary><p className="mt-2">Controller-recorded agent attempts and scheduling decisions. A stopped agent or a request for help is not successful restoration.</p></details>
+    <a href="/?systemHealth=1" className="mt-2 inline-block text-sm font-medium text-[#087d50] hover:underline">Back to System health</a></div>
+    <TestingButton className="text-sm" onClick={() => void query.refetch()}>Refresh</TestingButton></div>
     {query.isError ? <p className="text-sm text-[#a64235]">Restoration records could not refresh. Current status is unknown; any displayed history is the last received observation.</p> : null}
     {query.data?.hosts.map(host => <RestorationHost key={host.hostId} host={host} fresh={!query.isError && restorationHostIsFresh(host, now, query.data!.freshForMs)} />)}
     {!query.data?.hosts.length ? <p className="text-sm text-[#68746d]">{query.isPending ? "Loading restoration records…" : "No controller lane observation is available. Restoration status is unknown."}</p> : null}
     {query.data?.truncated ? <p className="text-xs text-[#a64235]">Only the first 32 reporting controllers are shown.</p> : null}
-    <p className="text-xs text-[#68746d]">Agent elapsed time starts at the recorded invocation. The lane handoff time and its ten-minute alert are separate. Missing start, end or receipt data stays unknown. This page does not start agents, answer questions or resume a lane.</p>
+    <details className="text-xs text-[#747780]"><summary className="cursor-pointer">Timing and receipt details</summary><p className="mt-2">Agent elapsed time starts at the recorded invocation. The lane handoff time and its ten-minute alert are separate. Missing start, end or receipt data stays unknown. This page does not start agents, answer questions or resume a lane.</p></details>
   </div>;
 }

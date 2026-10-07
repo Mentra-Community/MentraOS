@@ -8,6 +8,34 @@ import {ROUTINE_BUNDLE_BODY_BYTES, routineSourceRefSchema} from './types/framewo
 import {StorageService} from './services/storage/storage.service';
 import {createHash} from 'node:crypto';
 
+test("Core listener acknowledges authenticated completion after more than ten seconds", async () => {
+  const token = "synthetic-completion-host-" + "x".repeat(32);
+  const receipt = {entityId: "request", payloadSha256: "a".repeat(64), manifestSha256: "b".repeat(64)};
+  let calls = 0, requestSeen = "", hostSeen = "";
+  class Service extends FrameworkResultService {
+    override async complete(request: string, host: string): Promise<any> {
+      calls++; requestSeen = request; hostSeen = host;
+      await Bun.sleep(11_000);
+      return receipt;
+    }
+  }
+  const api = new Hono();
+  api.route("/api/internal/framework-results", createFrameworkResultsApi(new Service(), () => JSON.stringify({mini: token})));
+  const listener = spyOn(Bun, "serve");
+  const server = serveCore(api.fetch, 0), options = listener.mock.calls[0]![0];
+  listener.mockRestore();
+  const started = performance.now();
+  try {
+    expect(options.idleTimeout).toBe(60);
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/internal/framework-results/request/complete`,
+      {method: "POST", headers: {authorization: `Bearer ${token}`}, signal: AbortSignal.timeout(20_000)});
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(receipt);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(11_000);
+    expect(calls).toBe(1); expect(requestSeen).toBe("request"); expect(hostSeen).toBe("mini");
+  } finally {await server.stop(true);}
+}, 20_000);
+
 test("Core shutdown drains an admitted publication before disconnecting Mongo, once across repeated signals", async () => {
   let enter!: () => void, finish!: () => void, disconnected = false, disconnects = 0;
   const entered = new Promise<void>(resolve => enter = resolve);

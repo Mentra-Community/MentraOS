@@ -1,3 +1,5 @@
+import {HistoryStatus} from "../components/test-history-table";
+import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {frameworkRunHref} from "./routine-catalog";
 import {useState} from "react";
 import {AttemptHistory, AttemptLine, ChildReruns, RerunForm} from "./test-reruns";
@@ -19,9 +21,8 @@ export function readSuiteId(search: string) {
   const id = query.get("testSuite");
   return query.getAll("testSuite").length === 1 && id && frameworkIdentitySchema.safeParse(id).success ? id : null;
 }
-const panel = "rounded-2xl border border-[#e0e4de] bg-white p-6";
+const panel = TESTING_PANEL;
 const isFailure = (status: string) => ["failed", "setup-failed", "teardown-failed"].includes(status);
-const resultColor = (member: TestSuiteResult["members"][number]) => member.status === "pass" && member.publicationComplete === true ? "text-green-700" : isFailure(member.status) ? "text-red-700" : "text-[#68746d]";
 const pendingPassCount = (suite: TestSuiteResult) => suite.members.filter(member => member.status === "pass" && member.publicationComplete !== true).length;
 const memberStatus = (member: TestSuiteResult["members"][number]) => member.status === "pass" ? member.publicationComplete === true ? "Passed" : "Passed · evidence pending"
   : member.status === "not-run" ? "Did not run" : member.status === "waiting" ? "Awaiting result" : member.status;
@@ -39,7 +40,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
   const progress = useQuery({queryKey:["rerun-progress",suiteId],
     queryFn:()=>api<{members:{memberId:string;latest:RerunAttempt|null}[];children:{rerunId:string;reason:string}[]}>(`/api/admin/test-runs/reruns/suite/${encodeURIComponent(suiteId)}/progress`),refetchInterval:15000});
   if (result.isPending) return <p role="status">Loading test suite…</p>;
-  if (result.error) return <div role="alert" className={panel}><p>Could not load the test suite: {result.error.message}</p><button onClick={() => result.refetch()}>Try again</button></div>;
+  if (result.error) return <div role="alert" className={panel}><p>Could not load the test suite: {result.error.message}</p><TestingButton onClick={() => result.refetch()}>Try again</TestingButton></div>;
   const suite = result.data!;
   const presentation = suitePresentation(suite);
   const members = [...suite.members].sort((a, b) => {
@@ -61,40 +62,53 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
   if (suite.members.length < 2) {
     const member = suite.members[0];
     return <section className={panel}>
-      <a className="text-sm underline" href="/?testRuns=1">All test runs</a>
+      <a className={`${TESTING_LINK} text-sm`} href="/?testRuns=1">All test runs</a>
       <h2 className="mt-4 text-xl font-bold">Individual routine run</h2>
       <p className="mt-2">This job contains {suite.members.length} routine{suite.members.length === 1 ? "" : "s"} and is not a test suite.</p>
-      {member && <p className="mt-3">{member.routineId} · {memberStatus(member)}{member.runId && <> · <a className="underline" href={frameworkRunHref(member.runId)}>View run</a></>}</p>}
+      {member && <p className="mt-3">{member.routineId} · {memberStatus(member)}{member.runId && <> · <a className={TESTING_LINK} href={frameworkRunHref(member.runId)}>View run</a></>}</p>}
     </section>;
   }
   return <section className={panel}>
-    <a className="text-sm underline" href="/?testRuns=1">All test runs</a>
-    <div className="mt-4 flex items-start justify-between gap-4">
+    <a className={`${TESTING_LINK} text-sm`} href="/?testRuns=1">All test runs</a>
+    <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
       <div><h2 className="text-xl font-bold">{suite.channel === "dev" ? "Dev" : suite.channel} {suite.trigger} test suite</h2>
         <p className="mt-1 text-sm text-[#68746d]">{suite.build.release ?? suite.build.headSha.slice(0, 10)} · {suite.build.headSha.slice(0, 10)}</p></div>
-      <span className={`rounded-lg px-3 py-2 text-sm font-semibold ${presentation.color}`}>
+      <span className={`rounded-full px-3 py-1 text-xs font-medium ${presentation.color}`}>
         {presentation.label} · {suite.passed}/{suite.members.length} passed with complete evidence</span>
     </div>
-    <p className="mt-3 text-sm text-[#68746d]">Only passes with complete, uploaded evidence count in the header.
-      {pendingPassCount(suite) > 0 && ` ${pendingPassCount(suite)} passed run${pendingPassCount(suite) === 1 ? " has" : "s have"} pending evidence.`}</p>
+    <p className="mt-3 text-xs text-[#747780]">{pendingPassCount(suite) > 0 && `${pendingPassCount(suite)} passed · evidence pending`}</p>
     <p className="my-4 text-sm">Started {new Date(suite.startedAt).toLocaleString()}{suite.finishedAt ? ` · Finished ${new Date(suite.finishedAt).toLocaleString()} · ${runDuration(suite.startedAt, suite.finishedAt)}` : " · Refreshes every 15 seconds"}</p>
-    {suite.build.producerUrl ? <a className="text-sm underline" href={suite.build.producerUrl} target="_blank" rel="noreferrer">Dispatched job / build in GitHub</a> : null}
-    <div className="my-4"><button className="underline" disabled={!rerunnableFailures.length} onClick={()=>setDispatchMembers(rerunnableFailures.map(member=>member.memberId))}>Rerun failures</button></div>
+    {suite.build.producerUrl ? <a className={`${TESTING_LINK} text-sm`} href={suite.build.producerUrl} target="_blank" rel="noreferrer">Dispatched job / build in GitHub</a> : null}
+    <div className="my-4"><TestingButton disabled={!rerunnableFailures.length} onClick={()=>setDispatchMembers(rerunnableFailures.map(member=>member.memberId))}>Rerun failures</TestingButton></div>
     {dispatchMembers && <RerunForm key={dispatchMembers.join(",")} suiteId={suiteId} memberIds={dispatchMembers} onClose={()=>setDispatchMembers(null)}/>}
     {progress.data && <p className="my-3 text-sm">Repair progress: {members.filter(m=>isFailure(m.status)).length} originally failed · {members.filter(m=>isFailure(m.status)&&progress.data.members.some(p=>p.memberId===m.memberId&&p.latest?.status==="pass"&&p.latest.publicationComplete)).length} passed on rerun · {members.filter(m=>isFailure(m.status)&&progress.data.members.some(p=>p.memberId===m.memberId&&["queued","accepted","running","admission-pending"].includes(p.latest?.status??""))).length} pending · {members.filter(m=>isFailure(m.status)&&!progress.data.members.some(p=>p.memberId===m.memberId&&((p.latest?.status==="pass"&&p.latest.publicationComplete)||["queued","accepted","running","admission-pending"].includes(p.latest?.status??"")))).length} unresolved. Original verdict remains {suite.outcome}.</p>}
-    {progress.error && <p role="alert">Rerun progress unavailable. <button onClick={()=>progress.refetch()}>Retry</button></p>}
-    <ChildReruns suiteId={suiteId}/>
-    <div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm [&_th]:pr-4 [&_td]:pr-4 [&_td]:py-3 [&_td]:align-top"><thead><tr className="border-b text-[#68746d]"><th className="py-3">Started</th><th>Routine</th><th>Lane</th><th>Duration</th><th>Recording & steps</th><th className="min-w-[320px]">Latest rerun</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody>{members.map(member => <tr key={member.memberId} className="border-b last:border-0">
-        <td className="whitespace-nowrap py-4">{member.startedAt ? <time dateTime={member.startedAt}>{new Date(member.startedAt).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})}</time> : "—"}</td>
-        <td className="py-4 font-medium">{member.routineId}</td><td>{member.platform === "ios-on-mac" ? "Mac" : member.platform === "android" ? "Android" : "iOS"}</td>
-        <td>{runDuration(member.startedAt, member.finishedAt) ?? "—"}</td><td>{member.runId ? <a className="underline" href={frameworkRunHref(member.runId)}>View run</a> : "Not available yet"}</td>
-        <td>{latestAttempt(member.memberId) && <><AttemptLine attempt={latestAttempt(member.memberId)!}/><AttemptHistory suiteId={suiteId} memberId={member.memberId}/></>}</td>
-        <td className={resultColor(member)}>{memberStatus(member)}
-          {member.unavailableReason && <p className="mt-1 max-w-sm text-xs">{member.unavailableReason}</p>}</td>
-        <td><button type="button" title="Rerun" aria-label={`Rerun ${member.routineId} (${member.platform})`} disabled={!canRerun(member)}
-          className="rounded-md p-2 text-[#68746d] hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40" onClick={()=>setDispatchMembers([member.memberId])}><RefreshCw size={16} aria-hidden="true"/></button></td>
-      </tr>)}</tbody></table></div>
+    {progress.error && <p role="alert">Rerun progress unavailable. <TestingButton onClick={()=>progress.refetch()}>Retry</TestingButton></p>}
+    <details className="mt-3 text-sm"><summary className="cursor-pointer font-medium">Rerun batches{progress.data ? ` (${progress.data.children.length})` : ""}</summary><ChildReruns suiteId={suiteId}/></details>
+    <div className="mt-4 overflow-x-auto rounded-xl border border-[#e0e4de]">
+      <table aria-label="Suite routines" className="w-full text-left text-sm [&_th]:px-3 [&_th]:py-3 [&_td]:px-3 [&_td]:py-3 [&_td]:align-top">
+        <thead className="bg-[#f6f8fa]"><tr className="border-b text-xs font-medium text-[#747780]"><th>Started</th><th>Name</th><th>Duration</th><th>Lane</th><th>Tested build</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
+        <tbody>{members.map(member => <tr key={member.memberId} className="border-b last:border-0 hover:bg-[#fafbfa]">
+          <td className="whitespace-nowrap tabular-nums">{member.startedAt ? <time dateTime={member.startedAt}>{new Date(member.startedAt).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})}</time> : "—"}</td>
+          <td className="min-w-48">{member.runId || member.requestId
+            ? <a className={TESTING_LINK} href={frameworkRunHref(member.runId ?? member.requestId!)}>{member.routineId.replace(/[-_]+/g, " ")}</a>
+            : <><span className="font-medium">{member.routineId.replace(/[-_]+/g, " ")}</span><p className="mt-1 text-xs text-[#747780]">Not available yet</p></>}
+            {member.runId && <a className={`${TESTING_LINK} mt-1 block text-xs`} href={frameworkRunHref(member.runId)}>View run</a>}
+            {latestAttempt(member.memberId) && <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Latest rerun · {memberStatus({...member, ...latestAttempt(member.memberId)!}).replaceAll("-", " ")}</summary>
+              <AttemptLine attempt={latestAttempt(member.memberId)!}/><AttemptHistory suiteId={suiteId} memberId={member.memberId}/>
+            </details>}
+          </td>
+          <td className="whitespace-nowrap tabular-nums">{runDuration(member.startedAt, member.finishedAt) ?? "—"}</td>
+          <td className="whitespace-nowrap text-xs text-[#747780]">{member.platform === "ios-on-mac" ? "Mac" : member.platform === "android" ? "Android" : "iOS"}</td>
+          <td className="whitespace-nowrap text-xs" title={suite.build.headSha}>{suite.build.release ?? suite.build.headSha.slice(0, 10)}</td>
+          <td><HistoryStatus outcome={member.status === "pass" && member.publicationComplete !== true ? "evidence pending" : member.status}/>
+            {member.status === "not-run" && <span className="sr-only">Did not run</span>}
+            {member.unavailableReason && <details className="mt-2 min-w-40 max-w-xs text-xs text-[#747780]"><summary className="cursor-pointer">Failure reason</summary><p className="mt-2 break-words">{member.unavailableReason}</p></details>}
+          </td>
+          <td><TestingButton variant="ghost" size="icon-sm" title="Rerun" aria-label={`Rerun ${member.routineId} (${member.platform})`} disabled={!canRerun(member)}
+            onClick={()=>setDispatchMembers([member.memberId])}><RefreshCw size={16} aria-hidden="true"/></TestingButton></td>
+        </tr>)}</tbody>
+      </table>
+    </div>
     {failedRoutines.length ? <p className="mt-4 text-sm text-red-700">Failed: {failedRoutines.join(", ")}</p> : null}
     {incompleteRoutines.length ? <p className="mt-4 text-sm text-[#68746d]">Incomplete: {incompleteRoutines.join(", ")}</p> : null}
   </section>;
@@ -102,7 +116,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
 export function RecentTestSuites() {
   const result = useQuery({queryKey: ["test-suites"], queryFn: () => api<{suites: TestSuiteResult[]}>("/api/admin/test-runs/suite-index/list"), refetchInterval: 30000});
   if (result.isPending) return null;
-  if (result.error) return <p className="text-sm text-red-700">Test suites could not refresh. <button className="underline" onClick={() => result.refetch()}>Retry</button></p>;
+  if (result.error) return <p className="text-sm text-red-700">Test suites could not refresh. <TestingButton onClick={() => result.refetch()}>Retry</TestingButton></p>;
   if (!result.data?.suites.length) return null;
   return <section className={panel}><h2 className="text-xl font-bold">Recent test suites</h2><p className="my-2 text-sm text-[#68746d]">One dispatched job, with all of its routine results.</p>
     {result.data.suites.map(suite => <a key={suite.suiteId} className="flex justify-between gap-4 border-b py-3 last:border-0" href={`/?testSuite=${encodeURIComponent(suite.suiteId)}`}>

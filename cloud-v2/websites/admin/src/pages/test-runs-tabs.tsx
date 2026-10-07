@@ -7,11 +7,11 @@ export function TestRunsTabs({children}: {children: ReactNode}) {
   const id = useId();
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
   return <div className="space-y-5">
-    <div role="tablist" aria-label="Test run tools" className="flex gap-2 border-b border-[#e0e4de]">
+    <div role="tablist" aria-label="Test run tools" className="flex overflow-x-auto gap-1 border-b border-[#e0e4de]">
       {tabs.map((label, index) => <button key={label} ref={button => {buttons.current[index] = button;}}
         id={`${id}-tab-${index}`} role="tab" aria-selected={selected === index} aria-controls={`${id}-panel-${index}`}
         tabIndex={selected === index ? 0 : -1}
-        className={`border-b-2 px-4 py-3 text-sm font-semibold ${selected === index ? "border-[#16803a] text-[#16803a]" : "border-transparent text-[#68746d]"}`}
+        className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium ${selected === index ? "border-[#111217] text-[#111217]" : "border-transparent text-[#747780] hover:text-[#14151b]"}`}
         onClick={() => setSelected(index)} onKeyDown={event => {
           const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length
             : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;

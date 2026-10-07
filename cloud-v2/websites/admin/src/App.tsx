@@ -34,7 +34,7 @@ const ADMIN_NAV: ReadonlyArray<NavItem & { key: AdminPageKey }> = [
 
 const PAGE_META: Record<AdminPageKey, { title: string; body: string }> = {
   "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
-  "system-health": { title: "System health", body: "Host contact, worker status, device lanes and recorded disk space." },
+  "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
   incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
   "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
   workspaces: { title: "Workspaces", body: "Members, invitations, keys, settings and the audit log for each workspace." },
@@ -300,6 +300,7 @@ export function AdminPage() {
         </section>
       ) : null}
       {active === "incidents" ? <ReportsPage key={deepLinkReportId ?? "reports"} initialReportId={deepLinkReportId} /> : null}
+      <div className={active === "test-runs" || active === "routine-catalog" || active === "system-health" ? "testing-workspace" : undefined}>
       {active === "test-runs" ? <SystemHealthSummary /> : null}
       {active === "system-health" ? <SystemHealthPage restoration={restoration} lane={laneSelection} /> : null}
       {active === "routine-catalog" ? <RoutineCatalogPage /> : null}
@@ -319,6 +320,7 @@ export function AdminPage() {
           </section> : <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />}
         </TestRunsTabs>
       ) : null}
+      </div>
       {active === "workspaces" ? (
         <WorkspacesPage
           initialWorkspaceId={principal.workspaces[0]?.workspaceId ?? null}

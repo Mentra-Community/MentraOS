@@ -1,3 +1,4 @@
+import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {useQuery} from "@tanstack/react-query"
 import {
   restorationHostIsFresh,
@@ -33,7 +34,7 @@ export function FrameworkHealth({host, fresh}: {host: LaneRestorationHost; fresh
       {binding ? (
         <p className="mt-2 text-sm">
           Version {binding.version} · Routine API {binding.routineApiVersion} ·{" "}
-          <a className="text-blue-700 underline" href={source(binding.revision)}>
+          <a className={TESTING_LINK} href={source(binding.revision)}>
             {binding.revision.slice(0, 10)}
           </a>
         </p>
@@ -58,7 +59,7 @@ export function FrameworkHealth({host, fresh}: {host: LaneRestorationHost; fresh
             Pending framework update:{" "}
             {target ? (
               <>
-                <a className="text-blue-700 underline" href={source(target.revision)}>
+                <a className={TESTING_LINK} href={source(target.revision)}>
                   Version {target.version} · Routine API {target.routineApiVersion} · {target.revision.slice(0, 10)}
                 </a>
               </>
@@ -90,7 +91,7 @@ export function FrameworkHealth({host, fresh}: {host: LaneRestorationHost; fresh
           <ol className="mt-2 space-y-2 text-xs">
             {history.map((entry) => (
               <li key={`${entry.incarnation}:${entry.binding.installationId}`}>
-                <a className="text-blue-700 underline" href={source(entry.binding.revision)}>
+                <a className={TESTING_LINK} href={source(entry.binding.revision)}>
                   Version {entry.binding.version} · Routine API {entry.binding.routineApiVersion} ·{" "}
                   {entry.binding.revision.slice(0, 10)}
                 </a>
@@ -121,7 +122,7 @@ export function LaneHealthHost({
   return (
     <div className="mt-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold text-[#14151b]">{host.hostId}</h3>
+        <h3 className="text-sm font-semibold text-[#14151b]">{host.hostId}</h3>
         <p className="text-xs text-[#747780]">
           {fresh ? "Controller reporting" : "No recent controller report"} · Last observed {time(host.observedAt)} ·
           Received {time(host.receivedAt)}
@@ -137,7 +138,7 @@ export function LaneHealthHost({
             return (
               <article key={lane.id} className="rounded-xl border border-[#e0e4de] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h4 className="font-semibold text-[#14151b]">
+                  <h4 className="text-sm font-semibold text-[#14151b]">
                     {linkHistory ? (
                       <a href={laneHistoryHref(host.hostId, lane.id)} className="hover:underline">
                         {lane.id}
@@ -159,7 +160,7 @@ export function LaneHealthHost({
                 )}
                 {linkHistory && (
                   <a
-                    className="mt-3 inline-block text-sm font-medium text-blue-700 underline"
+                    className="mt-3 inline-block text-sm font-medium text-blue-700 hover:underline"
                     href={laneHistoryHref(host.hostId, lane.id)}>
                     View lane history
                   </a>
@@ -180,18 +181,15 @@ export function LaneHealthSection({now}: {now: number}) {
     refetchInterval: 30_000,
   })
   return (
-    <section aria-label="Device lanes" className="rounded-2xl border border-[#dfe5dd] bg-white p-5">
+    <section aria-label="Device lanes" className={TESTING_PANEL}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold">Device lanes</h2>
-          <p className="mt-1 text-sm text-[#747780]">
-            Live controller reports of each lane's state and scheduling mode. Idle means no routine is executing;
-            resource readiness is checked when a job is admitted.
-          </p>
+          <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">About lane status</summary><p className="mt-2">Live controller reports of each lane's state and scheduling mode. Idle means no routine is executing; resource readiness is checked when a job is admitted.</p></details>
         </div>
-        <button className="text-sm font-medium text-blue-700 underline" onClick={() => void query.refetch()}>
+        <TestingButton className="text-sm" onClick={() => void query.refetch()}>
           Refresh lanes
-        </button>
+        </TestingButton>
       </div>
       {query.isError && (
         <p role="alert" className="mt-3 text-sm text-red-700">
