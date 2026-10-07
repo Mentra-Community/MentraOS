@@ -636,7 +636,7 @@ test("history requests hide reruns by default and preserve exact cursor when ena
   const client = new QueryClient();
   client.setQueryData(["test-history", false], {pages: [{entries: [historyRun], nextCursor: null}], pageParams: [undefined]});
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage/></QueryClientProvider>);
-  expect(html).toContain('role="switch" aria-checked="false"');
+  expect(html).toContain('type="checkbox" role="switch"');
   expect(html).toContain("Show reruns");
   client.clear();
 });
@@ -721,6 +721,9 @@ test("combined history renders chronological suites and standalone runs across l
             outcome: "running",
             expectedCount: 2,
             passed: 1,
+            failedCount: 0,
+            rerunCount: 0,
+            lanes: [],
             build: {headSha: "a".repeat(40)},
           },
         ],
@@ -738,7 +741,7 @@ test("combined history renders chronological suites and standalone runs across l
   expect(html).toContain('href="/?testSuite=nightly-two"')
   expect(html).toContain('href="/?testRun=standalone-run"')
   expect(html.indexOf("nightly-two")).toBeLessThan(html.indexOf("standalone-run"))
-  expect(html).toContain("1/2 passed")
+  expect(html).toContain("0/2 failed")
   expect(html).toContain("dev.577")
   expect(html).toContain("More history")
   expect(html).toContain('role="search" aria-label="Search routines"')
@@ -746,7 +749,7 @@ test("combined history renders chronological suites and standalone runs across l
   expect(html).toContain("Load more history to search older entries")
   expect(html.match(/standalone-run/g)).toHaveLength(1)
 })
-test("history and scoped lists show passed totals and skipped counts", () => {
+test("history reserves failure totals for suites and omits single-run step totals", () => {
   const client = new QueryClient()
   const counted = {...historyRun, stepCounts: {passed: 2, total: 5, skipped: 1}}
   client.setQueryData(["test-history", false], {
@@ -763,6 +766,9 @@ test("history and scoped lists show passed totals and skipped counts", () => {
             outcome: "failed",
             expectedCount: 3,
             passed: 1,
+            failedCount: 0,
+            rerunCount: 0,
+            lanes: [],
             skipped: 2,
             build: historyRun.build,
           },
@@ -778,14 +784,14 @@ test("history and scoped lists show passed totals and skipped counts", () => {
         <FrameworkRunsPage scope={scope} />
       </QueryClientProvider>,
     )
-  expect(render()).toContain("2/5 passed, 1 skipped")
-  expect(render()).toContain("1/3 passed with complete evidence, 2 skipped")
+  expect(render()).not.toContain("2/5 passed")
+  expect(render()).toContain("0/1 failed, 2 skipped")
   const scope = {channel: "dev", headSha: "b".repeat(40)}
   client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {
     pages: [{runs: [counted], nextCursor: null}],
     pageParams: [undefined],
   })
-  expect(render(scope)).toContain("2/5 passed, 1 skipped")
+  expect(render(scope)).not.toContain("2/5 passed")
   client.clear()
 })
 test("history distinguishes empty data and cached refresh failures while keeping filtered build links scoped", () => {
@@ -847,7 +853,7 @@ test("initial history failure offers retry instead of claiming empty history", (
   expect(html).toContain(">Retry</button>")
   expect(html).not.toContain("Loading test history")
   expect(html).not.toContain("No test suites or routine runs yet")
-  expect(html).toContain('role="switch" aria-checked="false"')
+  expect(html).toContain('type="checkbox" role="switch"')
   expect(html).toContain("Show reruns")
 })
 
@@ -855,7 +861,7 @@ test("history visibility control stays available while the selected query is loa
   const client = new QueryClient();
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage/></QueryClientProvider>);
   expect(html).toContain("Loading test history");
-  expect(html).toContain('role="switch" aria-checked="false"');
+  expect(html).toContain('type="checkbox" role="switch"');
   expect(html).toContain("Show reruns");
   expect(html).not.toContain("No test suites or routine runs yet");
   client.clear();
@@ -891,6 +897,9 @@ test("unavailable history details retain their links without hiding neighboring 
             outcome: "passed",
             expectedCount: 2,
             passed: 2,
+            failedCount: 0,
+            rerunCount: 0,
+            lanes: [],
             build: {headSha: "a".repeat(40)},
           },
         ],
@@ -909,7 +918,7 @@ test("unavailable history details retain their links without hiding neighboring 
   expect(html).toContain('href="/?testRun=standalone-run"')
   expect(html).toContain('href="/?testSuite=older-suite"')
   expect(html.match(/Details unavailable\./g)).toHaveLength(2)
-  expect(html).toContain("2/2 passed with complete evidence")
+  expect(html).toContain("0/2 failed")
   expect(html.indexOf("standalone-run")).toBeLessThan(html.indexOf("unreadable-run"))
   expect(html.indexOf("unreadable-suite")).toBeLessThan(html.indexOf("older-suite"))
 })
