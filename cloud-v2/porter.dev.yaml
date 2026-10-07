@@ -4,12 +4,6 @@ name: cloud-dev
 envGroups:
   - cloud-v2-dev-doppler
 
-# Porter applies environment variables at application level.
-env:
-  ADMIN_URL: "https://admin.dev.mentraglass.com"
-  PORTAL_URL: "https://portal.dev.mentraglass.com"
-  MENTRA_STORE_INTERNAL_URL: "https://store.dev.us-west-2.mentraglass.com"
-
 build:
   method: docker
   context: ../
@@ -19,11 +13,6 @@ services:
   - name: core
     type: web
     run: bun packages/core/src/index.ts
-    # Category routing must survive stale environment-group snapshots. The bot
-    # token stays in the environment group; these channel IDs are public config.
-    env:
-      CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL: C0C5GK21552
-      CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING: C0C5ET2V65P
     port: 3000
     instances: 1
     cpuCores: 0.25
@@ -56,8 +45,6 @@ services:
     ramMegabytes: 2048
     domains:
       - name: runtime.dev.us-west-2.mentraglass.com
-    env:
-      AUDIO_WORKERS: "1"
     livenessCheck:
       enabled: true
       httpPath: /healthz

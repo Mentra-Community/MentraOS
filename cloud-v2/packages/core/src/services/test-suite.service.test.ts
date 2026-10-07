@@ -3,7 +3,7 @@ import {afterEach, beforeEach, expect, spyOn, test} from "bun:test";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
 import {TestRequestModel} from "../models/test-request.model";
-import {TestSuiteService} from "./test-suite.service";
+import {TestSuiteService, terminalNightlySummary} from "./test-suite.service";
 import {requestInputDigest} from "./test-request.service";
 import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 import {testSuiteSchema} from "../types/test-suite.types";
@@ -13,6 +13,41 @@ beforeEach(() => {
     read() {return this;}, readConcern() {return this;}, lean: async () => []} as any));
 });
 afterEach(() => {for (const mock of mocks.splice(0)) mock.mockRestore();});
+test("terminal list summaries preserve original verdicts and refuse contradictory displayed bindings", () => {
+  const suite = testSuiteSchema.parse({suiteId: "compact-terminal", channel: "dev", trigger: "nightly", startedAt: "2026-10-07T11:00:00Z",
+    build: {headSha: "a".repeat(40)}, members: [
+      {memberId: "one", requestId: "one", routineId: "notes", platform: "ios-on-mac"},
+      {memberId: "two", requestId: "two", routineId: "camera", platform: "android"},
+    ]});
+  const members = suite.members.map(member => ({...member, requestId: member.requestId!, definitionRevision: "b".repeat(40),
+    routineRevision: "b".repeat(40), hostId: "mini", laneId: member.platform, build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: suite.build.headSha}}));
+  const plan = {suiteId: suite.suiteId, occurrenceId: "compact-occurrence", startedAt: suite.startedAt, trigger: suite.trigger, members};
+  const result = {...plan, expectedCount: 2, finishedAt: "2026-10-07T12:00:00Z", members: members.map((member, index) => ({...member,
+    status: index === 0 ? "pass" : "incomplete", publicationComplete: index === 0,
+    ...(index === 0 ? {runId: member.requestId, preparedLaneId: member.laneId,
+      runStartedAt: suite.startedAt, runFinishedAt: "2026-10-07T11:02:00Z"} : {})}))};
+  const before = JSON.stringify(result);
+  expect(terminalNightlySummary(suite, plan, result)).toMatchObject({outcome: "failed", passed: 1,
+    members: [{status: "pass", publicationComplete: true}, {status: "not-run", publicationComplete: false}]});
+  expect(JSON.stringify(result)).toBe(before);
+  for (const mutate of [
+    (r: typeof result) => {r.members[0]!.requestId = "foreign";},
+    (r: typeof result) => {r.members[0]!.definitionRevision = "c".repeat(40);},
+    (r: typeof result) => {r.members[0]!.build.headSha = "c".repeat(40);},
+    (r: typeof result) => {r.members[0]!.hostId = "other";},
+    (r: typeof result) => {r.members[0]!.preparedLaneId = "android";},
+    (r: typeof result) => {r.members[0]!.runId = undefined;},
+    (r: typeof result) => {r.members[0]!.status = "waiting";},
+    (r: typeof result) => {r.members[0]!.publicationComplete = false; r.members[0]!.runId = undefined;},
+    (r: typeof result) => {r.members[1]!.memberId = r.members[0]!.memberId;},
+  ]) {
+    const changed = structuredClone(result); mutate(changed);
+    expect(() => terminalNightlySummary(suite, plan, changed)).toThrow("frozen membership");
+  }
+  // Selection failure legitimately has no admitted request or prepared lane.
+  const unadmitted = structuredClone(suite); delete unadmitted.members[1]!.requestId;
+  expect(terminalNightlySummary(unadmitted, plan, result)).toMatchObject({passed: 1, members: [{status: "pass"}, {status: "not-run"}]});
+});
 test('historical suite member results remain readable without routine or framework provenance', async () => {
   const startedAt = '2026-10-01T11:00:00Z', finishedAt = '2026-10-01T11:01:00Z';
   const run = {schemaVersion: 1, hostId: 'mini', requestId: 'old-member', routineId: 'notes', definitionRevision: 'a'.repeat(40),

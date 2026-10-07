@@ -54,6 +54,7 @@ import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
+import {cloudTtsDownloadTimeoutMs, downloadCloudTtsAudio} from "./CloudTtsAudio"
 import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
 import {summarizeTranscriptionRoutes, transcriptionDeliveryRoute} from "./TranscriptionRouting"
 import {TranscriptionSubscriptions, type TranscriptionListenerRegistration} from "./TranscriptionSubscriptions"
@@ -2730,13 +2731,16 @@ class LocalMiniappRuntime {
 
       const playCloudTts = async (fallbackToOffline: boolean): Promise<boolean> => {
         if (run.cancelled) return true
-        let source: Awaited<ReturnType<typeof cloudClientService.tts.speak>>
+        let cloudAudio: TtsSynthesisResult
         try {
-          source = await cloudClientService.tts.speak(cloudText, {
+          const source = await cloudClientService.tts.speak(cloudText, {
             ...(voiceExplicit && voice !== "default" ? {voice_id: voice} : {}),
             ...(modelId ? {model_id: modelId} : {}),
             ...(voiceSettings ? {voice_settings: voiceSettings} : {}),
           })
+          if (run.cancelled) return true
+          // Never hand the streaming URL to the media player; see CloudTtsAudio.
+          cloudAudio = await downloadCloudTtsAudio(source.audioUrl, cloudTtsDownloadTimeoutMs(cloudText))
         } catch (cloudErr) {
           if (run.cancelled) return true
           const error = cloudErr instanceof Error ? cloudErr.message : String(cloudErr)
@@ -2748,14 +2752,18 @@ class LocalMiniappRuntime {
           return true
         }
 
-        if (run.cancelled) return true
+        const generated = cloudAudio
+        if (run.cancelled) {
+          await Promise.resolve(generated.cleanup?.())
+          return true
+        }
 
         run.playbackRequestId = audioRequestId
         await Promise.resolve(
           audioPlaybackService.play(
             {
               requestId: audioRequestId,
-              audioUrl: source.audioUrl,
+              audioUrl: generated.audioUrl,
               startupTimeoutMs: 5000,
               appId: packageName,
               volume,
@@ -2763,6 +2771,9 @@ class LocalMiniappRuntime {
             },
             (_respId, success, error, duration, completionReason) => {
               if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
+              void Promise.resolve(generated.cleanup?.()).catch((cleanupError) => {
+                console.warn(`${LOG_TAG}: cloud TTS cleanup failed`, cleanupError)
+              })
               if (!success && fallbackToOffline) {
                 void playOfflineTts("cloud tts playback failed").then((started) => {
                   if (!started) {

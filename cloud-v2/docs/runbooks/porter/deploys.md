@@ -76,16 +76,13 @@ get layer-cached so re-builds are faster).
 
 ## Where do env vars come from?
 
-Porter v2 reads application-level `env:` in `porter.*.yaml`, including
-`MENTRA_STORE_INTERNAL_URL`. Service-level `env:` is not applied by the current
-Porter CLI; do not put required configuration there.
-
-Linked `envGroups:` supply shared configuration and secrets. We use
-`cloud-v2-dev-doppler`, `cloud-v2-staging-doppler`, and
-`cloud-v2-prod-doppler-sync`; see
-[`doppler/porter-integration.md`](../doppler/porter-integration.md). Existing
-secret-backed entries can override a manifest value, so verify the merged
-environment after a change.
+Doppler owns every application setting and secret, including
+`MENTRA_STORE_INTERNAL_URL`. Each `porter.*.yaml` links exactly one Doppler
+environment group (`cloud-v2-dev-doppler`, `cloud-v2-staging-doppler`,
+`cloud-v2-prod-doppler-sync`, …) and carries no `env:` block; the Doppler
+Porter health workflow rejects manifest `env:` and Porter app overrides. See
+[`doppler/porter-integration.md`](../doppler/porter-integration.md) for the
+group inventory and how to add or change a setting.
 
 Use `porter env pull --app cloud-dev --merged --file <secure-local-file>`
 to inspect effective values. The output contains secrets: keep it private and

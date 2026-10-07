@@ -2,13 +2,14 @@ import {HistoryStatus, runDisplayStatus} from "../components/test-history-table"
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {RunRerunLinks} from "./test-reruns";
-import {useEffect, useRef, useState} from "react";
+import {useEffect, useId, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
 import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
 import type {FrameworkRun, RecordedFrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
 import {RoutineSearch, useRoutineSearch, matchesRoutineSearch, hasRoutineFilters, type RoutineSearchFilters, type SearchableRoutine} from "../components/routine-search";
 import {RecordingVideo} from "../components/recording-video";
+import {Switch} from "../components/ui/switch";
 import {TestHistoryTable} from "../components/test-history-table";
 import {testRunLocation} from "../lib/test-run-links";
 import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
@@ -56,8 +57,7 @@ export function RoutineCatalogList() {
   const routines = catalog.data.routines;
   const filtered = routines.filter(row => matchesRoutineSearch(searchableRoutine(row), filters));
   return <div className="space-y-5">
-    <section className={PANEL}><h2 className="text-lg font-semibold">Routine catalog</h2>
-
+    <section className={PANEL} aria-label="Routine filters">
       <RoutineSearch filters={filters} onChange={setFilters} routines={routines.map(searchableRoutine)} countLabel={`Showing ${filtered.length} of ${routines.length} routines`} />
     </section>
     {catalog.error && <p role="alert">Routines could not refresh: {catalog.error.message}</p>}
@@ -86,21 +86,32 @@ export function RoutineCatalogCard({routine, onNightlyChange, saving = false, pr
   return <article className={PANEL}>
     <p className="text-sm text-[#68746d]">{routine.platform === "android" ? "Android" : "iOS on Mac"}</p>
     <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1"><h3 className="text-lg font-semibold"><a className={TESTING_LINK} href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
-      <label className={`flex min-h-11 shrink-0 items-center gap-2.5 text-sm font-medium text-[#5d6068] ${saving ? "cursor-wait opacity-60" : "cursor-pointer"}`}>
-        <input className="peer sr-only" type="checkbox" role="switch" aria-label={`${routine.definition.title}: Runs nightly`} checked={routine.nightlyEnabled ?? true} disabled={saving} onChange={event => onNightlyChange?.(event.target.checked)} />
-        <span aria-hidden="true" className="inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-[#747780] p-0.5 shadow-inner transition-colors duration-200 peer-checked:bg-[#111217] peer-focus-visible:ring-2 peer-focus-visible:ring-[#111217] peer-focus-visible:ring-offset-2 peer-checked:[&>span]:translate-x-5 motion-reduce:transition-none">
-          <span className="h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 motion-reduce:transition-none" />
-        </span>
-        <span>Runs nightly</span>
-      </label></div>
+      <Switch aria-label={`${routine.definition.title}: Runs nightly`} checked={routine.nightlyEnabled ?? true} disabled={saving} onChange={event => onNightlyChange?.(event.target.checked)}>Runs nightly</Switch></div>
     {preferenceError && <p role="alert" className="mt-2 text-sm">{preferenceError}</p>}
-    <p className="mt-2 text-sm text-[#747780]">{routine.definition.purpose}</p>
+    {routine.latestAttempt && <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#747780]">
+      <span>Latest</span>
+      <a className={TESTING_LINK} href={frameworkRunHref(routine.latestAttempt.runId)} aria-label={`Latest run: ${runDisplayStatus(routine.latestAttempt.outcome, routine.latestAttempt.evidenceStatus, routine.latestAttempt.uploadsComplete)}`}>
+        <HistoryStatus outcome={runDisplayStatus(routine.latestAttempt.outcome, routine.latestAttempt.evidenceStatus, routine.latestAttempt.uploadsComplete)} />
+      </a>
+      <time dateTime={routine.latestAttempt.startedAt} title={new Date(routine.latestAttempt.startedAt).toLocaleString()}>{new Date(routine.latestAttempt.startedAt).toLocaleString(undefined, {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"})}</time>
+      {routine.latestAttempt.definitionRevision !== routine.definitionRevision && <span>Earlier source</span>}
+    </div>}
     <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[#eceeeb] pt-3">
-      {routine.example ? <a className={TESTING_LINK} href={frameworkRunHref(routine.example.runId)}>Latest passing example</a> : <span className="text-xs text-[#747780]">Passing example pending</span>}
+      {routine.example ? <a className={TESTING_LINK} href={frameworkRunHref(routine.example.runId)}>{routine.example.definitionRevision !== routine.definitionRevision ? "Earlier passing example" : "Passing example"}</a> : <span className="text-xs text-[#747780]">Passing example pending</span>}
       <a className={TESTING_LINK} href={`${routineHref(routine.routineId, routine.platform)}#run-history`}>Run history</a>
     </div>
-    {routine.latestAttempt && <p className="mt-2 text-sm">Latest attempt: <a className={TESTING_LINK} href={frameworkRunHref(routine.latestAttempt.runId)}>{routine.latestAttempt.outcome}</a> · {new Date(routine.latestAttempt.startedAt).toLocaleString()}{routine.latestAttempt.definitionRevision !== routine.definitionRevision && " · earlier definition"}</p>}
-    {routine.example && <p className="mt-2 text-sm text-[#68746d]">Example: {new Date(routine.example.startedAt).toLocaleString()} · revision <code>{routine.example.definitionRevision.slice(0, 8)}</code>{routine.example.definitionRevision !== routine.definitionRevision && " · earlier definition"}</p>}
+    <details className="mt-3 text-sm text-[#747780]">
+      <summary className="w-fit cursor-pointer rounded-sm text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#111217]">Details</summary>
+      <div className="mt-3 space-y-2 break-words">
+        <p>{routine.definition.purpose}</p>
+        <p>Current source: <code className="break-all">{routine.definitionRevision}</code></p>
+        {routine.latestAttempt && <p>Latest run source: <code className="break-all">{routine.latestAttempt.definitionRevision}</code>{routine.latestAttempt.definitionRevision !== routine.definitionRevision && " (earlier definition)"}</p>}
+        {routine.example && <>
+          <p>Example recorded {new Date(routine.example.startedAt).toLocaleString()}.</p>
+          <p>Example source: <code className="break-all">{routine.example.definitionRevision}</code>{routine.example.definitionRevision !== routine.definitionRevision && " (earlier definition; this recording does not qualify the current source)"}</p>
+        </>}
+      </div>
+    </details>
   </article>;
 }
 
@@ -350,39 +361,55 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
   </section>;
 }
 
-export function FrameworkRunsPage({scope}: {scope?: Record<string, string>}) {
-  return scope ? <FilteredFrameworkRunsPage scope={scope}/> : <TestHistoryList/>;
+export function FrameworkRunsPage({scope, historySource}: {scope?: Record<string, string>; historySource?: HistoryOrigin}) {
+  return scope ? <FilteredFrameworkRunsPage scope={scope}/> : <TestHistoryList initialOrigin={historySource}/>;
 }
-function TestHistoryList() {
+export const HISTORY_ORIGINS = [["pr", "Pull Requests"], ["branch", "Nightly"], ["manual", "Other"]] as const;
+export type HistoryOrigin = typeof HISTORY_ORIGINS[number][0];
+export function historyOrigin(entry: TestHistoryEntry): HistoryOrigin {
+  if (entry.kind === "unavailable") return "manual";
+  if (entry.kind === "run" && entry.rerun || entry.kind === "suite" && entry.trigger === "manual") return "manual";
+  const channel = entry.kind === "suite" ? entry.channel : entry.build.channel;
+  return channel === "pr" ? "pr" : channel === "dev" || channel === "staging" ? "branch" : "manual";
+}
+function TestHistoryList({initialOrigin = "pr"}: {initialOrigin?: HistoryOrigin}) {
   const [filters, setFilters] = useRoutineSearch();
-  const [includeReruns, setIncludeReruns] = useState(false);
+  const [origin, setOrigin] = useState<HistoryOrigin>(initialOrigin);
+  const tabId = useId();
+  const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const catalog = useSearchCatalog();
-  const history = useInfiniteQuery({queryKey: ["test-history", includeReruns], initialPageParam: undefined as string | undefined,
-    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(testHistoryListPath(includeReruns, pageParam), {signal, timeoutMs: 30000}),
+  const history = useInfiniteQuery({queryKey: ["test-history", true], initialPageParam: undefined as string | undefined,
+    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(testHistoryListPath(true, pageParam), {signal, timeoutMs: 30000}),
     getNextPageParam: page => page.nextCursor ?? undefined, retry: false, retryOnMount: false,
     refetchInterval: query => query.state.error ? false : 15000});
   const entries = history.data?.pages.flatMap(page => page.entries) ?? [];
   const routines = catalog.data?.routines ?? [];
-  const filtered = entries.filter(entry => matchesHistorySearch(entry, routines, filters));
+  const originEntries = entries.filter(entry => entry.kind === "unavailable" || historyOrigin(entry) === origin);
+  const filtered = originEntries.filter(entry => matchesHistorySearch(entry, routines, filters));
   const members = entries.flatMap<{routineId: string; platform: string}>(entry => entry.kind === "suite" ? entry.members ?? [] : entry.kind === "run" ? [entry] : []);
   const options = [...routines.map(searchableRoutine), ...members.map(member => runSearchMetadata(member, routines))];
   return <section className={PANEL}>
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Test history</h2>
-      <TestingButton type="button" role="switch" aria-checked={includeReruns} onClick={() => setIncludeReruns(value => !value)}
-        className="inline-flex items-center gap-2 rounded-md py-1 text-sm text-[#57606a] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0969da]">
-        <span aria-hidden="true" className={`relative h-5 w-9 rounded-full transition-colors ${includeReruns ? "bg-[#0969da]" : "bg-[#d0d7de]"}`}><span className={`absolute top-0.5 size-4 rounded-full bg-white transition-transform ${includeReruns ? "translate-x-[18px]" : "translate-x-0.5"}`}/></span>Show reruns
-      </TestingButton>
+    <div role="tablist" aria-label="Dispatch source" className="mb-4 flex gap-1 overflow-x-auto border-b border-[#e0e4de]">
+      {HISTORY_ORIGINS.map(([value, label], index) => <button key={value} ref={button => {tabs.current[index] = button;}}
+        role="tab" id={`${tabId}-${value}`} aria-selected={origin === value} aria-controls={`${tabId}-history`} tabIndex={origin === value ? 0 : -1}
+        className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium ${origin === value ? "border-[#111217] text-[#111217]" : "border-transparent text-[#747780] hover:text-[#14151b]"}`}
+        onClick={() => setOrigin(value)} onKeyDown={event => {
+          const next = event.key === "ArrowRight" ? (index + 1) % HISTORY_ORIGINS.length : event.key === "ArrowLeft" ? (index + HISTORY_ORIGINS.length - 1) % HISTORY_ORIGINS.length : event.key === "Home" ? 0 : event.key === "End" ? HISTORY_ORIGINS.length - 1 : null;
+          if (next !== null) {event.preventDefault(); setOrigin(HISTORY_ORIGINS[next][0]); tabs.current[next]?.focus();}
+        }}>{label}</button>)}
     </div>
-    <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${entries.length} loaded entries`} />
-    <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p></details>
+    <div role="tabpanel" id={`${tabId}-history`} aria-labelledby={`${tabId}-${origin}`} tabIndex={0}>
+    <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${originEntries.length} loaded entries`} />
+    <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Tabs and filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p></details>
     {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
     {history.isPending && <p role="status" className="mt-3">Loading test history…</p>}
     {history.error && <p role="alert" className="mt-3">{history.data ? "History could not refresh" : "Could not load test history"}: {history.error.message} <TestingButton onClick={() => history.refetch()}>Retry</TestingButton></p>}
     {history.data && !entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
-    {history.data && !!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches your filters.</p>}
+    {history.data && !!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches this tab and your filters.</p>}
     {!!filtered.length && <TestHistoryTable entries={filtered} routines={routines}/>}
     {history.hasNextPage && <TestingButton className="mt-4" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? "Loading…" : "More history"}</TestingButton>}
+    </div>
   </section>;
 }
 export function testHistoryListPath(includeReruns: boolean, cursor?: string) {

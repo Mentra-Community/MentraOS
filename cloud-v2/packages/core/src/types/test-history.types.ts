@@ -22,7 +22,7 @@ export interface FrameworkRunSummary {
 export interface FrameworkRunPage {runs: FrameworkRunSummary[]; nextCursor: string | null}
 export type TestHistoryEntry = ({kind: "run"; rerun?: {rerunId: string; parentSuiteId?: string}} & FrameworkRunSummary) | {
   kind: "suite"; suiteId: string; channel: TestSuite["channel"]; trigger: TestSuite["trigger"];
-  startedAt: string; finishedAt?: string; outcome: string; expectedCount: number; passed: number; skipped?: number; build: TestSuite["build"];
+  startedAt: string; finishedAt?: string; outcome: string; expectedCount: number; passed: number; skipped?: number; build: TestSuite["build"] & {repository?: string; prNumber?: number};
   /** Accepted child rerun jobs, independent of the current history page and member count. */
   rerunCount: number; failedCount: number; lanes: {hostId: string; laneId: string}[];
   members?: (Pick<TestSuite["members"][number], "routineId" | "platform"> & {laneId?: string; hostId?: string})[];

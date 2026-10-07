@@ -8,6 +8,11 @@ const suite: TestHistoryEntry = {kind: "suite", suiteId: "private-suite-id", cha
   expectedCount: 2, passed: 2, rerunCount: 4, failedCount: 0, lanes: [{hostId: "private-host-id", laneId: "android-primary"}],
   build: {headSha: "a".repeat(40), release: "3.3.0-dev.698"}};
 
+const run: Extract<TestHistoryEntry, {kind: "run"}> = {kind: "run", runId: "private-run-id", requestId: "request", routineId: "notes-phone",
+  hostId: "mini", laneId: "mac", platform: "ios-on-mac", startedAt: suite.startedAt, finishedAt: suite.finishedAt!,
+  outcome: "pass", uploadsComplete: true, evidenceStatus: "complete", stepCounts: {passed: 12, total: 14, skipped: 2},
+  build: {...suite.build, repository: "Mentra-Community/MentraOS", channel: "dev"}};
+
 test("history is a semantic table with named links, exact lane pairs and accepted suite rerun count", () => {
   const html = renderToStaticMarkup(<TestHistoryTable entries={[suite]} routines={[]}/>);
   expect(html).toContain('<table data-slot="table"');
@@ -36,6 +41,72 @@ test("history distinguishes failure and pass from neutral cancelled, with textua
   expect(cancelled).toContain("text-[#656d76]");
   expect(cancelled).not.toContain("text-[#cf222e]");
   expect(cancelled).not.toContain("amber");
+});
+
+test("mixed history uses distinct kind icons, accessible kind names and a subtle suite row", () => {
+  const html = renderToStaticMarkup(<TestHistoryTable entries={[suite, run]} routines={[]}/>);
+  const [, suiteRow, runRow] = html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)!;
+  expect(suiteRow).toContain("lucide-layers");
+  expect(suiteRow).toContain('<span class="sr-only">Test suite: </span>Dev nightly suite');
+  expect(suiteRow.split(">", 1)[0]).toContain("bg-[#f6f8fa]");
+  expect(suiteRow.split(">", 1)[0]).toContain("hover:bg-[#eaeef2]");
+  expect(runRow).toContain("lucide-file-text");
+  expect(runRow).toContain('<span class="sr-only">Routine run: </span>notes phone');
+  expect(runRow.split(">", 1)[0]).not.toContain("hover:bg-[#eaeef2]");
+  expect(html).not.toContain("font-bold");
+  expect(html).not.toContain("font-semibold");
+});
+
+test("suite failure counts exclude authoritative skipped members from the denominator", () => {
+  const html = renderToStaticMarkup(<TestHistoryTable entries={[{...suite, outcome: "failed", expectedCount: 8, passed: 3, failedCount: 2, skipped: 3}]} routines={[]}/>);
+  expect(html).toContain("2/5 failed, 3 skipped");
+  expect(html).toContain(">Failed</span>");
+  expect(html).not.toContain("passed with complete evidence");
+  expect(html).not.toContain("2/8 failed");
+});
+
+test("zero failures and waiting suite members keep their original qualified status", () => {
+  const passed = renderToStaticMarkup(<TestHistoryTable entries={[{...suite, rerunCount: 0}]} routines={[]}/>);
+  expect(passed).toContain("0/2 failed");
+  expect(passed).toContain(">Passed</span>");
+  expect(passed).not.toContain("skipped");
+  const running = renderToStaticMarkup(<TestHistoryTable entries={[{...suite, outcome: "running", finishedAt: undefined, expectedCount: 8, passed: 1, failedCount: 0, skipped: 2}]} routines={[]} now={Date.parse(suite.startedAt) + 60_000}/>);
+  expect(running).toContain("0/6 failed, 2 skipped");
+  expect(running).toContain(">In progress</span>");
+  expect(running).not.toContain("text-[#1a7f37]");
+  expect(running).not.toContain("text-[#cf222e]");
+  const allSkipped = renderToStaticMarkup(<TestHistoryTable entries={[{...suite, outcome: "failed", passed: 0, failedCount: 0, skipped: 2}]} routines={[]}/>);
+  expect(allSkipped).toContain("0/0 failed, 2 skipped");
+  expect(allSkipped).toContain(">Incomplete</span>");
+});
+
+test("individual run status omits step fractions and keeps evidence qualification", () => {
+  const passed = renderToStaticMarkup(<TestHistoryTable entries={[run]} routines={[]}/>);
+  expect(passed).toContain(">Passed</span>");
+  expect(passed).not.toContain("12/14");
+  expect(passed).not.toContain("2 skipped");
+  const pending = renderToStaticMarkup(<TestHistoryTable entries={[{...run, uploadsComplete: false}]} routines={[]}/>);
+  expect(pending).toContain("Evidence pending");
+  expect(pending).toContain("Evidence upload pending");
+  expect(pending).not.toContain("12/14");
+});
+
+test("unavailable records retain suite and run distinctions without guessed failure counts", () => {
+  const entries: TestHistoryEntry[] = [
+    {kind: "unavailable", sourceKind: "suite", id: suite.suiteId, startedAt: suite.startedAt, message: "Details unavailable."},
+    {kind: "unavailable", sourceKind: "run", id: run.runId, startedAt: run.startedAt, message: "Details unavailable."},
+  ];
+  const html = renderToStaticMarkup(<TestHistoryTable entries={entries} routines={[]}/>);
+  const [, suiteRow, runRow] = html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)!;
+  expect(suiteRow).toContain("lucide-layers");
+  expect(suiteRow).toContain(">Test suite</a>");
+  expect(suiteRow.split(">", 1)[0]).toContain("hover:bg-[#eaeef2]");
+  expect(runRow).toContain("lucide-file-text");
+  expect(runRow).toContain(">Routine run</a>");
+  expect(runRow.split(">", 1)[0]).not.toContain("hover:bg-[#eaeef2]");
+  expect(html.match(/Details unavailable\./g)).toHaveLength(2);
+  expect(html.match(/>Unavailable<\/span>/g)).toHaveLength(2);
+  expect(html).not.toContain("failed");
 });
 
 test("suite without reruns omits the badge and an included rerun links to its authoritative batch", () => {
@@ -69,4 +140,19 @@ test("terminal evidence failure is distinct from pending uploads on an otherwise
   expect(pending).toContain("Evidence pending");
   expect(pending).toContain("Evidence upload pending");
   expect(pending).not.toContain("Evidence failed");
+});
+
+test("PR builds show the PR link followed by the recorded commit link", () => {
+  const html = renderToStaticMarkup(<TestHistoryTable entries={[{...run, build: {...run.build, channel: "pr", prNumber: 698, producerUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/123"}}]} routines={[]}/>);
+  expect(html).toContain('href="https://github.com/Mentra-Community/MentraOS/pull/698"');
+  expect(html).toContain('>#698</a>');
+  expect(html).toContain(`href="https://github.com/Mentra-Community/MentraOS/commit/${run.build.headSha}"`);
+  expect(html).not.toContain("actions/runs/123");
+});
+
+test("a suite without a recorded repository does not invent a commit destination", () => {
+  const html = renderToStaticMarkup(<TestHistoryTable entries={[{...suite, channel: "pr"}]} routines={[]}/>);
+  expect(html).toContain("PR number unavailable");
+  expect(html).toContain(suite.build.headSha.slice(0, 10));
+  expect(html).not.toContain("github.com/Mentra-Community/MentraOS/commit/");
 });

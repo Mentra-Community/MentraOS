@@ -271,8 +271,9 @@ Core and Runtime remain in the coordinated Cloud V2 release. The private Store's
 backend is `https://store.dev.us-west-2.mentraglass.com` and its website is
 `https://apps-dev.mentraglass.com`. These names do not select a dev catalog.
 The CLI and bundled Store select their Store explicitly, independently of Core's
-environment. Official Core Porter definitions point to the same Store for developer
-attestation verification. Local/self-hosted services can configure explicit URLs.
+environment. Each official Core environment's Doppler config points
+`MENTRA_STORE_INTERNAL_URL` at the same Store for developer attestation
+verification and workspace package counts. Local/self-hosted services can configure explicit URLs.
 
 Store preserves its existing data, developer accounts, storage and signing keys.
 Moving the website to `apps.mentraglass.com` later is a domain change, not a catalog
@@ -291,7 +292,7 @@ Core's developer-attestation requests keep using its own service secret
 
 Core owns browser login, callback, organization selection and logout at
 `/api/console/auth/*` for both public websites. Configure Core
-`ADMIN_URL` and `PORTAL_URL` (included in the environment Porter files) and
+`ADMIN_URL` and `PORTAL_URL` (set in each environment's Doppler config) and
 its existing `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD`.
 Allowlist both website origins plus `/api/console/auth/callback` in WorkOS,
 and their origins as sign-out return URLs. Local callbacks use ports 5174 and 5175. These routes do not call Store and preserve incident report deep links.

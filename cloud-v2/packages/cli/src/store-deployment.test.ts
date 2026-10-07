@@ -1,14 +1,24 @@
 import {expect, test} from "bun:test"
 import {readFileSync} from "node:fs"
-import {DEFAULT_STORE_URL} from "./config"
+
+// Doppler owns application settings (docs/runbooks/doppler/porter-integration.md), so
+// Core's Store URL comes from each Cloud V2 app's linked Doppler group. The hourly
+// Doppler Porter health audit requires every key the contract lists for that group.
+const contract = JSON.parse(
+  readFileSync(new URL("../../../../.github/production-release/doppler-porter-contract.json", import.meta.url), "utf8"),
+) as {groups: Array<{name: string; keys: string[]}>}
 
 test.each(["porter.yaml", "porter.dev.yaml", "porter.staging.yaml", "porter.prod.yaml", "porter.debug.yaml", "porter.isaiah.yaml"])(
-  "%s configures Core with the CLI's Store through Porter's supported application environment",
+  "%s configures Core's Store URL through its Doppler group, not a Porter override",
   (file) => {
     const config = Bun.YAML.parse(readFileSync(new URL(`../../../${file}`, import.meta.url), "utf8")) as {
-      env?: Record<string, string>; services: Array<{env?: Record<string, string>}>
+      env?: Record<string, string>; envGroups?: string[]; services: Array<{env?: Record<string, string>}>
     }
-    expect(config.env?.MENTRA_STORE_INTERNAL_URL).toBe(DEFAULT_STORE_URL)
-    expect(config.services.every(service => service.env?.MENTRA_STORE_INTERNAL_URL === undefined)).toBe(true)
+    expect(config.env).toBeUndefined()
+    expect(config.services.every(service => service.env === undefined)).toBe(true)
+    expect(config.envGroups).toHaveLength(1)
+    const group = contract.groups.find(candidate => candidate.name === config.envGroups?.[0])
+    // Core needs the Store's package-count secret whenever it has a Store URL.
+    expect(group?.keys).toEqual(expect.arrayContaining(["MENTRA_STORE_INTERNAL_URL", "CLOUD_CORE_STORE_SERVICE_SECRET"]))
   },
 )

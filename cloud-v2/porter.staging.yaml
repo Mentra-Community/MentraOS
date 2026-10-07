@@ -4,12 +4,6 @@ name: cloud-staging
 envGroups:
   - cloud-v2-staging-doppler
 
-# Porter applies environment variables at application level.
-env:
-  ADMIN_URL: "https://admin.staging.mentraglass.com"
-  PORTAL_URL: "https://portal.staging.mentraglass.com"
-  MENTRA_STORE_INTERNAL_URL: "https://store.dev.us-west-2.mentraglass.com"
-
 build:
   method: docker
   context: ../
@@ -51,8 +45,6 @@ services:
     ramMegabytes: 2048
     domains:
       - name: runtime.staging.us-west-2.mentraglass.com
-    env:
-      AUDIO_WORKERS: "1"
     livenessCheck:
       enabled: true
       httpPath: /healthz

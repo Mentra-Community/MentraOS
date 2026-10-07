@@ -12,4 +12,3 @@
 .testing-workspace code, .testing-workspace [role="alert"] { overflow-wrap: anywhere; }
 .testing-workspace details[open] > summary { margin-bottom: 0.5rem; }
 .testing-workspace [role="alert"] { color: #cf222e; }
-.testing-workspace button[role="switch"] { background: transparent; border: 0; box-shadow: none; padding: 0; }
