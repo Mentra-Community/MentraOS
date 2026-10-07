@@ -54,3 +54,19 @@ test("incomplete suites and unpublished passes remain neutral instead of claimin
   expect(html).toContain("Incomplete");
   expect(html).not.toContain("text-[#cf222e]");
 });
+
+
+test("terminal evidence failure is distinct from pending uploads on an otherwise passing run", () => {
+  const run: Extract<TestHistoryEntry, {kind: "run"}> = {kind: "run", runId: "run", requestId: "request", routineId: "notes",
+    hostId: "mini", laneId: "mac", platform: "ios-on-mac", startedAt: suite.startedAt, finishedAt: suite.finishedAt!,
+    outcome: "pass", uploadsComplete: false, evidenceStatus: "failed", build: {...suite.build, repository: "Mentra-Community/MentraOS", channel: "dev"}};
+  const failed = renderToStaticMarkup(<TestHistoryTable entries={[run]} routines={[]}/>);
+  expect(failed).toContain("Evidence failed");
+  expect(failed).not.toContain("Evidence pending");
+  expect(failed).not.toContain("Evidence upload pending");
+  expect(failed).not.toContain("text-[#1a7f37]");
+  const pending = renderToStaticMarkup(<TestHistoryTable entries={[{...run, evidenceStatus: "complete"}]} routines={[]}/>);
+  expect(pending).toContain("Evidence pending");
+  expect(pending).toContain("Evidence upload pending");
+  expect(pending).not.toContain("Evidence failed");
+});

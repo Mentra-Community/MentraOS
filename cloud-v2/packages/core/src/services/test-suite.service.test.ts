@@ -191,7 +191,7 @@ test("suite rejection projects the exact request reason without fabricating a ru
     read() {return this;}, readConcern() {return this;}, lean: async () => [row]} as any));
   const result = await new TestSuiteService().detail(payload.suiteId);
   expect(result.members[0]).toMatchObject({status: "not-run", publicationComplete: false,
-    unavailableReason: "missing-definition: Selected source is not installed.", rejectedAt: rejection.rejectedAt});
+    unavailableReason: "missing-definition: Selected source is not installed.", rejectedAt: rejection.rejectedAt, hostId: "mini", laneId: "phone"});
   expect(result.members[0]!.runId).toBeUndefined();
   expect(result.passed).toBe(0);
   row.hostRejection.inputSha256 = "c".repeat(64);
@@ -286,4 +286,53 @@ test("nightly projection exposes only prepared source and preserves full frozen 
     changed.members[0]!.inputSha256 = requestInputDigest(altered);
     expect(() => nightlySuiteProjection(suite, plan, changed)).toThrow("frozen input");
   }
+});
+
+
+test("ordinary waiting members expose exact queued and preparing lane bindings before a run exists", async () => {
+  const input = {routineId: "notes", platform: "ios-on-mac", definitionRevision: "a".repeat(40), laneId: "mac", resources: [],
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
+  const source = {channel: "dev", buildRunId: 21, publicationAttempt: 1};
+  const build = {...input.build, kind: "android-apk", source,
+    archive: {name: "app", url: "https://artifactscdn.mentraglass.com/app", size: 10, sha256: "c".repeat(64)},
+    receipt: {url: "https://artifactscdn.mentraglass.com/receipt", size: 10, sha256: "d".repeat(64)}};
+  const intent = {requestId: "preparing", routineId: "captions", platform: "android", routineRevision: "a".repeat(40), laneId: "android", source, build};
+  const payload = {suiteId: "waiting-lanes", channel: "dev", trigger: "manual", startedAt: "2026-10-07T11:00:00Z", build: {headSha: input.build.headSha},
+    members: [{memberId: "mac", requestId: "queued", routineId: input.routineId, platform: input.platform, definitionRevision: input.definitionRevision},
+      {memberId: "android", requestId: intent.requestId, routineId: intent.routineId, platform: intent.platform, definitionRevision: intent.routineRevision}]};
+  mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue({read() {return this;}, readConcern() {return this;}, lean: async () => ({payload})} as any));
+  mocks.push(spyOn(TestRunModel, "find").mockReturnValue({select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => []} as any));
+  const requests = [{requestId: "queued", hostId: "mini", input, inputSha256: requestInputDigest(input), state: "queued"},
+    {requestId: intent.requestId, hostId: "second-host", dispatchIntent: intent, dispatchIntentSha256: requestInputDigest(intent), state: "preparing"}];
+  mocks.push(spyOn(TestRequestModel, "find").mockReturnValue({select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => requests} as any));
+  const result = await new TestSuiteService().detail(payload.suiteId);
+  expect(result.members).toEqual([expect.objectContaining({status: "waiting", hostId: "mini", laneId: "mac"}),
+    expect.objectContaining({status: "waiting", hostId: "second-host", laneId: "android"})]);
+  expect(result.passed).toBe(0);
+  expect(result.members.every(member => !member.runId)).toBe(true);
+  requests[0]!.inputSha256 = "f".repeat(64);
+  requests[1]!.dispatchIntentSha256 = "f".repeat(64);
+  const mismatched = await new TestSuiteService().detail(payload.suiteId);
+  expect(mismatched.members.every(member => !("hostId" in member) && !("laneId" in member))).toBe(true);
+});
+
+test("request location enriches an old completion without changing its frozen verdict or reading later runs", async () => {
+  const input = {routineId: "notes", platform: "ios-on-mac", definitionRevision: "a".repeat(40), laneId: "mac", resources: [],
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
+  const frozen = {suiteId: "old-location", channel: "dev", trigger: "manual", startedAt: "2026-10-07T11:00:00Z", finishedAt: "2026-10-07T11:01:00Z",
+    build: {headSha: input.build.headSha}, outcome: "failed", passed: 0, failedRoutines: [input.routineId],
+    members: [{memberId: "mac", requestId: "old-request", routineId: input.routineId, platform: input.platform, definitionRevision: input.definitionRevision,
+      status: "not-run", publicationComplete: false}]};
+  const before = JSON.stringify(frozen);
+  mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue({read() {return this;}, readConcern() {return this;}, lean: async () => ({completedResult: frozen})} as any));
+  const request = {requestId: "old-request", hostId: "mini", input, inputSha256: requestInputDigest(input)};
+  mocks.push(spyOn(TestRequestModel, "find").mockReturnValue({select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => [request]} as any));
+  const reads = spyOn(TestRunModel, "find"); mocks.push(reads);
+  const result = await new TestSuiteService().detail(frozen.suiteId);
+  expect(result).toEqual({...frozen, members: [{...frozen.members[0], hostId: "mini", laneId: "mac"}]} as any);
+  expect(JSON.stringify(frozen)).toBe(before);
+  expect(reads).not.toHaveBeenCalled();
+  request.input = {...input, build: {...input.build, headSha: "c".repeat(40)}};
+  request.inputSha256 = requestInputDigest(request.input);
+  expect(await new TestSuiteService().detail(frozen.suiteId)).toEqual(frozen as any);
 });

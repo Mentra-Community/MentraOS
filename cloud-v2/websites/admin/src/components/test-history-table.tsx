@@ -64,6 +64,7 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
   const duration = entry.finishedAt ? runDuration(entry.startedAt, entry.finishedAt) : elapsedDuration(now - Date.parse(entry.startedAt));
   const lanes = suite ? entry.lanes ?? [] : [{hostId: entry.hostId, laneId: entry.laneId}];
   const outcome = suite && entry.outcome === "failed" && entry.failedCount === 0 ? "incomplete"
+    : !suite && entry.outcome === "pass" && entry.evidenceStatus === "failed" ? "evidence-failed"
     : !suite && entry.outcome === "pass" && (entry.evidenceStatus !== "complete" || !entry.uploadsComplete) ? "evidence pending" : entry.outcome;
   return <TableRow>
     <TableCell><StartedAt value={entry.startedAt}/></TableCell>
@@ -82,8 +83,8 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
       <HistoryStatus outcome={outcome}/>
       {suite ? <p className={MUTED}>{entry.passed}/{entry.expectedCount} passed with complete evidence{entry.skipped ? `, ${entry.skipped} skipped` : ""}</p>
         : <>{entry.stepCounts && <p className={MUTED}>{entry.stepCounts.passed}/{entry.stepCounts.total} passed{entry.stepCounts.skipped ? `, ${entry.stepCounts.skipped} skipped` : ""}</p>}
-          {entry.evidenceStatus === "failed" && <p className={`${MUTED} text-[#cf222e]`}>Evidence failed</p>}
-          {!entry.uploadsComplete && <p className={MUTED}>Evidence upload pending</p>}</>}
+          {entry.evidenceStatus === "failed" && outcome !== "evidence-failed" && <p className={`${MUTED} text-[#cf222e]`}>Evidence failed</p>}
+          {entry.evidenceStatus !== "failed" && !entry.uploadsComplete && <p className={MUTED}>Evidence upload pending</p>}</>}
     </TableCell>
   </TableRow>;
 }
