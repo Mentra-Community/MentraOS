@@ -61,6 +61,13 @@ private struct PhotoLibrarySaveResult {
     let timedOut: Bool
 }
 
+/// MentraJS calls get their own serial queue. Expo runs every module's default-queue
+/// AsyncFunction on one shared serial queue, so a blocking call in another module held every
+/// host→miniapp message behind it: the ~25s offline STT model extraction after login kept
+/// miniapps from spawning and starved running ones of PINGs until the host respawned them.
+/// Serial, so spawn, dispatch and kill still run in the order JS issued them.
+private let mentraJsQueue = DispatchQueue(label: "com.mentra.mentrajs-bridge", qos: .userInitiated)
+
 public class CrustModule: Module {
     public func definition() -> ModuleDefinition {
         Name("Crust")
@@ -282,7 +289,7 @@ public class CrustModule: Module {
                 polyfillBundle: polyfillBundle,
                 miniappJs: miniappJs
             )
-        }
+        }.runOnQueue(mentraJsQueue)
 
         /// Evaluate an arbitrary script inside the named context. Returns
         /// the JS return value bridged to a JSON-friendly Swift type, or
@@ -290,19 +297,19 @@ public class CrustModule: Module {
         /// + tests; production code paths use mentraJsDispatchToJs.
         AsyncFunction("mentraJsEvaluate") { (packageName: String, source: String) -> Any? in
             return JSCRuntime.shared.evaluate(packageName: packageName, source: source)
-        }
+        }.runOnQueue(mentraJsQueue)
 
         /// Tear down a JS context. Cancels timers, drops refs, forces GC.
         AsyncFunction("mentraJsKill") { (packageName: String) -> Void in
             JSCRuntime.shared.kill(packageName: packageName)
-        }
+        }.runOnQueue(mentraJsQueue)
 
         /// Push an event / response envelope into the named context's
         /// globalThis.__deliver. Used by MentraJSRouter for
         /// glasses-status broadcasts and request/response correlation.
         AsyncFunction("mentraJsDispatchToJs") { (packageName: String, envelope: [String: Any]) -> Void in
             JSCRuntime.shared.dispatchToJs(packageName: packageName, envelope: envelope)
-        }
+        }.runOnQueue(mentraJsQueue)
 
         /// Set the installed manifest for a miniapp so the dispatcher's
         /// permission gate can authorize sensitive `__dispatch` calls.
@@ -311,7 +318,7 @@ public class CrustModule: Module {
                 packageName: packageName,
                 manifest: InstalledMiniappManifest(permissions: Set(permissions))
             )
-        }
+        }.runOnQueue(mentraJsQueue)
 
         /// Diagnostic: list all live packageNames.
         Function("mentraJsAlivePackages") { () -> [String] in
@@ -323,7 +330,7 @@ public class CrustModule: Module {
         /// the context is dead.
         AsyncFunction("mentraJsDebugForceGC") { (packageName: String) -> Bool in
             return JSCRuntime.shared.debugForceGC(packageName: packageName)
-        }
+        }.runOnQueue(mentraJsQueue)
 
         /// Read the bundled MentraJS polyfill (startup.js) from the iOS
         /// pod's resource bundle. The host calls this once on app boot,

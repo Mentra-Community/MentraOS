@@ -12,6 +12,10 @@ private func codedBridgeError(_ error: BluetoothSdkError) -> Exception {
     Exception(name: error.code, description: error.message, code: error.code)
 }
 
+/// Offline model archives take tens of seconds to extract. Android runs this on Dispatchers.IO;
+/// on Expo's shared default queue it would hold every other module's AsyncFunction behind it.
+private let modelExtractionQueue = DispatchQueue(label: "com.mentra.model-extraction", qos: .utility)
+
 public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private var sdk: MentraBluetoothSDK?
 
@@ -844,7 +848,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("extractTarBz2") { (sourcePath: String, destinationPath: String) -> Bool in
             return STTTools.extractTarBz2(sourcePath: sourcePath, destinationPath: destinationPath)
-        }
+        }.runOnQueue(modelExtractionQueue)
 
         // MARK: - TTS Model Management
 
