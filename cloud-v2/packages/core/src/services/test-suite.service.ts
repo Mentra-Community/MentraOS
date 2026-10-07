@@ -1,14 +1,17 @@
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, recordedFrameworkRunSchema} from "../types/framework-run.types";
+import type {PipelineStage} from "mongoose";
 import {z} from "zod";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
 import {TestRequestModel} from "../models/test-request.model";
 import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun, type SuiteRejection} from "../types/test-suite.types";
 import {TestRunError} from "./test-result-error";
-import {hostRejectionSchema, requestInputDigest} from "./test-request.service";
-import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
+import {hostRejectionSchema, requestInputDigest, type StoredRequest} from "./test-request.service";
+import {frameworkBuildSchema, frameworkIdentitySchema, recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
 import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
 import {NightlyRoutineService, nightlyPreparedInput, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
+import {frameworkResultSummaryFields, verifiedFrameworkResultSummary} from "./framework-result.service";
+import {nativeRunFilter} from "./framework-run-summary.service";
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
 
@@ -111,7 +114,182 @@ function withRequestLanes(suite: ReturnType<typeof summarizeSuite>, requests: Bo
   })};
 }
 
+function suiteRejections(requests: BoundRequest[]): SuiteRejection[] {
+  return requests.filter(request => request.hostRejection !== undefined).map(request => {
+    const rejection = hostRejectionSchema.safeParse(request.hostRejection), input = recordedFrameworkRequestInputSchema.safeParse(request.input);
+    if (!rejection.success || !input.success || request.state !== "terminal" || request.terminalStatus !== "not-run"
+      || rejection.data.requestId !== request.requestId || rejection.data.hostId !== request.hostId
+      || rejection.data.inputSha256 !== request.inputSha256 || requestInputDigest(input.data) !== request.inputSha256)
+      throw new TestRunError(503, "suite member rejection identity is invalid; no verdict available");
+    return {requestId: request.requestId, routineId: input.data.routineId, platform: input.data.platform,
+      definitionRevision: input.data.definitionRevision, channel: input.data.build.channel, headSha: input.data.build.headSha,
+      rejectedAt: rejection.data.rejectedAt, reason: `${rejection.data.code}: ${rejection.data.reason}`};
+  });
+}
+
+type SuiteSummary = ReturnType<typeof summarizeSuite>;
+export type SuiteSummaryRead = SuiteSummary | Error;
+
+const compactNightlyMember = {
+  memberId: "$$member.memberId", requestId: "$$member.requestId", routineId: "$$member.routineId",
+  platform: "$$member.platform", definitionRevision: "$$member.definitionRevision", routineRevision: "$$member.routineRevision",
+  hostId: "$$member.hostId", laneId: {$ifNull: ["$$member.dispatchIntent.laneId", "$$member.input.laneId"]},
+  preparedLaneId: "$$member.input.laneId", status: "$$member.status", publicationComplete: "$$member.publicationComplete",
+  runId: "$$member.runId", runStartedAt: "$$member.runStartedAt", runFinishedAt: "$$member.runFinishedAt",
+  build: {$let: {vars: {build: {$ifNull: ["$$member.build", "$$member.input.build"]}}, in: {
+    repository: "$$build.repository", channel: "$$build.channel", headSha: "$$build.headSha", prNumber: "$$build.prNumber"}}},
+};
+const compactNightly = (field: string, open = false) => ({suiteId: `$${field}.suiteId`, occurrenceId: `$${field}.occurrenceId`,
+  startedAt: `$${field}.startedAt`, trigger: `$${field}.trigger`, finishedAt: `$${field}.finishedAt`,
+  expectedCount: `$${field}.expectedCount`, members: {$map: {input: `$${field}.members`, as: "member", in: {...compactNightlyMember, ...(open ? {dispatchIntent: "$$member.dispatchIntent"} : {})}}}});
+export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId: 1, payload: 1, finishedAt: 1, completedResult: 1,
+  nightlyPlan: {$cond: [{$eq: [{$ifNull: ["$nightlyPlan", null]}, null]}, "$$REMOVE",
+    {$cond: [{$ne: [{$ifNull: ["$nightlyResult", null]}, null]}, compactNightly("nightlyPlan"), compactNightly("nightlyPlan", true)]}]},
+  nightlyResult: {$cond: [{$ne: [{$ifNull: ["$nightlyResult", null]}, null]}, compactNightly("nightlyResult"), "$$REMOVE"]},
+}};
+interface CompactNightlyMember {
+  memberId: string; requestId: string; routineId: string; platform: string; definitionRevision: string; routineRevision?: string;
+  hostId?: string; laneId?: string; preparedLaneId?: string; build: {repository?: string; channel?: string; headSha?: string; prNumber?: number};
+  status?: string; publicationComplete?: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string;
+}
+interface CompactNightlyReceipt {suiteId: string; occurrenceId: string; startedAt: string; trigger: string;
+  finishedAt?: string; expectedCount?: number; members: CompactNightlyMember[]}
+
+/** List integrity covers displayed bindings and verdicts; the detail reader verifies complete artifact/input digests. */
+export function terminalNightlySummary(suite: TestSuite, plan: CompactNightlyReceipt, result: CompactNightlyReceipt): SuiteSummary {
+  if (!result.finishedAt) throw new TestRunError(503, "Nightly summary has no terminal receipt");
+  return nightlyHistorySummary(suite, plan, result);
+}
+
+function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, result: CompactNightlyReceipt): SuiteSummary {
+  const invalid = () => {throw new TestRunError(503, "Nightly summary differs from its frozen membership or receipt");};
+  if (!testSuiteSchema.safeParse(suite).success || plan.suiteId !== suite.suiteId || result.suiteId !== suite.suiteId
+    || plan.occurrenceId !== result.occurrenceId || plan.startedAt !== suite.startedAt || result.startedAt !== suite.startedAt
+    || plan.trigger !== suite.trigger || result.trigger !== suite.trigger || result.expectedCount !== suite.members.length
+    || plan.members.length !== suite.members.length || result.members.length !== suite.members.length
+    || result.finishedAt !== undefined && (!Number.isFinite(Date.parse(result.finishedAt)) || Date.parse(result.finishedAt) < Date.parse(suite.startedAt))
+    || new Set(plan.members.map(member => member.memberId)).size !== plan.members.length
+    || new Set(result.members.map(member => member.memberId)).size !== result.members.length) invalid();
+  const members = suite.members.map(member => {
+    const expected = plan.members.find(row => row.memberId === member.memberId), receipt = result.members.find(row => row.memberId === member.memberId);
+    if (!expected || !receipt || member.requestId !== undefined && expected.requestId !== member.requestId || receipt.requestId !== expected.requestId
+      || expected.routineId !== member.routineId || receipt.routineId !== expected.routineId
+      || expected.platform !== member.platform || receipt.platform !== expected.platform
+      || !frameworkRunIdSchema.safeParse(expected.requestId).success || !/^[a-f0-9]{40}$/.test(expected.definitionRevision)
+      || expected.hostId !== undefined && !frameworkIdentitySchema.safeParse(expected.hostId).success
+      || expected.laneId !== undefined && !frameworkIdentitySchema.safeParse(expected.laneId).success
+      || expected.build && !frameworkBuildSchema.safeParse(expected.build).success
+      || expected.definitionRevision !== receipt.definitionRevision || member.definitionRevision && member.definitionRevision !== expected.definitionRevision
+      || expected.routineRevision !== receipt.routineRevision || expected.hostId !== receipt.hostId
+      || requestInputDigest(JSON.parse(JSON.stringify(expected.build ?? null))) !== requestInputDigest(JSON.parse(JSON.stringify(receipt.build ?? null)))
+      || expected.build?.headSha && expected.build.headSha !== (member.headSha ?? suite.build.headSha)
+      || expected.build?.channel && expected.build.channel !== suite.channel
+      || expected.laneId !== receipt.laneId || receipt.preparedLaneId && receipt.preparedLaneId !== expected.laneId
+      || !["pass", "failed", "setup-failed", "teardown-failed", "cancelled", "incomplete", "not-run", ...(!result.finishedAt ? ["waiting"] : [])].includes(receipt.status ?? "")
+      || typeof receipt.publicationComplete !== "boolean"
+      || ["pass", "failed", "setup-failed", "teardown-failed", "cancelled"].includes(receipt.status ?? "") && !receipt.runId
+      || receipt.runId && (!expected.build || !expected.hostId || !expected.laneId)
+      || receipt.publicationComplete && (!receipt.runId || !receipt.preparedLaneId)
+      || receipt.runId && (receipt.runId !== receipt.requestId || !receipt.runStartedAt || !receipt.runFinishedAt
+        || !Number.isFinite(Date.parse(receipt.runStartedAt)) || !Number.isFinite(Date.parse(receipt.runFinishedAt))
+        || Date.parse(receipt.runFinishedAt) < Date.parse(receipt.runStartedAt))) invalid();
+    return {...member, status: receipt!.status === "incomplete" ? "not-run" : receipt!.status!,
+      publicationComplete: receipt!.publicationComplete, ...(expected!.hostId ? {hostId: expected!.hostId} : {}),
+      ...(expected!.laneId ? {laneId: expected!.laneId} : {}),
+      ...(receipt!.runId ? {runId: receipt!.runId, startedAt: receipt!.runStartedAt, finishedAt: receipt!.runFinishedAt} : {})};
+  });
+  const passed = members.filter(member => member.status === "pass" && member.publicationComplete).length;
+  return {...suite, ...(result.finishedAt ? {finishedAt: result.finishedAt} : {}), members, passed,
+    outcome: !result.finishedAt ? "running" : passed === members.length ? "passed" : "failed",
+    failedRoutines: [...new Set(members.filter(member => member.status !== "waiting"
+      && (member.status !== "pass" || !member.publicationComplete)).map(member => member.routineId))]};
+}
+
 export class TestSuiteService {
+  /** One page reads existing frozen receipts and batches live inputs and verified summaries. */
+  async summaries(suiteIds: string[], deadline: number): Promise<Map<string, SuiteSummaryRead>> {
+    if (suiteIds.length > 100 || suiteIds.some(id => !frameworkRunIdSchema.safeParse(id).success))
+      throw new TestRunError(400, "invalid suite summary query");
+    if (!suiteIds.length) return new Map();
+    const remaining = () => {
+      const timeoutMS = deadline - Date.now();
+      if (timeoutMS <= 0) throw new TestRunError(503, "Test history query timed out. Try again.");
+      return {timeoutMS};
+    };
+    const rows = await TestSuiteModel.aggregate<{suiteId: string; payload?: TestSuite; nightlyPlan?: NightlyPlan | CompactNightlyReceipt;
+      nightlyResult?: CompactNightlyReceipt; completedResult?: SuiteSummary; finishedAt?: string}>([
+      {$match: {suiteId: {$in: suiteIds}}}, {$limit: suiteIds.length + 1}, suiteHistoryProjection,
+    ]).read("primary").readConcern("majority").option(remaining()).exec();
+    if (rows.length > suiteIds.length) throw new TestRunError(503, "Suite identity is ambiguous");
+    const membersToRead = (row: typeof rows[number]) => {
+      const members = row.nightlyPlan ? (row.nightlyPlan as NightlyPlan).members : row.payload?.members;
+      return Array.isArray(members) ? members.filter(member => !row.nightlyPlan || "dispatchIntent" in member && member.dispatchIntent) : [];
+    };
+    const requestIds = [...new Set(rows.flatMap(row => {
+      if (row.nightlyPlan && row.nightlyResult) return [];
+      const suite = row.completedResult as SuiteSummary | undefined;
+      if (suite) return Array.isArray(suite.members) ? suite.members.flatMap(member => member.requestId && (!member.hostId || !member.laneId) ? [member.requestId] : []) : [];
+      return membersToRead(row).flatMap(member => member.requestId ? [member.requestId] : []);
+    }))];
+    if (requestIds.length > 10_000) throw new TestRunError(503, "Suite summary member count exceeds the query bound");
+    const liveRequestIds = [...new Set(rows.filter(row => !row.completedResult && (!row.nightlyPlan || !row.nightlyResult))
+      .flatMap(row => membersToRead(row).flatMap(member => member.requestId ? [member.requestId] : [])))];
+    const [requests, results] = await Promise.all([
+      requestIds.length ? TestRequestModel.find({requestId: {$in: requestIds}})
+        .select({requestId: 1, hostId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
+          state: 1, terminalStatus: 1, hostRejection: 1, preparation: 1, preparationCancellation: 1, preparationRejection: 1})
+        .limit(requestIds.length + 1).read("primary").readConcern("majority").setOptions(remaining()).lean() : [],
+      liveRequestIds.length ? TestRunModel.find({...nativeRunFilter, requestId: {$in: liveRequestIds}})
+        .select(frameworkResultSummaryFields).limit(liveRequestIds.length + 1).read("primary").readConcern("majority")
+        .setOptions(remaining()).lean() : [],
+    ]);
+    if (requests.length > requestIds.length || new Set(requests.map(row => row.requestId)).size !== requests.length
+      || results.length > liveRequestIds.length || new Set(results.map(row => row.requestId)).size !== results.length)
+      throw new TestRunError(503, "Suite member identity is ambiguous");
+    const byRequest = new Map(requests.map(row => [row.requestId, row as StoredRequest]));
+    const byResult = new Map(results.map(row => [row.requestId, row]));
+    const readers = {requests: {get: async (id: string) => byRequest.get(id) ?? null}, results: {
+      summary: async (id: string) => {
+        const row = byResult.get(id);
+        if (!row) throw new TestRunError(404, "Framework run was not found");
+        return verifiedFrameworkResultSummary(row);
+      },
+    }};
+    const summaries = new Map<string, SuiteSummaryRead>();
+    for (const row of rows) {
+      try {
+        if (!row.nightlyPlan && row.completedResult) {
+          summaries.set(row.suiteId, withRequestLanes(row.completedResult as SuiteSummary, requests));
+          continue;
+        }
+        const suite = row.payload as TestSuite | undefined;
+        if (!suite) throw new TestRunError(404, "Occurrence has no multi-member test suite");
+        if (row.nightlyPlan) {
+          if (row.nightlyResult) summaries.set(row.suiteId, terminalNightlySummary(suite, row.nightlyPlan as CompactNightlyReceipt, row.nightlyResult));
+          else {
+            const plan = row.nightlyPlan as NightlyPlan;
+            const snapshot = await new NightlyRoutineService().snapshot(plan, readers);
+            const result = {...snapshot, members: snapshot.members.map(member => ({...member,
+              laneId: (member as unknown as CompactNightlyMember).laneId ?? member.dispatchIntent?.laneId ?? member.input?.laneId,
+              preparedLaneId: member.input?.laneId,
+              build: {repository: member.build?.repository, channel: member.build?.channel,
+                headSha: member.build?.headSha, prNumber: member.build?.prNumber}}))};
+            summaries.set(row.suiteId, nightlyHistorySummary(suite, plan as unknown as CompactNightlyReceipt, result));
+          }
+          continue;
+        }
+        const ids = new Set(suite.members.flatMap(member => member.requestId ? [member.requestId] : []));
+        const runs: SuiteRun[] = results.filter(row => ids.has(row.requestId!)).map(row => {
+          const run = verifiedFrameworkResultSummary(row);
+          return {...run, channel: run.build.channel, provenance: {headSha: run.build.headSha},
+            publicationComplete: run.uploadsComplete && run.evidenceStatus === "complete"};
+        });
+        const bound = requests.filter(row => ids.has(row.requestId));
+        summaries.set(row.suiteId, withRequestLanes(summarizeSuite(suite, runs, row.finishedAt ?? undefined, suiteRejections(bound)), bound));
+      } catch (error) {summaries.set(row.suiteId, error instanceof Error ? error : new TestRunError(503, "Suite summary is unavailable"));}
+    }
+    return summaries;
+  }
   async create(input: unknown) {
     const parsed = testSuiteSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, "invalid test suite");
@@ -213,16 +391,7 @@ export class TestSuiteService {
         publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run)};
     });
     const requests = await boundSuiteRequests(suite.members.flatMap(member => member.requestId ? [member.requestId] : []));
-    const rejections: SuiteRejection[] = requests.filter(request => request.hostRejection !== undefined).map(request => {
-      const rejection = hostRejectionSchema.safeParse(request.hostRejection), input = recordedFrameworkRequestInputSchema.safeParse(request.input);
-      if (!rejection.success || !input.success || request.state !== "terminal" || request.terminalStatus !== "not-run"
-        || rejection.data.requestId !== request.requestId || rejection.data.hostId !== request.hostId
-        || rejection.data.inputSha256 !== request.inputSha256 || requestInputDigest(input.data) !== request.inputSha256)
-        throw new TestRunError(503, "suite member rejection identity is invalid; no verdict available");
-      return {requestId: request.requestId, routineId: input.data.routineId, platform: input.data.platform,
-        definitionRevision: input.data.definitionRevision, channel: input.data.build.channel, headSha: input.data.build.headSha,
-        rejectedAt: rejection.data.rejectedAt, reason: `${rejection.data.code}: ${rejection.data.reason}`};
-    });
+    const rejections = suiteRejections(requests);
     return withRequestLanes(summarizeSuite(suite, runs, row.finishedAt ?? undefined, rejections), requests);
   }
   async labels(requestIds: string[]) {

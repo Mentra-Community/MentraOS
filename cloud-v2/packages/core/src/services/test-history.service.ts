@@ -3,7 +3,7 @@ import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
 import {TestRerunModel} from "../models/test-rerun.model";
 import {TestRunModel} from "../models/test-run.model";
-import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.model";
+import {TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunIdSchema} from "../types/framework-run.types";
 import type {TestHistoryEntry, TestHistoryPage} from "../types/test-history.types";
 import {nativeRunFilter, readFrameworkRunSummary, type StoredSummaryRow} from "./framework-run-summary.service";
@@ -23,20 +23,22 @@ export interface StoredHistoryRow {
   historySuppressed?: boolean; rerunCount?: number; rerun?: {rerunId: string; parentSuiteId?: string};
 }
 export interface HistorySourceQueries {runs: PipelineStage[]; suites: PipelineStage[]; after: HistoryCursor | null; limit: number; includeReruns: boolean}
+const RAW_HISTORY_BATCH_SIZE = 256;
+interface StoredHistoryBatch {entries: StoredHistoryRow[]; scan: {count: number; last: StoredHistoryRow}[]}
 
 function sourceCursor(after: HistoryCursor | null, kind: "run" | "suite", id: string) {
   if (!after) return {};
   const time = new Date(after.startedAt);
-  return {$or: [{startedAt: {$lt: time}}, ...(kind < after.kind ? [{startedAt: time}]
+  return {startedAt: {$lte: time}, $or: [{startedAt: {$lt: time}}, ...(kind < after.kind ? [{startedAt: time}]
     : kind === after.kind ? [{startedAt: time, [id]: {$lt: after.id}}] : [])]};
 }
 
-/** Paginate after exact membership exclusion, so large suites cannot consume the run page. */
+/** Paginate after exact indexed membership exclusion in the database, without transferring suppressed raw rows. */
 export function testHistoryQueries(after: HistoryCursor | null, limit: number, includeReruns = false): HistorySourceQueries {
   const runs: PipelineStage[] = [
     {$match: {...nativeRunFilter, ...sourceCursor(after, "run", "runId")}},
     {$sort: {startedAt: -1, runId: -1}},
-    {$limit: limit + 1},
+    {$limit: RAW_HISTORY_BATCH_SIZE},
     {$lookup: {from: TestSuiteModel.collection.name, localField: "payload.requestId", foreignField: "payload.members.requestId",
       let: {requestId: "$payload.requestId", routineId: "$payload.routineId", platform: "$payload.platform",
         channel: "$payload.build.channel", headSha: "$payload.build.headSha", runId: "$runId"},
@@ -59,6 +61,8 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
       rerun: {$arrayElemAt: ["$historyReruns", 0]},
       historySuppressed: {$or: [{$gt: [{$size: "$historySuites"}, 0]},
         ...(!includeReruns ? [{$gt: [{$size: "$historyReruns"}, 0]}] : [])]}}},
+    {$facet: {entries: [{$match: {historySuppressed: false}}, {$limit: limit + 1}],
+      scan: [{$group: {_id: null, count: {$sum: 1}, last: {$last: {historyKind: "$historyKind", historyId: "$historyId", historyStartedAt: "$historyStartedAt"}}}}]}},
   ];
   const suites: PipelineStage[] = [
       {$match: {"payload.members.1": {$exists: true}, startedAt: {$type: "date"}, ...sourceCursor(after, "suite", "suiteId")}},
@@ -79,30 +83,25 @@ function remainingQueryTime(deadline: number) {
   return remaining;
 }
 
-async function readStandaloneRuns(queries: HistorySourceQueries, deadline: number) {
-  const eligible: StoredHistoryRow[] = [];
-  let after = queries.after;
-  // A batch is bounded, but there is no total raw-run cap: scan past any number of suite members.
-  while (eligible.length < queries.limit + 1) {
-    const pipeline = testHistoryQueries(after, queries.limit, queries.includeReruns).runs;
-    const batch = await TestRunModel.aggregate<StoredHistoryRow>(pipeline).collation({locale: "simple"})
-      .read("primary").readConcern("majority").option({maxTimeMS: remainingQueryTime(deadline)}).exec();
-    eligible.push(...batch.filter(row => !row.historySuppressed));
-    const last = batch.at(-1);
-    if (batch.length < queries.limit + 1 || !last) break;
-    after = {startedAt: last.historyStartedAt.toISOString(), kind: "run", id: last.historyId};
-  }
-  return eligible.slice(0, queries.limit + 1);
-}
-
 export class TestHistoryService {
-  constructor(private readonly suites: Pick<TestSuiteService, "detail"> = new TestSuiteService(),
-    private readonly read: (queries: HistorySourceQueries) => Promise<StoredHistoryRow[][]> = async queries => {
-      const deadline = Date.now() + HISTORY_QUERY_BUDGET_MS;
-      await backfillTestSuiteStartedAt(TestSuiteModel.collection, () => ({maxTimeMS: remainingQueryTime(deadline)}));
-      // Older writers racing this repair become eligible on the next refresh, with their real date.
-      const [runs, suites] = await Promise.all([readStandaloneRuns(queries, deadline), TestSuiteModel.aggregate<StoredHistoryRow>(queries.suites)
-        .collation({locale: "simple"}).read("primary").readConcern("majority").option({maxTimeMS: remainingQueryTime(deadline)}).exec()]);
+  constructor(private readonly suites: Pick<TestSuiteService, "summaries"> = new TestSuiteService(),
+    private readonly read: (queries: HistorySourceQueries, deadline: number) => Promise<StoredHistoryRow[][]> = async (queries, deadline) => {
+      // Timestamp projection is installed at startup and written with every new suite.
+      const suites = await TestSuiteModel.aggregate<StoredHistoryRow>(queries.suites)
+        .collation({locale: "simple"}).read("primary").readConcern("majority").option({timeoutMS: remainingQueryTime(deadline), maxTimeMS: remainingQueryTime(deadline)}).exec();
+      const runs: StoredHistoryRow[] = [];
+      let after = queries.after;
+      while (runs.length < queries.limit + 1) {
+        const runsPipeline = testHistoryQueries(after, queries.limit, queries.includeReruns).runs;
+        // A full suite candidate page proves a next page; older runs cannot enter this page.
+        if (suites.length === queries.limit + 1) runsPipeline.splice(1, 0, {$match: {startedAt: {$gte: suites.at(-1)!.historyStartedAt}}});
+        const [batch] = await TestRunModel.aggregate<StoredHistoryBatch>(runsPipeline)
+          .collation({locale: "simple"}).read("primary").readConcern("majority").option({timeoutMS: remainingQueryTime(deadline), maxTimeMS: remainingQueryTime(deadline)}).exec();
+        runs.push(...(batch?.entries ?? []));
+        const scan = batch?.scan[0];
+        if (!scan || scan.count < RAW_HISTORY_BATCH_SIZE) break;
+        after = {startedAt: scan.last.historyStartedAt.toISOString(), kind: "run", id: scan.last.historyId};
+      }
       return [runs, suites];
     }) {}
 
@@ -115,7 +114,8 @@ export class TestHistoryService {
       catch {throw new TestRunError(400, "invalid test history cursor");}
     }
     let sources: StoredHistoryRow[][];
-    try {sources = await this.read(testHistoryQueries(after, query.data.limit, query.data.includeReruns));}
+    const deadline = Date.now() + HISTORY_QUERY_BUDGET_MS;
+    try {sources = await this.read(testHistoryQueries(after, query.data.limit, query.data.includeReruns), deadline);}
     catch (error) {
       if ((error as {code?: number}).code === 50) throw new TestRunError(503, "Test history query timed out. Try again.");
       throw error;
@@ -124,6 +124,7 @@ export class TestHistoryService {
       || (a.historyKind < b.historyKind ? 1 : a.historyKind > b.historyKind ? -1 : 0)
       || (a.historyId < b.historyId ? 1 : a.historyId > b.historyId ? -1 : 0));
     const page = rows.slice(0, query.data.limit);
+    const suiteSummaries = await this.suites.summaries(page.filter(row => row.historyKind === "suite").map(row => row.historyId), deadline);
     const entries = await Promise.all(page.map(async (row): Promise<TestHistoryEntry> => {
       try {
         if (row.historyKind === "run") {
@@ -131,7 +132,9 @@ export class TestHistoryService {
             ...(row.rerun ? {rerun: row.rerun} : {})};
         }
         // The existing reader preserves frozen completions and computes current waiting members.
-        const suite = await this.suites.detail(row.historyId);
+        const suite = suiteSummaries.get(row.historyId);
+        if (!suite) throw new TestRunError(404, "test suite not found");
+        if (suite instanceof Error) throw suite;
         const members = suite.members.map(member => {
           const source = member as typeof member & {laneId?: string; hostId?: string; dispatchIntent?: {laneId?: string}; input?: {laneId?: string}};
           const laneId = source.laneId ?? source.dispatchIntent?.laneId ?? source.input?.laneId;
