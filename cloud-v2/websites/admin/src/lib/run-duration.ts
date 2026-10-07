@@ -6,5 +6,6 @@ export function runDuration(startedAt: unknown, finishedAt: unknown): string | n
 export function elapsedDuration(ms: unknown): string | null {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
   const seconds = Math.ceil(ms / 1000);
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
 }
