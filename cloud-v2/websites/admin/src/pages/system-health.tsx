@@ -1,3 +1,4 @@
+import {TESTING_PANEL, TestingButton} from "../components/testing-ui";
 import {elapsedDuration} from "../lib/run-duration";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -61,10 +62,10 @@ export function SystemHealthSummary() {
       ...host.components.filter(item => ["blocked", "stopped"].includes(item.state)).map(item => `${componentNames[item.component]}: ${item.state === "stopped" ? "paused" : "blocked"}`)]);
   const text = query.isError ? "System health could not refresh. Current service status is unknown."
     : query.isPending ? "Loading system health…" : !hosts.length ? "Host monitoring has not reported yet."
-    : problems.length ? problems.slice(0, 3).join(" · ") : `${hosts.length} ${hosts.length === 1 ? "host is" : "hosts are"} reporting. Open service, memory and disk details.`;
+    : problems.length ? problems.slice(0, 3).join(" · ") : `${hosts.length} ${hosts.length === 1 ? "host is" : "hosts are"} reporting.`;
   return <aside className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dfe5dd] bg-white px-4 py-3 text-sm" aria-label="System health summary">
     <p className="text-[#59655e]"><strong className="text-[#202820]">System health</strong> · {text}</p>
-    <a href="/?systemHealth=1" className="font-medium text-[#087d50] underline">View system health</a>
+    <a href="/?systemHealth=1" className="font-medium text-[#087d50] hover:underline">View system health</a>
   </aside>;
 }
 
@@ -147,7 +148,7 @@ export function MemoryHealth({ host, now, unavailable = false }: { host: TestHos
       <div><dt className="text-xs text-[#68746d]">Swap used</dt><dd className="mt-1 font-semibold">{size(memory?.swapUsedBytes)}</dd></div>
       <div><dt className="text-xs text-[#68746d]">OS memory availability</dt><dd className="mt-1 font-semibold">{memory?.pressureFreePercent == null ? "Unavailable" : `${memory.pressureFreePercent.toFixed(0)}%`}</dd></div>
     </dl>
-    <p className="mt-3 text-xs text-[#68746d]">Used RAM excludes file cache and includes the compressor's physical size. Availability and pressure are reported by macOS, not inferred from raw free pages. Swap can remain used after pressure subsides.</p>
+    <details className="mt-3 text-xs text-[#747780]"><summary className="cursor-pointer">About these measurements</summary><p className="mt-2">Used RAM excludes file cache and includes the compressor's physical size. Availability and pressure are reported by macOS, not inferred from raw free pages. Swap can remain used after pressure subsides.</p></details>
   </section>;
 }
 
@@ -163,22 +164,22 @@ function SystemHealthDashboard() {
   const fresh = Boolean(host && !query.isError && hostIsFresh(host, now));
   return <div className="space-y-5">
     <LaneHealthSection now={now} />
-    <section className="rounded-2xl border border-[#dfe5dd] bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Host health</h2><p className="mt-1 text-sm text-[#68746d]">Service status, memory and disk measurements are separate from a job's progress and a device lane's availability.</p></div>
-        <button className="text-sm font-medium text-[#087d50] underline" onClick={() => { void query.refetch(); if (host) void history.refetch(); }}>Refresh</button></div>
-      <a href="/?systemHealth=1&restoration=1" className="mt-3 inline-block text-sm font-medium text-[#087d50] underline">View lane restoration attempts &amp; resume decisions</a>
+    <section className={TESTING_PANEL}>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Host health</h2></div>
+        <TestingButton className="text-sm" onClick={() => { void query.refetch(); if (host) void history.refetch(); }}>Refresh</TestingButton></div>
+      <a href="/?systemHealth=1&restoration=1" className="mt-3 inline-block text-sm font-medium text-[#087d50] hover:underline">State repair history</a>
       {query.isError ? <p className="mt-4 text-sm text-[#a64235]">Health could not refresh. Current service status is unknown.</p> : null}
       {!hosts.length ? <p className="mt-4 text-sm text-[#68746d]">{query.isPending ? "Loading host reports…" : "No independent host monitor has reported yet. Historical disk measurements will appear as they are collected."}</p> : <>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><select aria-label="Host" value={host?.hostId} onChange={event => setHostId(event.target.value)} className="rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">{hosts.map(value => <option key={value.hostId}>{value.hostId}</option>)}</select>
           <p className="text-xs text-[#68746d]">{fresh ? "Host reporting" : "Stale · no recent report"} · Last observed {host ? elapsed(host.sampledAt, now) : "unknown"} ago{host ? ` (${time(host.sampledAt)})` : ""}</p></div>
         {host ? <div className="mt-4 grid gap-3 lg:grid-cols-3">{HOST_COMPONENTS.map(role => { const component = host.components.find(value => value.component === role), state = componentHealth(host, component, now, query.isError);
           return <article key={role} className="rounded-xl border border-[#e0e6de] p-4"><h3 className="font-semibold">{componentNames[role]}</h3>{role === "general-worker" ? <p className="mt-1 text-xs text-[#68746d]">Fixes and shared triage</p> : null}<span className={`mt-2 inline-block rounded-md px-2 py-1 text-xs font-semibold ${tones[state.tone]}`}>{state.label}</span>
-            <p className="mt-3 text-sm text-[#59655e]">{state.summary}</p><p className="mt-2 text-xs text-[#68746d]"><strong>Next:</strong> {state.next}</p>
-            {component?.state === "running" && fresh ? <p className="mt-2 text-xs text-[#68746d]">The service is alive; this does not say a model or routine is working.</p> : null}</article>; })}</div> : null}
+            <details className="mt-3 text-xs text-[#747780]"><summary className="cursor-pointer font-medium">Service details</summary><p className="mt-2">{state.summary}</p><p className="mt-2"><strong>Next:</strong> {state.next}</p>
+            {component?.state === "running" && fresh ? <p className="mt-2 text-xs text-[#68746d]">The service is alive; this does not say a model or routine is working.</p> : null}</details></article>; })}</div> : null}
         {host ? <MemoryHealth host={host} now={now} unavailable={query.isError} /> : null}
         <div className="mt-6 flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-base font-semibold">Available disk space</h3><p className={`mt-1 text-2xl font-semibold ${fresh && host?.freeBytes !== null && host!.freeBytes < DISK_FLOOR_BYTES ? "text-[#a64235]" : "text-[#202820]"}`}>{host ? size(host.freeBytes) : "Unavailable"}<span className="ml-2 text-xs font-normal text-[#68746d]">{fresh ? "latest measurement" : "stale · last reported, not current"}</span></p></div></div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><label className="text-sm">History metric <select aria-label="History metric" value={metric} onChange={event => setMetric(event.target.value as HistoryMetric)} className="ml-2 rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">{Object.entries(historyMetrics).map(([id, value]) => <option key={id} value={id}>{value.label}</option>)}</select></label>
-          <div className="flex gap-1 rounded-lg bg-[#f0f3ee] p-1">{([1, 7] as const).map(value => <button key={value} aria-pressed={days === value} onClick={() => setDays(value)} className={`rounded-md px-3 py-1 text-sm ${days === value ? "bg-white font-semibold shadow-sm" : "text-[#68746d]"}`}>{value === 1 ? "24 hours" : "7 days"}</button>)}</div></div>
+          <div className="flex gap-1 rounded-lg bg-[#f0f3ee] p-1">{([1, 7] as const).map(value => <TestingButton variant="ghost" key={value} aria-pressed={days === value} onClick={() => setDays(value)} className={`rounded-md px-3 py-1 text-sm ${days === value ? "bg-white font-semibold shadow-sm" : "text-[#68746d]"}`}>{value === 1 ? "24 hours" : "7 days"}</TestingButton>)}</div></div>
         {history.isError ? <p className="mt-3 text-sm text-[#a64235]">History could not refresh. {history.data ? "Showing the last fetched history, not current." : ""}</p> : null}
         {history.data ? <div className="mt-4"><DiskHistoryChart history={history.data} metric={metric} />{metric === "disk" ? <CleanupEvents events={history.data.cleanupEvents} /> : null}</div> : <p className="mt-4 text-sm text-[#68746d]">{history.isError ? "Historical measurements unavailable." : "Loading recorded measurements…"}</p>}
         {query.data?.truncated ? <p className="mt-3 text-xs text-[#a64235]">Only the first 32 reporting hosts are shown.</p> : null}

@@ -153,7 +153,7 @@ test("catalog labels a historical example without claiming the current definitio
       }}
     />,
   )
-  expect(markup).toContain("Complete passing example available")
+  expect(markup).toContain("Latest passing example")
   expect(markup).toContain("earlier definition")
   expect(markup).toContain("aaaaaaaa")
   expect(markup).toContain("routine=notes-phone&amp;platform=ios-on-mac")
@@ -371,7 +371,7 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
     )
     expect(legacy).toContain("Stopped at: legacy-entry")
     expect(legacy).toContain("Setup action details were not recorded")
-    expect(legacy).toContain(status === "cancelled" ? "Cancelled" : "failed")
+    expect(legacy).toContain(status === "cancelled" ? "Cancelled" : "Failed")
   }
 })
 

@@ -1,3 +1,4 @@
+import {TESTING_FIELD, TestingButton} from "./testing-ui";
 import {useState} from "react";
 
 export interface RoutineSearchFilters {search: string; platform: string; glasses: string}
@@ -20,7 +21,7 @@ export function RoutineSearch({filters, onChange, routines, countLabel}: {
 }) {
   const platforms = [...new Set([...routines.map(row => row.platform), ...(filters.platform ? [filters.platform] : [])])].sort();
   const glassesModels = [...new Set([...routines.flatMap(row => row.glassesModels ?? []), ...(filters.glasses && filters.glasses !== "no-glasses" ? [filters.glasses] : [])])].sort();
-  const field = "mt-1 block w-full rounded-lg border border-[#cbd3c8] bg-white p-2 text-sm";
+  const field = `mt-1 block ${TESTING_FIELD}`;
   return <>
     <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]" role="search" aria-label="Search routines">
       <label className="text-sm">Search routines<input type="search" className={field} value={filters.search} onChange={event => onChange({...filters, search: event.target.value})} placeholder="Name or description" /></label>
@@ -33,7 +34,7 @@ export function RoutineSearch({filters, onChange, routines, countLabel}: {
     </div>
     <div className="mt-3 flex items-center justify-between gap-3 text-sm">
       <p role="status" aria-live="polite">{countLabel}</p>
-      {hasRoutineFilters(filters) && <button className="underline" onClick={() => onChange(EMPTY_ROUTINE_FILTERS)}>Clear filters</button>}
+      {hasRoutineFilters(filters) && <TestingButton variant="ghost" onClick={() => onChange(EMPTY_ROUTINE_FILTERS)}>Clear filters</TestingButton>}
     </div>
   </>;
 }

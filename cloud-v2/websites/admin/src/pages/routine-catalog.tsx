@@ -1,3 +1,5 @@
+import {HistoryStatus} from "../components/test-history-table";
+import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {RunRerunLinks} from "./test-reruns";
 import {useEffect, useRef, useState} from "react";
@@ -14,7 +16,7 @@ import type {FrameworkRequestDisplay} from "../../../../packages/core/src/types/
 
 type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
 type Detail = CatalogRow & {history: CatalogHistoryRun[]; nextCursor: string | null};
-const PANEL = "rounded-2xl border border-[#e0e4de] bg-white p-5";
+const PANEL = TESTING_PANEL;
 export function routineHref(id: string, platform: string) {
   return `/?routineCatalog=1&routine=${encodeURIComponent(id)}&platform=${encodeURIComponent(platform)}`;
 }
@@ -55,7 +57,7 @@ export function RoutineCatalogList() {
   const filtered = routines.filter(row => matchesRoutineSearch(searchableRoutine(row), filters));
   return <div className="space-y-5">
     <section className={PANEL}><h2 className="text-lg font-semibold">Routine catalog</h2>
-      <p className="mt-2">Routines with a published passing example, their requirements and run history.</p>
+
       <RoutineSearch filters={filters} onChange={setFilters} routines={routines.map(searchableRoutine)} countLabel={`Showing ${filtered.length} of ${routines.length} routines`} />
     </section>
     {catalog.error && <p role="alert">Routines could not refresh: {catalog.error.message}</p>}
@@ -83,18 +85,21 @@ function EditableRoutineCatalogCard({routine}: {routine: CatalogRow}) {
 export function RoutineCatalogCard({routine, onNightlyChange, saving = false, preferenceError}: {routine: CatalogRow; onNightlyChange?: (enabled: boolean) => void; saving?: boolean; preferenceError?: string | null}) {
   return <article className={PANEL}>
     <p className="text-sm text-[#68746d]">{routine.platform === "android" ? "Android" : "iOS on Mac"}</p>
-    <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1"><h3 className="text-lg font-semibold"><a className="underline" href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
+    <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1"><h3 className="text-lg font-semibold"><a className={TESTING_LINK} href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
       <label className={`flex min-h-11 shrink-0 items-center gap-2.5 text-sm font-medium text-[#5d6068] ${saving ? "cursor-wait opacity-60" : "cursor-pointer"}`}>
         <input className="peer sr-only" type="checkbox" role="switch" aria-label={`${routine.definition.title}: Runs nightly`} checked={routine.nightlyEnabled ?? true} disabled={saving} onChange={event => onNightlyChange?.(event.target.checked)} />
-        <span aria-hidden="true" className="inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-[#747780] p-0.5 shadow-inner transition-colors duration-200 peer-checked:bg-[#2563eb] peer-focus-visible:ring-2 peer-focus-visible:ring-[#2563eb] peer-focus-visible:ring-offset-2 peer-checked:[&>span]:translate-x-5 motion-reduce:transition-none">
+        <span aria-hidden="true" className="inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-[#747780] p-0.5 shadow-inner transition-colors duration-200 peer-checked:bg-[#111217] peer-focus-visible:ring-2 peer-focus-visible:ring-[#111217] peer-focus-visible:ring-offset-2 peer-checked:[&>span]:translate-x-5 motion-reduce:transition-none">
           <span className="h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 motion-reduce:transition-none" />
         </span>
         <span>Runs nightly</span>
       </label></div>
     {preferenceError && <p role="alert" className="mt-2 text-sm">{preferenceError}</p>}
-    <p className="mt-2">{routine.definition.purpose}</p>
-    <p className="mt-4">{routine.example ? "Complete passing example available" : "Awaiting a published passing example"}</p>
-    {routine.latestAttempt && <p className="mt-2 text-sm">Latest attempt: <a className="underline" href={frameworkRunHref(routine.latestAttempt.runId)}>{routine.latestAttempt.outcome}</a> · {new Date(routine.latestAttempt.startedAt).toLocaleString()}{routine.latestAttempt.definitionRevision !== routine.definitionRevision && " · earlier definition"}</p>}
+    <p className="mt-2 text-sm text-[#747780]">{routine.definition.purpose}</p>
+    <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[#eceeeb] pt-3">
+      {routine.example ? <a className={TESTING_LINK} href={frameworkRunHref(routine.example.runId)}>Latest passing example</a> : <span className="text-xs text-[#747780]">Passing example pending</span>}
+      <a className={TESTING_LINK} href={`${routineHref(routine.routineId, routine.platform)}#run-history`}>Run history</a>
+    </div>
+    {routine.latestAttempt && <p className="mt-2 text-sm">Latest attempt: <a className={TESTING_LINK} href={frameworkRunHref(routine.latestAttempt.runId)}>{routine.latestAttempt.outcome}</a> · {new Date(routine.latestAttempt.startedAt).toLocaleString()}{routine.latestAttempt.definitionRevision !== routine.definitionRevision && " · earlier definition"}</p>}
     {routine.example && <p className="mt-2 text-sm text-[#68746d]">Example: {new Date(routine.example.startedAt).toLocaleString()} · revision <code>{routine.example.definitionRevision.slice(0, 8)}</code>{routine.example.definitionRevision !== routine.definitionRevision && " · earlier definition"}</p>}
   </article>;
 }
@@ -107,14 +112,14 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
   if (detail.error && !detail.data) return <p role="alert">Could not load routine: {detail.error.message}</p>;
   const row = detail.data.pages[0]!, definition = row.definition;
   return <div className="space-y-5">
-    <a href="/?routineCatalog=1" className="underline">All routines</a>
+    <a href="/?routineCatalog=1" className={TESTING_LINK}>All routines</a>
     {detail.error && <p role="alert">Routine could not refresh: {detail.error.message}</p>}
     <section className={PANEL}><h2 className="text-xl font-semibold">{definition.title}</h2><p className="mt-2">{definition.purpose}</p>
       {row.example ? <div className="mt-4"><RecordingVideo
-        src={`/api/admin/routine-catalog/results/by-run/${encodeURIComponent(row.example.runId)}/assets/${encodeURIComponent(row.example.recordingAssetId)}`} />
-        <p className="mt-2 text-sm">Recorded {new Date(row.example.startedAt).toLocaleString()} · {row.platform} · build <code>{row.example.build.headSha}</code></p>
-        <p className="mt-1 text-sm">Example definition: <code>{row.example.definitionRevision}</code>{row.example.definitionRevision !== row.definitionRevision && " (earlier than the current definition)"}</p>
-        <a className="mt-2 block underline" href={frameworkRunHref(row.example.runId)}>Open passing run</a></div>
+        className="max-w-[44rem]" src={`/api/admin/routine-catalog/results/by-run/${encodeURIComponent(row.example.runId)}/assets/${encodeURIComponent(row.example.recordingAssetId)}`} />
+        <p className="mt-2 text-sm">Recorded {new Date(row.example.startedAt).toLocaleString()} · {row.platform} · build <code title={row.example.build.headSha}>{row.example.build.headSha.slice(0, 10)}</code></p>
+        <p className="mt-1 text-sm">Example definition: <code title={row.example.definitionRevision}>{row.example.definitionRevision.slice(0, 10)}</code>{row.example.definitionRevision !== row.definitionRevision && " (earlier than the current definition)"}</p>
+        <a className={`${TESTING_LINK} mt-2 block`} href={frameworkRunHref(row.example.runId)}>Open passing run</a></div>
         : <p className="mt-4">Awaiting a published passing recording.</p>}
     </section>
     <section className={PANEL}><h3 className="font-semibold">Requirements</h3>
@@ -124,12 +129,12 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
       <h3 className="mt-5 font-semibold">Steps</h3><ol className="mt-3 list-decimal space-y-2 pl-5">{definition.steps.map(step => <li key={step.id}>{step.instruction}<p className="text-sm text-[#68746d]">Expected: {step.expected}</p></li>)}</ol>
       <p className="mt-4 text-xs">Source revision: <code>{row.definitionRevision}</code></p>
     </section>
-    <section className={PANEL}><h3 className="font-semibold">Run history</h3>
+    <section id="run-history" className={PANEL}><h3 className="font-semibold">Run history</h3>
       {!row.history.length && <p className="mt-3">No runs yet.</p>}
       <ul className="mt-3 space-y-2">{detail.data.pages.flatMap(page => page.history).map(run => <li key={run.runId}>
-        <a className="underline" href={frameworkRunHref(run.runId)}>{new Date(run.startedAt).toLocaleString()}</a>
+        <a className={TESTING_LINK} href={frameworkRunHref(run.runId)}>{new Date(run.startedAt).toLocaleString()}</a>
         {" · "}{run.outcome}{run.evidenceStatus === "failed" && " · evidence failed"}{!run.uploadsComplete && " · evidence pending"}</li>)}</ul>
-      {detail.hasNextPage && <button className="mt-4 underline" disabled={detail.isFetchingNextPage} onClick={() => detail.fetchNextPage()}>More runs</button>}
+      {detail.hasNextPage && <TestingButton className="mt-4" disabled={detail.isFetchingNextPage} onClick={() => detail.fetchNextPage()}>More runs</TestingButton>}
     </section>
   </div>;
 }
@@ -152,7 +157,7 @@ export function frameworkRunRefetchInterval(data: RunDisplay | RequestDisplay | 
 function RequestCard({request, observing, refreshing, onRefresh}: {request: FrameworkRequestDisplay; observing: boolean; refreshing: boolean; onRefresh: () => void}) {
   const status = request.terminalStatus ?? request.state;
   return <section className={PANEL} aria-label="Routine request">
-    <a className="underline" href="/?testRuns=1">All test runs</a>
+    <a className={TESTING_LINK} href="/?testRuns=1">All test runs</a>
     <h2 className="mt-4 text-xl font-semibold">{request.routineId}: {status === "not-run" ? "Did not run" : status}</h2>
     <p className="mt-2 text-sm">Request <code>{request.requestId}</code></p>
     <p className="mt-2"><BuildIdentity build={request.build} label="Requested build" /></p>
@@ -167,7 +172,7 @@ function RequestCard({request, observing, refreshing, onRefresh}: {request: Fram
     {request.cancellationRequested && <p className="mt-2 text-sm">Cancellation requested · {!request.inputSha256 ? "Cancelled before execution." : request.cancellationAcknowledged ? "Host acknowledged; cleanup may still be running." : "Awaiting host acknowledgement."}</p>}
     <p className="mt-3 text-sm text-[#68746d]">No routine result has been published.{request.state !== "terminal" && " This request refreshes automatically."}
       {request.terminalStatus === "cancelled" && (observing ? " Checking for final host custody or a published result for ten minutes." : "Automatic observation has ended. Refresh to check for later host custody or results.")}</p>
-    <button className="mt-3 underline" disabled={refreshing} onClick={onRefresh}>Refresh request</button>
+    <TestingButton className="mt-3" disabled={refreshing} onClick={onRefresh}>Refresh request</TestingButton>
   </section>;
 }
 
@@ -228,21 +233,28 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const visibleSteps = run.result.steps.map((step, index) => ({step, index, source: definitionSteps.get(step.id)}))
     .filter(({step, source}) => matchesStepSearch(step, source, stepSearch));
   return <div className="space-y-5">
-    <a className="underline" href={routineHref(run.routineId, run.platform)}>Back to routine</a>
+    <a className={TESTING_LINK} href={routineHref(run.routineId, run.platform)}>Back to routine</a>
     {result.error && <p role="alert">Run could not refresh: {result.error.message}</p>}
-    <section className={PANEL}><h2 className="text-xl font-semibold">{run.routineId}: {outcome}</h2>
-      <p className="mt-2">Started {new Date(run.startedAt).toLocaleString()} · Finished {new Date(run.finishedAt).toLocaleString()}</p>
-      <p className="mt-2 text-sm">Run <code>{actualRunId}</code> · Request <code>{run.requestId}</code></p>
+    <section className={PANEL}>
+      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">{definition?.title ?? run.routineId}</h2><HistoryStatus outcome={outcome}/></div>
+      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-[#747780]">
+        <span>{new Date(run.startedAt).toLocaleString()} · {runDuration(run.startedAt, run.finishedAt) ?? "Duration unknown"}</span>
+        <span>{run.hostId} / {run.laneId} · {run.platform === "ios-on-mac" ? "iOS on Mac" : run.platform}</span>
+        <span>Setup {elapsedDuration(run.result.timing.setupMs)} · Test {elapsedDuration(run.result.timing.testMs)} · Teardown {elapsedDuration(run.result.timing.teardownMs)}</span>
+      </div>
+      <p className="mt-3 text-sm"><BuildIdentity build={run.build} /></p>
       <RunRerunLinks requestId={run.requestId}/>
-      <p className="mt-2"><BuildIdentity build={run.build} /></p>
-      {definition?.source && <p className="mt-2 text-sm"><a className="underline" href={definitionSourceHref(definition.source)} target="_blank" rel="noreferrer">Routine source at {definition.source.revision.slice(0, 10)}</a></p>}
-      <p className="mt-2">Computer: {run.hostId} · Lane: {run.laneId} · {run.platform}</p>
-      {run.frameworkBinding ? <p className="mt-2 text-sm">Framework {run.frameworkBinding.version} · <code>{run.frameworkBinding.revision.slice(0, 10)}</code> · Routine API {run.frameworkBinding.routineApiVersion}</p>
-        : <p className="mt-2 text-sm">Framework provenance unknown: this historical result did not record its installed framework.</p>}
-      {!run.routineSource && <p className="mt-2 text-sm">Routine bundle provenance unknown: this historical result did not record its source archive.</p>}
-      <p className="mt-2">Setup {elapsedDuration(run.result.timing.setupMs)} · Test {elapsedDuration(run.result.timing.testMs)} · Teardown {elapsedDuration(run.result.timing.teardownMs)}</p>
-      {evidenceStatus === "failed" && <p role="alert" className="mt-2">Evidence failed; the execution verdict is unchanged.</p>}
-      {!uploadsComplete && <p role="status" className="mt-2">Evidence upload pending.</p>}
+      <details className="mt-3 border-t border-[#eceeeb] pt-3 text-xs text-[#747780]"><summary className="cursor-pointer font-medium">Run provenance</summary>
+        <dl className="mt-3 space-y-2 break-words"><div>Run <code>{actualRunId}</code> · Request <code>{run.requestId}</code></div>
+          <div>Started {new Date(run.startedAt).toLocaleString()} · Finished {new Date(run.finishedAt).toLocaleString()}</div>
+          {definition?.source && <div><a className={TESTING_LINK} href={definitionSourceHref(definition.source)} target="_blank" rel="noreferrer">Routine source at {definition.source.revision.slice(0, 10)}</a></div>}
+          <div>{run.frameworkBinding ? <>Framework {run.frameworkBinding.version} · <code>{run.frameworkBinding.revision.slice(0, 10)}</code> · Routine API {run.frameworkBinding.routineApiVersion}</>
+            : "Framework provenance unknown: this historical result did not record its installed framework."}</div>
+          {!run.routineSource && <div>Routine bundle provenance unknown: this historical result did not record its source archive.</div>}
+        </dl>
+      </details>
+      {evidenceStatus === "failed" && <p role="alert" className="mt-3 text-sm text-[#cf222e]">Evidence failed; the execution verdict is unchanged.</p>}
+      {!uploadsComplete && <p role="status" className="mt-3 text-sm text-[#747780]">Evidence upload pending.</p>}
     </section>
     <LifecyclePanel phase="setup" actions={run.result.setup.actions} status={run.result.setup.status}
       actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
@@ -254,7 +266,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       }} /></div>
     </section>}
     <section aria-label="Execution steps" className={`${PANEL} min-w-0 ${hasRecording ? "order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col" : ""}`}><h3 className="shrink-0 font-semibold">Execution</h3>
-      <label className="mt-3 block shrink-0 text-sm">Search steps<input type="search" className="mt-1 block w-full rounded-lg border border-[#cbd3c8] p-2" value={stepSearch} onChange={event => setStepSearch(event.target.value)} placeholder="Instruction, expected result or step ID" /></label>
+      <label className="mt-3 block shrink-0 text-sm">Search steps<input type="search" className={`mt-1 block ${TESTING_FIELD}`} value={stepSearch} onChange={event => setStepSearch(event.target.value)} placeholder="Instruction, expected result or step ID" /></label>
       <div role="region" aria-label="Execution details" tabIndex={0} className={`mt-2 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 ${hasRecording ? "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>
       {!visibleSteps.length && <p className="mt-3">No steps match your search.</p>}
       <ol role="list" className="mt-3 list-none space-y-2">{visibleSteps.map(({step, index, source}) => {
@@ -262,7 +274,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         return <li key={step.id} className={`flex gap-3 rounded-lg border p-3 ${selectedStep === step.id ? "border-[#3b7650] bg-[#edf6ef]" : "border-[#e0e4de]"}`}>
           <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
           <div className="min-w-0 flex-1">
-          {step.recordingLocation && uploadsComplete ? <button className="block w-full text-left" aria-current={selectedStep === step.id ? "step" : undefined} onClick={() => seekStep(step.id, step.recordingLocation!)}><span className="underline">{title}</span> <StepStatus status={step.status} /> · {elapsedDuration(step.durationMs)}<span className="block text-sm">Watch this step · {recordingOffset(step.recordingLocation.startOffsetMs)}</span></button>
+          {step.recordingLocation && uploadsComplete ? <button type="button" className="block w-full rounded-sm text-left text-sm hover:text-[#0969da] focus-visible:outline-2 focus-visible:outline-[#0969da]" aria-current={selectedStep === step.id ? "step" : undefined} onClick={() => seekStep(step.id, step.recordingLocation!)}><span className="font-medium">{title}</span> <StepStatus status={step.status} /> · {elapsedDuration(step.durationMs)}<span className="block text-sm">Watch this step · {recordingOffset(step.recordingLocation.startOffsetMs)}</span></button>
             : <p>{title} <StepStatus status={step.status} />{step.status !== "not-run" && ` · ${elapsedDuration(step.durationMs)}`}<span className="block text-sm text-[#68746d]">{step.status === "not-run" ? "Not executed" : "Recording location unavailable"}</span></p>}
           {source && <p className="mt-1 text-sm">Expected: {source.expected}</p>}
           {step.causedBy && <p className="mt-1 text-sm">Caused by: {step.causedBy}</p>}
@@ -278,7 +290,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       unavailable={run.result.teardown.unavailableResources} />
     <section className={PANEL}><h3 className="font-semibold">Evidence</h3>
       {run.result.failures.filter(failure => failure.phase === "evidence").map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
-      <ul className="mt-3 space-y-2">{run.assets.map(asset => <li key={asset.id}>{uploadsComplete ? <a className="underline" href={assetHref(asset.id)}>{asset.path}</a> : asset.path} · {asset.kind}</li>)}</ul>
+      <ul className="mt-3 space-y-2">{run.assets.map(asset => <li key={asset.id}>{uploadsComplete ? <a className={TESTING_LINK} href={assetHref(asset.id)}>{asset.path}</a> : asset.path} · {asset.kind}</li>)}</ul>
       <p className="mt-4 text-xs">Source revision: <code>{run.definitionRevision}</code></p>
     </section>
   </div>;
@@ -355,22 +367,21 @@ function TestHistoryList() {
   const options = [...routines.map(searchableRoutine), ...members.map(member => runSearchMetadata(member, routines))];
   return <section className={PANEL}>
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Test history</h2>
-      <button type="button" role="switch" aria-checked={includeReruns} onClick={() => setIncludeReruns(value => !value)}
+      <TestingButton type="button" role="switch" aria-checked={includeReruns} onClick={() => setIncludeReruns(value => !value)}
         className="inline-flex items-center gap-2 rounded-md py-1 text-sm text-[#57606a] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0969da]">
         <span aria-hidden="true" className={`relative h-5 w-9 rounded-full transition-colors ${includeReruns ? "bg-[#0969da]" : "bg-[#d0d7de]"}`}><span className={`absolute top-0.5 size-4 rounded-full bg-white transition-transform ${includeReruns ? "translate-x-[18px]" : "translate-x-0.5"}`}/></span>Show reruns
-      </button>
+      </TestingButton>
     </div>
-    <p className="mt-2 text-sm text-[#68746d]">Dispatched test suites and standalone routine runs, newest first.</p>
     <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${entries.length} loaded entries`} />
-    <p className="mt-2 text-sm text-[#68746d]">Filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p>
+    <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p></details>
     {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
-    {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <button className="underline" onClick={() => catalog.refetch()}>Retry routine metadata</button></p>}
+    {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
     {history.isPending && <p role="status" className="mt-3">Loading test history…</p>}
-    {history.error && <p role="alert" className="mt-3">{history.data ? "History could not refresh" : "Could not load test history"}: {history.error.message} <button className="underline" onClick={() => history.refetch()}>Retry</button></p>}
+    {history.error && <p role="alert" className="mt-3">{history.data ? "History could not refresh" : "Could not load test history"}: {history.error.message} <TestingButton onClick={() => history.refetch()}>Retry</TestingButton></p>}
     {history.data && !entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
     {history.data && !!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches your filters.</p>}
     {!!filtered.length && <TestHistoryTable entries={filtered} routines={routines}/>}
-    {history.hasNextPage && <button className="mt-4 underline" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? "Loading…" : "More history"}</button>}
+    {history.hasNextPage && <TestingButton className="mt-4" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? "Loading…" : "More history"}</TestingButton>}
   </section>;
 }
 export function testHistoryListPath(includeReruns: boolean, cursor?: string) {
@@ -393,14 +404,14 @@ function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
   const filtered = runs.filter(run => matchesRoutineSearch(runSearchMetadata(run, routines), filters));
   return <section className={PANEL}><h2 className="text-xl font-semibold">Filtered routine runs</h2>
     <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${runs.length} loaded runs`} />
-    <p className="mt-2 text-sm text-[#68746d]">Filters apply to loaded runs for this build. Load more runs to search older results.</p>
+    <p className="mt-2 text-xs text-[#747780]">Searches loaded runs for this build.</p>
     {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
-    {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <button className="underline" onClick={() => catalog.refetch()}>Retry routine metadata</button></p>}
+    {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
     {query.error && <p role="alert" className="mt-3">Runs could not refresh: {query.error.message}</p>}
     {!runs.length && <p className="mt-3">No routine runs match this build.</p>}
     {!!runs.length && !filtered.length && <p className="mt-3">No loaded routine runs match your filters for this build.</p>}
     {!!filtered.length && <TestHistoryTable entries={filtered.map(run => ({kind: "run" as const, ...run}))} routines={routines}/>}
-    {query.hasNextPage && <button className="mt-4 underline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>{query.isFetchingNextPage ? "Loading…" : "More runs"}</button>}
+    {query.hasNextPage && <TestingButton className="mt-4" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>{query.isFetchingNextPage ? "Loading…" : "More runs"}</TestingButton>}
   </section>;
 }
 export function recordingOffset(ms: number) {
@@ -411,7 +422,7 @@ export function matchesStepSearch(step: FrameworkRun["result"]["steps"][number],
   return `${step.id} ${source?.instruction ?? ""} ${source?.expected ?? ""} ${step.status}`.toLowerCase().includes(search.trim().toLowerCase());
 }
 function StepStatus({status}: {status: FrameworkRun["result"]["steps"][number]["status"] | "cancelled"}) {
-  return <span className={`ml-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${status === "passed" ? "bg-green-100 text-green-800" : status === "failed" ? "bg-red-100 text-red-800" : status === "cancelled" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-700"}`}>{status === "not-run" ? "Not run" : status === "cancelled" ? "Cancelled" : status}</span>;
+  return <HistoryStatus outcome={status}/>;
 }
 function definitionSourceHref(source: RoutineEnrollment["definition"]["source"]) {
   return `https://github.com/${source.repository}/blob/${source.revision}/${source.path.split("/").map(encodeURIComponent).join("/")}`;
@@ -420,5 +431,5 @@ function BuildIdentity({build, label = "Tested build"}: {build: {channel: string
   const href = build.repository && /^[\w-]+\/[\w.-]+$/.test(build.repository) && /^[a-f0-9]{40}$/.test(build.headSha) ? `https://github.com/${build.repository}/commit/${build.headSha}` : null;
   const producer = typeof build.producerUrl === "string" && /^https:\/\/github\.com\/Mentra-Community\//.test(build.producerUrl) ? build.producerUrl : null;
   const release = typeof build.releaseIdentity === "string" ? build.releaseIdentity : typeof build.release === "string" ? build.release : null;
-  return <>{label}: {build.channel}{release && ` · ${release}`} · {href ? <a className="underline" href={href} target="_blank" rel="noreferrer"><code>{build.headSha.slice(0, 10)}</code></a> : <code>{build.headSha.slice(0, 10)}</code>}{producer && <> · <a className="underline" href={producer} target="_blank" rel="noreferrer">Build job</a></>}</>;
+  return <>{label}: {build.channel}{release && ` · ${release}`} · {href ? <a className={TESTING_LINK} href={href} target="_blank" rel="noreferrer"><code>{build.headSha.slice(0, 10)}</code></a> : <code>{build.headSha.slice(0, 10)}</code>}{producer && <> · <a className={TESTING_LINK} href={producer} target="_blank" rel="noreferrer">Build job</a></>}</>;
 }
