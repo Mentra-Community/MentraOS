@@ -14,8 +14,9 @@
  *
  * Configuration (read on use, so a changed value takes effect on the next request):
  *  - `CLOUD_CORE_FLEET_URL`: Fleet's base URL, with an optional path prefix. Unset or blank means
- *    Fleet is not installed. `https` is accepted everywhere. Plain `http` is accepted outside
- *    production for any host, and in production (`NODE_ENV=production`) only for `localhost` and
+ *    Fleet is not installed. `https` is accepted everywhere. Plain `http` is accepted on a local or
+ *    test Core for any host, and on a deployed Core (`isDeployedEnvironment()`: `NODE_ENV=production`
+ *    or `CLOUD_CORE_ENVIRONMENT` dev, staging, prod or production) only for `localhost` and
  *    `127.0.0.1`. No credentials, query or fragment.
  *  - `CLOUD_CORE_FLEET_SECRET`: the shared secret that signs what Core sends. Required when the URL
  *    is set.
@@ -37,6 +38,9 @@
  *    Each segment is checked after one decoding and the path is forwarded exactly as received. A
  *    segment that is still `%2e`, `%2f` or `%5c` after that decoding (a double-encoded `%252e`) is
  *    refused too, so a Fleet that decodes a second time cannot be handed a dot segment or a separator;
+ *  - an upstream 401 reaches the caller as a 403 with Fleet's body: phones and the admin dashboard
+ *    read a 401 as "your session ended, sign in again", and a Fleet answer never means that. Fleet
+ *    should answer 403 for "not allowed" itself;
  *  - any other upstream status and body pass through, with `content-type` and `cache-control` only.
  *
  * What Fleet receives. Core copies the method, the query, the body and the `content-type` and
@@ -51,8 +55,12 @@
  *  - `x-mentra-organization-id`: this Core's organization id;
  *  - `x-mentra-principal`: who is calling, as base64url JSON, one of
  *      `{kind: "phone", mentraUserId, tenantId, sessionId}`,
- *      `{kind: "user", mentraUserId, email, isOrganizationAdmin}` or
- *      `{kind: "credential", credentialId, credentialKind, workspaceId, scopes}`;
+ *      `{kind: "user", mentraUserId, email, emailVerified, isOrganizationAdmin}` or
+ *      `{kind: "credential", credentialId, credentialKind, workspaceId, scopes, packageNames}`.
+ *    `emailVerified` says whether the identity provider verified `email`; never match on an
+ *    unverified one. A credential with a non-empty `packageNames` may act only on those packages:
+ *    Fleet cannot ask Core's `/authorize` about it (Core never forwards the bearer), so it must apply
+ *    that restriction itself;
  *  - `x-mentra-principal-signature`: base64url HMAC-SHA256, keyed with the same secret, of
  *    `<ts>\n<x-mentra-organization-id value>\n<x-mentra-principal value>`, using the same `<ts>`.
  *
@@ -71,7 +79,7 @@ import {createLogger} from "@mentra/cloud-shared"
 import {SERVICE_HEADERS, signServiceRequest} from "@mentra/workspace-contract/server"
 import {Hono, type Handler, type MiddlewareHandler} from "hono"
 import {bodyLimit} from "hono/body-limit"
-import {organizationId} from "../../services/workspaces/organization"
+import {isDeployedEnvironment, organizationId} from "../../services/workspaces/organization"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 
 const logger = createLogger("core").child({service: "fleet-forwarding"})
@@ -93,7 +101,7 @@ const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 10_000
 
-/** The only hosts that may use plain `http` in production. */
+/** The only hosts a deployed Core may reach over plain `http`. */
 const LOCAL_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1"])
 
 /** The only inbound headers copied upstream. Everything else, `x-mentra-*` included, is dropped. */
@@ -122,20 +130,20 @@ let parsed: {key: string; config: FleetConfig} | undefined
 function fleetConfig(): FleetConfig {
   const rawUrl = (process.env[URL_VARIABLE] ?? "").trim()
   const secret = process.env[SECRET_VARIABLE] ?? ""
-  const production = process.env.NODE_ENV === "production"
-  const key = JSON.stringify([rawUrl, secret, production])
-  if (parsed?.key !== key) parsed = {key, config: parseConfig(rawUrl, secret, production)}
+  const deployed = isDeployedEnvironment()
+  const key = JSON.stringify([rawUrl, secret, deployed])
+  if (parsed?.key !== key) parsed = {key, config: parseConfig(rawUrl, secret, deployed)}
   return parsed.config
 }
 
-function parseConfig(rawUrl: string, secret: string, production: boolean): FleetConfig {
+function parseConfig(rawUrl: string, secret: string, deployed: boolean): FleetConfig {
   // The URL decides whether Fleet is installed; a secret without one is inert.
   if (!rawUrl) return {state: "unset"}
-  const baseUrl = parseFleetUrl(rawUrl, production)
+  const baseUrl = parseFleetUrl(rawUrl, deployed)
   if (!baseUrl) {
     logger.error(
       {variable: URL_VARIABLE},
-      `${URL_VARIABLE} is not a usable Fleet URL (an http(s) URL without credentials, query or fragment; https is required in production except on localhost); refusing Fleet requests`,
+      `${URL_VARIABLE} is not a usable Fleet URL (an http(s) URL without credentials, query or fragment; a deployed Core requires https except on localhost); refusing Fleet requests`,
     )
   }
   if (!secret.trim()) {
@@ -147,7 +155,7 @@ function parseConfig(rawUrl: string, secret: string, production: boolean): Fleet
   return baseUrl && secret.trim() ? {state: "ready", baseUrl, secret} : {state: "misconfigured"}
 }
 
-function parseFleetUrl(raw: string, production: boolean): URL | null {
+function parseFleetUrl(raw: string, deployed: boolean): URL | null {
   let url: URL
   try {
     url = new URL(raw)
@@ -156,7 +164,7 @@ function parseFleetUrl(raw: string, production: boolean): URL | null {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null
   if (!url.hostname || url.username || url.password || url.search || url.hash) return null
-  if (production && url.protocol === "http:" && !LOCAL_HOSTS.has(url.hostname)) return null
+  if (deployed && url.protocol === "http:" && !LOCAL_HOSTS.has(url.hostname)) return null
   return url
 }
 
@@ -265,6 +273,7 @@ function callerPrincipal(c: AppContext, audience: Audience): Record<string, unkn
       kind: "user",
       mentraUserId: principal.mentraUserId,
       email: principal.email,
+      emailVerified: principal.emailVerified,
       isOrganizationAdmin: principal.isOrganizationAdmin,
     }
   }
@@ -274,6 +283,7 @@ function callerPrincipal(c: AppContext, audience: Audience): Record<string, unkn
     credentialKind: principal.credentialKind,
     workspaceId: principal.workspaceId,
     scopes: principal.scopes,
+    packageNames: principal.packageNames,
   }
 }
 
@@ -389,6 +399,8 @@ function forward(audience: Audience): Handler<AppEnv> {
       const value = upstreamHeaders.get(name)
       if (value) responseHeaders.set(name, value)
     }
+    // A 401 from Core means "sign in again" to every client; Fleet's never does, so it is relayed as a 403.
+    if (status === 401) status = 403
     return new Response(NULL_BODY_STATUSES.has(status) ? null : payload, {status, headers: responseHeaders})
   }
 }

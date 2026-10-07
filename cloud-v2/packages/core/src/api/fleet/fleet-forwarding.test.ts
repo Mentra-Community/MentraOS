@@ -26,6 +26,7 @@ const ENV_KEYS = [
   "CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES",
   "CLOUD_CORE_FLEET_TIMEOUT_MS",
   "CLOUD_CORE_ORGANIZATION_ID",
+  "CLOUD_CORE_ENVIRONMENT",
   "NODE_ENV",
   "WORKOS_API_KEY",
   "WORKOS_CLIENT_ID",
@@ -655,9 +656,21 @@ describe("what comes back", () => {
     expect(response.headers.get("access-control-allow-origin")).toBeNull()
   })
 
+  test("an upstream 401 reaches the caller as a 403 with Fleet's body, on both surfaces", async () => {
+    // Phones and the admin dashboard read a 401 as "your session ended"; Fleet's 401 never means that.
+    configure()
+    respond = () => Response.json({error: "not_enrolled"}, {status: 401})
+    const member = as("member-401", person(false))
+
+    for (const response of [await phone("/fleet/devices"), await admin(member, "/fleet/devices")]) {
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({error: "not_enrolled"})
+    }
+  })
+
   test("a 4xx from Fleet is passed through, not turned into an outage", async () => {
     configure()
-    for (const status of [400, 401, 403, 404, 409, 422, 429]) {
+    for (const status of [400, 403, 404, 409, 422, 429]) {
       respond = () => Response.json({error: `fleet_says_${status}`}, {status})
 
       const response = await phone("/fleet/devices")
@@ -772,6 +785,19 @@ describe("configuration", () => {
     expect(calls[0].headers.get(FLEET_HEADERS.organizationId)).toBe("acme")
   })
 
+  test("a deployed Core requires https too, even without NODE_ENV=production", async () => {
+    // Deployed Cores set CLOUD_CORE_ENVIRONMENT, not NODE_ENV.
+    configure({CLOUD_CORE_ENVIRONMENT: "dev", CLOUD_CORE_ORGANIZATION_ID: "acme"})
+    const installed = async (url: string) => {
+      process.env.CLOUD_CORE_FLEET_URL = url
+      return ((await (await phone("/capabilities")).json()) as {fleet: {installed: boolean}}).fleet.installed
+    }
+
+    expect(await installed("https://fleet.example.test")).toBe(true)
+    expect(await installed("http://fleet.example.test")).toBe(false)
+    expect(await installed(upstreamUrl())).toBe(true)
+  })
+
   test("outside production http is allowed on any host", async () => {
     configure({CLOUD_CORE_FLEET_URL: "http://fleet.internal:8080"})
 
@@ -831,6 +857,7 @@ describe("the admin surface", () => {
       kind: "user",
       mentraUserId: "mu_1",
       email: "person@example.test",
+      emailVerified: true,
       isOrganizationAdmin: false,
     })
     expect(serviceSignatureVerifies(call)).toBe(true)
@@ -860,12 +887,14 @@ describe("the admin surface", () => {
       expect([principal, (await admin(principal, "/fleet/devices")).status]).toEqual([principal, 200])
     }
 
+    // The package restriction travels with the key: Fleet cannot ask Core about a credential's bearer.
     expect(decodePrincipal(calls[0].headers.get(FLEET_HEADERS.principal))).toEqual({
       kind: "credential",
       credentialId: "01HZKEY",
       credentialKind: "workspace",
       workspaceId: "ws_1",
       scopes: ["miniapps.publish"],
+      packageNames: ["com.example.app"],
     })
     expect(decodePrincipal(calls[1].headers.get(FLEET_HEADERS.principal))).toEqual({
       kind: "credential",
@@ -873,8 +902,9 @@ describe("the admin surface", () => {
       credentialKind: "organization",
       workspaceId: null,
       scopes: [],
+      packageNames: ["com.example.app"],
     })
-    // The key's label and the package restriction are not part of what Fleet is told.
+    // The key's label is not part of what Fleet is told.
     expect(calls[0].headers.get(FLEET_HEADERS.principal)).not.toContain(Buffer.from("ci key").toString("base64url"))
     for (const call of calls) expect(principalSignatureVerifies(call)).toBe(true)
   })

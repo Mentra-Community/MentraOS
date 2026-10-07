@@ -20,6 +20,11 @@ export type CorePrincipal =
       credentialKind: "workspace" | "organization"
       workspaceId: string | null
       scopes: string[]
+      /**
+       * Non-empty: the key may act only on these packages. A consumer that lists or acts on packages
+       * must filter by it, and must pass `packageName` to `/authorize` for anything package-specific
+       * (see {@link AuthorizeRequest.packageName}).
+       */
       packageNames: string[]
       label: string
     }
@@ -43,6 +48,15 @@ export interface AuthorizeRequest {
   credential: AuthorizeCredential
   workspaceId?: string
   capability?: WorkspaceCapability
+  /**
+   * The package the request acts on. A package-scoped credential (non-empty
+   * `principal.packageNames`) is refused with `package_out_of_scope` for any other package.
+   *
+   * Omitting it authorizes the capability workspace-wide, package-scoped keys included: Core cannot
+   * apply a package restriction to a request that names no package. So every route that reads or
+   * changes one package must pass it, and a route that lists packages must itself filter the result
+   * by `principal.packageNames`. People and workspace-wide keys are never package-scoped.
+   */
   packageName?: string
 }
 

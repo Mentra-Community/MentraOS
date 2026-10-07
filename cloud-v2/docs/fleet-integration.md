@@ -19,9 +19,10 @@ for every Core variable.
 
 - `CLOUD_CORE_FLEET_URL`: Fleet's base URL with an optional path prefix. Unset or
   blank means Fleet is not installed. `https` is accepted everywhere. Plain `http`
-  is accepted outside production for any host, and in production
-  (`NODE_ENV=production`) only for `localhost` and `127.0.0.1`. No credentials,
-  query or fragment.
+  is accepted on a local or test Core for any host. A deployed Core
+  (`NODE_ENV=production`, or `CLOUD_CORE_ENVIRONMENT` set to `dev`, `staging`,
+  `prod` or `production`) accepts it only for `localhost` and `127.0.0.1`. No
+  credentials, query or fragment.
 - `CLOUD_CORE_FLEET_SECRET`: the shared secret that signs everything Core sends.
   Required when the URL is set.
 - `CLOUD_CORE_FLEET_MAX_BODY_BYTES`: the largest request body Core forwards.
@@ -153,17 +154,22 @@ Also check that `x-mentra-organization-id` is the organization Fleet is bound to
 {"kind": "phone", "mentraUserId": "...", "tenantId": "...", "sessionId": "..."}
 
 // /v1/admin: a signed-in person
-{"kind": "user", "mentraUserId": "...", "email": "..." /* or null */, "isOrganizationAdmin": false}
+{"kind": "user", "mentraUserId": "...", "email": "..." /* or null */, "emailVerified": true,
+ "isOrganizationAdmin": false}
 
 // /v1/admin: a Core credential
 {"kind": "credential", "credentialId": "...", "credentialKind": "workspace" /* or "organization" */,
- "workspaceId": "..." /* null for an operator key */, "scopes": ["..."]}
+ "workspaceId": "..." /* null for an operator key */, "scopes": ["..."], "packageNames": ["..."]}
 ```
 
 `isOrganizationAdmin` is computed from a verified identity email, so Fleet may
-rely on it. **The `email` field may be unverified**: it is what the identity
-provider reported, not proof of ownership. Never authorize on it. Authorize on
-`mentraUserId` through Core's internal API (below).
+rely on it. **The `email` field may be unverified**: `emailVerified` says whether
+the identity provider verified it. Even a verified email is not an authorization:
+authorize on `mentraUserId` through Core's internal API (below).
+
+A credential with a non-empty `packageNames` may act only on those packages.
+Core never forwards the bearer, so Fleet cannot ask `/authorize` about a
+credential: it must apply `scopes` and `packageNames` itself.
 
 ## Asking Core what a caller may do
 
@@ -207,5 +213,9 @@ Clients can tell the two apart and should: one means "hide Fleet", the other
   or there was a network error, a timeout, an upstream 5xx or any upstream 3xx.
   Never an empty success. Retry later.
 - `401 {"error":"unauthorized"}`: no principal reached the forwarder.
+
+A `401` from Fleet reaches the caller as a `403` with Fleet's body. Phones and
+the admin dashboard treat a 401 as "your session ended, sign in again", which a
+Fleet answer never means. Answer `403` for "not allowed" (not enrolled, say).
 
 Any other status Fleet answers, 4xx included, is relayed unchanged.
