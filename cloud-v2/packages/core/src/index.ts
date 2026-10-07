@@ -3,10 +3,13 @@
  * miniapp store, REST endpoints.
  *
  * Boot order:
- *   1. Connect Mongo (fail-fast on misconfiguration).
- *   2. Build the Hono app with readiness checks wired in.
- *   3. Start Bun.serve.
- *   4. Register SIGTERM/SIGINT handlers for graceful shutdown.
+ *   1. Connect Mongo (fail-fast on misconfiguration) and run the startup migrations.
+ *   2. On a deployed Core, check the organization configuration (fail-fast: a
+ *      missing or malformed `CLOUD_CORE_ORGANIZATION_ID` stops the boot, so the
+ *      deploy fails its health check instead of serving 500s on every signed-in path).
+ *   3. Build the Hono app with readiness checks wired in.
+ *   4. Start Bun.serve.
+ *   5. Register SIGTERM/SIGINT handlers for graceful shutdown.
  *
  * When imported (e.g. by integration tests), nothing runs — call
  * `startCore({ port, mongoUrl })` to boot. When executed directly via
@@ -24,6 +27,7 @@ import {createCoreStop, serveCore} from "./http-server"
 import {startFrameworkRunSummaryBackfill} from "./services/framework-run-summary.service"
 import {startRoutineWorkReporting} from "./services/routine-work-notification"
 import {warnIfWorkosIdentitiesStaySeparate} from "./services/workspaces/identity-link.service"
+import {credentialEnvironmentLabels, isDeployedEnvironment, organizationId} from "./services/workspaces/organization"
 
 const logger = createLogger("core")
 
@@ -48,11 +52,12 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   await connectMongo(mongoUrl)
   try {
     await runStartupMigrations()
+    checkDeploymentConfiguration()
   } catch (error) {
     // Disconnect best-effort: a secondary disconnect failure must not mask the
-    // original migration error, which is what we rethrow.
+    // original boot error, which is what we rethrow.
     await disconnectMongo().catch((disconnectError) => {
-      logger.warn({disconnectError}, "failed to disconnect mongo after migration failure")
+      logger.warn({disconnectError}, "failed to disconnect mongo after a boot failure")
     })
     throw error
   }
@@ -76,6 +81,20 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
       await disconnectMongo()
     }),
   }
+}
+
+/**
+ * On a deployed Core, read the organization configuration once before serving.
+ * Every identity-bearing path needs `organizationId()`, so a missing or malformed
+ * `CLOUD_CORE_ORGANIZATION_ID` must stop the boot rather than surface later as a
+ * 500 on admin sign-in, the workspace APIs and the internal service API. Local
+ * runs keep the `local` default.
+ */
+function checkDeploymentConfiguration(): void {
+  if (!isDeployedEnvironment()) return
+  const organization = organizationId()
+  const credentialEnvironments = credentialEnvironmentLabels()
+  logger.info({organizationId: organization, credentialEnvironments}, "organization configuration checked")
 }
 
 if (import.meta.main) {
