@@ -34,6 +34,12 @@ case "$1 $2" in
   "api user")
     if [[ "\${FAKE_GH_INSTALLATION:-}" == "1" ]]; then echo "Resource not accessible by integration" >&2; exit 1; fi
     echo "bob" ;;
+  "api repos/Mentra-Community/fixture/pulls/1")
+    count=$(( $(cat "$FAKE_STATE/head-reads" 2>/dev/null || echo 0) + 1 ))
+    echo "$count" > "$FAKE_STATE/head-reads"
+    if [[ "\${FAKE_GH_HEAD_CHANGES:-}" == "1" && "$count" -gt 1 ]]; then
+      git -C "$FAKE_ORIGIN" rev-parse refs/heads/main
+    else git -C "$FAKE_ORIGIN" rev-parse refs/heads/feature; fi ;;
   "api repos/Mentra-Community/fixture/pulls/1/reviews")
     case "\${FAKE_GH_REVIEWS:-ok}" in
       fail) echo "gh: HTTP 502 from GitHub" >&2; exit 1 ;;
@@ -156,6 +162,28 @@ const codexCalls = (f) =>
   existsSync(join(f.state, "codex-calls")) ? Number(readFileSync(join(f.state, "codex-calls"), "utf8").trim()) : 0
 
 describe("codex-pr-review.sh lifecycle", () => {
+  test("a missing pull ref fetches and reviews the exact API head", () => {
+    const f = makeFixture()
+    const expected = sh(f.origin, "git rev-parse refs/heads/feature")
+    sh(f.origin, "git update-ref -d refs/pull/1/head")
+    const result = run(f, [f.repo, "1"])
+    expect(result.code, result.out).toBe(0)
+    expect(sh(f.worktree, "git rev-parse HEAD")).toBe(expected)
+    expect(codexCalls(f)).toBe(1)
+    expect(result.out).toContain("codex-pr-review: done")
+  }, 30_000)
+
+  test("a missing pull ref refuses a head change before starting a reviewer", () => {
+    const f = makeFixture()
+    sh(f.origin, "git update-ref -d refs/pull/1/head")
+    const result = run(f, [f.repo, "1"], {FAKE_GH_HEAD_CHANGES: "1"})
+    expect(result.code).not.toBe(0)
+    expect(result.out).toContain("PR head changed while fetching")
+    expect(codexCalls(f)).toBe(0)
+    expect(existsSync(`${f.worktree}.lock`)).toBe(false)
+    expect(existsSync(f.worktree)).toBe(false)
+  })
+
   test("fresh owned reviews share the two existing external dependency targets and reuse their exact links", () => {
     const f = makeFixture()
     const shared = join(f.root, "shared packages"), runnerShared = join(shared, "runner")
