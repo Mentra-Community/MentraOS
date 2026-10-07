@@ -1,3 +1,4 @@
+import {elapsedDuration} from "../lib/run-duration";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { DISK_FLOOR_BYTES, HOST_COMPONENTS, hostIsFresh, type CleanupHealthEvent, type HostComponent, type HostDiskPoint,
@@ -8,7 +9,7 @@ import {LaneHistoryPage} from "./lane-history";
 import type {LaneSelection} from "../lib/lane-links";
 import {LaneHealthSection} from "./lane-health";
 
-const elapsed = (at: string, now: number) => `${Math.max(0, Math.floor((now - Date.parse(at)) / 60000))}m`;
+const elapsed = (at: string, now: number) => elapsedDuration(Math.max(0, now - Date.parse(at))) ?? "unknown";
 const GiB = 1024 ** 3;
 const recordingFloorGiB = DISK_FLOOR_BYTES / GiB;
 const componentNames = { "general-worker": "General worker", "triage-worker": "Dedicated triage worker", "disk-cleanup": "Scheduled cleanup" };

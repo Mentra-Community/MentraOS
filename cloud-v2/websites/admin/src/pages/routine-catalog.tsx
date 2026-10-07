@@ -1,3 +1,4 @@
+import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {RunRerunLinks} from "./test-reruns";
 import {useEffect, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
@@ -221,7 +222,6 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     video.current?.scrollIntoView({block: "nearest", behavior: "smooth"});
   };
   const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-run/${encodeURIComponent(actualRunId)}/assets/${encodeURIComponent(id)}`;
-  const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} seconds`;
   const hasRecording = Boolean(recordingAsset && uploadsComplete);
   const definitionSteps = new Map(definition?.steps.map(step => [step.id, step]) ?? []);
   const visibleSteps = run.result.steps.map((step, index) => ({step, index, source: definitionSteps.get(step.id)}))
@@ -239,7 +239,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       {run.frameworkBinding ? <p className="mt-2 text-sm">Framework {run.frameworkBinding.version} · <code>{run.frameworkBinding.revision.slice(0, 10)}</code> · Routine API {run.frameworkBinding.routineApiVersion}</p>
         : <p className="mt-2 text-sm">Framework provenance unknown: this historical result did not record its installed framework.</p>}
       {!run.routineSource && <p className="mt-2 text-sm">Routine bundle provenance unknown: this historical result did not record its source archive.</p>}
-      <p className="mt-2">Setup {seconds(run.result.timing.setupMs)} · Test {seconds(run.result.timing.testMs)} · Teardown {seconds(run.result.timing.teardownMs)}</p>
+      <p className="mt-2">Setup {elapsedDuration(run.result.timing.setupMs)} · Test {elapsedDuration(run.result.timing.testMs)} · Teardown {elapsedDuration(run.result.timing.teardownMs)}</p>
       {evidenceStatus === "failed" && <p role="alert" className="mt-2">Evidence failed; the execution verdict is unchanged.</p>}
       {!uploadsComplete && <p role="status" className="mt-2">Evidence upload pending.</p>}
     </section>
@@ -261,8 +261,8 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         return <li key={step.id} className={`flex gap-3 rounded-lg border p-3 ${selectedStep === step.id ? "border-[#3b7650] bg-[#edf6ef]" : "border-[#e0e4de]"}`}>
           <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
           <div className="min-w-0 flex-1">
-          {step.recordingLocation && uploadsComplete ? <button className="block w-full text-left" aria-current={selectedStep === step.id ? "step" : undefined} onClick={() => seekStep(step.id, step.recordingLocation!)}><span className="underline">{title}</span> <StepStatus status={step.status} /> · {seconds(step.durationMs)}<span className="block text-sm">Watch this step · {recordingOffset(step.recordingLocation.startOffsetMs)}</span></button>
-            : <p>{title} <StepStatus status={step.status} />{step.status !== "not-run" && ` · ${seconds(step.durationMs)}`}<span className="block text-sm text-[#68746d]">{step.status === "not-run" ? "Not executed" : "Recording location unavailable"}</span></p>}
+          {step.recordingLocation && uploadsComplete ? <button className="block w-full text-left" aria-current={selectedStep === step.id ? "step" : undefined} onClick={() => seekStep(step.id, step.recordingLocation!)}><span className="underline">{title}</span> <StepStatus status={step.status} /> · {elapsedDuration(step.durationMs)}<span className="block text-sm">Watch this step · {recordingOffset(step.recordingLocation.startOffsetMs)}</span></button>
+            : <p>{title} <StepStatus status={step.status} />{step.status !== "not-run" && ` · ${elapsedDuration(step.durationMs)}`}<span className="block text-sm text-[#68746d]">{step.status === "not-run" ? "Not executed" : "Recording location unavailable"}</span></p>}
           {source && <p className="mt-1 text-sm">Expected: {source.expected}</p>}
           {step.causedBy && <p className="mt-1 text-sm">Caused by: {step.causedBy}</p>}
           </div>
@@ -300,7 +300,7 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
     className="flex gap-3 rounded-lg border border-[#e0e4de] p-3">
     <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
     <div className="min-w-0 flex-1"><p>{action.instruction} <StepStatus status={action.status} />
-      {action.status !== "not-run" && ` · ${(action.durationMs / 1000).toFixed(1)} seconds`}</p>
+      {action.status !== "not-run" && ` · ${elapsedDuration(action.durationMs)}`}</p>
       <p className="mt-1 text-sm text-[#68746d]">Expected: {action.expected}</p>
       {action.startedAt && <p className="mt-1 text-sm">Started {new Date(action.startedAt).toLocaleTimeString()}
         {action.finishedAt && ` · Finished ${new Date(action.finishedAt).toLocaleTimeString()}`}</p>}
@@ -308,7 +308,7 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
     </div>
   </li>)}</ol>;
   return <section aria-label={`${title} details`} className={PANEL}>
-    <h3 className="font-semibold">{title} <StepStatus status={status} /> · {(durationMs / 1000).toFixed(1)} seconds</h3>
+    <h3 className="font-semibold">{title} <StepStatus status={status} /> · {elapsedDuration(durationMs)}</h3>
     {actionId && <p className="mt-2 text-sm">Stopped at: {actionId}</p>}
     <h4 className="mt-4 text-sm font-semibold">Routine {phase}</h4>
     {routine === undefined ? <p className="mt-2 text-sm text-[#68746d]">Routine-specific {phase} details were not recorded for this run.</p>
@@ -389,7 +389,7 @@ function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
 }
 function FrameworkRunListItem({run}: {run: FrameworkRunSummary}) {
   return <li className="rounded-lg border border-[#e0e4de] p-4">
-    <a className="font-semibold underline" href={frameworkRunHref(run.runId)}>{run.routineId} · {run.platform} · {new Date(run.startedAt).toLocaleString()}</a> · {run.outcome} · {((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000).toFixed(1)} seconds
+    <a className="font-semibold underline" href={frameworkRunHref(run.runId)}>{run.routineId} · {run.platform} · {new Date(run.startedAt).toLocaleString()}</a> · {run.outcome} · {runDuration(run.startedAt, run.finishedAt) ?? "Duration unknown"}
     {run.stepCounts && <p className="mt-1 text-sm">{`${run.stepCounts.passed}/${run.stepCounts.total} passed, ${run.stepCounts.skipped} skipped`}</p>}
     <p className="mt-1 text-sm">Run <code>{run.runId}</code> · {run.hostId}/{run.laneId}</p><p className="mt-1 text-sm"><BuildIdentity build={run.build}/></p>
     {!run.frameworkBinding && <p className="mt-1 text-sm">Framework provenance unknown</p>}
