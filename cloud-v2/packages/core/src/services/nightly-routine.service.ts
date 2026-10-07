@@ -277,12 +277,14 @@ export class NightlyRoutineService {
     return cancellation ? {...detail, cancellation} : detail;
   }
 
-  private async snapshot(plan: NightlyPlan): Promise<NightlyResult> {
+  /** Canonical live verdict; list readers may supply page-scoped batch lookups. */
+  async snapshot(plan: NightlyPlan, readers: {requests: Pick<TestRequestService, "get">; results: Pick<FrameworkResultService, "summary">}
+    = {requests: this.requests, results: this.results}): Promise<NightlyResult> {
     const settledUploads = new Set<string>();
     const members: NightlyResult["members"] = await Promise.all(plan.members.map(async member => {
       if (!member.dispatchIntent) return {...member, status: "incomplete", publicationComplete: false};
       let request: StoredRequest | null;
-      try {request = await this.requests.get(member.requestId);}
+      try {request = await readers.requests.get(member.requestId);}
       catch (error) {return this.unavailableEvidence(member, error, "Request");}
       if (!request) return {...member, status: "waiting", publicationComplete: false};
       if (request.requestId !== member.requestId || request.hostId !== member.hostId || request.dispatchIntentSha256 !== requestInputDigest(member.dispatchIntent)
@@ -297,7 +299,7 @@ export class NightlyRoutineService {
       catch {return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Prepared input differs from the frozen intent."};}
       const prepared = {...member, input, inputSha256: request.inputSha256};
       try {
-        const result = await this.results.summary(member.requestId), run = result;
+        const result = await readers.results.summary(member.requestId), run = result;
         if (run.requestId !== member.requestId || run.routineId !== input.routineId || run.platform !== input.platform || run.definitionRevision !== input.definitionRevision
           || run.hostId !== member.hostId || run.laneId !== input.laneId || requestInputDigest(run.build) !== requestInputDigest(input.build)
           || !run.routineSource || requestInputDigest(run.routineSource) !== requestInputDigest(input.routineSource))
@@ -322,7 +324,7 @@ export class NightlyRoutineService {
     const single = members.length === 1 ? members[0]! : undefined;
     let singleRequest;
     if (single?.dispatchIntent && !single.runId) {
-      try {singleRequest = await this.requests.get(single.requestId);}
+      try {singleRequest = await readers.requests.get(single.requestId);}
       catch (error) {logger.error({err: error, requestId: single.requestId}, "Nightly request link is unavailable");}
     }
     const singleResultId = single?.runId ?? (singleRequest && singleRequest.hostId === single?.hostId

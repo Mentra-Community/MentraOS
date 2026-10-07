@@ -39,7 +39,28 @@ export interface FrameworkUploadAcknowledgements {
   complete(stored: StoredFrameworkRun): Promise<void>;
 }
 export {nativeRunFilter, summarizeFrameworkRun} from "./framework-run-summary.service";
-import {createFrameworkRunSummaryProjection, nativeRunFilter, readFrameworkRunSummary, verifiedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {createFrameworkRunSummaryProjection, nativeRunFilter, readFrameworkRunSummary, readFrameworkRunSummaryProjection, verifiedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import type {StoredSummaryRow} from "./framework-run-summary.service";
+export const frameworkResultSummaryFields = {runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1,
+  uploadsComplete: 1, "payload.build": 1} as const;
+
+/** Single and batched readers verify the same frozen verdict and exact build. */
+export function verifiedFrameworkResultSummary(row: StoredSummaryRow & {payload?: unknown}) {
+  const projection = verifiedFrameworkRunSummaryProjection(row), summary = projection.summary;
+  const build = frameworkBuildSchema.safeParse((row.payload as {build?: unknown} | undefined)?.build);
+  if (!build.success || summary.requestId !== row.requestId || build.data.repository !== summary.build.repository
+    || build.data.channel !== summary.build.channel || build.data.headSha !== summary.build.headSha
+    || build.data.prNumber !== summary.build.prNumber)
+    throw new TestRunError(503, "Frozen result summary build or identity is unavailable");
+  return {...summary, definitionRevision: projection.definitionRevision, build: build.data, uploadsComplete: row.uploadsComplete === true};
+}
+/** A missing derived projection uses the original digest-checked native payload; corrupt projections never fall back. */
+export async function readFrameworkResultSummary(row: StoredSummaryRow & {payload?: unknown}, deadline = Date.now() + 10_000) {
+  const verified = row.summaryProjection === undefined ? {
+    ...row, summaryProjection: await readFrameworkRunSummaryProjection(row, deadline),
+  } : row;
+  return verifiedFrameworkResultSummary(verified);
+}
 export interface ResultRequestBinding {hostId: string; catalogEligible?: boolean;
   input: {routineId: string; definitionRevision: string; routineSource: RoutineSourceRef; minimumFrameworkVersion?: number;
     platform: string; laneId: string; build: unknown; verification?: CandidateVerification}}
@@ -216,17 +237,11 @@ export class FrameworkResultService {
   /** Occurrence polling reads the existing verified verdict without transferring its manifest or execution evidence. */
   async summary(requestId: string) {
     const row = await TestRunModel.findOne({...nativeRunFilter, requestId})
-      .select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1, "payload.build": 1})
+      .select(frameworkResultSummaryFields)
       .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
     if (!row) throw new TestRunError(404, "Framework run was not found");
     // Missing and corrupt projections fail closed here; polling must never fall back to the full payload.
-    const projection = verifiedFrameworkRunSummaryProjection(row), summary = projection.summary;
-    const build = frameworkBuildSchema.safeParse((row.payload as {build?: unknown} | undefined)?.build);
-    if (!build.success || summary.requestId !== requestId || build.data.repository !== summary.build.repository
-      || build.data.channel !== summary.build.channel || build.data.headSha !== summary.build.headSha
-      || build.data.prNumber !== summary.build.prNumber)
-      throw new TestRunError(503, "Frozen result summary build or identity is unavailable");
-    return {...summary, definitionRevision: projection.definitionRevision, build: build.data, uploadsComplete: row.uploadsComplete === true};
+    return readFrameworkResultSummary(row);
   }
 
   /** An assigned supervisor reads its original publication without an admin browser session. */

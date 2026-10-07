@@ -321,7 +321,6 @@ test("exact-request summary verifies the existing projection and frozen build wi
     expect(await service.summary(run.requestId)).toMatchObject({outcome: "pass", evidenceStatus: "failed", uploadsComplete: true});
     const valid = structuredClone(row);
     const corruptions = [
-      () => {row.summaryProjection = undefined;},
       () => {row.summaryProjection.summarySha256 = "e".repeat(64);},
       () => {row.payloadSha256 = "e".repeat(64);},
       () => {row.requestId = "foreign";},

@@ -73,7 +73,7 @@ test('historical payloads without provenance project without changing bytes or i
     const updateArguments = update.mock.calls[0] as unknown as unknown[];
     expect(updateArguments[1]).toEqual({$set: {summaryProjection: projection}});
     expect(requestInputDigest(old)).toBe(payloadSha256);
-    const history = new TestHistoryService({detail: async () => {throw new Error('not a suite');}}, async () => [[{
+    const history = new TestHistoryService({summaries: async () => new Map()}, async () => [[{
       historyKind: 'run', historyId: old.requestId, historyStartedAt: new Date(old.startedAt), requestId: old.requestId,
       payloadSha256, summaryProjection: projection, uploadsComplete: true,
     }], []]);
