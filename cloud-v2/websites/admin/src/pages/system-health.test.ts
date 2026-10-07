@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -9,6 +9,19 @@ const now = Date.parse("2026-09-29T00:00:00Z"), at = (offset: number) => new Dat
 const host: TestHostLatest = { schemaVersion: 1, hostId: "test-mini", sampleId: "sample", sampledAt: at(0), receivedAt: at(0), freeBytes: 19 * 1024 ** 3,
   components: [], cleanupEvents: [] };
 describe("system health presentation", () => {
+  test("last-observed age uses hours for stale host reports", () => {
+    const clock = spyOn(Date, "now").mockReturnValue(now);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    try {
+      client.setQueryData(["test-host-health"], { hosts: [{ ...host, sampledAt: at(-3_723_000), receivedAt: at(-3_723_000) }] });
+      const markup = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(SystemHealthPage)));
+      expect(markup).toContain("Last observed 1h 02m 03s ago");
+      expect(markup).toContain("Stale · no recent report");
+    } finally {
+      client.clear();
+      clock.mockRestore();
+    }
+  });
   test("memory pressure remains independent of usage and swap; missing or stale readings are explicit", () => {
     const memory = { totalBytes: 8 * 1024 ** 3, usedBytes: 7 * 1024 ** 3, compressedBytes: 1.136 * 1024 ** 3,
       swapUsedBytes: 4.395 * 1024 ** 3, pressureFreePercent: 61, pressure: "normal" as const };

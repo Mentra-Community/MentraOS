@@ -40,6 +40,12 @@ test("missing records, stale host and unfinished durations remain honest", () =>
   expect(restorationElapsed({...attempt, startedAt: "invalid"}, at)).toBe("Duration unknown");
   expect(render({...host, restoration: {...host.restoration!, attempts: [{...attempt, actionsTruncated: true}]}})).toContain("additional operations omitted");
 });
+test("completed and ongoing restoration durations use hours", () => {
+  const finishedAt = "2026-10-05T02:02:03Z";
+  expect(restorationElapsed({...attempt, finishedAt}, at)).toBe("1h 02m 03s");
+  expect(restorationElapsed({...attempt, finishedAt: null}, finishedAt)).toBe("1h 02m 03s at last observation");
+  expect(render({...host, restoration: {...host.restoration!, attempts: [{...attempt, finishedAt}]}})).toContain("1h 02m 03s");
+});
 test("restoration freshness requires both recent observation and receipt with bounded clock skew", () => {
   const now = Date.parse(at), window = 120_000;
   expect(restorationHostIsFresh(host, now, window)).toBe(true);

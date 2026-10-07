@@ -9,6 +9,7 @@ import type {FrameworkRun, RecordedFrameworkRun} from "../../../../packages/core
 import {api} from "../lib/api";
 import {RoutineSearch, useRoutineSearch, matchesRoutineSearch, hasRoutineFilters, type RoutineSearchFilters, type SearchableRoutine} from "../components/routine-search";
 import {RecordingVideo} from "../components/recording-video";
+import {Switch} from "../components/ui/switch";
 import {TestHistoryTable} from "../components/test-history-table";
 import {testRunLocation} from "../lib/test-run-links";
 import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
@@ -85,13 +86,7 @@ export function RoutineCatalogCard({routine, onNightlyChange, saving = false, pr
   return <article className={PANEL}>
     <p className="text-sm text-[#68746d]">{routine.platform === "android" ? "Android" : "iOS on Mac"}</p>
     <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1"><h3 className="text-lg font-semibold"><a className={TESTING_LINK} href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
-      <label className={`flex min-h-11 shrink-0 items-center gap-2.5 text-sm font-medium text-[#5d6068] ${saving ? "cursor-wait opacity-60" : "cursor-pointer"}`}>
-        <input className="peer sr-only" type="checkbox" role="switch" aria-label={`${routine.definition.title}: Runs nightly`} checked={routine.nightlyEnabled ?? true} disabled={saving} onChange={event => onNightlyChange?.(event.target.checked)} />
-        <span aria-hidden="true" className="inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-[#747780] p-0.5 shadow-inner transition-colors duration-200 peer-checked:bg-[#111217] peer-focus-visible:ring-2 peer-focus-visible:ring-[#111217] peer-focus-visible:ring-offset-2 peer-checked:[&>span]:translate-x-5 motion-reduce:transition-none">
-          <span className="h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 motion-reduce:transition-none" />
-        </span>
-        <span>Runs nightly</span>
-      </label></div>
+      <Switch aria-label={`${routine.definition.title}: Runs nightly`} checked={routine.nightlyEnabled ?? true} disabled={saving} onChange={event => onNightlyChange?.(event.target.checked)}>Runs nightly</Switch></div>
     {preferenceError && <p role="alert" className="mt-2 text-sm">{preferenceError}</p>}
     {routine.latestAttempt && <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#747780]">
       <span>Latest</span>
@@ -384,10 +379,7 @@ function TestHistoryList() {
   const options = [...routines.map(searchableRoutine), ...members.map(member => runSearchMetadata(member, routines))];
   return <section className={PANEL}>
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Test history</h2>
-      <TestingButton type="button" role="switch" aria-checked={includeReruns} onClick={() => setIncludeReruns(value => !value)}
-        className="inline-flex items-center gap-2 rounded-md py-1 text-sm text-[#57606a] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0969da]">
-        <span aria-hidden="true" className={`relative h-5 w-9 rounded-full transition-colors ${includeReruns ? "bg-[#0969da]" : "bg-[#d0d7de]"}`}><span className={`absolute top-0.5 size-4 rounded-full bg-white transition-transform ${includeReruns ? "translate-x-[18px]" : "translate-x-0.5"}`}/></span>Show reruns
-      </TestingButton>
+      <Switch checked={includeReruns} onChange={event => setIncludeReruns(event.target.checked)}>Show reruns</Switch>
     </div>
     <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${entries.length} loaded entries`} />
     <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p></details>

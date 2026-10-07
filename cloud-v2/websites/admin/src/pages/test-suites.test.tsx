@@ -61,6 +61,16 @@ function renderSuite(value: TestSuiteResult) {
   return renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={value.suiteId}/></QueryClientProvider>);
 }
 
+test("suite totals and routine rows use hours for long durations", () => {
+  const html = renderSuite({...suite, finishedAt: "2026-10-01T13:02:03Z", members: [
+    {...suite.members[0]!, startedAt: suite.startedAt, finishedAt: "2026-10-01T12:02:03Z"}, suite.members[1]!,
+  ]});
+  expect(html).toContain("2h 02m 03s");
+  expect(html).toContain('<td class="whitespace-nowrap tabular-nums">1h 02m 03s</td>');
+  expect(html).not.toContain("122m");
+  expect(html).not.toContain("62m");
+});
+
 test("suite displays chronological execution order with unrun members last and stable ties", () => {
   const member = suite.members[0]!;
   const value = {...suite, members: [
