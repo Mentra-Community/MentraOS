@@ -85,7 +85,9 @@ jobs:
       - name: Checkout exact source
         uses: actions/checkout@v4
         with:
+          # ASG identity needs path history; keep trees and fetch only current blobs.
           fetch-depth: 0
+          filter: blob:none
 
       - name: Init StreamPackLite submodule
         # asg_client/settings.gradle builds :core, :extension-rtmp and
