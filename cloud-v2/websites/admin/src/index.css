@@ -1,2 +1,13 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@500&family=DM+Sans:opsz,wght@9..40,400&family=Red+Hat+Display:wght@600;700&display=swap");
 @import "../styles/globals.css";
+
+/* Keep operational drill-downs aligned with the surrounding Admin surfaces. */
+.testing-workspace { font-size: 0.875rem; line-height: 1.5; }
+.testing-workspace h2, .testing-workspace h3 { color: #14151b; }
+.testing-workspace a { text-underline-offset: 3px; }
+.testing-workspace summary { border-radius: 4px; }
+.testing-workspace summary:focus-visible { outline: 2px solid #0969da; outline-offset: 3px; }
+.testing-workspace code, .testing-workspace [role="alert"] { overflow-wrap: anywhere; }
+.testing-workspace details[open] > summary { margin-bottom: 0.5rem; }
+.testing-workspace [role="alert"] { color: #cf222e; }
+.testing-workspace button[role="switch"] { background: transparent; border: 0; box-shadow: none; padding: 0; }

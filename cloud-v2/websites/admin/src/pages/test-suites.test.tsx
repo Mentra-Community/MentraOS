@@ -72,7 +72,7 @@ test("suite displays chronological execution order with unrun members last and s
   ]};
   const original = value.members.map(member => member.memberId);
   const html = renderSuite(value);
-  const order = ["first", "tie", "later", "unrun", "waiting"].map(id => html.indexOf(`font-medium">${id}</td>`));
+  const order = ["first", "tie", "later", "unrun", "waiting"].map(id => html.indexOf(`>${id}</a>`));
   expect(order.every(index => index >= 0)).toBe(true);
   expect(order).toEqual([...order].sort((a, b) => a - b));
   expect(value.members.map(member => member.memberId)).toEqual(original);
@@ -81,9 +81,10 @@ test("suite displays chronological execution order with unrun members last and s
 test("only passing and failure results use green and red; other states remain neutral", () => {
   for (const status of ["pass", "failed", "setup-failed", "teardown-failed", "not-run", "waiting", "cancelled"]) {
     const html = renderSuite({...suite, members: [suite.members[0]!, {...suite.members[1]!, status, publicationComplete: true}]});
-    const label = status === "pass" ? "Passed" : status === "not-run" ? "Did not run" : status === "waiting" ? "Awaiting result" : status;
-    const color = status === "pass" ? "text-green-700" : ["failed", "setup-failed", "teardown-failed"].includes(status) ? "text-red-700" : "text-[#68746d]";
-    expect(html).toContain(`<td class="${color}">${label}`);
+    const label = status === "pass" ? "Passed" : status === "not-run" ? "Not run" : status.replaceAll("-", " ").replace(/^./, c => c.toUpperCase());
+    const color = status === "pass" ? "text-[#1a7f37]" : ["failed", "setup-failed", "teardown-failed"].includes(status) ? "text-[#cf222e]" : "text-[#656d76]";
+    const row = html.match(/<tbody>(.*?)<\/tbody>/)?.[1].match(/<tr[^>]*>(.*?)<\/tr>/g)?.[1] ?? "";
+    expect(row).toContain(color); expect(row).toContain(`>${label}</span>`);
   }
 });
 
@@ -111,16 +112,16 @@ test("actual failures stay red and incomplete routines have their own neutral su
 test("suite rows show compact 12-hour start times and retain the full suite date", () => {
   const startedAt = "2026-10-01T11:01:23Z";
   const html = renderSuite({...suite, members: [{...suite.members[0]!, startedAt}, suite.members[1]!]});
-  expect(html).toContain('<th class="py-3">Started</th><th>Routine</th><th>Lane</th><th>Duration</th><th>Recording &amp; steps</th><th class="min-w-[320px]">Latest rerun</th><th>Status</th><th>Actions</th>');
+  expect(html).toContain("<th>Started</th><th>Name</th><th>Duration</th><th>Lane</th><th>Tested build</th><th>Status</th>");
   expect(html).toContain(`<time dateTime="${startedAt}">${new Date(startedAt).toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})}</time>`);
   expect(html).toContain(`Started ${new Date(suite.startedAt).toLocaleString()}`);
   const rows = html.match(/<tbody>(.*?)<\/tbody>/)?.[1].match(/<tr[^>]*>(.*?)<\/tr>/g) ?? [];
   expect(rows).toHaveLength(2);
-  expect(rows[0]).toContain('<td class="whitespace-nowrap py-4"><time');
-  expect(rows[0]).toContain('<td class="text-green-700">Passed</td>');
-  expect(rows[1]).toContain('<td class="text-[#68746d]">Did not run</td>');
+  expect(rows[0]).toContain('<td class="whitespace-nowrap tabular-nums"><time');
+  expect(rows[0]).toContain('text-[#1a7f37]'); expect(rows[0]).toContain('>Passed</span>');
+  expect(rows[1]).toContain('text-[#656d76]'); expect(rows[1]).toContain('>Not run</span>');
   expect(html.match(/<time /g)).toHaveLength(1);
-  expect(html).toContain('<td class="whitespace-nowrap py-4">—</td>');
+  expect(html).toContain('<td class="whitespace-nowrap tabular-nums">—</td>');
 });
 
 test.each([false, undefined])("a passed run with unpublished evidence stays neutral and does not inflate the qualified header; complete=%s", publicationComplete => {
@@ -129,10 +130,10 @@ test.each([false, undefined])("a passed run with unpublished evidence stays neut
   const before = JSON.stringify(value);
   const html = renderSuite(value);
   expect(html).toContain("1/2 passed with complete evidence");
-  expect(html).toContain("Only passes with complete, uploaded evidence count in the header.");
-  expect(html).toContain("1 passed run has pending evidence.");
-  expect(html).toContain('<td class="text-[#68746d]">Passed · evidence pending</td>');
-  expect(html.match(/<td class="text-green-700">Passed<\/td>/g)).toHaveLength(1);
+  expect(html).toContain("1 passed · evidence pending");
+  expect(html).toContain("text-[#656d76]");
+  expect(html).toContain(">Evidence pending</span>");
+  expect(html.match(/>Passed<\/span>/g)).toHaveLength(1);
   expect(html).toContain('href="/?testRun=uploading-run"');
   const client = new QueryClient(); client.setQueryData(["test-suites"], {suites: [value]});
   const recent = renderToStaticMarkup(<QueryClientProvider client={client}><RecentTestSuites/></QueryClientProvider>);
@@ -159,7 +160,7 @@ test("suite actions replace selection, keep status read-only and disable active 
     {memberId: "retrying", latest: {attemptId: "active", memberId: "retrying", attemptNumber: 1, parent: {suiteId: value.suiteId}, status: "running", publicationComplete: false}},
   ], children: []});
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={value.suiteId}/></QueryClientProvider>);
-  expect(html).toContain("<th>Status</th><th>Actions</th>");
+  expect(html).toContain('<th>Status</th><th><span class="sr-only">Actions</span></th>');
   expect(html).not.toContain('type="checkbox"');
   expect(html).not.toContain("Rerun selected");
   expect(html).not.toContain("No reruns");
@@ -171,3 +172,11 @@ test("suite actions replace selection, keep status read-only and disable active 
   expect(html).toContain('disabled="">Rerun failures</button>');
   expect(html).toContain('Attempt 1 · running');
 });
+
+
+test("unbound suite members use plain names and explain missing detail links", () => {
+  const html = renderSuite({...suite, members: [suite.members[0]!, {...suite.members[1]!, routineId: "unbound", runId: undefined, requestId: undefined}]})
+  expect(html).toContain('<span class="font-medium">unbound</span>')
+  expect(html).toContain("Not available yet")
+  expect(html).not.toMatch(/<a[^>]*>unbound<\/a>/)
+})

@@ -34,6 +34,13 @@ export function HistoryStatus({outcome}: {outcome: string}) {
   </span>;
 }
 
+/** A qualified pass requires complete evidence; execution failures keep their own verdict. */
+export function runDisplayStatus(outcome: string, evidenceStatus: string, uploadsComplete: boolean) {
+  const passed = outcome === "pass" || outcome === "passed";
+  return passed && evidenceStatus === "failed" ? "evidence-failed"
+    : passed && (evidenceStatus !== "complete" || !uploadsComplete) ? "evidence pending" : outcome;
+}
+
 function HistoryBuild({build}: {build: {channel?: string; repository?: string; headSha: string; release?: string; producerUrl?: string}}) {
   const commit = build.repository && /^[\w-]+\/[\w.-]+$/.test(build.repository) && /^[a-f0-9]{40}$/.test(build.headSha)
     ? `https://github.com/${build.repository}/commit/${build.headSha}` : null;
@@ -64,8 +71,7 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
   const duration = entry.finishedAt ? runDuration(entry.startedAt, entry.finishedAt) : elapsedDuration(now - Date.parse(entry.startedAt));
   const lanes = suite ? entry.lanes ?? [] : [{hostId: entry.hostId, laneId: entry.laneId}];
   const outcome = suite && entry.outcome === "failed" && entry.failedCount === 0 ? "incomplete"
-    : !suite && entry.outcome === "pass" && entry.evidenceStatus === "failed" ? "evidence-failed"
-    : !suite && entry.outcome === "pass" && (entry.evidenceStatus !== "complete" || !entry.uploadsComplete) ? "evidence pending" : entry.outcome;
+    : suite ? entry.outcome : runDisplayStatus(entry.outcome, entry.evidenceStatus, entry.uploadsComplete);
   return <TableRow>
     <TableCell><StartedAt value={entry.startedAt}/></TableCell>
     <TableCell className="min-w-56 max-w-96">

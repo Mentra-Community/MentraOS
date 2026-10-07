@@ -373,7 +373,7 @@ function AdminPage() {
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
     "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
-    "system-health": { title: "System health", body: "Host contact, worker status, device lanes and recorded disk space." },
+    "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
   };
 
   if (me.isLoading) return <Splash label="Checking admin session" />;
@@ -463,6 +463,7 @@ function AdminPage() {
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
+      <div className={["test-runs", "routine-catalog", "system-health"].includes(page) ? "testing-workspace" : undefined}>
       {page === "test-runs" ? <SystemHealthSummary /> : null}
       {page === "system-health" ? <SystemHealthPage restoration={restoration} lane={laneSelection} /> : null}
       {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
@@ -483,6 +484,7 @@ function AdminPage() {
         </TestRunsTabs>
       ) : null}
 
+      </div>
       {detailRelease ? (
         <SubmissionDetail
           release={detailRelease}
