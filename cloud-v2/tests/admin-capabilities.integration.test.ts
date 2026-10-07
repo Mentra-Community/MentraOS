@@ -39,6 +39,7 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
+import {RoutineDispatchService} from "../packages/core/src/services/routine-dispatch.service"
 import {resolveWorkosUser} from "../packages/core/src/services/workspaces/identity-link.service"
 import * as developerAuth from "../packages/developer-auth/src/index"
 import {capabilitiesForRole, ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
@@ -443,6 +444,16 @@ describe("incident reports", () => {
 // --- Testing ---------------------------------------------------------------
 
 describe("testing routes", () => {
+  // The routine catalog reads the routine source from GitHub; these tests are about the gate, not the source.
+  let catalog: ReturnType<typeof spyOn>
+  beforeEach(() => {
+    catalog = spyOn(RoutineDispatchService.prototype, "catalog").mockResolvedValue({
+      routineRevision: "a".repeat(40),
+      routines: [],
+    })
+  })
+  afterEach(() => catalog.mockRestore())
+
   test("reading needs organization.testing.read and writing needs organization.testing.manage", async () => {
     const reader = await operatorKey("reader", ["organization.testing.read"])
     const manager = await operatorKey("manager", ["organization.testing.manage"])
