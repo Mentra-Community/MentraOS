@@ -19,6 +19,11 @@ services:
   - name: core
     type: web
     run: bun packages/core/src/index.ts
+    # Category routing must survive stale environment-group snapshots. The bot
+    # token stays in the environment group; these channel IDs are public config.
+    env:
+      CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL: C0C5GK21552
+      CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING: C0C5ET2V65P
     port: 3000
     instances: 1
     cpuCores: 0.25

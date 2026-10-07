@@ -153,7 +153,10 @@ const sameStoppedProcess = (stop: FrameworkStop, installationId: string, process
   stop.installationId === installationId && stop.process.pid === process.pid && stop.process.startedAt === process.startedAt
 function reconcileFrameworkStops(history: FrameworkHistoryEntry[], stops: FrameworkStop[]) {
   for (const stop of stops) {
-    const interval = history.find(value => sameStoppedProcess(stop, value.binding.installationId, value.process))
+    const matching = history.filter(value => sameStoppedProcess(stop, value.binding.installationId, value.process))
+    const interval = matching.filter(value => Date.parse(value.effectiveAt) <= Date.parse(stop.observedAt))
+      .sort((a, b) => Date.parse(b.effectiveAt) - Date.parse(a.effectiveAt) || b.incarnationGeneration - a.incarnationGeneration)[0]
+      ?? matching.sort((a, b) => Date.parse(a.effectiveAt) - Date.parse(b.effectiveAt))[0]
     if (!interval) continue
     if (Date.parse(stop.observedAt) < Date.parse(interval.effectiveAt))
       throw new TestRunError(409, "Observed framework stop precedes its accepted startup")
@@ -233,6 +236,17 @@ export class TestHostStateService {
       } else history.push(interval)
     }
     history.sort((a, b) => a.incarnationGeneration - b.incarnationGeneration)
+    // A late history-bearing restart may already have inserted the successor. Move the process stop
+    // to its applicable interval while preserving the earlier controller replacement boundary.
+    for (let index = 1; index < history.length; index++) {
+      const prior = history[index - 1]!, next = history[index]!
+      if (prior.endReason === 'observed-stop' && Date.parse(prior.endedAt!) >= Date.parse(next.effectiveAt) &&
+        sameStoppedProcess({installationId: prior.binding.installationId, process: prior.process, observedAt: prior.endedAt!},
+          next.binding.installationId, next.process)) {
+        prior.endedAt = next.effectiveAt
+        prior.endReason = 'accepted-replacement'
+      }
+    }
     if (snapshot.frameworkBinding) {
       const last = history.at(-1),
         same =
@@ -251,9 +265,14 @@ export class TestHostStateService {
           throw new TestRunError(409, "A controller observed stopped cannot assert another running observation")
         last.observedAt = snapshot.observedAt
       } else {
-        if (last && Date.parse(snapshot.frameworkAcceptedAt!) < Date.parse(last.endedAt ?? last.effectiveAt))
+        const sharedStoppedProcess = last?.endReason === 'observed-stop' && snapshot.frameworkProcess &&
+          sameStoppedProcess({installationId: last.binding.installationId, process: last.process, observedAt: last.endedAt!},
+            snapshot.frameworkBinding.installationId, snapshot.frameworkProcess) &&
+          Date.parse(snapshot.frameworkAcceptedAt!) >= Date.parse(last.effectiveAt) &&
+          Date.parse(snapshot.frameworkAcceptedAt!) <= Date.parse(last.endedAt!)
+        if (last && !sharedStoppedProcess && Date.parse(snapshot.frameworkAcceptedAt!) < Date.parse(last.endedAt ?? last.effectiveAt))
           throw new TestRunError(409, "Framework replacement precedes the last accepted interval")
-        if (last && !last.endedAt) {
+        if (last && (!last.endedAt || sharedStoppedProcess)) {
           last.endedAt = snapshot.frameworkAcceptedAt
           last.endReason = "accepted-replacement"
         }

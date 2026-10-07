@@ -1,4 +1,5 @@
 import {RoutineSourceBundleService, routineBundleMetadataSchema} from '../../services/routine-source-bundle.service';
+import {ROUTINE_BUNDLE_BODY_BYTES} from '../../types/framework-version.types';
 import {TestRunError} from "../../services/test-result-error";
 import {Hono} from "hono";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
@@ -21,6 +22,9 @@ export function createRoutineDefinitionsApi(service = new RoutineDefinitionServi
     let metadata: unknown;
     try {metadata = routineBundleMetadataSchema.parse(JSON.parse(c.req.query('metadata') ?? ''));}
     catch {throw new TestRunError(400, 'Invalid routine bundle metadata');}
+    const length = c.req.header('content-length');
+    if (length && !c.req.header('transfer-encoding') && Number(length) > ROUTINE_BUNDLE_BODY_BYTES)
+      throw new TestRunError(413, 'Routine bundle exceeds its bounded allowance');
     // ingress-nginx terminates TLS, overwrites x-forwarded-proto, and preserves Host,
     // matching account OAuth's publicOrigin derivation without trusting the pod's http URL.
     const url = new URL(c.req.url), proto = c.req.header('x-forwarded-proto') ?? url.protocol.replace(':', '');
