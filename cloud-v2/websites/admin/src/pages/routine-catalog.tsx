@@ -306,8 +306,8 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
     if (previous && previous.stage === action.stage) previous.actions.push(action);
     else groups.push({stage: action.stage, start: index, actions: [action]});
   }
-  const lastFailure = (actions ?? []).findLastIndex(action => action.status === "failed"
-    || failures.some(failure => failure.actionId === action.id) || status === "failed" && actionId === action.id);
+  const lastFailure = (actions ?? []).reduce((last, action, index) => action.status === "failed"
+    || failures.some(failure => failure.actionId === action.id) || status === "failed" && actionId === action.id ? index : last, -1);
   const actionList = (items: LifecycleAction[], start: number) => <ol start={start + 1} className="mt-3 space-y-2">{items.map((action, index) => <li key={action.id}
     className={`flex gap-3 rounded-lg border border-l-4 p-3 ${action.scope === "routine"
       ? "border-[#bbd4c2] border-l-[#3b7650] bg-[#f3f8f4]" : "border-[#d9dfe5] border-l-[#778493] bg-[#f7f8fa]"}`}>
