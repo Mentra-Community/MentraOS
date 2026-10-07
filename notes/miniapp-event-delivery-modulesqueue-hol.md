@@ -3,7 +3,9 @@
 **Status:** root cause confirmed on device; Android fix implemented in PR #3474
 and verified on device 2026-07-17 (transcripts flowed through a live photo
 window, 20 events, max gap 657ms, no burst).
-**Platforms:** Android only. iOS is not affected (see "Why iOS is fine").
+**Platforms:** Android for the `PendingResponse.await` sites below. iOS has the
+same head-of-line queue for synchronous AsyncFunction bodies (see "iOS"), fixed
+in PR #4549.
 **Ticket:** OS-1714 (sub-issue of OS-1687). Related: OS-1701, OS-1712, the BGCAP
 "captions fall behind then flood in waves" investigation in
 `mobile/modules/engine/src/services/LocalMiniappRuntime.ts`.
@@ -80,11 +82,17 @@ is the most frequent offender; the longest-running are `stopVideoRecording`
 with upload (10 minutes), stream start (30s), and WiFi scan (20s), all well
 past photo's 15s default timeout.
 
-### Why iOS is fine
+### iOS
 
 `BluetoothSdkModule.swift` uses `try await sdk.requestPhoto(req)`: Swift
-concurrency suspends the task without holding a thread, so other async
-functions keep executing. Only the Kotlin side blocks a real thread.
+concurrency suspends the task without holding a thread, so the photo path
+does not block. A synchronous body does: expo-modules-core runs every
+default-queue AsyncFunction on one serial `expo.modules.AsyncFunctionQueue`.
+`extractTarBz2` held it for ~25s while extracting the offline STT model after
+every login, so Notes stayed on its splash and Captions missed PINGs until it
+was respawned (dev nightly 2026-10-07). PR #4549 moves the Crust MentraJS
+functions to their own serial queue, as Android does, and extraction to a
+utility queue.
 
 ### What this explains
 
