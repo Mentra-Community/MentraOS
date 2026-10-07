@@ -429,8 +429,11 @@ test("Private Deployment is release-matched and recorded by the dev coordinator"
   assert.match(notify, /RUNTIME_IMAGE_RESULT: \$\{\{ needs\.runtime-image\.result \}\}/)
 })
 
-for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", false], ["", true]]) {
-  test(`private deployment waits for both release images before HTTP probes (${stuckApp || (sameImage ? "configuration-only rollout" : "successful rollout")})`, () => {
+for (const [stuckApp, sameImage, diagnosticsUnavailable, startupLog = "private-token-must-not-print"] of [["", false], ["runtime", false], ["core", false], ["", true], ["core", false, true],
+  ["core", false, false, "private-token-must-not-print MongoServerError unsupported index option partialFilterExpression"],
+  ["core", false, false, "private-token-must-not-print aggregation pipeline is not supported"],
+  ["core", false, false, "private-token-must-not-print authorization failed OOMKilled"]]) {
+  test(`private deployment waits for both release images before HTTP probes (${diagnosticsUnavailable ? "diagnostics unavailable" : stuckApp || (sameImage ? "configuration-only rollout" : "successful rollout")}; ${startupLog})`, () => {
     const directory = mkdtempSync(path.join(tmpdir(), "private-rollout-"))
     const digest = `sha256:${"a".repeat(64)}`
     const image = `registry.example/cloud@${digest}`
@@ -448,6 +451,33 @@ for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", f
     const mocks = `
       az() {
         case "$*" in
+          "containerapp logs show"*)
+            if [[ "$DIAGNOSTICS_UNAVAILABLE" == true ]]; then
+              echo private-token-must-not-print >&2; return 1
+            fi
+            [[ "$*" == *"--revision $STUCK_APP-new "* ]] || return 1
+            echo "$STARTUP_LOG"
+            ;;
+          *latestRevision:properties.latestRevisionName*)
+            if [[ "$DIAGNOSTICS_UNAVAILABLE" == true ]]; then
+              echo private-token-must-not-print >&2; return 1
+            fi
+            printf '{"latestRevision":"%s-new","latestReadyRevision":"%s-old","provisioningState":"Succeeded","secrets":[{"value":"private-token-must-not-print"}]}' "$STUCK_APP" "$STUCK_APP"
+            ;;
+          *provisioningState:properties.provisioningState*)
+            if [[ "$DIAGNOSTICS_UNAVAILABLE" == true ]]; then
+              echo private-token-must-not-print >&2; return 1
+            fi
+            local revision="$STUCK_APP-new" image="$TARGET_IMAGE"
+            [[ "$*" != *"--revision $STUCK_APP-old "* ]] || { revision="$STUCK_APP-old"; image=registry.example/cloud:previous; }
+            printf '{"name":"%s","active":true,"provisioningState":"Succeeded","healthState":"Unhealthy","runningState":"Failed","images":["%s"],"provisioningError":"private-token-must-not-print","template":{"env":[{"value":"private-token-must-not-print"}]}}' "$revision" "$image"
+            ;;
+          "containerapp replica list"*)
+            if [[ "$DIAGNOSTICS_UNAVAILABLE" == true ]]; then
+              echo private-token-must-not-print >&2; return 1
+            fi
+            echo '[{"name":"replica-one","containers":[{"name":"core","ready":false,"restartCount":3,"runningState":{"state":"Terminated","detail":"private-token-must-not-print"},"console":"private-token-must-not-print"}],"logs":"private-token-must-not-print"}]'
+            ;;
           *properties.outputs.workspaceOrigin.value*) echo https://workspace.example ;;
           *properties.outputs.coreOrigin.value*) echo https://core.example.azurecontainerapps.io ;;
           *properties.outputs.generatedCoreHostname.value*) echo core.example.azurecontainerapps.io ;;
@@ -482,6 +512,7 @@ for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", f
           *) echo "Unexpected Azure command: $*" >&2; return 1 ;;
         esac
       }
+      timeout() { [[ "$1" == 8s ]] || return 1; shift; "$@"; }
       sleep() { :; }
       curl() {
         echo probe >> probes
@@ -497,7 +528,8 @@ for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", f
         cwd: directory,
         env: {...process.env, AZURE_RESOURCE_GROUP: "group", AZURE_REGISTRY: "registry",
           AZURE_CONTAINER_APP: "runtime", AZURE_CORE_CONTAINER_APP: "core", RUNNER_TEMP: directory,
-          TARGET_DIGEST: digest, TARGET_IMAGE: image, STUCK_APP: stuckApp, SAME_IMAGE: String(sameImage)},
+          TARGET_DIGEST: digest, TARGET_IMAGE: image, STUCK_APP: stuckApp, SAME_IMAGE: String(sameImage),
+          DIAGNOSTICS_UNAVAILABLE: String(!!diagnosticsUnavailable), STARTUP_LOG: startupLog},
         encoding: "utf8", timeout: 10_000,
       })
       assert.ifError(result.error)
@@ -505,6 +537,24 @@ for (const [stuckApp, sameImage] of [["", false], ["runtime", false], ["core", f
         assert.equal(result.status, 1, result.stderr)
         assert.match(result.stderr, /has no ready revision running/)
         assert.equal(existsSync(path.join(directory, "probes")), false)
+        assert.equal(readFileSync(path.join(directory, `${stuckApp}-count`), "utf8").trim(), "30")
+        assert.doesNotMatch(result.stderr + result.stdout, /private-token-must-not-print/)
+        if (diagnosticsUnavailable) {
+          assert.match(result.stderr, /metadata unavailable/)
+          assert.match(result.stderr, /Azure startup hint: sample-unavailable/)
+        } else {
+          assert.ok(result.stderr.includes(`"latestRevision":"${stuckApp}-new"`))
+          assert.ok(result.stderr.includes(`"latestReadyRevision":"${stuckApp}-old"`))
+          assert.ok(result.stderr.includes(`"images":["${image}"]`))
+          assert.match(result.stderr, /"images":\["registry\.example\/cloud:previous"\]/)
+          assert.match(result.stderr, /"ready":false,"restartCount":3,"runningState":"Terminated"/)
+          const codes = [
+            [/partialFilterExpression/, "mongo-index-option-unsupported"], [/pipeline/, "mongo-pipeline-unsupported"],
+            [/MongoServerError/, "mongo-server-error"], [/authorization failed/, "authorization-failed"], [/OOMKilled/, "out-of-memory"],
+          ].filter(([pattern]) => pattern.test(startupLog)).map(([, code]) => code)
+          for (const code of codes.length ? codes : ["unknown"]) assert.ok(result.stderr.includes(`Azure startup hint: ${code}`))
+        }
+        assert.equal(readdirSync(directory).some(name => name.startsWith("azure-startup-log.")), false)
       } else {
         assert.equal(result.status, 0, result.stderr)
         assert.equal(readFileSync(path.join(directory, "probes"), "utf8").trim().split("\n").length, 4)
