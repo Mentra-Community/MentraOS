@@ -88,7 +88,7 @@ import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
 import appRegistry, {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
-import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
+import {mayRequestLocationFor, resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
@@ -2815,7 +2815,10 @@ class LocalMiniappRuntime {
       // resumes. Read the current grant first, and only enter the prompt flow
       // while the Activity is actually foregrounded.
       const permissionStartedAt = Date.now()
-      const permission = await resolveForegroundLocationPermission(Location, () => AppState.currentState)
+      const app = this.connectedApps.get(packageName)
+      const permission = await resolveForegroundLocationPermission(Location, () => AppState.currentState, {
+        mayRequest: mayRequestLocationFor(app?.installedManifest?.permissions),
+      })
       const {status} = permission
       console.log(
         `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${
