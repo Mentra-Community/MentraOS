@@ -314,9 +314,8 @@ jobs:
       - name: Setup Android SDK for APK verification
         uses: android-actions/setup-android@v3
         with:
-          # The action's default list includes the retired `tools` package,
-          # which no longer downloads; Gradle fetches the rest it needs.
-          packages: platform-tools
+          # Install the verifier even when this run reuses an APK and skips Gradle.
+          packages: platform-tools build-tools;36.0.0
 
       - name: Restore isolated ASG Gradle cache
         if: steps.existing-asg.outputs.exists != 'true'
@@ -369,13 +368,13 @@ jobs:
           EXPECTED_VERSION_NAME: ${{ steps.asg-identity.outputs.version_name }}
         run: |
           set -euo pipefail
-          # -perm -111 (all three execute bits) is understood by both GNU and
-          # BSD find; the BSD-only "+111" spelling is an error on GNU findutils.
-          apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -perm -111 | LC_ALL=C sort | tail -1)
-          aapt=$(find "$ANDROID_HOME/build-tools" -type f -name aapt -perm -111 | LC_ALL=C sort | tail -1)
-          test -n "$apksigner"
-          test -n "$aapt"
-          $apksigner verify --print-certs coordinated-ota-work/asg.apk > coordinated-ota-work/apksigner-output.txt
+          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          aapt="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          test -x "$apksigner"
+          test -x "$aapt"
+          echo "Verifying ASG with $apksigner"
+          "$apksigner" verify --print-certs coordinated-ota-work/asg.apk > coordinated-ota-work/apksigner-output.txt
+          head -c 8192 coordinated-ota-work/apksigner-output.txt
           signer=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' coordinated-ota-work/apksigner-output.txt)
           signer=${signer%%$'\n'*}
           signer=$(tr '[:upper:]' '[:lower:]' <<< "$signer" | tr -d ':')
@@ -383,12 +382,14 @@ jobs:
             echo "ASG APK signing certificate ${signer:-<missing>} is not the production certificate." >&2
             exit 1
           fi
-          $aapt dump badging coordinated-ota-work/asg.apk > coordinated-ota-work/aapt-badging.txt
+          "$aapt" dump badging coordinated-ota-work/asg.apk > coordinated-ota-work/aapt-badging.txt
           badging=$(sed -n '1p' coordinated-ota-work/aapt-badging.txt)
           version_code=$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<< "$badging")
           version_name=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$badging")
-          [[ "$version_code" == "$EXPECTED_VERSION_CODE" ]]
-          [[ "$version_name" == "$EXPECTED_VERSION_NAME" ]]
+          if [[ "$version_code" != "$EXPECTED_VERSION_CODE" || "$version_name" != "$EXPECTED_VERSION_NAME" ]]; then
+            echo "ASG APK version ${version_name:-<missing>} (${version_code:-<missing>}) differs from the selected build." >&2
+            exit 1
+          fi
           echo "signing_certificate_sha256=${signer}" >> "$GITHUB_OUTPUT"
 
       - name: Create provenance for a new ASG artifact
