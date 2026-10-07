@@ -106,6 +106,7 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
     source,
     undefined,
     {async list() {return [];}, async complete() {throw new FrameworkResultConflict('not acknowledged');}},
+    {async complete() {return undefined;}},
   )
   const first = await service.ingest(run, "mini"), duplicate = await service.ingest(run, "mini");
   expect(projectionAttempts).toBe(2);
@@ -752,6 +753,7 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
         return all;
       }, async complete(value) {expect(value.payloadSha256).toBe(stored.payloadSha256); completionWrites++; stored.uploadsComplete = true;},
     },
+    {async complete() {return undefined;}},
   )
   const headers = new Headers({"content-type": "application/json", "content-length": String(bytes.length)});
   const body = () => new ReadableStream<Uint8Array>({start(controller) {controller.enqueue(bytes); controller.close();}});
@@ -849,6 +851,7 @@ test('failed recording publication preserves immutable step offsets and settled 
       ({definition: {steps: frozen.result.steps.map(step => ({id: step.id}))}}) as unknown as RoutineEnrollment,
     undefined,
     {async list() {return [];}, async complete() {}},
+    {async complete() {return undefined;}},
   )
   const originalDigest = requestInputDigest(frozen);
   const first = await service.ingest(frozen, frozen.hostId);

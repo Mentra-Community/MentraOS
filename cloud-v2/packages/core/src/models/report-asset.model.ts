@@ -22,6 +22,9 @@ const ReportAssetSchema = new Schema(
     contentType: { type: String, required: true },
     sizeBytes: { type: Number, required: true },
     sha256: { type: String, required: true },
+    // Shared native evidence remains owned by the test run; it is not copied.
+    sourceTestRunId: { type: String },
+    sourceTestAssetId: { type: String },
   },
   { timestamps: { createdAt: true, updatedAt: false }, collection: "report_assets" },
 );

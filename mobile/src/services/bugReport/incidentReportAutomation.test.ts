@@ -19,7 +19,7 @@ const receipt = {...request, status: "filed", report_id: "rep_test", incident_id
 
 beforeEach(() => {
   jest.clearAllMocks()
-  mockSuperMode.mockReturnValue(true)
+  mockSuperMode.mockReturnValue(false)
   jest.mocked(submitIncidentReport).mockResolvedValue(receipt as Awaited<ReturnType<typeof submitIncidentReport>>)
 })
 
@@ -39,7 +39,7 @@ it.each([
   expect(parseIncidentReportRequest(input).ok).toBe(false)
 })
 
-it("reuses an in-flight and completed request after a screen remount", async () => {
+it("reuses a normal-mode in-flight and completed request after a screen remount", async () => {
   let finish!: (value: Awaited<ReturnType<typeof submitIncidentReport>>) => void
   jest.mocked(submitIncidentReport).mockImplementationOnce(
     () =>
@@ -55,6 +55,7 @@ it("reuses an in-flight and completed request after a screen remount", async () 
   await expect(first).resolves.toMatchObject({incident_id: "rep_test"})
   expect(second).toBe(first)
   expect(submitIncidentReportOnce("account-a/dev", request)).toBe(first)
+  expect(mockSuperMode).not.toHaveBeenCalled()
 })
 
 it("does not reuse another account's or deployment's incident", async () => {
@@ -86,13 +87,13 @@ it("returns a correlated failure if the uploader unexpectedly rejects", async ()
   })
 })
 
-it("refuses normal-mode reports without uploading or reusing cached success", async () => {
-  await submitIncidentReportOnce("normal-mode-test", request)
-  jest.mocked(submitIncidentReport).mockClear()
-  mockSuperMode.mockReturnValue(false)
-  await expect(submitIncidentReportOnce("normal-mode-test", request)).resolves.toMatchObject({
-    status: "failed",
-    error: expect.stringContaining("Super Mode"),
-  })
-  expect(submitIncidentReport).not.toHaveBeenCalled()
+it.each(["Mac", "Android"])("submits a first normal-mode %s report through the shared uploader", async (source) => {
+  const input = {...request, alert_id: `normal-mode-${source}`, source}
+  const result = {...receipt, ...input}
+  jest.mocked(submitIncidentReport).mockResolvedValueOnce(result as Awaited<ReturnType<typeof submitIncidentReport>>)
+
+  await expect(submitIncidentReportOnce(`normal-mode-${source}/dev`, input)).resolves.toEqual(result)
+  expect(submitIncidentReport).toHaveBeenCalledTimes(1)
+  expect(submitIncidentReport).toHaveBeenCalledWith(input)
+  expect(mockSuperMode).not.toHaveBeenCalled()
 })

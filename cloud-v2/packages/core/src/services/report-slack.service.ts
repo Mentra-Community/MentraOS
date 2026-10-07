@@ -61,6 +61,8 @@ export interface ReportSlackNotification {
 
 export interface ReportSlackResult {
   ok: boolean;
+  receipt?: {channel: string; ts: string};
+  retryable?: boolean;
 }
 
 interface SlackBlock {
@@ -90,6 +92,7 @@ const CHANNEL_ENV_BY_CATEGORY: Record<ReportCategory, string> = {
 /** Post to exactly one category channel. Configuration/send failures never reject. */
 export async function notifyReportSlack(
   notification: ReportSlackNotification,
+  delivery?: {clientMessageId: string},
 ): Promise<ReportSlackResult> {
   const category = reportCategory(notification);
   const channelKey = CHANNEL_ENV_BY_CATEGORY[category];
@@ -101,7 +104,7 @@ export async function notifyReportSlack(
         missing: [!token && "CLOUD_REPORTS_SLACK_BOT_TOKEN", !channel && channelKey].filter(Boolean) },
       "report Slack notification not sent: missing configuration",
     );
-    return { ok: false };
+    return { ok: false, ...(delivery ? {retryable: true} : {}) };
   }
 
   try {
@@ -112,7 +115,8 @@ export async function notifyReportSlack(
         "content-type": "application/json; charset=utf-8",
         authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ channel, ...message }),
+      body: JSON.stringify({ channel, ...message, ...(delivery ? {client_msg_id: delivery.clientMessageId,
+        metadata: {event_type: "mentra_report", event_payload: {report_id: notification.reportId}}} : {}) }),
       signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
     });
     if (!res.ok) {
@@ -121,7 +125,7 @@ export async function notifyReportSlack(
           body: await res.text().catch(() => "") },
         "report Slack notification failed",
       );
-      return { ok: false };
+      return { ok: false, ...(delivery ? {retryable: res.status >= 400 && res.status < 500 && res.status !== 408} : {}) };
     }
     // The Web API also answers 200 with {ok:false} on refusal.
     const body = (await res.json().catch(() => null)) as
@@ -132,17 +136,42 @@ export async function notifyReportSlack(
         { reportId: notification.reportId, category, channel, error: body?.error ?? "unknown_error" },
         "report Slack notification rejected by chat.postMessage",
       );
-      return { ok: false };
+      return { ok: false, ...(delivery ? {retryable: body?.ok === false} : {}) };
     }
     logger.info({ reportId: notification.reportId, category, channel, ts: body.ts }, "report Slack notification sent");
-    return { ok: true };
+    return { ok: true, ...(delivery && typeof body.ts === 'string' && /^\d+\.\d+$/.test(body.ts) ? {receipt: {channel, ts: body.ts}} : {}) };
   } catch (error) {
     logger.error(
       { reportId: notification.reportId, category, channel, error: (error as Error)?.message },
       "report Slack notification error",
     );
-    return { ok: false };
+    return { ok: false, ...(delivery ? {retryable: false} : {}) };
   }
+}
+
+/** An uncertain write is read back before retrying; unavailable read access never authorizes a duplicate post. */
+export async function reconcileReportSlack(reportId: string, clientMessageId: string, startedAt: string): Promise<ReportSlackResult> {
+  const token = process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN?.trim();
+  const channel = process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING?.trim();
+  if (!token || !channel) return {ok: false};
+  const url = new URL("https://slack.com/api/conversations.history");
+  url.searchParams.set("channel", channel); url.searchParams.set("limit", "100");
+  url.searchParams.set("oldest", String((Date.parse(startedAt) - 1000) / 1000));
+  url.searchParams.set("include_all_metadata", "true");
+  try {
+    const response = await fetch(url, {headers: {authorization: `Bearer ${token}`}, signal: AbortSignal.timeout(SLACK_TIMEOUT_MS)});
+    const body = await response.json() as {ok?: boolean; messages?: {ts?: string; client_msg_id?: string;
+      metadata?: {event_type?: string; event_payload?: {report_id?: string}}}[]; has_more?: boolean};
+    if (!response.ok || !body.ok || !Array.isArray(body.messages)) return {ok: false};
+    const matches = body.messages.filter(message => message.client_msg_id === clientMessageId
+      || message.metadata?.event_type === "mentra_report" && message.metadata.event_payload?.report_id === reportId);
+    if (matches.length === 1 && matches[0]!.ts) return {ok: true, receipt: {channel, ts: matches[0]!.ts}};
+    // Only a complete history window after the request's settlement period can
+    // prove an unsent/crashed attempt. Missing scope, pagination or ambiguity
+    // cannot authorize another write.
+    return {ok: false, ...(matches.length === 0 && body.has_more === false && Date.now() - Date.parse(startedAt) >= 60_000
+      ? {retryable: true} : {})};
+  } catch {return {ok: false};}
 }
 
 function buildSlackMessage(notification: ReportSlackNotification): {
