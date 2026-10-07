@@ -153,7 +153,10 @@ test("catalog labels a historical example without claiming the current definitio
       }}
     />,
   )
-  expect(markup).toContain("Latest passing example")
+  expect(markup).toContain("Earlier passing example")
+  expect(markup).toContain("<details")
+  expect(markup).not.toContain("<details open")
+  expect(markup).toContain("this recording does not qualify the current source")
   expect(markup).toContain("earlier definition")
   expect(markup).toContain("aaaaaaaa")
   expect(markup).toContain("routine=notes-phone&amp;platform=ios-on-mac")
@@ -174,6 +177,22 @@ test("catalog tile nightly switch defaults on, preserves the detail link and rep
   expect(render(false)).toContain("Runs nightly")
   expect(render(false)).toContain("Preference was not saved")
   expect(render(false)).toContain('href="/?routineCatalog=1&amp;routine=notes-phone&amp;platform=ios-on-mac"')
+})
+
+test("compact catalog status keeps incomplete evidence neutral and exposes the latest run", () => {
+  const render = (uploadsComplete: boolean, evidenceStatus: "complete" | "failed") => renderToStaticMarkup(
+    <RoutineCatalogCard routine={{...routine, example: null, latestAttempt: {
+      runId: "latest", startedAt: "2026-10-07T18:00:00Z", outcome: "pass", uploadsComplete,
+      evidenceStatus, definitionRevision: routine.definitionRevision,
+    }}} />,
+  )
+  expect(render(false, "complete")).toContain("Evidence pending")
+  expect(render(true, "failed")).toContain("Evidence failed")
+  expect(render(true, "complete")).toContain("Passed")
+  expect(render(false, "complete")).not.toContain("text-[#1a7f37]")
+  expect(render(false, "complete")).toContain('dateTime="2026-10-07T18:00:00Z"')
+  expect(render(false, "complete")).toContain('href="/?testRun=latest"')
+  expect(render(false, "complete")).not.toContain("Latest attempt:")
 })
 
 test("the existing run view shows a queued, rejected or cancelled request without invented execution evidence", () => {

@@ -56,8 +56,7 @@ export function RoutineCatalogList() {
   const routines = catalog.data.routines;
   const filtered = routines.filter(row => matchesRoutineSearch(searchableRoutine(row), filters));
   return <div className="space-y-5">
-    <section className={PANEL}><h2 className="text-lg font-semibold">Routine catalog</h2>
-
+    <section className={PANEL} aria-label="Routine filters">
       <RoutineSearch filters={filters} onChange={setFilters} routines={routines.map(searchableRoutine)} countLabel={`Showing ${filtered.length} of ${routines.length} routines`} />
     </section>
     {catalog.error && <p role="alert">Routines could not refresh: {catalog.error.message}</p>}
@@ -94,13 +93,30 @@ export function RoutineCatalogCard({routine, onNightlyChange, saving = false, pr
         <span>Runs nightly</span>
       </label></div>
     {preferenceError && <p role="alert" className="mt-2 text-sm">{preferenceError}</p>}
-    <p className="mt-2 text-sm text-[#747780]">{routine.definition.purpose}</p>
+    {routine.latestAttempt && <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#747780]">
+      <span>Latest</span>
+      <a className={TESTING_LINK} href={frameworkRunHref(routine.latestAttempt.runId)} aria-label={`Latest run: ${runDisplayStatus(routine.latestAttempt.outcome, routine.latestAttempt.evidenceStatus, routine.latestAttempt.uploadsComplete)}`}>
+        <HistoryStatus outcome={runDisplayStatus(routine.latestAttempt.outcome, routine.latestAttempt.evidenceStatus, routine.latestAttempt.uploadsComplete)} />
+      </a>
+      <time dateTime={routine.latestAttempt.startedAt} title={new Date(routine.latestAttempt.startedAt).toLocaleString()}>{new Date(routine.latestAttempt.startedAt).toLocaleString(undefined, {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"})}</time>
+      {routine.latestAttempt.definitionRevision !== routine.definitionRevision && <span>Earlier source</span>}
+    </div>}
     <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[#eceeeb] pt-3">
-      {routine.example ? <a className={TESTING_LINK} href={frameworkRunHref(routine.example.runId)}>Latest passing example</a> : <span className="text-xs text-[#747780]">Passing example pending</span>}
+      {routine.example ? <a className={TESTING_LINK} href={frameworkRunHref(routine.example.runId)}>{routine.example.definitionRevision !== routine.definitionRevision ? "Earlier passing example" : "Passing example"}</a> : <span className="text-xs text-[#747780]">Passing example pending</span>}
       <a className={TESTING_LINK} href={`${routineHref(routine.routineId, routine.platform)}#run-history`}>Run history</a>
     </div>
-    {routine.latestAttempt && <p className="mt-2 text-sm">Latest attempt: <a className={TESTING_LINK} href={frameworkRunHref(routine.latestAttempt.runId)}>{routine.latestAttempt.outcome}</a> · {new Date(routine.latestAttempt.startedAt).toLocaleString()}{routine.latestAttempt.definitionRevision !== routine.definitionRevision && " · earlier definition"}</p>}
-    {routine.example && <p className="mt-2 text-sm text-[#68746d]">Example: {new Date(routine.example.startedAt).toLocaleString()} · revision <code>{routine.example.definitionRevision.slice(0, 8)}</code>{routine.example.definitionRevision !== routine.definitionRevision && " · earlier definition"}</p>}
+    <details className="mt-3 text-sm text-[#747780]">
+      <summary className="w-fit cursor-pointer rounded-sm text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#111217]">Details</summary>
+      <div className="mt-3 space-y-2 break-words">
+        <p>{routine.definition.purpose}</p>
+        <p>Current source: <code className="break-all">{routine.definitionRevision}</code></p>
+        {routine.latestAttempt && <p>Latest run source: <code className="break-all">{routine.latestAttempt.definitionRevision}</code>{routine.latestAttempt.definitionRevision !== routine.definitionRevision && " (earlier definition)"}</p>}
+        {routine.example && <>
+          <p>Example recorded {new Date(routine.example.startedAt).toLocaleString()}.</p>
+          <p>Example source: <code className="break-all">{routine.example.definitionRevision}</code>{routine.example.definitionRevision !== routine.definitionRevision && " (earlier definition; this recording does not qualify the current source)"}</p>
+        </>}
+      </div>
+    </details>
   </article>;
 }
 
