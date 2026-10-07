@@ -1,6 +1,13 @@
 import assert from "node:assert/strict"
 import {test} from "node:test"
-import {appProblems, environmentKeys, groupProblems, linkedGroups, syncProblems} from "./porter-doppler-health.mjs"
+import {
+  checkHealth,
+  appProblems,
+  environmentKeys,
+  groupProblems,
+  linkedGroups,
+  syncProblems,
+} from "./porter-doppler-health.mjs"
 
 test("reports only names from multiline secret exports", () => {
   const text =
@@ -62,4 +69,19 @@ test("detects missing keys and wrong Doppler scope without reporting secret valu
   const problems = groupProblems(scope, good.replace("API_KEY=secret-data\n", "").replace("CONFIG=prd", "CONFIG=dev"))
   assert.equal(problems.length, 2)
   assert.ok(!problems.join().includes("secret-data"))
+})
+
+test("checks contracted sync groups even when no managed app consumes them", async () => {
+  const contract = {
+    project: 15081,
+    clusters: [{id: 5690, target: "east"}],
+    apps: [],
+    groups: [{name: "prepared-doppler", cluster: 5690, project: "project", config: "legacy", keys: []}],
+  }
+  const run = async (args) =>
+    args[0] === "kubectl" ? JSON.stringify({items: []}) : "DOPPLER_PROJECT=project\nDOPPLER_CONFIG=legacy\n"
+  assert.deepEqual(await checkHealth(contract, {run}), [
+    "prepared-doppler: SecretStore missing",
+    "prepared-doppler: ExternalSecret missing",
+  ])
 })

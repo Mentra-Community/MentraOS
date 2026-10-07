@@ -82,7 +82,12 @@ export async function checkHealth(contract, {run = porter, token = process.env.P
         token,
       ),
     )
-    problems.push(...syncProblems(resources.items, [...new Set(apps.flatMap((app) => app.groups))]))
+    problems.push(
+      ...syncProblems(
+        resources.items,
+        contract.groups.filter((group) => group.cluster === cluster.id).map((group) => group.name),
+      ),
+    )
     for (const scope of contract.groups.filter((group) => group.cluster === cluster.id)) {
       const exported = await run(["env", "pull", "--group", scope.name, ...flags], token)
       problems.push(...groupProblems(scope, exported))
