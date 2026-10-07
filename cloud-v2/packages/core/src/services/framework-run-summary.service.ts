@@ -60,18 +60,23 @@ export function verifiedFrameworkRunSummaryProjection(row: StoredSummaryRow): Re
 }
 
 /** Missing projections during a rolling deployment read only that frozen result; corrupt projections fail closed. */
-export async function readFrameworkRunSummaryProjection(row: StoredSummaryRow): Promise<RecordedFrameworkRunSummaryProjection> {
+export async function readFrameworkRunSummaryProjection(row: StoredSummaryRow, deadline = Date.now() + 10_000): Promise<RecordedFrameworkRunSummaryProjection> {
+  const remaining = () => {
+    const timeoutMS = deadline - Date.now();
+    if (timeoutMS <= 0) throw new TestRunError(503, "Frozen result summary query timed out");
+    return {timeoutMS};
+  };
   let projection = row.summaryProjection;
   const previous = projection === undefined ? undefined : verifiedFrameworkRunSummaryProjection(row);
   if (projection === undefined || previous && previous.summary.stepCounts === undefined && previous.summary.routineSource && previous.summary.frameworkBinding) {
     const stored = await TestRunModel.findOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256})
-      .select({payload: 1, payloadSha256: 1}).read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
+      .select({payload: 1, payloadSha256: 1}).read("primary").readConcern("majority").setOptions(remaining()).lean();
     if (!stored) throw new TestRunError(503, "Frozen result summary is unavailable");
     projection = createRecordedFrameworkRunSummaryProjection(stored.payload, stored.payloadSha256);
     // A rolling old writer must not make every refresh transfer this evidence again.
     await TestRunModel.updateOne({...nativeRunFilter, runId: row.runId, payloadSha256: row.payloadSha256,
       ...(previous ? {"summaryProjection.summarySha256": previous.summarySha256} : {summaryProjection: {$exists: false}})},
-      {$set: {summaryProjection: projection}}, {writeConcern: testWriteConcern, timeoutMS: 10_000}).catch(() => {
+      {$set: {summaryProjection: projection}}, {writeConcern: testWriteConcern, ...remaining()}).catch(() => {
       logger.warn({runId: row.runId}, "Frozen result summary publication will retry on a later read");
     });
   }

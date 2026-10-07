@@ -39,7 +39,7 @@ export interface FrameworkUploadAcknowledgements {
   complete(stored: StoredFrameworkRun): Promise<void>;
 }
 export {nativeRunFilter, summarizeFrameworkRun} from "./framework-run-summary.service";
-import {createFrameworkRunSummaryProjection, nativeRunFilter, readFrameworkRunSummary, verifiedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {createFrameworkRunSummaryProjection, nativeRunFilter, readFrameworkRunSummary, readFrameworkRunSummaryProjection, verifiedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 import type {StoredSummaryRow} from "./framework-run-summary.service";
 export const frameworkResultSummaryFields = {runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1,
   uploadsComplete: 1, "payload.build": 1} as const;
@@ -53,6 +53,13 @@ export function verifiedFrameworkResultSummary(row: StoredSummaryRow & {payload?
     || build.data.prNumber !== summary.build.prNumber)
     throw new TestRunError(503, "Frozen result summary build or identity is unavailable");
   return {...summary, definitionRevision: projection.definitionRevision, build: build.data, uploadsComplete: row.uploadsComplete === true};
+}
+/** A missing derived projection uses the original digest-checked native payload; corrupt projections never fall back. */
+export async function readFrameworkResultSummary(row: StoredSummaryRow & {payload?: unknown}, deadline = Date.now() + 10_000) {
+  const verified = row.summaryProjection === undefined ? {
+    ...row, summaryProjection: await readFrameworkRunSummaryProjection(row, deadline),
+  } : row;
+  return verifiedFrameworkResultSummary(verified);
 }
 export interface ResultRequestBinding {hostId: string; catalogEligible?: boolean;
   input: {routineId: string; definitionRevision: string; routineSource: RoutineSourceRef; minimumFrameworkVersion?: number;
@@ -234,7 +241,7 @@ export class FrameworkResultService {
       .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
     if (!row) throw new TestRunError(404, "Framework run was not found");
     // Missing and corrupt projections fail closed here; polling must never fall back to the full payload.
-    return verifiedFrameworkResultSummary(row);
+    return readFrameworkResultSummary(row);
   }
 
   /** An assigned supervisor reads its original publication without an admin browser session. */

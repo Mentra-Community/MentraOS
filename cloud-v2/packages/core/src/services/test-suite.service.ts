@@ -10,7 +10,7 @@ import {hostRejectionSchema, requestInputDigest, type StoredRequest} from "./tes
 import {frameworkBuildSchema, frameworkIdentitySchema, recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
 import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
 import {NightlyRoutineService, nightlyPreparedInput, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
-import {frameworkResultSummaryFields, verifiedFrameworkResultSummary} from "./framework-result.service";
+import {frameworkResultSummaryFields, readFrameworkResultSummary} from "./framework-result.service";
 import {nativeRunFilter} from "./framework-run-summary.service";
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
@@ -253,7 +253,7 @@ export class TestSuiteService {
       summary: async (id: string) => {
         const row = byResult.get(id);
         if (!row) throw new TestRunError(404, "Framework run was not found");
-        return verifiedFrameworkResultSummary(row);
+        return readFrameworkResultSummary(row, deadline);
       },
     }};
     const summaries = new Map<string, SuiteSummaryRead>();
@@ -280,11 +280,11 @@ export class TestSuiteService {
           continue;
         }
         const ids = new Set(suite.members.flatMap(member => member.requestId ? [member.requestId] : []));
-        const runs: SuiteRun[] = results.filter(row => ids.has(row.requestId!)).map(row => {
-          const run = verifiedFrameworkResultSummary(row);
+        const runs: SuiteRun[] = await Promise.all(results.filter(row => ids.has(row.requestId!)).map(async row => {
+          const run = await readFrameworkResultSummary(row, deadline);
           return {...run, channel: run.build.channel, provenance: {headSha: run.build.headSha},
             publicationComplete: run.uploadsComplete && run.evidenceStatus === "complete"};
-        });
+        }));
         const bound = requests.filter(row => ids.has(row.requestId));
         summaries.set(row.suiteId, withRequestLanes(summarizeSuite(suite, runs, row.finishedAt ?? undefined, suiteRejections(bound)), bound));
       } catch (error) {summaries.set(row.suiteId, error instanceof Error ? error : new TestRunError(503, "Suite summary is unavailable"));}

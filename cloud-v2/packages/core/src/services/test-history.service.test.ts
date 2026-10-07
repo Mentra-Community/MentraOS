@@ -258,6 +258,19 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     expect((await history.list()).entries[0]).toMatchObject({kind: "suite", outcome: "failed", passed: 1, skipped: 1, lanes: [{hostId: "mini", laneId: "mac"}]});
   });
 
+  test("missing native suite projections use the shared frozen reader, while corrupt projections stay unavailable", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRequestModel.deleteMany({}); await TestRerunModel.deleteMany({});
+    const payload = plan("native-missing-summary", [member("native-one"), member("native-two")]);
+    await saveSuite(payload); await saveRun(run("native-one")); await saveRun(run("native-two"));
+    await TestRunModel.collection.updateOne({runId: "native-one"}, {$unset: {summaryProjection: ""}});
+    const page = await new TestHistoryService().list();
+    expect(page.entries).toHaveLength(1);
+    expect(page.entries[0]).toMatchObject({kind: "suite", outcome: "running", passed: 2});
+    expect((await TestRunModel.collection.findOne({runId: "native-one"}))?.summaryProjection).toBeDefined();
+    await TestRunModel.collection.updateOne({runId: "native-one"}, {$set: {"summaryProjection.summarySha256": "f".repeat(64)}});
+    expect((await new TestHistoryService().list()).entries[0]).toMatchObject({kind: "unavailable", id: payload.suiteId});
+  });
+
   test("accepted reruns are excluded before page and cursor selection, counted as jobs, and shown on request", async () => {
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
     const parent = {...plan("suite:rerun-parent", [member("original-a"), member("original-b")]), startedAt: "2026-10-03T18:00:00Z"};
