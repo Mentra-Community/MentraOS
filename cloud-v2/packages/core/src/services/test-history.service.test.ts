@@ -8,7 +8,7 @@ import {TestRequestModel} from "../models/test-request.model";
 import {backfillTestSuiteStartedAt, TEST_SUITE_HISTORY_INDEX, TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunSchema, type FrameworkRun} from "../types/framework-run.types";
 import type {TestSuite} from "../types/test-suite.types";
-import {TestHistoryService, testHistoryQueries, historySuiteBuild, type StoredHistoryRow} from "./test-history.service";
+import {TestHistoryService, testHistoryQueries, historySuiteBuild, enrichHistoryPrBuilds, type StoredHistoryRow} from "./test-history.service";
 import {TestSuiteService, type SuiteSummaryRead} from "./test-suite.service";
 import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 import {requestInputDigest} from "./test-request.service";
@@ -572,4 +572,12 @@ test("suite PR identity comes only from a verified bound request at the tested c
   expect(historySuiteBuild(suite, [request, request])).toEqual(suite.build);
   expect(historySuiteBuild({...suite, build: {headSha: "e".repeat(40)}}, [request])).toEqual({headSha: "e".repeat(40)});
   expect(historySuiteBuild(suite, [])).toEqual(suite.build);
+});
+
+test("optional PR metadata failure and timeout preserve readable entries", async () => {
+  const suite = {suiteId: "pr-suite", channel: "pr", build: {headSha: "c".repeat(40)}, members: [{requestId: "request", routineId: "notes", platform: "android"}]} as any;
+  const entries = [{kind: "suite", ...suite}, {kind: "unavailable", sourceKind: "run", id: "missing", startedAt: "2026-10-07T18:00:00Z", message: "Details unavailable."}] as any;
+  for (const error of [new Error("lookup failed"), Object.assign(new Error("timed out"), {code: 50})]) {
+    expect(await enrichHistoryPrBuilds(entries, async () => {throw error;}, new Map([[suite.suiteId, suite]]))).toBe(entries);
+  }
 });

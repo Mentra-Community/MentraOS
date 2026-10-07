@@ -12,7 +12,7 @@ import {frameworkRunIdSchema} from "../types/framework-run.types";
 import type {TestHistoryEntry, TestHistoryPage} from "../types/test-history.types";
 import {nativeRunFilter, readFrameworkRunSummary, type StoredSummaryRow} from "./framework-run-summary.service";
 import {TestRunError} from "./test-result-error";
-import {TestSuiteService} from "./test-suite.service";
+import {TestSuiteService, type SuiteSummaryRead} from "./test-suite.service";
 const logger = createLogger("core").child({component: "test-history"});
 
 const cursorSchema = z.object({startedAt: z.string().datetime({offset: true}),
@@ -129,11 +129,6 @@ export class TestHistoryService {
       || (a.historyId < b.historyId ? 1 : a.historyId > b.historyId ? -1 : 0));
     const page = rows.slice(0, query.data.limit);
     const suiteSummaries = await this.suites.summaries(page.filter(row => row.historyKind === "suite").map(row => row.historyId), deadline);
-    const prRequestIds = [...new Set([...suiteSummaries.values()].flatMap(suite => suite && !(suite instanceof Error) && suite.channel === "pr"
-      ? suite.members.flatMap(member => member.requestId ? [member.requestId] : []) : []))];
-    const prRequests = prRequestIds.length ? await TestRequestModel.find({requestId: {$in: prRequestIds}})
-      .select({requestId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1}).limit(prRequestIds.length + 1)
-      .read("primary").readConcern("majority").setOptions({timeoutMS: remainingQueryTime(deadline)}).lean() : [];
     const entries = await Promise.all(page.map(async (row): Promise<TestHistoryEntry> => {
       try {
         if (row.historyKind === "run") {
@@ -152,7 +147,7 @@ export class TestHistoryService {
         });
         return {kind: "suite", suiteId: suite.suiteId, channel: suite.channel, trigger: suite.trigger,
           startedAt: suite.startedAt, ...(suite.finishedAt ? {finishedAt: suite.finishedAt} : {}),
-          outcome: suite.outcome, expectedCount: suite.members.length, passed: suite.passed, build: historySuiteBuild(suite, prRequests),
+          outcome: suite.outcome, expectedCount: suite.members.length, passed: suite.passed, build: suite.build,
           skipped: suite.members.filter(member => member.status === "not-run").length,
           rerunCount: row.rerunCount ?? 0,
           failedCount: suite.members.filter(member => ["failed", "setup-failed", "teardown-failed"].includes(member.status)).length,
@@ -170,7 +165,13 @@ export class TestHistoryService {
     const nextCursor = rows.length > query.data.limit && last ? Buffer.from(JSON.stringify({
       startedAt: last.historyStartedAt.toISOString(), kind: last.historyKind, id: last.historyId,
     } satisfies HistoryCursor)).toString("base64url") : null;
-    return {entries, nextCursor};
+    const enriched = await enrichHistoryPrBuilds(entries, async ids => {
+      const timeoutMS = Math.min(500, Math.max(1, deadline - Date.now()));
+      return TestRequestModel.find({requestId: {$in: ids}})
+        .select({requestId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1})
+        .limit(ids.length + 1).read("primary").readConcern("majority").setOptions({timeoutMS, maxTimeMS: timeoutMS}).lean();
+    }, suiteSummaries);
+    return {entries: enriched, nextCursor};
   }
 }
 
@@ -193,4 +194,25 @@ export function historySuiteBuild(suite: {channel: string; build: {headSha: stri
   });
   const numbers = [...new Set(builds.map(build => build.prNumber))];
   return numbers.length === 1 && numbers[0] ? {...suite.build, repository: builds[0].repository, prNumber: numbers[0]} : suite.build;
+}
+
+/** Optional labels never prevent readable history from being returned. */
+export async function enrichHistoryPrBuilds(entries: TestHistoryEntry[], read: (ids: string[]) => Promise<Parameters<typeof historySuiteBuild>[1]>, suites: Map<string, SuiteSummaryRead>) {
+  const ids = [...new Set(entries.flatMap(entry => {
+    if (entry.kind !== "suite" || entry.channel !== "pr") return [];
+    const suite = suites.get(entry.suiteId);
+    return suite && !(suite instanceof Error) ? suite.members.flatMap(member => member.requestId ? [member.requestId] : []) : [];
+  }))];
+  if (!ids.length) return entries;
+  try {
+    const requests = await read(ids);
+    return entries.map(entry => {
+      if (entry.kind !== "suite" || entry.channel !== "pr") return entry;
+      const suite = suites.get(entry.suiteId);
+      return suite && !(suite instanceof Error) ? {...entry, build: historySuiteBuild(suite, requests)} : entry;
+    });
+  } catch (error) {
+    logger.warn({err: error}, "Optional history PR identity unavailable");
+    return entries;
+  }
 }
