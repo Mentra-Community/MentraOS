@@ -1,4 +1,4 @@
-import {routineApi, submitRoutineRequest, routineLabelIds, selectedCatalog, exactSource, stableRequestId, ensure, positive} from "./routine-api.mjs"
+import {submitRoutineRequest, routineLabelIds, routineId, routineRevision, platforms, exactSource, stableRequestId, ensure, positive} from "./routine-api.mjs"
 import {ANDROID_PUBLICATION_STEP} from "./pr-android-artifacts.mjs"
 
 export const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
@@ -84,52 +84,54 @@ async function currentPrSource(github, context, pr, platform) {
   return publication ? exactSource({channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: publication.publicationAttempt}) : null
 }
 
-export function planForDefinition(definition, source) {
+export function planRoutineRequest(selection, source, {occurrenceId, routineRevision: revision} = {}) {
   const selected = exactSource(source)
-  return {routineId: definition.routineId, platform: definition.platform, source: selected,
-    requestId: stableRequestId({occurrenceId: `source-${selected.channel}-${selected.buildRunId}-${selected.publicationAttempt}`,
-      routineId: definition.routineId, platform: definition.platform, source: selected})}
+  return {routineId: selection.routineId, platform: selection.platform, source: selected,
+    ...(revision === undefined ? {} : {routineRevision: revision}),
+    requestId: stableRequestId({occurrenceId: occurrenceId ?? `source-${selected.channel}-${selected.buildRunId}-${selected.publicationAttempt}`,
+      routineId: selection.routineId, platform: selection.platform, source: selected, routineRevision: revision})}
 }
 
-/** Labels select the enrolled catalog; build callbacks retry any labels whose publication is still pending. */
-export async function createRoutineRequests({github, context, token, routine, platform, source, number, fetchImpl = fetch}) {
+/** Labels request IDs directly. The host checks exact source and platform support before grants. */
+export async function createRoutineRequests({github, context, token, routine, platform, source, number, routineRevision: revision, fetchImpl = fetch}) {
   ensure(`${context.repo.owner}/${context.repo.repo}` === "Mentra-Community/MentraOS", "Unsupported request repository")
   const explicit = context.eventName === "workflow_dispatch"
   ensure(explicit ? context.ref === "refs/heads/dev" : context.eventName === "pull_request_target", "Requests require trusted workflow metadata")
-  const catalog = await routineApi({token, operation: "catalog", fetchImpl})
+  ensure(revision === undefined || routineRevision(revision), "Routine revision override must be an exact commit")
   const requests = [], requestIds = [], pending = [], outcomes = []
-  const dispatch = async (definition, selected) => {
-    const plan = planForDefinition(definition, selected)
+  const dispatch = async (selection, selected) => {
+    const plan = planRoutineRequest(selection, selected, {routineRevision: revision,
+      ...(explicit ? {occurrenceId: `manual-${context.runId}`} : {})})
     const {request, ...outcome} = await submitRoutineRequest({token, request: plan, fetchImpl})
     if (request) requests.push(request)
     if (outcome.status === "accepted" || outcome.status === "uncertain") requestIds.push(plan.requestId)
     outcomes.push(outcome)
   }
   if (explicit) {
+    ensure(positive(context.runId) && routineId(routine) && platforms.includes(platform), "An explicit request requires a routine ID, platform and workflow run")
     const selected = exactSource(source)
     if (selected.channel === "pr") await authenticatedPr(github, context, selected.prNumber)
-    const definitions = selectedCatalog(catalog, [routine], platform)
-    ensure(platform && definitions.length === 1, "An explicit request requires an enrolled routine and platform")
-    await dispatch(definitions[0], selected)
+    await dispatch({routineId: routine, platform}, selected)
     return {requests, requestIds, pending, outcomes}
   }
   const pr = await authenticatedPr(github, context, number)
   const ids = routineLabelIds(pr)
   if (!ids.length) return {requests, requestIds, pending, outcomes}
-  const definitions = selectedCatalog(catalog, ids), sources = new Map()
-  for (const definition of definitions) {
+  ensure(ids.every(routineId), "Invalid routine label")
+  const selections = ids.flatMap(routineId => platforms.map(platform => ({routineId, platform}))), sources = new Map()
+  for (const selection of selections) {
     try {
-      if (!sources.has(definition.platform)) sources.set(definition.platform, currentPrSource(github, context, pr, definition.platform))
-      const selected = await sources.get(definition.platform)
+      if (!sources.has(selection.platform)) sources.set(selection.platform, currentPrSource(github, context, pr, selection.platform))
+      const selected = await sources.get(selection.platform)
       if (!selected) {
         const reason = "Current PR app publication is pending"
-        pending.push({...definition, reason})
-        outcomes.push({routineId: definition.routineId, platform: definition.platform, status: "pending", reason})
+        pending.push({...selection, reason})
+        outcomes.push({...selection, status: "pending", reason})
         continue
       }
-      await dispatch(definition, selected)
+      await dispatch(selection, selected)
     } catch (error) {
-      outcomes.push({routineId: definition.routineId, platform: definition.platform, status: "failed",
+      outcomes.push({...selection, status: "failed",
         reason: "Current PR app publication could not be authenticated", retryable: error.retryable === true})
     }
   }

@@ -1,7 +1,9 @@
 import {testRoutineSource} from "../../testing/framework-fixtures"
 import {expect, test} from "bun:test";
 import {createTestDispatchAdminApi, HOST_STATE_FRESHNESS_MS} from "./test-dispatches.api";
-import {requestInputDigest, TestRequestService, type StoredTestRequest} from "../../services/test-request.service";
+import {requestInputDigest, TestRequestService, type StoredRequest} from "../../services/test-request.service";
+import {RoutineDispatchService} from "../../services/routine-dispatch.service";
+import {routineAdmissionInput} from "../../services/routine-admission.service";
 import type {RoutineDefinitionService} from "../../services/routine-definition.service";
 import type {TestBuildGateway} from "../../services/test-builds.service";
 import type {TestHostStateService} from "../../services/test-host-state.service";
@@ -9,11 +11,13 @@ const selection = {requestId: "request-1", hostId: "mini", laneId: "mac", routin
  source: {channel: "dev", buildRunId: 15, publicationAttempt: 1}, archiveSha256: "c".repeat(64)};
 const resources = [{id: "mac-app", kind: "app"}, {id: "mac-recorder", kind: "recorder"}];
 function fixture(changed = false, offline = false, clockSkew = 0, receiptAge = 0) {
-  let admitted: StoredTestRequest | undefined, revision = "a".repeat(40), resolves = 0;
-  const service = {get: async () => admitted ?? null, submit: async (requestId: string, hostId: string, input: unknown) => {
+  let admitted: StoredRequest | undefined, revision = "a".repeat(40), resolves = 0;
+  const service = {get: async (id: string) => admitted?.requestId === id ? admitted : null, prepare: async (hostId: string, dispatchIntent: any) => {
+    admitted = {requestId: dispatchIntent.requestId, hostId, dispatchIntent, dispatchIntentSha256: requestInputDigest(dispatchIntent), state: "preparing"}; return admitted;}, submit: async (requestId: string, hostId: string, input: unknown) => {
    admitted = {requestId,hostId,input,inputSha256:requestInputDigest(input),state:"queued"}; return admitted;}} as unknown as TestRequestService;
   const definitions = {
-    getCurrent: async () => ({
+    getCurrent: async () => {throw new Error("Must not select the old published definition");},
+    getExact: async () => ({
       routineId: selection.routineId,
       platform: selection.platform,
       definitionRevision: revision,
@@ -28,16 +32,21 @@ function fixture(changed = false, offline = false, clockSkew = 0, receiptAge = 0
    return {source: selection.source, headSha: "b".repeat(40), availability: "available", release:"3.3.0-dev.5",receipt: {url: "https://artifactscdn.mentraglass.com/receipt.json", sha256: "e".repeat(64), size: 1773}, archive: {name: "app.zip", url: "https://artifactscdn.mentraglass.com/app.zip", size: 100, sha256: (changed ? "d" : "c").repeat(64)}};}} as unknown as TestBuildGateway;
   const hosts = {get: async () => offline ? null : {hostId: "mini", observedAt:new Date(Date.now()+clockSkew).toISOString(),receivedAt:new Date(Date.now()-receiptAge).toISOString(),lanes:[{id:"mac",platform:"ios-on-mac",dispatchMode:"paused",resources}]}} as unknown as TestHostStateService;
   return {
-    app: createTestDispatchAdminApi(service, definitions, builds, hosts),
+    app: createTestDispatchAdminApi(service, definitions, builds, hosts, new RoutineDispatchService(definitions, builds, hosts, service, undefined, undefined,
+      {async resolve(override) {return override ?? revision;}, async inventory(commit) {return {commit, files: [{path: "routines/no-glasses/routine.ts", gitBlobSha1: "f".repeat(40), size: 10}]};}})),
+    input: async () => routineAdmissionInput((await definitions.getExact(selection.routineId, selection.platform, revision, true))!,
+      await builds.resolve(selection.source as any, selection.platform as any), {hostId: selection.hostId, laneId: selection.laneId},
+      await hosts.get(selection.hostId), Date.now(), {requireAutomatic: false}),
     admitted: () => admitted,
     reEnroll: () => (revision="d".repeat(40)),
     resolves:()=>resolves,
   }
 }
 const post = (app: ReturnType<typeof createTestDispatchAdminApi>, body: unknown, path="/test-dispatches/picker") => app.request(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
-test("picker freezes selected publication and source-defined host inputs", async () => {
+test("picker freezes fresh main, selected publication and explicit target before host preparation", async () => {
  const f=fixture();expect((await post(f.app,selection)).status).toBe(202);
- expect(f.admitted()).toMatchObject({requestId:"request-1",hostId:"mini",input:{routineId:"no-glasses",definitionRevision:"a".repeat(40),platform:"ios-on-mac",laneId:"mac",resources,policy:{estimatedOutputBytes:100},build:{headSha:"b".repeat(40),kind:"mac-ci-package",archive:{sha256:"c".repeat(64)}}}});
+ expect(f.admitted()).toMatchObject({requestId:"request-1",hostId:"mini",state:"preparing",dispatchIntent:{routineId:"no-glasses",routineRevision:"a".repeat(40),platform:"ios-on-mac",laneId:"mac",build:{headSha:"b".repeat(40),kind:"mac-ci-package",archive:{sha256:"c".repeat(64)}}}});
+ expect(f.admitted()!.input).toBeUndefined();
 });
 test("changed artifact and unavailable host refuse execution admission", async () => {
  for(const f of [fixture(true),fixture(false,true)]) {expect((await post(f.app,selection)).status).toBe(409);expect(f.admitted()).toBeUndefined();}
@@ -50,7 +59,7 @@ test("lost admission response keeps original definition after re-enrollment", as
 test("direct admission cannot bypass immutable build resolver or host bindings", async () => {
   const f=fixture();
   await post(f.app,selection);
-  const original=f.admitted()!;
+  const original = {input: await f.input()};
   const foreign = {
     ...(original.input as object),
     build:{repository:"Mentra-Community/MentraOS",headSha:"b".repeat(40),channel:"dev",source:selection.source,archive:{sha256:"f".repeat(64)}},
@@ -63,7 +72,7 @@ test("direct admission cannot bypass immutable build resolver or host bindings",
 test("direct admission preserves an explicit framework floor and its immutable retry digest", async () => {
   const selected = fixture();
   expect((await post(selected.app, selection)).status).toBe(202);
-  const input = {...selected.admitted()!.input as Record<string, unknown>, minimumFrameworkVersion: 123};
+  const input = {...await selected.input(), minimumFrameworkVersion: 123};
   const direct = fixture(), request = {requestId: "framework-floor", hostId: "mini", input};
   expect((await post(direct.app, request, "/test-dispatches")).status).toBe(202);
   expect(direct.admitted()!.input).toEqual(input);
@@ -87,11 +96,13 @@ function glassesFixture(
 ) {
   const revision = "a".repeat(40), manifest = {url: "https://artifactscdn.mentraglass.com/exact/manifest.json", sha256: "f".repeat(64), size: 100};
   const selected = {...selection, routineId: "paired-controls"};
-  const admitted = new Map<string, StoredTestRequest>();
-  const service = {get: async (id: string) => admitted.get(id) ?? null, submit: async (requestId: string, hostId: string, input: unknown) => {
-  const row: StoredTestRequest = {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}; admitted.set(requestId, row); return row;}} as unknown as TestRequestService;
+  const admitted = new Map<string, StoredRequest>();
+  const service = {get: async (id: string) => admitted.get(id) ?? null, prepare: async (hostId: string, dispatchIntent: any) => {
+    const row: StoredRequest = {requestId: dispatchIntent.requestId, hostId, dispatchIntent, dispatchIntentSha256: requestInputDigest(dispatchIntent), state: "preparing"}; admitted.set(row.requestId, row); return row;}, submit: async (requestId: string, hostId: string, input: unknown) => {
+  const row: StoredRequest = {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}; admitted.set(requestId, row); return row;}} as unknown as TestRequestService;
   const definitions = {
-    getCurrent: async () => ({
+    getCurrent: async () => {throw new Error("Must not select the old published definition");},
+    getExact: async () => ({
       routineId: selected.routineId,
       platform: selected.platform,
       definitionRevision: revision,
@@ -111,13 +122,16 @@ function glassesFixture(
   const hosts = {get: async () => ({hostId: "mini", receivedAt: new Date().toISOString(), lanes: [{id: "mac", platform: "ios-on-mac", dispatchMode: "paused",
   resources: [...resources, {id: "physical-live", kind: "glasses"}],
   glasses: [{resourceId: "physical-live", deviceId: "live-cid", model: "mentra-live", capabilities}]}]})} as unknown as TestHostStateService;
-  return {app: createTestDispatchAdminApi(service, definitions, builds, hosts), admitted, selected, manifest};
+  return {app: createTestDispatchAdminApi(service, definitions, builds, hosts, new RoutineDispatchService(definitions, builds, hosts, service, undefined, undefined,
+    {async resolve(override) {return override ?? revision;}, async inventory(commit) {return {commit, files: []};}})), admitted, selected, manifest,
+    input: async () => routineAdmissionInput((await definitions.getExact(selected.routineId, selected.platform, revision, true))!, build as any,
+      {hostId: selected.hostId, laneId: selected.laneId}, await hosts.get(selected.hostId), Date.now(), {requireAutomatic: false})};
 }
 
 test("Admin picker and direct admission share the frozen glasses manifest on a manually paused lane", async () => {
  const f = glassesFixture();
  expect((await post(f.app, f.selected)).status).toBe(202);
- const input = f.admitted.get(f.selected.requestId)!.input as Record<string, any>;
+ const input = await f.input() as Record<string, any>;
  expect(input.glassesStart).toEqual({model: "mentra-live", manifest: f.manifest});
  expect(input.glassesReturn).toEqual(input.glassesStart);
  expect(input.build.manifestSha256).toBe(f.manifest.sha256);
@@ -126,18 +140,19 @@ test("Admin picker and direct admission share the frozen glasses manifest on a m
  expect((await post(f.app, {requestId: "direct", hostId: "mini", input}, "/test-dispatches")).status).toBe(202);
 });
 
-test("both Admin paths refuse incompatible provider capability before storing a glasses request", async () => {
+test("picker saves immutable intent while direct executable admission checks provider capability", async () => {
  const valid = glassesFixture(); await post(valid.app, valid.selected);
- const input = valid.admitted.get(valid.selected.requestId)!.input;
+ const input = await valid.input();
  const missing = glassesFixture([]);
- expect((await post(missing.app, missing.selected)).status).toBe(409);
+ expect((await post(missing.app, missing.selected)).status).toBe(202);
+ expect(missing.admitted.get(missing.selected.requestId)!.input).toBeUndefined();
  expect((await post(missing.app, {requestId: "direct", hostId: "mini", input}, "/test-dispatches")).status).toBe(409);
- expect(missing.admitted.size).toBe(0);
+ expect(missing.admitted.size).toBe(1);
 });
 
 test("direct Admin admission refuses a coherent alternate manifest that does not match the resolved build", async () => {
  const f = glassesFixture(); await post(f.app, f.selected);
- const original = f.admitted.get(f.selected.requestId)!.input as Record<string, any>;
+ const original = await f.input() as Record<string, any>;
  const manifest = {...f.manifest, sha256: "d".repeat(64)}, software = {model: "mentra-live", manifest};
  const input = {...original, build: {...original.build, manifest, manifestSha256: manifest.sha256}, glassesStart: software, glassesReturn: software};
  expect((await post(f.app, {requestId: "changed", hostId: "mini", input}, "/test-dispatches")).status).toBe(409);
@@ -148,7 +163,7 @@ test("Admin paths preserve declared alternate start and refuse a forged start be
  const startSoftware = {model: "mentra-live" as const, manifest: {url: "https://artifactscdn.mentraglass.com/reset/manifest.json", sha256: "d".repeat(64), size: 100}};
  const f = glassesFixture(["glasses-ble"], startSoftware);
  expect((await post(f.app, f.selected)).status).toBe(202);
- const input = f.admitted.get(f.selected.requestId)!.input as Record<string, any>;
+ const input = await f.input() as Record<string, any>;
  expect(input.glassesStart).toEqual(startSoftware);
  expect(input.glassesReturn).toEqual({model: "mentra-live", manifest: f.manifest});
  expect((await post(f.app, {requestId: "declared", hostId: "mini", input}, "/test-dispatches")).status).toBe(202);
@@ -156,4 +171,33 @@ test("Admin paths preserve declared alternate start and refuse a forged start be
   expect((await post(f.app, {requestId: "forged", hostId: "mini", input: {...input, glassesStart}}, "/test-dispatches")).status).toBe(409);
   expect(f.admitted.has("forged")).toBe(false);
  }
+});
+
+test("picker inventory uses source IDs and fresh main without a published-definition gate", async () => {
+  const f = fixture(), response = await f.app.request("/test-routines");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({routineRevision: "a".repeat(40), routines: [{routineId: "no-glasses"}]});
+  const exact = await f.app.request(`/test-routines?revision=${"f".repeat(40)}`);
+  expect((await exact.json() as {routineRevision:string}).routineRevision).toBe("f".repeat(40));
+});
+
+test("picker optional exact revision and independent framework floor survive immutable retries", async () => {
+  const f = fixture(), request = {...selection, routineRevision: "f".repeat(40), minimumFrameworkVersion: 123};
+  expect((await post(f.app, request)).status).toBe(202);
+  expect(f.admitted()).toMatchObject({state: "preparing", dispatchIntent: {routineRevision: request.routineRevision, minimumFrameworkVersion: 123}});
+  f.reEnroll();
+  expect((await post(f.app, request)).status).toBe(202);
+  expect(f.resolves()).toBe(1);
+  for (const changed of [{...request, routineRevision: "e".repeat(40)}, {...request, minimumFrameworkVersion: 124},
+    {...request, laneId: "other"}, {...request, hostId: "other"}])
+    expect((await post(f.app, changed)).status).toBe(409);
+  expect((await post(fixture().app, {...selection, routineRevision: "main"})).status).toBe(400);
+});
+
+test("picker retries require its saved intent digest and never read a fabricated executable input", async () => {
+  const f = fixture(); expect((await post(f.app, selection)).status).toBe(202);
+  const saved = f.admitted()!;
+  expect(saved.input).toBeUndefined();
+  saved.dispatchIntentSha256 = "f".repeat(64);
+  expect((await post(f.app, selection)).status).toBe(503);
 });

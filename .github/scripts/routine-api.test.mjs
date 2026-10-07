@@ -1,15 +1,14 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import {routineApi, submitRoutineRequest, routineLabelIds, selectedCatalog, stableRequestId, boundRoutineResult, waitForRoutineResult, requestInputDigest} from "./routine-api.mjs"
-import {routineFixture, terminalRoutineFixture} from "./routine-api-fixture.mjs"
+import {routineFixture, terminalRoutineFixture, preparingRoutineFixture} from "./routine-api-fixture.mjs"
 
-test("unfamiliar routine labels resolve only through enrolled definitions", () => {
-  const f = routineFixture(), catalog = {routines: [f.enrollment]}
+test("discovery returns main IDs without enrollment or guessed platform metadata", () => {
+  const f = routineFixture(), catalog = {routineRevision: "b".repeat(40), routines: [{routineId: f.definition.id}]}
   assert.deepEqual(routineLabelIds({labels: ["routine:example.screen-check", {name: "routine:example.screen-check"}, {name: "other"}]}), [f.definition.id])
-  assert.equal(selectedCatalog(catalog, [f.definition.id])[0].title, f.definition.title)
-  assert.throws(() => selectedCatalog(catalog, ["not-enrolled"]), /not enrolled/)
-  assert.throws(() => selectedCatalog(catalog, [f.definition.id], "android"), /not enrolled for android/)
-  assert.throws(() => selectedCatalog({routines: [f.enrollment, f.enrollment]}), /ambiguous/)
+  assert.deepEqual(selectedCatalog(catalog), [{routineId: f.definition.id, routineRevision: catalog.routineRevision}])
+  assert.throws(() => selectedCatalog({routines: [f.enrollment]}), /unavailable/)
+  assert.throws(() => selectedCatalog({...catalog, routines: [catalog.routines[0], catalog.routines[0]]}), /ambiguous/)
 })
 test("source-based request identity is stable and binds routine, platform and publication", () => {
   const f = routineFixture(), input = {occurrenceId: "source-pr-10-2", routineId: f.definition.id, platform: "ios-on-mac", source: f.source}
@@ -19,11 +18,12 @@ test("source-based request identity is stable and binds routine, platform and pu
 })
 test("API authenticates source-bound acknowledgements and reports explicit admission failures", async () => {
   const f = routineFixture(), request = {requestId: "example-request", routineId: f.definition.id, platform: "ios-on-mac", source: f.source}
-  await routineApi({token: "fixture-token", operation: "dispatch", request, fetchImpl: f.fetchImpl})
+  const ack = await routineApi({token: "fixture-token", operation: "dispatch", request, fetchImpl: f.fetchImpl})
+  assert.equal(ack.state, "preparing"); assert.equal(ack.input, undefined)
   assert.equal(f.calls[0].options.headers.Authorization, "Bearer fixture-token")
   assert.equal(f.calls[0].options.redirect, "error")
   await assert.rejects(routineApi({token: "fixture", operation: "dispatch", request,
-    fetchImpl: async () => Response.json({...f.request, input: {...f.request.input, routineId: "another-check"}})}), /changed the original/)
+    fetchImpl: async () => Response.json({...f.request, input: {...f.request.input, routineId: "another-check"}})}), /changed the original|differs/)
   await assert.rejects(routineApi({token: "fixture", operation: "dispatch", request,
     fetchImpl: async () => Response.json({message: "Host lacks required recorder"}, {status: 409})}), /Host lacks required recorder/)
 })
@@ -169,10 +169,47 @@ test("terminal request receipts bind exact input, host, identity and terminal ki
     d => {d.request.hostReceipt = {requestId: d.request.requestId}}, d => {d.request.terminalStatus = "cancelled"},
     d => {d.request.hostRejection.extra = true}]) {
     const detail = structuredClone(f.detail); mutate(detail)
-    assert.throws(() => boundRoutineResult(detail), /immutable receipt/)
+    assert.throws(() => boundRoutineResult(detail), /immutable receipt|immutable input|dispatch intent/)
   }
   const cancellation = terminalRoutineFixture({status: "cancelled"})
   cancellation.request.state = "accepted"
   assert.equal(boundRoutineResult(cancellation.detail), null) // Intent is not settled cancellation.
   assert.equal(requestInputDigest({b: 2, a: [1, {c: true}]}), requestInputDigest({a: [1, {c: true}], b: 2}))
+})
+
+
+test("preparation acknowledgement binds immutable intent and the exact override without executable input", async () => {
+  const f = preparingRoutineFixture(), request = {requestId: f.request.requestId, routineId: f.definition.id,
+    platform: f.request.dispatchIntent.platform, source: f.source, routineRevision: "b".repeat(40)}
+  assert.equal((await routineApi({token: "fixture", operation: "dispatch", request, fetchImpl: async () => Response.json(f.request)})).state, "preparing")
+  for (const mutate of [row => {row.dispatchIntent.build.archive.sha256 = "e".repeat(64)},
+    row => {row.dispatchIntent.routineRevision = "e".repeat(40)}, row => {row.hostId = ""}]) {
+    const row = structuredClone(f.request); mutate(row)
+    await assert.rejects(routineApi({token: "fixture", operation: "dispatch", request, fetchImpl: async () => Response.json(row)}), /intent|source/)
+  }
+  const changed = structuredClone(f.request); changed.dispatchIntent.routineRevision = "e".repeat(40)
+  changed.dispatchIntentSha256 = requestInputDigest(changed.dispatchIntent)
+  await assert.rejects(routineApi({token: "fixture", operation: "dispatch", request, fetchImpl: async () => Response.json(changed)}), /changed the original/)
+})
+
+test("source preparation waits without a fabricated input or run and settles truthful receipts", async () => {
+  const preparing = preparingRoutineFixture(); assert.equal(boundRoutineResult(preparing.detail), null)
+  for (const status of ["cancelled", "not-run", "skipped"]) {
+    const f = preparingRoutineFixture({status}), row = boundRoutineResult(f.detail)
+    assert.equal(row.status, status); assert.equal(row.resultRunId, undefined)
+    const detail = await waitForRoutineResult({token: "fixture", requestId: f.request.requestId,
+      fetchImpl: async () => Response.json(f.detail), sleep: async () => assert.fail("No run is expected")})
+    assert.equal(detail.result, null)
+    if (status !== "cancelled") {
+      f.request.preparationRejection.dispatchIntentSha256 = "e".repeat(64)
+      assert.throws(() => boundRoutineResult(f.detail), /immutable receipt/)
+    }
+  }
+})
+
+test("default revision remains stable on retry while explicit revisions produce distinct identities", () => {
+  const f = routineFixture(), selection = {occurrenceId: "source-pr-10-2", routineId: f.definition.id, platform: "ios-on-mac", source: f.source}
+  assert.equal(stableRequestId(selection), stableRequestId({...selection, routineRevision: undefined}))
+  assert.notEqual(stableRequestId(selection), stableRequestId({...selection, routineRevision: "b".repeat(40)}))
+  assert.notEqual(stableRequestId({...selection, routineRevision: "b".repeat(40)}), stableRequestId({...selection, routineRevision: "d".repeat(40)}))
 })

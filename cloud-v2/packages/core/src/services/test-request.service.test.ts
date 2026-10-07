@@ -3,7 +3,10 @@ import {expect, test} from "bun:test";
 import {createHash} from "node:crypto";
 import {requestInputDigest, TestRequestService, type HostAcceptance, type HostRejection, type StoredTestRequest, type TestRequestRepository} from "./test-request.service";
 
-const build = {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)};
+const build = {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40), kind: 'android-apk',
+  source: {channel: 'dev', buildRunId: 1, publicationAttempt: 1},
+  archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 100, sha256: 'c'.repeat(64)},
+  receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 10, sha256: 'd'.repeat(64)}};
 function inputFor(routineId = "notes") {
   return {
     routineSource: testRoutineSource(),

@@ -10,7 +10,7 @@ test('rerun URLs reject ambiguous IDs; attempts show exact artifact and incomple
  const html=render(<AttemptLine attempt={attempt}/>);expect(html).toContain('Evidence incomplete');expect(html).toContain('Build 123, publication 1');expect(html).toContain('?testRerun=repair');
 });
 test('form defaults to original artifact and exposes an optional override',()=>{
- const html=render(<RerunForm suiteId="nightly" memberIds={['item']} onClose={()=>{}}/>);expect(html).toContain('Use a different MentraOS artifact');expect(html).not.toContain('Build workflow ID');
+ const html=render(<RerunForm suiteId="nightly" memberIds={['item']} onClose={()=>{}}/>);expect(html).toContain('Use a different MentraOS artifact');expect(html).not.toContain('Build workflow ID');expect(html).toContain('Routine revision (optional)');expect(html).toContain('Reuse original exact source');
 });
 test('suite original verdict stays failed while latest attempt and inline history are visible',()=>{
  const client=new QueryClient();client.setQueryData(['test-suite','nightly'],{suiteId:'nightly',channel:'dev' as const,trigger:'nightly',startedAt:'2026-10-06T10:00:00Z',outcome:'failed',passed:1,failedRoutines:['captions'],build:{headSha:'a'.repeat(40)},members:[{memberId:'item',routineId:'captions',platform:'android',status:'failed'},{memberId:'passing',routineId:'long-test',platform:'android',status:'pass'}]});

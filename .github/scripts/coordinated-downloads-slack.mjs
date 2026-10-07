@@ -115,7 +115,7 @@ export async function releaseFailureDetail(env, fetchImpl = fetch) {
   return `${fallback} <${run}/attempts/${env.RUN_ATTEMPT}|View release jobs>`
 }
 
-/** Current enrolled definitions and exact published artifacts; a release never implies a test request. */
+/** Current main routine IDs and exact published app platforms; neither implies compatibility or execution. */
 export async function coordinatedRoutineLinks(env, fetchImpl = fetch, {select = publishedCoordinatedBuild} = {}) {
   if (!["dev", "staging"].includes(env.BRANCH) || env.RELEASE_SCOPE === "examples") return []
   const pipeline = new URL("https://github.com/Mentra-Community/MentraOS/actions/workflows/dispatch-device-routine.yml")
@@ -124,38 +124,37 @@ export async function coordinatedRoutineLinks(env, fetchImpl = fetch, {select = 
   let detail, lines = []
   if (env.FINALIZE_RESULT === "success" && env.REPOSITORY === "Mentra-Community/MentraOS") {
     try {
-      const definitions = selectedCatalog(await routineApi({token: env.TEST_RUN_INGEST_TOKEN || env.TEST_RUN_INGEST_TOKEN_DEV,
+      const routines = selectedCatalog(await routineApi({token: env.TEST_RUN_INGEST_TOKEN || env.TEST_RUN_INGEST_TOKEN_DEV,
         operation: "catalog", fetchImpl}))
       const archives = new Map()
-      for (const platform of new Set(definitions.map(row => row.platform))) {
-        const expected = platform === "android" ? env.MOBILE_APK_URL ||
-          (env.MOBILE_ASSET_BASE_URL && env.APK_NAME ? `${env.MOBILE_ASSET_BASE_URL}/${env.APK_NAME}` : undefined) : env.MAC_URL
-        if (!expected) continue
+      const platforms = [["android", env.MOBILE_APK_URL], ["ios-on-mac", env.MAC_URL]].filter(([, url]) => url)
+      for (const [platform, expected] of platforms) {
         try {
           const selection = await select({identity: env.RELEASE_IDENTITY, channel: env.BRANCH, sourceCommit: env.SHA, platform, fetchImpl})
           if (selection.archive.url !== expected || !/^[a-f0-9]{64}$/.test(selection.archive.sha256)) throw new Error("Another published archive")
           archives.set(platform, selection.archive.sha256)
         } catch { /* A missing platform must not borrow another platform's results. */ }
       }
-      lines = definitions.map(row => {
-        const digest = archives.get(row.platform), platform = row.platform === "android" ? "Android" : "iOS on Mac"
-        if (!digest) return `${slackRoutineText(row.title)} · ${platform} — Published app download could not be verified; results link unavailable.`
+      lines = routines.flatMap(row => platforms.map(([value]) => {
+        const digest = archives.get(value), platform = value === "android" ? "Android" : "iOS on Mac"
+        if (!digest) return `${slackRoutineText(row.routineId)} · ${platform} — Published app download could not be verified; results link unavailable.`
         const url = new URL("https://admin.dev.mentraglass.com/")
         url.search = new URLSearchParams({testRuns: "1", channel: env.BRANCH, repository: env.REPOSITORY, headSha: env.SHA,
-          archiveSha256: digest, routineId: row.routineId, platform: row.platform}).toString()
-        return `${slackRoutineText(row.title)} · ${platform} — <${url.href}|Results for this exact build>`
-      })
-      detail = definitions.length ? "Tests require an explicit request; publishing this build does not request coverage."
-        : "No device tests are currently enrolled."
-    } catch { detail = "The current routine catalog is unavailable. Inspect the test request pipeline; no test execution is inferred." }
+          archiveSha256: digest, routineId: row.routineId, platform: value}).toString()
+        return `${slackRoutineText(row.routineId)} · ${platform} — <${url.href}|Results for this exact build>`
+      }))
+      detail = routines.length ? "Routine IDs come from current Harness main; platform labels identify available app builds. Compatibility is checked on request. Publishing this build does not request tests."
+        : "No routine IDs are present in current Harness main."
+
+    } catch { detail = "The current Harness routine source inventory is unavailable. Inspect the test request pipeline; no test execution is inferred." }
   }
   if (!detail) detail = await releaseFailureDetail(env, fetchImpl)
   const botConfigured = env.SLACK_BUILDS_BOT_TOKEN && /^C[A-Z0-9]+$/.test(env.BRANCH === "dev"
     ? env.SLACK_DEV_BUILDS_CHANNEL_ID ?? "" : env.SLACK_STAGING_BUILDS_CHANNEL_ID ?? "")
   const updates = botConfigured ? "" : "\nSlack result updates are not configured; use the results link when available."
   return [{type: "section", block_id: "mentra-release-routines", text: {type: "mrkdwn", text:
-    slackRoutineSection({heading: "*Available device tests*", detail, lines, footer: `<${pipeline.href}|Request pipeline>${updates}`,
-      overflowUrl: "https://admin.dev.mentraglass.com/?routineCatalog=1", overflowLabel: "View all available tests in Admin"})}}]
+    slackRoutineSection({heading: "*Routine results for published app builds*", detail, lines, footer: `<${pipeline.href}|Request pipeline>${updates}`,
+      overflowUrl: "https://admin.dev.mentraglass.com/?routineCatalog=1", overflowLabel: "View routine inventory in Admin"})}}]
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
