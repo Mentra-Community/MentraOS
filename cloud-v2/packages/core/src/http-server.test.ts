@@ -113,6 +113,7 @@ test('Core listener admits authenticated routine archives above ordinary limit a
       if (withLength) headers['content-length'] = String(ROUTINE_BUNDLE_BODY_BYTES + 1)
       const oversized = await fetch(url, {method: 'POST', headers, body: stream(ROUTINE_BUNDLE_BODY_BYTES + 1)})
       expect(oversized.status).toBe(413)
+      if (withLength) expect(oversized.headers.get("connection")).toBe("close")
       expect(await oversized.json()).toMatchObject({error: 'invalid_definition'})
     }
     expect(handled).toBe(2)
@@ -181,5 +182,32 @@ test("ordinary handlers retain the body ceiling with known and streamed lengths"
     expect(small.status).toBe(200);
     expect(await small.json()).toEqual({accepted: true, input: {text: "valid"}, header: "retained"});
     expect(handled).toBe(1);
+  } finally {await server.stop(true);}
+}, 15000);
+
+test("early bundle rejection closes its connection after a bounded drain and leaves the next upload usable", async () => {
+  let authenticatedBeforeRead = false;
+  const server = serveCore(async request => {
+    if (!request.headers.has("authorization")) {
+      authenticatedBeforeRead = !request.bodyUsed;
+      return Response.json({error: "unauthorized"}, {status: 401});
+    }
+    let size = 0;
+    for await (const bytes of request.body!) size += bytes.byteLength;
+    return Response.json({size});
+  }, 0);
+  const url = `http://127.0.0.1:${server.port}/api/internal/routine-definitions/bundles/${"a".repeat(64)}`;
+  let pulls = 0;
+  try {
+    const rejected = await fetch(url, {method: "POST", body: new ReadableStream({pull(controller) {
+      pulls++; controller.enqueue(new Uint8Array(1024 * 1024));
+      if (pulls > 270) controller.close();
+    }})});
+    expect(rejected.status).toBe(401);
+    expect(rejected.headers.get("connection")).toBe("close");
+    expect(authenticatedBeforeRead).toBe(true);
+    const next = await fetch(url, {method: "POST", headers: {authorization: "synthetic"}, body: "valid"});
+    expect(next.status).toBe(200);
+    expect(await next.json()).toEqual({size: 5});
   } finally {await server.stop(true);}
 }, 15000);
