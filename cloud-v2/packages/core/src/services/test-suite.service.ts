@@ -58,6 +58,8 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
     }
     const build = input?.build ?? expected.build;
     return {...member, routineRevision: "routineRevision" in expected ? expected.routineRevision : expected.definitionRevision,
+      hostId: expected.hostId,
+      ...(input?.laneId ? {laneId: input.laneId} : "dispatchIntent" in expected && expected.dispatchIntent ? {laneId: expected.dispatchIntent.laneId} : {}),
       ...("dispatchIntent" in expected && expected.dispatchIntent ? {dispatchIntent: expected.dispatchIntent} : {}),
       ...(input?.routineSource ? {routineSource: input.routineSource} : {}), ...(build ? {build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
@@ -162,6 +164,7 @@ export class TestSuiteService {
       if (!framework.success) throw new TestRunError(503, "Suite member is not a valid framework result");
       const run = framework.data;
       return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform, definitionRevision: run.definitionRevision,
+        hostId: run.hostId, laneId: run.laneId,
         channel: run.build.channel, provenance: {headSha: run.build.headSha},
         startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
         publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run)};

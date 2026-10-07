@@ -1,6 +1,7 @@
 import type {PipelineStage} from "mongoose";
 import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
+import {TestRerunModel} from "../models/test-rerun.model";
 import {TestRunModel} from "../models/test-run.model";
 import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunIdSchema} from "../types/framework-run.types";
@@ -14,13 +15,14 @@ const cursorSchema = z.object({startedAt: z.string().datetime({offset: true}),
   kind: z.enum(["run", "suite"]), id: frameworkRunIdSchema}).strict();
 type HistoryCursor = z.infer<typeof cursorSchema>;
 const querySchema = z.object({cursor: z.string().min(1).max(2000).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(25)}).strict();
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  includeReruns: z.enum(["true", "false"]).default("false").transform(value => value === "true")}).strict();
 export interface StoredHistoryRow {
   historyKind: "run" | "suite"; historyId: string; historyStartedAt: Date;
   requestId?: string; payloadSha256?: string; summaryProjection?: unknown; uploadsComplete?: boolean;
-  historySuppressed?: boolean;
+  historySuppressed?: boolean; rerunCount?: number; rerun?: {rerunId: string; parentSuiteId?: string};
 }
-export interface HistorySourceQueries {runs: PipelineStage[]; suites: PipelineStage[]; after: HistoryCursor | null; limit: number}
+export interface HistorySourceQueries {runs: PipelineStage[]; suites: PipelineStage[]; after: HistoryCursor | null; limit: number; includeReruns: boolean}
 
 function sourceCursor(after: HistoryCursor | null, kind: "run" | "suite", id: string) {
   if (!after) return {};
@@ -30,7 +32,7 @@ function sourceCursor(after: HistoryCursor | null, kind: "run" | "suite", id: st
 }
 
 /** Paginate after exact membership exclusion, so large suites cannot consume the run page. */
-export function testHistoryQueries(after: HistoryCursor | null, limit: number): HistorySourceQueries {
+export function testHistoryQueries(after: HistoryCursor | null, limit: number, includeReruns = false): HistorySourceQueries {
   const runs: PipelineStage[] = [
     {$match: {...nativeRunFilter, ...sourceCursor(after, "run", "runId")}},
     {$sort: {startedAt: -1, runId: -1}},
@@ -49,18 +51,25 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number): 
           {$anyElementTrue: [{$map: {input: {$ifNull: ["$nightlyResult.members", {$ifNull: ["$completedResult.members", []]}]}, as: "member",
             in: {$and: [{$eq: ["$$member.requestId", "$$requestId"]}, {$eq: ["$$member.runId", "$$runId"]}]}}}]}]},
       ]}}}, {$limit: 1}], as: "historySuites"}},
+    {$lookup: {from: TestRerunModel.collection.name, localField: "payload.requestId", foreignField: "plan.members.requestId",
+      pipeline: [{$match: {state: "accepted"}}, {$limit: 1}, {$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId"}}],
+      as: "historyReruns"}},
     {$project: {_id: 0, historyKind: {$literal: "run"}, historyId: "$runId",
       historyStartedAt: "$startedAt", runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1,
-      historySuppressed: {$gt: [{$size: "$historySuites"}, 0]}}},
+      rerun: {$arrayElemAt: ["$historyReruns", 0]},
+      historySuppressed: {$or: [{$gt: [{$size: "$historySuites"}, 0]},
+        ...(!includeReruns ? [{$gt: [{$size: "$historyReruns"}, 0]}] : [])]}}},
   ];
   const suites: PipelineStage[] = [
       {$match: {"payload.members.1": {$exists: true}, startedAt: {$type: "date"}, ...sourceCursor(after, "suite", "suiteId")}},
       {$sort: {startedAt: -1, suiteId: -1}},
       {$limit: limit + 1},
+      {$lookup: {from: TestRerunModel.collection.name, localField: "suiteId", foreignField: "plan.parent.suiteId",
+        pipeline: [{$match: {state: "accepted"}}, {$count: "count"}], as: "historyReruns"}},
       {$project: {_id: 0, historyKind: {$literal: "suite"}, historyId: "$suiteId",
-        historyStartedAt: "$startedAt"}},
+        historyStartedAt: "$startedAt", rerunCount: {$ifNull: [{$arrayElemAt: ["$historyReruns.count", 0]}, 0]}}},
   ];
-  return {runs, suites, after, limit};
+  return {runs, suites, after, limit, includeReruns};
 }
 
 const HISTORY_QUERY_BUDGET_MS = 10_000;
@@ -75,7 +84,7 @@ async function readStandaloneRuns(queries: HistorySourceQueries, deadline: numbe
   let after = queries.after;
   // A batch is bounded, but there is no total raw-run cap: scan past any number of suite members.
   while (eligible.length < queries.limit + 1) {
-    const pipeline = testHistoryQueries(after, queries.limit).runs;
+    const pipeline = testHistoryQueries(after, queries.limit, queries.includeReruns).runs;
     const batch = await TestRunModel.aggregate<StoredHistoryRow>(pipeline).collation({locale: "simple"})
       .read("primary").readConcern("majority").option({maxTimeMS: remainingQueryTime(deadline)}).exec();
     eligible.push(...batch.filter(row => !row.historySuppressed));
@@ -106,7 +115,7 @@ export class TestHistoryService {
       catch {throw new TestRunError(400, "invalid test history cursor");}
     }
     let sources: StoredHistoryRow[][];
-    try {sources = await this.read(testHistoryQueries(after, query.data.limit));}
+    try {sources = await this.read(testHistoryQueries(after, query.data.limit, query.data.includeReruns));}
     catch (error) {
       if ((error as {code?: number}).code === 50) throw new TestRunError(503, "Test history query timed out. Try again.");
       throw error;
@@ -118,15 +127,26 @@ export class TestHistoryService {
     const entries = await Promise.all(page.map(async (row): Promise<TestHistoryEntry> => {
       try {
         if (row.historyKind === "run") {
-          return {kind: "run", ...await readFrameworkRunSummary({...row, runId: row.historyId} as StoredSummaryRow)};
+          return {kind: "run", ...await readFrameworkRunSummary({...row, runId: row.historyId} as StoredSummaryRow),
+            ...(row.rerun ? {rerun: row.rerun} : {})};
         }
         // The existing reader preserves frozen completions and computes current waiting members.
         const suite = await this.suites.detail(row.historyId);
+        const members = suite.members.map(member => {
+          const source = member as typeof member & {laneId?: string; hostId?: string; dispatchIntent?: {laneId?: string}; input?: {laneId?: string}};
+          const laneId = source.laneId ?? source.dispatchIntent?.laneId ?? source.input?.laneId;
+          return {routineId: member.routineId, platform: member.platform,
+            ...(laneId ? {laneId} : {}), ...(source.hostId ? {hostId: source.hostId} : {})};
+        });
         return {kind: "suite", suiteId: suite.suiteId, channel: suite.channel, trigger: suite.trigger,
           startedAt: suite.startedAt, ...(suite.finishedAt ? {finishedAt: suite.finishedAt} : {}),
           outcome: suite.outcome, expectedCount: suite.members.length, passed: suite.passed, build: suite.build,
           skipped: suite.members.filter(member => member.status === "not-run").length,
-          members: suite.members.map(({routineId, platform}) => ({routineId, platform}))};
+          rerunCount: row.rerunCount ?? 0,
+          failedCount: suite.members.filter(member => ["failed", "setup-failed", "teardown-failed"].includes(member.status)).length,
+          lanes: [...new Map(members.flatMap(member => member.hostId && member.laneId
+            ? [[JSON.stringify([member.hostId, member.laneId]), {hostId: member.hostId, laneId: member.laneId}] as const] : [])).values()]
+            .sort((a, b) => a.hostId.localeCompare(b.hostId) || a.laneId.localeCompare(b.laneId)), members};
       } catch (error) {
         logger.warn({err: error, sourceKind: row.historyKind, id: row.historyId}, "History entry details unavailable");
         return {kind: "unavailable", sourceKind: row.historyKind, id: row.historyId,

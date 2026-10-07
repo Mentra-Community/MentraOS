@@ -23,7 +23,7 @@ export const testSuiteSchema = z.object({
 });
 export const testSuiteCompletionSchema = z.object({finishedAt: z.string().datetime({offset: true})}).strict();
 export type TestSuite = z.infer<typeof testSuiteSchema>;
-export type SuiteRun = {runId: string; requestId: string; routineId: string; platform: string; definitionRevision?: string;
+export type SuiteRun = {runId: string; requestId: string; routineId: string; platform: string; definitionRevision?: string; hostId?: string; laneId?: string;
   publicationComplete?: boolean; channel: string; source?: {headSha?: string}; provenance: {headSha?: string}; outcome: string; startedAt: string; finishedAt: string};
 export type SuiteRejection = {requestId: string; routineId: string; platform: string; definitionRevision: string;
   channel: string; headSha: string; rejectedAt: string; reason: string};
@@ -41,7 +41,8 @@ export function summarizeSuite(suite: TestSuite, runs: SuiteRun[], finishedAt?: 
     const rejection = !matches.length && rejected.length === 1 ? rejected[0] : undefined;
     return {...member, status: run?.outcome ?? (rejection || finishedAt ? "not-run" : "waiting"),
       ...(rejection ? {unavailableReason: rejection.reason, publicationComplete: false, rejectedAt: rejection.rejectedAt} : {}),
-      ...(run ? {publicationComplete: run.publicationComplete === true, runId: run.runId, startedAt: run.startedAt, finishedAt: run.finishedAt} : {})};
+      ...(run ? {publicationComplete: run.publicationComplete === true, runId: run.runId, startedAt: run.startedAt, finishedAt: run.finishedAt,
+        ...(run.hostId ? {hostId: run.hostId} : {}), ...(run.laneId ? {laneId: run.laneId} : {})} : {})};
   });
   const passed = members.filter(member => member.status === "pass" && member.publicationComplete).length;
   const failed = members.filter(member => !["pass", "waiting"].includes(member.status) || member.status === "pass" && !member.publicationComplete);

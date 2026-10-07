@@ -28,7 +28,7 @@ test('historical suite member results remain readable without routine or framewo
   mocks.push(spyOn(TestRunModel, 'find').mockReturnValue({select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;},
     async lean() {return [{payload: run, uploadsComplete: true}];}} as any));
   const result = await new TestSuiteService().detail(payload.suiteId);
-  expect(result.members[0]).toMatchObject({runId: run.requestId, status: 'pass', publicationComplete: true});
+  expect(result.members[0]).toMatchObject({runId: run.requestId, status: 'pass', publicationComplete: true, hostId: 'mini', laneId: 'mac'});
   expect(JSON.stringify(run)).toBe(before);
 });
 test("query overflow refuses a verdict rather than truncating duplicate evidence", async () => {
@@ -270,6 +270,10 @@ test("nightly projection exposes only prepared source and preserves full frozen 
     members: members.map((member, index) => ({...member, status: "setup-failed", publicationComplete: false,
       ...(index === 0 ? {input, inputSha256: requestInputDigest(input)} : {})})), expectedCount: 2, passed: 0, status: "running"};
   const projection = nightlySuiteProjection(suite, plan, result);
+  expect(projection.members).toEqual(expect.arrayContaining([
+    expect.objectContaining({memberId: "admitted", hostId: "mini", laneId: "lane"}),
+    expect.objectContaining({memberId: "unadmitted", hostId: "mini", laneId: "lane"}),
+  ]));
   expect((projection.members[0] as any).build.manifest).toEqual(manifest);
   expect((projection.members[1] as any).build.manifest).toEqual(manifest);
   expect((projection.members[0] as any).routineSource).toEqual(input.routineSource);
