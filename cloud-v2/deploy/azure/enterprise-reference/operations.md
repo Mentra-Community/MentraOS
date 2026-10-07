@@ -223,13 +223,17 @@ attachment share, deployment state and original signing/refresh secrets using
 your approved recovery process. Confirm the target release's provenance and
 matching Mentra App compatibility floor before executing it.
 
-From the extracted target package:
+Rerunning the install command downloads the channel's newer release next to the
+current one and prints these commands with the exact versions. It leaves an
+existing deployment on its current package until you run them:
 
 ```bash
-./setup.sh upgrade --directory ../mentra-setup \
-  --previous-package /path/to/retained/mentra-private-cloud --backup-confirmed
-./setup.sh resume --directory ../mentra-setup
-./setup.sh verify --directory ../mentra-setup
+cd ~/mentra-install
+./packages/NEW_VERSION/mentra-private-cloud/setup.sh upgrade --directory ./mentra-state \
+  --previous-package ./packages/CURRENT_VERSION/mentra-private-cloud --backup-confirmed
+ln -sfn packages/NEW_VERSION/mentra-private-cloud mentra-private-cloud
+./mentra-private-cloud/setup.sh resume --directory ./mentra-state
+./mentra-private-cloud/setup.sh verify --directory ./mentra-state
 ```
 
 Upgrade preserves the tenant/subscription, resource names, hostname, Entra

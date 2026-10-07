@@ -8,6 +8,11 @@ ACS, and ACR.
 
 - Official signed Mentra App through the customer's Android/iOS channel.
 - Public `mentra-cloud` image pinned by digest, with signed provenance and SBOM.
+- Stable per-channel install command, `curl -fsSL https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/private-cloud/<channel>/install.sh | bash`.
+  It reads that channel's `latest.json`, verifies the installer archive's SHA-256 and unpacks it into
+  `~/mentra-install/packages/<version>/`, linked as `~/mentra-install/mentra-private-cloud`. Set
+  `MENTRA_VERSION` to install an exact release. CI advances the dev pointer only after the reference
+  Azure stack deploys and verifies that release; pointers never move backwards.
 - `bootstrap.bicep` and `main.bicep`.
 - Idempotent `configure-entra.sh` helper and administrator review steps.
 - One-time signing-key/refresh-pepper generator for import into customer secret management.
@@ -47,7 +52,7 @@ account can separately supply the employee's ACS token.
 
 ## Check Teams prerequisites
 
-Initialize the packaged installer first with `./setup.sh init --directory ../mentra-setup`, then run `./setup.sh check-teams --directory ../mentra-setup --teams-user EMPLOYEE_OBJECT_ID` before deployment. Installation verification also checks when the operator can read Entra license inventory. An Azure resource administrator without that permission receives an Entra-admin handoff; access failure is not classified as a missing license.
+From `~/mentra-install`, initialize the packaged installer first with `./mentra-private-cloud/setup.sh init --directory ./mentra-state`, then run `./mentra-private-cloud/setup.sh check-teams --directory ./mentra-state --teams-user EMPLOYEE_OBJECT_ID` before deployment. Installation verification also checks when the operator can read Entra license inventory. An Azure resource administrator without that permission receives an Entra-admin handoff; access failure is not classified as a missing license.
 
 The check identifies enabled Teams subscriptions and provisioned Teams service plans for the employee and configured customer guest organizer. If missing, it directs Microsoft 365 administrators to purchase a plan **including Teams**, assign it under Users → Active users → Licenses and apps, and wait for provisioning. Business Basic without Teams is insufficient. An unlicensed employee can join as a guest, but creating guest meetings requires a licensed customer-owned organizer. License inventory alone does not verify Graph consent or Teams policy. See [meeting creation](./entra-setup.md#meeting-creation) for those separate steps.
 
