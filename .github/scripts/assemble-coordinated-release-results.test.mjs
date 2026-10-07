@@ -7,6 +7,10 @@ import test from "node:test"
 import {fileURLToPath} from "node:url"
 
 import {assembleCoordinatedReleaseResults} from "./assemble-coordinated-release-results.mjs"
+import {createPrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
+import {completedReleaseDownloads} from "./publish-coordinated-release-page.mjs"
+import {validateCoreReleaseHandoff} from "./load-coordinated-example-release.mjs"
+import {artifactUrl} from "./release-artifact-storage.mjs"
 import {cloudRecordForPlan} from "./coordinated-cloud-v2-test-helpers.mjs"
 import {runtimeImageRecordForPlan} from "./coordinated-runtime-image-test-helpers.mjs"
 import {createReleasePlan, familyBuildNumber, finalizeReleaseManifest, loadReleaseFamily} from "./release-family.mjs"
@@ -116,7 +120,7 @@ for (const channel of ["beta", "dev"]) {
       manifest: {
         status: "published",
         asset: plan.artifactNames.otaManifest,
-        url: "https://example.com/ota.json",
+        url: artifactUrl("Mentra-Community/MentraOS", plan.artifactContainerTag, plan.artifactNames.otaManifest),
         sha256: "c".repeat(64),
         size: 100,
       },
@@ -169,6 +173,31 @@ for (const channel of ["beta", "dev"]) {
     assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
     assert.equal(manifest.cloud.environment, channel === "dev" ? "dev" : "staging")
     assert.equal(manifest.privateDeployment, undefined)
+    if (channel === "dev") {
+      const workspaceOrigin = "https://mentra.acmeworkspace.com"
+      const coreHostname = "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
+      const coreOrigin = `https://${coreHostname}`
+      const privateDeployment = createPrivateDeploymentRecord({
+        plan, sourceCommit: plan.sourceCommit, requestedTag: plan.sourceCommit, status: "deployed",
+        sourceImage: runtimeImage.image, sourceImageDigest: runtimeImage.digest,
+        image: `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@${runtimeImage.digest}`,
+        imageDigest: runtimeImage.digest,
+        revision: "ca-mentra-enterprise-reference--0000057", coreRevision: "ca-mentra-ent-ref-core--0000057",
+        workspaceOrigin, coreHostname, coreOrigin,
+        checks: [workspaceOrigin, coreOrigin].flatMap(origin =>
+          ["healthz", "ready"].map(probe => ({url: `${origin}/${probe}`, ready: true, statusCode: 200}))),
+        completedAt: "2026-08-25T01:59:00.000Z", provenanceUrl,
+      })
+      const archived = finalizeReleaseManifest({plan, results: {...results, privateDeployment}, completedAt: manifest.completedAt})
+      assert.deepEqual(finalizeReleaseManifest({plan, results: archived, completedAt: archived.completedAt}), archived)
+      assert.equal(completedReleaseDownloads(plan, archived).apk.coordinate, plan.artifactNames.androidApp)
+      assert.equal(validateCoreReleaseHandoff({plan, manifest: archived, run: {head_sha: plan.sourceCommit},
+        selection: {identity: plan.releaseIdentity, channel: "dev", planName: `coordinated-release-plan-${plan.releaseSetId}`},
+        repository: "Mentra-Community/MentraOS"}).source_commit, plan.sourceCommit)
+      assert.throws(() => finalizeReleaseManifest({plan, results: {...archived,
+        privateDeployment: {...privateDeployment, sourceCommit: "0".repeat(40)}}, completedAt: archived.completedAt}),
+        /do not match a dev release plan/)
+    }
     assert.equal(manifest.runtimeImage.digest, runtimeImage.digest)
     // The Mentra beta is complete without any Starter Kit or example evidence;
     // the Bluetooth example is finalized separately (example-release-records).
