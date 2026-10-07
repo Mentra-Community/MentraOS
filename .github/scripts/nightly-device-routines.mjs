@@ -87,15 +87,17 @@ export async function publishNightlyWebhook({result, webhook, attempt, fetchImpl
   requireThat(attempt === 1 && /^https:\/\/hooks\.slack\.com\/services\//.test(webhook ?? ""), "Nightly Slack replay requires reconciliation")
   const escape = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
   const ran = result.members.filter(member => member.runId).length
-  const failures = result.members.filter(member => ["failed", "setup-failed", "teardown-failed"].includes(member.status))
+  const failures = result.members.filter(member => member.status !== "pass")
   const build = result.members.find(member => member.build)?.build
   const buildText = build ? `Build: ${build.releaseIdentity ? `${escape(build.releaseIdentity)} · ` : ""}${escape(build.headSha.slice(0, 10))}` +
     (positive(build.source?.buildRunId) ? ` · <https://github.com/Mentra-Community/MentraOS/actions/runs/${build.source.buildRunId}|Build job> (publication ${build.source.publicationAttempt})` : "")
     : "Build: unavailable in the nightly receipt"
-  const text = [buildText, `${ran}/${result.expectedCount} Ran, ${result.expectedCount - ran} skipped`,
+  const heading = `${summary.passed ? "🟢" : summary.skipped ? "⚪" : "🔴"} ${summary.text}`
+  const resultsLink = summary.url ? `<${summary.url}|View nightly results>` : "Result link unavailable"
+  const text = [heading, resultsLink, buildText, `${ran}/${result.expectedCount} Ran, ${result.expectedCount - ran} skipped`,
     ...(failures.length ? ["", ...failures.map(member => {
       const url = member.runId ? `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(member.runId)}` : summary.url
-      return `- ${escape(member.routineId)} (${escape(member.platform)}) - ${url ? `<${url}|View failure>` : "Result link unavailable"}`
+      return `- ${escape(member.routineId)} (${escape(member.platform)}) · ${escape(member.status)} - ${url ? `<${url}|View result>` : "Result link unavailable"}`
     })] : [])].join("\n")
   let response
   try {response = await fetchImpl(webhook, {method: "POST", redirect: "error", signal: AbortSignal.timeout(30_000),
