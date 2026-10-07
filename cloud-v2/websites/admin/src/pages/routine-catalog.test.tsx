@@ -828,3 +828,11 @@ test("unavailable history details retain their links without hiding neighboring 
   expect(html.indexOf("standalone-run")).toBeLessThan(html.indexOf("unreadable-run"))
   expect(html.indexOf("unreadable-suite")).toBeLessThan(html.indexOf("older-suite"))
 })
+
+
+test('preparing request detail explains exact source custody without calling it historical', () => {
+  const client=new QueryClient();
+  client.setQueryData(['framework-run','preparing-source'],{kind:'request',request:{requestId:'preparing-source',hostId:'mini',dispatchIntentSha256:'d'.repeat(64),routineId:'new-main',definitionRevision:'a'.repeat(40),platform:'android',laneId:'phone',state:'preparing',reason:'Waiting for installed routine API.',build:{repository:'Mentra-Community/MentraOS',channel:'dev',headSha:'b'.repeat(40)}}});
+  const html=renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId='preparing-source'/></QueryClientProvider>);
+  expect(html).toContain('new-main: preparing');expect(html).toContain('The exact routine source is being prepared');expect(html).toContain('Waiting for installed routine API.');expect(html).not.toContain('this historical request');
+});

@@ -158,11 +158,11 @@ function RequestCard({request, observing, refreshing, onRefresh}: {request: Fram
     <p className="mt-2 text-sm">Routine revision: <code>{request.definitionRevision}</code></p>
     {request.minimumFrameworkVersion !== undefined && <p className="mt-2 text-sm">Requires framework version {request.minimumFrameworkVersion} or later.</p>}
     {request.routineSource && <p className="mt-2 text-sm">Requires routine API {request.routineSource.minimumRoutineApiVersion} or later. The installed framework is recorded when execution starts.</p>}
-    {!request.routineSource && <p className="mt-2 text-sm">Routine bundle provenance unknown: this historical request did not record its source archive.</p>}
+    {!request.routineSource && <p className="mt-2 text-sm">{request.dispatchIntentSha256 ? 'The exact routine source is being prepared before executable input is committed.' : 'Routine bundle provenance unknown: this historical request did not record its source archive.'}</p>}
     {request.createdAt && <p className="mt-2 text-sm">Requested {new Date(request.createdAt).toLocaleString()}</p>}
     {request.acceptedAt && <p className="mt-2 text-sm">Host accepted {new Date(request.acceptedAt).toLocaleString()}</p>}
     {request.reason && <p className="mt-3">{request.reason}</p>}
-    {request.cancellationRequested && <p className="mt-2 text-sm">Cancellation requested · {request.cancellationAcknowledged ? "Host acknowledged; cleanup may still be running." : "Awaiting host acknowledgement."}</p>}
+    {request.cancellationRequested && <p className="mt-2 text-sm">Cancellation requested · {!request.inputSha256 ? "Cancelled before execution." : request.cancellationAcknowledged ? "Host acknowledged; cleanup may still be running." : "Awaiting host acknowledgement."}</p>}
     <p className="mt-3 text-sm text-[#68746d]">No routine result has been published.{request.state !== "terminal" && " This request refreshes automatically."}
       {request.terminalStatus === "cancelled" && (observing ? " Checking for final host custody or a published result for ten minutes." : "Automatic observation has ended. Refresh to check for later host custody or results.")}</p>
     <button className="mt-3 underline" disabled={refreshing} onClick={onRefresh}>Refresh request</button>
