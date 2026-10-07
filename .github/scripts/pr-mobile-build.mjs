@@ -3,16 +3,13 @@ import {execFileSync} from "node:child_process"
 import {appendFileSync, readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
+import {MOBILE_SOURCE_GLOBS, MOBILE_SOURCE_PATHS} from "./mobile-build-inputs.mjs"
 import {downloadAsset, mergeAssets, readArtifactIndex} from "./release-artifact-storage.mjs"
 
 // Include shared Metro sources and native inputs, not just mobile/. Firmware
 // selection and per-run packaging metadata do not change the compiled app.
 export const MOBILE_INPUT_PATHS = [
-  "mobile",
-  "cloud-v2",
-  "android_core",
-  "package.json",
-  "bun.lock",
+  ...MOBILE_SOURCE_PATHS,
   ".github/workflows/mentra-app-android-build.yml",
   ".github/workflows/mentra-app-ios-build.yml",
   ".github/actions/inject-signing",
@@ -21,22 +18,20 @@ export const MOBILE_INPUT_PATHS = [
   ".github/scripts/ios-build-timeline.py",
   ".github/scripts/ios-xcodebuild-attempt.sh",
   ".github/scripts/pr-mobile-build.mjs",
+  ".github/scripts/mobile-build-inputs.mjs",
   ".github/scripts/install-android-sdk.mjs",
   ".github/scripts/prepare-pr-mobile.mjs",
   ".github/scripts/pr_mobile_config.py",
   ".github/scripts/repackage-pr-apk.py",
 ]
 export const MOBILE_PR_PATHS = [
-  "mobile/**",
-  "cloud-v2/**",
-  "android_core/**",
+  ...MOBILE_SOURCE_GLOBS,
   "asg_client/**",
-  "package.json",
-  "bun.lock",
   ".github/workflows/mentra-app-android-build.yml",
   ".github/workflows/mentra-asg-client-build.yml",
   ".github/actions/inject-signing/**",
   ".github/scripts/pr-mobile-build*",
+  ".github/scripts/mobile-build-inputs*",
   ".github/scripts/ensure-android-ndk*",
   ".github/scripts/install-android-sdk*",
   ".github/scripts/pr_mobile_config.py",
