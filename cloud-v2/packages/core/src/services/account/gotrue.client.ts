@@ -14,7 +14,14 @@ import { AccountError } from "./account-error";
 export interface GotrueIdentity {
   id: string;
   email: string;
+  /** `email_confirmed_at`, falling back to `confirmed_at`. */
   emailVerified: boolean;
+  /**
+   * `email_confirmed_at` alone. `confirmed_at` can be set by confirming something other than the
+   * email (a phone number), so anything that matches a person by email address for good (identity
+   * linking) must use this, never {@link emailVerified}.
+   */
+  emailConfirmed: boolean;
   name?: string;
   avatarUrl?: string;
 }
@@ -81,6 +88,7 @@ function identityFrom(user: any): GotrueIdentity {
     id: user.id,
     email: user.email,
     emailVerified: Boolean(user.email_confirmed_at ?? user.confirmed_at),
+    emailConfirmed: Boolean(user.email_confirmed_at),
     name: meta.full_name ?? meta.name ?? undefined,
     avatarUrl: meta.avatar_url ?? meta.picture ?? undefined,
   };

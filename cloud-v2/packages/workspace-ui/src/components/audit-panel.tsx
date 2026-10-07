@@ -22,6 +22,7 @@ const ACTION_LABELS: Record<string, string> = {
   "membership.left": "Member left",
   "membership.ownership_recovered": "Ownership recovered",
   "membership.merged_duplicate": "Duplicate membership merged",
+  "membership.claimed": "Migrated membership claimed at sign-in",
   "invitation.created": "Invitation created",
   "invitation.accepted": "Invitation accepted",
   "invitation.revoked": "Invitation revoked",
