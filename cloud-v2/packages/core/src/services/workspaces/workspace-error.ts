@@ -16,6 +16,7 @@ export type WorkspaceErrorCode =
   | "workspace_deleted"
   | "already_member"
   | "email_mismatch"
+  | "email_unverified"
   | "invitation_expired"
   | "invitation_not_found"
   | "workspace_has_packages"
@@ -31,6 +32,7 @@ const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   workspace_deleted: 410,
   already_member: 409,
   email_mismatch: 403,
+  email_unverified: 403,
   invitation_expired: 410,
   invitation_not_found: 404,
   workspace_has_packages: 409,

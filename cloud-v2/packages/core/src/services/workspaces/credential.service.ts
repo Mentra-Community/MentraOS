@@ -20,10 +20,15 @@
  *    migrated creator who has not signed in yet is still an active membership,
  *    so their CI keys keep working.
  *
+ * A workspace key also needs its workspace to be active: deletion revokes every
+ * key, and a row written around it (a migration re-run, say) still never resolves.
+ *
  * Mutations follow the shape of `workspace.service`: one transaction that
- * checks the actor, bumps the workspace's `authorizationRevision` (workspace
- * credentials only, which also serializes them against every other mutation of
- * that workspace, such as the creator leaving) and records the audit event as
+ * checks the actor, writes the workspace document (workspace credentials only;
+ * `touchWorkspace`, which serializes them against every other mutation of that
+ * workspace, such as the creator leaving, without bumping
+ * `authorizationRevision`: a key does not change who holds which role, so it must
+ * not invalidate someone's pending role change) and records the audit event as
  * its last write. Audit targets never carry the token or its hash.
  */
 
@@ -43,15 +48,16 @@ import {ulid} from "ulid"
 import {withTransaction} from "../../connections/mongo.connection"
 import {AccessCredentialModel, type AccessCredentialRow} from "../../models/access-credential.model"
 import {WorkspaceMembershipModel, type WorkspaceMembershipRow} from "../../models/workspace-membership.model"
+import {WorkspaceModel} from "../../models/workspace.model"
 import {recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {credentialEnvironmentLabels, isOrganizationAdminEmail, organizationId} from "./organization"
 import {fail} from "./workspace-error"
 import {
   actingRole,
   auditActor,
-  bumpRevision,
   isId,
   loadActiveWorkspace,
+  touchWorkspace,
   validateName,
   type Actor,
 } from "./workspace.service"
@@ -111,7 +117,7 @@ export async function createWorkspaceCredential(
       fail("forbidden", "your role in this workspace cannot publish, so a credential from it would be unusable")
     }
 
-    await bumpRevision(session, workspaceId, undefined)
+    await touchWorkspace(session, workspaceId)
     const {row, token} = await insertCredential(session, {
       prefix: "msk",
       credentialKind: "workspace",
@@ -156,7 +162,7 @@ export async function mintServiceCredential(
 
   return withTransaction(async session => {
     const workspace = await loadActiveWorkspace(session, workspaceId)
-    await bumpRevision(session, workspaceId, undefined)
+    await touchWorkspace(session, workspaceId)
     const {row, token} = await insertCredential(session, {
       prefix: "msk",
       credentialKind: "workspace",
@@ -221,12 +227,23 @@ export async function createOperatorKey(
 
 // --- Listing ---------------------------------------------------------------
 
-/** The workspace's live (not revoked) credentials, newest first (creation time, then id for a tie). */
-export async function listWorkspaceCredentials(workspaceId: string): Promise<CredentialView[]> {
+/**
+ * The workspace's live (not revoked) credentials, newest first (creation time, then id for a tie).
+ * With `createdByMembershipId`, only the keys that membership created: a caller who may publish but
+ * not revoke other people's keys sees their own keys only (publishing access is not directory
+ * access). `null` there matches nothing, so a caller with no membership sees no keys.
+ */
+export async function listWorkspaceCredentials(
+  workspaceId: string,
+  opts: {createdByMembershipId?: string | null} = {},
+): Promise<CredentialView[]> {
   if (!isId(workspaceId)) return []
-  const rows = await AccessCredentialModel.find({workspaceId, credentialKind: "workspace", revokedAt: null})
-    .sort({createdAt: -1, _id: -1})
-    .lean<CredentialRow[]>()
+  const filter: Record<string, unknown> = {workspaceId, credentialKind: "workspace", revokedAt: null}
+  if ("createdByMembershipId" in opts) {
+    if (!isId(opts.createdByMembershipId)) return []
+    filter.createdByMembershipId = opts.createdByMembershipId
+  }
+  const rows = await AccessCredentialModel.find(filter).sort({createdAt: -1, _id: -1}).lean<CredentialRow[]>()
   return rows.map(toView)
 }
 
@@ -299,17 +316,22 @@ export async function revokeCredential(actor: Actor, credentialId: string): Prom
     if (!allowed) fail("forbidden", "revoking this credential requires its creator or the admin role")
     if (row.revokedAt) return
 
-    await bumpRevision(session, workspaceId, undefined)
+    await touchWorkspace(session, workspaceId)
     await markRevoked(session, row, auditActor(actor))
   })
 }
 
-async function markRevoked(
+/**
+ * Revoke one live credential inside the caller's transaction and record `credential.revoked` as
+ * `actor`. A key that is already revoked changes nothing and records nothing. The caller has
+ * already written the workspace document (for a workspace key) and checked who may do this.
+ */
+export async function markRevoked(
   session: ClientSession,
   row: CredentialRow,
   actor: WorkspaceAuditEventInput["actor"],
+  now: Date = new Date(),
 ): Promise<void> {
-  const now = new Date()
   const revoked = await AccessCredentialModel.updateOne(
     {credentialId: row.credentialId, revokedAt: null},
     {$set: {revokedAt: now}},
@@ -389,6 +411,8 @@ async function effectiveGrant(row: CredentialRow): Promise<{scopes: string[]; pa
   }
 
   if (row.credentialKind !== "workspace" || !row.workspaceId) return null
+  // A deleted workspace's keys were revoked with it; one written around that must not resolve either.
+  if (!(await WorkspaceModel.exists({workspaceId: row.workspaceId, status: "active"}))) return null
   if (row.issuedByService) {
     // Minted with at least one package; a service key without any would be unrestricted.
     if (row.packageNames.length === 0) return null

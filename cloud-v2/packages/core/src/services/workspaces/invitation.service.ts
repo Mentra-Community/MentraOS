@@ -43,6 +43,7 @@ import {
   isWorkspaceRole,
   loadActiveWorkspace,
   requireMembershipManager,
+  touchWorkspace,
   type Actor,
 } from "./workspace.service"
 import {fail} from "./workspace-error"
@@ -75,7 +76,8 @@ export interface InvitationRow {
  *
  * The actor needs at least the admin role and `canChangeRole(actorRole, null,
  * role)`: admins invite members and developers, only owners invite admins and
- * owners. A pending invitation to the same address is revoked (superseded), so
+ * owners. A person inviting must have a verified email (`email_unverified`
+ * otherwise). A pending invitation to the same address is revoked (superseded), so
  * only the newest link works. `inviteUrl` is built from
  * `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE`, which must contain `{token}`; a
  * missing or unusable template throws a plain `Error` before anything is written.
@@ -100,6 +102,10 @@ export async function createInvitation(
     const workspace = await loadActiveWorkspace(session, workspaceId)
     const actorRole = await requireMembershipManager(session, actor, workspaceId)
     if (!canChangeRole(actorRole, null, role)) fail("forbidden", `a ${actorRole} cannot invite a ${role}`)
+    // Invitations send Mentra-branded email in the inviter's name, so the inviter's address must be verified.
+    if (actor.kind === "user" && actor.emailVerified !== true) {
+      fail("email_unverified", "verify your email address before inviting people")
+    }
     // Only now, for a caller who may invite: a configuration problem is the operator's to hear about, not a stranger's.
     const template = inviteUrlTemplate()
     await touchWorkspace(session, workspaceId)
@@ -327,20 +333,6 @@ export async function acceptInvitation(
 }
 
 // --- Helpers ---------------------------------------------------------------
-
-/**
- * Write the workspace document without changing anything it holds, so this
- * transaction conflicts with any other mutation of the workspace (the same
- * serialization every membership change gets from its revision bump).
- */
-async function touchWorkspace(session: ClientSession, workspaceId: string): Promise<void> {
-  const touched = await WorkspaceModel.updateOne(
-    {workspaceId, status: "active"},
-    {$set: {updatedAt: new Date()}},
-    {session},
-  )
-  if (touched.matchedCount !== 1) fail("workspace_deleted", "workspace has been deleted")
-}
 
 /** The membership the actor invites from, or null (organization admins and the system may have none). */
 async function actorMembershipId(session: ClientSession, actor: Actor, workspaceId: string): Promise<string | null> {

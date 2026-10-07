@@ -150,7 +150,9 @@ export async function countActiveOwners(workspaceId: string, session?: ClientSes
 // --- Lifecycle -------------------------------------------------------------
 
 /**
- * Create a workspace; the creator becomes its owner.
+ * Create a workspace; the creator becomes its owner. The creator's email must be
+ * verified (`email_unverified` otherwise): a workspace's name goes out in its
+ * invitation emails, so only someone the identity provider vouches for may make one.
  *
  * `CLOUD_CORE_WORKSPACE_CREATION` is `open` (default) or `organization-admins`.
  * It is read at call time, and an unrecognized value throws rather than
@@ -159,6 +161,9 @@ export async function countActiveOwners(workspaceId: string, session?: ClientSes
 export async function createWorkspace(actor: Actor & {kind: "user"}, input: {name: string}): Promise<WorkspaceSummary> {
   // An actor with no usable id would own a workspace nobody can ever be matched to.
   if (actor?.kind !== "user" || !isId(actor.mentraUserId)) fail("forbidden", "a signed-in user is required")
+  if (actor.emailVerified !== true) {
+    fail("email_unverified", "verify your email address before creating a workspace")
+  }
   const name = validateName(input?.name)
   if (creationPolicy() === "organization-admins" && !actor.isOrganizationAdmin) {
     fail("forbidden", "only organization admins can create workspaces")
@@ -586,8 +591,28 @@ export async function bumpRevision(
   return updated
 }
 
-/** End a membership, revoke the credentials it created and record the audit event. */
-async function endMembership(
+/**
+ * Write the workspace document without changing anything it holds, so this
+ * transaction conflicts with any other mutation of the workspace (the same
+ * serialization every membership change gets from its revision bump) without
+ * invalidating anyone's `expectedRevision`. Invitations and credentials use it:
+ * they do not change who holds which role.
+ */
+export async function touchWorkspace(session: ClientSession, workspaceId: string): Promise<void> {
+  const touched = await WorkspaceModel.updateOne(
+    {workspaceId, status: "active"},
+    {$set: {updatedAt: new Date()}},
+    {session},
+  )
+  if (touched.matchedCount !== 1) fail("workspace_deleted", "workspace has been deleted")
+}
+
+/**
+ * End a membership, revoke the credentials it created and record the audit
+ * event. The caller has already bumped the workspace's revision in the same
+ * transaction.
+ */
+export async function endMembership(
   session: ClientSession,
   args: {
     workspace: WorkspaceRow

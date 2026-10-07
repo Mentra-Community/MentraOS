@@ -205,8 +205,15 @@ app.delete(
 
 // --- Credentials -----------------------------------------------------------
 
+// Everyone who may revoke any key sees every key; a developer sees only their own (publishing access
+// is not directory access, so other creators' emails stay hidden).
 app.get("/:workspaceId/credentials", requireWorkspaceCapability("miniapps.credentials.create"), async (c) => {
-  return c.json({items: await listWorkspaceCredentials(c.req.param("workspaceId"))})
+  const workspaceId = c.req.param("workspaceId")
+  const decision = c.get("workspaceAuthorization")
+  const items = decision?.capabilities.includes("workspace.credentials.revoke")
+    ? await listWorkspaceCredentials(workspaceId)
+    : await listWorkspaceCredentials(workspaceId, {createdByMembershipId: decision?.membership?.membershipId ?? null})
+  return c.json({items})
 })
 
 app.post("/:workspaceId/credentials", requireWorkspaceCapability("miniapps.credentials.create"), async (c) => {

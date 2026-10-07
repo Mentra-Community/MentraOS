@@ -287,7 +287,8 @@ describe("createWorkspaceCredential", () => {
       packageNames: [],
       label: "CI key",
     })
-    expect(await revisionOf(workspaceId)).toBe(before + 1)
+    // Keys do not change who holds which role, so they leave the revision alone.
+    expect(await revisionOf(workspaceId)).toBe(before)
   })
 
   test("records a credential.created audit event that never carries the token or its hash", async () => {
@@ -512,6 +513,25 @@ describe("validateCredentialToken", () => {
     const op = parse(operator.token)
     expect(await validateCredentialToken(`msk_${op.env}_${op.credentialId}.${op.secret}`)).toBeNull()
     expect(await validateCredentialToken(operator.token)).not.toBeNull()
+  })
+
+  test("a key of a workspace that is no longer active is null, member and service keys alike", async () => {
+    const {workspaceId, developer} = await newWorkspace()
+    const member = await createWorkspaceCredential(developer, workspaceId, {name: "member key"})
+    const service = await mintServiceCredential("store", {
+      workspaceId,
+      name: "Publish com.acme.app",
+      packageNames: ["com.acme.app"],
+      actorEmail: "staff@example.test",
+    })
+    expect(await validateCredentialToken(member.token)).not.toBeNull()
+    expect(await validateCredentialToken(service.token)).not.toBeNull()
+
+    // Deletion revokes every key; a row written around it (a migration re-run, say) must still not resolve.
+    await WorkspaceModel.updateOne({workspaceId}, {$set: {status: "deleted", deletedAt: new Date()}})
+
+    expect(await validateCredentialToken(member.token)).toBeNull()
+    expect(await validateCredentialToken(service.token)).toBeNull()
   })
 
   test("a revoked key is null", async () => {
@@ -792,7 +812,7 @@ describe("mintServiceCredential", () => {
       issuedByService: "store",
       hash: sha256Hex(parse(token).secret),
     })
-    expect(await revisionOf(workspaceId)).toBe(before + 1)
+    expect(await revisionOf(workspaceId)).toBe(before)
 
     const events = (await listWorkspaceAudit(workspaceId, {limit: 50})).filter(e => e.action === "credential.created")
     expect(events).toHaveLength(1)
@@ -1032,7 +1052,25 @@ describe("revokeCredential", () => {
     expect(await AccessCredentialModel.findOne({credentialId: credential.credentialId}).lean()).toMatchObject({
       revokedAt: expect.any(Date),
     })
-    expect(await revisionOf(workspaceId)).toBe(before + 1)
+    expect(await revisionOf(workspaceId)).toBe(before)
+  })
+
+  test("a pending role change keeps its expected revision across a key mint, a service mint and a revoke", async () => {
+    const {workspaceId, owner, developer, member} = await newWorkspace()
+    const revision = await revisionOf(workspaceId)
+
+    const {credential} = await createWorkspaceCredential(developer, workspaceId, {name: "k"})
+    await mintServiceCredential("store", {
+      workspaceId,
+      name: "Publish com.acme.app",
+      packageNames: ["com.acme.app"],
+      actorEmail: "staff@example.test",
+    })
+    await revokeCredential(developer, credential.credentialId)
+
+    const memberId = await membershipIdOf(workspaceId, member.mentraUserId)
+    await changeRole(owner, workspaceId, memberId, "developer", revision)
+    expect((await getActiveMembership(workspaceId, member.mentraUserId))?.role).toBe("developer")
   })
 
   test("admins, owners and organization admins can revoke any workspace key; members and strangers cannot", async () => {
@@ -1204,6 +1242,25 @@ describe("listing", () => {
       {$set: {createdAt: created}},
     )
     expect((await listOperatorKeys()).map(view => view.name)).toEqual(["ops-a", "ops-b"])
+  })
+
+  test("listWorkspaceCredentials can be limited to the keys one membership created", async () => {
+    const {workspaceId, developer, admin} = await newWorkspace()
+    const mine = await createWorkspaceCredential(developer, workspaceId, {name: "mine"})
+    await createWorkspaceCredential(admin, workspaceId, {name: "theirs"})
+    await mintServiceCredential("store", {
+      workspaceId,
+      name: "Publish com.acme.app",
+      packageNames: ["com.acme.app"],
+      actorEmail: "staff@example.test",
+    })
+
+    const own = await listWorkspaceCredentials(workspaceId, {
+      createdByMembershipId: await membershipIdOf(workspaceId, developer.mentraUserId),
+    })
+
+    expect(own).toEqual([mine.credential])
+    expect(await listWorkspaceCredentials(workspaceId, {createdByMembershipId: null})).toEqual([])
   })
 
   test("listWorkspaceCredentials shows lastUsedAt once the key has been used", async () => {

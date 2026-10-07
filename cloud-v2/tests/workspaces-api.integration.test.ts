@@ -522,6 +522,16 @@ describe("authentication", () => {
 // --- Workspaces ------------------------------------------------------------
 
 describe("workspaces", () => {
+  test("a person whose email is not verified cannot create a workspace", async () => {
+    const unverified = await person("unverified-creator", {emailVerified: false})
+
+    const reply = await call("POST", "/api/workspaces", {as: unverified, body: {name: "Spam Inc"}})
+
+    expect(reply.status).toBe(403)
+    expect(reply.json.error).toBe("email_unverified")
+    expect(await WorkspaceModel.countDocuments({})).toBe(0)
+  })
+
   test("creation validates the name", async () => {
     const owner = await person("owner")
 
@@ -990,6 +1000,20 @@ describe("members", () => {
 // --- Invitations -----------------------------------------------------------
 
 describe("invitations", () => {
+  test("an admin whose email is not verified cannot invite", async () => {
+    const ws = await newWorkspace()
+    identities.set(ws.admin.bearer, {id: ws.admin.workosUserId, email: ws.admin.email, emailVerified: false})
+
+    const reply = await call("POST", `/api/workspaces/${ws.workspaceId}/invitations`, {
+      as: ws.admin,
+      body: {email: "someone@example.test", role: "developer"},
+    })
+
+    expect(reply.status).toBe(403)
+    expect(reply.json.error).toBe("email_unverified")
+    expect(await WorkspaceInvitationModel.countDocuments({email: "someone@example.test"})).toBe(0)
+  })
+
   test("an admin lists, invites and revokes; a developer cannot", async () => {
     const ws = await newWorkspace()
     const base = `/api/workspaces/${ws.workspaceId}/invitations`
@@ -1104,6 +1128,26 @@ describe("workspace credentials", () => {
   async function createKey(ws: {workspaceId: string}, as: Person, body: unknown = {name: "ci"}) {
     return call("POST", `/api/workspaces/${ws.workspaceId}/credentials`, {as, body})
   }
+
+  test("a developer lists only the keys they created; admins and owners list every key", async () => {
+    const ws = await newWorkspace()
+    const other = await person("other-lister")
+    await join(ws.workspaceId, ws.owner, other, "developer")
+    const mine = (await createKey(ws, ws.developer, {name: "mine"})).json.credential.credentialId
+    const theirs = (await createKey(ws, other, {name: "theirs"})).json.credential.credentialId
+    const url = `/api/workspaces/${ws.workspaceId}/credentials`
+
+    const asDeveloper = await call("GET", url, {as: ws.developer})
+    expect(asDeveloper.status).toBe(200)
+    expect(asDeveloper.json.items.map((item: any) => item.credentialId)).toEqual([mine])
+    // Publishing access is not directory access: another creator's email is not shown.
+    expect(asDeveloper.text).not.toContain(other.email)
+
+    for (const caller of [ws.admin, ws.owner]) {
+      const listed = await call("GET", url, {as: caller})
+      expect(listed.json.items.map((item: any) => item.credentialId)).toEqual([theirs, mine])
+    }
+  })
 
   test("a plain member cannot list or create credentials", async () => {
     const ws = await newWorkspace()
