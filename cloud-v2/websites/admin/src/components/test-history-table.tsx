@@ -42,10 +42,19 @@ export function runDisplayStatus(outcome: string, evidenceStatus: string, upload
     : passed && (evidenceStatus !== "complete" || !uploadsComplete) ? "evidence pending" : outcome;
 }
 
-function HistoryBuild({build}: {build: {channel?: string; repository?: string; headSha: string; release?: string; producerUrl?: string}}) {
-  const commit = build.repository && /^[\w-]+\/[\w.-]+$/.test(build.repository) && /^[a-f0-9]{40}$/.test(build.headSha)
-    ? `https://github.com/${build.repository}/commit/${build.headSha}` : null;
+function HistoryBuild({build}: {build: {channel?: string; repository?: string; headSha: string; prNumber?: number; release?: string; producerUrl?: string}}) {
+  const repository = build.repository;
+  const commit = repository && /^[\w-]+\/[\w.-]+$/.test(repository) && /^[a-f0-9]{40}$/.test(build.headSha)
+    ? `https://github.com/${repository}/commit/${build.headSha}` : null;
   const producer = build.producerUrl && /^https:\/\/github\.com\/Mentra-Community\//.test(build.producerUrl) ? build.producerUrl : null;
+  if (build.channel === "pr") {
+    const pr = Number.isSafeInteger(build.prNumber) && build.prNumber! > 0 && repository && /^[\w-]+\/[\w.-]+$/.test(repository)
+      ? `https://github.com/${repository}/pull/${build.prNumber}` : null;
+    return <div className="whitespace-nowrap">
+      {pr ? <a className={LINK} href={pr} target="_blank" rel="noreferrer">#{build.prNumber}</a> : <span className="text-[#656d76]">PR number unavailable</span>}
+      <div className={MUTED}>{commit ? <a className={LINK} href={commit} title={`Commit ${build.headSha}`} target="_blank" rel="noreferrer">{build.headSha.slice(0, 10)}</a> : <span>{build.headSha.slice(0, 10)}</span>}</div>
+    </div>;
+  }
   const href = producer ?? commit;
   const name = build.release ?? build.headSha.slice(0, 10);
   return <div className="whitespace-nowrap" title={`Commit ${build.headSha}`}>

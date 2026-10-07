@@ -1,6 +1,10 @@
 import type {PipelineStage} from "mongoose";
 import {z} from "zod";
 import {createLogger} from "@mentra/cloud-shared";
+import {TestRequestModel} from "../models/test-request.model";
+import {recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
+import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
+import {requestInputDigest} from "./test-request.service";
 import {TestRerunModel} from "../models/test-rerun.model";
 import {TestRunModel} from "../models/test-run.model";
 import {TestSuiteModel} from "../models/test-suite.model";
@@ -8,7 +12,7 @@ import {frameworkRunIdSchema} from "../types/framework-run.types";
 import type {TestHistoryEntry, TestHistoryPage} from "../types/test-history.types";
 import {nativeRunFilter, readFrameworkRunSummary, type StoredSummaryRow} from "./framework-run-summary.service";
 import {TestRunError} from "./test-result-error";
-import {TestSuiteService} from "./test-suite.service";
+import {TestSuiteService, type SuiteSummaryRead} from "./test-suite.service";
 const logger = createLogger("core").child({component: "test-history"});
 
 const cursorSchema = z.object({startedAt: z.string().datetime({offset: true}),
@@ -161,6 +165,54 @@ export class TestHistoryService {
     const nextCursor = rows.length > query.data.limit && last ? Buffer.from(JSON.stringify({
       startedAt: last.historyStartedAt.toISOString(), kind: last.historyKind, id: last.historyId,
     } satisfies HistoryCursor)).toString("base64url") : null;
-    return {entries, nextCursor};
+    const enriched = await enrichHistoryPrBuilds(entries, async ids => {
+      const timeoutMS = Math.min(500, Math.max(1, deadline - Date.now()));
+      return TestRequestModel.find({requestId: {$in: ids}})
+        .select({requestId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1})
+        .limit(ids.length + 1).read("primary").readConcern("majority").setOptions({timeoutMS, maxTimeMS: timeoutMS}).lean();
+    }, suiteSummaries);
+    return {entries: enriched, nextCursor};
+  }
+}
+
+/** Only a digest-verified, member-bound request can supply a missing PR identity. */
+export function historySuiteBuild(suite: {channel: string; build: {headSha: string}; members: {requestId?: string; routineId: string; platform: string; headSha?: string; definitionRevision?: string}[]}, requests: {requestId: string; input?: unknown; inputSha256?: unknown; dispatchIntent?: unknown; dispatchIntentSha256?: unknown}[]) {
+  if (suite.channel !== "pr") return suite.build;
+  const builds = suite.members.flatMap(member => {
+    const rows = requests.filter(request => request.requestId === member.requestId);
+    if (rows.length !== 1) return [];
+    const request = rows[0];
+    const parsed = request.input !== undefined ? recordedFrameworkRequestInputSchema.safeParse(request.input) : routineDispatchIntentSchema.safeParse(request.dispatchIntent);
+    const digest = request.input !== undefined ? request.inputSha256 : request.dispatchIntentSha256;
+    if (!parsed.success || requestInputDigest(parsed.data) !== digest
+      || "requestId" in parsed.data && parsed.data.requestId !== request.requestId
+      || member.definitionRevision && ("definitionRevision" in parsed.data ? parsed.data.definitionRevision : parsed.data.routineRevision) !== member.definitionRevision
+      || parsed.data.routineId !== member.routineId
+      || parsed.data.platform !== member.platform || parsed.data.build.channel !== "pr"
+      || parsed.data.build.headSha !== (member.headSha ?? suite.build.headSha)) return [];
+    return [parsed.data.build];
+  });
+  const numbers = [...new Set(builds.map(build => build.prNumber))];
+  return numbers.length === 1 && numbers[0] ? {...suite.build, repository: builds[0].repository, prNumber: numbers[0]} : suite.build;
+}
+
+/** Optional labels never prevent readable history from being returned. */
+export async function enrichHistoryPrBuilds(entries: TestHistoryEntry[], read: (ids: string[]) => Promise<Parameters<typeof historySuiteBuild>[1]>, suites: Map<string, SuiteSummaryRead>) {
+  const ids = [...new Set(entries.flatMap(entry => {
+    if (entry.kind !== "suite" || entry.channel !== "pr") return [];
+    const suite = suites.get(entry.suiteId);
+    return suite && !(suite instanceof Error) ? suite.members.flatMap(member => member.requestId ? [member.requestId] : []) : [];
+  }))];
+  if (!ids.length) return entries;
+  try {
+    const requests = await read(ids);
+    return entries.map(entry => {
+      if (entry.kind !== "suite" || entry.channel !== "pr") return entry;
+      const suite = suites.get(entry.suiteId);
+      return suite && !(suite instanceof Error) ? {...entry, build: historySuiteBuild(suite, requests)} : entry;
+    });
+  } catch (error) {
+    logger.warn({err: error}, "Optional history PR identity unavailable");
+    return entries;
   }
 }

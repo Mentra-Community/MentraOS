@@ -2,7 +2,7 @@ import {HistoryStatus, runDisplayStatus} from "../components/test-history-table"
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {RunRerunLinks} from "./test-reruns";
-import {useEffect, useRef, useState} from "react";
+import {useEffect, useId, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
 import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
 import type {FrameworkRun, RecordedFrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
@@ -361,36 +361,55 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
   </section>;
 }
 
-export function FrameworkRunsPage({scope}: {scope?: Record<string, string>}) {
-  return scope ? <FilteredFrameworkRunsPage scope={scope}/> : <TestHistoryList/>;
+export function FrameworkRunsPage({scope, historySource}: {scope?: Record<string, string>; historySource?: HistoryOrigin}) {
+  return scope ? <FilteredFrameworkRunsPage scope={scope}/> : <TestHistoryList initialOrigin={historySource}/>;
 }
-function TestHistoryList() {
+export const HISTORY_ORIGINS = [["pr", "PR CI"], ["branch", "Branch CI"], ["manual", "Manual & reruns"]] as const;
+export type HistoryOrigin = typeof HISTORY_ORIGINS[number][0];
+export function historyOrigin(entry: TestHistoryEntry): HistoryOrigin {
+  if (entry.kind === "unavailable") return "manual";
+  if (entry.kind === "run" && entry.rerun || entry.kind === "suite" && entry.trigger === "manual") return "manual";
+  const channel = entry.kind === "suite" ? entry.channel : entry.build.channel;
+  return channel === "pr" ? "pr" : channel === "dev" || channel === "staging" ? "branch" : "manual";
+}
+function TestHistoryList({initialOrigin = "pr"}: {initialOrigin?: HistoryOrigin}) {
   const [filters, setFilters] = useRoutineSearch();
-  const [includeReruns, setIncludeReruns] = useState(false);
+  const [origin, setOrigin] = useState<HistoryOrigin>(initialOrigin);
+  const tabId = useId();
+  const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const catalog = useSearchCatalog();
-  const history = useInfiniteQuery({queryKey: ["test-history", includeReruns], initialPageParam: undefined as string | undefined,
-    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(testHistoryListPath(includeReruns, pageParam), {signal, timeoutMs: 30000}),
+  const history = useInfiniteQuery({queryKey: ["test-history", true], initialPageParam: undefined as string | undefined,
+    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(testHistoryListPath(true, pageParam), {signal, timeoutMs: 30000}),
     getNextPageParam: page => page.nextCursor ?? undefined, retry: false, retryOnMount: false,
     refetchInterval: query => query.state.error ? false : 15000});
   const entries = history.data?.pages.flatMap(page => page.entries) ?? [];
   const routines = catalog.data?.routines ?? [];
-  const filtered = entries.filter(entry => matchesHistorySearch(entry, routines, filters));
+  const originEntries = entries.filter(entry => entry.kind === "unavailable" || historyOrigin(entry) === origin);
+  const filtered = originEntries.filter(entry => matchesHistorySearch(entry, routines, filters));
   const members = entries.flatMap<{routineId: string; platform: string}>(entry => entry.kind === "suite" ? entry.members ?? [] : entry.kind === "run" ? [entry] : []);
   const options = [...routines.map(searchableRoutine), ...members.map(member => runSearchMetadata(member, routines))];
   return <section className={PANEL}>
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Test history</h2>
-      <Switch checked={includeReruns} onChange={event => setIncludeReruns(event.target.checked)}>Show reruns</Switch>
+    <div role="tablist" aria-label="Dispatch source" className="mb-4 flex gap-1 overflow-x-auto border-b border-[#e0e4de]">
+      {HISTORY_ORIGINS.map(([value, label], index) => <button key={value} ref={button => {tabs.current[index] = button;}}
+        role="tab" id={`${tabId}-${value}`} aria-selected={origin === value} aria-controls={`${tabId}-history`} tabIndex={origin === value ? 0 : -1}
+        className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium ${origin === value ? "border-[#111217] text-[#111217]" : "border-transparent text-[#747780] hover:text-[#14151b]"}`}
+        onClick={() => setOrigin(value)} onKeyDown={event => {
+          const next = event.key === "ArrowRight" ? (index + 1) % HISTORY_ORIGINS.length : event.key === "ArrowLeft" ? (index + HISTORY_ORIGINS.length - 1) % HISTORY_ORIGINS.length : event.key === "Home" ? 0 : event.key === "End" ? HISTORY_ORIGINS.length - 1 : null;
+          if (next !== null) {event.preventDefault(); setOrigin(HISTORY_ORIGINS[next][0]); tabs.current[next]?.focus();}
+        }}>{label}</button>)}
     </div>
-    <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${entries.length} loaded entries`} />
-    <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p></details>
+    <div role="tabpanel" id={`${tabId}-history`} aria-labelledby={`${tabId}-${origin}`} tabIndex={0}>
+    <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${originEntries.length} loaded entries`} />
+    <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Tabs and filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p></details>
     {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
     {history.isPending && <p role="status" className="mt-3">Loading test history…</p>}
     {history.error && <p role="alert" className="mt-3">{history.data ? "History could not refresh" : "Could not load test history"}: {history.error.message} <TestingButton onClick={() => history.refetch()}>Retry</TestingButton></p>}
     {history.data && !entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
-    {history.data && !!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches your filters.</p>}
+    {history.data && !!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches this tab and your filters.</p>}
     {!!filtered.length && <TestHistoryTable entries={filtered} routines={routines}/>}
     {history.hasNextPage && <TestingButton className="mt-4" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? "Loading…" : "More history"}</TestingButton>}
+    </div>
   </section>;
 }
 export function testHistoryListPath(includeReruns: boolean, cursor?: string) {
