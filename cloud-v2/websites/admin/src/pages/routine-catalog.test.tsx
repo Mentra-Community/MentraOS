@@ -828,7 +828,19 @@ test("initial history failure offers retry instead of claiming empty history", (
   expect(html).toContain(">Retry</button>")
   expect(html).not.toContain("Loading test history")
   expect(html).not.toContain("No test suites or routine runs yet")
+  expect(html).toContain('role="switch" aria-checked="false"')
+  expect(html).toContain("Show reruns")
 })
+
+test("history visibility control stays available while the selected query is loading", () => {
+  const client = new QueryClient();
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage/></QueryClientProvider>);
+  expect(html).toContain("Loading test history");
+  expect(html).toContain('role="switch" aria-checked="false"');
+  expect(html).toContain("Show reruns");
+  expect(html).not.toContain("No test suites or routine runs yet");
+  client.clear();
+});
 
 test("unavailable history details retain their links without hiding neighboring results", () => {
   const client = new QueryClient()

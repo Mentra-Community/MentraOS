@@ -348,10 +348,7 @@ function TestHistoryList() {
     queryFn: ({pageParam, signal}) => api<TestHistoryPage>(testHistoryListPath(includeReruns, pageParam), {signal, timeoutMs: 30000}),
     getNextPageParam: page => page.nextCursor ?? undefined, retry: false, retryOnMount: false,
     refetchInterval: query => query.state.error ? false : 15000});
-  if (history.isPending) return <p role="status">Loading test history…</p>;
-  if (history.error && !history.data) return <section className={PANEL} role="alert"><p>Could not load test history: {history.error.message}</p>
-    <button className="mt-3 underline" onClick={() => history.refetch()}>Retry</button></section>;
-  const entries = history.data.pages.flatMap(page => page.entries);
+  const entries = history.data?.pages.flatMap(page => page.entries) ?? [];
   const routines = catalog.data?.routines ?? [];
   const filtered = entries.filter(entry => matchesHistorySearch(entry, routines, filters));
   const members = entries.flatMap<{routineId: string; platform: string}>(entry => entry.kind === "suite" ? entry.members ?? [] : entry.kind === "run" ? [entry] : []);
@@ -368,9 +365,10 @@ function TestHistoryList() {
     <p className="mt-2 text-sm text-[#68746d]">Filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p>
     {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <button className="underline" onClick={() => catalog.refetch()}>Retry routine metadata</button></p>}
-    {history.error && <p role="alert" className="mt-3">History could not refresh: {history.error.message} <button className="underline" onClick={() => history.refetch()}>Retry</button></p>}
-    {!entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
-    {!!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches your filters.</p>}
+    {history.isPending && <p role="status" className="mt-3">Loading test history…</p>}
+    {history.error && <p role="alert" className="mt-3">{history.data ? "History could not refresh" : "Could not load test history"}: {history.error.message} <button className="underline" onClick={() => history.refetch()}>Retry</button></p>}
+    {history.data && !entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
+    {history.data && !!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches your filters.</p>}
     {!!filtered.length && <TestHistoryTable entries={filtered} routines={routines}/>}
     {history.hasNextPage && <button className="mt-4 underline" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? "Loading…" : "More history"}</button>}
   </section>;
