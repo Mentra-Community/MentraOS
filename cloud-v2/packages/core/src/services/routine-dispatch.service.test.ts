@@ -83,3 +83,11 @@ test('exact preparation completes on its frozen explicitly assigned paused lane 
   const prepared=await f.service.prepared(selected.requestId,'mini',{dispatchIntentSha256:waiting.dispatchIntentSha256,routineSource:definition.routineSource,definitionSha256:definition.definitionSha256,definition:definition.definition});
   expect(prepared.state).toBe('queued');expect(prepared).not.toHaveProperty('hostReceipt');expect(prepared).not.toHaveProperty('runId');expect((prepared.input as any).laneId).toBe('android-lane');
 });
+
+
+test('known candidate-only source is a precise validation refusal without ordinary promotion',async()=>{
+  const f=fixture(),definition=f.definition();let enrolls=0;
+  (f.service as any).definitions={async getExact(_id:string,_platform:string,_revision:string,ordinary:boolean){return ordinary?null:definition},async enroll(){enrolls++}};
+  await expect(f.service.submit({...selected,routineRevision:definition.definitionRevision})).rejects.toMatchObject({status:422,message:expect.stringContaining('accepted authoring job')});
+  expect(enrolls).toBe(0);expect(await f.requests.get(selected.requestId)).toBeNull();
+});

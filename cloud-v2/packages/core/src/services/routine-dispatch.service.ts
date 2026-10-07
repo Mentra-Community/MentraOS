@@ -45,6 +45,11 @@ export class RoutineDispatchService {
       throw new TestRunError(409, 'Request retry changed its original routine/platform or exact source');
     return request;
   }
+  async validatePreparationSource(intent: {routineId: string; platform: string; routineRevision: string}) {
+    const ordinary = await this.definitions.getExact(intent.routineId, intent.platform, intent.routineRevision, true);
+    if (!ordinary && await this.definitions.getExact(intent.routineId, intent.platform, intent.routineRevision, false))
+      throw new TestRunError(422, 'Candidate-only routine source requires its accepted authoring job and review authorization');
+  }
   /** Rerun previews inherit explicit old routine source and immutable app references. */
   async prepareIntent(input: unknown, original?: {hostId: string; laneId: string; build: z.infer<typeof frameworkRequestInputSchema>['build']}) {
     const selected = routineDispatchSchema.parse(input), binding = original ?? this.bindings()[selected.platform];
@@ -64,6 +69,7 @@ export class RoutineDispatchService {
     if (build.availability !== 'available' || !build.archive || !build.receipt) throw new TestRunError(409, build.reason ?? 'Exact app publication is unavailable');
     const frozen = original?.build ?? JSON.parse(JSON.stringify({...selectedBuildInput(build, selected.platform), ...(build.manifest ? {manifest: build.manifest, manifestSha256: build.manifestSha256} : {})}));
     const dispatchIntent = routineDispatchIntentSchema.parse({...selected, routineRevision, laneId: binding.laneId, build: frozen});
+    await this.validatePreparationSource(dispatchIntent);
     return {hostId: binding.hostId, dispatchIntent};
   }
   async submit(input: unknown) {
@@ -85,11 +91,12 @@ export class RoutineDispatchService {
     const parsed = preparedRoutineRequestSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, 'Invalid routine preparation completion');
     const value = parsed.data, row = await this.requests.preparation(requestId, hostId, value.dispatchIntentSha256), intent = row.dispatchIntent!;
+    if (row.state === 'terminal' && !isExecutableRequest(row)) return row;
+    await this.validatePreparationSource(intent);
     const enrollment = routineEnrollmentSchema.parse({routineId: intent.routineId, platform: intent.platform, definitionRevision: intent.routineRevision,
       routineSource: value.routineSource, definitionSha256: value.definitionSha256, definition: value.definition});
     if (requestInputDigest(value.definition) !== value.definitionSha256 || intent.routineSource && requestInputDigest(intent.routineSource) !== requestInputDigest(value.routineSource))
       throw new TestRunError(409, 'Prepared routine source contradicts the selected intent');
-    if (row.state === 'terminal' && !isExecutableRequest(row)) return row;
     const exact = await this.definitions.getExact(intent.routineId, intent.platform, intent.routineRevision, true);
     if (exact && (exact.definitionSha256 !== enrollment.definitionSha256 || requestInputDigest(exact.routineSource) !== requestInputDigest(enrollment.routineSource)))
       throw new TestRunError(409, 'Prepared source differs from immutable ordinary enrollment');

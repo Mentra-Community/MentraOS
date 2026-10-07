@@ -111,7 +111,7 @@ test('cancelled original preparation can rerun an unpublished exact revision wit
  f.requests.set(originalId,{requestId:originalId,hostId:'mini',state:'terminal',terminalStatus:'cancelled',dispatchIntent:intent,dispatchIntentSha256:requestInputDigest(intent)});
  f.members[20]!.status='cancelled';let exactCalls=0;
  const {RoutineDispatchService}=await import('./routine-dispatch.service');
- (f.service as any).dispatch=new RoutineDispatchService({async current(){throw Error('no collection')},async getCurrent(){throw Error('no collection')},async getExact(){throw Error('preview cannot need enrollment')},async enroll(){throw Error('preview cannot enroll')}},
+ (f.service as any).dispatch=new RoutineDispatchService({async current(){throw Error('no collection')},async getCurrent(){throw Error('no collection')},async getExact(){return null},async enroll(){throw Error('preview cannot enroll')}},
    {async resolve(){throw Error('original app must remain pinned')}},undefined,undefined,undefined,()=>({android:{hostId:'mini',laneId:'android'}}),
    {async resolve(value){exactCalls++;expect(value).toBe(revision);return value!},async inventory(){throw Error('preview cannot need inventory')}});
  const input={rerunId:'unpublished-source',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},routineRevision:revision,reason:'Exact source fix'};

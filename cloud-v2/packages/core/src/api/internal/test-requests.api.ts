@@ -32,6 +32,7 @@ export function createTestRequestsApi(service = new TestRequestService(), creden
   const active = async (requestId: string, hostId: string) => {
     const row = await service.preparation(requestId, hostId);
     if (row.state !== 'preparing') throw new TestRequestConflict('Routine request is no longer preparing');
+    await dispatch.validatePreparationSource(row.dispatchIntent!);
     return row.dispatchIntent!;
   };
   app.get('/:requestId/preparation', async c => c.json({request: await service.preparation(c.req.param('requestId'), c.var.testHostId)}));

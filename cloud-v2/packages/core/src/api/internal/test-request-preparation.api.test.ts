@@ -18,7 +18,7 @@ function fixture() {
     override async inventory(value:string) {expect(value).toBe(commit);return {commit,files:[{path:'routines/sample/routine.ts',gitBlobSha1:blob,size:bytes.length}]};}
     override async blob(value:{gitBlobSha1:string;size:number}) {blobReads++;expect(value.gitBlobSha1).toBe(blob);return bytes;}
   }
-  const service=new Service(); const dispatch={async prepared(id:string,host:string,body:any){await service.preparation(id,host,body.dispatchIntentSha256);return row;}} as RoutineDispatchService;
+  const service=new Service(); const dispatch={async validatePreparationSource(){},async prepared(id:string,host:string,body:any){await service.preparation(id,host,body.dispatchIntentSha256);return row;}} as unknown as RoutineDispatchService;
   const api=createTestRequestsApi(service,()=>JSON.stringify({mini:token}),new Sources(),dispatch);
   return {api,get blobReads(){return blobReads},cancel(){active=false}};
 }
@@ -41,7 +41,7 @@ test('host sees actual preparation state and completion acknowledgment retains i
 test('invalid exact source is distinguished from cancelled preparation and transient acquisition', async () => {
   class Sources extends GithubRoutineSourceGateway {override async inventory(): Promise<never> {throw new TestRunError(422, 'Selected source contains a symbolic link.')}}
   class Service extends TestRequestService {override async preparation() {return row}}
-  const api=createTestRequestsApi(new Service(),()=>JSON.stringify({mini:token}),new Sources());
+  const api=createTestRequestsApi(new Service(),()=>JSON.stringify({mini:token}),new Sources(),{async validatePreparationSource(){}} as unknown as RoutineDispatchService);
   const response=await api.request('/r1/routine-source/inventory',{headers});
   expect(response.status).toBe(422);expect(await response.json()).toEqual({error:'routine_source_invalid',message:'Selected source contains a symbolic link.'});
 });
