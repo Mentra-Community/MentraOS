@@ -98,7 +98,6 @@ automation keys from an admin who will stay.
 Core reads the variables below when it uses them, so a changed value takes effect
 on the next request. The values shown are placeholders.
 
-- `CLOUD_CORE_ORGANIZATION_ID` (public): stable id of this organization, matching `^[a-z0-9][a-z0-9-]{1,62}$` (for example `acme-private`). Stamped on every workspace, membership and audit event, and named in every answer the Store and Fleet check. **Required when `NODE_ENV=production` or `CLOUD_CORE_ENVIRONMENT` is `dev`, `staging`, `prod` or `production`**: such a Core checks it at boot and refuses to start without a valid value, so the deploy fails its health check. (Every identity-bearing path needs it: admin sign-in and every signed-in admin request, the workspace and organization APIs, the internal service API and `/api/client/capabilities`.) Elsewhere (local runs and tests) it defaults to `local`, so set it explicitly in every shared deployment. Never change it once workspaces exist.
 - `CLOUD_CORE_ADMIN_EMAILS`, `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` (public): the Organization Admins, as above.
 - `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` (public): comma list of the environment labels credentials may carry in `msk_<label>_...` and `mak_<label>_...`. New credentials use the first label. Without it Core uses `CLOUD_CORE_ENVIRONMENT`, then `local`. Labels are lowercased and reduced to `[a-z0-9]`. Credentials migrated from the Mentra Store keep their original labels, so list every label they carry (for the Mentra Store, `prod,dev`) or those keys stop validating.
 - `CLOUD_CORE_WORKSPACE_CREATION` (public): `open` (default) lets any signed-in person create a workspace. `organization-admins` limits creation to Organization Admins. Any other value is a configuration error and workspace creation fails.
@@ -112,7 +111,6 @@ on the next request. The values shown are placeholders.
 Example (placeholders only):
 
 ```text
-CLOUD_CORE_ORGANIZATION_ID=acme-private
 CLOUD_CORE_CREDENTIAL_ENVIRONMENTS=private
 CLOUD_CORE_WORKSPACE_CREATION=organization-admins
 CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE=https://admin.acme.example/?workspaceInvite={token}
@@ -363,7 +361,6 @@ services:
       MENTRA_MINIAPP_JWT_PRIVATE_KEY: ${MENTRA_MINIAPP_JWT_PRIVATE_KEY:?required}
       MENTRA_MINIAPP_JWT_PUBLIC_KEY: ${MENTRA_MINIAPP_JWT_PUBLIC_KEY:?required}
       CLOUD_CORE_ISSUER: https://core.acme.example
-      CLOUD_CORE_ORGANIZATION_ID: acme-private
       CLOUD_CORE_OIDC_PROVIDERS: ${CLOUD_CORE_OIDC_PROVIDERS:?required}
     secrets: [mongo_password]
     depends_on: [mongo]

@@ -38,7 +38,7 @@ import {
   UsageError,
 } from "../packages/core/scripts/migrate-store-developer-orgs"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
-import {WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
+import {WORKSPACE_AUDIT_COUNTER_ID, WorkspaceAuditCounterModel} from "../packages/core/src/models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -68,11 +68,9 @@ const SOURCE_COLLECTIONS = [
   "developer_org_api_keys",
 ] as const
 
-const ORGANIZATION = "acme-org"
 const NOW = new Date("2026-10-05T12:00:00.000Z")
 
 const ENV_KEYS = [
-  "CLOUD_CORE_ORGANIZATION_ID",
   "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
   "CLOUD_CORE_ENVIRONMENT",
   "CLOUD_CORE_ADMIN_EMAILS",
@@ -410,7 +408,7 @@ async function withReadOnlyTarget<T>(fn: (target: Awaited<ReturnType<typeof open
 }
 
 function run(overrides: Partial<Parameters<typeof migrateStoreDeveloperOrgs>[0]> = {}) {
-  return migrateStoreDeveloperOrgs({source, organizationId: ORGANIZATION, apply: false, now: NOW, ...overrides})
+  return migrateStoreDeveloperOrgs({source, apply: false, now: NOW, ...overrides})
 }
 
 async function thrown(fn: () => Promise<unknown>): Promise<any> {
@@ -484,7 +482,6 @@ describe("dry run", () => {
 
     expect(report).toEqual({
       mode: "dry-run",
-      organizationId: ORGANIZATION,
       counts: {orgs: 4, memberships: 7, invitations: 3, credentials: 4, skippedKeys: 3},
       keysWithoutCreator: [
         {orgId: ORG_ACME, keyId: keys.removedCreator.row.keyId, name: "Left the company"},
@@ -540,7 +537,6 @@ describe("apply", () => {
     expect(workspaces.map(row => row.workspaceId)).toEqual([ORG_ACME, ORG_BETA, ORG_DELTA, ORG_GAMMA])
     expect(workspaces[0]).toMatchObject({
       workspaceId: ORG_ACME,
-      organizationId: ORGANIZATION,
       name: "Acme Robotics",
       status: "active",
       authorizationRevision: 0,
@@ -566,7 +562,6 @@ describe("apply", () => {
     )
     const byId = Object.fromEntries(acme.map(row => [row.membershipId, row]))
     expect(byId[`wm_${ownerHex}`]).toMatchObject({
-      organizationId: ORGANIZATION,
       workspaceId: ORG_ACME,
       mentraUserId: null,
       pendingWorkosUserId: U.acmeOwner,
@@ -607,7 +602,6 @@ describe("apply", () => {
 
     const owner = await WorkspaceMembershipModel.findOne({membershipId: `wm_owner_${ORG_BETA}`}).lean()
     expect(owner).toMatchObject({
-      organizationId: ORGANIZATION,
       workspaceId: ORG_BETA,
       mentraUserId: null,
       pendingWorkosUserId: U.betaOwner,
@@ -685,7 +679,6 @@ describe("apply", () => {
     expect(acme.map(row => row.invitationId).sort()).toEqual([invitationIds.acmeAdmin, invitationIds.acmeMember].sort())
     const byId = Object.fromEntries(acme.map(row => [row.invitationId, row]))
     expect(byId[invitationIds.acmeAdmin]).toMatchObject({
-      organizationId: ORGANIZATION,
       workspaceId: ORG_ACME,
       email: "new.admin@acme.example",
       role: "admin",
@@ -719,7 +712,6 @@ describe("apply", () => {
     expect(dev).toMatchObject({
       prefix: "msk",
       credentialKind: "workspace",
-      organizationId: ORGANIZATION,
       workspaceId: ORG_ACME,
       name: "Dev laptop",
       env: "local",
@@ -781,7 +773,6 @@ describe("apply", () => {
     expect(events.map(event => event.workspaceId).sort()).toEqual([ORG_ACME, ORG_BETA, ORG_DELTA, ORG_GAMMA])
     for (const event of events) {
       expect(event).toMatchObject({
-        organizationId: ORGANIZATION,
         action: "workspace.imported",
         actor: {kind: "system"},
         target: {workspaceId: event.workspaceId},
@@ -789,7 +780,7 @@ describe("apply", () => {
     }
     const acme = events.find(event => event.workspaceId === ORG_ACME)!
     expect(acme.after).toMatchObject({name: "Acme Robotics", memberships: 4, invitations: 2, credentials: 3})
-    expect(await WorkspaceAuditCounterModel.findOne({_id: ORGANIZATION}).lean()).toMatchObject({seq: 4})
+    expect(await WorkspaceAuditCounterModel.findOne({_id: WORKSPACE_AUDIT_COUNTER_ID}).lean()).toMatchObject({seq: 4})
   })
 
   test("a migrated key validates before its creator has ever signed in", async () => {
@@ -800,7 +791,6 @@ describe("apply", () => {
 
     expect(await validateCredentialToken(keys.dev.token)).toEqual({
       kind: "credential",
-      organizationId: ORGANIZATION,
       credentialId: keys.dev.row.keyId,
       credentialKind: "workspace",
       workspaceId: ORG_ACME,
@@ -840,7 +830,7 @@ describe("re-running apply", () => {
     expect(await snapshotTarget()).toEqual(first)
     // One audit event per org, not two.
     expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.imported"})).toBe(4)
-    expect(await WorkspaceAuditCounterModel.findOne({_id: ORGANIZATION}).lean()).toMatchObject({seq: 4})
+    expect(await WorkspaceAuditCounterModel.findOne({_id: WORKSPACE_AUDIT_COUNTER_ID}).lean()).toMatchObject({seq: 4})
   })
 
   test("never overwrites changes made in Core after the first run", async () => {
@@ -917,7 +907,6 @@ describe("re-running apply", () => {
     // invitation violates the unique (workspace, email) pending-invitation index inside BETA's transaction.
     await WorkspaceInvitationModel.create({
       invitationId: "winv_preexisting",
-      organizationId: ORGANIZATION,
       workspaceId: ORG_BETA,
       email: "friend@beta.example",
       role: "developer",
@@ -936,14 +925,14 @@ describe("re-running apply", () => {
     expect(await WorkspaceInvitationModel.countDocuments({workspaceId: ORG_BETA})).toBe(1)
     expect(await AccessCredentialModel.countDocuments({workspaceId: ORG_BETA})).toBe(0)
     expect(await WorkspaceAuditEventModel.find({}).distinct("workspaceId")).toEqual([ORG_ACME])
-    expect(await WorkspaceAuditCounterModel.findOne({_id: ORGANIZATION}).lean()).toMatchObject({seq: 1})
+    expect(await WorkspaceAuditCounterModel.findOne({_id: WORKSPACE_AUDIT_COUNTER_ID}).lean()).toMatchObject({seq: 1})
 
     await WorkspaceInvitationModel.deleteOne({invitationId: "winv_preexisting"})
     await run({apply: true})
 
     expect(await WorkspaceModel.countDocuments({})).toBe(4)
     expect(await WorkspaceAuditEventModel.countDocuments({action: "workspace.imported"})).toBe(4)
-    expect(await WorkspaceAuditCounterModel.findOne({_id: ORGANIZATION}).lean()).toMatchObject({seq: 4})
+    expect(await WorkspaceAuditCounterModel.findOne({_id: WORKSPACE_AUDIT_COUNTER_ID}).lean()).toMatchObject({seq: 4})
   })
 
   test("rejects an unexpected source role instead of guessing, in a dry run too, before any write", async () => {
@@ -1116,7 +1105,6 @@ describe("re-running apply carries access removals made in the Store", () => {
     // owner would violate the unique (workspace, pending WorkOS user) index.
     await WorkspaceMembershipModel.create({
       membershipId: "wm_preexisting",
-      organizationId: ORGANIZATION,
       workspaceId: ORG_BETA,
       pendingWorkosUserId: U.betaOwner,
       role: "member",
@@ -1221,42 +1209,6 @@ describe("malformed keys", () => {
   })
 })
 
-// --- Organization id -------------------------------------------------------
-
-describe("organization id", () => {
-  test("refuses an id that differs from CLOUD_CORE_ORGANIZATION_ID, writing nothing", async () => {
-    process.env.CLOUD_CORE_ORGANIZATION_ID = "another-org"
-
-    for (const apply of [false, true]) {
-      const err = await thrown(() => run({apply}))
-      expect(err).toBeInstanceOf(MigrationError)
-      expect(err.message).toContain("CLOUD_CORE_ORGANIZATION_ID")
-      expect(err.message).toContain("another-org")
-    }
-    expect((await targetCounts()).Workspace).toBe(0)
-  })
-
-  test("accepts an id equal to CLOUD_CORE_ORGANIZATION_ID, and stamps every row with it", async () => {
-    process.env.CLOUD_CORE_ORGANIZATION_ID = ORGANIZATION
-
-    await run({apply: true})
-
-    // Every collection but the counter, which is keyed by the organization id itself.
-    for (const model of TARGET_MODELS.filter(model => model.modelName !== "WorkspaceAuditCounter")) {
-      const rows = await model.find({}).lean()
-      expect(rows.length).toBeGreaterThan(0)
-      expect(rows.every(row => row.organizationId === ORGANIZATION)).toBe(true)
-    }
-  })
-
-  test("rejects an id that organizationId() would reject", async () => {
-    for (const bad of ["", "A", "Acme Org", "-acme", "acme_org", "x".repeat(64)]) {
-      const err = await thrown(() => run({organizationId: bad}))
-      expect(err).toBeInstanceOf(MigrationError)
-    }
-  })
-})
-
 // --- Argument parsing and the remote guard ---------------------------------
 
 describe("parseArgs", () => {
@@ -1268,8 +1220,6 @@ describe("parseArgs", () => {
     LOCAL_SOURCE,
     "--target",
     LOCAL_TARGET,
-    "--organization-id",
-    "acme-org",
     ...rest,
   ]
 
@@ -1277,13 +1227,12 @@ describe("parseArgs", () => {
     expect(parseArgs(args())).toEqual({
       source: LOCAL_SOURCE,
       target: LOCAL_TARGET,
-      organizationId: "acme-org",
       apply: false,
       allowRemote: false,
     })
     expect(parseArgs(args("--apply"))).toMatchObject({apply: true, allowRemote: false})
     expect(
-      parseArgs([`--source=${LOCAL_SOURCE}`, `--target=${LOCAL_TARGET}`, "--organization-id=acme-org"]),
+      parseArgs([`--source=${LOCAL_SOURCE}`, `--target=${LOCAL_TARGET}`]),
     ).toMatchObject({
       source: LOCAL_SOURCE,
       target: LOCAL_TARGET,
@@ -1292,7 +1241,7 @@ describe("parseArgs", () => {
 
   test("refuses --apply with a remote target", () => {
     const err = thrownSync(() =>
-      parseArgs(["--source", LOCAL_SOURCE, "--target", REMOTE, "--organization-id", "acme-org", "--apply"]),
+      parseArgs(["--source", LOCAL_SOURCE, "--target", REMOTE, "--apply"]),
     )
     expect(err).toBeInstanceOf(UsageError)
     expect(err.message).toContain("--i-understand-remote")
@@ -1300,7 +1249,7 @@ describe("parseArgs", () => {
 
   test("refuses --apply with a remote source", () => {
     expect(() =>
-      parseArgs(["--source", REMOTE, "--target", LOCAL_TARGET, "--organization-id", "acme-org", "--apply"]),
+      parseArgs(["--source", REMOTE, "--target", LOCAL_TARGET, "--apply"]),
     ).toThrow(UsageError)
   })
 
@@ -1310,8 +1259,6 @@ describe("parseArgs", () => {
       REMOTE,
       "--target",
       REMOTE.replace("/core", "/other"),
-      "--organization-id",
-      "acme-org",
     ]
     expect(parseArgs([...remoteArgs, "--apply", "--i-understand-remote"])).toMatchObject({
       apply: true,
@@ -1369,8 +1316,6 @@ describe("parseArgs", () => {
           LOCAL_SOURCE,
           "--target",
           `mongodb://${evil}/core`,
-          "--organization-id",
-          "acme-org",
           "--apply",
         ]),
       )
@@ -1385,8 +1330,6 @@ describe("parseArgs", () => {
           urls["--source"],
           "--target",
           urls["--target"],
-          "--organization-id",
-          "acme-org",
           "--apply",
         ]),
       )
@@ -1397,20 +1340,19 @@ describe("parseArgs", () => {
 
   test("rejects missing, repeated and unknown arguments", () => {
     expect(() => parseArgs([])).toThrow(UsageError)
-    expect(() => parseArgs(["--source", LOCAL_SOURCE, "--organization-id", "acme-org"])).toThrow(/--target/)
-    expect(() => parseArgs(["--target", LOCAL_TARGET, "--organization-id", "acme-org"])).toThrow(/--source/)
-    expect(() => parseArgs(["--source", LOCAL_SOURCE, "--target", LOCAL_TARGET])).toThrow(/--organization-id/)
+    expect(() => parseArgs(["--source", LOCAL_SOURCE])).toThrow(/--target/)
+    expect(() => parseArgs(["--target", LOCAL_TARGET])).toThrow(/--source/)
     expect(() => parseArgs(args("--bogus"))).toThrow(/--bogus/)
     expect(() => parseArgs(args("--source", LOCAL_SOURCE))).toThrow(/--source/)
-    expect(() => parseArgs(["--source", "--target", LOCAL_TARGET, "--organization-id", "acme-org"])).toThrow(UsageError)
+    expect(() => parseArgs(["--source", "--target", LOCAL_TARGET])).toThrow(UsageError)
     expect(() =>
-      parseArgs(["--source", "not a url", "--target", LOCAL_TARGET, "--organization-id", "acme-org"]),
+      parseArgs(["--source", "not a url", "--target", LOCAL_TARGET]),
     ).toThrow(UsageError)
   })
 
   test("refuses a source and target that are the same database", () => {
     expect(() =>
-      parseArgs(["--source", LOCAL_TARGET, "--target", LOCAL_TARGET, "--organization-id", "acme-org"]),
+      parseArgs(["--source", LOCAL_TARGET, "--target", LOCAL_TARGET]),
     ).toThrow(/same database/)
   })
 })
@@ -1421,7 +1363,7 @@ async function runCli(args: string[], env: Record<string, string | undefined> = 
   const proc = Bun.spawn([process.execPath, SCRIPT, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: {...process.env, CLOUD_CORE_ORGANIZATION_ID: ORGANIZATION, ...env},
+    env: {...process.env, ...env},
   })
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -1439,8 +1381,6 @@ describe("command line", () => {
       sourceUrl,
       "--target",
       "mongodb://mongo.example.invalid:27017/core",
-      "--organization-id",
-      ORGANIZATION,
       "--apply",
     ])
 
@@ -1451,12 +1391,12 @@ describe("command line", () => {
   }, 30_000)
 
   test("a dry run prints only the JSON report on stdout and writes nothing", async () => {
-    const result = await runCli(["--source", sourceUrl, "--target", targetUrl, "--organization-id", ORGANIZATION])
+    const result = await runCli(["--source", sourceUrl, "--target", targetUrl])
 
     expect(result.exitCode).toBe(0)
     const report = JSON.parse(result.stdout)
     const expected = await withReadOnlyTarget(target =>
-      migrateStoreDeveloperOrgs({source, target, organizationId: ORGANIZATION, apply: false}),
+      migrateStoreDeveloperOrgs({source, target, apply: false}),
     )
     expect(report).toEqual(JSON.parse(JSON.stringify(expected)))
     expect(report.targetCompared).toBe(true)
@@ -1473,7 +1413,7 @@ describe("command line", () => {
   }, 30_000)
 
   test("--apply on local databases imports, and a second run changes nothing", async () => {
-    const cli = ["--source", sourceUrl, "--target", targetUrl, "--organization-id", ORGANIZATION, "--apply"]
+    const cli = ["--source", sourceUrl, "--target", targetUrl, "--apply"]
 
     const first = await runCli(cli)
     expect(first.exitCode).toBe(0)
@@ -1492,7 +1432,7 @@ describe("command line", () => {
     try {
       assertConnectedTo(freshUrl, fresh.name)
       const collections = async () => (await fresh.db!.listCollections().toArray()).map(entry => entry.name).sort()
-      const cli = ["--source", sourceUrl, "--target", freshUrl, "--organization-id", ORGANIZATION]
+      const cli = ["--source", sourceUrl, "--target", freshUrl]
       await sourceDb()
         .collection("developer_org_memberships")
         .insertOne({orgId: ORG_GAMMA, userId: U.stranger, role: "superuser", status: "active"})
@@ -1530,15 +1470,4 @@ describe("command line", () => {
       await fresh.close()
     }
   }, 60_000)
-
-  test("an organization id that differs from CLOUD_CORE_ORGANIZATION_ID exits non-zero", async () => {
-    const result = await runCli(
-      ["--source", sourceUrl, "--target", targetUrl, "--organization-id", ORGANIZATION, "--apply"],
-      {CLOUD_CORE_ORGANIZATION_ID: "another-org"},
-    )
-
-    expect(result.exitCode).not.toBe(0)
-    expect(result.stderr).toContain("CLOUD_CORE_ORGANIZATION_ID")
-    expect((await targetCounts()).Workspace).toBe(0)
-  }, 30_000)
 })

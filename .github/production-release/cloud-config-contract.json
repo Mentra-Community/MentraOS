@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-10-06.1",
+  "contractVersion": "2026-10-07.1",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
@@ -16,7 +16,6 @@
       "valuesByEnvironment": {"staging": ["staging"], "prod": ["prod"]},
       "acceptanceTest": "core-environment"
     },
-    "CLOUD_CORE_ORGANIZATION_ID": {"kind": "string", "acceptanceTest": "core-readiness"},
     "CLOUD_RUNTIME_AUTH_AUDIENCE": {"kind": "string", "acceptanceTest": "runtime-session-auth"},
     "CLOUD_RUNTIME_AUTH_ISSUERS": {"kind": "json", "acceptanceTest": "runtime-session-auth"},
     "CLOUD_STORAGE_PROVIDER": {"kind": "enum", "values": ["r2", "s3"], "acceptanceTest": "core-storage"},

@@ -56,9 +56,10 @@ is signed (`@mentra/workspace-contract/server`, `signServiceRequest`): headers
 Core accepts any secret in its list for that service. A missing or wrong
 signature, an unknown service and a stale timestamp all answer
 `401 {"error":"service_unauthorized"}`; a malformed secret list answers
-`503 {"error":"service_auth_misconfigured"}`. Every answer that names an
-organization carries `organizationId`, and the client refuses one that is not the
-organization it is bound to.
+`503 {"error":"service_auth_misconfigured"}`. No answer names the organization:
+the Store knows which Core it talks to from `MENTRA_CORE_INTERNAL_URL`, and the
+shared secret proves both sides. The client refuses an answer that does not have
+the documented shape.
 
 - `POST /authorize`: may a person (a bearer token, or a Mentra user id the Store
   vouches for) do `capability` in `workspaceId`, for `packageName`? Returns the
@@ -83,7 +84,7 @@ people use through the dashboard, the CLI and the Store proxy. Core credentials
 (`msk_`, `mak_`) are refused on every `/api/workspaces` route and on the
 `/api/organization` administration routes; people administer. The one exception
 is `GET /api/organization`, which any caller, a credential included, may use to
-learn the organization id and which organization capabilities it holds.
+learn which organization capabilities it holds.
 
 ### Secret pairing
 
@@ -97,10 +98,9 @@ Two secrets, one per direction. Keep both in the secret manager.
   `CLOUD_CORE_STORE_SERVICE_SECRET` must be listed in the Store's
   `MENTRA_STORE_CORE_SERVICE_SECRETS`, a JSON array.
 
-The Store also needs `MENTRA_CORE_INTERNAL_URL` (Core's origin) and
-`MENTRA_CORE_ORGANIZATION_ID`, which must equal Core's
-`CLOUD_CORE_ORGANIZATION_ID`. Without all three the Store fails closed: Console
-requests answer `503 core_unavailable` and nothing is authorized.
+The Store also needs `MENTRA_CORE_INTERNAL_URL` (Core's origin). Without it or
+the secret the Store fails closed: Console requests answer
+`503 core_unavailable` and nothing is authorized.
 
 ### Same WorkOS client and environment
 
@@ -191,17 +191,17 @@ Existing Store developer organizations, their members, pending invitations and
 # read-only connection (so a re-run can report what it would change), writes
 # nothing, and prints a JSON report to stdout.
 bun packages/core/scripts/migrate-store-developer-orgs.ts \
-  --source "$STORE_MONGO_URL" --target "$CORE_MONGO_URL" --organization-id "$CLOUD_CORE_ORGANIZATION_ID"
+  --source "$STORE_MONGO_URL" --target "$CORE_MONGO_URL"
 
 # Apply. An operator running the real cutover passes --i-understand-remote; the
 # script refuses a non-local URL without it.
 bun packages/core/scripts/migrate-store-developer-orgs.ts \
-  --source "$STORE_MONGO_URL" --target "$CORE_MONGO_URL" --organization-id "$CLOUD_CORE_ORGANIZATION_ID" \
+  --source "$STORE_MONGO_URL" --target "$CORE_MONGO_URL" \
   --apply --i-understand-remote
 ```
 
-`--organization-id` must equal the deployment's `CLOUD_CORE_ORGANIZATION_ID`. Read
-the dry-run report before applying:
+`--target` is the database of the Core the Store talks to. Read the dry-run report
+before applying:
 
 - `counts` of organizations, memberships, invitations and credentials, and the
   environment labels the keys carry. List every label in Core's
@@ -251,11 +251,8 @@ on 5173. Configure `MENTRA_STORE_INTERNAL_URL=http://127.0.0.1:3003` in Core,
 `MENTRA_STORE_CORE_JWKS_URL=http://127.0.0.1:3000/.well-known/jwks.json` in Store,
 and the same service secret. For workspaces, pair the secrets as described above:
 a value in Core's `CLOUD_CORE_SERVICE_SECRETS` (`{"store":["dev-secret"]}`) as the
-Store's `MENTRA_CORE_WORKSPACE_SERVICE_SECRET`, Core's
-`CLOUD_CORE_STORE_SERVICE_SECRET` in the Store's `MENTRA_STORE_CORE_SERVICE_SECRETS`,
-and the Store's `MENTRA_CORE_ORGANIZATION_ID` equal to Core's
-`CLOUD_CORE_ORGANIZATION_ID` (`local` when Core sets none, which only a local
-run or test may do: a deployed Core requires it).
+Store's `MENTRA_CORE_WORKSPACE_SERVICE_SECRET`, and Core's
+`CLOUD_CORE_STORE_SERVICE_SECRET` in the Store's `MENTRA_STORE_CORE_SERVICE_SECRETS`.
 Core admin remains on 5174 and uses `CORE_URL`.
 
 ## Bundled Store artifact

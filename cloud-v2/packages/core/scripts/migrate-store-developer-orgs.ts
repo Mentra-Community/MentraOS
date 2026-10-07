@@ -4,13 +4,11 @@
  * Usage:
  *
  *   bun packages/core/scripts/migrate-store-developer-orgs.ts \
- *     --source <mongo-url> --target <mongo-url> --organization-id <id> [--apply]
+ *     --source <mongo-url> --target <mongo-url> [--apply]
  *
  * The source is the Store database (`developer_orgs`, `developer_org_memberships`,
  * `developer_org_invitations`, `developer_org_api_keys`). It is only ever read.
- * The target is the Core database. Every row written carries `--organization-id`,
- * which must equal `CLOUD_CORE_ORGANIZATION_ID` when that is set, because the
- * change feed only serves the deployment's own organization.
+ * The target is the Core database of the organization the Store belongs to.
  *
  * Without `--apply` this prints a JSON report and writes nothing. It reads the
  * target through a separate read-only connection (no models, no collection or
@@ -91,7 +89,6 @@ import {WorkspaceMembershipModel} from "../src/models/workspace-membership.model
 import {WorkspaceModel} from "../src/models/workspace.model"
 import {recordWorkspaceEvent} from "../src/services/workspaces/audit.service"
 import {markRevoked} from "../src/services/workspaces/credential.service"
-import {ORGANIZATION_ID_PATTERN} from "../src/services/workspaces/organization"
 import {
   bumpRevision,
   endMembership,
@@ -202,7 +199,6 @@ export class UsageError extends Error {
 
 export type MigrationReport = {
   mode: "dry-run" | "apply"
-  organizationId: string
   /** `skippedKeys` is every key not imported: `keysWithoutCreator` plus `malformedKeys`. */
   counts: {orgs: number; memberships: number; invitations: number; credentials: number; skippedKeys: number}
   /** Keys bound to a creator who has no membership in the org: not imported. */
@@ -244,7 +240,6 @@ export type MigrationOptions = {
    * an apply would change there. Never written to. An apply uses the default mongoose connection.
    */
   target?: Connection
-  organizationId: string
   apply: boolean
   /** The instant "now" for expiry checks and missing dates; tests pin it. */
   now?: Date
@@ -317,25 +312,6 @@ type SourceRows = {
 }
 
 /**
- * Check `value` as an organization id for the migration: the same pattern as
- * `organizationId()`, and equal to `CLOUD_CORE_ORGANIZATION_ID` when that is set
- * (the change feed only serves the deployment's own organization).
- */
-export function resolveMigrationOrganizationId(value: string): string {
-  if (typeof value !== "string" || !ORGANIZATION_ID_PATTERN.test(value)) {
-    throw new MigrationError(`--organization-id must match ${ORGANIZATION_ID_PATTERN}`)
-  }
-  const configured = process.env.CLOUD_CORE_ORGANIZATION_ID?.trim()
-  if (configured && configured !== value) {
-    throw new MigrationError(
-      `--organization-id "${value}" differs from CLOUD_CORE_ORGANIZATION_ID "${configured}"; ` +
-        "the change feed only serves the deployment's own organization",
-    )
-  }
-  return value
-}
-
-/**
  * Plan (and with `apply`, perform) the import. The target is the default
  * mongoose connection, because that is where Core's models live; `source` must be
  * a different connection. The counts and source findings are computed from the
@@ -344,7 +320,6 @@ export function resolveMigrationOrganizationId(value: string): string {
  * run given a target and an apply of the same data report the same thing.
  */
 export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Promise<MigrationReport> {
-  const organization = resolveMigrationOrganizationId(options.organizationId)
   const now = options.now ?? new Date()
   const log = options.log ?? (() => {})
   const {source, apply} = options
@@ -364,7 +339,6 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
 
   const report: MigrationReport = {
     mode: apply ? "apply" : "dry-run",
-    organizationId: organization,
     counts: {orgs: 0, memberships: 0, invitations: 0, credentials: 0, skippedKeys: 0},
     keysWithoutCreator: [],
     malformedKeys: [],
@@ -388,7 +362,7 @@ export async function migrateStoreDeveloperOrgs(options: MigrationOptions): Prom
   if (apply) {
     // Only now, with the whole source validated, does anything touch the target.
     await prepareTarget(source)
-    for (const plan of plans) recordReconciliation(report, plan.orgId, await importOrg(plan, organization, log))
+    for (const plan of plans) recordReconciliation(report, plan.orgId, await importOrg(plan, log))
   } else if (options.target) {
     const db = options.target.db
     if (!db) throw new MigrationError("the target connection is not open")
@@ -862,7 +836,7 @@ async function prepareTarget(source: Connection): Promise<void> {
  * `workspace.imported` audit event is the last write and is recorded only when
  * this run inserted the workspace. Returns what it decided, for the report.
  */
-async function importOrg(plan: OrgPlan, organization: string, log: (message: string) => void): Promise<Reconciliation> {
+async function importOrg(plan: OrgPlan, log: (message: string) => void): Promise<Reconciliation> {
   const {orgId} = plan
   let result: ImportResult
   try {
@@ -880,7 +854,6 @@ async function importOrg(plan: OrgPlan, organization: string, log: (message: str
           insertOnly(
             {workspaceId: orgId},
             {
-              organizationId: organization,
               name: plan.name,
               status: "active",
               authorizationRevision: 0,
@@ -903,7 +876,6 @@ async function importOrg(plan: OrgPlan, organization: string, log: (message: str
             insertOnly(
               {membershipId: membership.membershipId},
               {
-                organizationId: organization,
                 workspaceId: orgId,
                 mentraUserId: null,
                 pendingWorkosUserId: membership.sourceUserId,
@@ -927,7 +899,6 @@ async function importOrg(plan: OrgPlan, organization: string, log: (message: str
           insertOnly(
             {invitationId: invitation.invitationId},
             {
-              organizationId: organization,
               workspaceId: orgId,
               email: invitation.email,
               role: invitation.role,
@@ -956,7 +927,6 @@ async function importOrg(plan: OrgPlan, organization: string, log: (message: str
               {
                 prefix: "msk",
                 credentialKind: "workspace",
-                organizationId: organization,
                 workspaceId: orgId,
                 name: credential.name,
                 env: credential.env,
@@ -981,7 +951,6 @@ async function importOrg(plan: OrgPlan, organization: string, log: (message: str
 
       if (inserted) {
         await recordWorkspaceEvent(session, {
-          organizationId: organization,
           workspaceId: orgId,
           action: "workspace.imported",
           actor: SYSTEM_ACTOR,
@@ -1065,7 +1034,6 @@ async function applyRemovals(session: ClientSession, workspaceId: string, reconc
     ).lean()
     if (!invitation) continue
     await recordWorkspaceEvent(session, {
-      organizationId: invitation.organizationId,
       workspaceId,
       action: "invitation.revoked",
       actor: SYSTEM_ACTOR,
@@ -1166,19 +1134,18 @@ function isNewerInvitation(candidate: SourceInvitation, current: SourceInvitatio
 export type CliOptions = {
   source: string
   target: string
-  organizationId: string
   apply: boolean
   allowRemote: boolean
 }
 
 const USAGE = `Usage: bun packages/core/scripts/migrate-store-developer-orgs.ts \\
-  --source <mongo-url> --target <mongo-url> --organization-id <id> [--apply]
+  --source <mongo-url> --target <mongo-url> [--apply]
 
 Without --apply the script prints a JSON report and writes nothing; it reads the target to report what
 a re-run would change (revocations and removals carried from the Store, drift, skipped workspaces).
 --apply refuses unless both URLs are local; --i-understand-remote lifts that and is for the operator only.`
 
-const VALUE_FLAGS = {"--source": "source", "--target": "target", "--organization-id": "organizationId"} as const
+const VALUE_FLAGS = {"--source": "source", "--target": "target"} as const
 /** Exactly a loopback host, with an optional all-digit port: nothing else may follow the host or port. */
 const LOCAL_HOST_PATTERN = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/
 
@@ -1234,7 +1201,7 @@ export function parseArgs(argv: string[]): CliOptions {
   for (const [flag, key] of Object.entries(VALUE_FLAGS)) {
     if (values[key] === undefined) throw new UsageError(`${flag} is required`)
   }
-  const {source, target, organizationId} = values as Record<(typeof VALUE_FLAGS)[keyof typeof VALUE_FLAGS], string>
+  const {source, target} = values as Record<(typeof VALUE_FLAGS)[keyof typeof VALUE_FLAGS], string>
 
   const sourceParts = splitMongoUrl(source)
   const targetParts = splitMongoUrl(target)
@@ -1257,7 +1224,7 @@ export function parseArgs(argv: string[]): CliOptions {
       }
     }
   }
-  return {source, target, organizationId, apply, allowRemote}
+  return {source, target, apply, allowRemote}
 }
 
 function databaseKey(parts: MongoUrlParts): string {
@@ -1271,10 +1238,8 @@ async function main(argv: string[]): Promise<void> {
   }
 
   let options: CliOptions
-  let organizationId: string
   try {
     options = parseArgs(argv)
-    organizationId = resolveMigrationOrganizationId(options.organizationId)
   } catch (err) {
     console.error(`error: ${(err as Error).message}`)
     if (err instanceof UsageError) console.error(`\n${USAGE}`)
@@ -1295,11 +1260,10 @@ async function main(argv: string[]): Promise<void> {
       // Plan from the source alone first: this validates the whole source before the target is
       // touched, because connecting makes Mongoose create the collections and indexes, which bad
       // source data must not leave behind.
-      await migrateStoreDeveloperOrgs({source, organizationId, apply: false})
+      await migrateStoreDeveloperOrgs({source, apply: false})
       await mongoose.connect(options.target, {serverSelectionTimeoutMS: 10_000})
       report = await migrateStoreDeveloperOrgs({
         source,
-        organizationId,
         apply: true,
         log: message => console.error(message),
       })
@@ -1309,7 +1273,6 @@ async function main(argv: string[]): Promise<void> {
       report = await migrateStoreDeveloperOrgs({
         source,
         target: readOnlyTarget,
-        organizationId,
         apply: false,
         log: message => console.error(message),
       })
