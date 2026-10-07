@@ -445,6 +445,7 @@ for (const [stuckApp, sameImage, diagnosticsUnavailable, startupLog = "private-t
       .split("        run: |\n")[1]
       .split("          jq -e '.status")[0]
       .replace(/^          /gm, "")
+      .replace("source .github/scripts/azure-readiness-diagnostics.sh", readFileSync(new URL("./azure-readiness-diagnostics.sh", import.meta.url), "utf8").split('if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then')[0])
       .replace(/\$\{\{ steps\.source\.outputs\.(\w+) \}\}/g, (_, key) => ({
         acr_tag: "release-tag", source_digest: digest, image,
       })[key])
