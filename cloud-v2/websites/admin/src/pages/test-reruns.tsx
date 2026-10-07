@@ -1,5 +1,5 @@
-import {useState} from "react";
-import {useQuery, useQueryClient} from "@tanstack/react-query";
+import {useEffect, useState} from "react";
+import {keepPreviousData, useQuery, useQueryClient} from "@tanstack/react-query";
 import {api, ApiError} from "../lib/api";
 import type {RerunAttempt, RerunPlan} from "../../../../packages/core/src/types/test-rerun.types";
 import type {TestBuildSource} from "../../../../packages/core/src/types/test-build.types";
@@ -13,7 +13,7 @@ export const attemptHref = (attempt: RerunAttempt) => frameworkRunHref(attempt.r
 export function AttemptLine({attempt}: {attempt: RerunAttempt}) {
   const source = attempt.build?.source as TestBuildSource | undefined;
   return <p className="my-2 text-sm"><a className="underline" href={attemptHref(attempt)}>{attempt.attemptNumber === 0 ? "Original" : `Attempt ${attempt.attemptNumber}`} · {attempt.status}</a>
-    {attempt.status === "pass" && !attempt.publicationComplete && " · Evidence incomplete"}
+    {attempt.status === "pass" && !attempt.publicationComplete && " · Evidence pending"}
     {attempt.build && <> · App {attempt.build.headSha.slice(0,10)}{source && <> · Build {source.buildRunId}, publication {source.publicationAttempt}</>}</>}
     {!!attempt.build?.archive && <span className="block text-xs">Artifact {(attempt.build.archive as {sha256:string}).sha256.slice(0,12)}</span>}
     {attempt.definitionRevision && <> · Definition {attempt.definitionRevision.slice(0,10)}</>}
@@ -21,15 +21,28 @@ export function AttemptLine({attempt}: {attempt: RerunAttempt}) {
     {attempt.rerunId && <> · <a className="underline" href={`/?testRerun=${encodeURIComponent(attempt.rerunId)}`}>Rerun batch</a></>}
     {attempt.reason && <span className="block text-[#68746d]">{attempt.reason}</span>}</p>;
 }
+type AttemptHistoryData = {original:RerunAttempt;attempts:RerunAttempt[];nextBefore:number|null};
+export function AttemptHistoryView({page, before, error, loading, onOpen, onBefore, onRetry}: {
+  page?: AttemptHistoryData; before: number|null; error?: Error|null; loading: boolean;
+  onOpen:(open:boolean)=>void; onBefore:(before:number|null)=>void; onRetry:()=>void;
+}) {
+  const message = error && <p role="alert">History unavailable. <button onClick={onRetry}>Retry</button></p>;
+  if (before === null && (!page || !page.attempts.length)) return message || null;
+  return <details onToggle={event=>onOpen(event.currentTarget.open)}><summary className="cursor-pointer text-sm underline">Attempt history</summary>
+    {message}{loading && <p role="status">Loading attempts…</p>}
+    {page && <><AttemptLine attempt={page.original}/>{page.attempts.map(attempt=><AttemptLine key={attempt.attemptId} attempt={attempt}/>)}
+      {page.nextBefore && <button disabled={loading} onClick={()=>onBefore(page.nextBefore)}>Older attempts</button>}</>}
+    {before !== null && <button className="ml-3" onClick={()=>onBefore(null)}>Latest attempts</button>}
+  </details>;
+}
 export function AttemptHistory({suiteId, memberId, originalRequestId}: {suiteId?:string;memberId:string;originalRequestId?:string}) {
   const [open,setOpen]=useState(false), [before,setBefore]=useState<number | null>(null);
-  const history=useQuery({queryKey:["rerun-history",suiteId??originalRequestId,memberId,before],enabled:open,
-    queryFn:()=>api<{original:RerunAttempt;attempts:RerunAttempt[];nextBefore:number|null}>(`/api/admin/test-runs/reruns/${suiteId?`suite/${encodeURIComponent(suiteId)}/members/${encodeURIComponent(memberId)}`:`request/${encodeURIComponent(originalRequestId!)}`}/history${before ? `?before=${before}` : ""}`),refetchInterval:15000});
-  return <details onToggle={e=>setOpen(e.currentTarget.open)}><summary className="cursor-pointer text-sm underline">Attempt history</summary>
-    {history.error && <p role="alert">History unavailable. <button onClick={()=>history.refetch()}>Retry</button></p>}
-    {history.data && <><AttemptLine attempt={history.data.original}/>{history.data.attempts.map(a=><AttemptLine key={a.attemptId} attempt={a}/>)}
-      {history.data.nextBefore && <button onClick={()=>setBefore(history.data!.nextBefore)}>Older attempts</button>}
-      {before && <button className="ml-3" onClick={()=>setBefore(null)}>Latest attempts</button>}</>}</details>;
+  const [retainedPage,setRetainedPage]=useState<AttemptHistoryData>();
+  const history=useQuery({queryKey:["rerun-history",suiteId??originalRequestId,memberId,before],enabled:before === null || open,placeholderData:keepPreviousData,
+    queryFn:()=>api<AttemptHistoryData>(`/api/admin/test-runs/reruns/${suiteId?`suite/${encodeURIComponent(suiteId)}/members/${encodeURIComponent(memberId)}`:`request/${encodeURIComponent(originalRequestId!)}`}/history${before ? `?before=${before}` : ""}`),refetchInterval:15000});
+  useEffect(()=>{if(history.data && !history.isPlaceholderData) setRetainedPage(history.data);},[history.data,history.isPlaceholderData]);
+  return <AttemptHistoryView page={history.data ?? retainedPage} before={before} error={history.error} loading={history.isFetching}
+    onOpen={setOpen} onBefore={setBefore} onRetry={()=>history.refetch()}/>;
 }
 type Preview={rerunId:string;previewDigest:string;plan:RerunPlan;state:string};
 export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {suiteId?:string;originalRequestId?:string;memberIds:string[];onClose:()=>void}) {
@@ -87,7 +100,7 @@ export function TestRerunPage({rerunId}:{rerunId:string}) {
     finally{setReconciling(false);}
   }
   return <section className="rounded-2xl border bg-white p-6"><a className="underline" href={"suiteId" in value.parent?`/?testSuite=${encodeURIComponent(value.parent.suiteId)}`:frameworkRunHref(value.parent.requestId)}>Original {"suiteId" in value.parent?"suite":"test"}</a>
-    <h2 className="mt-3 text-xl font-bold">Linked rerun · {value.outcome}</h2><p>{value.passed}/{value.attempts.length} passed · {value.reason}</p>
+    <h2 className="mt-3 text-xl font-bold">Linked rerun · {value.outcome}</h2><p>{value.passed}/{value.attempts.length} passed with complete evidence · {value.reason}</p>
     <p className="text-sm">This verdict covers only these attempts. The original result is unchanged.</p>
     {value.attempts.some(a=>a.status==="admission-pending")&&<p><button className="underline" disabled={reconciling} onClick={reconcile}>{value.state==="preview"?"Submit recorded preview":"Reconcile pending admissions"}</button></p>}{reconcileMessage&&<p role="status">{reconcileMessage}</p>}
     {value.attempts.map(a=><div key={a.attemptId}><h3 className="mt-4 font-semibold">{a.memberId}</h3><AttemptLine attempt={a}/><AttemptHistory suiteId={"suiteId" in value.parent?value.parent.suiteId:undefined} originalRequestId={"requestId" in value.parent?value.parent.requestId:undefined} memberId={a.memberId}/></div>)}</section>;

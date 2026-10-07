@@ -374,7 +374,7 @@ function TestHistoryItem({entry}: {entry: TestHistoryEntry}) {
   </li>;
   if (entry.kind === "run") return <FrameworkRunListItem run={entry}/>;
   return <li className="rounded-lg border border-[#e0e4de] p-4">
-    <a className="font-semibold underline" href={`/?testSuite=${encodeURIComponent(entry.suiteId)}`}>{entry.channel} {entry.trigger} suite · {new Date(entry.startedAt).toLocaleString()}</a> · {entry.outcome} · {`${entry.passed}/${entry.expectedCount} passed${entry.skipped === undefined ? "" : `, ${entry.skipped} skipped`}`}
+    <a className="font-semibold underline" href={`/?testSuite=${encodeURIComponent(entry.suiteId)}`}>{entry.channel} {entry.trigger} suite · {new Date(entry.startedAt).toLocaleString()}</a> · {entry.outcome} · {`${entry.passed}/${entry.expectedCount} passed with complete evidence${entry.skipped === undefined ? "" : `, ${entry.skipped} skipped`}`}
     <p className="mt-1 text-sm">Suite <code>{entry.suiteId}</code>{entry.finishedAt ? ` · Finished ${new Date(entry.finishedAt).toLocaleString()}` : " · In progress"}</p>
     <p className="mt-1 text-sm"><BuildIdentity build={{...entry.build, channel: entry.channel}}/></p>
   </li>;
