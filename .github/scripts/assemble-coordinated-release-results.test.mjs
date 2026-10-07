@@ -1,25 +1,22 @@
 import assert from "node:assert/strict"
 import {createHash} from "node:crypto"
-import {mkdtempSync, writeFileSync} from "node:fs"
+import {mkdtempSync, rmSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 import {fileURLToPath} from "node:url"
 
 import {assembleCoordinatedReleaseResults} from "./assemble-coordinated-release-results.mjs"
+import {createPrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
+import {completedReleaseDownloads} from "./publish-coordinated-release-page.mjs"
+import {validateCoreReleaseHandoff} from "./load-coordinated-example-release.mjs"
+import {artifactUrl} from "./release-artifact-storage.mjs"
 import {cloudRecordForPlan} from "./coordinated-cloud-v2-test-helpers.mjs"
 import {runtimeImageRecordForPlan} from "./coordinated-runtime-image-test-helpers.mjs"
 import {createReleasePlan, familyBuildNumber, finalizeReleaseManifest, loadReleaseFamily} from "./release-family.mjs"
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const family = loadReleaseFamily({rootDir})
-const plan = createReleasePlan({
-  family,
-  channel: "beta",
-  sequence: 57,
-  sourceCommit: "a".repeat(40),
-  nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 57),
-})
 const provenanceUrl = "https://github.com/Mentra-Community/MentraOS/actions/runs/123"
 
 function publication(coordinate, sha256 = "b".repeat(64)) {
@@ -32,7 +29,7 @@ function publication(coordinate, sha256 = "b".repeat(64)) {
   }
 }
 
-function npmRecord(names) {
+function npmRecord(plan, names) {
   return {
     releaseSetId: plan.releaseSetId,
     publications: Object.fromEntries(
@@ -41,168 +38,207 @@ function npmRecord(names) {
   }
 }
 
-test("assembles every product target and finalizes one complete release manifest", () => {
-  const directory = mkdtempSync(path.join(tmpdir(), "coordinated-results-"))
-  const enginePackage = path.join(directory, plan.artifactNames.enginePackage)
-  const asgSelectionFile = path.join(directory, plan.artifactNames.asgSelection)
-  writeFileSync(enginePackage, "engine package")
-  const asgSelection = {
-    releaseSetId: plan.releaseSetId,
-    releaseIdentity: plan.releaseIdentity,
-    sourceCommit: plan.sourceCommit,
-    fingerprint: "f".repeat(64),
-    versionCode: 100057,
-    versionName: "asg.100057.ffffffffffff",
-    apk: {asset: "mentra-live-asg.apk", sha256: "e".repeat(64)},
-  }
-  writeFileSync(asgSelectionFile, JSON.stringify(asgSelection))
-  const selectionSha = createHash("sha256").update(JSON.stringify(asgSelection)).digest("hex")
-  const engineSha = createHash("sha256").update("engine package").digest("hex")
-  const npmRecordForFamily = npmRecord([
-    "@mentra/jspolyfill",
-    "@mentra/cloud-protocol",
-    "@mentra/crust",
-    "@mentra/glasses-media",
-    "@mentra/acs-meeting",
-    "@mentra/cloud-client",
-    "@mentra/bluetooth-sdk",
-    "@mentra/miniapp",
-    "@mentra/engine",
-  ])
-  npmRecordForFamily.publications["@mentra/engine"].npm = publication(
-    `@mentra/engine@${plan.releaseIdentity}`,
-    engineSha,
-  )
-  const npmRecords = [npmRecordForFamily]
-  const native = {
-    releaseSetId: plan.releaseSetId,
-    publications: {
-      "@mentra/bluetooth-sdk": {
-        "maven-central": {
-          ...publication(`com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`),
-          status: "submitted",
+for (const channel of ["beta", "dev"]) {
+  test(`assembles and finalizes a complete ${channel} release without the enterprise demo`, (t) => {
+    const plan = createReleasePlan({
+      family, channel, sequence: 57, sourceCommit: "a".repeat(40),
+      nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 57),
+    })
+    const directory = mkdtempSync(path.join(tmpdir(), "coordinated-results-"))
+    t.after(() => rmSync(directory, {recursive: true, force: true}))
+    const enginePackage = path.join(directory, plan.artifactNames.enginePackage)
+    const asgSelectionFile = path.join(directory, plan.artifactNames.asgSelection)
+    writeFileSync(enginePackage, "engine package")
+    const asgSelection = {
+      releaseSetId: plan.releaseSetId,
+      releaseIdentity: plan.releaseIdentity,
+      sourceCommit: plan.sourceCommit,
+      fingerprint: "f".repeat(64),
+      versionCode: 100057,
+      versionName: "asg.100057.ffffffffffff",
+      apk: {asset: "mentra-live-asg.apk", sha256: "e".repeat(64)},
+    }
+    writeFileSync(asgSelectionFile, JSON.stringify(asgSelection))
+    const selectionSha = createHash("sha256").update(JSON.stringify(asgSelection)).digest("hex")
+    const engineSha = createHash("sha256").update("engine package").digest("hex")
+    const npmRecordForFamily = npmRecord(plan, [
+      "@mentra/jspolyfill",
+      "@mentra/cloud-protocol",
+      "@mentra/crust",
+      "@mentra/glasses-media",
+      "@mentra/acs-meeting",
+      "@mentra/cloud-client",
+      "@mentra/bluetooth-sdk",
+      "@mentra/miniapp",
+      "@mentra/engine",
+    ])
+    npmRecordForFamily.publications["@mentra/engine"].npm = publication(
+      `@mentra/engine@${plan.releaseIdentity}`,
+      engineSha,
+    )
+    const npmRecords = [npmRecordForFamily]
+    const native = {
+      releaseSetId: plan.releaseSetId,
+      publications: {
+        "@mentra/bluetooth-sdk": {
+          "maven-central": {
+            ...publication(`com.mentraglass:bluetooth-sdk:${plan.releaseIdentity}`),
+            status: "submitted",
+          },
+          "swift-package-manager": publication(`Mentra-Community/mentra-bluetooth-sdk-ios@${plan.releaseIdentity}`),
         },
-        "swift-package-manager": publication(`Mentra-Community/mentra-bluetooth-sdk-ios@${plan.releaseIdentity}`),
       },
-    },
-    artifacts: [publication(`com.mentraglass:lc3Lib:${plan.releaseIdentity}`)],
-  }
-  const mobile = {
-    releaseSetId: plan.releaseSetId,
-    publications: {
-      mentraos: {
-        "google-play": publication(`com.mentra.mentra:${plan.native.buildNumber}:beta`),
-        "app-store-connect": publication(
-          `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:Mentra Staging`,
-        ),
+      artifacts: [publication(`com.mentraglass:lc3Lib:${plan.releaseIdentity}`)],
+    }
+    const mobile = {
+      releaseSetId: plan.releaseSetId,
+      publications: {
+        mentraos: {
+          "google-play": publication(`com.mentra.mentra:${plan.native.buildNumber}:${plan.native.playTrack}`),
+          "app-store-connect": publication(
+            `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${channel === "dev" ? "Mentra Dev" : "Mentra Staging"}`,
+          ),
+        },
       },
-    },
-    artifacts: [
-      publication(plan.artifactNames.androidApp),
-      publication(plan.artifactNames.androidStoreApp),
-      publication(plan.artifactNames.iosApp),
-    ],
-  }
-  const ota = {
-    releaseSetId: plan.releaseSetId,
-    releaseIdentity: plan.releaseIdentity,
-    sourceCommit: plan.sourceCommit,
-    selection: {
-      status: "published",
-      asset: plan.artifactNames.asgSelection,
-      url: "https://example.com/asg-selection.json",
-      sha256: selectionSha,
-      size: Buffer.byteLength(JSON.stringify(asgSelection)),
-    },
-    manifest: {
-      status: "published",
-      asset: plan.artifactNames.otaManifest,
-      url: "https://example.com/ota.json",
-      sha256: "c".repeat(64),
-      size: 100,
-    },
-    bundle: {
-      status: "published",
-      asset: plan.artifactNames.otaBundle,
-      url: "https://example.com/ota.zip",
-      sha256: "d".repeat(64),
-      size: 200,
-    },
-    asg: {
-      fingerprint: asgSelection.fingerprint,
-      versionCode: asgSelection.versionCode,
-      versionName: asgSelection.versionName,
-      reused: false,
-      artifact: {
-        asset: "mentra-live-asg.apk",
-        url: "https://example.com/asg.apk",
-        sha256: "e".repeat(64),
-        size: 300,
-        signingCertificateSha256: "f".repeat(64),
+      artifacts: [
+        publication(plan.artifactNames.androidApp),
+        publication(plan.artifactNames.androidStoreApp),
+        publication(plan.artifactNames.iosApp),
+      ],
+    }
+    const ota = {
+      releaseSetId: plan.releaseSetId,
+      releaseIdentity: plan.releaseIdentity,
+      sourceCommit: plan.sourceCommit,
+      selection: {
+        status: "published",
+        asset: plan.artifactNames.asgSelection,
+        url: "https://example.com/asg-selection.json",
+        sha256: selectionSha,
+        size: Buffer.byteLength(JSON.stringify(asgSelection)),
       },
-    },
-    workflow: {repository: "Mentra-Community/MentraOS", runId: "123"},
-  }
-  const runtimeImage = runtimeImageRecordForPlan(plan)
+      manifest: {
+        status: "published",
+        asset: plan.artifactNames.otaManifest,
+        url: artifactUrl("Mentra-Community/MentraOS", plan.artifactContainerTag, plan.artifactNames.otaManifest),
+        sha256: "c".repeat(64),
+        size: 100,
+      },
+      bundle: {
+        status: "published",
+        asset: plan.artifactNames.otaBundle,
+        url: "https://example.com/ota.zip",
+        sha256: "d".repeat(64),
+        size: 200,
+      },
+      asg: {
+        fingerprint: asgSelection.fingerprint,
+        versionCode: asgSelection.versionCode,
+        versionName: asgSelection.versionName,
+        reused: false,
+        artifact: {
+          asset: "mentra-live-asg.apk",
+          url: "https://example.com/asg.apk",
+          sha256: "e".repeat(64),
+          size: 300,
+          signingCertificateSha256: "f".repeat(64),
+        },
+      },
+      workflow: {repository: "Mentra-Community/MentraOS", runId: "123"},
+    }
+    const runtimeImage = runtimeImageRecordForPlan(plan)
 
-  const results = assembleCoordinatedReleaseResults({
-    plan,
-    ota,
-    npmRecords,
-    native,
-    mobile,
-    cloud: cloudRecordForPlan(plan),
-    runtimeImage,
-    asgSelectionFile,
-    enginePackage,
-    releaseAssetBaseUrl: "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0",
+    const results = assembleCoordinatedReleaseResults({
+      plan,
+      ota,
+      npmRecords,
+      native,
+      mobile,
+      cloud: cloudRecordForPlan(plan),
+      runtimeImage,
+      asgSelectionFile,
+      enginePackage,
+      releaseAssetBaseUrl: "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0",
+    })
+    const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-08-25T02:00:00.000Z"})
+    for (const field of ["cloud", "runtimeImage", "otaManifest"]) {
+      assert.throws(() => finalizeReleaseManifest({
+        plan, results: {...results, [field]: undefined}, completedAt: "2026-08-25T02:00:00.000Z",
+      }))
+    }
+
+    assert.equal(Object.keys(manifest.publications).length, 10)
+    assert.equal(manifest.publications["@mentra/bluetooth-sdk"]["maven-central"].status, "submitted")
+    assert.equal(manifest.publications.mentraos["app-store-connect"].status, "published")
+    assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
+    assert.equal(manifest.cloud.environment, channel === "dev" ? "dev" : "staging")
+    assert.equal(manifest.privateDeployment, undefined)
+    if (channel === "dev") {
+      const workspaceOrigin = "https://mentra.acmeworkspace.com"
+      const coreHostname = "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
+      const coreOrigin = `https://${coreHostname}`
+      const privateDeployment = createPrivateDeploymentRecord({
+        plan, sourceCommit: plan.sourceCommit, requestedTag: plan.sourceCommit, status: "deployed",
+        sourceImage: runtimeImage.image, sourceImageDigest: runtimeImage.digest,
+        image: `mentraenterpriseref.azurecr.io/mentra-cloud-enterprise@${runtimeImage.digest}`,
+        imageDigest: runtimeImage.digest,
+        revision: "ca-mentra-enterprise-reference--0000057", coreRevision: "ca-mentra-ent-ref-core--0000057",
+        workspaceOrigin, coreHostname, coreOrigin,
+        checks: [workspaceOrigin, coreOrigin].flatMap(origin =>
+          ["healthz", "ready"].map(probe => ({url: `${origin}/${probe}`, ready: true, statusCode: 200}))),
+        completedAt: "2026-08-25T01:59:00.000Z", provenanceUrl,
+      })
+      const archived = finalizeReleaseManifest({plan, results: {...results, privateDeployment}, completedAt: manifest.completedAt})
+      assert.deepEqual(finalizeReleaseManifest({plan, results: archived, completedAt: archived.completedAt}), archived)
+      assert.equal(completedReleaseDownloads(plan, archived).apk.coordinate, plan.artifactNames.androidApp)
+      assert.equal(validateCoreReleaseHandoff({plan, manifest: archived, run: {head_sha: plan.sourceCommit},
+        selection: {identity: plan.releaseIdentity, channel: "dev", planName: `coordinated-release-plan-${plan.releaseSetId}`},
+        repository: "Mentra-Community/MentraOS"}).source_commit, plan.sourceCommit)
+      assert.throws(() => finalizeReleaseManifest({plan, results: {...archived,
+        privateDeployment: {...privateDeployment, sourceCommit: "0".repeat(40)}}, completedAt: archived.completedAt}),
+        /do not match a dev release plan/)
+    }
+    assert.equal(manifest.runtimeImage.digest, runtimeImage.digest)
+    // The Mentra beta is complete without any Starter Kit or example evidence;
+    // the Bluetooth example is finalized separately (example-release-records).
+    assert.equal(manifest.starterKit, undefined)
+    assert.equal(manifest.exampleTestflight, undefined)
+    assert.equal(manifest.artifacts.at(-1).coordinate, plan.artifactNames.enginePackage)
+
+    assert.throws(
+      () =>
+        assembleCoordinatedReleaseResults({
+          plan,
+          ota,
+          npmRecords: [...npmRecords, npmRecords[0]],
+          native,
+          mobile,
+          cloud: cloudRecordForPlan(plan),
+          runtimeImage,
+          asgSelectionFile,
+          enginePackage,
+          releaseAssetBaseUrl: "https://example.com/release",
+        }),
+      /Duplicate publication record/,
+    )
+
+    writeFileSync(asgSelectionFile, `${JSON.stringify(asgSelection)}\n`)
+    assert.throws(
+      () =>
+        assembleCoordinatedReleaseResults({
+          plan,
+          ota,
+          npmRecords,
+          native,
+          mobile,
+          cloud: cloudRecordForPlan(plan),
+          runtimeImage,
+          asgSelectionFile,
+          enginePackage,
+          releaseAssetBaseUrl: "https://example.com/release",
+        }),
+      /selection file differs/,
+    )
   })
-  const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-08-25T02:00:00.000Z"})
 
-  assert.equal(Object.keys(manifest.publications).length, 10)
-  assert.equal(manifest.publications["@mentra/bluetooth-sdk"]["maven-central"].status, "submitted")
-  assert.equal(manifest.publications.mentraos["app-store-connect"].status, "published")
-  assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
-  assert.equal(manifest.cloud.environment, "staging")
-  assert.equal(manifest.runtimeImage.digest, runtimeImage.digest)
-  // The Mentra beta is complete without any Starter Kit or example evidence;
-  // the Bluetooth example is finalized separately (example-release-records).
-  assert.equal(manifest.starterKit, undefined)
-  assert.equal(manifest.exampleTestflight, undefined)
-  assert.equal(manifest.artifacts.at(-1).coordinate, plan.artifactNames.enginePackage)
-
-  assert.throws(
-    () =>
-      assembleCoordinatedReleaseResults({
-        plan,
-        ota,
-        npmRecords: [...npmRecords, npmRecords[0]],
-        native,
-        mobile,
-        cloud: cloudRecordForPlan(plan),
-        runtimeImage,
-        asgSelectionFile,
-        enginePackage,
-        releaseAssetBaseUrl: "https://example.com/release",
-      }),
-    /Duplicate publication record/,
-  )
-
-  writeFileSync(asgSelectionFile, `${JSON.stringify(asgSelection)}\n`)
-  assert.throws(
-    () =>
-      assembleCoordinatedReleaseResults({
-        plan,
-        ota,
-        npmRecords,
-        native,
-        mobile,
-        cloud: cloudRecordForPlan(plan),
-        runtimeImage,
-        asgSelectionFile,
-        enginePackage,
-        releaseAssetBaseUrl: "https://example.com/release",
-      }),
-    /selection file differs/,
-  )
-})
+}

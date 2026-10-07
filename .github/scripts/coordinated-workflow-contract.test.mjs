@@ -347,7 +347,7 @@ test("Cloud V2 readiness gates mobile compilation and publication", () => {
   }
 })
 
-test("Private Deployment is release-matched and recorded by the dev coordinator", () => {
+test("Private Deployment remains release-matched without gating the dev release", () => {
   const coordinator = workflow("coordinated-release.yml")
   const runtimeImage = workflow("reusable-coordinated-runtime-image.yml")
   const privateDeployment = workflow("private-deployment-dev.yml")
@@ -421,10 +421,9 @@ test("Private Deployment is release-matched and recorded by the dev coordinator"
   assert.match(privateDeployment, /displayName:\{value:\$reference\[0\]\.displayName\}/)
   assert.match(privateDeployment, /az acr manifest show-metadata/)
   assert.match(privateDeployment, /latestReadyRevisionName/)
-  assert.match(finalize, /needs\.private-deployment\.result == 'success'/)
+  assert.doesNotMatch(finalize, /private-deployment|privateDeployment/)
   assert.match(finalize, /needs\.runtime-image\.result == 'success'/)
   assert.match(finalize, /--runtime-image release-input\/runtime-image\/runtime-image-publication\.json/)
-  assert.match(finalize, /--private-deployment release-input\/private-deployment\/private-deployment\.json/)
   assert.match(notify, /PRIVATE_DEPLOYMENT_RESULT: \$\{\{ needs\.private-deployment\.result \}\}/)
   assert.match(notify, /RUNTIME_IMAGE_RESULT: \$\{\{ needs\.runtime-image\.result \}\}/)
 })
@@ -714,7 +713,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   // finalized as a separate record, so it can never make the beta incomplete.
   assert.match(
     finalize,
-    /^    needs: \[plan, cloud-v2, runtime-image, private-deployment, ota, npm, sdk-native, mobile, engine-consumer\]$/m,
+    /^    needs: \[plan, cloud-v2, runtime-image, ota, npm, sdk-native, mobile, engine-consumer\]$/m,
   )
   assert.doesNotMatch(finalize, /starter-kit|example-testflight|example-google-play/)
   assert.match(starterKitJob, /^    needs: plan$/m)
