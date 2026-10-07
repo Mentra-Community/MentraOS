@@ -33,14 +33,18 @@ jobs:
       - name: Reject deployment source overrides
         run: node .github/scripts/porter-doppler-source.mjs
   check:
+    # Only reviewed default-branch code may receive the Porter credential.
+    # Pull requests run the uncredentialed tests/source guard above.
     needs: test
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - uses: actions/setup-node@v4
         with:
           node-version: "24"

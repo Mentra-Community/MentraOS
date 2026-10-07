@@ -2,7 +2,7 @@
 
 Doppler owns application secrets and settings. Porter apps attach only their direct Doppler environment group. Do not use `porter env set`, app-level `env`, or GitHub secret bundles to mirror application configuration. Porter v2 ignores service-level `env`; it must not be used to configure applications either. Listening ports, resource limits, domains, and deployment commands remain in Porter YAML. Porter also retains the scoped integration credential and platform-generated environment variables.
 
-The complete managed-app inventory is in [doppler-porter-contract.json](../../../../.github/production-release/doppler-porter-contract.json). Kubernetes sync health, linked groups, and app overrides are checked hourly and on relevant pull requests by the Doppler Porter health workflow. Run the same read-only check locally:
+The complete managed-app inventory is in [doppler-porter-contract.json](../../../../.github/production-release/doppler-porter-contract.json). Kubernetes sync health, linked groups, and app overrides are checked hourly by the Doppler Porter health workflow using reviewed default-branch code. Pull requests run tests and the deployment source guard without credentials; manual live audit runs are allowed only on the default branch. Run the same read-only check locally:
 
 ```bash
 node .github/scripts/porter-doppler-health.mjs
@@ -20,10 +20,10 @@ Always specify project 15081 and the intended cluster: 5690 (legacy east), 5692 
 | cloud-staging                                         | staging                      | cloud-v2-staging-doppler     |
 | cloud-debug                                           | dev_debug                    | cloud-v2-debug-doppler       |
 | cloud-isaiah                                          | dev_isaiah                   | cloud-v2-isaiah-doppler      |
-| legacy cloud-v2 east (prepared; cutover blocked)      | legacy_east                  | cloud-v2-legacy-east-doppler |
+| legacy cloud-v2 east (retired; zero replicas)         | legacy_east                  | cloud-v2-legacy-east-doppler |
 | Miniapp Store (historical app name miniapp-store-dev) | store_prod                   | miniapp-store-prod-doppler   |
 
-Store is production despite its historical `dev` resource names. Its isolated Doppler environment preserves its existing production database, storage, auth, and URLs. Do not copy the main cloud config into it. Legacy east has different regional/database/auth settings. Its isolated config and native group are prepared, but its pre-existing invalid Mongo/Redis settings prevent startup and Porter automatically restores its old manual group. Repair or retirement needs an ownership decision; it is explicitly excluded from the migrated-app contract until then. The contract also documents the unused, failing `peg-merge-prod-doppler` AWS resources, whose deletion requires a Porter administrator.
+Store is production despite its historical `dev` resource names. Its isolated Doppler environment preserves its existing production database, storage, auth, and URLs. Do not copy the main cloud config into it. Legacy east has different regional/database/auth settings. Its application services were retired at the owner’s request: both have zero replicas, and their existing settings and image are preserved with the native Doppler group attached. The separate database infrastructure was preserved. Repair its invalid Mongo/Redis settings before any restart; configuration ownership is still monitored while the app is stopped. The contract also documents the unused, failing `peg-merge-prod-doppler` AWS resources, whose deletion requires a Porter administrator.
 
 Enterprise has a separate `mentra-enterprise/prd` project/config. Intentionally shared Merge credentials use Doppler references to `local-merge/prd`, so future shared rotations propagate without duplicating those values. App-specific settings belong to Enterprise.
 

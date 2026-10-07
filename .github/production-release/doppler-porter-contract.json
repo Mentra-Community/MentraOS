@@ -134,6 +134,11 @@
       "name": "livestreamer-miniapp-prod",
       "cluster": 5783,
       "groups": ["livestreamer-prod"]
+    },
+    {
+      "name": "cloud-v2",
+      "cluster": 5690,
+      "groups": ["cloud-v2-legacy-east-doppler"]
     }
   ],
   "groups": [
@@ -1228,14 +1233,18 @@
   ],
   "exceptions": [
     {
-      "app": "cloud-v2",
-      "cluster": 5690,
-      "reason": "Legacy east app already fails Mongo/Redis startup. Doppler config legacy_east and native group are prepared, but Porter automatically restores the old manual group after the failed rollout. Preserve until its owner chooses repair or retirement."
-    },
-    {
       "resource": "peg-merge-prod-doppler",
       "clusters": [5690, 5692, 5783],
       "reason": "Unused legacy AWS-backed resources refer to a nonexistent provider secret, absent from the current Porter cloud-group inventory. No deployment/statefulset/daemonset/job/cronjob/pod consumers found. Kubernetes role cannot delete them; Porter administrator cleanup required."
+    }
+  ],
+  "retiredApps": [
+    {
+      "name": "cloud-v2",
+      "cluster": 5690,
+      "services": ["audio", "core"],
+      "replicas": 0,
+      "reason": "Pre-existing failed startup; retired at the owner request on 2026-10-07. Existing image and settings preserved in cloud-v2/legacy_east. Repair Mongo/Redis configuration before any restart."
     }
   ]
 }
