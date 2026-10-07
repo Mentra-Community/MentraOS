@@ -2,12 +2,21 @@ import {Schema} from "mongoose";
 import {registerModel} from "./register-model";
 
 /** Cloud admission only. Resource ownership lives in the host controller. */
+function executableInputRequired(this: {state?: string; preparationCancellation?: unknown; preparationRejection?: unknown}) {
+  return this.state !== 'preparing' && !this.preparationCancellation && !this.preparationRejection;
+}
 const schema = new Schema({
   requestId: {type: String, required: true, unique: true},
-  inputSha256: {type: String, required: true, immutable: true},
-  input: {type: Schema.Types.Mixed, required: true, immutable: true},
+  inputSha256: {type: String, required: executableInputRequired, immutable: true},
+  input: {type: Schema.Types.Mixed, required: executableInputRequired, immutable: true},
+  dispatchIntent: {type: Schema.Types.Mixed, immutable: true},
+  dispatchIntentSha256: {type: String, immutable: true},
+  preparation: {type: Schema.Types.Mixed},
+  preparationCancellation: {type: Schema.Types.Mixed},
+  preparationRejection: {type: Schema.Types.Mixed},
+  preparationCheckedAt: {type: Date},
   hostId: {type: String, required: true, immutable: true},
-  state: {type: String, required: true, enum: ["queued", "accepted", "running", "terminal"]},
+  state: {type: String, required: true, enum: ["preparing", "queued", "accepted", "running", "terminal"]},
   hostReceipt: {type: Schema.Types.Mixed},
   hostRejection: {type: Schema.Types.Mixed},
   hostCancellation: {type: Schema.Types.Mixed},

@@ -1,6 +1,6 @@
 import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {expect, spyOn, test} from "bun:test";
-import {NightlyRoutineService, nightlyPlanRepository, type NightlyPlan, type NightlyResult, type NightlyPlanRepository} from "./nightly-routine.service";
+import {NightlyRoutineService as ActualNightlyRoutineService, nightlyPlanRepository, type NightlyPlan, type NightlyResult, type NightlyPlanRepository} from "./nightly-routine.service";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRequestModel} from "../models/test-request.model";
 import type {RoutineCatalogService} from "./routine-catalog.service";
@@ -9,9 +9,24 @@ import type {TestBuild} from "../types/test-build.types";
 import type {ReceivedTestHostState} from "./test-host-state.service";
 import {TestRunError} from "./test-result-error";
 import {TestSuiteService} from "./test-suite.service";
-import {requestInputDigest, TestRequestService, type StoredTestRequest, type TestRequestRepository} from "./test-request.service";
+import {requestInputDigest, TestRequestService, type StoredRequest, type StoredPreparingRequest, type TestRequestRepository} from "./test-request.service";
+import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
 import {TestDispatchError} from "./test-builds.service";
 
+const mainRevision = "7".repeat(40);
+class NightlyRoutineService extends ActualNightlyRoutineService {
+  constructor(...args: ConstructorParameters<typeof ActualNightlyRoutineService>) {
+    args[9] ??= {async resolve() {return mainRevision;}};
+    super(...args);
+  }
+}
+function preparedRequest(hostId: string, intent: any) {
+  const input = {routineId: intent.routineId, platform: intent.platform, definitionRevision: intent.routineRevision,
+    routineSource: testRoutineSource(intent.routineRevision), laneId: intent.laneId, build: intent.build,
+    resources: [{id: `app:${intent.platform}`, kind: "app"}]};
+  return {requestId: intent.requestId, hostId, dispatchIntent: intent, dispatchIntentSha256: requestInputDigest(intent),
+    input, inputSha256: requestInputDigest(input), state: "queued"};
+}
 const startedAt = "2026-10-03T11:00:00Z", now = Date.parse(startedAt);
 const occurrence = {occurrenceId: "schedule:2026-10-03", startedAt, trigger: "nightly" as const};
 function row(id: string, platform: "android" | "ios-on-mac", nightlyEnabled = true) {
@@ -54,7 +69,7 @@ function fixture(
   repository?: NightlyPlanRepository,
 ) {
   let catalog = initial, plan: NightlyPlan | null = null, finished: NightlyResult | null = null, reads = 0;
-  let failId: string | undefined, cancelFailId: string | undefined, clock = now;
+  let failId: string | undefined, cancelFailId: string | undefined, clock = now, selectedMain = mainRevision, sourceReads = 0, autoPrepare = true;
   const admitted: {requestId: string; hostId: string; input: any}[] = [];
   const cancelled: string[] = [], buildReads: string[] = [];
   const completionEvents: string[] = [];
@@ -66,28 +81,35 @@ function fixture(
     {async latestDev(platform, before) {buildReads.push("latest:" + platform); expect(before).toBe(startedAt); return build(platform);},
       async resolve(source, platform) {buildReads.push("resolve:" + platform); expect(source).toEqual(build(platform).source); return build(platform);}},
     {async get(id) {expect(id).toBe("mini"); return host;}},
-    {async cancelSubmission(id) {completionEvents.push("cancel:" + id); cancelled.push(id); if (id === cancelFailId) throw new TestRunError(503, "Cancellation storage unavailable."); return {} as any;}, async get(id) {if (requestErrors.has(id)) throw requestErrors.get(id)!; return requestRows.get(id) ?? null;}, async submit(requestId, hostId, input) {if (requestId === failId) throw new Error("queue unavailable"); admitted.push({requestId, hostId, input}); requestRows.set(requestId, {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "queued"}); return {} as any;}},
+    {async cancelPreparationSubmission(id) {completionEvents.push("cancel:" + id); cancelled.push(id); if (id === cancelFailId) throw new TestRunError(503, "Cancellation storage unavailable."); return {} as any;}, async get(id) {if (requestErrors.has(id)) throw requestErrors.get(id)!; return requestRows.get(id) ?? null;}, async prepare(hostId, value) {const input = routineDispatchIntentSchema.parse(value), requestId = input.requestId; if (requestId === failId) throw new Error("queue unavailable"); admitted.push({requestId, hostId, input});
+      const request = autoPrepare ? preparedRequest(hostId, input) : {requestId, hostId, dispatchIntent: input, dispatchIntentSha256: requestInputDigest(input), state: "preparing"};
+      requestRows.set(requestId, request); return request as any;}},
     repository ?? {async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return finished;}, async finish(_id, result) {finished ??= result; return finished;}},
     () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
     {async summary(id) {completionEvents.push("evidence:" + id); const result = resultRows.get(id); if (typeof result === "function") return result(); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, "missing"); return result;}},
     () => clock,
+    undefined,
+    {async resolve() {sourceReads++; return selectedMain;}},
   )
-  return {service, admitted, cancelled, completionEvents, buildReads, resultRows, requestRows, requestErrors, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}, set cancelFailId(value: string | undefined) {cancelFailId = value;}};
+  return {service, admitted, get sourceReads() {return sourceReads;}, set main(value: string) {selectedMain = value;}, set autoPrepare(value: boolean) {autoPrepare = value;}, cancelled, completionEvents, buildReads, resultRows, requestRows, requestErrors, get plan() {return plan!;}, get reads() {return reads;}, set clock(value: number) {clock = value;}, set catalog(next: typeof initial) {catalog = next;}, set failId(value: string | undefined) {failId = value;}, set cancelFailId(value: string | undefined) {cancelFailId = value;}};
 }
-test("nightly freezes the entire enabled catalog, arbitrary IDs and exact current definitions/artifacts", async () => {
+test("nightly pins fresh main for every enabled routine and freezes exact app artifacts", async () => {
   const state = fixture(), result = await state.service.start(occurrence);
   expect(result.plan.members.map(row => row.routineId)).toEqual(["a-new-routine", "different.routine"]);
   expect(state.admitted).toHaveLength(2);
   expect(state.admitted[0]!.input.build.kind).toBe("android-apk");
   expect(state.admitted[0]!.input.build.source).toEqual({channel: "dev", buildRunId: 21, publicationAttempt: 2});
-  expect(result.plan.suite!.members[0]!.definitionRevision).toBe("a".repeat(40));
+  expect(result.plan.suite!.members[0]!.definitionRevision).toBe(mainRevision);
   expect(result.plan.publication).toEqual({source: {channel: "dev", buildRunId: 21, publicationAttempt: 2}, headSha: "e".repeat(40)});
   expect(state.buildReads).toEqual(["latest:android", "resolve:ios-on-mac"]);
-  expect(result.plan.members.every(member => member.input!.build.headSha === "e".repeat(40))).toBe(true);
+  expect(result.plan.members.every(member => member.dispatchIntent!.build.headSha === "e".repeat(40))).toBe(true);
+  expect(result.plan.members.every(member => member.routineRevision === mainRevision && !("routineSource" in member) && !("input" in member))).toBe(true);
+  state.main = "8".repeat(40);
   state.catalog = [row("later-routine", "android")];
   const retry = await state.service.start(occurrence);
   expect(retry.plan).toEqual(result.plan);
   expect(state.reads).toBe(1);
+  expect(state.sourceReads).toBe(1);
   expect(state.admitted[2]).toEqual(state.admitted[0]);
   await expect(state.service.start({...occurrence, startedAt: "2026-10-03T12:00:00Z"})).rejects.toThrow("changed");
 });
@@ -119,7 +141,7 @@ test("a missing platform binding retains its expected member and never creates a
   let plan: NightlyPlan | null = null;
   const service = new NightlyRoutineService({async list() {return [row("unbound-routine", "android")];}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}}, {async get() {throw new Error("must not look up an unbound fleet");}},
-    {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit() {throw new Error("must not submit");}},
+    {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare() {throw new Error("must not submit");}},
     {async get() {return plan;}, async freeze(next) {plan = next; return next;}, async completed() {return null;}, async finish(_id, value) {return value;}},
     () => ({}), undefined, () => now);
   const result = await service.start(occurrence);
@@ -134,11 +156,11 @@ test("result matching refuses changed artifact/source identity and terminal rece
   const state = fixture([row("single-routine", "android")]);
   const {plan} = await state.service.start(occurrence), member = plan.members[0]!;
   state.resultRows.set(member.requestId, {routineId: member.routineId, platform: member.platform, definitionRevision: member.definitionRevision,
-    hostId: member.hostId, laneId: member.input!.laneId, build: {...member.input!.build, source: {channel: "dev", buildRunId: 22, publicationAttempt: 2}}, runId: member.requestId,
+    hostId: member.hostId, laneId: member.dispatchIntent!.laneId, build: {...member.dispatchIntent!.build, source: {channel: "dev", buildRunId: 22, publicationAttempt: 2}}, runId: member.requestId,
     outcome: "pass", uploadsComplete: true, evidenceStatus: "complete"});
   expect((await state.service.detail(occurrence.occurrenceId)).status).toBe("incomplete");
   const final = await state.service.complete(occurrence.occurrenceId);
-  state.resultRows.get(member.requestId).build = member.input!.build;
+  state.resultRows.get(member.requestId).build = member.dispatchIntent!.build;
   expect(await state.service.detail(occurrence.occurrenceId)).toEqual(final);
   expect(final.resultUrl).toContain("testRun=");
   expect(final.resultUrl).not.toContain("testSuite=");
@@ -148,13 +170,13 @@ test("nightly summary keeps every frozen identity and complete build field in it
   const state = fixture([row("single-routine", "android")]);
   const {plan} = await state.service.start(occurrence), member = plan.members[0]!;
   const valid = publishedResult(member, true);
-  for (const field of ["routineId", "platform", "definitionRevision", "hostId", "laneId"] as const) {
+  for (const field of ["requestId", "routineId", "platform", "definitionRevision", "hostId", "laneId"] as const) {
     state.resultRows.set(member.requestId, {...valid, [field]: "foreign"});
     expect((await state.service.detail(occurrence.occurrenceId)).members[0]).toMatchObject({status: "incomplete", publicationComplete: false,
       unavailableReason: "Result identity differs from the frozen request."});
   }
-  for (const build of [{...member.input!.build, archive: {sha256: "2".repeat(64)}},
-    {...member.input!.build, source: {channel: "dev", buildRunId: 21, publicationAttempt: 99}}]) {
+  for (const build of [{...member.dispatchIntent!.build, archive: {sha256: "2".repeat(64)}},
+    {...member.dispatchIntent!.build, source: {channel: "dev", buildRunId: 21, publicationAttempt: 99}}]) {
     state.resultRows.set(member.requestId, {...valid, build});
     expect((await state.service.detail(occurrence.occurrenceId)).status).toBe("incomplete");
   }
@@ -235,8 +257,8 @@ test("an empty enabled catalog freezes a skipped occurrence without advertising 
 test("nightly preserves a host's precise rejected-member reason without inventing a run or a pass", async () => {
   const state = fixture([row("rejected-routine", "android")]), {plan} = await state.service.start(occurrence), member = plan.members[0]!;
   const {requestInputDigest} = await import("./test-request.service");
-  const inputSha256 = requestInputDigest(member.input);
-  state.requestRows.set(member.requestId, {hostId: member.hostId, inputSha256, hostRejection: {requestId: member.requestId,
+  const prepared = preparedRequest(member.hostId!, member.dispatchIntent), inputSha256 = prepared.inputSha256;
+  state.requestRows.set(member.requestId, {...prepared, state: "terminal", terminalStatus: "not-run", hostRejection: {requestId: member.requestId,
     hostId: member.hostId, inputSha256, rejectedAt: startedAt, code: "missing-definition", reason: "The requested source is not installed."}});
   const detail = await state.service.detail(occurrence.occurrenceId);
   expect(detail).toMatchObject({status: "incomplete", expectedCount: 1, passed: 0});
@@ -314,8 +336,8 @@ test("an admission completing across the deadline is cancelled through the ordin
   const cancelled: string[] = [];
   const service = new NightlyRoutineService({async list() {return [row("late-product", "android")];}} as any,
     {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
-    {async get() {return host;}}, {async get() {return null;}, async submit() {clock = now + 3 * 3600_000; return {} as any;},
-      async cancelSubmission(id) {cancelled.push(id); return {} as any;}},
+    {async get() {return host;}}, {async get() {return null;}, async prepare() {clock = now + 3 * 3600_000; return {} as any;},
+      async cancelPreparationSubmission(id) {cancelled.push(id); return {} as any;}},
     {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
     () => ({android: {hostId: "mini", laneId: "android"}}), undefined, () => clock);
   const {plan} = await service.start(occurrence);
@@ -324,16 +346,17 @@ test("an admission completing across the deadline is cancelled through the ordin
 
 test("deadline fences a concurrent uncertain admission before completion and across service restart", async () => {
   for (const insertFirst of [false, true]) {
-    const rows = new Map<string, StoredTestRequest>();
+    const rows = new Map<string, StoredRequest>();
     let release!: () => void, entered!: () => void;
     const paused = new Promise<void>(resolve => {release = resolve;}), inserting = new Promise<void>(resolve => {entered = resolve;});
-    const commit = (request: StoredTestRequest) => {
+    const commit = (request: StoredPreparingRequest) => {
       if (rows.has(request.requestId)) throw Object.assign(new Error("duplicate"), {code: 11000});
       rows.set(request.requestId, structuredClone(request));
     };
     const requestRepository: TestRequestRepository = {
-      async insert(request) {
-        if (request.state === "queued") {
+      async insert() {throw new Error("Must not insert executable input before host preparation");},
+      async insertPreparation(request) {
+        if (request.state === "preparing") {
           if (insertFirst) commit(request);
           entered();
           await paused;
@@ -343,14 +366,15 @@ test("deadline fences a concurrent uncertain admission before completion and acr
         commit(request);
       },
       async get(id) {return structuredClone(rows.get(id) ?? null);},
-      async cancel(receipt) {
-        const request = rows.get(receipt.requestId);
-        if (!request || request.hostCancellation || request.state === "terminal") return null;
-        if (request.state === "queued") {request.state = "terminal"; request.terminalStatus = "cancelled";}
-        request.hostCancellation = structuredClone(receipt);
+      async cancelPreparation(id, digest, value) {
+        const request = rows.get(id);
+        if (!request || request.dispatchIntentSha256 !== digest || request.state !== "preparing") return null;
+        request.state = "terminal"; request.terminalStatus = "cancelled";
+        (request as StoredPreparingRequest).preparationCancellation = value;
         return structuredClone(request);
       },
-      async queued(hostId) {return [...rows.values()].filter(request => request.hostId === hostId && request.state === "queued");},
+      async cancel() {throw new Error("No executable input exists");},
+      async queued() {return [];}, async preparations(hostId) {return [...rows.values()].filter(request => request.hostId === hostId && request.state === "preparing") as StoredPreparingRequest[];},
       async accept() {throw new Error("unused acceptance");}, async reject() {throw new Error("unused rejection");},
       async acknowledgeCancellation() {throw new Error("unused acknowledgement");}, async cancellations() {return [];},
     };
@@ -367,8 +391,8 @@ test("deadline fences a concurrent uncertain admission before completion and acr
     const terminal = await makeService().complete(occurrence.occurrenceId);
     const member = saved!.members[0]!, cancelled = rows.get(member.requestId)!;
     expect(terminal).toMatchObject({status: "incomplete", expectedCount: 1});
-    expect(cancelled).toMatchObject({hostId: member.hostId, input: member.input, inputSha256: requestInputDigest(member.input),
-      state: "terminal", terminalStatus: "cancelled", hostCancellation: {requestedAt: "2026-10-03T14:00:00.000Z"}});
+    expect(cancelled).toMatchObject({hostId: member.hostId, dispatchIntent: member.dispatchIntent, dispatchIntentSha256: requestInputDigest(member.dispatchIntent),
+      state: "terminal", terminalStatus: "cancelled", preparationCancellation: {requestedAt: "2026-10-03T14:00:00.000Z"}});
     // A replacement process reconciles the retained fence while the original insert is still unacknowledged.
     expect((await makeService().start(occurrence)).admissions).toEqual([]);
     expect(await makeService().complete(occurrence.occurrenceId)).toEqual(terminal);
@@ -378,12 +402,8 @@ test("deadline fences a concurrent uncertain admission before completion and acr
     expect(await makeService().complete(occurrence.occurrenceId)).toEqual(terminal);
     expect(rows.get(member.requestId)).toEqual(cancelled);
     expect((await new TestRequestService(requestRepository).queued("mini", undefined, 100)).requests).toEqual([]);
-    // Also repair a late queued row left beside a terminal occurrence by the previous implementation.
-    const unfenced = {...cancelled, state: "queued" as const};
-    delete unfenced.terminalStatus; delete unfenced.hostCancellation;
-    rows.set(member.requestId, unfenced);
-    expect(await makeService().complete(occurrence.occurrenceId)).toEqual(terminal);
-    expect(rows.get(member.requestId)).toEqual(cancelled);
+    expect(cancelled.input).toBeUndefined();
+    expect((await new TestRequestService(requestRepository).queued("mini", undefined, 100)).preparations).toEqual([]);
   }
 });
 
@@ -392,8 +412,8 @@ test("admission receipts distinguish unexecuted cancellation and rejection from 
     let saved: NightlyPlan | null = null;
     const service = new NightlyRoutineService({async list() {return [row("receipt-product", "android")];}} as any,
       {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
-      {async get() {return host;}}, {async get() {return null;}, async cancelSubmission() {throw new Error("Must not cancel before boundary");},
-        async submit(requestId, hostId, input) {return {requestId, hostId, input, inputSha256: requestInputDigest(input), state: "terminal", terminalStatus: status,
+      {async get() {return host;}}, {async get() {return null;}, async cancelPreparationSubmission() {throw new Error("Must not cancel before boundary");},
+        async prepare(hostId, intent) {const {requestId, input, inputSha256, ...prepared} = preparedRequest(hostId, intent); return {...prepared, requestId, input, inputSha256, state: "terminal", terminalStatus: status,
           ...(status === "not-run" ? {hostRejection: {requestId, hostId, inputSha256: requestInputDigest(input), rejectedAt: startedAt,
             code: "unavailable-definition", reason: "The enrolled definition is unavailable."}} : {}),
           ...(status === "cancelled" ? {hostCancellation: {requestId, hostId, inputSha256: requestInputDigest(input), requestedAt: startedAt,
@@ -420,7 +440,7 @@ test("a mismatched platform publication remains expected and missing anchor plat
           ...(variant === "head" ? {headSha: "9".repeat(40)} : variant === "source" ? {source: {...source, publicationAttempt: 3}}
             : variant === "platform" ? {platform: "android" as const} : variant === "release" ? {release: "dev.21"} : {})};}},
       {async get() {return host;}},
-      {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit() {return {} as any;}},
+      {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare() {return {} as any;}},
       {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
       () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
       undefined,
@@ -428,8 +448,8 @@ test("a mismatched platform publication remains expected and missing anchor plat
     )
     const {plan} = await service.start(occurrence);
     expect(plan.members).toHaveLength(2);
-    expect(plan.members[mismatch ? 1 : 0]!.input).toBeUndefined();
-    expect(plan.members[mismatch ? 0 : 1]!.input).toBeDefined();
+    expect(plan.members[mismatch ? 1 : 0]!.dispatchIntent).toBeUndefined();
+    expect(plan.members[mismatch ? 0 : 1]!.dispatchIntent).toBeDefined();
     expect(plan.members[mismatch ? 1 : 0]!.unavailableReason).toBeDefined();
     if (mismatch) {
       expect(plan.members[1]!.build).toBeUndefined();
@@ -441,8 +461,8 @@ test("a mismatched platform publication remains expected and missing anchor plat
 })
 
 function publishedResult(member: NightlyPlan["members"][number], uploadsComplete: boolean) {
-  return {routineId: member.routineId, platform: member.platform, definitionRevision: member.definitionRevision,
-    hostId: member.hostId, laneId: member.input!.laneId, build: member.input!.build, runId: member.requestId,
+  return {requestId: member.requestId, routineId: member.routineId, platform: member.platform, definitionRevision: member.definitionRevision,
+    routineSource: testRoutineSource(member.routineRevision), hostId: member.hostId, laneId: member.dispatchIntent!.laneId, build: member.dispatchIntent!.build, runId: member.requestId,
     startedAt, finishedAt: "2026-10-03T11:01:00Z",
     outcome: "pass", uploadsComplete, evidenceStatus: "complete"};
 }
@@ -509,7 +529,7 @@ test("selection retains independently resolved artifacts and safe original typed
         if (id === "desktop-host") throw stage === "unknown" ? unknown : new TestRunError(503, "Host observation storage is unavailable.");
         return host;
       }},
-      {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit() {return {} as any;}},
+      {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare() {return {} as any;}},
       {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
       () => ({
         "android": {hostId: "mini", laneId: "android"},
@@ -520,8 +540,8 @@ test("selection retains independently resolved artifacts and safe original typed
       (error, context) => logged.push({error, context}),
     )
     const {plan} = await service.start(occurrence), desktop = plan.members[1]!;
-    expect(plan.members[0]!.input).toBeDefined();
-    expect(desktop.input).toBeUndefined();
+    expect(plan.members[0]!.dispatchIntent).toBeDefined();
+    expect(desktop.dispatchIntent).toBeUndefined();
     expect(plan.publication!.source).toEqual(build("android").source);
     if (stage === "build") {
       expect(desktop.selectionErrors).toEqual([{stage: "build", status: 502, message: "Immutable receipt SHA does not match publication 21."},
@@ -540,7 +560,7 @@ test("selection retains independently resolved artifacts and safe original typed
   }
 })
 
-test("known automatic lanes queue through repair/offline states while invalid mode or resource metadata remains rejected", async () => {
+test("automatic lanes prepare through repair/offline states and resource selection waits for the actual definition", async () => {
   for (const laneState of ["in-repair", "out-of-service", "offline", "running"] as const) {
     for (const invalid of [undefined, "mode", "resources"] as const) {
       const observed = structuredClone(host), submitted: string[] = [];
@@ -552,7 +572,7 @@ test("known automatic lanes queue through repair/offline states while invalid mo
         {async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
         {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
         {async get() {return observed;}},
-        {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit(id) {submitted.push(id); return {} as any;}},
+        {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare(_hostId, input) {submitted.push(routineDispatchIntentSchema.parse(input).requestId); return {} as any;}},
         {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
         () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
         undefined,
@@ -560,10 +580,10 @@ test("known automatic lanes queue through repair/offline states while invalid mo
       )
       const {plan} = await service.start(occurrence);
       expect(plan.members).toHaveLength(2);
-      expect(plan.members[1]!.input).toBeDefined();
-      expect(submitted).toHaveLength(invalid ? 1 : 2);
-      if (invalid) expect(plan.members[0]!.unavailableReason).toBeDefined();
-      else expect(plan.members[0]!.input).toBeDefined();
+      expect(plan.members[1]!.dispatchIntent).toBeDefined();
+      expect(submitted).toHaveLength(invalid === "mode" ? 1 : 2);
+      if (invalid === "mode") expect(plan.members[0]!.unavailableReason).toBeDefined();
+      else expect(plan.members[0]!.dispatchIntent).toBeDefined();
     }
   }
 })
@@ -579,7 +599,7 @@ test("lane-specific exact-definition availability never disables the healthy sib
       {async list() {return [row("phone-product", "android"), row("desktop-product", "ios-on-mac")];}} as any,
       {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
       {async get() {return observed;}},
-      {async cancelSubmission() {return {} as any;}, async get() {return null;}, async submit(id) {submitted.push(id); return {} as any;}},
+      {async cancelPreparationSubmission() {return {} as any;}, async get() {return null;}, async prepare(_hostId, input) {submitted.push(routineDispatchIntentSchema.parse(input).requestId); return {} as any;}},
       {async get() {return saved;}, async freeze(plan) {saved = plan; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
       () => ({"android": {hostId: "mini", laneId: "android"}, "ios-on-mac": {hostId: "mini", laneId: "ios-on-mac"}}),
       undefined,
@@ -588,9 +608,10 @@ test("lane-specific exact-definition availability never disables the healthy sib
     const {plan} = await service.start(occurrence);
     expect(plan.members).toHaveLength(2);
     expect(submitted).toEqual(plan.members.map(member => member.requestId))
-    expect(plan.members[0]!.input?.routineSource).toEqual(testRoutineSource())
+    expect(plan.members[0]!.dispatchIntent?.routineRevision).toBe(mainRevision)
+    expect(plan.members[0]!.dispatchIntent?.routineSource).toBeUndefined()
     expect(plan.members[0]!.unavailableReason).toBeUndefined()
-    expect(plan.members[1]!.input).toBeDefined();
+    expect(plan.members[1]!.dispatchIntent).toBeDefined();
     observed.lanes[0]!.routineAvailability = [{routineId: "phone-product", definitionRevision: "a".repeat(40), available: true}];
     const retry = await service.start(occurrence);
     expect(retry.plan).toEqual(plan); // Capability changes cannot silently replace the frozen expected member.
@@ -609,4 +630,71 @@ test("an unpersisted single admission exposes no dead result link until its stab
   const detail = await state.service.detail(occurrence.occurrenceId);
   expect(detail.resultUrl).toContain(`testRun=${encodeURIComponent(first.plan.members[0]!.requestId)}`);
   expect(detail.resultUrl).not.toContain("testSuite=");
+});
+
+test("nightly preparation reads only passed-once IDs and preferences, never old definition metadata", async () => {
+  const historical = row("known-product", "android");
+  for (const key of ["definition", "definitionRevision", "definitionSha256", "routineSource"])
+    Object.defineProperty(historical, key, {get() {throw new Error(`Nightly must not read old ${key}`);}});
+  const state = fixture([historical]); state.autoPrepare = false;
+  const {plan, admissions} = await state.service.start(occurrence);
+  expect(admissions[0]!.admitted).toBe(true);
+  expect(plan.members[0]!.dispatchIntent).toMatchObject({routineId: "known-product", routineRevision: mainRevision,
+    laneId: "android", source: build("android").source});
+  expect(state.requestRows.get(plan.members[0]!.requestId)).toMatchObject({state: "preparing"});
+  expect(state.requestRows.get(plan.members[0]!.requestId).input).toBeUndefined();
+});
+
+test("unavailable main source cannot fall back to an old enrolled definition", async () => {
+  let plan: NightlyPlan | null = null, available = false, preparations = 0, sourceReads = 0;
+  const service = new NightlyRoutineService({async list() {return [row("known-product", "android")];}} as any,
+    {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
+    {async get() {return host;}}, {async get() {return null;}, async prepare() {preparations++; return {} as any;}, async cancelPreparationSubmission() {return {} as any;}},
+    {async get() {return plan;}, async freeze(next) {plan ??= next; return plan;}, async completed() {return null;}, async finish(_id, result) {return result;}},
+    () => ({android: {hostId: "mini", laneId: "android"}}), undefined, () => now, undefined,
+    {async resolve() {sourceReads++; if (!available) throw new TestRunError(503, "Routine main source unavailable"); return mainRevision;}});
+  await expect(service.start(occurrence)).rejects.toThrow("main source unavailable");
+  expect(plan).toBeNull(); expect(preparations).toBe(0);
+  available = true;
+  const first = await service.start(occurrence);
+  expect(first.plan.members[0]!.routineRevision).toBe(mainRevision);
+  available = false;
+  expect((await service.start(occurrence)).plan).toEqual(first.plan);
+  expect(sourceReads).toBe(2);
+});
+
+test("preparing members retain shortage diagnostics and cannot count a result before executable preparation", async () => {
+  const state = fixture([row("waiting-product", "android")]); state.autoPrepare = false;
+  const {plan} = await state.service.start(occurrence), member = plan.members[0]!;
+  const request = state.requestRows.get(member.requestId);
+  request.preparation = {code: "routine-api-shortage", reason: "Installed API 1 cannot prepare minimum 2.", observedAt: startedAt};
+  state.resultRows.set(member.requestId, publishedResult(member, true));
+  const detail = await state.service.detail(occurrence.occurrenceId);
+  expect(detail).toMatchObject({status: "running", passed: 0, members: [{status: "waiting", publicationComplete: false,
+    unavailableReason: "routine-api-shortage: Installed API 1 cannot prepare minimum 2."}]});
+  expect(detail.members[0]!.input).toBeUndefined();
+  expect(detail.members[0]!.runId).toBeUndefined();
+  expect(state.completionEvents.some(event => event.startsWith("evidence:"))).toBe(false);
+  request.state = "terminal";
+  request.preparationRejection = {dispatchIntentSha256: request.dispatchIntentSha256, code: "invalid-source",
+    reason: "Routine was removed at the requested commit.", rejectedAt: startedAt, disposition: "not-applicable"};
+  expect((await state.service.detail(occurrence.occurrenceId)).members[0]).toMatchObject({status: "incomplete",
+    unavailableReason: "invalid-source: Routine was removed at the requested commit."});
+});
+
+test("prepared input must match the pinned revision and every frozen app reference", async () => {
+  const state = fixture([row("prepared-product", "android")]), {plan} = await state.service.start(occurrence), member = plan.members[0]!;
+  const request = state.requestRows.get(member.requestId), original = structuredClone(request);
+  state.resultRows.set(member.requestId, publishedResult(member, true));
+  for (const input of [{...original.input, definitionRevision: "a".repeat(40), routineSource: testRoutineSource("a".repeat(40))},
+    {...original.input, build: {...original.input.build, receipt: {...original.input.build.receipt, sha256: "9".repeat(64)}}}]) {
+    state.requestRows.set(member.requestId, {...original, input, inputSha256: requestInputDigest(input)});
+    expect((await state.service.detail(occurrence.occurrenceId)).members[0]).toMatchObject({status: "incomplete", publicationComplete: false,
+      unavailableReason: "Prepared input differs from the frozen intent."});
+  }
+  state.requestRows.set(member.requestId, {...original, dispatchIntent: {...original.dispatchIntent, routineRevision: "a".repeat(40)}});
+  expect((await state.service.detail(occurrence.occurrenceId)).members[0]).toMatchObject({status: "incomplete", publicationComplete: false,
+    unavailableReason: "Request identity differs from the frozen intent."});
+  state.requestRows.set(member.requestId, original);
+  expect((await state.service.detail(occurrence.occurrenceId))).toMatchObject({status: "pass", passed: 1});
 });

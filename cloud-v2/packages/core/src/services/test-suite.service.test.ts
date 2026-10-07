@@ -4,6 +4,7 @@ import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
 import {TestRequestModel} from "../models/test-request.model";
 import {TestSuiteService} from "./test-suite.service";
+import {requestInputDigest} from "./test-request.service";
 import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 import {testSuiteSchema} from "../types/test-suite.types";
 const mocks: {mockRestore(): void}[] = [];
@@ -204,7 +205,16 @@ test("a live nightly keeps waiting members out of failed routines and its termin
       {memberId: "desktop", requestId: "desktop-request", routineId: "desktop-product", platform: "ios-on-mac", definitionRevision: "b".repeat(40)},
     ]});
   const plan: NightlyPlan = {occurrenceId: "live-occurrence", suiteId: payload.suiteId, startedAt: payload.startedAt, trigger: "nightly", suite: payload,
-    members: payload.members.map(member => ({...member, requestId: member.requestId!, definitionRevision: member.definitionRevision!, definitionSha256: "c".repeat(64)}))};
+    members: payload.members.map(member => {
+      const build = {repository: "Mentra-Community/MentraOS" as const, headSha: payload.build.headSha, channel: "dev" as const,
+        kind: member.platform === "android" ? "android-apk" as const : "mac-ci-package" as const,
+        source: {channel: "dev" as const, buildRunId: 21, publicationAttempt: 2},
+        archive: {name: "app", url: "https://artifactscdn.mentraglass.com/app", size: 100, sha256: "c".repeat(64)},
+        receipt: {url: "https://artifactscdn.mentraglass.com/receipt", size: 100, sha256: "d".repeat(64)}};
+      return {...member, requestId: member.requestId!, definitionRevision: member.definitionRevision!, routineRevision: member.definitionRevision!,
+        hostId: "mini", build, dispatchIntent: {requestId: member.requestId!, routineId: member.routineId, platform: member.platform,
+          routineRevision: member.definitionRevision!, laneId: member.platform, source: build.source, build}};
+    })};
   const result: NightlyResult = {occurrenceId: plan.occurrenceId, suiteId: plan.suiteId, startedAt: plan.startedAt, trigger: plan.trigger,
     members: plan.members.map(member => ({...member, status: "waiting", publicationComplete: false})), expectedCount: 2, passed: 0, status: "running"};
   const row: {payload: typeof payload; nightlyPlan: NightlyPlan; nightlyResult?: NightlyResult} = {payload, nightlyPlan: plan};
@@ -214,6 +224,10 @@ test("a live nightly keeps waiting members out of failed routines and its termin
   expect(await service.detail(plan.suiteId)).toMatchObject({outcome: "running", passed: 0, failedRoutines: [], members: [
     {status: "waiting"}, {status: "waiting"},
   ]});
+  const prepared = plan.members[0]!;
+  const input = {routineId: prepared.routineId, platform: prepared.platform, definitionRevision: prepared.routineRevision,
+    routineSource: testRoutineSource(prepared.routineRevision), laneId: prepared.dispatchIntent!.laneId, resources: [], build: prepared.build!};
+  result.members[0]!.input = input; result.members[0]!.inputSha256 = requestInputDigest(input);
   result.members[0]!.status = "failed"; result.members[0]!.publicationComplete = true;
   expect((await service.detail(plan.suiteId)).failedRoutines).toEqual(["phone-product"]);
   expect(liveDetail).toHaveBeenCalledTimes(2);
@@ -235,13 +249,37 @@ test("suite completion refuses empty or single nightly occurrences before delega
   }
   expect(complete).not.toHaveBeenCalled(); expect(write).not.toHaveBeenCalled();
 });
-test('nightly projection retains full admitted firmware references and unadmitted manifest data',async()=>{
- const {nightlySuiteProjection}=await import('./test-suite.service');
- const manifest={url:'https://artifactscdn.mentraglass.com/exact/firmware.json',size:100,sha256:'c'.repeat(64)};
- const build={repository:'Mentra-Community/MentraOS',headSha:'a'.repeat(40),channel:'dev' as const,source:{channel:'dev' as const,buildRunId:21,publicationAttempt:2},archive:{name:'app',url:'https://artifactscdn.mentraglass.com/app',size:100,sha256:'d'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:100,sha256:'e'.repeat(64)},manifest,manifestSha256:manifest.sha256};
- const suite=testSuiteSchema.parse({suiteId:'firmware-nightly',channel:'dev',trigger:'nightly',startedAt:'2026-10-06T11:00:00Z',build:{headSha:build.headSha},members:[{memberId:'admitted',requestId:'one',routineId:'camera',platform:'android'},{memberId:'unadmitted',requestId:'two',routineId:'camera-two',platform:'android'}]});
- const members=suite.members.map((m,i)=>({...m,requestId:m.requestId!,definitionRevision:'a'.repeat(40),definitionSha256:'b'.repeat(64),build:{...build,kind:'android-apk'},...(i===0?{input:{routineId:m.routineId,definitionRevision:'a'.repeat(40),platform:'android',laneId:'lane',resources:[],build}}:{})}));
- const plan={occurrenceId:'firmware-occurrence',suiteId:suite.suiteId,startedAt:suite.startedAt,trigger:'nightly',suite,members} as NightlyPlan;
- const result={occurrenceId:plan.occurrenceId,suiteId:suite.suiteId,startedAt:suite.startedAt,trigger:'nightly',members:members.map(m=>({...m,status:'setup-failed',publicationComplete:false})),expectedCount:2,passed:0,status:'running'} as NightlyResult;
- const projection=nightlySuiteProjection(suite,plan,result);expect((projection.members[0] as any).build.manifest).toEqual(manifest);expect((projection.members[1] as any).build.manifest).toEqual(manifest);
+test("nightly projection exposes only prepared source and preserves full frozen firmware references", async () => {
+  const {nightlySuiteProjection} = await import("./test-suite.service");
+  const manifest = {url: "https://artifactscdn.mentraglass.com/exact/firmware.json", size: 100, sha256: "c".repeat(64)};
+  const build = {repository: "Mentra-Community/MentraOS" as const, headSha: "a".repeat(40), channel: "dev" as const, kind: "android-apk" as const,
+    source: {channel: "dev" as const, buildRunId: 21, publicationAttempt: 2},
+    archive: {name: "app", url: "https://artifactscdn.mentraglass.com/app", size: 100, sha256: "d".repeat(64)},
+    receipt: {url: "https://artifactscdn.mentraglass.com/receipt", size: 100, sha256: "e".repeat(64)}, manifest, manifestSha256: manifest.sha256};
+  const suite = testSuiteSchema.parse({suiteId: "firmware-nightly", channel: "dev", trigger: "nightly", startedAt: "2026-10-06T11:00:00Z",
+    build: {headSha: build.headSha}, members: [{memberId: "admitted", requestId: "one", routineId: "camera", platform: "android"},
+      {memberId: "unadmitted", requestId: "two", routineId: "camera-two", platform: "android"}]});
+  const members = suite.members.map(member => ({...member, requestId: member.requestId!, platform: "android" as const,
+    routineRevision: "a".repeat(40), definitionRevision: "a".repeat(40), hostId: "mini", build,
+    dispatchIntent: {requestId: member.requestId!, routineId: member.routineId, platform: "android" as const, routineRevision: "a".repeat(40),
+      laneId: "lane", source: build.source, build}}));
+  const plan: NightlyPlan = {occurrenceId: "firmware-occurrence", suiteId: suite.suiteId, startedAt: suite.startedAt, trigger: "nightly", suite, members};
+  const input = {routineId: "camera", definitionRevision: "a".repeat(40), routineSource: testRoutineSource("a".repeat(40)),
+    platform: "android" as const, laneId: "lane", resources: [], build};
+  const result: NightlyResult = {occurrenceId: plan.occurrenceId, suiteId: suite.suiteId, startedAt: suite.startedAt, trigger: "nightly",
+    members: members.map((member, index) => ({...member, status: "setup-failed", publicationComplete: false,
+      ...(index === 0 ? {input, inputSha256: requestInputDigest(input)} : {})})), expectedCount: 2, passed: 0, status: "running"};
+  const projection = nightlySuiteProjection(suite, plan, result);
+  expect((projection.members[0] as any).build.manifest).toEqual(manifest);
+  expect((projection.members[1] as any).build.manifest).toEqual(manifest);
+  expect((projection.members[0] as any).routineSource).toEqual(input.routineSource);
+  expect((projection.members[1] as any).routineSource).toBeUndefined();
+  expect((projection.members[1] as any).routineRevision).toBe("a".repeat(40));
+  for (const altered of [{...input, definitionRevision: "b".repeat(40), routineSource: testRoutineSource("b".repeat(40))},
+    {...input, build: {...build, source: {...build.source, publicationAttempt: 3}}}]) {
+    const changed = structuredClone(result);
+    changed.members[0]!.input = altered;
+    changed.members[0]!.inputSha256 = requestInputDigest(altered);
+    expect(() => nightlySuiteProjection(suite, plan, changed)).toThrow("frozen input");
+  }
 });

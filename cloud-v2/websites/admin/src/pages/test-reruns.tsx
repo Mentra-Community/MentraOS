@@ -33,7 +33,7 @@ export function AttemptHistory({suiteId, memberId, originalRequestId}: {suiteId?
 }
 type Preview={rerunId:string;previewDigest:string;plan:RerunPlan;state:string};
 export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {suiteId?:string;originalRequestId?:string;memberIds:string[];onClose:()=>void}) {
-  const [override,setOverride]=useState(false);
+  const [override,setOverride]=useState(false), [routineRevision,setRoutineRevision]=useState("");
   const [channel,setChannel]=useState<TestBuildSource["channel"]>("dev"), [build,setBuild]=useState(""),[publication,setPublication]=useState("1"),[pr,setPr]=useState(""),[reason,setReason]=useState("");
   const [id,setId]=useState(()=>crypto.randomUUID()),[preview,setPreview]=useState<Preview|null>(null),[message,setMessage]=useState(""),[busy,setBusy]=useState(false),[entered,setEntered]=useState(false),[previewEntered,setPreviewEntered]=useState(false);
   const client=useQueryClient();
@@ -42,9 +42,10 @@ export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {sui
     try {
       for(const value of override?[build,publication,...(channel==="pr"?[pr]:[])]:[]) if(!/^[1-9]\d*$/.test(value)||!Number.isSafeInteger(Number(value))) throw new Error("Enter exact positive build/publication coordinates.");
       const source:TestBuildSource|undefined=!override?undefined:channel==="pr"?{channel,prNumber:Number(pr),buildRunId:Number(build),publicationAttempt:Number(publication)}:{channel,buildRunId:Number(build),publicationAttempt:Number(publication)};
+      if(routineRevision && !/^[a-f0-9]{40}$/.test(routineRevision)) throw new Error("Enter an exact 40-character routine revision.");
       if(!reason.trim()) throw new Error("Enter a reason for this rerun.");
       setPreviewEntered(true);
-      const value=await api<Preview>("/api/admin/test-runs/reruns/preview",{method:"POST",body:{rerunId:id,parent:suiteId?{suiteId}:{requestId:originalRequestId},selection:{memberIds},...(source?{source}:{}),reason}});setPreview(value);
+      const value=await api<Preview>("/api/admin/test-runs/reruns/preview",{method:"POST",body:{rerunId:id,parent:suiteId?{suiteId}:{requestId:originalRequestId},selection:{memberIds},...(source?{source}:{}),...(routineRevision?{routineRevision}:{}),reason}});setPreview(value);
     }catch(error){if(error instanceof ApiError && error.status<500){setPreviewEntered(false);setId(crypto.randomUUID());}setMessage(error instanceof Error?error.message:"Preview unavailable; retry the same selection.");}finally{setBusy(false);}
   }
   async function submit() {
@@ -56,15 +57,16 @@ export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {sui
     }catch(error){if(error instanceof ApiError && error.status<500){setEntered(false);setPreview(null);setPreviewEntered(false);setId(crypto.randomUUID());}setMessage(error instanceof Error?error.message:"Submission uncertain; retry this same submission.");}finally{setBusy(false);}
   }
   return <div className="my-4 rounded-xl border p-4 space-y-3"><h3 className="font-semibold">Rerun {memberIds.length} selected item{memberIds.length!==1?"s":""}</h3>
-    <p className="text-sm">Reuse the original MentraOS artifact, or choose a replacement. The machine uses its installed framework and current enrolled definition.</p>
+    <p className="text-sm">Reuse the original MentraOS artifact, or choose a replacement. The machine uses its installed framework and verifies the original exact routine source. An optional source revision selects another commit.</p>
     <label className="block"><input type="checkbox" checked={override} disabled={previewEntered||busy} onChange={e=>setOverride(e.target.checked)}/> Use a different MentraOS artifact</label>
     {override&&<div className="flex flex-wrap gap-3"><label>Channel <select value={channel} disabled={previewEntered||busy} onChange={e=>setChannel(e.target.value as TestBuildSource["channel"])}>{["dev","staging","pr"].map(v=><option key={v}>{v}</option>)}</select></label>
       {channel==="pr"&&<label>PR <input value={pr} disabled={previewEntered||busy} onChange={e=>setPr(e.target.value)}/></label>}
       <label>Build workflow ID <input value={build} disabled={previewEntered||busy} onChange={e=>setBuild(e.target.value)}/></label>
       <label>Publication attempt <input value={publication} disabled={previewEntered||busy} onChange={e=>setPublication(e.target.value)}/></label>
       </div>}
+    <div><label>Routine revision (optional) <input value={routineRevision} disabled={previewEntered||busy} placeholder="Reuse original exact source" onChange={e=>setRoutineRevision(e.target.value)}/></label></div>
     <div><label>Reason <input value={reason} disabled={previewEntered||busy} onChange={e=>setReason(e.target.value)}/></label></div>
-    {preview&&<ul>{preview.plan.members.map(m=><li key={m.memberId}>{m.input.routineId} · {m.input.platform} · App {m.input.build.headSha.slice(0,10)} · Definition {m.input.definitionRevision.slice(0,10)} · {m.hostId}/{m.input.laneId}</li>)}</ul>}
+    {preview&&<ul>{preview.plan.members.map(m=><li key={m.memberId}>{m.dispatchIntent.routineId} · {m.dispatchIntent.platform} · App {m.dispatchIntent.build.headSha.slice(0,10)} · Definition {m.dispatchIntent.routineRevision.slice(0,10)} · {m.hostId}/{m.dispatchIntent.laneId}</li>)}</ul>}
     <button disabled={busy} className="underline" onClick={preview?submit:prepare}>{busy?"Working…":preview?entered?"Reconcile same submission":"Submit this preview":"Preview rerun"}</button>
     <button className="ml-4 underline" disabled={busy} onClick={onClose}>Close</button>
     {!entered&&<button className="ml-4 underline" disabled={busy} onClick={()=>{setId(crypto.randomUUID());setPreview(null);setPreviewEntered(false);setMessage("New preview; any prior preview remains unsubmitted.");}}>Start fresh preview</button>}

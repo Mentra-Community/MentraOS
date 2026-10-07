@@ -6,6 +6,7 @@ import {TestRequestModel} from "../models/test-request.model";
 import {z} from "zod";
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {RoutineDefinitionModel} from '../models/routine-definition.model';
+import {routineDispatchIntentSchema, preparationStatusSchema, preparationRejectionSchema, type RoutineDispatchIntent} from '../types/routine-dispatch.types';
 
 export type RequestState = "queued" | "accepted" | "running" | "terminal";
 export interface HostAcceptance {
@@ -38,16 +39,36 @@ export interface StoredTestRequest {
   terminalStatus?: string;
   createdAt?: Date;
   catalogEligible?: boolean;
+  dispatchIntent?: RoutineDispatchIntent;
+  dispatchIntentSha256?: string;
 }
+export interface StoredPreparingRequest {
+  requestId: string; hostId: string; state: 'preparing' | 'terminal';
+  dispatchIntent: RoutineDispatchIntent; dispatchIntentSha256: string;
+  input?: never; inputSha256?: never; hostReceipt?: never; hostRejection?: never; hostCancellation?: never;
+  runId?: never; cancellationAcknowledged?: never; catalogEligible?: never;
+  terminalStatus?: string; createdAt?: Date;
+  preparation?: {code: string; reason: string; observedAt: string};
+  preparationCancellation?: {requestedAt: string; reason: string};
+  preparationRejection?: z.infer<typeof preparationRejectionSchema>;
+}
+export type StoredRequest = StoredTestRequest | StoredPreparingRequest;
+export const isExecutableRequest = (row: StoredRequest): row is StoredTestRequest => typeof row.inputSha256 === 'string' && row.input !== undefined;
 export interface TestRequestRepository {
   insert(request: StoredTestRequest): Promise<void>;
-  get(requestId: string): Promise<StoredTestRequest | null>;
+  get(requestId: string): Promise<StoredRequest | null>;
   accept(receipt: HostAcceptance): Promise<StoredTestRequest | null>;
   reject(receipt: HostRejection): Promise<StoredTestRequest | null>;
   cancel(receipt: HostCancellation): Promise<StoredTestRequest | null>;
   acknowledgeCancellation(receipt: HostCancellation): Promise<StoredTestRequest | null>;
   queued(hostId: string, after: QueueCursor | null, limit: number): Promise<StoredTestRequest[]>;
   cancellations(hostId: string, after: CancellationCursor | null, limit: number): Promise<StoredTestRequest[]>;
+  insertPreparation?(request: StoredPreparingRequest): Promise<void>;
+  preparations?(hostId: string, limit: number): Promise<StoredPreparingRequest[]>;
+  completePreparation?(requestId: string, hostId: string, intentSha256: string, input: unknown, inputSha256: string): Promise<StoredTestRequest | null>;
+  updatePreparation?(requestId: string, hostId: string, intentSha256: string, value: StoredPreparingRequest['preparation']): Promise<StoredPreparingRequest | null>;
+  cancelPreparation?(requestId: string, intentSha256: string, value: NonNullable<StoredPreparingRequest['preparationCancellation']>): Promise<StoredPreparingRequest | null>;
+  rejectPreparation?(requestId: string, hostId: string, intentSha256: string, value: NonNullable<StoredPreparingRequest['preparationRejection']>): Promise<StoredPreparingRequest | null>;
 }
 export class TestRequestConflict extends Error {}
 
@@ -66,7 +87,36 @@ export function requestInputDigest(input: unknown): string {
 
 const mongoRepository: TestRequestRepository = {
   async insert(request) {await TestRequestModel.create([request], {writeConcern: testWriteConcern});},
-  async get(requestId) {return await TestRequestModel.findOne({requestId}).read("primary").readConcern("majority").lean() as StoredTestRequest | null;},
+  async get(requestId) {return await TestRequestModel.findOne({requestId}).read("primary").readConcern("majority").lean() as StoredRequest | null;},
+  async insertPreparation(request) {await TestRequestModel.create([request], {writeConcern: testWriteConcern});},
+  async preparations(hostId, limit) {
+    const rows = await TestRequestModel.find({hostId, state: 'preparing'}).sort({preparationCheckedAt: 1, createdAt: 1, requestId: 1})
+      .limit(limit).read('primary').readConcern('majority').lean() as unknown as StoredPreparingRequest[];
+    if (rows.length) await TestRequestModel.updateMany({hostId, state: 'preparing', requestId: {$in: rows.map(row => row.requestId)}},
+      {$set: {preparationCheckedAt: new Date()}}, {writeConcern: testWriteConcern});
+    return rows;
+  },
+  async completePreparation(requestId, hostId, dispatchIntentSha256, input, inputSha256) {
+    // Mongoose immutable fields stay protected for every ordinary update. This one guarded transition fills absent input once.
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, dispatchIntentSha256, state: 'preparing',
+      input: {$exists: false}, inputSha256: {$exists: false}, preparationCancellation: {$exists: false}, preparationRejection: {$exists: false}},
+      {$set: {state: 'queued', input, inputSha256, updatedAt: new Date()}, $unset: {preparation: '', preparationCheckedAt: ''}},
+      {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredTestRequest | null;
+  },
+  async updatePreparation(requestId, hostId, dispatchIntentSha256, preparation) {
+    return await TestRequestModel.findOneAndUpdate({requestId, hostId, dispatchIntentSha256, state: 'preparing'},
+      {$set: {preparation}}, {new: true, writeConcern: testWriteConcern}).lean() as unknown as StoredPreparingRequest | null;
+  },
+  async cancelPreparation(requestId, dispatchIntentSha256, preparationCancellation) {
+    return await TestRequestModel.findOneAndUpdate({requestId, dispatchIntentSha256, state: 'preparing', input: {$exists: false}},
+      {$set: {state: 'terminal', terminalStatus: 'cancelled', preparationCancellation}},
+      {new: true, writeConcern: testWriteConcern}).lean() as unknown as StoredPreparingRequest | null;
+  },
+  async rejectPreparation(requestId, hostId, dispatchIntentSha256, preparationRejection) {
+    return await TestRequestModel.findOneAndUpdate({requestId, hostId, dispatchIntentSha256, state: 'preparing', input: {$exists: false}},
+      {$set: {state: 'terminal', terminalStatus: 'not-run', preparationRejection}},
+      {new: true, writeConcern: testWriteConcern}).lean() as unknown as StoredPreparingRequest | null;
+  },
   async accept(receipt) {
     const accepted = await TestRequestModel.findOneAndUpdate({requestId: receipt.requestId, inputSha256: receipt.inputSha256,
       hostId: receipt.hostId, state: "queued", hostReceipt: {$exists: false}, hostRejection: {$exists: false}},
@@ -137,7 +187,85 @@ export class TestRequestService {
     const parsed = this.decodeCursor(hostId, cursor, "createdAt");
     const after = parsed ? {createdAt: new Date(parsed.timestamp), requestId: parsed.requestId} : null;
     const found = await this.repository.queued(hostId, after, limit + 1), requests = found.slice(0, limit), last = requests.at(-1);
-    return {requests, nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "createdAt", last.createdAt!.toISOString()) : null};
+    const preparations = (await this.repository.preparations?.(hostId, limit) ?? []).map(row => ({requestId: row.requestId,
+      hostId: row.hostId, dispatchIntentSha256: row.dispatchIntentSha256, dispatchIntent: row.dispatchIntent}));
+    return {requests, preparations, nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "createdAt", last.createdAt!.toISOString()) : null};
+  }
+  async prepare(hostId: string, input: unknown): Promise<StoredRequest> {
+    const intent = routineDispatchIntentSchema.parse(input);
+    if (!frameworkIdentitySchema.safeParse(hostId).success) throw new TestRequestConflict('Assigned host identity is required');
+    const request: StoredPreparingRequest = {requestId: intent.requestId, hostId, dispatchIntent: intent,
+      dispatchIntentSha256: requestInputDigest(intent), state: 'preparing'};
+    if (!this.repository.insertPreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
+    try {await this.repository.insertPreparation(request); return request;}
+    catch (error) {
+      if ((error as {code?: number}).code !== 11000) throw error;
+      const existing = await this.repository.get(request.requestId);
+      if (!existing || existing.hostId !== hostId || existing.dispatchIntentSha256 !== request.dispatchIntentSha256)
+        throw new TestRequestConflict('Request identity already belongs to a different dispatch intent or host');
+      return existing;
+    }
+  }
+  /** Retain cancellation even if the first source-preparation insert is still in flight. */
+  async cancelPreparationSubmission(requestId: string, hostId: string, input: unknown, requestedAt: string, reason: string): Promise<StoredRequest> {
+    const intent = routineDispatchIntentSchema.parse(input);
+    if (intent.requestId !== requestId || !frameworkIdentitySchema.safeParse(hostId).success)
+      throw new TestRequestConflict('Cancellation differs from its assigned request identity');
+    const value = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict().parse({requestedAt, reason});
+    const row: StoredPreparingRequest = {requestId, hostId, dispatchIntent: intent, dispatchIntentSha256: requestInputDigest(intent),
+      state: 'terminal', terminalStatus: 'cancelled', preparationCancellation: value};
+    if (!this.repository.insertPreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
+    try {await this.repository.insertPreparation(row); return row;}
+    catch (error) {if ((error as {code?: number}).code !== 11000) throw error;}
+    const existing = await this.preparation(requestId, hostId, row.dispatchIntentSha256);
+    return await this.cancel(requestId, requestedAt, reason) ?? existing;
+  }
+  async preparation(requestId: string, hostId: string, intentSha256?: string) {
+    const row = await this.repository.get(requestId);
+    if (!row || row.hostId !== hostId) throw new TestRunError(404, 'Assigned routine request was not found');
+    if (!row.dispatchIntent || requestInputDigest(row.dispatchIntent) !== row.dispatchIntentSha256 ||
+      intentSha256 && row.dispatchIntentSha256 !== intentSha256)
+      throw new TestRequestConflict('Preparation differs from the immutable dispatch intent');
+    return row;
+  }
+  async completePreparation(requestId: string, hostId: string, intentSha256: string, input: unknown): Promise<StoredRequest> {
+    const row = await this.preparation(requestId, hostId, intentSha256), intent = row.dispatchIntent!;
+    const frozen = frameworkRequestInputSchema.parse(input), digest = requestInputDigest(frozen);
+    if (frozen.routineId !== intent.routineId || frozen.platform !== intent.platform || frozen.definitionRevision !== intent.routineRevision ||
+      frozen.laneId !== intent.laneId || frozen.minimumFrameworkVersion !== intent.minimumFrameworkVersion ||
+      requestInputDigest(frozen.build) !== requestInputDigest(intent.build) || intent.routineSource && requestInputDigest(frozen.routineSource) !== requestInputDigest(intent.routineSource))
+      throw new TestRequestConflict('Prepared executable input contradicts its original dispatch intent');
+    if (isExecutableRequest(row)) {
+      if (row.inputSha256 !== digest) throw new TestRequestConflict('Prepared executable input changed after its first commit');
+      return row;
+    }
+    if (row.state !== 'preparing') return row;
+    await this.enrolled?.(frozen);
+    if (!this.repository.completePreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
+    const saved = await this.repository.completePreparation(requestId, hostId, intentSha256, frozen, digest) ??
+      await this.preparation(requestId, hostId, intentSha256);
+    if (isExecutableRequest(saved) && saved.inputSha256 !== digest)
+      throw new TestRequestConflict('Prepared executable input changed after its first commit');
+    return saved;
+  }
+  async preparationStatus(requestId: string, hostId: string, input: unknown): Promise<StoredRequest> {
+    const value = preparationStatusSchema.parse(input), row = await this.preparation(requestId, hostId, value.dispatchIntentSha256);
+    if (row.state !== 'preparing') return row;
+    if (!this.repository.updatePreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
+    return await this.repository.updatePreparation(requestId, hostId, value.dispatchIntentSha256,
+      {code: value.code, reason: value.reason, observedAt: value.observedAt}) ?? await this.preparation(requestId, hostId, value.dispatchIntentSha256);
+  }
+  async rejectPreparation(requestId: string, hostId: string, input: unknown): Promise<StoredRequest> {
+    const value = preparationRejectionSchema.parse(input), row = await this.preparation(requestId, hostId, value.dispatchIntentSha256);
+    if (!isExecutableRequest(row) && row.preparationRejection && requestInputDigest(row.preparationRejection) !== requestInputDigest(value))
+      throw new TestRequestConflict('Preparation rejection changed its original receipt');
+    if (row.state !== 'preparing') return row;
+    if (!this.repository.rejectPreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
+    const saved = await this.repository.rejectPreparation(requestId, hostId, value.dispatchIntentSha256, value) ??
+      await this.preparation(requestId, hostId, value.dispatchIntentSha256);
+    if (!isExecutableRequest(saved) && saved.preparationRejection && requestInputDigest(saved.preparationRejection) !== requestInputDigest(value))
+      throw new TestRequestConflict('Preparation rejection changed its original receipt');
+    return saved;
   }
   async cancellations(hostId: string, cursor: string | undefined, limit: number) {
     this.validatePageLimit(limit);
@@ -167,7 +295,11 @@ export class TestRequestService {
     if (!frameworkIdentitySchema.safeParse(requestId).success || !frameworkIdentitySchema.safeParse(hostId).success) throw new TestRequestConflict("Request and assigned host identities are required");
     if (!frameworkRequestInputSchema.safeParse(input).success) throw new TestRunError(400, "Invalid framework request input");
     const inputSha256 = requestInputDigest(input);
-    return {requestId, hostId, input, inputSha256, state: "queued",
+    const selected = frameworkRequestInputSchema.parse(input), exactSource = selected.build.source;
+    const intent = !selected.verification && selected.build.channel !== 'local' ? routineDispatchIntentSchema.parse({requestId, routineId: selected.routineId, platform: selected.platform,
+      routineRevision: selected.definitionRevision, routineSource: selected.routineSource, laneId: selected.laneId,
+      source: exactSource, build: selected.build, ...(selected.minimumFrameworkVersion !== undefined ? {minimumFrameworkVersion: selected.minimumFrameworkVersion} : {})}) : undefined;
+    return {requestId, hostId, input, inputSha256, state: "queued", ...(intent ? {dispatchIntent: intent, dispatchIntentSha256: requestInputDigest(intent)} : {}),
       ...(frameworkRequestInputSchema.parse(input).verification ? {catalogEligible: false} : {})};
   }
 
@@ -184,7 +316,7 @@ export class TestRequestService {
       // Only duplicate identity is recoverable; outages must not become acceptance.
       if ((error as {code?: number}).code !== 11000) throw error;
       const existing = await this.repository.get(requestId);
-      if (!existing || existing.inputSha256 !== request.inputSha256 || existing.hostId !== hostId)
+      if (!existing || !isExecutableRequest(existing) || existing.inputSha256 !== request.inputSha256 || existing.hostId !== hostId)
         throw new TestRequestConflict("Request identity already belongs to different inputs or host");
       return existing;
     }
@@ -201,11 +333,11 @@ export class TestRequestService {
     try {await this.repository.insert(cancelled); return cancelled;}
     catch (error) {if ((error as {code?: number}).code !== 11000) throw error;}
     const existing = await this.repository.get(requestId);
-    if (!existing || existing.hostId !== hostId || existing.inputSha256 !== request.inputSha256
+    if (!existing || !isExecutableRequest(existing) || existing.hostId !== hostId || existing.inputSha256 !== request.inputSha256
       || requestInputDigest(existing.input) !== request.inputSha256)
       throw new TestRequestConflict("Cancellation submission differs from the original inputs or host");
     const saved = await this.cancel(requestId, hostCancellation.requestedAt, reason);
-    if (!saved || saved.state !== "terminal" && !saved.hostCancellation)
+    if (!saved || !isExecutableRequest(saved) || saved.state !== "terminal" && !saved.hostCancellation)
       throw new TestRunError(503, "Cancellation submission was not retained");
     return saved;
   }
@@ -229,7 +361,7 @@ export class TestRequestService {
     catch (error) {
       if ((error as {code?: number}).code !== 11000) throw error;
       const existing = await this.repository.get(receipt.requestId);
-      if (!existing || existing.hostId !== authenticatedHostId || existing.inputSha256 !== receipt.inputSha256
+      if (!existing || !isExecutableRequest(existing) || existing.hostId !== authenticatedHostId || existing.inputSha256 !== receipt.inputSha256
         || !existing.hostReceipt || existing.hostReceipt.acceptedAt !== receipt.acceptedAt)
         throw new TestRequestConflict("Local request conflicts with an existing admission");
       return existing;
@@ -242,7 +374,7 @@ export class TestRequestService {
     const accepted = await this.repository.accept(receipt);
     if (accepted) return accepted;
     const existing = await this.repository.get(receipt.requestId);
-    if (!existing || existing.inputSha256 !== receipt.inputSha256 || existing.hostId !== authenticatedHostId || !existing.hostReceipt
+    if (!existing || !isExecutableRequest(existing) || existing.inputSha256 !== receipt.inputSha256 || existing.hostId !== authenticatedHostId || !existing.hostReceipt
       || requestInputDigest(existing.hostReceipt) !== requestInputDigest(receipt))
       throw new TestRequestConflict("Request is missing, changed, or has not been accepted by this host");
     // Lost acknowledgements return the original receipt, never another execution.
@@ -255,11 +387,11 @@ export class TestRequestService {
     if (!parsed.success || parsed.data.hostId !== authenticatedHostId)
       throw new TestRequestConflict("Rejection must identify the authenticated host and its immutable receipt");
     const receipt = parsed.data, existing = await this.repository.get(receipt.requestId);
-    if (!existing || existing.hostId !== authenticatedHostId || existing.inputSha256 !== receipt.inputSha256
+    if (!existing || !isExecutableRequest(existing) || existing.hostId !== authenticatedHostId || existing.inputSha256 !== receipt.inputSha256
       || requestInputDigest(existing.input) !== receipt.inputSha256)
       throw new TestRequestConflict("Rejection does not match the original request host and immutable input");
-    const original = (row: StoredTestRequest | null) => {
-      if (!row || row.state !== "terminal" || row.terminalStatus !== "not-run" || !row.hostRejection
+    const original = (row: StoredRequest | null) => {
+      if (!row || !isExecutableRequest(row) || row.state !== "terminal" || row.terminalStatus !== "not-run" || !row.hostRejection
         || requestInputDigest(row.hostRejection) !== requestInputDigest(receipt))
         throw new TestRequestConflict("Request is already accepted or has a different terminal rejection");
       return row;
@@ -270,10 +402,18 @@ export class TestRequestService {
     return await this.repository.reject(receipt) ?? original(await this.repository.get(receipt.requestId));
   }
 
-  async cancel(requestId: string, requestedAt: string, reason: string): Promise<StoredTestRequest | null> {
+  async cancel(requestId: string, requestedAt: string, reason: string): Promise<StoredRequest | null> {
     const row = await this.repository.get(requestId);
     if (!row) return null;
     if (row.hostCancellation || row.state === "terminal") return row;
+    if (!isExecutableRequest(row)) {
+      const value = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict().parse({requestedAt, reason});
+      if (!this.repository.cancelPreparation) throw new TestRunError(503, 'Request preparation storage is unavailable');
+      const saved = await this.repository.cancelPreparation(requestId, row.dispatchIntentSha256, value);
+      if (saved) return saved;
+      const winner = await this.repository.get(requestId);
+      return winner && isExecutableRequest(winner) ? this.cancel(requestId, requestedAt, reason) : winner;
+    }
     const parsed = hostCancellationSchema.parse({requestId, hostId: row.hostId, inputSha256: row.inputSha256, requestedAt, reason});
     const receipt = {...parsed, requestedAt: new Date(parsed.requestedAt).toISOString()};
     return await this.repository.cancel(receipt) ?? await this.repository.get(requestId);
@@ -284,7 +424,7 @@ export class TestRequestService {
     if (!parsed.success || parsed.data.hostId !== authenticatedHostId)
       throw new TestRequestConflict("Cancellation must identify the authenticated host");
     const receipt = parsed.data, row = await this.repository.get(receipt.requestId);
-    if (!row?.hostCancellation || row.hostId !== authenticatedHostId || row.inputSha256 !== receipt.inputSha256
+    if (!row || !isExecutableRequest(row) || !row.hostCancellation || row.hostId !== authenticatedHostId || row.inputSha256 !== receipt.inputSha256
       || requestInputDigest(row.hostCancellation) !== requestInputDigest(receipt))
       throw new TestRequestConflict("Cancellation acknowledgement differs from the immutable intent");
     const saved = await this.repository.acknowledgeCancellation(row.hostCancellation);
