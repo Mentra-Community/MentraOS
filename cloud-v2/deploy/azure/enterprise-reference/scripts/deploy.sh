@@ -323,6 +323,23 @@ for app in "$CORE_NAME" "$(jq -r .runtimeName "$CONFIG")"; do
   [[ "$READY" == true ]] || { printf '%s revision did not become ready. Check its revision logs in the Azure portal, then run setup again.\n' "$app" >&2; exit 1; }
 done
 
+# Revoke earlier Graph apps' secrets. Deployments are incremental, so a grant
+# from a previous app would outlive a switch; with the current app live, Runtime
+# keeps read access to that app's secret only. The secrets stay for operators.
+RUNTIME_PRINCIPAL="$(az identity show --name "$RUNTIME_IDENTITY" --resource-group "$RESOURCE_GROUP" --query principalId --output tsv)"
+VAULT_ID="$(az keyvault show --name "$KEY_VAULT" --query id --output tsv)"
+STALE_GRANTS="$(az role assignment list --all --output json | jq -r --arg principal "$RUNTIME_PRINCIPAL" \
+  --arg prefix "$VAULT_ID/secrets/teams-graph-client-secret-" --arg current "$TEAMS_CLIENT_ID" '
+  ($prefix | ascii_downcase) as $prefix |
+  .[] | select(.principalId == $principal) | (.scope | ascii_downcase) as $scope |
+  select(($scope | startswith($prefix)) and $scope != $prefix + ($current | ascii_downcase)) | .id')"
+if [[ -n "$STALE_GRANTS" ]]; then
+  # shellcheck disable=SC2086 # one argument per assignment ID
+  az role assignment delete --ids $STALE_GRANTS --output none
+  printf 'Removed Runtime access to the previous Graph app secret.\n' >&2
+fi
+# End of Graph grant cleanup.
+
 WORKSPACE="$(az deployment group show \
   --name "$DEPLOYMENT_NAME" \
   --resource-group "$RESOURCE_GROUP" \

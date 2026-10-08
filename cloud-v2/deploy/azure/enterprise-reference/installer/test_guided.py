@@ -259,6 +259,18 @@ class GuidedTests(unittest.TestCase):
              patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}), patch.object(setup, 'update_configuration'):
             self.assertEqual(setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)['adminConsent'], 'granted')
 
+    def test_a_failed_teams_rollout_stays_pending_for_the_next_run(self):
+        state = self.write_state('infrastructure_verified', outputs={'keyVaultName': 'kvacmementra12345678'})
+        self.args.teams_client_id = SUB
+        with patch.object(setup, 'vault_get', return_value={'value': 'saved'}), \
+             patch.object(setup, 'update_configuration'), \
+             patch.object(setup, 'meetings_consent', return_value=True), \
+             patch.object(setup, 'install', side_effect=setup.SetupError('preflight failed')):
+            with self.assertRaises(setup.SetupError):
+                setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
+        # Guided setup reruns install() for any phase but infrastructure_verified.
+        self.assertEqual(json.loads((self.directory / 'state.json').read_text())['phase'], 'deploying')
+
     def test_teams_settings_are_the_only_new_post_install_changes(self):
         self.assertEqual(setup.UPDATABLE_KEYS, {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId',
                                                 'teamsGraphClientId', 'teamsGraphOrganizerId'})

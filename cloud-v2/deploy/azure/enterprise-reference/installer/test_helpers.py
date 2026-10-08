@@ -418,6 +418,34 @@ else: sys.exit(9)
             self.assertEqual(r.returncode,0,r.stderr)
             self.assertEqual((self.path/'added').exists(),expected)
 
+    def test_switching_graph_apps_revokes_runtime_access_to_the_previous_secret(self):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        block = source[source.index('# Revoke earlier Graph apps'):source.index('# End of Graph grant cleanup.')]
+        self.assertGreater(source.index(block), source.index('did not become ready'))
+        vault = '/subscriptions/s/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv'
+        grants = [dict(id='old', principalId='runtime', scope=vault + '/secrets/teams-graph-client-secret-aaaa'),
+                  dict(id='current', principalId='runtime', scope=vault.lower() + '/secrets/teams-graph-client-secret-BBBB'),
+                  dict(id='core', principalId='core', scope=vault + '/secrets/teams-graph-client-secret-aaaa'),
+                  dict(id='pepper', principalId='runtime', scope=vault + '/secrets/refresh-token-pepper')]
+        (self.path / 'grants.json').write_text(json.dumps(grants))
+        self.env.update(HELPER_TEST_DIRECTORY=str(self.path), FAKE_VAULT_ID=vault)
+        self.executable('az', '''import json,os,sys
+from pathlib import Path
+p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
+if a[:2]==['identity','show']:print('runtime')
+elif a[:2]==['keyvault','show']:print(os.environ['FAKE_VAULT_ID'])
+elif a[:3]==['role','assignment','list']:print((p/'grants.json').read_text())
+elif a[:3]==['role','assignment','delete']:(p/'deleted').write_text(json.dumps(a[a.index('--ids')+1:a.index('--output')]))
+else:sys.exit(9)
+''')
+        for current, expected in (('bbbb', ['old']), ('', ['old', 'current'])):
+            (self.path / 'deleted').unlink(missing_ok=True)
+            script = ('set -euo pipefail\nRUNTIME_IDENTITY=id-rt\nRESOURCE_GROUP=rg\nKEY_VAULT=kv\n'
+                      f'TEAMS_CLIENT_ID={current}\n' + block)
+            result = subprocess.run(['bash', '-c', script], env=self.env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads((self.path / 'deleted').read_text()), expected)
+
     def test_source_mirror_validation_rejects_boolean_and_nonregistry_values(self):
         source = (ROOT / 'scripts/deploy.sh').read_text()
         expression = source.split("jq -e '\n", 1)[1].split("\n' \"$CONFIG\"", 1)[0]
