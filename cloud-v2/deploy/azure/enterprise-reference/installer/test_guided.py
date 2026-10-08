@@ -262,7 +262,7 @@ class GuidedTests(unittest.TestCase):
         with patch.object(setup, 'create_meetings_app', return_value=(SUB, True, '2028-10-08T00:00:00Z')), \
              patch.object(setup, 'confirm', return_value=True), patch.object(setup, 'vault_set') as vault_set, \
              patch.object(setup, 'vault_get', return_value={'value': 'stored-by-create'}), \
-             patch.object(setup, 'resolve_principal', return_value={'id': TENANT}), \
+             patch.object(setup, 'resolve_principal', return_value={'id': TENANT, 'collection': 'users'}), \
              patch.object(setup, 'update_configuration') as update, \
              patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}) as install:
             self.args.teams_organizer = 'organizer@acme.example'
@@ -274,7 +274,7 @@ class GuidedTests(unittest.TestCase):
         install.assert_called_once()
         policy = next(line for line in result['teamsPolicy'] if 'CsApplicationAccessPolicy -Identity MentraMeetings -AppIds' in line)
         # Works the first time and after switching apps, when the policy already exists.
-        self.assertIn(f'Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {SUB}', policy)
+        self.assertIn(f"Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Add='{SUB}'}}", policy)
         self.assertIn(f'New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {SUB}', policy)
         self.assertEqual(result['adminConsent'], 'granted')
 
@@ -409,7 +409,7 @@ class GuidedTests(unittest.TestCase):
              patch.object(setup, 'grant_admin_consent', side_effect=setup.SetupError('not an admin')):
             handoffs = setup.entra_handoffs(self.args, self.config, interactive=False)
         self.assertEqual([h['step'] for h in handoffs], ['Admin consent', 'Employee access'])
-        self.assertIn(f'https://login.microsoftonline.com/{TENANT}/adminconsent?client_id={TENANT}', handoffs[0]['action'])
+        self.assertIn(setup.permissions_page(TENANT), handoffs[0]['action'])
         self.assertIn('ManagedAppMenuBlade/~/Users/objectId/sp-id', handoffs[1]['action'])
 
     def test_granted_consent_is_trusted_before_graph_lists_it(self):
@@ -418,7 +418,7 @@ class GuidedTests(unittest.TestCase):
             self.assertEqual(setup.entra_handoffs(self.args, self.config, interactive=False), [])
         grant.assert_called_once()
 
-    def test_employees_are_assigned_once_and_unknown_names_reported(self):
+    def test_employees_are_assigned_once_and_problems_reported_per_entry(self):
         posted = []
         def graph(config, method, path, body=None, missing_ok=False):
             if method == 'POST':
@@ -426,25 +426,70 @@ class GuidedTests(unittest.TestCase):
                 if body['principalId'] in ('existing', 'mail-only'):
                     # Graph answers 400 for a duplicate and for an unassignable group alike.
                     raise setup.GraphError(400)
+                if body['principalId'] == 'flaky':
+                    raise setup.GraphError(503)
                 return {}
+            if '/members/microsoft.graph.group' in path:
+                return {'value': [{'id': 'child'}] if path.startswith('groups/existing/') else []}
             if '/appRoleAssignments' in path:
                 return {'value': [{'id': 'assignment'}] if path.startswith('groups/existing/') else []}
             if path.startswith('users/alice'):
                 return {'id': 'alice-id', 'displayName': 'Alice'}
             if path.startswith('users/'):
                 return None
+            if 'mail eq' in urllib_unquote(path) and 'shared' in path:
+                return {'value': [{'id': 'one'}, {'id': 'two'}]}
             if 'groups' in path and 'Field' in path:
                 return {'value': [{'id': 'existing', 'displayName': 'Field Techs'}]}
             if 'groups' in path and 'Newsletter' in path:
                 return {'value': [{'id': 'mail-only', 'displayName': 'Newsletter'}]}
+            if 'groups' in path and 'Night' in path:
+                return {'value': [{'id': 'flaky', 'displayName': 'Night Shift'}]}
             return {'value': []}
         with patch.object(setup, 'graph', side_effect=graph):
-            assigned, unknown, refused = setup.assign_employees(
-                self.config, 'sp', ['alice@acme.example', 'Field Techs', 'ghost@acme.example', 'Newsletter'])
+            assigned, problems = setup.assign_employees(
+                self.config, 'sp', ['alice@acme.example', 'Field Techs', 'ghost@acme.example', 'Newsletter',
+                                    'shared@acme.example', 'Night Shift'])
         self.assertEqual(assigned, ['Alice', 'Field Techs'])
-        self.assertEqual(unknown, ['ghost@acme.example'])
-        self.assertEqual(refused, ['Newsletter'])
-        self.assertEqual(posted, ['alice-id', 'existing', 'mail-only'])
+        reasons = dict(problems)
+        self.assertIn('not found', reasons['ghost@acme.example'])
+        self.assertIn('Entra ID P1', reasons['Newsletter'])
+        self.assertIn('more than one', reasons['shared@acme.example'])
+        self.assertIn('groups inside it', reasons['Field Techs'])
+        # One failing entry doesn't stop the others.
+        self.assertIn('HTTP 503', reasons['Night Shift'])
+        self.assertEqual(posted, ['alice-id', 'existing', 'mail-only', 'flaky'])
+
+    def test_teams_policy_commands_target_the_tenant_and_keep_other_apps(self):
+        commands = setup.teams_policy_commands(SUB, TENANT, TENANT, previous_client_id='99999999-9999-9999-9999-999999999999')
+        text = '\n'.join(commands)
+        self.assertIn(f'Connect-MicrosoftTeams -TenantId {TENANT}', text)
+        self.assertIn(f"-AppIds @{{Add='{SUB}'}}", text)
+        self.assertIn("-AppIds @{Remove='99999999-9999-9999-9999-999999999999'}", text)
+        self.assertIn('30 minutes', text)
+        self.assertNotIn('Remove', '\n'.join(setup.teams_policy_commands(SUB, '', TENANT)))
+
+    def test_meetings_app_created_by_setup_is_recognized_by_its_tag(self):
+        state = self.write_state('infrastructure_verified')
+        graph, calls = self.meetings_graph()
+        tagged = {'value': [{'id': 'app-object', 'appId': SUB, 'tags': ['mentraInstallerOwner:owner']}]}
+        def lookup(config, method, path, body=None, missing_ok=False):
+            if method == 'GET' and 'displayName' in urllib_unquote(path) and path.startswith('applications?'):
+                return tagged
+            return graph(config, method, path, body, missing_ok)
+        with patch.object(setup, 'graph', side_effect=lookup), patch.object(setup, 'vault_get', return_value={'value': 'saved'}):
+            self.assertEqual(setup.create_meetings_app(self.directory, self.config, state)[0], SUB)
+        self.assertNotIn(('POST', 'applications'), calls)
+
+    def test_a_failed_optional_teams_step_still_ends_with_the_summary(self):
+        self.write_state('identity_configured')
+        with self.steps() as calls, patch.object(setup.sys.stdin, 'isatty', return_value=True), \
+             patch.object(setup, 'confirm', return_value=True), \
+             patch.object(setup, 'configure_teams', side_effect=setup.SetupError('no Entra role')), \
+             patch.object(setup, 'finish', side_effect=lambda d, r: dict(r, finished=True)) as finish:
+            result = setup.guided(self.args, self.directory)
+        self.assertTrue(result['finished'])
+        self.assertNotIn('teams', result)
 
     def test_graph_lookups_quote_names_with_apostrophes(self):
         paths = []
@@ -476,12 +521,69 @@ class GuidedTests(unittest.TestCase):
         with patch.object(setup.sys.stdin, 'isatty', return_value=True), patch('builtins.input', side_effect=ask), \
              patch.object(setup, 'signed_in_account', return_value={'id': SUB, 'tenantId': TENANT, 'name': 'Default', 'user': {'name': 'it@acme'}}), \
              patch.object(setup.subprocess, 'run', return_value=chosen), patch.object(setup, 'check_release', return_value=RELEASE), \
-             patch.object(setup, 'digest', return_value='this-release'):
+             patch.object(setup, 'digest', return_value='this-release'), \
+             patch.object(setup, 'subscription_visible', return_value=True), \
+             patch.object(setup, 'existing_deployment', return_value=None):
             setup.init(args, self.directory / 'fresh')
         config = setup.read_json(self.directory / 'fresh/deployment.config.json')
         self.assertIn('[44444444-4444-4444-4444-444444444444]', prompts[1])
         self.assertEqual((config['subscriptionId'], config['tenantId']), ('33333333-3333-3333-3333-333333333333', '44444444-4444-4444-4444-444444444444'))
         self.assertEqual(config['deploymentId'], 'acme-mentra')
+
+    def init_with(self, answers, earlier=None, where='fresh'):
+        path = self.directory / 'answers.json'
+        setup.write_json(path, answers)
+        args = argparse.Namespace(config=str(path), json=False, backup_confirmed=False)
+        with patch.object(setup.sys.stdin, 'isatty', return_value=False), \
+             patch.object(setup, 'check_release', return_value=RELEASE), patch.object(setup, 'digest', return_value='this-release'), \
+             patch.object(setup, 'subscription_visible', return_value=True), \
+             patch.object(setup, 'existing_deployment', return_value=earlier), \
+             patch.object(setup, 'dns_records', return_value=[{'value': 'app.azurecontainerapps.io'}, {'value': 'id'}]):
+            setup.init(args, self.directory / where)
+        return setup.read_json(self.directory / where / 'deployment.config.json'), setup.read_json(self.directory / where / 'state.json')
+
+    def test_answers_are_cleaned_and_the_data_location_follows_the_region(self):
+        config, _ = self.init_with(dict(subscriptionId=SUB.upper(), tenantId=TENANT.upper(), displayName='ACME',
+                                        deploymentId='acme-mentra', location='West Europe',
+                                        workspaceHostname='https://mentra.acme.example/'))
+        self.assertEqual((config['subscriptionId'], config['tenantId']), (SUB, TENANT))
+        self.assertEqual((config['location'], config['workspaceHostname']), ('westeurope', 'mentra.acme.example'))
+        self.assertEqual(config['communicationDataLocation'], 'Europe')
+        with self.assertRaisesRegex(setup.SetupError, 'subdomain'):
+            self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',
+                                workspaceHostname='acme.example'), where='apex')
+
+    def test_placeholders_from_the_example_are_refused(self):
+        with self.assertRaisesRegex(setup.SetupError, 'placeholders.*coreApiClientId'):
+            self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',
+                                coreApiClientId='<core-api-client-id>'))
+
+    def test_a_lost_setup_folder_continues_the_same_deployment(self):
+        owner = '22222222-2222-2222-2222-222222222222'
+        earlier = {'owner': owner, 'release': RELEASE['releaseTag'], 'group': 'rg-acme-mentra',
+                   'settings': {'displayName': 'ACME Corp', 'coreApiClientId': SUB, 'mobileClientId': TENANT,
+                                'workspaceHostname': 'mentra.acme.example', 'teamsGraphClientId': SUB}}
+        config, state = self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='Acme', deploymentId='acme-mentra',
+                                            workspaceHostname='mentra.acme.example'), earlier)
+        # Same owner, so the same derived names and the earlier Entra apps and resource group.
+        self.assertEqual(state['owner'], owner)
+        self.assertTrue(config['keyVaultName'].endswith('22222222'))
+        self.assertEqual(config['resourceTags']['mentraInstallerOwner'], owner)
+        # Settings come from Azure's record of the last deployment, not the retyped answers.
+        self.assertEqual((config['displayName'], config['coreApiClientId'], config['teamsGraphClientId']), ('ACME Corp', SUB, SUB))
+        # The live custom address stays bound through the next rollout.
+        self.assertTrue(state['domainVerified'])
+
+    def test_a_lost_folder_never_downgrades_its_deployment(self):
+        earlier = {'owner': '22222222-2222-2222-2222-222222222222', 'release': '9.9.9', 'group': 'rg-acme-mentra', 'settings': {}}
+        with self.assertRaisesRegex(setup.SetupError, 'newer than this package'):
+            self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra'), earlier)
+
+    def test_an_interrupted_init_can_be_run_again(self):
+        (self.directory / 'fresh').mkdir()
+        setup.write_json(self.directory / 'fresh/deployment.config.json', {'left': 'over'})
+        config, state = self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra'))
+        self.assertEqual(state['phase'], 'initialized')
 
     def test_suggested_deployment_names_are_valid(self):
         for name, expected in (('ACME Lumber & Supply', 'acme-lumber-mentra'), ('', 'company-mentra'),

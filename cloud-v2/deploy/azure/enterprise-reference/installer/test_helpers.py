@@ -147,7 +147,7 @@ else:sys.exit(9)
                 result = subprocess.run(['bash', '-c', script], env=self.env, text=True, capture_output=True)
                 if expected is None:
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn('not created by this setup', result.stderr)
+                    self.assertIn('this setup did not create', result.stderr)
                 else:
                     self.assertEqual((result.returncode, result.stdout), (0, expected), result.stderr)
         self.assertEqual(json.loads((self.path / 'created.json').read_text())['tags'], [tag])
