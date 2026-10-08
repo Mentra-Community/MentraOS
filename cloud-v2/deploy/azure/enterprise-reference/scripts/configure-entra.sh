@@ -5,6 +5,7 @@ CORE_NAME="${CORE_NAME:-Mentra Core}"
 MOBILE_NAME="${MOBILE_NAME:-Mentra Mobile}"
 CORE_CLIENT_ID="${CORE_CLIENT_ID:-}"
 MOBILE_CLIENT_ID="${MOBILE_CLIENT_ID:-}"
+INSTALLER_OWNER="${INSTALLER_OWNER:-}"
 GRANT_ADMIN_CONSENT=false
 CONSENT_ONLY=false
 IOS_REDIRECT="msauth.com.mentra.mentra://auth"
@@ -23,6 +24,8 @@ usage() {
     "  --mobile-name NAME           Display name when creating/finding Mobile (default: $MOBILE_NAME)" \
     "  --core-client-id UUID     Reconcile this existing Core registration" \
     "  --mobile-client-id UUID      Reconcile this existing Mobile registration" \
+    "  --installer-owner UUID       Tag new registrations with this installer; a same-named app is" \
+    "                               reused only if it carries the tag" \
     "  --grant-admin-consent        Grant tenant-wide consent after configuring permissions" \
     "  --consent-only               Only grant consent for --mobile-client-id; change nothing else" \
     "  --help                       Show this help" \
@@ -36,6 +39,7 @@ while [[ $# -gt 0 ]]; do
     --mobile-name) MOBILE_NAME="$2"; shift 2 ;;
     --core-client-id) CORE_CLIENT_ID="$2"; shift 2 ;;
     --mobile-client-id) MOBILE_CLIENT_ID="$2"; shift 2 ;;
+    --installer-owner) INSTALLER_OWNER="$2"; shift 2 ;;
     --grant-admin-consent) GRANT_ADMIN_CONSENT=true; shift ;;
     --consent-only) CONSENT_ONLY=true; shift ;;
     --help|-h) usage; exit 0 ;;
@@ -88,6 +92,12 @@ if [[ "${CONSENT_ONLY:-false}" == true ]]; then
   exit 0
 fi
 
+if [[ -n "${INSTALLER_OWNER:-}" && ! "$INSTALLER_OWNER" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+  printf -- '--installer-owner must be a UUID\n' >&2
+  exit 2
+fi
+OWNER_TAG="${INSTALLER_OWNER:+mentraInstallerOwner:$INSTALLER_OWNER}"
+
 find_or_create_app() {
   local client_id="$1"
   local display_name="$2"
@@ -95,7 +105,7 @@ find_or_create_app() {
   if [[ -n "$client_id" ]]; then
     object_id="$(az ad app show --id "$client_id" --query id -o tsv)" || return
   else
-    local apps matches escaped_display_name
+    local apps owned escaped_display_name
     # --display-name is a prefix search. Escape OData string literals and use
     # one exact-name snapshot for both the count and selected object id.
     # Leave this assignment unquoted for Bash 3.2's replacement escaping.
@@ -104,13 +114,19 @@ find_or_create_app() {
     # Graph comparisons can be case-insensitive; require the literal name.
     apps="$(jq -ce --arg name "$display_name" \
       'if type != "array" then error("Expected an app registration array") else map(select(.displayName == $name)) end' <<<"$apps")" || return
-    matches="$(jq -r 'length' <<<"$apps")" || return
-    if [[ "$matches" == "0" ]]; then
-      object_id="$(az ad app create --display-name "$display_name" --sign-in-audience AzureADMyOrg --query id -o tsv)" || return
-    elif [[ "$matches" == "1" ]]; then
-      object_id="$(jq -er '.[0].id | select(type == "string" and length > 0)' <<<"$apps")" || return
+    # Only an app this installer created (tagged at creation) is reused by name;
+    # adopting someone else's same-named registration would reconfigure it.
+    owned="$(jq -c --arg tag "$OWNER_TAG" 'map(select($tag != "" and ((.tags // []) | index($tag))))' <<<"$apps")" || return
+    if [[ "$(jq -r 'length' <<<"$owned")" == "1" ]]; then
+      object_id="$(jq -er '.[0].id | select(type == "string" and length > 0)' <<<"$owned")" || return
+    elif [[ "$(jq -r 'length' <<<"$apps")" == "0" ]]; then
+      object_id="$(az rest --method POST --uri "https://graph.microsoft.com/v1.0/applications" \
+        --headers 'Content-Type=application/json' \
+        --body "$(jq -cn --arg name "$display_name" --arg tag "$OWNER_TAG" \
+          '{displayName: $name, signInAudience: "AzureADMyOrg"} + (if $tag == "" then {} else {tags: [$tag]} end)')" \
+        --query id -o tsv)" || return
     else
-      printf 'More than one app registration is named %s; pass its client id explicitly.\n' "$display_name" >&2
+      printf 'An app registration named %s already exists and was not created by this setup. Pass its client id to reconcile it, or use another name.\n' "$display_name" >&2
       exit 1
     fi
   fi

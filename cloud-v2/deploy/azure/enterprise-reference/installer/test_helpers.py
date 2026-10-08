@@ -121,6 +121,37 @@ elif url.endswith('.zip'):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_sign_in_apps_are_reused_by_name_only_when_this_installer_created_them(self):
+        source = (ROOT / 'scripts/configure-entra.sh').read_text()
+        block = source[source.index('if [[ -n "${INSTALLER_OWNER:-}"'):source.index('CORE_OBJECT_ID=')]
+        owner = 'abcdef12-1234-1234-1234-abcdef123456'
+        self.env['HELPER_TEST_DIRECTORY'] = str(self.path)
+        self.executable('az', '''import json,os,sys
+from pathlib import Path
+p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
+if a[:3]==['ad','app','list']:print((p/'apps.json').read_text())
+elif a[:2]==['rest'] or a[:1]==['rest']:
+ (p/'created.json').write_text(a[a.index('--body')+1]);print('new-object')
+elif a[:3]==['ad','app','show']:print('AzureADMyOrg')
+else:sys.exit(9)
+''')
+        tag = 'mentraInstallerOwner:' + owner
+        cases = (([], 'new-object'),
+                 ([dict(id='mine', displayName='ACME Core', tags=[tag])], 'mine'),
+                 ([dict(id='theirs', displayName='ACME Core', tags=[]), dict(id='mine', displayName='ACME Core', tags=[tag])], 'mine'),
+                 ([dict(id='theirs', displayName='ACME Core')], None))
+        for apps, expected in cases:
+            with self.subTest(apps=apps):
+                (self.path / 'apps.json').write_text(json.dumps(apps))
+                script = f'set -euo pipefail\nINSTALLER_OWNER={owner}\n' + block + '\nfind_or_create_app "" "ACME Core"'
+                result = subprocess.run(['bash', '-c', script], env=self.env, text=True, capture_output=True)
+                if expected is None:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('not created by this setup', result.stderr)
+                else:
+                    self.assertEqual((result.returncode, result.stdout), (0, expected), result.stderr)
+        self.assertEqual(json.loads((self.path / 'created.json').read_text())['tags'], [tag])
+
     def test_entra_profile_binds_directory_without_changing_callers_default(self):
         source = (ROOT / 'scripts/configure-entra.sh').read_text()
         binding = source[source.index('if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}"'):source.index('find_or_create_app()')]

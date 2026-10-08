@@ -42,6 +42,8 @@ class GuidedTests(unittest.TestCase):
                            coreIdentityName='id-acme-core', runtimeIdentityName='id-acme-runtime',
                            resourceTags={'mentraInstallerOwner': 'owner'}, **RELEASE)
 
+    group = 'owned'
+
     def write_state(self, phase, release_hash='this-release', **extra):
         setup.write_json(self.directory / 'deployment.config.json', self.config)
         state = dict(dict(schemaVersion=1, deploymentId='acme-mentra', releaseHash=release_hash, owner='owner',
@@ -70,8 +72,9 @@ class GuidedTests(unittest.TestCase):
              patch.object(setup, 'preflight', record('preflight', {'resourceGroup': 'owned'})), \
              patch.object(setup, 'configure_entra', record('entra')), \
              patch.object(setup, 'entra_handoffs', record('handoffs', [])), \
-             patch.object(setup, 'ensure_group', record('group')), \
+             patch.object(setup, 'ensure_group', record('group', {'resourceGroup': self.group})), \
              patch.object(setup, 'preview', record('preview', {'create': ['Key Vault kv'], 'change': [], 'unchanged': 0})), \
+             patch.object(setup, 'run', record('run', '')), \
              patch.object(setup, 'install', record('install', {'status': phase_after_install}, installed)), \
              patch.object(setup, 'bootstrap_admin', record('admin', {'status': 'admin_key_ready'})), \
              patch.object(setup, 'upgrade_command', record('upgrade', {'status': 'upgraded'})):
@@ -81,7 +84,7 @@ class GuidedTests(unittest.TestCase):
         self.write_state('identity_configured')
         with self.steps() as calls:
             result = setup.guided(self.args, self.directory)
-        self.assertEqual(calls, ['providers', 'preflight', 'handoffs', 'group', 'preview', 'install', 'admin'])
+        self.assertEqual(calls, ['providers', 'preflight', 'group', 'preview', 'handoffs', 'install', 'admin'])
         self.assertEqual(result['workspace'], 'https://acme.example')
 
     def test_rerun_after_install_only_checks_and_reports(self):
@@ -110,11 +113,27 @@ class GuidedTests(unittest.TestCase):
         dns.assert_called_once()
 
     def test_declining_the_preview_creates_nothing(self):
-        self.write_state('identity_configured')
+        # A first run: no sign-in apps yet, and the preview's resource group is new.
+        self.config.update(coreApiClientId='', mobileClientId='')
+        self.write_state('initialized')
+        self.group = 'new'
         with self.steps() as calls, patch.object(setup, 'confirm', return_value=False):
             result = setup.guided(self.args, self.directory)
         self.assertEqual(result['status'], 'stopped')
-        self.assertNotIn('install', calls)
+        for step in ('entra', 'handoffs', 'install'):
+            self.assertNotIn(step, calls)
+        # The empty group made for the preview is removed again.
+        self.assertEqual(calls[-1], 'run')
+
+    def test_sign_in_apps_are_created_only_after_confirmation(self):
+        self.config.update(coreApiClientId='', mobileClientId='')
+        self.write_state('initialized')
+        previews = []
+        with self.steps() as calls, patch.object(setup, 'preview', side_effect=lambda d, c, s: previews.append(c) or
+                                                 {'create': [], 'change': [], 'unchanged': 0}):
+            setup.guided(self.args, self.directory)
+        self.assertLess(calls.index('group'), calls.index('entra'))
+        self.assertEqual(previews[0]['mobileClientId'], setup.PLANNED_APP_ID)
 
     def test_preview_summary_ignores_server_defaults_and_unresolved_references(self):
         preview = {'bootstrap': {'changes': [change('Microsoft.KeyVault/vaults', 'kvacme', 'Create')]},

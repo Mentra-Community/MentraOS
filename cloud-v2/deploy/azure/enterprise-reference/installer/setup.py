@@ -917,13 +917,13 @@ def configure_entra(args, directory, config, state):
     if state.get('outputs') or state.get('configHash'):
         raise SetupError('Do not replace identity registrations after deployment. Reconcile existing IDs through the standalone helper.')
     argv = ['bash', str(ROOT / 'scripts/configure-entra.sh'), '--core-name', config['displayName'] + ' Core',
-            '--mobile-name', config['displayName'] + ' Mobile']
+            '--mobile-name', config['displayName'] + ' Mobile', '--installer-owner', state['owner']]
     for field, flag in (('coreApiClientId', '--core-client-id'), ('mobileClientId', '--mobile-client-id')):
         if config.get(field):
             argv += [flag, config[field]]
     if args.grant_admin_consent:
         argv.append('--grant-admin-consent')
-    result = json.loads(run(argv, env=environment(config)))
+    result = json.loads(run(argv, env=environment(config), explain=True))
     if result['tenantId'].lower() != config['tenantId'].lower():
         raise SetupError('Entra helper returned another tenant')
     write_json(directory / 'identity.pending.json', dict(previousBinding=state['binding'],
@@ -940,6 +940,7 @@ def configure_entra(args, directory, config, state):
 
 GRAPH_APP_ID = '00000003-0000-0000-c000-000000000000'
 DEFAULT_ACCESS_ROLE = '00000000-0000-0000-0000-000000000000'
+PLANNED_APP_ID = '00000000-0000-0000-0000-000000000000'
 MEETINGS_PERMISSION = 'OnlineMeetings.ReadWrite.All'
 VAULT_RETRIES = 30
 RETRY_SECONDS = 10
@@ -1635,20 +1636,32 @@ def guided(args, directory):
     section('Checking the Azure subscription')
     ensure_providers(config, interactive)
     preflight(config)
-    if not (config.get('coreApiClientId') and config.get('mobileClientId')):
+    entra_missing = not (config.get('coreApiClientId') and config.get('mobileClientId'))
+    if state['phase'] in ('initialized', 'identity_configured'):
+        section('Preview')
+        checks = ensure_group(config, state)
+        # Nothing in Entra changes before the confirmation; the preview uses
+        # stand-in IDs for sign-in apps that don't exist yet.
+        planned = dict(config, coreApiClientId=config.get('coreApiClientId') or PLANNED_APP_ID,
+                       mobileClientId=config.get('mobileClientId') or PLANNED_APP_ID)
+        print_preview(preview(directory, planned, state), config)
+        if entra_missing:
+            print(f"Setup also creates two Microsoft Entra app registrations for employee sign-in: "
+                  f"\"{config['displayName']} Core\" and \"{config['displayName']} Mobile\".")
+        print('These resources incur Azure charges; this profile uses authenticated public endpoints.')
+        if not confirm('Create these resources now? This takes about 15 minutes.', True, interactive):
+            if checks['resourceGroup'] == 'new':
+                # The group was created only for the preview and is still empty.
+                run(['az', 'group', 'delete', '--name', config['resourceGroup'], '--yes', '--no-wait',
+                     '--subscription', config['subscriptionId']])
+            return {'status': 'stopped', 'next': 'Nothing was created. Run setup again when you are ready.'}
+    if entra_missing:
         section('Creating the Microsoft sign-in apps')
         configure_entra(argparse.Namespace(**dict(vars(args), grant_admin_consent=False)), directory, config, state)
         config, state, release = load(directory)
     section('Employee sign-in')
     handoffs = entra_handoffs(args, config, interactive)
     checkpoint(directory, state, state['phase'], handoffs=handoffs)
-    if state['phase'] in ('initialized', 'identity_configured'):
-        section('Preview')
-        ensure_group(config, state)
-        print_preview(preview(directory, config, state), config)
-        print('These resources incur Azure charges; this profile uses authenticated public endpoints.')
-        if not confirm('Create these resources now? This takes about 15 minutes.', True, interactive):
-            return {'status': 'stopped', 'next': 'Run setup again when you are ready.'}
     result = {'status': state['phase']}
     if state['phase'] != 'infrastructure_verified':
         section('Installing')
