@@ -3,14 +3,17 @@ set -euo pipefail
 
 # Deploys the stack, or previews it. Secrets never pass through this script:
 # signing keys are created in Key Vault and the apps read them from there.
+# --bootstrap-only runs just the ownership step, which also gives whoever runs
+# it access to the deployment's Key Vault.
 MODE=deploy
 case "${1:-}" in
   --validate-only) MODE=validate; shift ;;
   --what-if) MODE=what-if; shift ;;
+  --bootstrap-only) MODE=bootstrap; shift ;;
 esac
 
 if [[ $# -ne 1 ]]; then
-  printf 'Usage: %s [--validate-only | --what-if] deployment.config.json\n' "$0" >&2
+  printf 'Usage: %s [--validate-only | --what-if | --bootstrap-only] deployment.config.json\n' "$0" >&2
   exit 2
 fi
 
@@ -192,6 +195,11 @@ jq -n \
 if [[ "$MODE" == what-if ]]; then
   # Azure's own preview of both templates. Nothing is created or changed; the
   # image reference is the one the import will produce for this digest.
+  [[ "$(az group exists --name "$RESOURCE_GROUP")" == true ]] || {
+    printf 'Resource group %s does not exist yet. Create it with "az group create --name %s --location %s", then preview again.\n' \
+      "$RESOURCE_GROUP" "$RESOURCE_GROUP" "$LOCATION" >&2
+    exit 1
+  }
   write_parameters "$REGISTRY_NAME.azurecr.io/mentra-cloud-enterprise@${SOURCE_IMAGE##*@}"
   BOOTSTRAP_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME-bootstrap" --resource-group "$RESOURCE_GROUP" \
     --template-file "$TEMPLATE_DIR/bootstrap.bicep" --parameters "${BOOTSTRAP_PARAMETERS[@]}" --no-pretty-print --output json)"
@@ -218,6 +226,9 @@ az deployment group create \
   --parameters "${BOOTSTRAP_PARAMETERS[@]}" \
   --query properties.provisioningState \
   --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
+if [[ "$MODE" == bootstrap ]]; then
+  exit 0
+fi
 
 "$SCRIPT_DIR/ensure-vault-secrets.sh" "$KEY_VAULT" "$RESOURCE_GROUP" "$CORE_NAME"
 if [[ -n "$(jq -r '.teamsGraphClientId // ""' "$CONFIG")" ]]; then

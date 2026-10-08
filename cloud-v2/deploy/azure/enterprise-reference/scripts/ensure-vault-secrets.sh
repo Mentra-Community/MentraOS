@@ -13,6 +13,7 @@ VAULT="$1"
 RESOURCE_GROUP="$2"
 CORE_NAME="$3"
 [[ "$VAULT" =~ ^[a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9]$ ]] || { printf 'Invalid Key Vault name\n' >&2; exit 2; }
+[[ "$CORE_NAME" =~ ^[a-z][a-z0-9-]{0,30}[a-z0-9]$ ]] || { printf 'Invalid Core app name\n' >&2; exit 2; }
 for command in az jq openssl; do
   command -v "$command" >/dev/null || { printf '%s is required\n' "$command" >&2; exit 1; }
 done
@@ -44,7 +45,9 @@ if [[ ${#MISSING[@]} -eq 0 ]]; then
   printf 'Signing keys are in Key Vault %s.\n' "$VAULT" >&2
   exit 0
 fi
-if az containerapp show --name "$CORE_NAME" --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
+# A failed lookup stops here; it must never read as "no Core yet".
+CORE_COUNT="$(az containerapp list --resource-group "$RESOURCE_GROUP" --query "length([?name=='$CORE_NAME'])" --output tsv)"
+if [[ "$CORE_COUNT" != 0 ]]; then
   printf 'Key Vault %s is missing %s, but Core already runs with the original keys. Recover them with "az keyvault secret recover --vault-name %s --name NAME". Setup never replaces the keys of a running deployment.\n' \
     "$VAULT" "${MISSING[*]}" "$VAULT" >&2
   exit 1

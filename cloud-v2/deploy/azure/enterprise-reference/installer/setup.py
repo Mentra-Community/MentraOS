@@ -985,6 +985,7 @@ def vault_az(config, *args, missing_ok=False):
     import time
     argv = ['az', 'keyvault', 'secret', *args, '--vault-name', config['keyVaultName'],
             '--subscription', config['subscriptionId'], '--output', 'json']
+    granted = False
     for attempt in range(VAULT_RETRIES):
         result = subprocess.run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode == 0:
@@ -993,9 +994,21 @@ def vault_az(config, *args, missing_ok=False):
             return None
         if 'Forbidden' not in result.stderr or attempt + 1 == VAULT_RETRIES:
             break
+        if not granted:
+            grant_vault_access(config)
+            granted = True
         time.sleep(RETRY_SECONDS)
-    raise SetupError(f"Key Vault {config['keyVaultName']} refused the request. The person running setup needs the "
-                     'Key Vault Secrets Officer role, which setup assigns during resume. Provider output withheld.')
+    raise SetupError(f"Key Vault {config['keyVaultName']} refused the request. Setup gave you the Key Vault Secrets "
+                     'Officer role, which can take a few minutes to apply; run setup again shortly. Provider output withheld.')
+
+
+def grant_vault_access(config):
+    # Each deploy gives its runner Key Vault access. An administrator resuming a
+    # deployment someone else finished gets it here, from the same template.
+    with tempfile.TemporaryDirectory(prefix='mentra-config-') as temp:
+        path = Path(temp) / 'deployment.config.json'
+        write_json(path, config)
+        run(['bash', str(ROOT / 'scripts/deploy.sh'), '--bootstrap-only', str(path)], env=environment(config), explain=True)
 
 
 def vault_get(config, name):
@@ -1041,13 +1054,18 @@ def graph(config, method, path, body=None, missing_ok=False):
         raise GraphError('network') from None
 
 
+def odata(value):
+    # An OData string literal; a quote inside it is doubled, as in O'Reilly.
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def graph_filter(collection, expression, select=''):
     query = '$filter=' + urllib.parse.quote(expression, safe="'=")
     return f'{collection}?{query}' + (f'&$select={select}' if select else '')
 
 
 def service_principal(config, app_id, select='id,appRoles,appRoleAssignmentRequired'):
-    found = graph(config, 'GET', graph_filter('servicePrincipals', f"appId eq '{app_id}'", select))['value']
+    found = graph(config, 'GET', graph_filter('servicePrincipals', f"appId eq {odata(app_id)}", select))['value']
     return found[0] if found else None
 
 
@@ -1226,10 +1244,10 @@ def resolve_principal(config, entry):
     if '@' in entry:
         user = graph(config, 'GET', 'users/' + urllib.parse.quote(entry) + '?$select=id,displayName', missing_ok=True)
         if not user:
-            found = graph(config, 'GET', graph_filter('users', f"mail eq '{entry}'", 'id,displayName'))['value']
+            found = graph(config, 'GET', graph_filter('users', f"mail eq {odata(entry)}", 'id,displayName'))['value']
             user = found[0] if found else None
         return user
-    found = graph(config, 'GET', graph_filter('groups', f"displayName eq '{entry}'", 'id,displayName'))['value']
+    found = graph(config, 'GET', graph_filter('groups', f"displayName eq {odata(entry)}", 'id,displayName'))['value']
     return found[0] if len(found) == 1 else None
 
 
@@ -1345,7 +1363,7 @@ def create_meetings_app(config):
     name = f"{config['displayName']} Mentra Meetings"
     graph_sp = service_principal(config, GRAPH_APP_ID)
     role = next(r for r in graph_sp['appRoles'] if r.get('value') == MEETINGS_PERMISSION)
-    found = graph(config, 'GET', graph_filter('applications', f"displayName eq '{name}'", 'id,appId'))['value']
+    found = graph(config, 'GET', graph_filter('applications', f"displayName eq {odata(name)}", 'id,appId'))['value']
     app = found[0] if found else graph(config, 'POST', 'applications', {
         'displayName': name, 'signInAudience': 'AzureADMyOrg',
         'requiredResourceAccess': [{'resourceAppId': GRAPH_APP_ID, 'resourceAccess': [{'id': role['id'], 'type': 'Role'}]}]})
