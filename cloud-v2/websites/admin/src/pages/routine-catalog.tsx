@@ -43,11 +43,12 @@ function runSearchMetadata(run: {routineId: string; platform: string}, routines:
   const routine = routines.find(row => row.routineId === run.routineId && row.platform === run.platform);
   return routine ? searchableRoutine(routine) : {title: run.routineId, platform: run.platform};
 }
-export function matchesBuildSearch(build: {headSha: string; prNumber?: number}, search: string) {
+export function matchesBuildSearch(build: {headSha: string; prNumber?: number; release?: string}, search: string) {
   const text = search.trim().toLowerCase();
   if (!text) return false;
   const pr = text.match(/^(?:#|pr\s*#?\s*)?(\d+)$/);
-  return !!pr && build.prNumber !== undefined && Number(pr[1]) === build.prNumber
+  return build.release?.toLowerCase().includes(text) === true
+    || !!pr && build.prNumber !== undefined && Number(pr[1]) === build.prNumber
     || /^[a-f0-9]{4,40}$/.test(text) && build.headSha.toLowerCase().startsWith(text);
 }
 export function matchesHistorySearch(entry: TestHistoryEntry, routines: RoutineEnrollment[], filters: RoutineSearchFilters) {
@@ -409,7 +410,7 @@ function TestHistoryList({initialOrigin = "pr"}: {initialOrigin?: HistoryOrigin}
         }}>{label}</button>)}
     </div>
     <div role="tabpanel" id={`${tabId}-history`} aria-labelledby={`${tabId}-${origin}`} tabIndex={0}>
-    <RoutineSearch placeholder="Routine, PR number or commit SHA" filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${originEntries.length} loaded entries`} />
+    <RoutineSearch placeholder="Routine, PR, commit or tested build" filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${originEntries.length} loaded entries`} />
     <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Tabs and filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p></details>
     {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
@@ -441,7 +442,7 @@ function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
   const options = runs.map(run => runSearchMetadata(run, routines));
   const filtered = runs.filter(run => matchesHistorySearch({kind: "run", ...run}, routines, filters));
   return <section className={PANEL}><h2 className="text-xl font-semibold">Filtered routine runs</h2>
-    <RoutineSearch placeholder="Routine, PR number or commit SHA" filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${runs.length} loaded runs`} />
+    <RoutineSearch placeholder="Routine, PR, commit or tested build" filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${runs.length} loaded runs`} />
     <p className="mt-2 text-xs text-[#747780]">Searches loaded runs for this build.</p>
     {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
