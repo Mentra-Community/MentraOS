@@ -75,12 +75,14 @@ cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --what-if /secure/p
 cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh /secure/path/mentra-private.config.json
 ```
 
-The deployment helper runs `bootstrap.bicep` (registry, managed identity,
-purge-protected Key Vault and the role assignments; needs Owner or User Access
-Administrator). It grants whoever runs it Key Vault Secrets Officer on that
-vault and creates the signing keys and refresh pepper directly in Key Vault,
-once. It then imports and verifies the release digest, deploys `main.bicep`
-(Contributor is enough) and runs the smoke test. A deployed Core is never given
+The deployment helper runs `bootstrap.bicep` (registry, one managed identity per
+app, purge-protected Key Vault; needs Owner or User Access Administrator). It
+grants whoever runs it Key Vault Secrets Officer on that vault and creates the
+signing keys and refresh pepper directly in Key Vault, once. `access.bicep` then
+lets each app read only its own secrets: Core its keys, Runtime the Graph secret.
+No app can read the administrator key. Finally the helper imports and verifies
+the release digest, deploys `main.bicep` (Contributor is enough) and runs the
+smoke test. A deployed Core is never given
 new keys: if Key Vault is missing one, the helper refuses and points to
 `az keyvault secret recover`.
 
@@ -90,7 +92,7 @@ The templates create:
 - separate Core and meetings-only Runtime apps using the same digest;
 - Cosmos DB with MongoDB-compatible API for Core identity/session state;
 - customer-owned ACS;
-- one managed identity that pulls the image and reads Key Vault;
+- a managed identity per app, each able to read only its own Key Vault secrets;
 - a purge-protected Key Vault holding the signing keys, refresh pepper,
   administrator key and optional Graph client secret;
 - a generated deployment manifest; and

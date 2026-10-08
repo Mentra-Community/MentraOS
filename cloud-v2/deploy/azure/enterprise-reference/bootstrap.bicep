@@ -10,8 +10,11 @@ param resourceTags object = {}
 @description('Globally unique, alphanumeric Azure Container Registry name.')
 param registryName string = take('mentra${uniqueString(subscription().id, resourceGroup().id)}', 50)
 
-@description('Identity the Container Apps use to pull their image and read their secrets.')
-param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
+@description('Core\'s identity: pulls the image and reads only Core\'s Key Vault secrets (see access.bicep).')
+param coreIdentityName string = 'id-mentra-enterprise-reference-core'
+
+@description('Runtime\'s identity: pulls the image and reads only the Teams Graph secret.')
+param runtimeIdentityName string = 'id-mentra-enterprise-reference-runtime'
 
 @minLength(3)
 @maxLength(24)
@@ -28,10 +31,6 @@ var acrPullRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 )
-var secretsUserRoleDefinitionId = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions',
-  '4633458b-17de-408a-b874-0445c86b69e6'
-)
 var secretsOfficerRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
@@ -45,21 +44,22 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   properties: { adminUserEnabled: false }
 }
 
-resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: pullIdentityName
+// One identity per app, so a compromised app cannot read the other's secrets.
+resource identities 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = [for name in [coreIdentityName, runtimeIdentityName]: {
+  name: name
   location: location
   tags: resourceTags
-}
+}]
 
-resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(registry.id, pullIdentity.id, acrPullRoleDefinitionId)
+resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (name, i) in [coreIdentityName, runtimeIdentityName]: {
+  name: guid(registry.id, identities[i].id, acrPullRoleDefinitionId)
   scope: registry
   properties: {
-    principalId: pullIdentity.properties.principalId
+    principalId: identities[i].properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: acrPullRoleDefinitionId
   }
-}
+}]
 
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: keyVaultName
@@ -79,16 +79,8 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-resource vaultRead 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(vault.id, pullIdentity.id, secretsUserRoleDefinitionId)
-  scope: vault
-  properties: {
-    principalId: pullIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: secretsUserRoleDefinitionId
-  }
-}
-
+// Apps get no vault-wide access; access.bicep grants each one only its own
+// secrets once they exist. Nothing but operators can read mentra-admin-key.
 resource vaultOperator 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(operatorPrincipalId)) {
   name: guid(vault.id, operatorPrincipalId, secretsOfficerRoleDefinitionId)
   scope: vault
@@ -103,4 +95,5 @@ output registryName string = registry.name
 output registryLoginServer string = registry.properties.loginServer
 output keyVaultName string = vault.name
 output keyVaultUri string = vault.properties.vaultUri
-output pullIdentityId string = pullIdentity.id
+output coreIdentityId string = identities[0].id
+output runtimeIdentityId string = identities[1].id

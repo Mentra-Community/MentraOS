@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS = ('Microsoft.App', 'Microsoft.ContainerRegistry', 'Microsoft.ManagedIdentity',
              'Microsoft.Communication', 'Microsoft.DocumentDB', 'Microsoft.Storage', 'Microsoft.KeyVault')
 BINDING_KEYS = ('subscriptionId', 'tenantId', 'resourceGroup', 'registryName', 'location',
-                'workspaceHostname', 'environmentName', 'runtimeName', 'coreName', 'pullIdentityName',
+                'workspaceHostname', 'environmentName', 'runtimeName', 'coreName', 'coreIdentityName', 'runtimeIdentityName',
                 'communicationName', 'mongoAccountName', 'reportStorageAccountName', 'deploymentName',
                 'resourceTags', 'coreApiClientId', 'mobileClientId', 'keyVaultName')
 # Key Vault holds every original secret; nothing secret is stored locally.
@@ -103,7 +103,7 @@ def check_release():
     if release.get('schemaVersion') != 1 or not re.fullmatch(
             r'ghcr\.io/mentra-community/mentra-cloud@sha256:[0-9a-f]{64}', release.get('sourceImage', '')):
         raise SetupError('Invalid release metadata')
-    required = {'setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep',
+    required = {'setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep', 'access.bicep',
                 'deployment.config.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
                 'scripts/ensure-vault-secrets.sh', 'scripts/import-runtime-image.sh', 'scripts/smoke-test.sh'}
     inventory = release.get('files')
@@ -429,7 +429,8 @@ def init(args, directory):
                   clientRecommendedVersion=release['clientMinVersion'])
     defaults = dict(resourceGroup=f'rg-{name}', registryName=name.replace('-', '') + ownership.replace('-', '')[:8],
                     environmentName=f'cae-{name}', runtimeName=f'ca-{name}', coreName=f'ca-{name}-core',
-                    pullIdentityName=f'id-{name}-pull', communicationName=f'{name}-acs-{ownership[:8]}',
+                    coreIdentityName=f'id-{name}-core', runtimeIdentityName=f'id-{name}-runtime',
+                    communicationName=f'{name}-acs-{ownership[:8]}',
                     keyVaultName='kv' + name.replace('-', '')[:14] + ownership.replace('-', '')[:8],
                     coreApiClientId='', mobileClientId='', coreAdminEmails='',
                     privacyPolicyUrl='', termsOfServiceUrl='')
@@ -452,7 +453,8 @@ def validate_resource_names(config):
         raise SetupError('Invalid Azure source registry mirror')
     patterns = {'registryName': r'[a-z0-9]{5,50}', 'resourceGroup': r'[a-zA-Z0-9_-]{1,90}',
                 'runtimeName': r'[a-z][a-z0-9-]{0,29}[a-z0-9]', 'coreName': r'[a-z][a-z0-9-]{0,29}[a-z0-9]',
-                'environmentName': r'[a-zA-Z0-9-]{2,60}', 'pullIdentityName': r'[a-zA-Z0-9_-]{2,128}',
+                'environmentName': r'[a-zA-Z0-9-]{2,60}', 'coreIdentityName': r'[a-zA-Z0-9_-]{2,128}',
+                'runtimeIdentityName': r'[a-zA-Z0-9_-]{2,128}',
                 'communicationName': r'[a-zA-Z0-9-]{2,63}', 'location': r'[a-z0-9]{2,40}',
                 'keyVaultName': r'[a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9]'}
     for key, pattern in patterns.items():
@@ -1065,7 +1067,7 @@ FRIENDLY_TYPES = {
 
 
 ROLE_PURPOSES = {'7f951dda-4ed3-4680-a7ca-43fe172d538d': 'apps can pull the image',
-                 '4633458b-17de-408a-b874-0445c86b69e6': 'apps can read Key Vault',
+                 '4633458b-17de-408a-b874-0445c86b69e6': 'an app can read one of its own secrets',
                  'b86a8fe4-44ce-4948-aee5-eccb2c155cd7': 'you can manage Key Vault secrets'}
 
 
@@ -1106,7 +1108,7 @@ def _describe(paths):
 
 def summarize_preview(preview):
     created, changed, unchanged = [], [], 0
-    for template in ('bootstrap', 'main'):
+    for template in ('bootstrap', 'access', 'main'):
         for change in (preview.get(template) or {}).get('changes', []):
             kind, name = _resource(change)
             if change['changeType'] == 'Create':
@@ -1417,9 +1419,13 @@ def configure_teams(args, directory, config, state, interactive=None):
         elif interactive:
             secret = ask('Client secret for that app (hidden; Enter keeps the saved one)', '', interactive, secret=True)
     if secret:
-        vault_set(config, TEAMS_SECRET, secret)
-    elif not vault_get(config, TEAMS_SECRET):
-        raise SetupError(f'Key Vault has no {TEAMS_SECRET}. Provide the client secret.')
+        vault_set(config, TEAMS_SECRET, secret, clientId=client_id)
+    else:
+        # The saved secret is tagged with its app; never pair it with another app.
+        saved = vault_get(config, TEAMS_SECRET)
+        if not saved or (saved.get('tags') or {}).get('clientId') != client_id:
+            raise SetupError(f'Provide the client secret for Graph app {client_id} (--teams-secret-stdin); '
+                             'Key Vault has no secret saved for that app.')
     organizer = getattr(args, 'teams_organizer', None) or (config.get('teamsGraphOrganizerId') or '')
     if not organizer and interactive:
         organizer = ask('Licensed account that hosts meetings for guests (email; Enter to skip)', '', interactive)

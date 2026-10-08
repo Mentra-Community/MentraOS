@@ -127,7 +127,7 @@ class GuidedTests(unittest.TestCase):
         preview['bootstrap']['changes'].append(dict(change('Microsoft.Authorization/roleAssignments', 'a1de', 'Create'), after={
             'properties': {'roleDefinitionId': '/subscriptions/s/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6'}}))
         summary = setup.summarize_preview(preview)
-        self.assertEqual(summary['create'], ['Key Vault kvacme', 'Role assignment apps can read Key Vault'])
+        self.assertEqual(summary['create'], ['Key Vault kvacme', 'Role assignment an app can read one of its own secrets'])
         self.assertEqual(summary['change'], ['Container App ca-acme-core: new software image'])
         self.assertEqual(summary['unchanged'], 3)
 
@@ -209,7 +209,7 @@ class GuidedTests(unittest.TestCase):
              patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}) as install:
             self.args.teams_organizer = 'organizer@acme.example'
             result = setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
-        vault_set.assert_called_once_with(self.config, 'teams-graph-client-secret', 'graph-secret')
+        vault_set.assert_called_once_with(self.config, 'teams-graph-client-secret', 'graph-secret', clientId=SUB)
         self.assertEqual(update.call_args.kwargs, {'teamsGraphTenantId': TENANT, 'teamsGraphClientId': SUB,
                                                    'teamsGraphOrganizerId': TENANT})
         install.assert_called_once()
@@ -230,6 +230,23 @@ class GuidedTests(unittest.TestCase):
                 self.assertIs(setup.meetings_consent(self.config, SUB), self.granted)
         with patch.object(setup, 'graph', side_effect=setup.GraphError(403)):
             self.assertIsNone(setup.meetings_consent(self.config, SUB))
+
+    def test_switching_graph_apps_requires_that_apps_secret(self):
+        state = self.write_state('infrastructure_verified', outputs={'keyVaultName': 'kvacmementra12345678'})
+        self.config['teamsGraphClientId'] = SUB
+        self.args.teams_client_id = TENANT
+        saved = {'value': 'old-secret', 'tags': {'clientId': SUB}}
+        with patch.object(setup, 'vault_get', return_value=saved), patch.object(setup, 'install') as install, \
+             patch.object(setup, 'update_configuration') as update:
+            with self.assertRaisesRegex(setup.SetupError, f'client secret for Graph app {TENANT}'):
+                setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
+        install.assert_not_called()
+        update.assert_not_called()
+        # The same app keeps its saved secret.
+        self.args.teams_client_id = SUB
+        with patch.object(setup, 'vault_get', return_value=saved), patch.object(setup, 'meetings_consent', return_value=True), \
+             patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}), patch.object(setup, 'update_configuration'):
+            self.assertEqual(setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)['adminConsent'], 'granted')
 
     def test_teams_settings_are_the_only_new_post_install_changes(self):
         self.assertEqual(setup.UPDATABLE_KEYS, {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId',

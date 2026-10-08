@@ -68,7 +68,8 @@ jq -e '
   (.deploymentId | nonempty) and
   (.displayName | nonempty) and
   (.environmentName | nonempty) and
-  (.pullIdentityName | nonempty) and
+  (.coreIdentityName | nonempty) and
+  (.runtimeIdentityName | nonempty) and
   (.communicationName | nonempty) and
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
@@ -102,7 +103,9 @@ fi
 RELEASE_TAG="$(jq -r .releaseTag "$CONFIG")"
 KEY_VAULT="$(jq -r .keyVaultName "$CONFIG")"
 CORE_NAME="$(jq -r .coreName "$CONFIG")"
-PULL_IDENTITY="$(jq -r .pullIdentityName "$CONFIG")"
+CORE_IDENTITY="$(jq -r .coreIdentityName "$CONFIG")"
+RUNTIME_IDENTITY="$(jq -r .runtimeIdentityName "$CONFIG")"
+TEAMS_SECRET="$(jq -r 'if (.teamsGraphClientId // "") == "" then "false" else "true" end' "$CONFIG")"
 
 # Wizard calls are bound to an explicit subscription without changing az defaults.
 if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
@@ -126,8 +129,10 @@ fi
   exit 1
 }
 
-BOOTSTRAP_PARAMETERS=(registryName="$REGISTRY_NAME" pullIdentityName="$PULL_IDENTITY" keyVaultName="$KEY_VAULT"
+BOOTSTRAP_PARAMETERS=(registryName="$REGISTRY_NAME" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY" keyVaultName="$KEY_VAULT"
   operatorPrincipalId="$OPERATOR_ID" operatorPrincipalType="$OPERATOR_TYPE" resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")")
+ACCESS_PARAMETERS=(keyVaultName="$KEY_VAULT" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY"
+  teamsSecret="$TEAMS_SECRET")
 
 umask 077
 PARAMETERS="$(mktemp "${TMPDIR:-/tmp}/mentra-private-parameters.XXXXXX")"
@@ -161,7 +166,8 @@ jq -n \
       environmentName:{value:$c.environmentName},
       runtimeName:{value:$c.runtimeName},
       coreName:{value:$c.coreName},
-      pullIdentityName:{value:$c.pullIdentityName},
+      coreIdentityName:{value:$c.coreIdentityName},
+      runtimeIdentityName:{value:$c.runtimeIdentityName},
       communicationName:{value:$c.communicationName},
       communicationDataLocation:{value:($c.communicationDataLocation // "United States")},
       teamsGraphTenantId:{value:(if ($c.teamsGraphTenantId // "") == "" then $c.tenantId else $c.teamsGraphTenantId end)},
@@ -191,7 +197,12 @@ if [[ "$MODE" == what-if ]]; then
     --template-file "$TEMPLATE_DIR/bootstrap.bicep" --parameters "${BOOTSTRAP_PARAMETERS[@]}" --no-pretty-print --output json)"
   MAIN_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
     --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" --no-pretty-print --output json)"
-  jq -n --argjson bootstrap "$BOOTSTRAP_PREVIEW" --argjson main "$MAIN_PREVIEW" '{bootstrap:$bootstrap,main:$main}'
+  # Access grants need the secrets to exist; before the first install there is nothing to preview.
+  ACCESS_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME-access" --resource-group "$RESOURCE_GROUP" \
+    --template-file "$TEMPLATE_DIR/access.bicep" --parameters "${ACCESS_PARAMETERS[@]}" --no-pretty-print --output json 2>/dev/null)" ||
+    ACCESS_PREVIEW=null
+  jq -n --argjson bootstrap "$BOOTSTRAP_PREVIEW" --argjson main "$MAIN_PREVIEW" --argjson access "$ACCESS_PREVIEW" \
+    '{bootstrap:$bootstrap,access:$access,main:$main}'
   exit 0
 fi
 
@@ -214,6 +225,19 @@ if [[ -n "$(jq -r '.teamsGraphClientId // ""' "$CONFIG")" ]]; then
     printf 'Graph meeting creation is configured, but Key Vault %s has no teams-graph-client-secret. Run setup.sh configure-teams.\n' "$KEY_VAULT" >&2
     exit 1
   }
+fi
+
+# Grant each app read access to exactly its own secrets. New grants take a
+# moment to reach Key Vault, and an app that cannot read a secret fails to start.
+NEW_GRANTS="$(az deployment group what-if --name "$DEPLOYMENT_NAME-access" --resource-group "$RESOURCE_GROUP" \
+  --template-file "$TEMPLATE_DIR/access.bicep" --parameters "${ACCESS_PARAMETERS[@]}" --no-pretty-print --output json |
+  jq '[.changes[] | select(.changeType == "Create")] | length')"
+az deployment group create --name "$DEPLOYMENT_NAME-access" --resource-group "$RESOURCE_GROUP" \
+  --template-file "$TEMPLATE_DIR/access.bicep" --parameters "${ACCESS_PARAMETERS[@]}" \
+  --query properties.provisioningState --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
+if [[ "$NEW_GRANTS" != 0 ]]; then
+  printf 'Waiting for new Key Vault access to apply...\n' >&2
+  sleep "${MENTRA_RBAC_WAIT_SECONDS:-60}"
 fi
 
 # The helper reports progress on stderr and prints only the digest-pinned

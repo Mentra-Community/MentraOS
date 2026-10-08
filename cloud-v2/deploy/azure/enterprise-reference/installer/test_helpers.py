@@ -200,6 +200,19 @@ else:sys.exit(9)
         template = (ROOT / 'main.bicep').read_text()
         self.assertNotIn('@secure()', template)
         self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 6)
+        # Each app reads only its own secrets with its own identity; nothing reads the admin key.
+        core = template[template.index("resource core '"):template.index("resource runtime '")]
+        runtime = template[template.index("resource runtime '"):]
+        self.assertNotIn('runtimeIdentity.id', core)
+        self.assertNotIn('coreIdentity.id', runtime)
+        self.assertNotIn('Microsoft.Authorization/roleAssignments', template)
+        bootstrap = (ROOT / 'bootstrap.bicep').read_text()
+        self.assertNotIn('4633458b-17de-408a-b874-0445c86b69e6', bootstrap)
+        access = (ROOT / 'access.bicep').read_text()
+        self.assertIn('scope: coreSecret[i]', access)
+        self.assertIn('scope: runtimeSecret[i]', access)
+        # The admin key appears only in the comment saying no app can read it.
+        self.assertEqual(access.count('mentra-admin-key'), 1)
 
     def test_configuration_requires_a_valid_key_vault_name(self):
         source = (ROOT / 'scripts/deploy.sh').read_text()
@@ -332,7 +345,7 @@ else:sys.exit(9)
                                 env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         preview = json.loads(result.stdout)
-        self.assertEqual(set(preview), {'bootstrap', 'main'})
+        self.assertEqual(set(preview), {'bootstrap', 'access', 'main'})
         calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()]
         bootstrap = next(c for c in calls if c[:3] == ['deployment', 'group', 'what-if'] and 'bootstrap' in c[c.index('--template-file') + 1])
         self.assertIn('operatorPrincipalId=abcdef12-1234-1234-1234-abcdef123456', bootstrap)
