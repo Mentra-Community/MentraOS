@@ -1,7 +1,7 @@
 import {expect, test} from "bun:test";
 import {renderToStaticMarkup} from "react-dom/server";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
-import {FrameworkHealth, LaneHealthHost, LaneHealthSection} from "./lane-health"
+import {FrameworkHealth, LaneHealthHost, LaneHealthSection, laneOverviewQuery} from "./lane-health"
 import {SystemHealthPage} from "./system-health";
 import type {LaneRestorationHost} from "../../../../packages/core/src/types/lane-restoration.types";
 
@@ -14,7 +14,7 @@ test("main System Health shows controller lanes independently of host monitoring
   const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
   client.setQueryData(["test-host-health"], {hosts: []});
   const current = new Date().toISOString();
-  client.setQueryData(["lane-restoration"], {hosts: [{...host, observedAt: current, receivedAt: current}], freshForMs: 120_000});
+  client.setQueryData(["lane-overview"], {hosts: [{...host, observedAt: current, receivedAt: current}], freshForMs: 120_000});
   const html = renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <SystemHealthPage />
@@ -93,8 +93,8 @@ test("framework health distinguishes current accepted source, API, pending targe
 test("stale observation, stale receipt and refresh failures never show current lane status", () => {
   for (const fields of [{observedAt: new Date(now - 120_001).toISOString()}, {receivedAt: new Date(now - 120_001).toISOString()}, {}]) {
     const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
-    client.setQueryData(["lane-restoration"], {hosts: [{...host, ...fields}], freshForMs: 120_000});
-    if (!Object.keys(fields).length) client.getQueryCache().find({queryKey: ["lane-restoration"]})!.setState({status: "error", error: new Error("Refresh failed")});
+    client.setQueryData(["lane-overview"], {hosts: [{...host, ...fields}], freshForMs: 120_000});
+    if (!Object.keys(fields).length) client.getQueryCache().find({queryKey: ["lane-overview"]})!.setState({status: "error", error: new Error("Refresh failed")});
     const html = renderToStaticMarkup(
       <QueryClientProvider client={client}>
         <LaneHealthSection now={now} />
@@ -115,6 +115,21 @@ test("repair and offline states remain explicit; unknown states do not become id
   expect(html).not.toContain(">Idle<");
 });
 
+test('overview uses one lightweight query and the last interval keeps observed stops truthful', async () => {
+  const original = globalThis.fetch; let url = '';
+  globalThis.fetch = (async input => {url = String(input); return Response.json({hosts: [], freshForMs: 120000});}) as typeof fetch;
+  try {await laneOverviewQuery.queryFn(); expect(url).toBe('/api/admin/test-runs/lanes/overview')}
+  finally {globalThis.fetch = original}
+  const binding = {version: 1, revision: 'a'.repeat(40), installationId: 'one', configurationSha256: 'b'.repeat(64),
+    runtimeSha256: 'c'.repeat(64), routineApiVersion: 14, publicApiSha256: 'd'.repeat(64)};
+  const {restoration: _restoration, ...current} = host;
+  const html = renderToStaticMarkup(<FrameworkHealth host={{...current, frameworkBinding: binding, frameworkAcceptedAt: at,
+    frameworkCurrentInterval: {binding, incarnation: 'boot', incarnationGeneration: 1, process: {pid: 42, startedAt: 'one'},
+      effectiveAt: at, observedAt: at, endedAt: at, endReason: 'observed-stop'}}} fresh />);
+  expect(html).toContain('Controller stop was observed'); expect(html).not.toContain('Running framework');
+  expect(html).not.toContain('Installation history');
+});
+
 test('all five dynamically reported lanes show readable labels, exact IDs and current owner links', () => {
   const client = new QueryClient({defaultOptions: {queries: {retry: false}}})
   const hosts = ['computer-1', 'computer-2', 'computer-3'].map((hostId, index) => ({...host, hostId,
@@ -125,7 +140,7 @@ test('all five dynamically reported lanes show readable labels, exact IDs and cu
         ? {id: `request:${index}`, kind: 'run' as const, requestId: `request:${index}`}
         : {id: `reservation:${index}`, kind: 'authoring' as const}},
     }))}))
-  client.setQueryData(['lane-restoration'], {hosts, freshForMs: 120_000})
+  client.setQueryData(['lane-overview'], {hosts, freshForMs: 120_000})
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHealthSection now={now} /></QueryClientProvider>)
   expect((html.match(/Lane: /g) ?? []).length).toBe(5)
   for (const row of hosts) for (const lane of row.lanes) {

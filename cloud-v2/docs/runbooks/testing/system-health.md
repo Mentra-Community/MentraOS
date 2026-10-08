@@ -95,6 +95,17 @@ Missing owner metadata remains not reported; Core does not infer custody from
 accepted requests or create another observation store. Idle state and Automatic
 mode are distinct: a paused idle lane does not accept automatic jobs.
 
+The overview uses `GET /api/admin/test-runs/lanes/overview`, a compact read of
+current lane state, sanitized owner, glasses model and framework deployment.
+It reads the same `test_host_state` records, projecting out routine availability,
+resource inventories, retained repair attempts and all but the latest framework
+interval. The latest interval preserves observed-stop information. System health
+and lane pages share this query; current status does not wait for history.
+Lane detail retrieves retained repair and installation history separately with
+`GET /api/admin/test-runs/restoration/list?hostId=<controller>`, scoped to that
+controller. The dedicated repair overview keeps the full bounded list. No
+history or controller authority is removed by the compact projection.
+
 Open **Lane restoration attempts & resume decisions** from System health. The
 page reads the controller's durable repair records, separately from passive
 worker monitoring. An accepted scheduling resume receipt establishes success;

@@ -159,6 +159,12 @@ export type LaneRestorationList = {
   truncated: boolean
 }
 
+/** Current status does not carry retained repair attempts or installation history. */
+export type LaneOverviewHost = Omit<LaneRestorationHost, 'restoration' | 'frameworkHistory'> & {
+  frameworkCurrentInterval?: FrameworkHistoryEntry
+}
+export type LaneOverviewList = Omit<LaneRestorationList, 'hosts'> & {hosts: LaneOverviewHost[]}
+
 export function restorationHostIsFresh(
   host: Pick<LaneRestorationHost, "observedAt" | "receivedAt">,
   now: number,

@@ -226,6 +226,18 @@ test("restoration list has a bounded uncached route outside generic run identiti
   expect(await response.json()).toMatchObject({hosts: [], truncated: false});
 });
 
+test('current lane and host-filtered history routes remain distinct uncached reads', async () => {
+  class Restoration extends LaneRestorationService {
+    override async overview() {return {generatedAt: '2026-10-05T01:00:00Z', freshForMs: 120_000, hosts: [], truncated: false}}
+    override async list(hostId?: string) {expect(hostId).toBe('selected-host'); return this.overview() as any}
+  }
+  const app = createTestRunAdminApi(undefined, undefined, undefined, undefined, new Restoration());
+  for (const path of ['/lanes/overview', '/restoration/list?hostId=selected-host']) {
+    const response = await app.request(path);
+    expect(response.status).toBe(200); expect(response.headers.get('Cache-Control')).toBe('no-store');
+  }
+});
+
 test('historical request detail preserves an absent routine source and original digest without enabling new admission', async () => {
   const input = {routineId: 'old-product', definitionRevision: 'a'.repeat(40), platform: 'android', laneId: 'phone', resources: [],
     build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)}};
