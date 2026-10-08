@@ -14,7 +14,7 @@ describe("system health presentation", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     try {
       client.setQueryData(["test-host-health"], { hosts: [{ ...host, sampledAt: at(-3_723_000), receivedAt: at(-3_723_000) }] });
-      const markup = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(SystemHealthPage)));
+      const markup = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(SystemHealthPage, {tab: "services"})));
       expect(markup).toContain("Last observed 1h 02m 03s ago");
       expect(markup).toContain("Stale · no recent report");
     } finally {
@@ -82,7 +82,8 @@ describe("system health presentation", () => {
       client.setQueryData(["test-host-health"], { hosts: [{ ...host, freeBytes: gib * 1024 ** 3, sampledAt: at, receivedAt: at }] });
       const render = (page: typeof SystemHealthPage | typeof SystemHealthSummary) => renderToStaticMarkup(
         createElement(QueryClientProvider, { client }, createElement(page)));
-      const summary = render(SystemHealthSummary), page = render(SystemHealthPage);
+      const summary = render(SystemHealthSummary), page = renderToStaticMarkup(
+        createElement(QueryClientProvider, {client}, createElement(SystemHealthPage, {tab: "disk"})));
       expect(summary.includes("below 5 GiB recorder minimum")).toBe(gib < 5);
       expect(page.includes('text-2xl font-semibold text-[#a64235]')).toBe(gib < 5);
       expect(summary).not.toContain("20 GiB");

@@ -19,7 +19,7 @@ export function PendingQueueSection() {
   return <section className={TESTING_PANEL}>
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Pending queue{data ? ` · ${data.total}` : ''}</h2>
       <TestingButton onClick={() => {void query.refetch();}}>Refresh queue</TestingButton></div>
-    <p className="mt-2 text-sm text-[#68746d]">Waiting and active requests. Compatible lanes match the routine’s exact resource requirements; their status shows current availability.</p>
+    <p className="mt-2 text-sm text-[#68746d]">Waiting to start.</p>
     {query.isError ? <p className="mt-4 text-sm text-[#a64235]">Pending queue could not refresh. Lane availability is unknown.</p> : query.isPending ?
       <LoadingIndicator label="Loading pending queue" className="mt-4" /> : <>
       {!data?.items.length ? <p className="mt-4 text-sm text-[#68746d]">{cursor ? 'No requests remain on this page.' : 'No pending requests.'}</p> :

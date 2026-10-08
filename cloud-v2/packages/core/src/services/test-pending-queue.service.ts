@@ -8,6 +8,7 @@ import {requestInputDigest} from './test-request.service';
 import {compatibleRoutineLane, routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
 import {TestHostStateService, type ReceivedTestHostState} from './test-host-state.service';
 import {TestRunError} from './test-result-error';
+import {pendingRequestFilter} from './test-request-activity';
 
 /** Read-only projection; compatible hardware is distinct from current acceptance. */
 function projectPendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostState[], now: number): PendingQueueItem {
@@ -27,7 +28,7 @@ function projectPendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostS
     return {...base, reason: 'Stored request identity is unavailable.'};
   const selected = selection.data;
   const item: PendingQueueItem = {...base, routineId: selected.routineId, platform: selected.platform, build: selected.build,
-    reason: row.fleetCancellation?.reason ?? row.preparation?.reason ?? row.fleetDispatch?.error,
+    reason: row.preparation?.reason ?? row.fleetDispatch?.error,
     ...(row.fleetBinding ? {assignment: {hostId: row.fleetBinding.hostId, laneId: row.fleetBinding.laneId}} : {})};
   let requirements;
   if (row.fleetPreparation) {
@@ -58,16 +59,16 @@ export function pendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostS
     compatibleLanes: [], platformCandidates: [], reason: 'Stored request metadata is unavailable.'};}
 }
 export class TestPendingQueueService {
-  constructor(private readonly hosts = new TestHostStateService()) {}
+  constructor(private readonly hosts = new TestHostStateService(), private readonly now = Date.now) {}
   async list(cursor?: string): Promise<PendingQueuePage> {
     if (cursor && !frameworkIdentitySchema.safeParse(cursor).success) throw new TestRunError(400, 'Invalid pending queue cursor');
-    const filter = {state: {$ne: 'terminal'}};
+    const filter = pendingRequestFilter;
     const [rows, total, hosts] = await Promise.all([
       TestRequestModel.find({...filter, ...(cursor ? {requestId: {$gt: cursor}} : {})}).sort({requestId: 1}).limit(51)
         .read('primary').readConcern('majority').lean(),
       TestRequestModel.countDocuments(filter).read('primary').readConcern('majority'), this.hosts.list(),
     ]);
-    const now = Date.now(), page = rows.slice(0, 50);
+    const now = this.now(), page = rows.slice(0, 50);
     return {items: page.map(row => pendingQueueItem(row as unknown as StoredRoutineJob, hosts, now)), total,
       ...(rows.length > 50 ? {nextCursor: page.at(-1)!.requestId} : {}), observedAt: new Date(now).toISOString()};
   }

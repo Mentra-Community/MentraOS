@@ -18,3 +18,13 @@ test('pending queue shows exact compatible lane states, unknown preparation and 
   expect(html).toContain('/?testRun=request'); expect(html).toContain('hostId=mini&amp;laneId=android');
   client.clear();
 });
+test('empty queue only reports jobs waiting to start', () => {
+  const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
+  client.setQueryData(['test-pending-queue', undefined], {total: 0, observedAt: new Date().toISOString(), items: []} satisfies PendingQueuePage);
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><PendingQueueSection /></QueryClientProvider>);
+  expect(html).toContain('Waiting to start.');
+  expect(html).toContain('No pending requests.');
+  expect(html).not.toContain('Cancellation');
+  expect(html).not.toContain('active requests');
+  client.clear();
+});
