@@ -15,6 +15,7 @@ export interface RequestActivityRecord {
   hostCancellation?: unknown;
   fleetCancellation?: unknown;
   preparationCancellation?: unknown;
+  cancellationAcknowledged?: boolean | null;
 }
 export function requestActivity(row: RequestActivityRecord) {
   if (row.hostCancellation !== undefined || row.fleetCancellation !== undefined || row.preparationCancellation !== undefined)
