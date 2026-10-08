@@ -204,7 +204,7 @@ def load(directory):
     if config.get('managedMiniapps') != release['managedMiniapps']:
         raise SetupError('Managed miniapp pin changed. Use a reviewed release package.')
     if state.get('configHash') and state['configHash'] != digest(directory / 'deployment.config.json'):
-        raise SetupError('Configuration changed after deployment started. Restore it before resuming.')
+        raise SetupError('Configuration changed after deployment started. Restore it, then run setup again.')
     return config, state, release
 
 
@@ -307,7 +307,7 @@ def select_upgrade(args, directory):
     if target['releaseTag'] == old_release['releaseTag'] and target['sourceImage'] != old_release['sourceImage']:
         raise SetupError('A coordinated release identity cannot change its image digest')
     if digest(ROOT / 'release.json') == state['releaseHash']:
-        raise SetupError('Target installer is already selected. Use resume or verify')
+        raise SetupError('This package is already selected; run setup again to continue.')
     updated = dict(config, **{k: target[k] for k in ('sourceImage', 'releaseTag', 'managedMiniapps', 'clientMinVersion')},
                    clientRecommendedVersion=target['clientMinVersion'])
     preflight(updated, require_identity=True)
@@ -336,7 +336,7 @@ def select_upgrade(args, directory):
     temporary.unlink()
     recover_upgrade(directory, config, state)
     return ({'status': 'upgrade_ready', **summary,
-                'next': 'Use this target package to run resume, then verify employee sign-in, Calls and report retrieval. Original keys and resource bindings are retained. Retain both packages and your database/files backup.'})
+                'next': 'Run setup again with this package, then verify employee sign-in, Calls and report retrieval. Original keys and resource bindings are retained. Retain both packages and your database/files backup.'})
 
 
 def recover_configuration(directory, config, state):
@@ -399,7 +399,9 @@ DATA_LOCATIONS = {'canada': 'Canada', 'brazil': 'Brazil', 'uk': 'UK', 'australia
                   'korea': 'Korea', 'india': 'India', 'uae': 'UAE', 'southafrica': 'Africa', 'eastasia': 'Asia Pacific',
                   'southeastasia': 'Asia Pacific', 'europe': 'Europe', 'france': 'Europe', 'germany': 'Europe',
                   'norway': 'Europe', 'switzerland': 'Europe', 'sweden': 'Europe', 'poland': 'Europe', 'italy': 'Europe',
-                  'spain': 'Europe'}
+                  'spain': 'Europe', 'austria': 'Europe', 'belgium': 'Europe', 'denmark': 'Europe', 'finland': 'Europe',
+                  'israel': 'Europe', 'qatar': 'UAE', 'newzealand': 'Australia', 'malaysia': 'Asia Pacific',
+                  'indonesia': 'Asia Pacific', 'taiwan': 'Asia Pacific', 'chile': 'Brazil'}
 # Settings recovered from Azure's record of the last deployment when the local folder was lost.
 RESTORED_KEYS = ('location', 'tenantId', 'coreApiClientId', 'mobileClientId', 'coreAdminEmails', 'workspaceHostname',
                  'workspaceCertificateName', 'additionalWorkspaceDomains', 'displayName', 'communicationDataLocation',
@@ -477,7 +479,7 @@ def init(args, directory):
     placeholders = [k for k, v in inputs.items() if isinstance(v, str) and re.search(r'<[^>]*>', v)]
     if placeholders:
         raise SetupError('Replace the example placeholders in --config: ' + ', '.join(sorted(placeholders)))
-    interactive = sys.stdin.isatty()
+    interactive = sys.stdin.isatty() and not getattr(args, 'yes', False)
     account = signed_in_account() if interactive else {}
     if account:
         print(f"Signed in to Azure as {account.get('user', {}).get('name', 'unknown')}, "
@@ -514,8 +516,6 @@ def init(args, directory):
                 inputs[key] = value
                 break
             print(f'  Please enter {ANSWER_HELP[key]}.')
-            if key == 'subscriptionId':
-                break
     if inputs.get('subscriptionId') is None or not GUID.fullmatch(inputs.get('subscriptionId', '')):
         raise SetupError('subscriptionId must be a UUID')
     for key in ('coreApiClientId', 'mobileClientId'):
@@ -1042,6 +1042,11 @@ def check_admin_access(core_origin, token, attempts=30, wait=10):
     raise SetupError('The administrator key could not retrieve reports from Core yet. Wait for the Core revision, then run setup again.')
 
 
+def app_name(config, role):
+    # Includes the deployment, so a company's test and production deployments never share a name.
+    return f"{config['displayName']} Mentra {role} ({config['deploymentId']})"
+
+
 def configure_entra(args, directory, config, state):
     preflight(config)
     if state.get('outputs') or state.get('configHash'):
@@ -1059,8 +1064,8 @@ def configure_entra(args, directory, config, state):
                    previousConfigHash=digest(directory / 'deployment.config.json'), coreApiClientId=core, mobileClientId=mobile))
         recover_identity(directory, config, state)
         return {'status': 'configured', 'next': 'Run setup again to continue.'}
-    argv = ['bash', str(ROOT / 'scripts/configure-entra.sh'), '--core-name', config['displayName'] + ' Mentra Core',
-            '--mobile-name', config['displayName'] + ' Mentra Mobile', '--installer-owner', state['owner']]
+    argv = ['bash', str(ROOT / 'scripts/configure-entra.sh'), '--core-name', app_name(config, 'Core'),
+            '--mobile-name', app_name(config, 'Mobile'), '--installer-owner', state['owner']]
     for field, flag in (('coreApiClientId', '--core-client-id'), ('mobileClientId', '--mobile-client-id')):
         if config.get(field):
             argv += [flag, config[field]]
@@ -1479,12 +1484,12 @@ def assign_employees(config, sp_id, entries):
 
 def entra_handoff(config, state):
     # For an Entra administrator; setup itself only needs the two IDs it prints.
-    name = config['displayName']
     return {'step': 'Sign-in apps', 'action': (
         f"An Application Administrator or Cloud Application Administrator, signed in to tenant {config['tenantId']}, "
-        f'downloads the installer as in the guide (prefix the command with MENTRA_START=0 so setup does not start) and runs:\n'
-        f'    ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh --core-name "{name} Mentra Core" '
-        f'--mobile-name "{name} Mentra Mobile" --installer-owner {state["owner"]} --grant-admin-consent\n'
+        f'downloads the installer without starting setup (the guide\'s install command, ending in '
+        f'"&& MENTRA_START=0 bash mentra-install.sh") and runs:\n'
+        f'    ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh --core-name "{app_name(config, "Core")}" '
+        f'--mobile-name "{app_name(config, "Mobile")}" --installer-owner {state["owner"]} --grant-admin-consent\n'
         f'  It prints coreApiClientId and mobileClientId. Then run: {setup_command()} configure-entra '
         '--core-client-id CORE_ID --mobile-client-id MOBILE_ID')}
 
@@ -1594,7 +1599,7 @@ def create_meetings_app(directory, config, state):
     # Creates the Graph app that schedules meetings, or on a rerun reuses the one
     # setup recorded. Its secret goes to Key Vault the moment it exists.
     import time
-    name = f"{config['displayName']} Mentra Meetings"
+    name = app_name(config, 'Meetings')
     graph_sp = service_principal(config, GRAPH_APP_ID)
     role = next(r for r in graph_sp['appRoles'] if r.get('value') == MEETINGS_PERMISSION)
     tag = 'mentraInstallerOwner:' + state['owner']
@@ -1758,6 +1763,9 @@ def configure_teams(args, directory, config, state, interactive=None):
         print('  Checking the client secret with Microsoft sign-in...')
         check_graph_secret(config, client_id, secret)
         vault_set(config, teams_secret(client_id), secret)
+        if client_id == previous:
+            print('  The renewed secret reaches the running service within about 30 minutes, when Container Apps '
+                  'refreshes its Key Vault references.')
     elif not vault_get(config, teams_secret(client_id)):
         raise SetupError(f'Provide the client secret for Graph app {client_id} (--teams-secret-stdin); '
                          'Key Vault has no secret saved for that app.')
@@ -1892,7 +1900,11 @@ def guided(args, directory):
     relink()
     section('Checking the Azure subscription')
     ensure_providers(config, interactive)
-    preflight(config)
+    checks = preflight(config)
+    if checks['resourceGroup'] == 'new' and state.get('outputs'):
+        raise SetupError(f"Resource group {config['resourceGroup']} no longer exists, so this deployment was deleted. "
+                         'To install again, follow "Start over" in the guide: remove the setup folder '
+                         '~/mentra-install/mentra-state and the Entra apps, then run the install command.')
     entra_missing = not (config.get('coreApiClientId') and config.get('mobileClientId'))
     if state['phase'] in ('initialized', 'identity_configured'):
         section('Preview')
@@ -1904,7 +1916,7 @@ def guided(args, directory):
         print_preview(preview(directory, planned, state), config)
         if entra_missing:
             print(f"Setup also creates two Microsoft Entra app registrations for employee sign-in: "
-                  f"\"{config['displayName']} Mentra Core\" and \"{config['displayName']} Mentra Mobile\".")
+                  f"\"{app_name(config, 'Core')}\" and \"{app_name(config, 'Mobile')}\".")
         print('These resources incur Azure charges; this profile uses authenticated public endpoints.')
         if not confirm('Create these resources now? This takes about 15 minutes.', True, interactive):
             if checks['resourceGroup'] == 'new':
@@ -1920,9 +1932,15 @@ def guided(args, directory):
             configure_entra(argparse.Namespace(**dict(vars(args), grant_admin_consent=False, core_client_id=None,
                                                       mobile_client_id=None)), directory, config, state)
         except SetupError as error:
+            if 'did not create' in str(error):
+                # The names are taken by apps another team owns; recreating them elsewhere would fail the same way.
+                raise
             print(f'  Setup could not create them with your account: {error}')
             checkpoint(directory, state, state['phase'], handoffs=[entra_handoff(config, state)])
-            return finish(directory, {'status': 'awaiting_entra', 'next': 'Run setup again after the Entra administrator has run the command above.'})
+            return finish(directory, {'status': 'awaiting_entra', 'next': (
+                f'After the Entra administrator has run the command above, record the two IDs with '
+                f'{setup_command()} configure-entra --core-client-id CORE_ID --mobile-client-id MOBILE_ID, '
+                'then run setup again.')})
         config, state, release = load(directory)
     section('Employee sign-in')
     handoffs = entra_handoffs(args, config, interactive)
@@ -2040,7 +2058,7 @@ def main():
         with locked(directory):
             if args.command == 'guided':
                 result = guided(args, directory)
-                if result.get('status') in ('stopped', 'awaiting_dns'):
+                if result.get('status') in ('stopped', 'awaiting_dns', 'awaiting_entra'):
                     print(result['next'])
                 return
             if args.command == 'init':

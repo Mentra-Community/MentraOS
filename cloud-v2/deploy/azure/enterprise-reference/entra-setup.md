@@ -11,7 +11,56 @@ deployment-scoped Mentra session. Runtime accepts only short-lived tokens issued
 by that Core. Neither Mentra nor customer services receive the employee's
 Microsoft password.
 
-## Automated setup
+## Guided setup
+
+Guided setup (`setup.sh`) changes nothing in Entra until the operator confirms
+the Azure preview, which names the two apps it will register:
+`<Company> Mentra Core (<deployment name>)` and `<Company> Mentra Mobile (<deployment name>)`. It then runs the helper
+below with `--installer-owner <owner>`, which tags the registrations it creates.
+A same-named app is reused only when it carries that tag; any other same-named
+app stops setup with `Entra already has an app registration named ... that this
+setup did not create`. Rename or delete that app, or configure the existing apps
+by client ID as shown below.
+
+After the apps exist, setup offers tenant-wide consent and asks which employees
+or groups can sign in (`--employees` for automation).
+
+When the operator cannot create Entra apps, setup prints a handoff for an
+Application Administrator or Cloud Application Administrator, signed in to the
+tenant. They download the installer without starting setup (run the install
+script as `MENTRA_START=0 bash mentra-install.sh`) and run the printed command:
+
+```bash
+~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh \
+  --core-name "<Company> Mentra Core (<deployment name>)" --mobile-name "<Company> Mentra Mobile (<deployment name>)" \
+  --installer-owner <owner> --grant-admin-consent
+```
+
+It prints `coreApiClientId` and `mobileClientId`. The operator records them,
+then runs setup again:
+
+```bash
+~/mentra-install/mentra-private-cloud/setup.sh configure-entra \
+  --core-client-id CORE_ID --mobile-client-id MOBILE_ID
+```
+
+That command only reads the two apps: each must be a single-tenant registration
+in the deployment's tenant.
+
+## Consent
+
+Tenant-wide consent for the Mobile app's delegated permissions (Core
+`mentra.session`, ACS `Teams.ManageCalls` and `Teams.ManageChats`) needs a
+Global Administrator, Privileged Role Administrator or Cloud Application
+Administrator. Setup grants it when the operator has the role. Otherwise the
+summary shows a `Still to do - Admin consent` line with the app's API
+permissions page, where the administrator selects **Grant admin consent**.
+Setup rechecks consent on every run and keeps showing the line until it is
+granted. The meetings app's Microsoft Graph application permission
+(`OnlineMeetings.ReadWrite.All`) needs a Global Administrator or Privileged
+Role Administrator; see [meeting creation](#meeting-creation).
+
+## Standalone helper
 
 Run the idempotent helper while signed into the customer's tenant as an
 Application, Cloud Application, or Global Administrator:
@@ -22,8 +71,10 @@ cloud-v2/deploy/azure/enterprise-reference/scripts/configure-entra.sh \
   --mobile-name "ACME Mentra Mobile"
 ```
 
-Run without `--grant-admin-consent` first, review the two registrations and
-permissions, then rerun with the printed ids:
+Without `--installer-owner`, the helper only creates apps whose names are not
+taken; it never adopts a same-named registration. Run without
+`--grant-admin-consent` first, review the two registrations and permissions,
+then rerun with the printed ids:
 
 ```bash
 cloud-v2/deploy/azure/enterprise-reference/scripts/configure-entra.sh \
@@ -106,28 +157,43 @@ credential from this deployment's ACS resource.
 
 Joining does not require Graph meeting-creation permissions. To enable creation,
 run `setup.sh configure-teams` (guided setup offers it after installation). It
-creates a confidential Graph application in the same tenant with application
-permission `OnlineMeetings.ReadWrite.All` and grants tenant admin consent when
-you are an Entra administrator; otherwise it prints the consent link. Its client
-secret goes straight to Key Vault and only Runtime reads it. To use an existing
-application, pass `--teams-client-id` and `--teams-secret-stdin`.
+creates a confidential Graph application, `<Company> Mentra Meetings (<deployment name>)`, in the
+same tenant with application permission `OnlineMeetings.ReadWrite.All`, tagged
+with the installer owner, and reuses only the app it created. It grants the
+permission when the operator is a Global Administrator or Privileged Role
+Administrator; otherwise it prints the app's API permissions page, where one of
+them selects **Grant admin consent**, and the summary keeps a `Still to do`
+line until it is granted. Its client secret goes straight to Key Vault and only
+Runtime reads it. To use an existing application, pass `--teams-client-id` and
+`--teams-secret-stdin`; setup checks a supplied secret with a Microsoft sign-in
+before storing it.
+
+The client secret setup creates expires after 2 years, and setup prints the
+date. Before then, add a new client secret to the app in Entra and run
+`setup.sh configure-teams` (it asks for the secret, hidden) or
+`setup.sh configure-teams --teams-secret-stdin`.
 
 A Teams administrator then authorizes organizers in Microsoft Teams PowerShell,
 for example in Cloud Shell (Switch to PowerShell). `configure-teams` prints these
-with the IDs filled in:
+with the IDs filled in and saves them to `mentra-state/teams-policy.ps1`:
 
 ```powershell
 Install-Module MicrosoftTeams -Scope CurrentUser -Force   # first time only
-Connect-MicrosoftTeams -UseDeviceAuthentication
-New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds <graph-client-id>
-Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global   # or -Identity <organizer-object-id> per user
+Connect-MicrosoftTeams -TenantId <tenant-id> -UseDeviceAuthentication
+# Create the MentraMeetings policy, or add this app to it:
+if (Get-CsApplicationAccessPolicy -Identity MentraMeetings -ErrorAction SilentlyContinue) { Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{Add='<graph-client-id>'} } else { New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds <graph-client-id> }
+Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{Remove='<previous-graph-client-id>'}   # the Graph app it replaces
+# Let employees create meetings as themselves. This replaces any policy already granted to everyone;
+# if your tenant has one, add the app to that policy instead (Set-CsApplicationAccessPolicy with @{Add=...}).
+Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global
+Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Identity <organizer-object-id>
+# Policy changes can take up to 30 minutes to apply.
 ```
 
-Grant the licensed fallback organizer too if you granted per user. After
-switching to another Graph app, point the existing policy at it with
-`Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds <new-client-id>`;
-the printed commands handle both cases. Allow time for policy propagation before
-testing.
+The `@{Remove=...}` line appears only after switching from another Graph app,
+and the `-Identity` grant only when a guest meeting organizer is configured.
+`-Global` replaces any application access policy already granted to everyone in
+the tenant; a tenant with one adds the app to that policy instead.
 See the [Runtime API contract](../../private-deployment.md#teams-meeting-creation)
 for identity selection and the [deployment inputs](./README.md#teams-meeting-creation)
 for secret/configuration wiring.

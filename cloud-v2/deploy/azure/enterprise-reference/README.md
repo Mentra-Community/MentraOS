@@ -57,6 +57,14 @@ cloud-v2/deploy/azure/enterprise-reference/scripts/configure-entra.sh \
   --mobile-name "ACME Mentra Mobile"
 ```
 
+Guided setup runs it with `--installer-owner`, naming the apps
+`<Company> Mentra Core (<deployment name>)` and `<Company> Mentra Mobile (<deployment name>)`, and only after the
+operator confirms the Azure preview. It never adopts a same-named app it did not
+create. An operator without Entra rights gets the exact command for an
+Application Administrator or Cloud Application Administrator, then records the
+resulting IDs with `setup.sh configure-entra --core-client-id ... --mobile-client-id ...`
+(see [entra-setup.md](./entra-setup.md#guided-setup)).
+
 ## Coordinated reference deployment
 
 The `dev` coordinated release:
@@ -96,21 +104,28 @@ cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --what-if /secure/p
 cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh /secure/path/mentra-private.config.json
 ```
 
-It creates the resource group, runs `bootstrap.bicep` (registry, identity, Key
-Vault, role assignments), creates the signing keys in Key Vault once, imports and
-verifies the digest, deploys Core and Runtime, runs the smoke test, and prints
-the deployment outputs. Replacing Key Vault values is a deliberate session/key
-rotation, not an ordinary redeploy.
+It creates the resource group, runs `bootstrap.bicep` (registry, identities, Key
+Vault, role assignments), creates the signing keys in Key Vault once, applies
+`access.bicep`'s per-secret grants, imports and verifies the digest, deploys
+Core and Runtime, runs the smoke test, and prints the deployment outputs. A
+rerun waits for a still-running deployment of the same name and recovers a Key
+Vault deleted together with the resource group. Replacing signing keys or the
+refresh pepper is a deliberate session/key rotation, not an ordinary redeploy;
+the administrator key is rotated with Mentra support.
 
 ### Teams meeting creation
 
 Guided setup offers this after installation, and `setup.sh configure-teams` adds
-it later. It can create the Graph application itself, granting
-`OnlineMeetings.ReadWrite.All` when the operator is an Entra administrator. It
-writes the client secret straight to Key Vault as
+it later. It can create the Graph application `<Company> Mentra Meetings (<deployment name>)`
+itself, granting `OnlineMeetings.ReadWrite.All` when the operator is a Global
+Administrator or Privileged Role Administrator (otherwise it prints the app's
+API permissions page). It writes the client secret straight to Key Vault as
 `teams-graph-client-secret-<client ID>` (one secret per app, so a new app's ID
 and secret take effect together), records `teamsGraphClientId` and `teamsGraphOrganizerId`, rolls the change out,
-and prints the Teams PowerShell access-policy commands with the IDs filled in.
+and prints the Teams PowerShell access-policy commands with the IDs filled in,
+also saving them to `mentra-state/teams-policy.ps1`. The secret it creates
+expires after 2 years; renew it with `setup.sh configure-teams --teams-secret-stdin`
+(or the hidden prompt of `setup.sh configure-teams`).
 See [Graph consent and Teams access policy](./entra-setup.md#meeting-creation).
 Leaving these inputs empty preserves join-only server behavior; creation returns
 a configuration error.
