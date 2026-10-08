@@ -313,6 +313,28 @@ public class LinkStateMachineTest {
     }
 
     @Test
+    public void besFirmwareChanged_dropsCapsUntilTheNewBuildAdvertises() {
+        machine.serialReady();
+        machine.srSyvrParsed(
+                new BesCaps(true, true, true, true, BesWireFormat.PROTOCOL_VERSION_V2, 509,
+                        true, true, true));
+        RecordingListener listener = new RecordingListener();
+        machine.addListener(listener);
+
+        machine.besFirmwareChanged();
+
+        assertThat(machine.getNegotiatedCaps()).isEqualTo(BesCaps.NONE);
+        assertThat(machine.getState()).isEqualTo(LinkState.LINK_PROVEN);
+        assertThat(listener.states).hasSize(2);
+
+        // An older build without the flag stays paced; the new build's own flags return.
+        machine.srSyvrParsed(
+                new BesCaps(true, true, true, true, BesWireFormat.PROTOCOL_VERSION_V2, 509));
+        assertThat(machine.getNegotiatedCaps().uartRxPos).isFalse();
+        assertThat(machine.getNegotiatedCaps().filePayloadV2).isTrue();
+    }
+
+    @Test
     public void srSyvrParsed_withoutBinaryFlag_doesNotTouchProto() {
         machine.serialReady();
         machine.binaryRelayObserved();

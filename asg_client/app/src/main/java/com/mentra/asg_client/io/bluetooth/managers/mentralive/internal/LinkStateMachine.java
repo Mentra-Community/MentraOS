@@ -540,6 +540,27 @@ public final class LinkStateMachine {
     }
 
     /**
+     * The BES now runs different firmware (an applied OTA, or an sr_syvr reporting another
+     * version). Every advertised capability describes one firmware build, so drop them until the
+     * new build re-advertises its own. Unlike a reopen window this is not a transient gap: keeping
+     * the old flags would let ASG skip compatibility behavior, such as UART file pacing, that the
+     * replacement still needs.
+     */
+    public void besFirmwareChanged() {
+        synchronized (this) {
+            if (negotiatedCaps.equals(BesCaps.NONE)) {
+                return;
+            }
+            BesCaps previousProven = provenCapsLocked();
+            negotiatedCaps = BesCaps.NONE;
+            if (state == LinkState.LINK_PROVEN
+                    && !Objects.equals(previousProven, provenCapsLocked())) {
+                notifyListenersLocked();
+            }
+        }
+    }
+
+    /**
      * Merge capabilities from a valid {@code sr_syvr} without publishing a proven-link edge. The
      * transport coordinator uses this while that same reply is initiating a baud transition; the
      * capabilities are real, but the current byte stream is no longer a stable go-ahead.
