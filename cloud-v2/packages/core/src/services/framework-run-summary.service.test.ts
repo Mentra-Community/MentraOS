@@ -210,7 +210,7 @@ describe.skipIf(!uri)("Mongo frozen summary projection", () => {
     await TestRunModel.collection.insertOne({runId: run.requestId, requestId: run.requestId, payloadSha256, payload: run,
       routineId: run.routineId, platform: run.platform, startedAt: new Date(run.startedAt), uploadsComplete: true, outcome: "pass"});
     const definition = {routineId: run.routineId, platform: run.platform, definitionRevision: "e".repeat(40)} as RoutineEnrollment;
-    const service = new RoutineCatalogService({async current() {return [definition];}, async getCurrent() {return definition;}}, undefined,
+    const service = new RoutineCatalogService({async current() {return [definition];}, async overview() {return this.current();}, async getCurrent() {return definition;}}, undefined,
       {async list() {return [];}, async get() {return null;}, async set() {}});
     const expected = {
       runId: run.requestId,

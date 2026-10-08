@@ -17,7 +17,7 @@ test('public passing selector excludes verification candidates while retaining p
     read() {return this;}, readConcern() {return this;}, lean: async () => null} as unknown as ReturnType<typeof TestRunModel.findOne>);
   const definition = {routineId: 'notes', platform: 'android', definitionRevision: 'c'.repeat(40)} as RoutineEnrollment;
   try {
-    const service = new RoutineCatalogService({async current() {return [definition];}, async getCurrent() {return definition;}},
+    const service = new RoutineCatalogService({async current() {return [definition];}, async overview() {return this.current();}, async getCurrent() {return definition;}},
       undefined, preferences);
     // A history read is separate from eligibility; isolate this selector via a detail with mocked history.
     const history = spyOn(TestRunModel, 'find').mockReturnValue({sort() {return this;}, limit() {return this;}, select() {return this;},
@@ -29,7 +29,7 @@ test('public passing selector excludes verification candidates while retaining p
 test("a historical passing example retains catalog membership while new authoring work stays out", async () => {
   const definitions = [{routineId: "notes", platform: "ios-on-mac", definitionRevision: "c".repeat(40)},
     {routineId: "gallery-sync", platform: "android", definitionRevision: "d".repeat(40)}] as RoutineEnrollment[];
-  const service = new RoutineCatalogService({async current() {return definitions;}, async getCurrent() {return definitions[0]!;}}, {
+  const service = new RoutineCatalogService({async current() {return definitions;}, async overview() {return this.current();}, async getCurrent() {return definitions[0]!;}}, {
     async history() {return [];}, async latestPassing(row) {return row.routineId === "notes" ? example : null;},
   }, preferences);
   const catalog = await service.list();
@@ -57,7 +57,7 @@ test('canonical catalog reads recorded payload and summary with genuinely absent
     readConcern() {return this;}, async lean() {return [row];}} as never);
   const definition = {routineId: 'notes', platform: 'ios-on-mac', definitionRevision: 'd'.repeat(40)} as RoutineEnrollment;
   try {
-    const service = new RoutineCatalogService({async current() {return [definition];}, async getCurrent() {return definition;}}, undefined, preferences);
+    const service = new RoutineCatalogService({async current() {return [definition];}, async overview() {return this.current();}, async getCurrent() {return definition;}}, undefined, preferences);
     const catalog = await service.list(), detail = await service.detail('notes', 'ios-on-mac');
     expect(catalog).toHaveLength(1);
     expect(detail.example?.runId).toBe(old.requestId);
@@ -73,7 +73,7 @@ test("history pagination preserves equal-time and earlier runs and refuses forei
   const rows: CatalogHistoryRun[] = ["c", "b", "a"].map(runId => ({runId, startedAt: "2026-10-02T19:00:00Z",
     outcome: "failed", uploadsComplete: true, evidenceStatus: "complete", definitionRevision: "a".repeat(40)}));
   rows.push({...rows[0]!, runId: "z", startedAt: "2026-10-02T18:00:00Z"});
-  const service = new RoutineCatalogService({async current() {return [definition];},
+  const service = new RoutineCatalogService({async current() {return [definition];}, async overview() {return this.current();},
     async getCurrent(id) {return ["notes", "other"].includes(id) ? {...definition, routineId: id} : null;}}, {
     async latestPassing() {return null;},
     async history(_id, _platform, after, limit) {return rows.filter(row => !after
@@ -101,7 +101,7 @@ test("nightly preference survives later failure and a new definition revision fo
     async get(id, platform) {return saved.get(`${id}/${platform}`) ?? null;},
     async set(row) {saved.set(`${row.routineId}/${row.platform}`, row);}};
   const definition = () => ({routineId: "new-routine", platform: "android", definitionRevision: revision}) as RoutineEnrollment;
-  const service = new RoutineCatalogService({async current() {return [definition()];}, async getCurrent() {return definition();}}, {
+  const service = new RoutineCatalogService({async current() {return [definition()];}, async overview() {return this.current();}, async getCurrent() {return definition();}}, {
     async latestPassing() {return example;}, async history() {return [{runId: "later-failure", startedAt: "2026-10-03T18:00:00Z", outcome: "failed", uploadsComplete: true, evidenceStatus: "complete", definitionRevision: revision}];},
   }, preferences);
   expect((await service.list())[0]!.nightlyEnabled).toBe(true);
@@ -115,4 +115,27 @@ test("nightly preference survives later failure and a new definition revision fo
   expect((await service.detail("new-routine", "android")).nightlyEnabled).toBe(false);
   await service.setPreference("new-routine", "android", true);
   expect((await service.list())[0]!.nightlyEnabled).toBe(true);
+});
+
+test('overview retains passing proof and nightly preferences while full dispatch list uses current definitions', async () => {
+  const definition = {routineId: 'notes', platform: 'android' as const, definitionRevision: 'c'.repeat(40),
+    definitionSha256: 'd'.repeat(64), definition: {title: 'Notes', purpose: 'Create and find a note'}};
+  let fullReads = 0, cardReads = 0;
+  const definitions = {async current() {fullReads++; return [{...definition, routineSource: {commit: definition.definitionRevision},
+    definition: {...definition.definition, steps: [{id: 'search'}]}}] as RoutineEnrollment[];},
+    async overview() {cardReads++; return [definition] as Awaited<ReturnType<import('./routine-definition.service').RoutineDefinitionService['overview']>>;},
+    async getCurrent() {return null;}};
+  const latest: CatalogHistoryRun = {runId: 'latest-failed', startedAt: example.startedAt, outcome: 'failed',
+    evidenceStatus: 'complete', uploadsComplete: true, definitionRevision: definition.definitionRevision};
+  const service = new RoutineCatalogService(definitions, {async latestPassing() {return example;}, async history() {return [latest];}},
+    {async list() {return [{routineId: 'notes', platform: 'android', nightlyEnabled: false}];}, async get() {return null;}, async set() {}});
+  expect(await service.overview()).toEqual([{...definition, example, latestAttempt: latest, nightlyEnabled: false}]);
+  expect(fullReads).toBe(0);
+  expect(cardReads).toBe(1);
+  const full = await service.list();
+  expect(full[0]).toHaveProperty('routineSource');
+  expect(full[0]?.definition).toHaveProperty('steps');
+  expect(full[0]?.example).toEqual(example);
+  expect(full[0]?.nightlyEnabled).toBe(false);
+  expect(fullReads).toBe(1);
 });

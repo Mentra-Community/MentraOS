@@ -1,6 +1,6 @@
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {useQuery} from "@tanstack/react-query"
-import {Loader2} from 'lucide-react'
+import {LoadingIndicator} from '../components/loading-indicator'
 import {
   restorationHostIsFresh,
   type LaneRestorationHost,
@@ -200,8 +200,7 @@ export function LaneHealthSection({now}: {now: number}) {
           <h2 className="text-xl font-semibold">Device lanes</h2>
           <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">About lane status</summary><p className="mt-2">Live controller reports of each lane's state and scheduling mode. Idle means no routine is executing; resource readiness is checked when a job is admitted.</p></details>
         </div>
-        <TestingButton className="text-sm" disabled={query.isFetching} onClick={() => void query.refetch()}>
-          {query.isFetching && <Loader2 aria-label="Refreshing lanes" className="size-4 animate-spin" />}
+        <TestingButton className="text-sm" busy={query.isFetching} onClick={() => void query.refetch()}>
           Refresh lanes
         </TestingButton>
       </div>
@@ -220,7 +219,7 @@ export function LaneHealthSection({now}: {now: number}) {
       {!query.data?.hosts.length && (
         <p className="mt-4 text-sm text-[#747780]">
           {query.isPending
-            ? <span role="status" className="inline-flex items-center gap-2"><Loader2 aria-hidden="true" className="size-4 animate-spin" />Loading lane reports</span>
+            ? <LoadingIndicator label="Loading lane reports" inline />
             : "No controller lane report is available. Current lane status is unknown."}
         </p>
       )}

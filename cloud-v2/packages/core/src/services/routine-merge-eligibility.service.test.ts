@@ -54,7 +54,7 @@ test('candidate edit cannot become current or public example until normal merged
       if (!previous) records.set(row.definitionRevision, {row, ordinary: !row.verification, order: ++order})
       else if (!row.verification && !previous.ordinary) {previous.ordinary = true; previous.order = ++order}
     },
-    async current() {return [...records.values()].filter(v => v.ordinary).sort((x, y) => y.order - x.order).slice(0, 1).map(v => v.row)},
+    async current() {return [...records.values()].filter(v => v.ordinary).sort((x, y) => y.order - x.order).slice(0, 1).map(v => v.row)}, async overview() {return this.current();},
     async getCurrent() {return (await this.current())[0] ?? null},
     async getExact(_routine, _platform, revision) {
       return records.get(revision)?.row ?? null

@@ -2,7 +2,7 @@ import {z} from "zod";
 import {frameworkRunIdSchema} from "../types/framework-run.types";
 import {frameworkBuildSchema} from "../types/framework-request.types";
 import {TestRunModel} from "../models/test-run.model";
-import type {RoutineEnrollment} from "../types/routine-definition.types";
+import type {RoutineEnrollment, RoutineCardDefinition} from "../types/routine-definition.types";
 import type {CatalogExample, CatalogHistoryRun} from "../types/test-history.types";
 import {RoutineDefinitionService} from "./routine-definition.service";
 import {nativeRunFilter, readFrameworkRunSummaryProjection} from "./framework-run-summary.service";
@@ -10,7 +10,7 @@ import {TestRunError} from "./test-result-error";
 import {routinePreferences, type RoutinePreferenceRepository} from "./routine-preference.service";
 
 export interface CatalogRunRepository {
-  latestPassing(definition: RoutineEnrollment): Promise<CatalogExample | null>;
+  latestPassing(definition: Pick<RoutineEnrollment, 'routineId' | 'platform'>): Promise<CatalogExample | null>;
   history(routineId: string, platform: string, after: {startedAt: Date; runId: string} | null, limit: number): Promise<CatalogHistoryRun[]>;
 }
 export class RoutineCatalogError extends Error {
@@ -58,11 +58,19 @@ const cursorSchema = z.object({routineId: z.string(), platform: z.string(),
   startedAt: z.string().datetime({offset: true}), runId: frameworkRunIdSchema}).strict();
 
 export class RoutineCatalogService {
-  constructor(private readonly definitions: Pick<RoutineDefinitionService, "current" | "getCurrent"> = new RoutineDefinitionService(),
+  constructor(private readonly definitions: Pick<RoutineDefinitionService, "current" | "overview" | "getCurrent"> = new RoutineDefinitionService(),
     private readonly runs: CatalogRunRepository = mongoRuns,
     private readonly preferences: RoutinePreferenceRepository = routinePreferences) {}
   async list() {
     const [definitions, preferences] = await Promise.all([this.definitions.current(), this.preferences.list()]);
+    return this.entries(definitions, preferences);
+  }
+  /** Cards never need executable steps or complete bundle references. */
+  async overview() {
+    const [definitions, preferences] = await Promise.all([this.definitions.overview(), this.preferences.list()]);
+    return this.entries(definitions, preferences);
+  }
+  private async entries<T extends RoutineCardDefinition | RoutineEnrollment>(definitions: T[], preferences: Awaited<ReturnType<RoutinePreferenceRepository['list']>>) {
     const entries = await Promise.all(definitions.map(async definition => {
       const [example, history] = await Promise.all([this.runs.latestPassing(definition), this.runs.history(definition.routineId, definition.platform, null, 1)]);
       const nightlyEnabled = preferences.find(row => row.routineId === definition.routineId && row.platform === definition.platform)?.nightlyEnabled ?? true;
