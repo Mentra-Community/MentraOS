@@ -164,3 +164,21 @@ test("both workflows install packages before Gradle and changes invalidate APK r
   assert.ok(MOBILE_INPUT_PATHS.includes(".github/scripts/install-android-sdk.mjs"))
   assert.ok(MOBILE_PR_PATHS.includes(".github/scripts/install-android-sdk*"))
 })
+
+test("coordinated Android builds install their selected SDK after dependencies and preserve immutable pair reuse", () => {
+  const source = readFileSync(new URL("../workflows/reusable-coordinated-mobile.yml", import.meta.url), "utf8")
+  const android = source.split("\n  android:\n")[1].split("\n  ios:\n")[0]
+  assert.match(android, /packages: ""/)
+  assert.match(android, /node release-tooling\/\.github\/scripts\/install-android-sdk\.mjs platform-tools "build-tools;36\.0\.0"/)
+  const dependencies = android.indexOf("run: bun install --frozen-lockfile")
+  const setup = android.indexOf("run: node release-tooling/.github/scripts/install-android-sdk.mjs --mobile mobile")
+  const verify = android.indexOf("run: node release-tooling/.github/scripts/ensure-android-ndk.mjs")
+  const build = android.indexOf("run: bun run release:android")
+  assert.ok(dependencies > 0 && setup > dependencies && verify > setup && build > verify)
+  for (const name of ["Install exact workspace dependencies", "Install the selected Android SDK before Gradle", "Verify the selected Android NDK installation", "Build signed coordinated APK and AAB"]) {
+    const step = android.split(`      - name: ${name}\n`)[1].split(/\n      - /)[0]
+    assert.match(step, /if: inputs\.dry_run == true \|\| needs\.prepare\.outputs\.android_assets_exist != 'true'/)
+    assert.doesNotMatch(step, /continue-on-error/)
+  }
+  assert.match(android, /Download the existing immutable Android pair\n        if: inputs\.dry_run != true && needs\.prepare\.outputs\.android_assets_exist == 'true'/)
+})
