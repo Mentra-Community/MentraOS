@@ -58,6 +58,7 @@ test('lane details fetch retained history for the selected host only', async () 
 test('selected-host history remains visible when the cold fleet overview fails or omits this host', () => {
   for (const mode of ['failed', 'truncated'] as const) {
     const {client, render} = fixture();
+    client.setDefaultOptions({queries: {retry: false, retryOnMount: false}});
     client.setQueryData(['lane-overview'], {hosts: [], freshForMs: 120000, truncated: mode === 'truncated'});
     if (mode === 'failed') client.getQueryCache().find({queryKey: ['lane-overview']})!
       .setState({status: 'error', data: undefined, error: new Error('Overview failed')});
