@@ -8,6 +8,7 @@ import {
   routineWorkRequestSchema,
   routineWorkAcceptanceSchema,
   routineWorkStatusSchema,
+  routineWorkLocalRegistrationSchema,
   type AuthoringWork,
   type RoutineWorkRequest,
   type RoutineWorkStatus,
@@ -29,7 +30,7 @@ export interface RoutineWorkDelivery {
   requestSha256: string
   inputSha256: string
   hostId?: string
-  request: RoutineWorkRequest
+  request: RoutineWorkRequest | AuthoringWork
   work: AuthoringWork | PortableAuthoringWork
   fleetSelection?: PortableAuthoringWork
   fleetInputSha256?: string
@@ -460,6 +461,34 @@ export class RoutineWorkService {
       throw new TestRequestConflict('Authoring acceptance differs from its original receipt')
     await this.notify(accepted)
     return accepted.acceptance
+  }
+  async registerLocal(value: unknown, hostId: string) {
+    const parsed = routineWorkLocalRegistrationSchema.safeParse(value)
+    if (!parsed.success || parsed.data.receipt.hostId !== hostId)
+      throw new TestRunError(400, 'Invalid local authoring registration')
+    const {work, receipt} = parsed.data
+    if (requestInputDigest(work) !== receipt.inputSha256)
+      throw new TestRequestConflict('Local authoring registration changed its accepted input')
+    const assertSame = (row: RoutineWorkDelivery) => {
+      if (row.hostId !== hostId || row.inputSha256 !== receipt.inputSha256 ||
+          requestInputDigest(row.work) !== receipt.inputSha256 || row.work.origin || row.fleetSelection ||
+          row.requestSha256 !== receipt.inputSha256 || requestInputDigest(row.request) !== receipt.inputSha256 ||
+          requestInputDigest(row.acceptance) !== requestInputDigest(receipt))
+        throw new TestRequestConflict('Local authoring registration conflicts with its immutable work or acceptance')
+      return row.acceptance!
+    }
+    const existing = await this.rows.get(work.workId)
+    if (existing) return assertSame(existing)
+    // The existing unique work ID and majority write retain admission and receipt
+    // together. This is an observation of local acceptance, never fleet delivery.
+    const row: RoutineWorkDelivery = {workId: work.workId, hostId, work, request: work,
+      inputSha256: receipt.inputSha256, requestSha256: receipt.inputSha256, acceptance: receipt}
+    try {await this.rows.insert(row)} catch (error) {
+      const winner = await this.rows.get(work.workId)
+      if (winner) return assertSame(winner)
+      throw error
+    }
+    return assertSame(await this.inspect(work.workId))
   }
   async status(value: unknown, hostId: string) {
     const parsed = routineWorkStatusSchema.safeParse(value)
