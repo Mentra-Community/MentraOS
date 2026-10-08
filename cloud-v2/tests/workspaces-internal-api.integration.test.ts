@@ -1558,6 +1558,16 @@ describe("GET /workspaces/:workspaceId/memberships/history", () => {
     }
   })
 
+  test("a lookback longer than the epoch starts the window at 1970 rather than failing", async () => {
+    process.env.CLOUD_CORE_FLEET_HISTORY_MAX_DAYS = "9007199254740991"
+    const {workspaceId, subject} = await workspaceAndPerson()
+
+    const reply = await history(workspaceId, subject.mentraUserId)
+
+    expect(reply.status).toBe(200)
+    expect(reply.json.windowStart).toBe("1970-01-01T00:00:00.000Z")
+  })
+
   test("a since that is not an ISO time with a zone, or is in the future, is 400 invalid_request", async () => {
     const {workspaceId, subject} = await workspaceAndPerson()
     for (const since of ["yesterday", "2026-10-08", "1760000000000", "10/08/2026 10:00", iso(new Date(Date.now() + 5 * 60_000))]) {

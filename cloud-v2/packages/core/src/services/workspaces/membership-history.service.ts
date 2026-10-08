@@ -58,9 +58,12 @@ export function historyMaxDays(): number {
   return DEFAULT_MAX_DAYS
 }
 
-/** The earliest time a history read may ask about, `now` minus the configured lookback. */
+/**
+ * The earliest time a history read may ask about, `now` minus the configured lookback. A lookback
+ * reaching past 1970 starts at 1970: no membership is older, and the time stays representable.
+ */
 export function historyWindowStart(now: Date): Date {
-  return new Date(now.getTime() - historyMaxDays() * DAY_MS)
+  return new Date(Math.max(0, now.getTime() - historyMaxDays() * DAY_MS))
 }
 
 /**
