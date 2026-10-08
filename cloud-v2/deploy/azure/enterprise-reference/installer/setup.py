@@ -32,7 +32,6 @@ BINDING_KEYS = ('subscriptionId', 'tenantId', 'resourceGroup', 'registryName', '
                 'resourceTags', 'coreApiClientId', 'mobileClientId', 'keyVaultName')
 # Key Vault holds every original secret; nothing secret is stored locally.
 ADMIN_KEY_SECRET = 'mentra-admin-key'
-TEAMS_SECRET = 'teams-graph-client-secret'
 # Teams settings may be added after installation; resume rolls them out.
 UPDATABLE_KEYS = {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId', 'teamsGraphClientId',
                   'teamsGraphOrganizerId'}
@@ -864,8 +863,6 @@ def bootstrap_admin(args, directory, config, state):
         raise SetupError('Core returned an invalid administrator credential')
     if not saved:
         vault_set(config, ADMIN_KEY_SECRET, credential['value'], keyId=credential['id'])
-    if credential.get('cleanupRequired'):
-        raise SetupError('Administrator key saved in Key Vault, but legacy share cleanup failed. Resolve Azure Files access and retry bootstrap-admin before granting admin access.')
     email = 'api-key@' + credential['id'] + '.local'
     values = next((entry.get('value', '') for entry in current['properties']['template']['containers'][0]['env']
                    if entry['name'] == 'CLOUD_CORE_ADMIN_EMAILS'), '')
@@ -1246,27 +1243,34 @@ def resolve_principal(config, entry):
         if not user:
             found = graph(config, 'GET', graph_filter('users', f"mail eq {odata(entry)}", 'id,displayName'))['value']
             user = found[0] if found else None
-        return user
+        return dict(user, collection='users') if user else None
     found = graph(config, 'GET', graph_filter('groups', f"displayName eq {odata(entry)}", 'id,displayName'))['value']
-    return found[0] if len(found) == 1 else None
+    return dict(found[0], collection='groups') if len(found) == 1 else None
 
 
 def assign_employees(config, sp_id, entries):
-    assigned, unknown = [], []
+    assigned, unknown, refused = [], [], []
     for entry in filter(None, (e.strip() for e in entries)):
         principal = resolve_principal(config, entry)
         if not principal:
             unknown.append(entry)
             continue
+        name = principal.get('displayName') or entry
         try:
             graph(config, 'POST', f'servicePrincipals/{sp_id}/appRoleAssignedTo',
                   {'principalId': principal['id'], 'resourceId': sp_id, 'appRoleId': DEFAULT_ACCESS_ROLE})
         except GraphError as error:
-            # An existing assignment is the desired end state.
             if error.code not in (400, 409):
                 raise
-        assigned.append(principal.get('displayName') or entry)
-    return assigned, unknown
+            # Graph answers 400 both for an existing assignment, the desired end
+            # state, and for a principal it cannot assign, such as a mail-only group.
+            existing = graph(config, 'GET', graph_filter(f"{principal['collection']}/{principal['id']}/appRoleAssignments",
+                                                         f'resourceId eq {sp_id}', 'id'))['value']
+            if not existing:
+                refused.append(name)
+                continue
+        assigned.append(name)
+    return assigned, unknown, refused
 
 
 def entra_handoffs(args, config, interactive):
@@ -1297,12 +1301,14 @@ def entra_handoffs(args, config, interactive):
                       '', interactive).split(',')
     if sp_id and any(e.strip() for e in entries):
         try:
-            assigned, unknown = assign_employees(config, sp_id, entries)
+            assigned, unknown, refused = assign_employees(config, sp_id, entries)
             if assigned:
                 print('  Allowed to sign in: ' + ', '.join(assigned))
                 access['assigned'] = True
             if unknown:
                 print('  Not found in Entra: ' + ', '.join(unknown))
+            if refused:
+                print('  Cannot be assigned (use users or security groups): ' + ', '.join(refused))
         except GraphError:
             print('  Could not assign employees with your Entra role.')
     if not access['assigned']:
@@ -1417,6 +1423,10 @@ def teams_policy_commands(client_id, organizer_id):
     return commands
 
 
+def teams_secret(client_id):
+    return 'teams-graph-client-secret-' + client_id
+
+
 def configure_teams(args, directory, config, state, interactive=None):
     interactive = sys.stdin.isatty() and not getattr(args, 'yes', False) if interactive is None else interactive
     if not state.get('outputs', {}).get('keyVaultName') and state['phase'] not in ('deployed', 'infrastructure_verified'):
@@ -1436,14 +1446,13 @@ def configure_teams(args, directory, config, state, interactive=None):
             secret = sys.stdin.readline().strip()
         elif interactive:
             secret = ask('Client secret for that app (hidden; Enter keeps the saved one)', '', interactive, secret=True)
+    # Each Graph app has its own secret, so saving a new app's secret leaves the
+    # running deployment untouched until the rollout switches ID and secret together.
     if secret:
-        vault_set(config, TEAMS_SECRET, secret, clientId=client_id)
-    else:
-        # The saved secret is tagged with its app; never pair it with another app.
-        saved = vault_get(config, TEAMS_SECRET)
-        if not saved or (saved.get('tags') or {}).get('clientId') != client_id:
-            raise SetupError(f'Provide the client secret for Graph app {client_id} (--teams-secret-stdin); '
-                             'Key Vault has no secret saved for that app.')
+        vault_set(config, teams_secret(client_id), secret)
+    elif not vault_get(config, teams_secret(client_id)):
+        raise SetupError(f'Provide the client secret for Graph app {client_id} (--teams-secret-stdin); '
+                         'Key Vault has no secret saved for that app.')
     organizer = getattr(args, 'teams_organizer', None) or (config.get('teamsGraphOrganizerId') or '')
     if not organizer and interactive:
         organizer = ask('Licensed account that hosts meetings for guests (email; Enter to skip)', '', interactive)

@@ -1,13 +1,13 @@
 // Per-secret Key Vault read access, applied after the secrets exist. Core reads
-// only its signing keys and refresh pepper; Runtime reads only the Teams Graph
-// secret. No app can read mentra-admin-key, which is for operators.
+// only its signing keys and refresh pepper; Runtime reads only the configured
+// Graph app's secret. No app can read mentra-admin-key, which is for operators.
 @description('Existing Key Vault created by bootstrap.bicep.')
 param keyVaultName string
 param coreIdentityName string = 'id-mentra-enterprise-reference-core'
 param runtimeIdentityName string = 'id-mentra-enterprise-reference-runtime'
 
-@description('Grant Runtime the teams-graph-client-secret; it must already exist.')
-param teamsSecret bool = false
+@description('Graph meeting-creation app. Runtime is granted its secret, teams-graph-client-secret-<client ID>, which must already exist. Empty grants nothing.')
+param teamsGraphClientId string = ''
 
 var secretsUserRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
@@ -20,7 +20,7 @@ var coreSecrets = [
   'miniapp-jwt-private-key'
   'miniapp-jwt-public-key'
 ]
-var runtimeSecrets = teamsSecret ? ['teams-graph-client-secret'] : []
+var runtimeSecrets = empty(teamsGraphClientId) ? [] : ['teams-graph-client-secret-${teamsGraphClientId}']
 
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName

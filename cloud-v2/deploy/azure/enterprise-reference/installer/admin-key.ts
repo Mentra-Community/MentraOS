@@ -1,7 +1,6 @@
 // Executed inside the selected Core container by the Azure operator.
 // Reuse its existing DB-backed org API keys; no additional HTTP auth surface.
 import mongoose from "mongoose";
-import {readFileSync, existsSync, unlinkSync} from "node:fs";
 import {createHash, randomBytes, createCipheriv, createDecipheriv} from "node:crypto";
 import {ulid} from "ulid";
 import {DeveloperOrgService} from "/app/cloud-v2/packages/core/src/services/developer-orgs/developer-org.service";
@@ -10,10 +9,8 @@ import {DeveloperOrgApiKeyModel} from "/app/cloud-v2/packages/core/src/models/de
 
 const owner = process.argv[2];
 if (!/^[0-9a-f-]{36}$/.test(owner ?? "")) throw Error("Invalid deployment owner");
-const directory = "/mnt/core-attachments/operator";
-const output = `${directory}/admin-${owner}.json`;
 const user = {id: `private-cloud-operator:${owner}`, email: "operator@private-cloud.local"};
-let credential: {id: string; value: string; orgId?: string; adminEmail?: string; cleanupRequired?: boolean};
+let credential: {id: string; value: string; orgId?: string; adminEmail?: string};
 function checkCredential(value: typeof credential) {
   if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(value.id)
       || !new RegExp(`^msk_local_${value.id}\\.[A-Za-z0-9_-]{43}$`).test(value.value)) {
@@ -25,16 +22,14 @@ try {
   // Persist a complete credential atomically before creating its API-key row.
   // The journal encrypts the secret with the deployment signing key; stable
   // owner IDs and Mongo's unique _id make concurrent/restarted calls converge.
-  // Only the encrypted journal persists the credential. A legacy plaintext
-  // share cache is read for migration, then removed after successful validation.
+  // Only the encrypted journal persists the credential.
   const encryptionKey = createHash("sha256").update("mentra-installer-admin-v1:")
     .update(owner).update(process.env.MENTRA_JWT_PRIVATE_KEY!).digest();
   const journal = mongoose.connection.collection("installer_admin_credentials");
   let row = await journal.findOne({_id: owner as any});
   if (!row) {
     const id = ulid();
-    const candidate = existsSync(output) ? JSON.parse(readFileSync(output, "utf8"))
-      : {id, value: `msk_local_${id}.${randomBytes(32).toString("base64url")}`};
+    const candidate = {id, value: `msk_local_${id}.${randomBytes(32).toString("base64url")}`};
     checkCredential(candidate);
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", encryptionKey, iv);
@@ -80,13 +75,9 @@ try {
   if (valid?.orgId !== org.id) throw Error("Saved administrator credential is revoked or inconsistent");
   credential.orgId = org.id;
   credential.adminEmail = `api-key@${credential.id}.local`;
-  // Never leave an administrator token in the report attachment share, whose
-  // SMB mount permissions do not provide owner-only access.
-  try { unlinkSync(output); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") credential.cleanupRequired = true; }
 } finally {
   await mongoose.disconnect();
 }
-// Azure exec is captured directly into the operator's protected local file.
-// This does not write the token to the application's console log stream.
+// Setup reads this from the exec stream and stores it in Key Vault. It is not
+// written to the application's console log stream.
 console.log("MENTRA_ADMIN_BEGIN" + JSON.stringify(credential) + "MENTRA_ADMIN_END");

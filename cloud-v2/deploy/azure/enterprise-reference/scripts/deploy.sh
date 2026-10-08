@@ -108,7 +108,7 @@ KEY_VAULT="$(jq -r .keyVaultName "$CONFIG")"
 CORE_NAME="$(jq -r .coreName "$CONFIG")"
 CORE_IDENTITY="$(jq -r .coreIdentityName "$CONFIG")"
 RUNTIME_IDENTITY="$(jq -r .runtimeIdentityName "$CONFIG")"
-TEAMS_SECRET="$(jq -r 'if (.teamsGraphClientId // "") == "" then "false" else "true" end' "$CONFIG")"
+TEAMS_CLIENT_ID="$(jq -r '.teamsGraphClientId // ""' "$CONFIG")"
 
 # Wizard calls are bound to an explicit subscription without changing az defaults.
 if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
@@ -135,7 +135,7 @@ fi
 BOOTSTRAP_PARAMETERS=(registryName="$REGISTRY_NAME" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY" keyVaultName="$KEY_VAULT"
   operatorPrincipalId="$OPERATOR_ID" operatorPrincipalType="$OPERATOR_TYPE" resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")")
 ACCESS_PARAMETERS=(keyVaultName="$KEY_VAULT" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY"
-  teamsSecret="$TEAMS_SECRET")
+  teamsGraphClientId="$TEAMS_CLIENT_ID")
 
 umask 077
 PARAMETERS="$(mktemp "${TMPDIR:-/tmp}/mentra-private-parameters.XXXXXX")"
@@ -231,9 +231,10 @@ if [[ "$MODE" == bootstrap ]]; then
 fi
 
 "$SCRIPT_DIR/ensure-vault-secrets.sh" "$KEY_VAULT" "$RESOURCE_GROUP" "$CORE_NAME"
-if [[ -n "$(jq -r '.teamsGraphClientId // ""' "$CONFIG")" ]]; then
-  az keyvault secret show --vault-name "$KEY_VAULT" --name teams-graph-client-secret --query id --output none 2>/dev/null || {
-    printf 'Graph meeting creation is configured, but Key Vault %s has no teams-graph-client-secret. Run setup.sh configure-teams.\n' "$KEY_VAULT" >&2
+if [[ -n "$TEAMS_CLIENT_ID" ]]; then
+  az keyvault secret show --vault-name "$KEY_VAULT" --name "teams-graph-client-secret-$TEAMS_CLIENT_ID" --query id --output none 2>/dev/null || {
+    printf 'Graph meeting creation is configured, but Key Vault %s has no secret for Graph app %s. Run setup.sh configure-teams.\n' \
+      "$KEY_VAULT" "$TEAMS_CLIENT_ID" >&2
     exit 1
   }
 fi
