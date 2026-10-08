@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test';
-import {publishedRoutineDefinitionSchema, routineEnrollmentSchema} from './routine-definition.types';
+import {publishedRoutineDefinitionSchema, routineEnrollmentSchema, routineResourceRequirementSchema} from './routine-definition.types';
 const definition = {
   minimumRoutineApiVersion: 1,
   id: 'data-export',
@@ -15,6 +15,11 @@ const definition = {
   steps: ['copy', 'share', 'dismiss', 'home'].map(id => ({id, instruction: id, expected: 'Observed'})),
   source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40), path: 'routines/data-export/routine.ts'},
 }
+test('audio recognition is an explicit requested capability; undeclared and unsupported operations are rejected', () => {
+  expect(routineResourceRequirementSchema.safeParse({kind: 'audio', capabilities: ['witness', 'recognition']}).success).toBe(true);
+  expect(routineResourceRequirementSchema.safeParse({kind: 'audio', capabilities: ['playback']}).success).toBe(false);
+  expect(routineResourceRequirementSchema.safeParse({kind: 'phone', capabilities: ['recognition']}).success).toBe(false);
+});
 test('private recording intervals retain the exact source declaration without replacing step results', () => {
   const interval = {startStepId: 'share', endStepId: 'dismiss', reason: 'Native share previews contain account data'};
   const parsed = publishedRoutineDefinitionSchema.parse({...definition, privateEvidenceIntervals: [interval]});

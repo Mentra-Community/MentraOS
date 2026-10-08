@@ -51,6 +51,17 @@ test("glasses dispatch matches declared model/capability and freezes exact build
   expect(select(enrollment(), build, {...host(), lanes: [{...host().lanes[0]!, state: "offline"}]}).glassesStart).toEqual(input.glassesStart);
 });
 
+test('a recording witness without recognition cannot admit a speech recognition routine', () => {
+  const definition = enrollment(false);
+  definition.definition.resourceRequirements.push({kind: 'audio', capabilities: ['witness', 'recognition']});
+  definition.definition.execution!.resourceKinds.push('audio');
+  const observed = host(false), lane = observed.lanes[0]!;
+  lane.resources.push({id: 'audio', kind: 'audio', capabilities: ['speech', 'witness', 'synthesis']});
+  expect(() => select(definition, build, observed)).toThrow('required audio resource capabilities');
+  lane.resources.find(resource => resource.kind === 'audio')!.capabilities!.push('recognition');
+  expect(select(definition, build, observed).resources).toContainEqual({id: 'audio', kind: 'audio'});
+});
+
 test("model, capability, inventory and manifest contradictions fail before producing admission input", () => {
   for (const glasses of [undefined, [], [{resourceId: "physical-live", deviceId: "live-cid", model: "g2", capabilities: ["connection"]}],
     [{resourceId: "physical-live", deviceId: "live-cid", model: "mentra-live", capabilities: []}]])
