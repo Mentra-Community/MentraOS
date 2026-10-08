@@ -368,6 +368,58 @@ jobs:
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
     secrets: inherit
 
+  private-cloud-channel:
+    name: Point Private Cloud downloads at this release
+    needs: [plan, runtime-image, private-deployment]
+    # Dev moves only after the reference Azure stack deployed and verified this
+    # exact release. Other channels have no reference stack to wait for.
+    if: >-
+      always() && needs.plan.outputs.dry_run != 'true' && needs.runtime-image.result == 'success' &&
+      (needs.private-deployment.result == 'success' ||
+      (needs.plan.outputs.cloud_environment != 'dev' && needs.private-deployment.result == 'skipped'))
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    concurrency:
+      group: private-cloud-channel-${{ github.ref_name }}
+      cancel-in-progress: false
+    permissions:
+      attestations: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.source_commit }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Verify the published installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+        run: |
+          set -euo pipefail
+          url=$(node .github/scripts/release-assets.mjs url --repository "$GITHUB_REPOSITORY" \
+            --tag "mentra-private-cloud-$RELEASE_IDENTITY" --name mentra-private-cloud.tar.gz)
+          curl --fail --silent --show-error --location --retry 3 --output mentra-private-cloud.tar.gz "$url"
+          gh attestation verify mentra-private-cloud.tar.gz --repo "$GITHUB_REPOSITORY"
+          tar -xzOf mentra-private-cloud.tar.gz mentra-private-cloud/release.json > release.json
+
+      - name: Advance the channel's stable install URL
+        env:
+          ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+          ARTIFACTS_R2_BUCKET: artifactscdn
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+        run: >-
+          node .github/scripts/publish-private-cloud-channel.mjs
+          --repository "$GITHUB_REPOSITORY"
+          --version "${{ needs.plan.outputs.release_identity }}"
+          --archive mentra-private-cloud.tar.gz
+          --release-json release.json
+          --bootstrap cloud-v2/deploy/azure/enterprise-reference/installer/bootstrap.sh
+
   ota:
     name: Publish immutable Mentra Live OTA set
     needs: plan

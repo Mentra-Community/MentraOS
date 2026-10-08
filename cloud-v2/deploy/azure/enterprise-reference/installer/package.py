@@ -66,36 +66,37 @@ def build(publication_path, sbom_path, output):
                    clientMinVersion=client_version, files={name: sha(data) for name, data in contents.items()})
     contents['release.json'] = (json.dumps(release, indent=2) + '\n').encode()
     contents['INSTALL.txt'] = b'''Mentra Private Cloud Azure installer
-Use Azure Portal > Cloud Shell > Bash on Windows, macOS, or Linux.
-Select Cloud Shell persistent storage, then use $HOME/mentra-install for the package and setup state.
-Do not put private keys directly in clouddrive: its SMB permissions cannot restrict access.
+Use Azure Cloud Shell (Bash) from any browser, or any Bash terminal with Azure CLI and Python 3.
+The Mentra install command unpacks this package into ~/mentra-install/packages/VERSION and links it
+as ~/mentra-install/mentra-private-cloud. Run every command below from ~/mentra-install.
+Setup state contains private keys: keep it in ~/mentra-install/mentra-state, not Cloud Shell's clouddrive.
 Read release.json and verify the archive checksum and publisher attestations before executing.
-Run ./setup.sh init --directory ../mentra-setup
-Run ./setup.sh preflight --directory ../mentra-setup
-Run ./setup.sh plan --directory ../mentra-setup
-Run ./setup.sh configure-entra --directory ../mentra-setup
-Run ./setup.sh check-teams --directory ../mentra-setup --teams-user EMPLOYEE_OBJECT_ID
+Run ./mentra-private-cloud/setup.sh init --directory ./mentra-state
+Run ./mentra-private-cloud/setup.sh preflight --directory ./mentra-state
+Run ./mentra-private-cloud/setup.sh plan --directory ./mentra-state
+Run ./mentra-private-cloud/setup.sh configure-entra --directory ./mentra-state
+Run ./mentra-private-cloud/setup.sh check-teams --directory ./mentra-state --teams-user EMPLOYEE_OBJECT_ID
 If Teams is missing, Microsoft 365 admin center > Marketplace: choose a plan with Teams.
 Assign it to intended Teams employees and a customer-owned guest meeting organizer; wait for provisioning.
 Guest joining does not require an employee Teams license. Guest creation needs a licensed organizer.
 Creating meetings also needs Graph OnlineMeetings.ReadWrite.All consent and a Teams application access policy.
-Ask Mentra for the IT guide before configuring these; never reuse Mentra's consumer organizer.
-Run ./setup.sh install --directory ../mentra-setup
+The IT guide covers these steps; never reuse Mentra's consumer organizer.
+Run ./mentra-private-cloud/setup.sh install --directory ./mentra-state
 Install/verify checks Teams licensing when the operator has permission; otherwise it gives an Entra-admin handoff.
-After Core is deployed: ./setup.sh bootstrap-admin --directory ../mentra-setup
+After Core is deployed: ./mentra-private-cloud/setup.sh bootstrap-admin --directory ./mentra-state
 It allowlists operator@private-cloud.local and mints a Core operator key (mak_).
 Store admin-key.json in your secret manager; use its value as MENTRA_ADMIN_TOKEN.
 Keep operator@private-cloud.local in coreAdminEmails or that key stops working.
 A custom hostname pauses for the CNAME and TXT in dns-records.json.
-After publishing those records: ./setup.sh resume --directory ../mentra-setup --dns-ready
+After publishing those records: ./mentra-private-cloud/setup.sh resume --directory ./mentra-state --dns-ready
 The setup directory contains private keys: protect it and back it up to your secret manager.
 Server verification does not certify Teams licensing/policy or phone behavior.
-Retain the archive, its extracted package directory and protected state.
+Keep every package under ~/mentra-install/packages and the protected state.
 Normal resume keeps release pins; target-package resume completes a pending upgrade.
 Before upgrade, back up the database, report attachment share, state and original secrets.
-From a verified target release package run:
-./setup.sh upgrade --directory ../mentra-setup --previous-package /path/to/retained/mentra-private-cloud --backup-confirmed
-Then ./setup.sh resume --directory ../mentra-setup and verify employee Calls and reports.
+Rerun the install command to download a newer release; it prints the exact upgrade commands:
+./packages/NEW/mentra-private-cloud/setup.sh upgrade --directory ./mentra-state --previous-package ./packages/CURRENT/mentra-private-cloud --backup-confirmed
+Then link mentra-private-cloud to the new package, resume, and verify employee Calls and reports.
 Upgrade retains resource/identity bindings and original keys; unsafe downgrades are refused.
 An image rollback is not database rollback. Follow the approved recovery procedure.
 

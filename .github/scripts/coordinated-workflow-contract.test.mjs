@@ -426,6 +426,21 @@ test("Private Deployment remains release-matched without gating the dev release"
   assert.match(finalize, /--runtime-image release-input\/runtime-image\/runtime-image-publication\.json/)
   assert.match(notify, /PRIVATE_DEPLOYMENT_RESULT: \$\{\{ needs\.private-deployment\.result \}\}/)
   assert.match(notify, /RUNTIME_IMAGE_RESULT: \$\{\{ needs\.runtime-image\.result \}\}/)
+
+  // Customers' stable install URL follows only verified, deployed releases.
+  const channel = jobBlock(coordinator, "private-cloud-channel")
+  assert.match(channel, /^    needs: \[plan, runtime-image, private-deployment\]$/m)
+  assert.match(channel, /needs\.runtime-image\.result == 'success'/)
+  assert.match(channel, /needs\.private-deployment\.result == 'success' \|\|/)
+  assert.match(
+    channel,
+    /needs\.plan\.outputs\.cloud_environment != 'dev' && needs\.private-deployment\.result == 'skipped'/,
+  )
+  assert.match(channel, /needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.match(channel, /cancel-in-progress: false/)
+  assert.ok(channel.indexOf("gh attestation verify") < channel.indexOf("publish-private-cloud-channel.mjs"))
+  assert.match(channel, /--bootstrap cloud-v2\/deploy\/azure\/enterprise-reference\/installer\/bootstrap\.sh/)
+  assert.doesNotMatch(finalize, /private-cloud-channel/)
 })
 
 for (const [stuckApp, sameImage, diagnosticsUnavailable, startupLog = "private-token-must-not-print"] of [["", false], ["runtime", false], ["core", false], ["", true], ["core", false, true],
