@@ -232,7 +232,7 @@ else:sys.exit(9)
         store = self.path / 'vault'
         store.mkdir(exist_ok=True)
         self.env.update(HELPER_TEST_DIRECTORY=str(self.path), MENTRA_VAULT_RETRY_SECONDS='0',
-                        CORE_EXISTS='1' if core_exists else '0', LIST_FAILURES=str(list_failures))
+                        CORE_EXISTS={True: '1', False: '0'}.get(core_exists, core_exists), LIST_FAILURES=str(list_failures))
         self.executable('az', '''import json,os,sys
 from pathlib import Path
 p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:];store=p/'vault'
@@ -243,7 +243,9 @@ if a[:3]==['keyvault','secret','list']:
  print(json.dumps(sorted(x.name for x in store.iterdir())))
 elif a[:3]==['keyvault','secret','set']:
  (store/a[a.index('--name')+1]).write_bytes(Path(a[a.index('--file')+1]).read_bytes())
-elif a[:2]==['containerapp','show']:sys.exit(0 if os.environ['CORE_EXISTS']=='1' else 3)
+elif a[:2]==['containerapp','list']:
+ if os.environ['CORE_EXISTS']=='error':print('ERROR: (AuthorizationFailed) transient',file=sys.stderr);sys.exit(1)
+ print(os.environ['CORE_EXISTS'])
 else:sys.exit(9)
 ''')
         return store
@@ -281,6 +283,15 @@ else:sys.exit(9)
         self.assertEqual(result.returncode, 1)
         self.assertIn('never replaces the keys of a running deployment', result.stderr)
         self.assertEqual([x.name for x in store.iterdir()], ['mentra-jwt-public-key'])
+
+    def test_failed_core_lookup_never_reads_as_no_core(self):
+        store = self.fake_vault(core_exists='error')
+        (store / 'mentra-jwt-public-key').write_text('original-public')
+        result = self.ensure()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('AuthorizationFailed', result.stderr)
+        self.assertEqual((store / 'mentra-jwt-public-key').read_text(), 'original-public')
+        self.assertEqual(len(list(store.iterdir())), 1)
 
     def test_interrupted_first_run_writes_one_matching_set(self):
         store = self.fake_vault()
@@ -321,7 +332,8 @@ print('ERROR: (AuthorizationFailed) no access', file=sys.stderr); sys.exit(1)
         self.assertEqual(result.returncode, 1)
         self.assertIn('AuthorizationFailed', result.stderr)
 
-    def test_what_if_previews_both_templates_with_the_callers_identity(self):
+    def fake_deploy(self, group_exists=True):
+        # deploy.sh against a recording az stand-in.
         import base64
         claims = base64.urlsafe_b64encode(json.dumps({'oid': 'abcdef12-1234-1234-1234-abcdef123456', 'idtyp': 'user'}).encode()).decode().rstrip('=')
         config = json.loads((ROOT / 'deployment.config.example.json').read_text())
@@ -329,24 +341,52 @@ print('ERROR: (AuthorizationFailed) no access', file=sys.stderr); sys.exit(1)
                       tenantId='11111111-1111-1111-1111-111111111111', coreApiClientId='11111111-1111-1111-1111-111111111112',
                       mobileClientId='11111111-1111-1111-1111-111111111113')
         (self.path / 'config.json').write_text(json.dumps(config))
-        self.env.update(HELPER_TEST_DIRECTORY=str(self.path), TOKEN='header.' + claims + '.signature')
+        self.env.update(HELPER_TEST_DIRECTORY=str(self.path), TOKEN='header.' + claims + '.signature',
+                        GROUP_EXISTS='true' if group_exists else 'false')
         self.executable('az', '''import json,os,sys
 from pathlib import Path
 p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
 with (p/'calls').open('a') as f:f.write(json.dumps(a)+'\\n')
 if a[:2]==['account','show']:pass
+elif a[:2]==['group','exists']:print(os.environ['GROUP_EXISTS'])
+elif a[:2]==['group','create']:pass
+elif a[:3]==['deployment','group','create']:print('Succeeded')
 elif a[:2]==['account','get-access-token']:print(os.environ['TOKEN'])
 elif a[:3]==['deployment','group','what-if']:
  if '@' in ' '.join(a): (p/'main-parameters.json').write_text(Path(a[a.index('--parameters')+1][1:]).read_text())
  print(json.dumps({'status':'Succeeded','changes':[{'changeType':'Create','resourceId':'/subscriptions/s/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv'}]}))
 else:sys.exit(9)
 ''')
-        result = subprocess.run(['bash', str(ROOT / 'scripts/deploy.sh'), '--what-if', str(self.path / 'config.json')],
+
+    def deploy(self, *flags):
+        result = subprocess.run(['bash', str(ROOT / 'scripts/deploy.sh'), *flags, str(self.path / 'config.json')],
                                 env=self.env, capture_output=True, text=True)
+        calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()]
+        return result, calls
+
+    def test_what_if_needs_the_resource_group(self):
+        self.fake_deploy(group_exists=False)
+        result, calls = self.deploy('--what-if')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('az group create --name rg-acme-mentra', result.stderr)
+        self.assertFalse(any(c[:3] == ['deployment', 'group', 'what-if'] for c in calls))
+
+    def test_bootstrap_only_runs_just_the_ownership_template(self):
+        self.fake_deploy()
+        result, calls = self.deploy('--bootstrap-only')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        created = [c for c in calls if c[:3] == ['deployment', 'group', 'create']]
+        self.assertEqual(len(created), 1)
+        self.assertTrue(created[0][created[0].index('--template-file') + 1].endswith('bootstrap.bicep'))
+        self.assertIn('operatorPrincipalId=abcdef12-1234-1234-1234-abcdef123456', created[0])
+        self.assertFalse(any(c[:2] in (['keyvault', 'secret'], ['acr', 'import']) for c in calls))
+
+    def test_what_if_previews_both_templates_with_the_callers_identity(self):
+        self.fake_deploy()
+        result, calls = self.deploy('--what-if')
         self.assertEqual(result.returncode, 0, result.stderr)
         preview = json.loads(result.stdout)
         self.assertEqual(set(preview), {'bootstrap', 'access', 'main'})
-        calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()]
         bootstrap = next(c for c in calls if c[:3] == ['deployment', 'group', 'what-if'] and 'bootstrap' in c[c.index('--template-file') + 1])
         self.assertIn('operatorPrincipalId=abcdef12-1234-1234-1234-abcdef123456', bootstrap)
         self.assertIn('keyVaultName=kvacmementra', bootstrap)

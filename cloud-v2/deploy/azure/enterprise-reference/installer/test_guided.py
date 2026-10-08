@@ -138,14 +138,25 @@ class GuidedTests(unittest.TestCase):
             seen.append((argv, path.read_text(), path.stat().st_mode & 0o777))
             stderr = 'ERROR: (Forbidden) Caller is not authorized' if len(seen) < 3 else ''
             return setup.subprocess.CompletedProcess(argv, 1 if stderr else 0, '"id"', stderr)
-        with patch.object(setup.subprocess, 'run', side_effect=run), patch.object(setup, 'RETRY_SECONDS', 0):
+        with patch.object(setup.subprocess, 'run', side_effect=run), patch.object(setup, 'RETRY_SECONDS', 0), \
+             patch.object(setup, 'grant_vault_access') as grant:
             setup.vault_set(self.config, 'teams-graph-client-secret', 'private-value', keyId='abc')
         self.assertEqual(len(seen), 3)
+        # An administrator without access yet (say, resuming someone else's install) is given it once.
+        grant.assert_called_once_with(self.config)
         argv, value, mode = seen[-1]
         self.assertEqual((value, mode), ('private-value', 0o600))
         self.assertNotIn('private-value', argv)
         self.assertEqual(argv[argv.index('--tags') + 1], 'keyId=abc')
         self.assertEqual(argv[argv.index('--vault-name') + 1], 'kvacmementra12345678')
+
+    def test_vault_access_is_granted_by_the_ownership_template(self):
+        with patch.object(setup, 'run') as run:
+            setup.grant_vault_access(self.config)
+        argv = run.call_args[0][0]
+        self.assertEqual(argv[2:3], ['--bootstrap-only'])
+        self.assertTrue(argv[1].endswith('scripts/deploy.sh'))
+        self.assertFalse(Path(argv[3]).exists())
 
     def test_vault_reports_missing_secret_without_retrying(self):
         result = setup.subprocess.CompletedProcess([], 1, '', 'ERROR: (SecretNotFound) A secret with (name/id) x was not found')
@@ -287,6 +298,15 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(assigned, ['Alice', 'Field Techs'])
         self.assertEqual(unknown, ['ghost@acme.example'])
         self.assertEqual(posted, ['alice-id', 'existing'])
+
+    def test_graph_lookups_quote_names_with_apostrophes(self):
+        paths = []
+        def graph(config, method, path, body=None, missing_ok=False):
+            paths.append(path)
+            return {'value': [{'id': 'group-id', 'displayName': "O'Reilly Field Techs"}]}
+        with patch.object(setup, 'graph', side_effect=graph):
+            self.assertEqual(setup.resolve_principal(self.config, "O'Reilly Field Techs")['id'], 'group-id')
+        self.assertIn("displayName%20eq%20'O''Reilly%20Field%20Techs'", paths[0])
 
     def test_resume_after_a_finished_deployment_only_verifies(self):
         state = self.write_state('deployed', domainVerified=True)
