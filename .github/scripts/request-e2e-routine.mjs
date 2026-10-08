@@ -1,5 +1,6 @@
-import {submitRoutineRequest, routineLabelIds, routineId, routineRevision, platforms, exactSource, stableRequestId, ensure, positive} from "./routine-api.mjs"
+import {submitRoutineRequest, routineLabelIds, routineId, routineRevision, platforms, exactSource, stableRequestId, automaticRoutineRequest, ensure, positive} from "./routine-api.mjs"
 import {ANDROID_PUBLICATION_STEP} from "./pr-android-artifacts.mjs"
+import {selectedRoutinePlatforms, reportUnsupportedRoutinePlatforms, retainedAutomaticPlan} from './routine-platforms.mjs'
 
 export const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
 export const PR_ROUTINE_BASES = Object.freeze(["dev", "staging"])
@@ -100,9 +101,9 @@ export async function createRoutineRequests({github, context, token, routine, pl
   ensure(revision === undefined || routineRevision(revision), "Routine revision override must be an exact commit")
   const requests = [], requestIds = [], pending = [], outcomes = []
   const dispatch = async (selection, selected) => {
-    const plan = planRoutineRequest(selection, selected, {routineRevision: revision,
-      ...(explicit ? {occurrenceId: `manual-${context.runId}`} : {})})
-    const {request, ...outcome} = await submitRoutineRequest({token, request: plan, fetchImpl})
+    const plan = explicit ? planRoutineRequest(selection, selected, {routineRevision: revision, occurrenceId: `manual-${context.runId}`})
+      : automaticRoutineRequest(selection, selected, selection.routineRevision)
+    const {request, ...outcome} = await submitRoutineRequest({token, request: plan, fetchImpl, automatic: !explicit})
     if (request) requests.push(request)
     if (outcome.status === "accepted" || outcome.status === "uncertain") requestIds.push(plan.requestId)
     outcomes.push(outcome)
@@ -118,24 +119,49 @@ export async function createRoutineRequests({github, context, token, routine, pl
   const ids = routineLabelIds(pr)
   if (!ids.length) return {requests, requestIds, pending, outcomes}
   ensure(ids.every(routineId), "Invalid routine label")
-  const selections = ids.flatMap(routineId => platforms.map(platform => ({routineId, platform}))), sources = new Map()
-  for (const selection of selections) {
+  const selections = ids.flatMap(routineId => platforms.map(platform => ({routineId, platform}))), sources = new Map(), unsupported = []
+  const candidates = await Promise.all(selections.map(async selection => {
+    if (!sources.has(selection.platform)) sources.set(selection.platform, currentPrSource(github, context, pr, selection.platform)
+      .then(source => ({source}), error => ({error})))
+    const {source: selected, error: sourceError} = await sources.get(selection.platform)
+    try {return {selection, selected, sourceError, retained: selected ? await retainedAutomaticPlan({token, selection, source: selected, fetchImpl}) : null}}
+    catch (lookupError) {return {selection, lookupError}}
+  }))
+  const newIds = [...new Set(candidates.filter(row => !row.retained && !row.lookupError).map(row => row.selection.routineId))]
+  let descriptions
+  const describe = async () => {
+    descriptions ??= selectedRoutinePlatforms({token, routineIds: newIds, revision, fetchImpl})
+    try {return await descriptions}
+    catch (error) {error.applicability = true; throw error}
+  }
+  for (const {selection, selected, sourceError, retained, lookupError} of candidates) {
     try {
-      if (!sources.has(selection.platform)) sources.set(selection.platform, currentPrSource(github, context, pr, selection.platform))
-      const selected = await sources.get(selection.platform)
+      if (lookupError) throw lookupError
+      if (retained) {await dispatch(retained, selected); continue}
+      const description = (await describe()).find(row => row.routineId === selection.routineId)
+      if (description.platforms && !description.platforms.includes(selection.platform)) {
+        const row = {...description, platform: selection.platform}
+        unsupported.push(row)
+        outcomes.push({...selection, routineRevision: row.routineRevision, status: 'skipped', reason: 'Exact routine source does not support this platform'})
+        continue
+      }
+      if (sourceError) throw sourceError
       if (!selected) {
         const reason = "Current PR app publication is pending"
         pending.push({...selection, reason})
         outcomes.push({...selection, status: "pending", reason})
         continue
       }
-      await dispatch(selection, selected)
+      await dispatch({...selection, routineRevision: description.routineRevision}, selected)
     } catch (error) {
       outcomes.push({...selection, status: "failed",
-        reason: "Current PR app publication could not be authenticated", retryable: error.retryable === true})
+        reason: error.applicability ? 'Exact routine platform description is unavailable' : "Current PR app publication could not be authenticated", retryable: error.retryable === true})
     }
   }
-  return {requests, requestIds, pending, outcomes}
+  let notificationError
+  try {await reportUnsupportedRoutinePlatforms({github, context, pr, rows: unsupported})}
+  catch {notificationError = 'Unsupported routine/platform comment could not be published; retained admission outcomes are unchanged'}
+  return {requests, requestIds, pending, outcomes, ...(notificationError ? {notificationError} : {})}
 }
 
 /** Call only after accepted/uncertain selectors and all member outcomes have been retained. */

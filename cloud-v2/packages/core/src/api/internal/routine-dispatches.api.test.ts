@@ -23,3 +23,18 @@ test("internal catalog, exact-source admission and result reads require the exis
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect(await (await app.request("/api/internal/routine-dispatches/request", {headers})).json()).toEqual({request: {requestId: "request"}, result: null});
 });
+
+test('selected applicability query is bounded and keeps exact revision under the existing trusted capability', async () => {
+  process.env.TEST_RUN_INGEST_TOKEN = 'test-only-internal-token-that-exceeds-32-characters';
+  const calls: unknown[] = [], service = {async catalog(revision: string, ids: string[]) {
+    calls.push({revision, ids}); return {routineRevision: revision, routines: ids.map(routineId => ({routineId, platforms: ['android']}))};
+  }} as unknown as RoutineDispatchService;
+  const app = new Hono(); app.route('/api/internal', createRoutineDispatchesApi(service));
+  const headers = {authorization: `Bearer ${process.env.TEST_RUN_INGEST_TOKEN}`}, revision = 'a'.repeat(40);
+  const response = await app.request(`/api/internal/routine-catalog?revision=${revision}&routines=first,second`, {headers});
+  expect(response.status).toBe(200); expect(calls).toEqual([{revision, ids: ['first', 'second']}]);
+  expect(response.headers.get('cache-control')).toBe('no-store');
+  expect((await app.request('/api/internal/routine-catalog?routines=', {headers})).status).toBe(400);
+  expect((await app.request(`/api/internal/routine-catalog?routines=${Array.from({length: 31}, (_, i) => `id${i}`).join(',')}`, {headers})).status).toBe(400);
+  expect(calls).toHaveLength(1);
+});

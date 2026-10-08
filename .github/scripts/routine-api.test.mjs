@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {routineApi, submitRoutineRequest, routineLabelIds, selectedCatalog, stableRequestId, boundRoutineResult, waitForRoutineResult, requestInputDigest} from "./routine-api.mjs"
+import {routineApi, submitRoutineRequest, routineLabelIds, selectedCatalog, stableRequestId, automaticRoutineRequest, boundRoutineResult, waitForRoutineResult, requestInputDigest} from "./routine-api.mjs"
 import {routineFixture, terminalRoutineFixture, preparingRoutineFixture, portableRoutineFixture} from "./routine-api-fixture.mjs"
 
 test("discovery returns main IDs without enrollment or guessed platform metadata", () => {
@@ -212,6 +212,33 @@ test("default revision remains stable on retry while explicit revisions produce 
   assert.equal(stableRequestId(selection), stableRequestId({...selection, routineRevision: undefined}))
   assert.notEqual(stableRequestId(selection), stableRequestId({...selection, routineRevision: "b".repeat(40)}))
   assert.notEqual(stableRequestId({...selection, routineRevision: "b".repeat(40)}), stableRequestId({...selection, routineRevision: "d".repeat(40)}))
+})
+
+test('automatic occurrence identity is independent of discovered revision while manual overrides remain distinct', () => {
+  const f = routineFixture(), selection = {routineId: f.definition.id, platform: 'ios-on-mac'}
+  const first = automaticRoutineRequest(selection, f.source, 'b'.repeat(40)), moved = automaticRoutineRequest(selection, f.source, 'd'.repeat(40))
+  assert.equal(first.requestId, moved.requestId)
+  assert.equal(first.requestId, stableRequestId({occurrenceId: 'source-pr-10-2', ...selection, source: f.source}))
+})
+
+test('concurrent automatic commit reconciles the cancelled winner and refuses an unavailable original lookup', async () => {
+  const f = portableRoutineFixture({status: 'cancelled'}), plan = automaticRoutineRequest({routineId: f.definition.id, platform: 'ios-on-mac'}, f.source, 'd'.repeat(40))
+  f.request.requestId = plan.requestId; f.request.fleetSelection.requestId = plan.requestId
+  f.request.fleetSelectionSha256 = requestInputDigest(f.request.fleetSelection)
+  const calls = []
+  const outcome = await submitRoutineRequest({token: 'fixture', request: plan, automatic: true, fetchImpl: async (url, init) => {
+    calls.push(init.method)
+    if (calls.length === 1) return new Response(null, {status: 404})
+    if (init.method === 'POST') return Response.json({message: 'Routine job retry changed its frozen source'}, {status: 409})
+    return Response.json(f.detail)
+  }})
+  assert.deepEqual(calls, ['GET', 'POST', 'GET']); assert.equal(outcome.status, 'accepted')
+  assert.equal(outcome.request.fleetSelection.routineRevision, 'b'.repeat(40)); assert.equal(outcome.request.state, 'terminal')
+  const outage = []
+  const uncertain = await submitRoutineRequest({token: 'fixture', request: plan, automatic: true, fetchImpl: async (url, init) => {
+    outage.push(init.method); return new Response(null, {status: 503})
+  }})
+  assert.equal(uncertain.status, 'uncertain'); assert.deepEqual(outage, ['GET'])
 })
 
 test("portable acknowledgement accepts exact source custody before assigning a host", async () => {

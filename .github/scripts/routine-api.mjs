@@ -97,6 +97,21 @@ export function stableRequestId({occurrenceId, routineId: id, platform, source, 
   return `routine-${sha256}`
 }
 
+/** Automatic publications share the original occurrence across label events and callbacks. */
+export function automaticRoutineRequest({routineId: id, platform}, source, revision) {
+  const selected = exactSource(source)
+  return {routineId: id, platform, source: selected,
+    requestId: stableRequestId({occurrenceId: `source-${selected.channel}-${selected.buildRunId}-${selected.publicationAttempt}`,
+      routineId: id, platform, source: selected}), ...(revision === undefined ? {} : {routineRevision: revision})}
+}
+
+export async function retainedAutomaticRequest({token, request, fetchImpl = fetch}) {
+  ensure(request.requestId === automaticRoutineRequest(request, request.source).requestId, 'Invalid automatic occurrence identity')
+  const {routineRevision: _, ...identity} = request
+  try {return (await routineApi({token, operation: 'detail', request: identity, fetchImpl})).request}
+  catch (error) {if (error.httpStatus === 404) return null; throw error}
+}
+
 /** Preparation has an immutable intent; executable input is committed only after description. */
 function boundDispatchIntent(request) {
   const intent = request.dispatchIntent
@@ -147,12 +162,17 @@ export function routineRequestSelection(request) {
   return bound ?? portable
 }
 
-export async function routineApi({token, operation, request, requestId = request?.requestId, fetchImpl = fetch}) {
+export async function routineApi({token, operation, request, requestId = request?.requestId, routineIds, revision, fetchImpl = fetch}) {
   ensure(token && ["catalog", "dispatch", "detail"].includes(operation), "Routine API capability is missing")
   if (operation !== "catalog") ensure(requestIdentity(requestId), "Invalid routine request identity")
   if (operation === "dispatch") ensure(routineId(request?.routineId) && platforms.includes(request.platform) && exactSource(request.source) &&
     (request.routineRevision === undefined || routineRevision(request.routineRevision)), "Invalid routine dispatch")
-  const path = operation === "catalog" ? "/routine-catalog" : `/routine-dispatches${operation === "detail" ? `/${encodeURIComponent(requestId)}` : ""}`
+  if (routineIds !== undefined) ensure(operation === "catalog" && Array.isArray(routineIds) && routineIds.length > 0 && routineIds.length <= 30 &&
+    routineIds.every(routineId) && new Set(routineIds).size === routineIds.length, "Invalid selected routine catalog")
+  ensure(revision === undefined || operation === 'catalog' && routineRevision(revision), 'Invalid exact catalog revision')
+  const query = new URLSearchParams({...routineIds ? {routines: routineIds.join(',')} : {}, ...revision ? {revision} : {}}).toString()
+  const path = operation === "catalog" ? `/routine-catalog${query ? `?${query}` : ""}`
+    : `/routine-dispatches${operation === "detail" ? `/${encodeURIComponent(requestId)}` : ""}`
   let response
   try {response = await fetchImpl(`${ENDPOINT}${path}`, {method: operation === "dispatch" ? "POST" : "GET", redirect: "error",
     signal: AbortSignal.timeout(30_000), headers: {Authorization: `Bearer ${token}`, "Content-Type": "application/json"},
@@ -185,20 +205,29 @@ export async function routineApi({token, operation, request, requestId = request
 const admissionReason = error => String(error?.message ?? "Routine API admission failed").replace(/[\r\n]/g, " ").slice(0, 600)
 
 /** One POST; a lost acknowledgement is reconciled by the same ID, never another admission identity. */
-export async function submitRoutineRequest({token, request, fetchImpl = fetch}) {
+export async function submitRoutineRequest({token, request, fetchImpl = fetch, automatic = false}) {
   const identity = {routineId: request.routineId, platform: request.platform, requestId: request.requestId}
+  const {routineRevision: _, ...originalOccurrence} = request
+  if (automatic) {
+    try {
+      const retained = await retainedAutomaticRequest({token, request, fetchImpl})
+      if (retained) return {...identity, status: 'accepted', request: retained}
+    } catch (error) {return {...identity, status: error.retryable ? 'uncertain' : 'failed', reason: admissionReason(error), retryable: error.retryable === true}}
+  }
   let dispatchError
   try {
     const acknowledged = await routineApi({token, operation: "dispatch", request, fetchImpl})
     return {...identity, status: "accepted", request: acknowledged}
   } catch (error) {
-    if (!error.retryable) return {...identity, status: "failed", reason: admissionReason(error), retryable: false}
+    if (!error.retryable && !(automatic && error.httpStatus === 409)) return {...identity, status: "failed", reason: admissionReason(error), retryable: false}
     dispatchError = error
   }
   try {
-    const detail = await routineApi({token, operation: "detail", request, fetchImpl})
+    const detail = await routineApi({token, operation: "detail", request: automatic ? originalOccurrence : request, fetchImpl})
     return {...identity, status: "accepted", request: detail.request}
   } catch (error) {
+    if (automatic && dispatchError.httpStatus === 409 && error.httpStatus === 404)
+      return {...identity, status: 'failed', reason: admissionReason(dispatchError), retryable: false}
     // HTTP failure/absence cannot settle a possibly committed POST. A contradictory acknowledgement is a hard refusal.
     if (!error.retryable && error.httpStatus === undefined)
       return {...identity, status: "failed", reason: admissionReason(error), retryable: false}

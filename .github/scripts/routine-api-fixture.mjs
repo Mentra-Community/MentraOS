@@ -19,7 +19,8 @@ export function routineFixture({routineId = "example.screen-check", platform = "
   const calls = []
   const fetchImpl = async (url, options) => {
     calls.push({url, options})
-    if (url.endsWith("/routine-catalog")) return Response.json({routineRevision: enrollment.definitionRevision, routines: [{routineId}]})
+    if (new URL(url).pathname.endsWith("/routine-catalog")) return Response.json({routineRevision: enrollment.definitionRevision,
+      routines: [{routineId, ...(new URL(url).searchParams.has('routines') ? {platforms: definition.platforms} : {})}]})
     if (options.method === "POST") {
       const submitted = JSON.parse(options.body)
       const intent = {...request.dispatchIntent, requestId: submitted.requestId, routineId: submitted.routineId,
@@ -28,7 +29,7 @@ export function routineFixture({routineId = "example.screen-check", platform = "
       return Response.json({requestId: submitted.requestId, hostId: request.hostId, state: "preparing", dispatchIntent: intent,
         dispatchIntentSha256: requestInputDigest(intent)})
     }
-    return Response.json(detail)
+    return new URL(url).pathname.endsWith(`/${request.requestId}`) ? Response.json(detail) : new Response(null, {status: 404})
   }
   return {definition, enrollment, source, build, request, run, detail, fetchImpl, calls}
 }

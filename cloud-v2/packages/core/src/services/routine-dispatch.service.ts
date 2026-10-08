@@ -28,12 +28,28 @@ export class RoutineDispatchService {
     private readonly bindings: () => RoutineLaneBindings = configuredRoutineLanes,
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve' | 'inventory'> = new GithubRoutineSourceGateway(),
     private readonly fleet: Pick<RoutineJobService, 'submit'> | null = new RoutineJobService()) {}
-  async catalog(revision?: string) {
+  async catalog(revision?: string, selectedIds?: string[]): Promise<{routineRevision: string; routines: Array<{
+    routineId: string; platforms?: z.infer<typeof routineEnrollmentSchema>['definition']['platforms']}>}> {
     const routineRevision = await this.sources.resolve(revision), inventory = await this.sources.inventory(routineRevision);
-    return {routineRevision, routines: inventory.files.flatMap(file => {
+    const routines = inventory.files.flatMap(file => {
       const match = /^routines\/([A-Za-z0-9][A-Za-z0-9_.-]{0,119})\/routine\.ts$/.exec(file.path);
       return match && match[1] !== 'shared' ? [{routineId: match[1]}] : [];
-    })};
+    });
+    if (!selectedIds) return {routineRevision, routines};
+    const ids = z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/)).min(1).max(30).parse(selectedIds);
+    if (new Set(ids).size !== ids.length || ids.some(id => !routines.some(row => row.routineId === id)))
+      throw new TestRunError(422, 'Selected routine is absent from the exact source inventory');
+    const selected = [];
+    for (const routineId of ids) {
+      const definitions = (await Promise.all(['android', 'ios-on-mac'].map(platform =>
+        this.definitions.getExact(routineId, platform, routineRevision, true)))).filter(row => row !== null);
+      if (!definitions.length) {selected.push({routineId}); continue;}
+      for (const row of definitions) if (!routineEnrollmentSchema.safeParse(row).success || row.routineId !== routineId ||
+        row.definitionRevision !== routineRevision || requestInputDigest(row.definition) !== row.definitionSha256)
+        throw new TestRunError(503, 'Selected routine exact platform description is unavailable');
+      selected.push({routineId, platforms: [...new Set(definitions.flatMap(row => row.definition.platforms))].sort()});
+    }
+    return {routineRevision, routines: selected};
   }
   private originalRequest(selected: z.infer<typeof routineDispatchSchema>, request: StoredRequest) {
     const intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
