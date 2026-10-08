@@ -5,9 +5,6 @@ import java.text.Normalizer
 private val LATIN_COMBINING_MARKS = Regex("\\p{M}+")
 private val LATIN_LETTERS_WITH_MARKS = Regex("\\p{IsLatin}\\p{M}*")
 
-/** G1 uses the shared Latin fallback without applying other devices' punctuation fixes. */
-internal fun sanitizeG1DisplayText(text: String): String = sanitizeLatinDisplayText(text)
-
 /** Converts accented and extended Latin letters to base glyphs at the device boundary. */
 internal fun sanitizeLatinDisplayText(text: String, preserveOtherScripts: Boolean = false): String {
     val expanded = buildString(text.length) {

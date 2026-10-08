@@ -24,9 +24,9 @@ class G1Text {
 
     init() {}
 
-    /// G1 uses the shared Latin fallback without applying other devices' punctuation fixes.
+    /// Preserve supported G1 Latin glyphs before BLE encoding.
     static func sanitizeForDisplay(_ text: String) -> String {
-        LatinTextSanitizer.sanitizeForDisplay(text)
+        G1TextSanitizer.sanitizeForDisplay(text)
     }
 
     // MARK: - Text Wall Methods
