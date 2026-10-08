@@ -22,15 +22,11 @@ class HelperTests(unittest.TestCase):
         path.write_text('#!/usr/bin/env python3\n' + body)
         path.chmod(0o755)
 
-    def test_admin_cleanup_distinguishes_absence_from_permission_failure(self):
+    def test_admin_key_lives_only_in_the_encrypted_journal(self):
+        # The credential is never written to the report share or any other file.
         code = (ROOT / 'installer/admin-key.ts').read_text()
-        block = code[code.index('  try { unlinkSync(output);'):code.index('} finally {', code.index('  try { unlinkSync(output);'))]
-        block = block.replace('(error as NodeJS.ErrnoException).code', 'error.code')
-        for error, required in (('EACCES', True), ('ENOENT', False)):
-            script = 'const credential={id:"saved"};const output="legacy";const unlinkSync=()=>{throw Object.assign(Error("test"),{code:"'+error+'"})};\n' + block + '\nconsole.log(JSON.stringify(credential));'
-            result = subprocess.run(['node', '-e', script], text=True, capture_output=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(bool(json.loads(result.stdout).get('cleanupRequired')), required)
+        self.assertNotIn('node:fs', code)
+        self.assertNotIn('/mnt/', code)
 
     def test_mirror_import_keeps_credentials_out_of_arguments_and_checks_digest(self):
         self.env.update(SOURCE_REGISTRY_USERNAME='reader', SOURCE_REGISTRY_PASSWORD='private-value',
@@ -205,6 +201,9 @@ else:sys.exit(9)
         runtime = template[template.index("resource runtime '"):]
         self.assertNotIn('runtimeIdentity.id', core)
         self.assertNotIn('coreIdentity.id', runtime)
+        # Each Graph app has its own secret, so a new app ID and its secret switch together.
+        self.assertIn("secrets/teams-graph-client-secret-${teamsGraphClientId}'", runtime)
+        self.assertIn("'teams-graph-client-secret-${teamsGraphClientId}'", (ROOT / 'access.bicep').read_text())
         self.assertNotIn('Microsoft.Authorization/roleAssignments', template)
         bootstrap = (ROOT / 'bootstrap.bicep').read_text()
         self.assertNotIn('4633458b-17de-408a-b874-0445c86b69e6', bootstrap)

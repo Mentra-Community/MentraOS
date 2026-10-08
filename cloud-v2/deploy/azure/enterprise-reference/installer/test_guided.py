@@ -220,7 +220,7 @@ class GuidedTests(unittest.TestCase):
              patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}) as install:
             self.args.teams_organizer = 'organizer@acme.example'
             result = setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
-        vault_set.assert_called_once_with(self.config, 'teams-graph-client-secret', 'graph-secret', clientId=SUB)
+        vault_set.assert_called_once_with(self.config, 'teams-graph-client-secret-' + SUB, 'graph-secret')
         self.assertEqual(update.call_args.kwargs, {'teamsGraphTenantId': TENANT, 'teamsGraphClientId': SUB,
                                                    'teamsGraphOrganizerId': TENANT})
         install.assert_called_once()
@@ -246,8 +246,8 @@ class GuidedTests(unittest.TestCase):
         state = self.write_state('infrastructure_verified', outputs={'keyVaultName': 'kvacmementra12345678'})
         self.config['teamsGraphClientId'] = SUB
         self.args.teams_client_id = TENANT
-        saved = {'value': 'old-secret', 'tags': {'clientId': SUB}}
-        with patch.object(setup, 'vault_get', return_value=saved), patch.object(setup, 'install') as install, \
+        saved = lambda config, name: {'value': 'old-secret'} if name == 'teams-graph-client-secret-' + SUB else None
+        with patch.object(setup, 'vault_get', side_effect=saved), patch.object(setup, 'install') as install, \
              patch.object(setup, 'update_configuration') as update:
             with self.assertRaisesRegex(setup.SetupError, f'client secret for Graph app {TENANT}'):
                 setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
@@ -255,7 +255,7 @@ class GuidedTests(unittest.TestCase):
         update.assert_not_called()
         # The same app keeps its saved secret.
         self.args.teams_client_id = SUB
-        with patch.object(setup, 'vault_get', return_value=saved), patch.object(setup, 'meetings_consent', return_value=True), \
+        with patch.object(setup, 'vault_get', side_effect=saved), patch.object(setup, 'meetings_consent', return_value=True), \
              patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}), patch.object(setup, 'update_configuration'):
             self.assertEqual(setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)['adminConsent'], 'granted')
 
@@ -283,21 +283,28 @@ class GuidedTests(unittest.TestCase):
         def graph(config, method, path, body=None, missing_ok=False):
             if method == 'POST':
                 posted.append(body['principalId'])
-                if body['principalId'] == 'existing':
-                    raise setup.GraphError(409)
+                if body['principalId'] in ('existing', 'mail-only'):
+                    # Graph answers 400 for a duplicate and for an unassignable group alike.
+                    raise setup.GraphError(400)
                 return {}
+            if '/appRoleAssignments' in path:
+                return {'value': [{'id': 'assignment'}] if path.startswith('groups/existing/') else []}
             if path.startswith('users/alice'):
                 return {'id': 'alice-id', 'displayName': 'Alice'}
             if path.startswith('users/'):
                 return None
             if 'groups' in path and 'Field' in path:
                 return {'value': [{'id': 'existing', 'displayName': 'Field Techs'}]}
+            if 'groups' in path and 'Newsletter' in path:
+                return {'value': [{'id': 'mail-only', 'displayName': 'Newsletter'}]}
             return {'value': []}
         with patch.object(setup, 'graph', side_effect=graph):
-            assigned, unknown = setup.assign_employees(self.config, 'sp', ['alice@acme.example', 'Field Techs', 'ghost@acme.example'])
+            assigned, unknown, refused = setup.assign_employees(
+                self.config, 'sp', ['alice@acme.example', 'Field Techs', 'ghost@acme.example', 'Newsletter'])
         self.assertEqual(assigned, ['Alice', 'Field Techs'])
         self.assertEqual(unknown, ['ghost@acme.example'])
-        self.assertEqual(posted, ['alice-id', 'existing'])
+        self.assertEqual(refused, ['Newsletter'])
+        self.assertEqual(posted, ['alice-id', 'existing', 'mail-only'])
 
     def test_graph_lookups_quote_names_with_apostrophes(self):
         paths = []

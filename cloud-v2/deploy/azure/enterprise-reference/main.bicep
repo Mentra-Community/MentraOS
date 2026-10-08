@@ -10,7 +10,7 @@ param cloudImage string
 @description('Existing Azure Container Registry created by bootstrap.bicep.')
 param registryName string
 
-@description('Existing Key Vault created by bootstrap.bicep. It holds refresh-token-pepper, the mentra- and miniapp- JWT key pairs and, when Graph meeting creation is enabled, teams-graph-client-secret.')
+@description('Existing Key Vault created by bootstrap.bicep. It holds refresh-token-pepper, the mentra- and miniapp- JWT key pairs and, when Graph meeting creation is enabled, teams-graph-client-secret-<teamsGraphClientId>.')
 param keyVaultName string
 
 param tenantId string
@@ -52,7 +52,7 @@ param communicationName string = take('mentra-${uniqueString(subscription().id, 
 param communicationDataLocation string = 'United States'
 @description('Microsoft Graph tenant for meeting creation. Employee organizers must belong to this tenant.')
 param teamsGraphTenantId string = tenantId
-@description('Graph application with OnlineMeetings.ReadWrite.All and a Teams application access policy. Its client secret is the teams-graph-client-secret Key Vault secret.')
+@description('Graph application with OnlineMeetings.ReadWrite.All and a Teams application access policy. Its client secret is the Key Vault secret teams-graph-client-secret-<this ID>, so a new app ID and its secret take effect together.')
 param teamsGraphClientId string = ''
 @description('Licensed organizer object ID used when the caller has no eligible Teams identity.')
 param teamsGraphOrganizerId string = ''
@@ -381,7 +381,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
       secrets: concat([
         { name: 'acs-connection-string', value: communication.listKeys().primaryConnectionString }
       ], empty(teamsGraphClientId) ? [] : [
-        { name: 'teams-graph-client-secret', keyVaultUrl: '${vaultUri}secrets/teams-graph-client-secret', identity: runtimeIdentity.id }
+        { name: 'teams-graph-client-secret', keyVaultUrl: '${vaultUri}secrets/teams-graph-client-secret-${teamsGraphClientId}', identity: runtimeIdentity.id }
       ])
     }
     template: {

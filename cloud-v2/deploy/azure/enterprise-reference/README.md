@@ -107,8 +107,9 @@ rotation, not an ordinary redeploy.
 Guided setup offers this after installation, and `setup.sh configure-teams` adds
 it later. It can create the Graph application itself, granting
 `OnlineMeetings.ReadWrite.All` when the operator is an Entra administrator. It
-writes the client secret straight to Key Vault as `teams-graph-client-secret`,
-records `teamsGraphClientId` and `teamsGraphOrganizerId`, rolls the change out,
+writes the client secret straight to Key Vault as
+`teams-graph-client-secret-<client ID>` (one secret per app, so a new app's ID
+and secret take effect together), records `teamsGraphClientId` and `teamsGraphOrganizerId`, rolls the change out,
 and prints the Teams PowerShell access-policy commands with the IDs filled in.
 See [Graph consent and Teams access policy](./entra-setup.md#meeting-creation).
 Leaving these inputs empty preserves join-only server behavior; creation returns
@@ -116,8 +117,8 @@ a configuration error.
 
 The reference CI deployment reads GitHub variables
 `ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID` and `ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID`;
-its client secret is `teams-graph-client-secret` in the stack's Key Vault. Only
-Runtime references it; neither Core nor the deployment manifest receives it.
+its client secret is `teams-graph-client-secret-<client ID>` in the stack's Key
+Vault. Only Runtime references it; neither Core nor the deployment manifest receives it.
 
 ### Custom hostname
 
