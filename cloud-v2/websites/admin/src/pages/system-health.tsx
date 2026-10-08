@@ -1,3 +1,4 @@
+import {LoadingIndicator} from "../components/loading-indicator";
 import {TESTING_PANEL, TestingButton} from "../components/testing-ui";
 import {elapsedDuration} from "../lib/run-duration";
 import { useQuery } from "@tanstack/react-query";
@@ -61,7 +62,7 @@ export function SystemHealthSummary() {
       ...(host.memory?.pressure === "warning" || host.memory?.pressure === "critical" ? [`${host.hostId}: ${host.memory.pressure} memory pressure`] : []),
       ...host.components.filter(item => ["blocked", "stopped"].includes(item.state)).map(item => `${componentNames[item.component]}: ${item.state === "stopped" ? "paused" : "blocked"}`)]);
   const text = query.isError ? "System health could not refresh. Current service status is unknown."
-    : query.isPending ? "Loading system health…" : !hosts.length ? "Host monitoring has not reported yet."
+    : query.isPending ? <LoadingIndicator inline label="Loading system health" /> : !hosts.length ? "Host monitoring has not reported yet."
     : problems.length ? problems.slice(0, 3).join(" · ") : `${hosts.length} ${hosts.length === 1 ? "host is" : "hosts are"} reporting.`;
   return <aside className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dfe5dd] bg-white px-4 py-3 text-sm" aria-label="System health summary">
     <p className="text-[#59655e]"><strong className="text-[#202820]">System health</strong> · {text}</p>
@@ -169,7 +170,7 @@ function SystemHealthDashboard() {
         <TestingButton className="text-sm" onClick={() => { void query.refetch(); if (host) void history.refetch(); }}>Refresh</TestingButton></div>
       <a href="/?systemHealth=1&restoration=1" className="mt-3 inline-block text-sm font-medium text-[#087d50] hover:underline">State repair history</a>
       {query.isError ? <p className="mt-4 text-sm text-[#a64235]">Health could not refresh. Current service status is unknown.</p> : null}
-      {!hosts.length ? <p className="mt-4 text-sm text-[#68746d]">{query.isPending ? "Loading host reports…" : "No independent host monitor has reported yet. Historical disk measurements will appear as they are collected."}</p> : <>
+      {!hosts.length ? query.isPending ? <LoadingIndicator label="Loading host reports" className="mt-4" /> : <p className="mt-4 text-sm text-[#68746d]">No independent host monitor has reported yet. Historical disk measurements will appear as they are collected.</p> : <>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><select aria-label="Host" value={host?.hostId} onChange={event => setHostId(event.target.value)} className="rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">{hosts.map(value => <option key={value.hostId}>{value.hostId}</option>)}</select>
           <p className="text-xs text-[#68746d]">{fresh ? "Host reporting" : "Stale · no recent report"} · Last observed {host ? elapsed(host.sampledAt, now) : "unknown"} ago{host ? ` (${time(host.sampledAt)})` : ""}</p></div>
         {host ? <div className="mt-4 grid gap-3 lg:grid-cols-3">{HOST_COMPONENTS.map(role => { const component = host.components.find(value => value.component === role), state = componentHealth(host, component, now, query.isError);
@@ -181,7 +182,7 @@ function SystemHealthDashboard() {
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><label className="text-sm">History metric <select aria-label="History metric" value={metric} onChange={event => setMetric(event.target.value as HistoryMetric)} className="ml-2 rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">{Object.entries(historyMetrics).map(([id, value]) => <option key={id} value={id}>{value.label}</option>)}</select></label>
           <div className="flex gap-1 rounded-lg bg-[#f0f3ee] p-1">{([1, 7] as const).map(value => <TestingButton variant="ghost" key={value} aria-pressed={days === value} onClick={() => setDays(value)} className={`rounded-md px-3 py-1 text-sm ${days === value ? "bg-white font-semibold shadow-sm" : "text-[#68746d]"}`}>{value === 1 ? "24 hours" : "7 days"}</TestingButton>)}</div></div>
         {history.isError ? <p className="mt-3 text-sm text-[#a64235]">History could not refresh. {history.data ? "Showing the last fetched history, not current." : ""}</p> : null}
-        {history.data ? <div className="mt-4"><DiskHistoryChart history={history.data} metric={metric} />{metric === "disk" ? <CleanupEvents events={history.data.cleanupEvents} /> : null}</div> : <p className="mt-4 text-sm text-[#68746d]">{history.isError ? "Historical measurements unavailable." : "Loading recorded measurements…"}</p>}
+        {history.data ? <div className="mt-4"><DiskHistoryChart history={history.data} metric={metric} />{metric === "disk" ? <CleanupEvents events={history.data.cleanupEvents} /> : null}</div> : history.isError ? <p className="mt-4 text-sm text-[#68746d]">Historical measurements unavailable.</p> : <LoadingIndicator label="Loading recorded measurements" className="mt-4" />}
         {query.data?.truncated ? <p className="mt-3 text-xs text-[#a64235]">Only the first 32 reporting hosts are shown.</p> : null}
       </>}
     </section>

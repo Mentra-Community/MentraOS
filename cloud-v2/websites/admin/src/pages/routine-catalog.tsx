@@ -1,3 +1,4 @@
+import {LoadingIndicator} from "../components/loading-indicator";
 import {HistoryStatus, runDisplayStatus} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
@@ -63,7 +64,7 @@ export function matchesHistorySearch(entry: TestHistoryEntry, routines: RoutineE
 export function RoutineCatalogList() {
   const [filters, setFilters] = useRoutineSearch();
   const catalog = useSearchCatalog();
-  if (catalog.isPending) return <p role="status">Loading routines…</p>;
+  if (catalog.isPending) return <LoadingIndicator label="Loading routines" />;
   if (catalog.error && !catalog.data) return <p role="alert">Could not load routines: {catalog.error.message}</p>;
   const routines = catalog.data.routines;
   const filtered = routines.filter(row => matchesRoutineSearch(searchableRoutine(row), filters));
@@ -130,7 +131,7 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
   const detail = useInfiniteQuery({queryKey: ["routine-detail", id, platform], initialPageParam: undefined as string | undefined,
     queryFn: ({pageParam}) => api<Detail>(`/api/admin/routine-catalog/${encodeURIComponent(id)}/${encodeURIComponent(platform)}${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ""}`),
     getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 15000});
-  if (detail.isPending) return <p role="status">Loading routine…</p>;
+  if (detail.isPending) return <LoadingIndicator label="Loading routine" />;
   if (detail.error && !detail.data) return <p role="alert">Could not load routine: {detail.error.message}</p>;
   const row = detail.data.pages[0]!, definition = row.definition;
   return <div className="space-y-5">
@@ -156,7 +157,7 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
       <ul className="mt-3 space-y-2">{detail.data.pages.flatMap(page => page.history).map(run => <li key={run.runId}>
         <a className={TESTING_LINK} href={frameworkRunHref(run.runId)}>{new Date(run.startedAt).toLocaleString()}</a>
         {" · "}{run.outcome}{run.evidenceStatus === "failed" && " · evidence failed"}{!run.uploadsComplete && " · evidence pending"}</li>)}</ul>
-      {detail.hasNextPage && <TestingButton className="mt-4" disabled={detail.isFetchingNextPage} onClick={() => detail.fetchNextPage()}>More runs</TestingButton>}
+      {detail.hasNextPage && <TestingButton className="mt-4" busy={detail.isFetchingNextPage} onClick={() => detail.fetchNextPage()}>More runs</TestingButton>}
     </section>
   </div>;
 }
@@ -226,7 +227,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     } else {pendingOffset.current = null; setSelectedAsset(null);}
   }, [runId, stepId, result.data?.run]);
   useEffect(() => {setStepSearch(""); setSelectedStep(stepId); if (!stepId) {pendingOffset.current = null; setSelectedAsset(null);}}, [runId, stepId]);
-  if (result.isPending) return <p role="status">Loading run…</p>;
+  if (result.isPending) return <LoadingIndicator label="Loading run" />;
   if (result.error && !result.data) return <p role="alert">Could not load run: {result.error.message}</p>;
   if (result.data.kind === "request") {
     const request = result.data.request;
@@ -412,14 +413,14 @@ function TestHistoryList({initialOrigin = "pr"}: {initialOrigin?: HistoryOrigin}
     <div role="tabpanel" id={`${tabId}-history`} aria-labelledby={`${tabId}-${origin}`} tabIndex={0}>
     <RoutineSearch placeholder="Routine, PR, commit or tested build" filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${originEntries.length} loaded entries`} />
     <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Tabs and filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p></details>
-    {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
+    {catalog.isPending && <LoadingIndicator label="Loading routine names and glasses requirements" className="mt-2 text-sm" />}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
-    {history.isPending && <p role="status" className="mt-3">Loading test history…</p>}
+    {history.isPending && <LoadingIndicator label="Loading test history" className="mt-3" />}
     {history.error && <p role="alert" className="mt-3">{history.data ? "History could not refresh" : "Could not load test history"}: {history.error.message} <TestingButton onClick={() => history.refetch()}>Retry</TestingButton></p>}
     {history.data && !entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
     {history.data && !!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches this tab and your filters.</p>}
     {!!filtered.length && <TestHistoryTable entries={filtered} routines={routines}/>}
-    {history.hasNextPage && <TestingButton className="mt-4" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? "Loading…" : "More history"}</TestingButton>}
+    {history.hasNextPage && <TestingButton className="mt-4" busy={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>More history</TestingButton>}
     </div>
   </section>;
 }
@@ -435,7 +436,7 @@ function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
   const query = useInfiniteQuery({queryKey: ["framework-runs", params.toString()], initialPageParam: undefined as string | undefined,
     queryFn: ({pageParam, signal}) => api<ScopedRunPage>(`/api/admin/routine-catalog/results?${params}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, {signal, timeoutMs: 30000}),
     getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 15000});
-  if (query.isPending) return <p role="status">Loading runs…</p>;
+  if (query.isPending) return <LoadingIndicator label="Loading runs" />;
   if (query.error && !query.data) return <p role="alert">Could not load runs: {query.error.message}</p>;
   const routines = catalog.data?.routines ?? [];
   const runs = query.data.pages.flatMap(page => page.runs);
@@ -444,13 +445,13 @@ function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
   return <section className={PANEL}><h2 className="text-xl font-semibold">Filtered routine runs</h2>
     <RoutineSearch placeholder="Routine, PR, commit or tested build" filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${runs.length} loaded runs`} />
     <p className="mt-2 text-xs text-[#747780]">Searches loaded runs for this build.</p>
-    {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
+    {catalog.isPending && <LoadingIndicator label="Loading routine names and glasses requirements" className="mt-2 text-sm" />}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
     {query.error && <p role="alert" className="mt-3">Runs could not refresh: {query.error.message}</p>}
     {!runs.length && <p className="mt-3">No routine runs match this build.</p>}
     {!!runs.length && !filtered.length && <p className="mt-3">No loaded routine runs match your filters for this build.</p>}
     {!!filtered.length && <TestHistoryTable entries={filtered.map(run => ({kind: "run" as const, ...run}))} routines={routines}/>}
-    {query.hasNextPage && <TestingButton className="mt-4" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>{query.isFetchingNextPage ? "Loading…" : "More runs"}</TestingButton>}
+    {query.hasNextPage && <TestingButton className="mt-4" busy={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>More runs</TestingButton>}
   </section>;
 }
 export function recordingOffset(ms: number) {

@@ -25,4 +25,6 @@ test("test run tools have three ordered, accessible tabs with results selected i
    expect(panels[index]).toContain(`id="${controls}"`);
  });
  expect(html).toContain("Recorded history");
+ expect((client.getQueryCache().find({queryKey: ["dispatch-routines", ""]})?.options as {enabled?: boolean}).enabled).toBe(false);
+ expect((client.getQueryCache().find({queryKey: ["framework-activity"]})?.options as {enabled?: boolean}).enabled).toBe(false);
 });

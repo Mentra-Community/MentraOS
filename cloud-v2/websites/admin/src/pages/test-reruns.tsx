@@ -1,3 +1,4 @@
+import {LoadingIndicator} from "../components/loading-indicator";
 import {HistoryStatus} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
 import {useEffect, useState} from "react";
@@ -31,9 +32,9 @@ export function AttemptHistoryView({page, before, error, loading, onOpen, onBefo
   const message = error && <p role="alert">History unavailable. <TestingButton onClick={onRetry}>Retry</TestingButton></p>;
   if (before === null && (!page || !page.attempts.length)) return message || null;
   return <details onToggle={event=>onOpen(event.currentTarget.open)}><summary className="cursor-pointer text-sm font-medium">Attempt history</summary>
-    {message}{loading && <p role="status">Loading attempts…</p>}
+    {message}{loading && <LoadingIndicator label="Loading attempts" />}
     {page && <><AttemptLine attempt={page.original}/>{page.attempts.map(attempt=><AttemptLine key={attempt.attemptId} attempt={attempt}/>)}
-      {page.nextBefore && <TestingButton disabled={loading} onClick={()=>onBefore(page.nextBefore)}>Older attempts</TestingButton>}</>}
+      {page.nextBefore && <TestingButton busy={loading} onClick={()=>onBefore(page.nextBefore)}>Older attempts</TestingButton>}</>}
     {before !== null && <TestingButton className="ml-3" onClick={()=>onBefore(null)}>Latest attempts</TestingButton>}
   </details>;
 }
@@ -86,7 +87,7 @@ export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {sui
     <div><label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Reason <input className={TESTING_FIELD} value={reason} disabled={previewEntered||busy} onChange={e=>setReason(e.target.value)}/></label></div>
     {preview&&<RerunPreviewMembers plan={preview.plan}/>}
     <div className="flex flex-wrap items-center gap-2">
-    <TestingButton disabled={busy} onClick={preview?submit:prepare}>{busy?"Working…":preview?entered?"Reconcile same submission":"Submit this preview":"Preview rerun"}</TestingButton>
+    <TestingButton busy={busy} onClick={preview?submit:prepare}>{preview?entered?"Reconcile same submission":"Submit this preview":"Preview rerun"}</TestingButton>
     <TestingButton className="ml-4" disabled={busy} onClick={onClose}>Close</TestingButton>
     {!entered&&<TestingButton className="ml-4" disabled={busy} onClick={()=>{setId(crypto.randomUUID());setPreview(null);setPreviewEntered(false);setMessage("New preview; any prior preview remains unsubmitted.");}}>Start fresh preview</TestingButton>}
     {preview&&<a className={TESTING_LINK} href={`/?testRerun=${encodeURIComponent(preview.rerunId)}`}>View rerun</a>}
@@ -98,7 +99,7 @@ export function TestRerunPage({rerunId}:{rerunId:string}) {
   const [reconciling,setReconciling]=useState(false);
   const result=useQuery({queryKey:["test-rerun",rerunId],queryFn:()=>api<{previewDigest:string;parent:RerunPlan["parent"];reason:string;source?:TestBuildSource;outcome:string;passed:number;attempts:RerunAttempt[];state:string}>(`/api/admin/test-runs/reruns/${encodeURIComponent(rerunId)}`),refetchInterval:15000});
   if(result.error)return <p role="alert">Rerun unavailable. <TestingButton onClick={()=>result.refetch()}>Retry</TestingButton></p>;
-  if(!result.data)return <p>Loading rerun…</p>;
+  if(!result.data)return <LoadingIndicator label="Loading rerun" />;
   const value=result.data;
   async function reconcile() {
     setReconciling(true);
@@ -109,7 +110,7 @@ export function TestRerunPage({rerunId}:{rerunId:string}) {
   return <section className={TESTING_PANEL}><a className={TESTING_LINK} href={"suiteId" in value.parent?`/?testSuite=${encodeURIComponent(value.parent.suiteId)}`:frameworkRunHref(value.parent.requestId)}>Original {"suiteId" in value.parent?"suite":"test"}</a>
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Rerun</h2><HistoryStatus outcome={value.outcome}/></div><p>{value.passed}/{value.attempts.length} passed with complete evidence · {value.reason}</p>
     <p className="text-sm">This verdict covers only these attempts. The original result is unchanged.</p>
-    {value.attempts.some(a=>a.status==="admission-pending")&&<p><TestingButton disabled={reconciling} onClick={reconcile}>{value.state==="preview"?"Submit recorded preview":"Reconcile pending admissions"}</TestingButton></p>}{reconcileMessage&&<p role="status">{reconcileMessage}</p>}
+    {value.attempts.some(a=>a.status==="admission-pending")&&<p><TestingButton busy={reconciling} onClick={reconcile}>{value.state==="preview"?"Submit recorded preview":"Reconcile pending admissions"}</TestingButton></p>}{reconcileMessage&&<p role="status">{reconcileMessage}</p>}
     {value.attempts.map((a, index)=><div key={a.attemptId} className="mt-4 rounded-xl border border-[#e0e4de] p-4"><h3 className="font-semibold">Routine attempt {index + 1}</h3><AttemptLine attempt={a}/><details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Member identity</summary><code>{a.memberId}</code></details><AttemptHistory suiteId={"suiteId" in value.parent?value.parent.suiteId:undefined} originalRequestId={"requestId" in value.parent?value.parent.requestId:undefined} memberId={a.memberId}/></div>)}</section>;
 }
 

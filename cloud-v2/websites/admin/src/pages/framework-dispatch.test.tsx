@@ -61,11 +61,11 @@ test("delivery cards explain queue states and keep diagnostic IDs in details", (
 test("delivery distinguishes loading from an empty queue", () => {
  const client = new QueryClient();
  const render = () => renderToStaticMarkup(<QueryClientProvider client={client}><NativeActivityPanel/></QueryClientProvider>);
- expect(render()).toContain("Loading request delivery…");
+ expect(render()).toContain("Loading request delivery");
  expect(render()).not.toContain("No pending requests.");
  client.setQueryData(["framework-activity"], {requests: []});
  expect(render()).toContain("No pending requests.");
- expect(render()).not.toContain("Loading request delivery…");
+ expect(render()).not.toContain("Loading request delivery");
 });
 
 test("preparing delivery has a routine name and exact waiting reason without executable input", () => {

@@ -1,3 +1,4 @@
+import {LoadingIndicator} from "./components/loading-indicator";
 import {TestRunsTabs} from "./pages/test-runs-tabs";
 import {TestRerunPage, readRerunId} from "./pages/test-reruns";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
@@ -261,22 +262,22 @@ function AdminPage() {
   const submissions = useQuery({
     queryKey: ["admin-submissions"],
     queryFn: () => api<{ submissions: ReleaseSummary[] }>("/api/admin/submissions"),
-    enabled: me.isSuccess,
+    enabled: me.isSuccess && (["home", "review"].includes(page) || detailReleaseId !== null),
   });
   const registries = useQuery({
     queryKey: ["admin-registries"],
     queryFn: () => api<{ registries: Registry[] }>("/api/admin/preinstalled/registries"),
-    enabled: me.isSuccess,
+    enabled: me.isSuccess && ["home", "preinstalled"].includes(page),
   });
   const releases = useQuery({
     queryKey: ["admin-releases"],
     queryFn: () => api<{ releases: ReleaseSummary[] }>("/api/admin/preinstalled/releases"),
-    enabled: me.isSuccess,
+    enabled: me.isSuccess && (page === "preinstalled" || detailReleaseId !== null),
   });
   const audit = useQuery({
     queryKey: ["admin-audit"],
     queryFn: () => api<{ events: AuditEvent[] }>("/api/admin/audit-log"),
-    enabled: me.isSuccess,
+    enabled: me.isSuccess && ["home", "audit"].includes(page),
   });
   const activeRegistry = useMemo(
     () => registries.data?.registries.find(registry => registry.environment === env && registry.name === "default"),
@@ -285,7 +286,7 @@ function AdminPage() {
   const revisions = useQuery({
     queryKey: ["admin-revisions", activeRegistry?.id],
     queryFn: () => api<{ revisions: RegistryRevision[] }>(`/api/admin/preinstalled/registries/${activeRegistry?.id}/revisions`),
-    enabled: Boolean(activeRegistry?.id),
+    enabled: me.isSuccess && ["home", "preinstalled"].includes(page) && Boolean(activeRegistry?.id),
   });
 
   // Review decisions carry the reviewer's typed notes. "Request changes" is a
@@ -1434,20 +1435,14 @@ function Splash(props: { label: string }) {
   return (
     <main className="grid min-h-screen place-items-center bg-[#f5f7f4]">
       <div className="flex items-center gap-3 rounded-full bg-white px-5 py-3 shadow-sm ring-1 ring-black/10">
-        <Loader2 className="size-5 animate-spin text-[#038755]" />
-        <span>{props.label}</span>
+        <LoadingIndicator inline label={props.label} />
       </div>
     </main>
   );
 }
 
 function InlineLoading(props: { label: string }) {
-  return (
-    <div className="flex items-center gap-3 rounded-[18px] bg-[#f5f7f4] px-5 py-4 text-[#68746d]">
-      <Loader2 className="size-5 animate-spin" />
-      {props.label}
-    </div>
-  );
+  return <LoadingIndicator label={props.label} />;
 }
 
 function ErrorText({ error }: { error: unknown }) {
