@@ -1812,8 +1812,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     /**
-     * Clear firmware-scoped caps when the BES reports a different build than the one they were
-     * advertised by, so a downgrade cannot inherit flags such as wire_caps.uart_rx_pos.
+     * Forget the previous build's negotiation when the BES reports a different build, so a
+     * downgrade cannot inherit flags such as wire_caps.uart_rx_pos.
      */
     private void noteBesFirmwareVersion(String version) {
         if (version == null || version.isEmpty()) {
@@ -1824,8 +1824,18 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (previous != null && !previous.equals(version)) {
             Log.i(TAG, "📋 BES firmware changed " + previous + " -> " + version
                     + "; clearing negotiated wire caps");
-            linkState.besFirmwareChanged();
+            forgetBesBuildNegotiation();
         }
+    }
+
+    /**
+     * Drop what the previous BES build negotiated: its wire caps and little-endian K900 lengths.
+     * Every build parses big-endian lengths, and the new build re-advertises k900_le in its
+     * sr_syvr if it supports it.
+     */
+    private void forgetBesBuildNegotiation() {
+        linkState.besFirmwareChanged();
+        uartToBesEndian = K900LengthCodec.Endian.BE;
     }
 
     private static String extractDisplayBesVersion(JSONObject bData) {
@@ -2367,7 +2377,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         linkState.streamDiscontinuity();
         linkState.phonePresenceInvalidated();
         // The new build re-advertises its caps in the post-reboot sr_syvr.
-        linkState.besFirmwareChanged();
+        forgetBesBuildNegotiation();
         transportCoordinator.onBesOtaApplied();
     }
 
