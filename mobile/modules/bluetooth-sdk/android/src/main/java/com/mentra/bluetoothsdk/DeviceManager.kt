@@ -1512,6 +1512,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             Bridge.log("MAN: SGC is null, returning")
             return
         }
+        clearOwnerLost()
 
         // A new identity must never inherit the previous glasses' address when
         // pairing supplied only a name. Same-device reconnects retain their cache.
@@ -2342,6 +2343,13 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     internal fun shouldReconnectAfterBluetoothOn(): Boolean =
         defaultWearable.isNotEmpty() && deviceName.isNotEmpty() && !ownerLost
 
+    /** A forget or a ready (re-paired) glasses session ends owner loss for SDK-only hosts too. */
+    internal fun clearOwnerLost() {
+        if (!ownerLost) return
+        DeviceStore.apply("bluetooth", "mentra_live_owner_lost", false)
+        Bridge.saveSetting("mentra_live_owner_lost", false)
+    }
+
     fun connectDefault() {
         if (defaultWearable.isEmpty()) {
             Bridge.log("MAN: No default wearable, returning")
@@ -2553,6 +2561,7 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
             connectionRecovery.clear()
         }
         Bridge.log("MAN: Forgetting smart glasses")
+        clearOwnerLost()
 
         val live = sgc as? MentraLive
         if (live != null) {

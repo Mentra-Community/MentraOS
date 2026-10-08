@@ -13,7 +13,7 @@ import org.robolectric.annotation.LooperMode
 @Config(sdk = [33])
 @LooperMode(LooperMode.Mode.PAUSED)
 class DeviceManagerOwnerLossTest {
-    @Test fun `bluetooth on does not reconnect glasses another phone now owns`() {
+    @Test fun `owner loss blocks bluetooth-on reconnect until forget or re-pair clears it`() {
         Bridge.initialize(ApplicationProvider.getApplicationContext())
         val saved = DeviceStore.store.getCategory("bluetooth")
         // A Bluetooth OFF/ON cycle replaces the stood-down SGC with a fresh manager, so the
@@ -26,7 +26,9 @@ class DeviceManagerOwnerLossTest {
             DeviceStore.set("bluetooth", "mentra_live_owner_lost", true)
             assertFalse(manager.shouldReconnectAfterBluetoothOn())
 
-            DeviceStore.set("bluetooth", "mentra_live_owner_lost", false)
+            // SDK-only hosts have no engine to reset the flag; re-pairing or forgetting must.
+            manager.clearOwnerLost()
+            assertFalse(DeviceStore.store.get("bluetooth", "mentra_live_owner_lost") as Boolean)
             assertTrue(manager.shouldReconnectAfterBluetoothOn())
         } finally {
             manager.cleanup()
