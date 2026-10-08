@@ -23,19 +23,33 @@ fi
 NAMES=(refresh-token-pepper mentra-jwt-public-key miniapp-jwt-public-key mentra-jwt-private-key miniapp-jwt-private-key)
 RETRY_SECONDS="${MENTRA_VAULT_RETRY_SECONDS:-10}"
 
-# A role assignment made moments ago by bootstrap.bicep can take a few
-# minutes to reach Key Vault. Retry only while access is still propagating.
+ERRORS="$(mktemp "${TMPDIR:-/tmp}/mentra-vault-errors.XXXXXX")"
+trap 'rm -f "$ERRORS"' EXIT
+
+# A role assignment made moments ago by bootstrap.bicep can take a few minutes
+# to reach Key Vault, and a new vault's name can take a moment to resolve.
+# Retry only those; any other refusal is shown at once.
 vault_call() {
   local attempt
   for attempt in $(seq 1 30); do
-    if "$@"; then return 0; fi
-    sleep "$RETRY_SECONDS"
+    if "$@" 2>"$ERRORS"; then return 0; fi
+    if grep -q 'ForbiddenByRbac' "$ERRORS" || { grep -q 'Forbidden' "$ERRORS" && ! grep -q 'ForbiddenBy' "$ERRORS"; } ||
+      grep -Eqi 'getaddrinfo|Name or service not known|nodename nor servname|Failed to establish a new connection' "$ERRORS"; then
+      sleep "$RETRY_SECONDS"
+      continue
+    fi
+    if grep -Eq 'ObjectIsDeletedButRecoverable|deleted but recoverable' "$ERRORS"; then
+      printf 'Key Vault %s holds a deleted secret with that name. Recover it with "az keyvault secret recover --vault-name %s --name NAME", then run setup again.\n' \
+        "$VAULT" "$VAULT" >&2
+    fi
+    grep '^ERROR' "$ERRORS" | head -n 3 >&2 || true
+    return 1
   done
-  printf 'Cannot use Key Vault %s. Setup needs the Key Vault Secrets Officer role on it; setup assigns it to whoever runs it, which can take a few minutes to apply.\n' "$VAULT" >&2
+  printf 'Cannot use Key Vault %s yet. Setup gives whoever runs it the Key Vault Secrets Officer role, which can take a few minutes to apply; run setup again shortly.\n' "$VAULT" >&2
   return 1
 }
 
-list_names() { az keyvault secret list --vault-name "$VAULT" --query '[].name' --output json 2>/dev/null; }
+list_names() { az keyvault secret list --vault-name "$VAULT" --query '[].name' --output json; }
 PRESENT="$(vault_call list_names)"
 MISSING=()
 for name in "${NAMES[@]}"; do
@@ -57,12 +71,12 @@ fi
 # by writing one fresh, matching set.
 umask 077
 TEMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TEMP_DIR"' EXIT
+trap 'rm -rf "$TEMP_DIR" "$ERRORS"' EXIT
 key_body() { sed '/^-----/d' "$1" | tr -d '\r\n'; }
-openssl genpkey -algorithm ED25519 -out "$TEMP_DIR/access.pem" 2>/dev/null
-openssl pkey -in "$TEMP_DIR/access.pem" -pubout -out "$TEMP_DIR/access.pub" 2>/dev/null
-openssl genpkey -algorithm ED25519 -out "$TEMP_DIR/miniapp.pem" 2>/dev/null
-openssl pkey -in "$TEMP_DIR/miniapp.pem" -pubout -out "$TEMP_DIR/miniapp.pub" 2>/dev/null
+openssl genpkey -algorithm ED25519 -out "$TEMP_DIR/access.pem"
+openssl pkey -in "$TEMP_DIR/access.pem" -pubout -out "$TEMP_DIR/access.pub"
+openssl genpkey -algorithm ED25519 -out "$TEMP_DIR/miniapp.pem"
+openssl pkey -in "$TEMP_DIR/miniapp.pem" -pubout -out "$TEMP_DIR/miniapp.pub"
 openssl rand -base64 48 | tr -d '\r\n' > "$TEMP_DIR/refresh-token-pepper"
 key_body "$TEMP_DIR/access.pub" > "$TEMP_DIR/mentra-jwt-public-key"
 key_body "$TEMP_DIR/miniapp.pub" > "$TEMP_DIR/miniapp-jwt-public-key"
@@ -71,7 +85,7 @@ key_body "$TEMP_DIR/miniapp.pem" > "$TEMP_DIR/miniapp-jwt-private-key"
 set_secret() {
   # The value is read from a file, never passed as a command-line argument.
   az keyvault secret set --vault-name "$VAULT" --name "$1" --file "$TEMP_DIR/$1" --encoding utf-8 \
-    --content-type text/plain --output none 2>/dev/null
+    --content-type text/plain --output none
 }
 for name in "${NAMES[@]}"; do
   [[ -s "$TEMP_DIR/$name" ]] || { printf 'Key generation produced an empty %s\n' "$name" >&2; exit 1; }

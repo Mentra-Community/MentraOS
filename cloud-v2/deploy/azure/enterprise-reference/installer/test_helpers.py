@@ -200,7 +200,8 @@ elif a[:3] in (['deployment','group','validate'],['deployment','group','create']
 elif a[:3]==['deployment','group','show']:print('{}')
 else:sys.exit(9)
 """)
-        result = subprocess.run(['bash', '-c', 'set -euo pipefail\naz() { command az "$@"; }\n' + block],
+        result = subprocess.run(['bash', '-c', 'set -euo pipefail\naz() { command az "$@"; }\n'
+                                 'progress() { :; }\nwait_for_deployment() { :; }\n' + block],
                                 env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 3, result.stderr)
         self.assertIn('Configure DNS', result.stderr)
@@ -282,7 +283,8 @@ p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:];store=p/'vault'
 with (p/'calls').open('a') as f:f.write(json.dumps(a)+'\\n')
 if a[:3]==['keyvault','secret','list']:
  failures=p/'list-failures';n=int(failures.read_text()) if failures.exists() else 0
- if n<int(os.environ['LIST_FAILURES']):failures.write_text(str(n+1));sys.exit(1)
+ if n<int(os.environ['LIST_FAILURES']):
+  failures.write_text(str(n+1));print('ERROR: (Forbidden) Caller is not authorized. Inner error: {"code":"ForbiddenByRbac"}',file=sys.stderr);sys.exit(1)
  print(json.dumps(sorted(x.name for x in store.iterdir())))
 elif a[:3]==['keyvault','secret','set']:
  (store/a[a.index('--name')+1]).write_bytes(Path(a[a.index('--file')+1]).read_bytes())
@@ -335,6 +337,16 @@ else:sys.exit(9)
         self.assertIn('AuthorizationFailed', result.stderr)
         self.assertEqual((store / 'mentra-jwt-public-key').read_text(), 'original-public')
         self.assertEqual(len(list(store.iterdir())), 1)
+
+    def test_other_key_vault_errors_are_shown_without_waiting(self):
+        self.fake_vault()
+        self.executable('az', '''import sys
+print('ERROR: (Forbidden) Client address is not authorized. Inner error: {"code":"ForbiddenByFirewall"}',file=sys.stderr);sys.exit(1)
+''')
+        result = self.ensure()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('ForbiddenByFirewall', result.stderr)
+        self.assertNotIn('can take a few minutes', result.stderr)
 
     def test_interrupted_first_run_writes_one_matching_set(self):
         store = self.fake_vault()
@@ -498,10 +510,55 @@ else:sys.exit(9)
         for current, expected in (('bbbb', ['old']), ('', ['old', 'current'])):
             (self.path / 'deleted').unlink(missing_ok=True)
             script = ('set -euo pipefail\nRUNTIME_IDENTITY=id-rt\nRESOURCE_GROUP=rg\nKEY_VAULT=kv\n'
-                      f'TEAMS_CLIENT_ID={current}\n' + block)
+                      f'ERRORS={self.path / "errors"}\nTEAMS_CLIENT_ID={current}\n' + block)
             result = subprocess.run(['bash', '-c', script], env=self.env, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads((self.path / 'deleted').read_text()), expected)
+
+    def deploy_block(self, start, end, fake, prelude=''):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        block = source[source.index(start):source.index(end)]
+        self.env['HELPER_TEST_DIRECTORY'] = str(self.path)
+        self.executable('az', 'import json,os,sys\nfrom pathlib import Path\np=Path(os.environ["HELPER_TEST_DIRECTORY"]);a=sys.argv[1:]\n'
+                        'with (p/"calls").open("a") as f:f.write(json.dumps(a)+"\\n")\n' + fake)
+        script = ('set -euo pipefail\nprogress() { :; }\nwait_for_deployment() { :; }\n'
+                  f'ERRORS={self.path / "errors"}\nRESOURCE_GROUP=rg-acme\nKEY_VAULT=kvacme\nDEPLOYMENT_NAME=mentra-private\n'
+                  f'TEMPLATE_DIR={ROOT}\nPARAMETERS={self.path / "p.json"}\nOPERATOR_ID=op\n'
+                  'MENTRA_KEYVAULT_RETRY_SECONDS=0\n' + prelude + block)
+        result = subprocess.run(['bash', '-c', script], env=self.env, text=True, capture_output=True)
+        calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()] if (self.path / 'calls').exists() else []
+        return result, calls
+
+    def test_a_vault_deleted_with_this_deployment_is_recovered(self):
+        for owner, recovered in (('/subscriptions/s/resourceGroups/RG-ACME/providers/Microsoft.KeyVault/vaults/kvacme', True),
+                                 ('/subscriptions/s/resourceGroups/rg-other/providers/Microsoft.KeyVault/vaults/kvacme', False)):
+            with self.subTest(owner=owner):
+                (self.path / 'calls').unlink(missing_ok=True)
+                fake = (f'if a[:2]==["keyvault","show"]:sys.exit(3)\n'
+                        f'elif a[:2]==["keyvault","show-deleted"]:print({owner!r})\n'
+                        'elif a[:2]==["keyvault","recover"]:pass\nelse:sys.exit(9)\n')
+                result, calls = self.deploy_block('# A vault deleted together', '# Someone may have granted', fake)
+                self.assertEqual(result.returncode == 0, recovered, result.stderr)
+                self.assertEqual(any(c[:2] == ['keyvault', 'recover'] for c in calls), recovered)
+                if not recovered:
+                    self.assertIn('stays reserved', result.stderr)
+
+    def test_main_deployment_retries_only_while_key_vault_access_applies(self):
+        fake = ('n=p/"tries";k=int(n.read_text()) if n.exists() else 0;n.write_text(str(k+1))\n'
+                'if a[:3]==["deployment","group","create"]:\n'
+                ' if k<int(os.environ["FAILURES"]):print("ERROR: "+os.environ["FAILURE"],file=sys.stderr);sys.exit(1)\n'
+                ' print("Succeeded")\nelse:sys.exit(9)\n')
+        cases = ((2, 'Unable to get value using Managed identity /x for secret refresh-token-pepper', 0, 3),
+                 (1, 'InvalidTemplate: something else', 1, 1))
+        for failures, failure, code, tries in cases:
+            with self.subTest(failure=failure):
+                for name in ('calls', 'tries'):
+                    (self.path / name).unlink(missing_ok=True)
+                self.env.update(FAILURES=str(failures), FAILURE=failure)
+                result, calls = self.deploy_block('# New Key Vault access can take up to 10 minutes',
+                                                  'progress "Waiting for both services', fake)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(len(calls), tries)
 
     def test_source_mirror_validation_rejects_boolean_and_nonregistry_values(self):
         source = (ROOT / 'scripts/deploy.sh').read_text()

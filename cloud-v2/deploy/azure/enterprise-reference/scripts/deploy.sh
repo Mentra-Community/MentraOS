@@ -25,6 +25,31 @@ command -v jq >/dev/null || { printf 'jq is required\n' >&2; exit 1; }
 if [[ "$MODE" != validate ]]; then
   command -v az >/dev/null || { printf 'az is required\n' >&2; exit 1; }
 fi
+if [[ "$MODE" == deploy ]] && ! openssl genpkey -algorithm ED25519 -out /dev/null 2>/dev/null; then
+  printf 'OpenSSL with Ed25519 support is required to create the signing keys. Azure Cloud Shell has it; on macOS install openssl@3 and put it first on PATH.\n' >&2
+  exit 1
+fi
+
+# Progress for the person running setup, even when the caller captures output.
+progress() { { printf '  %s\n' "$*" > /dev/tty; } 2>/dev/null || true; }
+
+# A rerun after a closed session can find the previous run's deployment still
+# in progress; wait for it rather than failing with DeploymentActive.
+wait_for_deployment() {
+  local state attempt
+  for attempt in $(seq 1 90); do
+    state="$(az deployment group show --name "$1" --resource-group "$RESOURCE_GROUP" \
+      --query properties.provisioningState --output tsv 2>/dev/null || true)"
+    case "$state" in
+      Running|Accepted|Deploying|Validating|Waiting)
+        [[ "$attempt" == 1 ]] && progress "An earlier run's deployment $1 is still in progress; waiting for it..."
+        sleep 20 ;;
+      *) return 0 ;;
+    esac
+  done
+  printf 'Deployment %s is still running after 30 minutes. Check it in the Azure portal, then run setup again.\n' "$1" >&2
+  exit 1
+}
 [[ -f "$CONFIG" ]] || { printf 'Configuration file not found: %s\n' "$CONFIG" >&2; exit 1; }
 
 # Container App names: lowercase alphanumeric/hyphen, 2-32 characters, start with
@@ -35,7 +60,7 @@ fi
 jq -e '
   def nonempty: type == "string" and length > 0;
   def guid: test("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$");
-  def container_app_name: type == "string" and test("^[a-z][a-z0-9-]{0,30}[a-z0-9]$");
+  def container_app_name: type == "string" and test("^[a-z][a-z0-9-]{0,30}[a-z0-9]$") and (test("--") | not);
   def package_name: type == "string" and test("^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z0-9_]+)+$");
   def miniapp_configuration:
     type == "object" and
@@ -203,19 +228,22 @@ if [[ "$MODE" == what-if ]]; then
     exit 1
   }
   write_parameters "$REGISTRY_NAME.azurecr.io/mentra-cloud-enterprise@${SOURCE_IMAGE##*@}"
-  BOOTSTRAP_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME-bootstrap" --resource-group "$RESOURCE_GROUP" \
-    --template-file "$TEMPLATE_DIR/bootstrap.bicep" --parameters "${BOOTSTRAP_PARAMETERS[@]}" --no-pretty-print --output json)"
-  MAIN_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
-    --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" --no-pretty-print --output json)"
+  PREVIEWS="$(mktemp -d "${TMPDIR:-/tmp}/mentra-preview.XXXXXX")"
+  trap 'rm -rf "$PARAMETERS" "$ERRORS" "$PREVIEWS"' EXIT
+  az deployment group what-if --name "$DEPLOYMENT_NAME-bootstrap" --resource-group "$RESOURCE_GROUP" \
+    --template-file "$TEMPLATE_DIR/bootstrap.bicep" --parameters "${BOOTSTRAP_PARAMETERS[@]}" --no-pretty-print --output json > "$PREVIEWS/bootstrap"
+  az deployment group what-if --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
+    --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" --no-pretty-print --output json > "$PREVIEWS/main"
   # Access grants need the vault's secrets. Before the first install they don't
   # exist and there is nothing to preview; any other failure stops the preview.
-  if ! ACCESS_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME-access" --resource-group "$RESOURCE_GROUP" \
-    --template-file "$TEMPLATE_DIR/access.bicep" --parameters "${ACCESS_PARAMETERS[@]}" --no-pretty-print --output json 2>"$ERRORS")"; then
+  if ! az deployment group what-if --name "$DEPLOYMENT_NAME-access" --resource-group "$RESOURCE_GROUP" \
+    --template-file "$TEMPLATE_DIR/access.bicep" --parameters "${ACCESS_PARAMETERS[@]}" --no-pretty-print --output json \
+    > "$PREVIEWS/access" 2>"$ERRORS"; then
     grep -Eq 'ResourceNotFound|ParentResourceNotFound|SecretNotFound|VaultNotFound' "$ERRORS" || { cat "$ERRORS" >&2; exit 1; }
-    ACCESS_PREVIEW=null
+    echo null > "$PREVIEWS/access"
   fi
-  jq -n --argjson bootstrap "$BOOTSTRAP_PREVIEW" --argjson main "$MAIN_PREVIEW" --argjson access "$ACCESS_PREVIEW" \
-    '{bootstrap:$bootstrap,access:$access,main:$main}'
+  jq -n --slurpfile bootstrap "$PREVIEWS/bootstrap" --slurpfile main "$PREVIEWS/main" --slurpfile access "$PREVIEWS/access" \
+    '{bootstrap:$bootstrap[0],access:$access[0],main:$main[0]}'
   exit 0
 fi
 
@@ -224,6 +252,29 @@ fi
 if [[ "${MENTRA_GROUP_PREPARED:-false}" != true ]]; then
   az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
 fi
+# A vault deleted together with its resource group stays reserved (purge
+# protection); recover it, with its signing keys, instead of failing.
+if ! az keyvault show --name "$KEY_VAULT" --output none 2>/dev/null; then
+  DELETED_VAULT="$(az keyvault show-deleted --name "$KEY_VAULT" --query properties.vaultId --output tsv 2>/dev/null || true)"
+  if [[ -n "$DELETED_VAULT" ]]; then
+    if [[ "$(tr '[:upper:]' '[:lower:]' <<<"$DELETED_VAULT")" == *"/resourcegroups/$(tr '[:upper:]' '[:lower:]' <<<"$RESOURCE_GROUP")/"* ]]; then
+      progress "Recovering Key Vault $KEY_VAULT, deleted with an earlier copy of this deployment..."
+      az keyvault recover --name "$KEY_VAULT" --output none
+    else
+      printf 'The Key Vault name %s belongs to a deleted vault elsewhere and stays reserved until its purge protection expires. Start setup again with a different deployment name.\n' "$KEY_VAULT" >&2
+      exit 1
+    fi
+  fi
+fi
+# Someone may have granted the operator Secrets Officer by hand; a second
+# assignment under another name would fail, and the role is already there.
+VAULT_ID="$(az keyvault show --name "$KEY_VAULT" --query id --output tsv 2>/dev/null || true)"
+if [[ -n "$VAULT_ID" && -n "$(az role assignment list --assignee-object-id "$OPERATOR_ID" --scope "$VAULT_ID" \
+    --role b86a8fe4-44ce-4948-aee5-eccb2c155cd7 --fill-principal-name false --query '[0].id' --output tsv 2>/dev/null)" ]]; then
+  BOOTSTRAP_PARAMETERS=("${BOOTSTRAP_PARAMETERS[@]/#operatorPrincipalId=*/operatorPrincipalId=}")
+fi
+progress "Preparing the registry, identities and Key Vault..."
+wait_for_deployment "$DEPLOYMENT_NAME-bootstrap"
 az deployment group create \
   --name "$DEPLOYMENT_NAME-bootstrap" \
   --resource-group "$RESOURCE_GROUP" \
@@ -235,6 +286,7 @@ if [[ "$MODE" == bootstrap ]]; then
   exit 0
 fi
 
+progress "Checking the signing keys in Key Vault..."
 "$SCRIPT_DIR/ensure-vault-secrets.sh" "$KEY_VAULT" "$RESOURCE_GROUP" "$CORE_NAME"
 if [[ -n "$TEAMS_CLIENT_ID" ]]; then
   az keyvault secret show --vault-name "$KEY_VAULT" --name "teams-graph-client-secret-$TEAMS_CLIENT_ID" --query id --output none 2>/dev/null || {
@@ -249,16 +301,18 @@ fi
 NEW_GRANTS="$(az deployment group what-if --name "$DEPLOYMENT_NAME-access" --resource-group "$RESOURCE_GROUP" \
   --template-file "$TEMPLATE_DIR/access.bicep" --parameters "${ACCESS_PARAMETERS[@]}" --no-pretty-print --output json |
   jq '[.changes[] | select(.changeType == "Create")] | length')"
+wait_for_deployment "$DEPLOYMENT_NAME-access"
 az deployment group create --name "$DEPLOYMENT_NAME-access" --resource-group "$RESOURCE_GROUP" \
   --template-file "$TEMPLATE_DIR/access.bicep" --parameters "${ACCESS_PARAMETERS[@]}" \
   --query properties.provisioningState --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
 if [[ "$NEW_GRANTS" != 0 ]]; then
-  printf 'Waiting for new Key Vault access to apply...\n' >&2
+  progress "Waiting for new Key Vault access to apply..."
   sleep "${MENTRA_RBAC_WAIT_SECONDS:-60}"
 fi
 
 # The helper reports progress on stderr and prints only the digest-pinned
 # reference on stdout; tail keeps the last line in case az adds stdout noise.
+progress "Copying the Mentra image into your registry..."
 IMPORTED_IMAGE="$("$SCRIPT_DIR/import-runtime-image.sh" "$REGISTRY_NAME" "$SOURCE_IMAGE" "$RELEASE_TAG" | tail -n 1)"
 [[ "$IMPORTED_IMAGE" =~ ^[a-zA-Z0-9]+\.azurecr\.io/mentra-cloud-enterprise@sha256:[0-9a-f]{64}$ ]] || {
   printf 'Import helper returned an unexpected image reference: %s\n' "$IMPORTED_IMAGE" >&2
@@ -279,6 +333,7 @@ if [[ -n "$WORKSPACE_HOSTNAME" ]]; then
     # packaged installer. Azure cannot bind a hostname to an absent app.
     az deployment group validate --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
       --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" workspaceHostname="" --output none
+    wait_for_deployment "$DEPLOYMENT_NAME"
     az deployment group create --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
       --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" workspaceHostname="" --output none
     az deployment group show --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
@@ -302,14 +357,30 @@ az deployment group validate \
   --parameters "@$PARAMETERS" \
   --output none
 
-az deployment group create \
-  --name "$DEPLOYMENT_NAME" \
-  --resource-group "$RESOURCE_GROUP" \
-  --template-file "$TEMPLATE_DIR/main.bicep" \
-  --parameters "@$PARAMETERS" \
-  --query properties.provisioningState \
-  --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
+progress "Deploying Core and Runtime (about 10 minutes)..."
+wait_for_deployment "$DEPLOYMENT_NAME"
+# New Key Vault access can take up to 10 minutes to reach Container Apps, which
+# then cannot read a secret yet. Retry only that.
+for attempt in $(seq 1 "${MENTRA_KEYVAULT_ATTEMPTS:-10}"); do
+  if az deployment group create \
+    --name "$DEPLOYMENT_NAME" \
+    --resource-group "$RESOURCE_GROUP" \
+    --template-file "$TEMPLATE_DIR/main.bicep" \
+    --parameters "@$PARAMETERS" \
+    --query properties.provisioningState \
+    --output tsv 2>"$ERRORS" | grep --fixed-strings --line-regexp Succeeded >/dev/null; then
+    break
+  fi
+  if [[ "$attempt" == "${MENTRA_KEYVAULT_ATTEMPTS:-10}" ]] ||
+    ! grep -Eqi 'Unable to get value using Managed identity|unable to fetch secret|ForbiddenByRbac|Key ?Vault.*(denied|forbidden|unauthorized)' "$ERRORS"; then
+    cat "$ERRORS" >&2
+    exit 1
+  fi
+  progress "Key Vault access is still being applied; trying again in a minute..."
+  sleep "${MENTRA_KEYVAULT_RETRY_SECONDS:-60}"
+done
 
+progress "Waiting for both services to start..."
 # ARM completion precedes Container Apps readiness. Wait until both services run
 # their new revisions; until then the previous Runtime still serves the old
 # manifest (for example the Azure address instead of the custom one).
@@ -333,15 +404,20 @@ done
 # keeps read access to that app's secret only. The secrets stay for operators.
 RUNTIME_PRINCIPAL="$(az identity show --name "$RUNTIME_IDENTITY" --resource-group "$RESOURCE_GROUP" --query principalId --output tsv)"
 VAULT_ID="$(az keyvault show --name "$KEY_VAULT" --query id --output tsv)"
-STALE_GRANTS="$(az role assignment list --all --output json | jq -r --arg principal "$RUNTIME_PRINCIPAL" \
+STALE_GRANTS="$(az role assignment list --all --assignee-object-id "$RUNTIME_PRINCIPAL" --fill-principal-name false \
+  --output json | jq -r --arg principal "$RUNTIME_PRINCIPAL" \
   --arg prefix "$VAULT_ID/secrets/teams-graph-client-secret-" --arg current "$TEAMS_CLIENT_ID" '
   ($prefix | ascii_downcase) as $prefix |
   .[] | select(.principalId == $principal) | (.scope | ascii_downcase) as $scope |
   select(($scope | startswith($prefix)) and $scope != $prefix + ($current | ascii_downcase)) | .id')"
 if [[ -n "$STALE_GRANTS" ]]; then
   # shellcheck disable=SC2086 # one argument per assignment ID
-  az role assignment delete --ids $STALE_GRANTS --output none
-  printf 'Removed Runtime access to the previous Graph app secret.\n' >&2
+  if az role assignment delete --ids $STALE_GRANTS --output none 2>"$ERRORS"; then
+    printf 'Removed Runtime access to the previous Graph app secret.\n' >&2
+  else
+    printf 'Warning: could not remove Runtime access to a previous Graph app secret; remove it in the Azure portal: %s\n' \
+      "$(tr '\n' ' ' <<<"$STALE_GRANTS")" >&2
+  fi
 fi
 # End of Graph grant cleanup.
 
