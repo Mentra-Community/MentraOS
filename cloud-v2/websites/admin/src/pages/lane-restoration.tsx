@@ -6,11 +6,7 @@ import {useEffect, useState} from "react";
 import type {LaneRestorationAttempt, LaneRestorationHost, LaneRestorationList} from "../../../../packages/core/src/types/lane-restoration.types";
 import {restorationHostIsFresh} from "../../../../packages/core/src/types/lane-restoration.types";
 import {api} from "../lib/api";
-
-const labels: Record<LaneRestorationAttempt["state"], string> = {
-  "awaiting-fixer": "Awaiting agent", working: "Restoration in progress", "needs-input": "Needs human input",
-  stopped: "Stopped before resumption", halted: "Halted · lane out of service", resumed: "Scheduling resumed", unknown: "Unknown outcome",
-};
+import {repairActivityLabel} from '../lib/repair-status';
 const time = (value: string | null) => value ? new Date(value).toLocaleString() : "Unknown";
 export function restorationElapsed(attempt: LaneRestorationAttempt, observedAt: string) {
   const start = attempt.startedAt;
@@ -19,16 +15,17 @@ export function restorationElapsed(attempt: LaneRestorationAttempt, observedAt: 
   const duration = runDuration(start, finish);
   return attempt.finishedAt ? duration : `${duration} at last observation`;
 }
-export function restorationOutcome(attempt: LaneRestorationAttempt) {
-  return attempt.resume.status === "accepted" ? "Scheduling resumed" : labels[attempt.state];
+export function restorationOutcome(attempt: LaneRestorationAttempt, lane?: LaneRestorationHost['lanes'][number]) {
+  return attempt.resume.status === "accepted" ? "Scheduling resumed" : repairActivityLabel(attempt, lane);
 }
-function Attempt({attempt, observedAt}: {attempt: LaneRestorationAttempt; observedAt: string}) {
-  const outcome = restorationOutcome(attempt), successful = attempt.resume.status === "accepted";
+function Attempt({attempt, observedAt, fresh, lane}: {attempt: LaneRestorationAttempt; observedAt: string; fresh: boolean; lane: LaneRestorationHost['lanes'][number]}) {
+  const recordedOutcome = restorationOutcome(attempt, lane), outcome = fresh ? recordedOutcome : `Last reported: ${recordedOutcome}`, successful = attempt.resume.status === "accepted";
   return <article id={`restoration-${attempt.executionId}`} className={TESTING_PANEL}>
     <div className="flex flex-wrap items-start justify-between gap-3"><div>
       <h4 className="font-semibold text-[#202820]">{attempt.laneId}</h4>
       <span className={`mt-2 inline-block rounded-md px-2 py-1 text-xs font-semibold ${successful ? "bg-[#e6f5ed] text-[#087d50]" : ["stopped", "halted", "needs-input"].includes(attempt.state) ? "bg-[#fff0e9] text-[#a64235]" : "bg-[#f0f2ef] text-[#59655e]"}`}>{outcome}</span>
       <p className="mt-2 text-xs text-[#68746d]">{attempt.current ? "Current attempt" : "Historical attempt"} · {restorationElapsed(attempt, observedAt)}</p>
+      {!fresh && attempt.current ? <p className="mt-1 text-xs text-[#68746d]">Current repair execution is unknown.</p> : null}
     </div><div className="text-xs text-[#68746d]">Started: {time(attempt.startedAt)}<br />Finished: {time(attempt.finishedAt)}</div></div>
     <p className="mt-3 text-sm text-[#59655e]">{attempt.report?.summary ?? "No restoration conclusion was recorded."}</p>
     {attempt.report?.question ? <p className="mt-2 text-sm text-[#a64235]"><strong>Human input:</strong> {attempt.report.question}</p> : null}
@@ -61,7 +58,7 @@ export function RestorationHost({host, fresh, laneId}: {host: LaneRestorationHos
     {!host.restoration ? <p className="rounded-xl bg-[#f5f7f3] p-4 text-sm text-[#68746d]">Restoration attempts and resume receipts are unknown. This controller has not reported restoration records.</p>
       : !host.restoration.attempts.some(attempt => !laneId || attempt.laneId === laneId) ? <p className="text-sm text-[#68746d]">No restoration attempt is present in the controller's retained history for {laneId ? "this lane" : "these lanes"}.</p>
       : <>{lanes.map(lane => {const attempts = host.restoration!.attempts.filter(row => row.laneId === lane.id); return <div id={`lane-${host.hostId}-${lane.id}`} key={lane.id} className="space-y-3">
-        {attempts.map(attempt => <Attempt key={attempt.executionId} attempt={attempt} observedAt={host.observedAt} />)}</div>;})}</>}
+        {attempts.map(attempt => <Attempt key={attempt.executionId} attempt={attempt} observedAt={host.observedAt} fresh={fresh} lane={lane} />)}</div>;})}</>}
     {host.restoration?.truncated ? <p className="text-xs text-[#a64235]">The controller reports only a bounded portion of its restoration history. Older attempts may be absent.</p> : null}
   </section>;
 }

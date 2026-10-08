@@ -63,6 +63,21 @@ export type FrameworkHistoryEntry = z.infer<typeof frameworkHistoryEntrySchema>
 
 const identity = frameworkIdentitySchema.nullable()
 const timestamp = z.string().datetime({offset: true}).nullable()
+const restorationState = z.enum(["awaiting-fixer", "working", "needs-input", "stopped", "halted", "resumed", "unknown"])
+/** Compact activity from the exact repair attempt holding a lane; custody alone is not execution. */
+export const laneRepairStatusSchema = z.object({
+  executionId: frameworkIdentitySchema,
+  interruptionId: frameworkIdentitySchema,
+  laneId: frameworkIdentitySchema,
+  state: restorationState,
+  current: z.boolean(),
+  startedAt: timestamp,
+  finishedAt: timestamp,
+}).superRefine((attempt, ctx) => {
+  if (attempt.startedAt && attempt.finishedAt && Date.parse(attempt.finishedAt) < Date.parse(attempt.startedAt))
+    ctx.addIssue({code: "custom", message: "Restoration finish precedes its recorded start"})
+})
+export type LaneRepairStatus = z.infer<typeof laneRepairStatusSchema>
 /** Read projection of controller records. A report's resume intention is not a scheduling receipt. */
 export const laneRestorationAttemptSchema = z
   .object({
@@ -71,7 +86,7 @@ export const laneRestorationAttemptSchema = z
     laneId: frameworkIdentitySchema,
     generation: z.number().int().nonnegative().safe().nullable(),
     current: z.boolean(),
-    state: z.enum(["awaiting-fixer", "working", "needs-input", "stopped", "halted", "resumed", "unknown"]),
+    state: restorationState,
     assignedAt: timestamp,
     handedOffAt: timestamp,
     startedAt: timestamp,
@@ -144,7 +159,7 @@ export type LaneRestorationHost = {
   receivedAt: string
   observedAt: string
   lanes: Array<{id: string; platform: "android" | "ios-on-mac"; state: string; dispatchMode: string;
-    glassesModels?: string[]; activity?: LaneActivity}>
+    glassesModels?: string[]; activity?: LaneActivity; repair?: LaneRepairStatus}>
   restoration: LaneRestorationProjection | null
   frameworkBinding?: FrameworkBinding
   frameworkAcceptedAt?: string
