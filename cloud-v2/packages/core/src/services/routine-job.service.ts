@@ -376,11 +376,12 @@ export class RoutineJobService {
     return this.bindingProjection(winner, hostId, input);
   }
   private async bindingProjection(row: StoredRoutineJob, hostId: string, input: z.infer<typeof routineJobBindInputSchema>) {
-    row = await this.supersession(await this.job(row.requestId));
+    const observation = await this.observation(row.requestId);
+    row = await this.job(row.requestId);
     const binding = row.fleetBinding!;
     return {binding, execute: !row.fleetCancellation && !row.dispatchCompletion && this.now() < row.fleetDeadline.getTime() && row.state !== 'terminal' &&
       binding.hostId === hostId && binding.laneId === input.laneId && binding.actionsJobId === input.actionsJobId && binding.actionsRunId === input.actionsRunId,
-      observation: await this.observation(row.requestId)};
+      observation};
   }
   async cancel(jobId: string, value: unknown) {
     const input = z.object({reason: z.string().min(1).max(2000)}).strict().parse(value), row = await this.job(jobId);

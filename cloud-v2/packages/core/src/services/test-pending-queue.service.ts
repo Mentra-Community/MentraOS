@@ -10,7 +10,7 @@ import {TestHostStateService, type ReceivedTestHostState} from './test-host-stat
 import {TestRunError} from './test-result-error';
 
 /** Read-only projection; compatible hardware is distinct from current acceptance. */
-export function pendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostState[], now: number): PendingQueueItem {
+function projectPendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostState[], now: number): PendingQueueItem {
   const base: PendingQueueItem = {requestId: row.requestId, state: row.state, createdAt: row.createdAt?.toISOString(),
     compatibilityKnown: false, compatibleLanes: [], platformCandidates: []};
   if (!row.fleetSelection) {
@@ -50,6 +50,12 @@ export function pendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostS
   return {...item, compatibilityKnown: !!requirements,
     compatibleLanes: requirements ? lanes.filter(({lane}) => compatibleRoutineLane(requirements, lane)).map(value => value.label) : [],
     platformCandidates: requirements ? [] : lanes.map(value => value.label)};
+}
+/** Bad persisted rows cannot hide valid neighbors, including malformed timestamps. */
+export function pendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostState[], now: number): PendingQueueItem {
+  try {return projectPendingQueueItem(row, hosts, now);}
+  catch {return {requestId: row.requestId, state: row.state, compatibilityKnown: false,
+    compatibleLanes: [], platformCandidates: [], reason: 'Stored request metadata is unavailable.'};}
 }
 export class TestPendingQueueService {
   constructor(private readonly hosts = new TestHostStateService()) {}

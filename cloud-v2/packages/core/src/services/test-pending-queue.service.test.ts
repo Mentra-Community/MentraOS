@@ -50,3 +50,10 @@ test('corrupt exact requirements cannot produce compatible lane claims or hide n
   const item=pendingQueueItem(row,[host],now); expect(item.compatibleLanes).toEqual([]); expect(item.reason).toContain('unavailable');
   expect(pendingQueueItem(fixture().row,[host],now).compatibleLanes).toHaveLength(3);
 });
+
+test('malformed persisted dates remain visible without hiding valid neighbors', () => {
+  const {row,host}=fixture(), deadline={...row,fleetDeadline:new Date('invalid')}, created={...row,createdAt:new Date('invalid')};
+  const page=[deadline,created,row].map(value=>pendingQueueItem(value,[host],now));
+  expect(page).toHaveLength(3); expect(page[0]!.reason).toContain('unavailable'); expect(page[1]!.reason).toContain('unavailable');
+  expect(page[2]!.compatibleLanes).toHaveLength(3);
+});
