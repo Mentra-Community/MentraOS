@@ -395,6 +395,14 @@ public class AsgConstants {
     /** Allowed parent prefix for owned shared-provider BES staging directories. */
     public static final String DEBUG_BES_OTA_STAGING_PREFIX = "/data/local/tmp/mentra-live-";
 
+    /** Bounded inline manifest for one privileged MTK restoration request. */
+    public static final String DEBUG_MTK_OTA_MANIFEST_EXTRA = "manifest_json";
+    public static final String DEBUG_MTK_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
+    public static final int DEBUG_MTK_OTA_MANIFEST_MAX_BYTES = 64 * 1024;
+    /** Inline A/B metadata inspection uses fixed memory and entry bounds. */
+    public static final int MTK_OTA_MAX_ZIP_ENTRIES = 128;
+    public static final int MTK_OTA_MAX_PAYLOAD_MANIFEST_BYTES = 4 * 1024 * 1024;
+
     /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
     public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =
             "reboot_bes_for_mtk_flash";

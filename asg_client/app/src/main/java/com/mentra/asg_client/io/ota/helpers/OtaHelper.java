@@ -48,6 +48,7 @@ import java.util.stream.Collectors;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.DowngradeGate;
 import com.mentra.asg_client.io.ota.utils.MtkOtaSelector;
+import com.mentra.asg_client.io.ota.utils.MtkOtaArtifactValidator;
 import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.ota.utils.OtaHttpRequest;
@@ -695,6 +696,55 @@ public class OtaHelper {
             isPhoneInitiatedOta = false;
             otaAdmissionPermit.release();
             throw fatalDispatchFailure;
+        }
+    }
+
+    /** One privileged frozen-manifest MTK update, using the production selector and installer. */
+    public boolean startValidatedDebugMtkFirmware(String manifestJson, String artifactId) throws Exception {
+        if (manifestJson == null || manifestJson.getBytes(StandardCharsets.UTF_8).length > AsgConstants.DEBUG_MTK_OTA_MANIFEST_MAX_BYTES
+                || artifactId == null || !artifactId.matches("firmware-[a-f0-9]{32}")) return false;
+        JSONObject manifest = new JSONObject(manifestJson);
+        if (!reserveOtaAdmission()) return false;
+        boolean admitted = false;
+        try {
+            if (isUpdating || isMtkOtaInProgress || isBesOtaInProgress()) return false;
+            String source = readMtkSourceVersion();
+            String boot = readMtkSourceBoot();
+            if (boot == null || !boot.matches("[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}")) return false;
+            JSONObject selected = MtkOtaSelector.selectForTarget(manifest, source);
+            if (selected == null || !selected.optString("sha256").matches("[a-fA-F0-9]{64}")
+                    || selected.has("size") && (!(selected.opt("size") instanceof Integer || selected.opt("size") instanceof Long)
+                        || selected.getLong("size") <= 0 || selected.getLong("size") > AsgConstants.MTK_OTA_MAX_DOWNLOAD_BYTES)) return false;
+            java.net.URI url = new java.net.URI(selected.optString("url"));
+            if (!"https".equals(url.getScheme()) || url.getHost() == null || url.getUserInfo() != null || url.getFragment() != null) return false;
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(manifestJson.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sha = new StringBuilder();
+            for (byte value : hash) sha.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
+            if (!sessionManager.createMtkRestore(artifactId, sha.toString(), selected, source, boot)) return false;
+            admitted = true;
+            isPhoneInitiatedOta = true;
+            currentUpdateType = "mtk";
+            if (!checkAndUpdateMtkFirmware(selected, context) && !"failed".equals(sessionManager.getStatus()))
+                sessionManager.setFailed("MTK update was not installed");
+            return true;
+        } catch (Exception error) {
+            if (admitted) sessionManager.setFailed("MTK restoration failed: " + error.getClass().getSimpleName());
+            throw error;
+        } finally {
+            isPhoneInitiatedOta = false;
+            otaAdmissionPermit.release();
+        }
+    }
+
+    String readMtkSourceVersion() {
+        return SysProp.getProperty(context, "ro.custom.ota.version");
+    }
+
+    String readMtkSourceBoot() throws IOException {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream("/proc/sys/kernel/random/boot_id"), StandardCharsets.UTF_8))) {
+            return reader.readLine();
         }
     }
 
@@ -2685,6 +2735,14 @@ public class OtaHelper {
             if (!downloaded) {
                 Log.e(TAG, "Failed to download MTK firmware");
                 return false;
+            }
+
+            if (sessionManager.getMtkRestoreReceipt() != null) {
+                JSONObject original = sessionManager.getMtkRestoreReceipt();
+                if (!original.getString("source_version").equals(readMtkSourceVersion())
+                        || !original.getString("source_boot_id").equals(readMtkSourceBoot())) return false;
+                MtkOtaArtifactValidator.validate(new File(OtaConstants.MTK_FIRMWARE_PATH), firmwareInfo.has("start_firmware"));
+                if (!sessionManager.recordMtkRestoreDownload(new File(OtaConstants.MTK_FIRMWARE_PATH).length())) return false;
             }
 
             if (!isPhoneInitiatedOta) {

@@ -3,6 +3,10 @@ package com.mentra.asg_client.receiver;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
+import dagger.hilt.android.EntryPointAccessors;
 
 /**
  * Debug receiver for testing MTK OTA updates via adb.
@@ -24,6 +28,22 @@ public class DebugMtkOtaReceiver extends BroadcastReceiver {
 
   @Override
   public void onReceive(Context context, Intent intent) {
+    if (!ACTION_DEBUG_MTK_OTA.equals(intent.getAction())) return;
+    if (intent.hasExtra(AsgConstants.DEBUG_MTK_OTA_MANIFEST_EXTRA)) {
+      PendingResult pending = goAsync();
+      new Thread(() -> {
+        try {
+          boolean accepted = EntryPointAccessors.fromApplication(context.getApplicationContext(), AsgClientEntryPoint.class)
+              .otaHelper().startValidatedDebugMtkFirmware(
+                  intent.getStringExtra(AsgConstants.DEBUG_MTK_OTA_MANIFEST_EXTRA),
+                  intent.getStringExtra(AsgConstants.DEBUG_MTK_OTA_ARTIFACT_ID_EXTRA));
+          Log.i(TAG, accepted ? "Pinned MTK restoration admitted" : "Pinned MTK restoration refused");
+        } catch (Exception error) {
+          Log.e(TAG, "Pinned MTK restoration failed", error);
+        } finally {pending.finish();}
+      }, "debug-mtk-ota").start();
+      return;
+    }
     DebugOtaReceiverSupport.triggerOtaFromUrl(
         context,
         intent,

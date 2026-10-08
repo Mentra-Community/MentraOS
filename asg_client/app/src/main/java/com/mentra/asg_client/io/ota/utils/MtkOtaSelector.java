@@ -10,13 +10,27 @@ public final class MtkOtaSelector {
 
     /** Prefer an exact-base delta; a full OTA is eligible only for a known older version. */
     public static JSONObject select(JSONObject manifest, String currentVersion) {
+        return select(manifest, currentVersion, null);
+    }
+
+    /** Inline ADB input keeps the requested full destination while reusing normal update eligibility. */
+    public static JSONObject selectForTarget(JSONObject manifest, String currentVersion) {
+        JSONObject full = manifest.optJSONObject("mtk_full_ota");
+        String target = full == null ? "" : normalize(full.optString("end_firmware"));
+        if (!target.matches("[0-9]{8}(\\.[0-9]{1,9})?")) return null;
+        return select(manifest, currentVersion, target);
+    }
+
+    private static JSONObject select(JSONObject manifest, String currentVersion, String target) {
         String current = normalize(currentVersion);
-        if (current.isEmpty()) return null;
+        if (current.isEmpty() || current.equals(target)
+                || target != null && !current.matches("[0-9]{8}(\\.[0-9]{1,9})?")) return null;
         JSONArray patches = manifest.optJSONArray("mtk_patches");
         if (patches != null) {
             for (int i = 0; i < patches.length(); i++) {
                 JSONObject patch = patches.optJSONObject(i);
-                if (patch != null && current.equals(normalize(patch.optString("start_firmware")))) {
+                if (patch != null && current.equals(normalize(patch.optString("start_firmware")))
+                        && (target == null || target.equals(normalize(patch.optString("end_firmware"))))) {
                     return patch;
                 }
             }
