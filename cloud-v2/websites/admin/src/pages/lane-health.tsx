@@ -4,7 +4,8 @@ import {Loader2} from 'lucide-react'
 import {
   restorationHostIsFresh,
   type LaneRestorationHost,
-  type LaneRestorationList,
+  type LaneOverviewHost,
+  type LaneOverviewList,
 } from "../../../../packages/core/src/types/lane-restoration.types"
 import {laneDisplayLabel, laneHistoryHref, readableLaneIdentity} from "../lib/lane-links"
 import {api} from "../lib/api"
@@ -21,9 +22,9 @@ const unknown = {label: "Unknown", style: "bg-[#f0f2ef] text-[#59655e]"}
 const modes: Record<string, string> = {automatic: "Automatic", authoring: "Authoring", paused: "Paused"}
 const time = (value: string) => new Date(value).toLocaleString()
 
-export function FrameworkHealth({host, fresh}: {host: LaneRestorationHost; fresh: boolean}) {
-  const history = host.frameworkHistory ?? [],
-    last = history.at(-1),
+export function FrameworkHealth({host, fresh, showHistory = true}: {host: LaneOverviewHost | LaneRestorationHost; fresh: boolean; showHistory?: boolean}) {
+  const history = 'restoration' in host ? host.frameworkHistory ?? [] : [],
+    last = 'frameworkCurrentInterval' in host ? host.frameworkCurrentInterval : history.at(-1),
     binding = host.frameworkBinding ?? last?.binding
   const stopped = last?.endedAt && last.binding.installationId === binding?.installationId
   const current = !!host.frameworkBinding && fresh && !stopped
@@ -86,7 +87,7 @@ export function FrameworkHealth({host, fresh}: {host: LaneRestorationHost; fresh
           </p>
         </div>
       )}
-      {!!history.length && (
+      {showHistory && !!history.length && (
         <details className="mt-3">
           <summary className="cursor-pointer text-sm font-medium">Installation history</summary>
           <ol className="mt-2 space-y-2 text-xs">
@@ -116,7 +117,7 @@ export function LaneHealthHost({
   fresh,
   linkHistory = true,
 }: {
-  host: LaneRestorationHost
+  host: LaneOverviewHost | LaneRestorationHost
   fresh: boolean
   linkHistory?: boolean
 }) {
@@ -129,7 +130,7 @@ export function LaneHealthHost({
           Received {time(host.receivedAt)}
         </p>
       </div>
-      <FrameworkHealth host={host} fresh={fresh} />
+      <FrameworkHealth host={host} fresh={fresh} showHistory={linkHistory === false} />
       {!host.lanes.length ? (
         <p className="mt-3 text-sm text-[#747780]">No lanes were reported by this controller.</p>
       ) : (
@@ -185,12 +186,13 @@ export function LaneHealthHost({
   )
 }
 
-export function LaneHealthSection({now}: {now: number}) {
-  const query = useQuery({
-    queryKey: ["lane-restoration"],
-    queryFn: () => api<LaneRestorationList>("/api/admin/test-runs/restoration/list"),
+export const laneOverviewQuery = {
+    queryKey: ['lane-overview'],
+    queryFn: () => api<LaneOverviewList>('/api/admin/test-runs/lanes/overview'),
     refetchInterval: 30_000,
-  })
+}
+export function LaneHealthSection({now}: {now: number}) {
+  const query = useQuery(laneOverviewQuery)
   return (
     <section aria-label="Device lanes" className={TESTING_PANEL}>
       <div className="flex flex-wrap items-start justify-between gap-3">

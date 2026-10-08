@@ -36,7 +36,8 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     .read("primary").readConcern("majority").lean().then(rows => rows.map(row => displayRequest(row as StoredRequest)))}));
   app.get("/health", async c => c.json(await health.list()));
   app.get("/health/:hostId", async c => c.json(await health.history(c.req.param("hostId"), c.req.query("days"))));
-  app.get("/restoration/list", async c => c.json(await restoration.list()));
+  app.get("/lanes/overview", async c => c.json(await restoration.overview()));
+  app.get("/restoration/list", async c => c.json(await restoration.list(c.req.query('hostId'))));
   app.get("/:runId", async c => {
     const id = c.req.param("runId");
     if (!frameworkIdentitySchema.safeParse(id).success) throw new TestRunError(400, "Invalid run or request identity");
