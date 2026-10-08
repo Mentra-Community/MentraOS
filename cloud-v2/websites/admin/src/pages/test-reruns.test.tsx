@@ -20,7 +20,7 @@ test('portable preview shows the frozen app and definition before lane assignmen
  expect(html).toContain('Lane assigned when dispatched');expect(html).not.toContain('undefined');
 });
 test('suite original verdict stays failed while latest attempt and inline history are visible',()=>{
- const client=new QueryClient();client.setQueryData(['test-suite','nightly'],{suiteId:'nightly',channel:'dev' as const,trigger:'nightly',startedAt:'2026-10-06T10:00:00Z',outcome:'failed',passed:1,failedRoutines:['captions'],build:{headSha:'a'.repeat(40)},members:[{memberId:'item',routineId:'captions',platform:'android',status:'failed'},{memberId:'passing',routineId:'long-test',platform:'android',status:'pass'}]});
+ const client=new QueryClient();client.setQueryData(['test-suite-summary','nightly'],{suiteId:'nightly',channel:'dev' as const,trigger:'nightly',startedAt:'2026-10-06T10:00:00Z',outcome:'failed',passed:1,failedRoutines:['captions'],build:{headSha:'a'.repeat(40)},members:[{memberId:'item',routineId:'captions',platform:'android',status:'failed'},{memberId:'passing',routineId:'long-test',platform:'android',status:'pass'}]});
  client.setQueryData(['rerun-progress','nightly'],{members:[{memberId:'item',latest:{...attempt,publicationComplete:true}},{memberId:'passing',latest:null}],children:[{rerunId:'repair',reason:'Fix'}]});
  client.setQueryData(['rerun-history','nightly','item',null],{original:{...attempt,attemptNumber:0},attempts:[attempt],nextBefore:null});
  const html=render(<TestSuitePage suiteId="nightly"/>,client);expect(html).toContain('1/2 passed');expect(html).toContain('1 passed on rerun');expect(html).toContain('Original verdict remains failed');expect(html).toContain('Attempt history');expect(html).toContain('Rerun failures');
