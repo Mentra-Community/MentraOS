@@ -270,3 +270,19 @@ test('activity and detail show input-free exact source preparation with its obse
     expect(selected).toMatchObject({dispatchIntent:1,dispatchIntentSha256:1,preparation:1});
   } finally {find.mockRestore()}
 });
+
+test('unbound fleet request keeps a stable exact-input URL and shows awaiting runner before assignment', async () => {
+  const {portableRoutineSelectionSchema}=await import('../../types/routine-job.types')
+  const selected=portableRoutineSelectionSchema.parse({requestId:'fleet-pending',routineId:'new-routine',platform:'android',routineRevision:'a'.repeat(40),
+    source:{channel:'pr',prNumber:12,buildRunId:55,publicationAttempt:2},build:{repository:'Mentra-Community/MentraOS',headSha:'b'.repeat(40),channel:'pr',prNumber:12,
+      kind:'android-apk',source:{channel:'pr',prNumber:12,buildRunId:55,publicationAttempt:2},
+      archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},
+      receipt:{url:'https://artifactscdn.mentraglass.com/receipt.json',size:10,sha256:'d'.repeat(64)}}})
+  const rows={async get(){return {requestId:selected.requestId,state:'awaiting-runner',fleetSelection:selected,fleetSelectionSha256:requestInputDigest(selected),
+    fleetDeadline:new Date('2026-10-08T03:00:00Z')}}} as unknown as TestRequestService
+  const results={async detailByRun(){throw new TestRunError(404,'missing')},async detail(){throw new TestRunError(404,'missing')}} as unknown as FrameworkResultService
+  const app=createTestRunAdminApi(undefined,undefined,results,rows)
+  const response=await app.request('/fleet-pending')
+  expect(response.status).toBe(200);expect(await response.json()).toMatchObject({kind:'request',request:{requestId:'fleet-pending',state:'awaiting-runner',
+    routineId:'new-routine',reason:'Awaiting a compatible testing runner.',build:{headSha:'b'.repeat(40)}}})
+})

@@ -108,14 +108,14 @@ function fixture() {
   function status(state: string, details: object = {}) {
     row.acceptance ??= {
       workId: row.workId,
-      hostId: row.hostId,
+      hostId: row.hostId!,
       inputSha256: requestInputDigest(work),
       acceptedAt: new Date(start).toISOString(),
     }
     row.status = {
       sequence: (row.status?.sequence ?? 0) + 1,
       state,
-      details: {details, acceptedAt: row.acceptance.acceptedAt},
+      details: {details, acceptedAt: row.acceptance!.acceptedAt},
     } as RoutineWorkDelivery['status']
   }
   return {

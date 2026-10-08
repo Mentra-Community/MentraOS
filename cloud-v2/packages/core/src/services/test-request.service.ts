@@ -68,6 +68,8 @@ export interface TestRequestRepository {
   completePreparation?(requestId: string, hostId: string, intentSha256: string, input: unknown, inputSha256: string): Promise<StoredTestRequest | null>;
   updatePreparation?(requestId: string, hostId: string, intentSha256: string, value: StoredPreparingRequest['preparation']): Promise<StoredPreparingRequest | null>;
   cancelPreparation?(requestId: string, intentSha256: string, value: NonNullable<StoredPreparingRequest['preparationCancellation']>): Promise<StoredPreparingRequest | null>;
+  pendingDispatchCompletions?(hostId: string, limit: number): Promise<StoredTestRequest[]>;
+  cancelFleet?(requestId: string, selectionSha256: string, value: {requestedAt: string; reason: string}): Promise<StoredRequest | null>;
   rejectPreparation?(requestId: string, hostId: string, intentSha256: string, value: NonNullable<StoredPreparingRequest['preparationRejection']>): Promise<StoredPreparingRequest | null>;
 }
 export class TestRequestConflict extends Error {}
@@ -99,7 +101,7 @@ const mongoRepository: TestRequestRepository = {
   async completePreparation(requestId, hostId, dispatchIntentSha256, input, inputSha256) {
     // Mongoose immutable fields stay protected for every ordinary update. This one guarded transition fills absent input once.
     return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, dispatchIntentSha256, state: 'preparing',
-      input: {$exists: false}, inputSha256: {$exists: false}, preparationCancellation: {$exists: false}, preparationRejection: {$exists: false}},
+      input: {$exists: false}, inputSha256: {$exists: false}, preparationCancellation: {$exists: false}, preparationRejection: {$exists: false}, fleetCancellation: {$exists: false}},
       {$set: {state: 'queued', input, inputSha256, updatedAt: new Date()}, $unset: {preparation: '', preparationCheckedAt: ''}},
       {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredTestRequest | null;
   },
@@ -117,9 +119,25 @@ const mongoRepository: TestRequestRepository = {
       {$set: {state: 'terminal', terminalStatus: 'not-run', preparationRejection}},
       {new: true, writeConcern: testWriteConcern}).lean() as unknown as StoredPreparingRequest | null;
   },
+  async pendingDispatchCompletions(hostId, limit) {
+    return await TestRequestModel.find({hostId, fleetBinding: {$exists: true}, dispatchCompletion: {$exists: false},
+      inputSha256: {$exists: true}}).sort({createdAt: 1, requestId: 1}).limit(limit)
+      .read('primary').readConcern('majority').lean() as StoredTestRequest[];
+  },
+  async cancelFleet(requestId, fleetSelectionSha256, fleetCancellation) {
+    const identity = {requestId, fleetSelectionSha256, fleetCancellation: {$exists: false}};
+    const unbound = await TestRequestModel.collection.findOneAndUpdate({...identity, fleetBinding: {$exists: false}},
+      {$set: {fleetCancellation, state: 'terminal', terminalStatus: 'not-run', updatedAt: new Date()}},
+      {returnDocument: 'after', writeConcern: testWriteConcern});
+    if (unbound) return unbound as unknown as StoredRequest;
+    return await TestRequestModel.collection.findOneAndUpdate(identity, [{$set: {fleetCancellation: {$literal: fleetCancellation}, updatedAt: new Date(),
+      state: {$cond: [{$and: [{$ne: [{$type: '$dispatchCompletion'}, 'missing']}, {$ne: ['$state', 'terminal']}]}, 'terminal', '$state']},
+      terminalStatus: {$cond: [{$and: [{$ne: [{$type: '$dispatchCompletion'}, 'missing']}, {$ne: ['$state', 'terminal']}]}, 'cancelled', '$terminalStatus']}}}],
+      {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRequest | null;
+  },
   async accept(receipt) {
     const accepted = await TestRequestModel.findOneAndUpdate({requestId: receipt.requestId, inputSha256: receipt.inputSha256,
-      hostId: receipt.hostId, state: "queued", hostReceipt: {$exists: false}, hostRejection: {$exists: false}},
+      hostId: receipt.hostId, state: "queued", hostReceipt: {$exists: false}, hostRejection: {$exists: false}, fleetCancellation: {$exists: false}},
     {$set: {state: "accepted", hostReceipt: receipt}}, {new: true, writeConcern: testWriteConcern}).lean() as StoredTestRequest | null;
     if (accepted) return accepted;
     // Local admission may commit before Core receives its receipt. Preserve cancellation while recording that custody.
@@ -187,9 +205,11 @@ export class TestRequestService {
     const parsed = this.decodeCursor(hostId, cursor, "createdAt");
     const after = parsed ? {createdAt: new Date(parsed.timestamp), requestId: parsed.requestId} : null;
     const found = await this.repository.queued(hostId, after, limit + 1), requests = found.slice(0, limit), last = requests.at(-1);
+    const dispatchCompletions = (await this.repository.pendingDispatchCompletions?.(hostId, limit) ?? []).map(row => ({
+      requestId: row.requestId, hostId: row.hostId, inputSha256: row.inputSha256, laneId: (row.input as {laneId: string}).laneId}));
     const preparations = (await this.repository.preparations?.(hostId, limit) ?? []).map(row => ({requestId: row.requestId,
       hostId: row.hostId, dispatchIntentSha256: row.dispatchIntentSha256, dispatchIntent: row.dispatchIntent}));
-    return {requests, preparations, nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "createdAt", last.createdAt!.toISOString()) : null};
+    return {requests, preparations, dispatchCompletions, nextCursor: found.length > limit && last ? this.encodeCursor(hostId, last.requestId, "createdAt", last.createdAt!.toISOString()) : null};
   }
   async prepare(hostId: string, input: unknown): Promise<StoredRequest> {
     const intent = routineDispatchIntentSchema.parse(input);
@@ -403,8 +423,16 @@ export class TestRequestService {
   }
 
   async cancel(requestId: string, requestedAt: string, reason: string): Promise<StoredRequest | null> {
-    const row = await this.repository.get(requestId);
+    let row = await this.repository.get(requestId);
     if (!row) return null;
+    const fleet = row as StoredRequest & {fleetSelectionSha256?: string; fleetBinding?: unknown; fleetCancellation?: {requestedAt: string; reason: string}};
+    if (fleet.fleetSelectionSha256 && !fleet.fleetCancellation) {
+      if (!this.repository.cancelFleet) throw new TestRunError(503, 'Fleet cancellation storage is unavailable');
+      const value = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict().parse({requestedAt, reason});
+      row = await this.repository.cancelFleet(requestId, fleet.fleetSelectionSha256, value) ?? await this.repository.get(requestId);
+      if (!row) return null;
+      if (!(row as typeof fleet).fleetBinding) return row;
+    }
     if (row.hostCancellation || row.state === "terminal") return row;
     if (!isExecutableRequest(row)) {
       const value = z.object({requestedAt: z.string().datetime({offset: true}), reason: z.string().min(1).max(2000)}).strict().parse({requestedAt, reason});

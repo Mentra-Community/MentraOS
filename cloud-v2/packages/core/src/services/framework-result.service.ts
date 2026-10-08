@@ -66,7 +66,7 @@ export interface ResultRequestBinding {hostId: string; catalogEligible?: boolean
     platform: string; laneId: string; build: unknown; verification?: CandidateVerification}}
 const requestBinding = async (requestId: string): Promise<ResultRequestBinding | null> => {
   const row = await TestRequestModel.findOne({requestId, hostReceipt: {$exists: true}}).read("primary").readConcern("majority").lean();
-  return row ? {hostId: row.hostId, input: row.input as ResultRequestBinding["input"],
+  return row && typeof row.hostId === 'string' ? {hostId: row.hostId, input: row.input as ResultRequestBinding["input"],
     ...(typeof row.catalogEligible === 'boolean' ? {catalogEligible: row.catalogEligible} : {})} : null;
 };
 const buildDigest = (input: unknown): string | null => {

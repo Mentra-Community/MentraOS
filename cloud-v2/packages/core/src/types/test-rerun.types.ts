@@ -2,6 +2,7 @@ import {z} from "zod";
 import {frameworkIdentitySchema, frameworkRequestInputSchema, recordedFrameworkRequestInputSchema} from "./framework-request.types";
 import {testBuildSourceSchema} from "./test-build.types";
 import {routineDispatchIntentSchema} from './routine-dispatch.types';
+import {portableRoutineSelectionSchema} from './routine-job.types';
 
 export const rerunTerminalStatuses = ["pass", "failed", "setup-failed", "teardown-failed", "not-run", "cancelled", "incomplete"] as const;
 export const rerunFailureStatuses = ["failed", "setup-failed", "teardown-failed"] as const;
@@ -31,15 +32,17 @@ export const rerunPlanSchema = z.object({rerunId: frameworkIdentitySchema, paren
   expiresAt: z.string().datetime(), members: z.array(z.object({memberId: frameworkIdentitySchema,
     rootKey: z.string(), originalRequestId: frameworkIdentitySchema.optional(), predecessorAttemptId: frameworkIdentitySchema,
     attemptNumber: z.number().int().min(1), requestId: frameworkIdentitySchema,
-    hostId: frameworkIdentitySchema, dispatchIntent: routineDispatchIntentSchema}).strict()).min(1).max(100)}).strict();
+    selection: portableRoutineSelectionSchema}).strict()).min(1).max(100)}).strict();
 export type RerunPreviewInput = z.infer<typeof rerunPreviewSchema>;
 export type RerunPlan = z.infer<typeof rerunPlanSchema>;
 export type RerunMember = RerunPlan["members"][number];
 /** Read immutable plans written before dispatch preparation; never use these for new admission. */
+const recordedBoundMember = rerunPlanSchema.shape.members.element.omit({selection: true}).extend({hostId: frameworkIdentitySchema});
+const recordedDispatchPlanSchema = rerunPlanSchema.extend({members: z.array(recordedBoundMember.extend({dispatchIntent: routineDispatchIntentSchema})).min(1).max(100)});
 const recordedInputPlanSchema = rerunPlanSchema.omit({routineRevision: true}).extend({members: z.array(
-  rerunPlanSchema.shape.members.element.omit({dispatchIntent: true}).extend({input: recordedFrameworkRequestInputSchema}),
+  recordedBoundMember.extend({input: recordedFrameworkRequestInputSchema}),
 ).min(1).max(100)});
-export const recordedRerunPlanSchema = z.union([rerunPlanSchema, recordedInputPlanSchema]);
+export const recordedRerunPlanSchema = z.union([rerunPlanSchema, recordedDispatchPlanSchema, recordedInputPlanSchema]);
 export type RecordedRerunPlan = z.infer<typeof recordedRerunPlanSchema>;
 export type RecordedRerunMember = RecordedRerunPlan["members"][number];
 export interface RerunAttempt {

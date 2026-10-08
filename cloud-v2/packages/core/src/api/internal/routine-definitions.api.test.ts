@@ -34,3 +34,22 @@ test('routine publication behind TLS ingress returns an exact HTTPS receipt afte
     expect(writes).toBe(2)
   } finally {storage.mockRestore()}
 })
+
+test('trusted offline credential may publish bounded bundles but cannot enroll definitions or collections', async () => {
+  const previous = process.env.TEST_RUN_INGEST_TOKEN, token = 'offline-observer-' + 'x'.repeat(32)
+  process.env.TEST_RUN_INGEST_TOKEN = token
+  const bytes = gzipSync('offline exact archive'), sha256 = createHash('sha256').update(bytes).digest('hex')
+  const storage = spyOn(StorageService.prototype, 'putObject').mockImplementation(async input =>
+    ({key: input.key, contentType: input.contentType, sizeBytes: input.body.byteLength, sha256}))
+  const app = new Hono()
+  app.route('/api/internal/routine-definitions', createRoutineDefinitionsApi(undefined, () => JSON.stringify({mini: 'host-only-' + 'y'.repeat(32)})))
+  const metadata = {commit: 'b'.repeat(40), routineId: 'fixture', minimumRoutineApiVersion: 1,
+    definitionSha256: 'c'.repeat(64), size: bytes.length}
+  const headers = {authorization: `Bearer ${token}`, 'content-type': 'application/gzip'}
+  try {
+    expect((await app.request(`https://core.example/api/internal/routine-definitions/bundles/${sha256}?metadata=${encodeURIComponent(JSON.stringify(metadata))}`,
+      {method: 'POST', body: bytes, headers})).status).toBe(200)
+    expect((await app.request('https://core.example/api/internal/routine-definitions/', {method: 'POST', body: '{}', headers})).status).toBe(401)
+    expect((await app.request('https://core.example/api/internal/routine-definitions/collection', {method: 'POST', body: '{}', headers})).status).toBe(401)
+  } finally {storage.mockRestore(); if(previous === undefined)delete process.env.TEST_RUN_INGEST_TOKEN;else process.env.TEST_RUN_INGEST_TOKEN=previous}
+})

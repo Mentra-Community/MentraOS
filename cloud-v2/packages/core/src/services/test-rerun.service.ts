@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
+import {routinePreparedBuildSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {TestRerunModel} from "../models/test-rerun.model";
 import {testWriteConcern} from "../models/test-write-concern";
 import {testBuildSourceSchema} from "../types/test-build.types";
@@ -7,7 +7,8 @@ import {frameworkIdentitySchema, frameworkRequestInputSchema, recordedFrameworkR
 import {individualRerunSchema, rerunPlanSchema, recordedRerunPlanSchema, rerunPreviewSchema, rerunSubmitSchema,
   rerunTerminalStatuses, type RerunPlan, type RerunMember, type RecordedRerunPlan, type RecordedRerunMember, type RerunAttempt} from "../types/test-rerun.types";
 import {TestSuiteService} from "./test-suite.service";
-import {RoutineDispatchService} from "./routine-dispatch.service";
+import {RoutineJobService} from "./routine-job.service";
+import {portableRoutineSelectionSchema, type StoredRoutineJob} from "../types/routine-job.types";
 import {TestRequestService, requestInputDigest, isExecutableRequest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
@@ -62,7 +63,7 @@ const verified = (row: RerunRecord): RerunRecord => {
 export class TestRerunService {
   constructor(private readonly store: RerunRepository = testRerunRepository,
     private readonly suites: Pick<TestSuiteService, "detail"> & Partial<Pick<TestSuiteService,"originalMember">> = new TestSuiteService(),
-    private readonly dispatch: Pick<RoutineDispatchService, 'prepareIntent'> = new RoutineDispatchService(),
+    private readonly jobs: Pick<RoutineJobService, 'freezeSelection' | 'submitFrozen'> = new RoutineJobService(),
     private readonly requests: Pick<TestRequestService, 'get' | 'prepare'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, "summary"> = new FrameworkResultService(),
     private readonly now: () => number = Date.now) {}
@@ -70,14 +71,34 @@ export class TestRerunService {
   private async requestAttempt(requestId: string, identity: Pick<RerunAttempt, "parent" | "memberId" | "attemptNumber" | "attemptId">,
     frozen?: RecordedRerunMember): Promise<RerunAttempt> {
     const request = await this.requests.get(requestId);
-    const intent = frozen && 'dispatchIntent' in frozen ? frozen.dispatchIntent : undefined;
+    const selection = frozen && 'selection' in frozen ? frozen.selection : undefined;
+    let intent = frozen && 'dispatchIntent' in frozen ? frozen.dispatchIntent : undefined;
     const recordedInput = frozen && 'input' in frozen ? frozen.input : undefined;
     if (!request) return {...identity, requestId, status: "admission-pending", publicationComplete: false,
-      ...(frozen ? {build: intent?.build ?? recordedInput!.build, definitionRevision: intent?.routineRevision ?? recordedInput!.definitionRevision} : {})};
-    if (frozen && (request.hostId !== frozen.hostId || (intent
+      ...(frozen ? {build: selection?.build ?? intent?.build ?? recordedInput!.build, definitionRevision: selection?.routineRevision ?? intent?.routineRevision ?? recordedInput!.definitionRevision} : {})};
+    if (frozen && !selection && (request.hostId !== ('hostId' in frozen ? frozen.hostId : undefined) || (intent
       ? request.dispatchIntentSha256 !== requestInputDigest(intent)
       : !isExecutableRequest(request) || request.inputSha256 !== requestInputDigest(recordedInput))))
       throw new TestRunError(503, 'Rerun request differs from its frozen provenance');
+    const job = request as unknown as StoredRoutineJob;
+    if (job.fleetSelection) {
+      const parsed = portableRoutineSelectionSchema.safeParse(job.fleetSelection);
+      if (!parsed.success || requestInputDigest(parsed.data) !== job.fleetSelectionSha256
+        || selection && requestInputDigest(parsed.data) !== requestInputDigest(selection))
+        throw new TestRunError(503, 'Rerun request differs from its frozen selection');
+      if (!job.fleetBinding) return {...identity, requestId, status: job.fleetCancellation ? 'not-run' : job.state,
+        publicationComplete: false, build: parsed.data.build, definitionRevision: parsed.data.routineRevision,
+        ...(job.fleetCancellation ? {reason: job.fleetCancellation.reason} : {})};
+      const bound = routineDispatchIntentSchema.safeParse(job.dispatchIntent);
+      if (!bound.success || requestInputDigest(bound.data) !== job.dispatchIntentSha256 || request.hostId !== job.fleetBinding.hostId
+        || bound.data.laneId !== job.fleetBinding.laneId) throw new TestRunError(503, 'Rerun binding provenance is unavailable');
+      const {laneId: _lane, routineSource: boundSource, ...boundSelection} = bound.data;
+      const {routineSource: frozenSource, ...expectedSelection} = parsed.data;
+      if (requestInputDigest(boundSelection) !== requestInputDigest(expectedSelection) || frozenSource && requestInputDigest(boundSource) !== requestInputDigest(frozenSource)
+        || job.fleetPreparation && requestInputDigest(boundSource) !== requestInputDigest(job.fleetPreparation.routineSource))
+        throw new TestRunError(503, 'Rerun binding differs from its frozen selection');
+      intent = bound.data;
+    }
     if (!isExecutableRequest(request)) {
       const intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
       if (!intent.success || requestInputDigest(intent.data) !== request.dispatchIntentSha256)
@@ -98,7 +119,7 @@ export class TestRerunService {
     try {result = await this.results.summary(requestId);} catch (error) {
       if (!(error instanceof TestRunError && error.status === 404)) throw error;
     }
-    if (result && (result.routineId !== input.data.routineId || result.platform !== input.data.platform ||
+    if (result && (job.fleetSelection && (result.hostId !== request.hostId || result.laneId !== input.data.laneId) || result.routineId !== input.data.routineId || result.platform !== input.data.platform ||
       result.definitionRevision !== input.data.definitionRevision || requestInputDigest(result.routineSource ?? null) !== requestInputDigest(input.data.routineSource ?? null) || requestInputDigest(result.build) !== requestInputDigest(input.data.build)))
       throw new TestRunError(503, "Rerun result differs from its admitted app or definition");
     return {...identity, requestId, status: result?.outcome ?? request.terminalStatus ?? request.state,
@@ -114,7 +135,8 @@ export class TestRerunService {
     if (await this.store.byRequest(parent.requestId)) throw new TestRunError(409, "Use the rerun's original parent to preserve its history");
     const request = await this.requests.get(parent.requestId);
     if (!request) throw new TestRunError(404, "Original test request was not found");
-    const intent = !isExecutableRequest(request) ? routineDispatchIntentSchema.parse(request.dispatchIntent) : undefined;
+    const job = request as unknown as StoredRoutineJob;
+    const intent = job.fleetSelection ?? (!isExecutableRequest(request) ? routineDispatchIntentSchema.parse(request.dispatchIntent) : undefined);
     const input = isExecutableRequest(request) ? recordedFrameworkRequestInputSchema.parse(request.input) : undefined;
     const attempt = await this.requestAttempt(parent.requestId, {parent, memberId: parent.requestId, attemptNumber: 0, attemptId: parent.requestId});
     return [{...attempt, memberId: parent.requestId, routineId: input?.routineId ?? intent!.routineId, platform: input?.platform ?? intent!.platform,
@@ -164,25 +186,30 @@ export class TestRerunService {
       const requestId = `rerun-${requestInputDigest({rerunId: selected.rerunId, rootKey})}`;
       let source = selected.source;
       let originalBuild = member.build;
-      let originalBinding: {hostId: string; laneId: string} | undefined;
       let routineSource = member.routineSource;
       let routineRevision = member.routineRevision ?? routineSource?.commit;
       if (member.requestId) {
         const original = await this.requests.get(member.requestId);
-        if (original && !isExecutableRequest(original)) {
+        const originalJob = original as unknown as StoredRoutineJob | null;
+        if (originalJob?.fleetSelection) {
+          const frozen = portableRoutineSelectionSchema.safeParse(originalJob.fleetSelection);
+          if (!frozen.success || requestInputDigest(frozen.data) !== originalJob.fleetSelectionSha256)
+            throw new TestRunError(503, 'Original fleet selection provenance is unavailable');
+          routineRevision = frozen.data.routineRevision;
+          routineSource = frozen.data.routineSource ?? originalJob.fleetPreparation?.routineSource;
+          originalBuild = frozen.data.build;
+        } else if (original && !isExecutableRequest(original)) {
           const intent = routineDispatchIntentSchema.safeParse(original.dispatchIntent);
           if (!intent.success || requestInputDigest(intent.data) !== original.dispatchIntentSha256)
             throw new TestRunError(503, 'Original preparation provenance is unavailable');
           routineRevision = original.dispatchIntent.routineRevision; routineSource = original.dispatchIntent.routineSource;
           originalBuild = original.dispatchIntent.build;
-          originalBinding = {hostId: original.hostId, laneId: original.dispatchIntent.laneId};
         } else if (original) {
           const parsedInput = (original.dispatchIntent ? frameworkRequestInputSchema : recordedFrameworkRequestInputSchema).safeParse(original.input);
           if (!parsedInput.success || requestInputDigest(parsedInput.data) !== original.inputSha256)
             throw new TestRunError(503, 'Original routine provenance is unavailable');
           routineSource = parsedInput.data.routineSource;
           routineRevision = parsedInput.data.definitionRevision;
-          originalBinding = {hostId: original.hostId, laneId: parsedInput.data.laneId};
         }
       }
       if (!source) {
@@ -201,10 +228,10 @@ export class TestRerunService {
       }
       if (!routineRevision) throw new TestRunError(409, 'Original exact routine source is unavailable');
       if (selected.routineRevision) {routineRevision = selected.routineRevision; routineSource = undefined;}
-      const frozen = await this.dispatch.prepareIntent({requestId, routineId: member.routineId, platform: member.platform, source, routineRevision,
-        ...(routineSource ? {routineSource} : {})}, !selected.source && originalBuild && originalBinding ? {...originalBinding, build: originalBuild} : undefined);
+      const frozen = await this.jobs.freezeSelection({requestId, routineId: member.routineId, platform: member.platform, source, routineRevision,
+        ...(routineSource ? {routineSource} : {})}, !selected.source && originalBuild ? routinePreparedBuildSchema.parse(originalBuild) : undefined);
       members.push({memberId: member.memberId, rootKey, ...(member.requestId ? {originalRequestId: member.requestId} : {}), predecessorAttemptId,
-        attemptNumber: (latest?.member.attemptNumber ?? 0) + 1, requestId, ...frozen});
+        attemptNumber: (latest?.member.attemptNumber ?? 0) + 1, requestId, selection: frozen});
     }
     const plan = rerunPlanSchema.parse({rerunId: selected.rerunId, parent: selected.parent, ...(selected.source ? {source: selected.source} : {}),
       ...(selected.routineRevision ? {routineRevision: selected.routineRevision} : {}),
@@ -239,7 +266,7 @@ export class TestRerunService {
     }
     const admissions = [];
     for (const member of currentPlan.data.members) {
-      try {await this.requests.prepare(member.hostId, member.dispatchIntent); admissions.push({requestId: member.requestId, admitted: true});}
+      try {await this.jobs.submitFrozen(member.selection, new Date(Date.parse(row.acceptedAt!) + 3 * 3600_000).toISOString()); admissions.push({requestId: member.requestId, admitted: true});}
       catch {admissions.push({requestId: member.requestId, admitted: false, reason: "Admission unavailable; retry this same rerun ID and preview digest"});}
     }
     return {...await this.detail(row.rerunId), admissions};

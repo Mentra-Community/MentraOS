@@ -28,7 +28,7 @@ function fixture() {
     {async resolve(value,platform){resolves++;return {source:value,platform,availability:'available',title:'App',headSha:'c'.repeat(40),createdAt:'2026-10-03T11:00:00Z',buildUrl:'https://github.com/Mentra-Community/MentraOS/actions/runs/55',archive:{name:'app.apk',size:100,sha256:'d'.repeat(64),url:'https://artifactscdn.mentraglass.com/app.apk'},receipt:{size:10,sha256:'e'.repeat(64),url:'https://artifactscdn.mentraglass.com/receipt.json'}}}},
     {async get(hostId){return available?{hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:new Date().toISOString(),receivedAt:new Date().toISOString(),lanes:[{id:'android-lane',platform:'android',dispatchMode:automatic?'automatic':'paused',state:'idle',resources:[{id:'app:android',kind:'app'}]}]}:null}},requests,
     {async detail(){throw new TestRunError(404,'not published')}},()=>({android:{hostId:'mini',laneId:'android-lane'}}),
-    {async resolve(override){sourceResolves++;return override??revision},async inventory(commit){return {commit,files:[{path:`routines/${selected.routineId}/routine.ts`,gitBlobSha1:'f'.repeat(40),size:10}]}}});
+    {async resolve(override){sourceResolves++;return override??revision},async inventory(commit){return {commit,files:[{path:`routines/${selected.routineId}/routine.ts`,gitBlobSha1:'f'.repeat(40),size:10}]}}}, null);
   return {service,requests,repository,definition,definitions,get resolves(){return resolves},get sourceResolves(){return sourceResolves},get enrollments(){return enrollments},set revision(value:string){revision=value},set available(value:boolean){available=value},set automatic(value:boolean){automatic=value}};
 }
 test('new routine is retained with exact main and app references before publication; retries never substitute newer source',async()=>{
@@ -71,6 +71,7 @@ test('explicit source override and framework floor remain separate and immutable
 test('existing exact enrollment is optional warm cache and frozen historical app reuse is strict',async()=>{
   const f=fixture(),definition=f.definition();f.definitions.set(definition.definitionRevision,definition);
   const queued=await f.service.submit(selected);expect(queued.state).toBe('queued');
+  if(!('input' in queued))throw Error('Fixture expected executable targeted request');
   const input=queued.input as any;expect(recordedRoutineBuild(input.build,source,'android').headSha).toBe('c'.repeat(40));
   const sourceCalls=f.sourceResolves;
   await expect(f.service.prepareIntent({...selected,routineSource:definition.routineSource},{hostId:'mini',laneId:input.laneId,build:input.build})).resolves.toMatchObject({dispatchIntent:{routineRevision:definition.definitionRevision}});expect(f.resolves).toBe(1);expect(f.sourceResolves).toBe(sourceCalls);

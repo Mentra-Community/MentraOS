@@ -3,10 +3,11 @@ import {afterEach, beforeEach, expect, spyOn, test} from "bun:test";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
 import {TestRequestModel} from "../models/test-request.model";
-import {TestSuiteService, terminalNightlySummary} from "./test-suite.service";
+import {TestSuiteService, terminalNightlySummary, suiteHistoryProjection} from "./test-suite.service";
 import {requestInputDigest} from "./test-request.service";
 import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 import {testSuiteSchema} from "../types/test-suite.types";
+import {createRecordedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 const mocks: {mockRestore(): void}[] = [];
 beforeEach(() => {
   mocks.push(spyOn(TestRequestModel, "find").mockReturnValue({select() {return this;}, limit() {return this;},
@@ -370,4 +371,78 @@ test("request location enriches an old completion without changing its frozen ve
   request.input = {...input, build: {...input.build, headSha: "c".repeat(40)}};
   request.inputSha256 = requestInputDigest(request.input);
   expect(await new TestSuiteService().detail(frozen.suiteId)).toEqual(frozen as any);
+});
+
+test('history summaries read portable members through the real nightly snapshot and retain bound preparation location', async () => {
+ const source={channel:'dev' as const,buildRunId:21,publicationAttempt:1},build={repository:'Mentra-Community/MentraOS' as const,
+  channel:'dev' as const,headSha:'b'.repeat(40),kind:'android-apk' as const,source,
+  archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},
+  receipt:{url:'https://artifactscdn.mentraglass.com/receipt.json',size:30,sha256:'d'.repeat(64)}};
+ const suite=testSuiteSchema.parse({suiteId:'portable-summary',channel:'dev',trigger:'nightly',startedAt:'2026-10-08T00:00:00Z',
+  build:{headSha:build.headSha},members:[{memberId:'one',requestId:'one',routineId:'camera',platform:'android',definitionRevision:'a'.repeat(40)},
+   {memberId:'two',requestId:'two',routineId:'settings',platform:'android',definitionRevision:'a'.repeat(40)}]});
+ const members=suite.members.map(member=>({...member,requestId:member.requestId!,platform:'android' as const,routineRevision:'a'.repeat(40),
+  definitionRevision:'a'.repeat(40),build,selection:{requestId:member.requestId!,routineId:member.routineId,platform:'android' as const,
+   routineRevision:'a'.repeat(40),source,build}}));
+ const binding={jobId:'two',requestId:'two',hostId:'second-host',laneId:'android',descriptorRevision:'e'.repeat(64),
+  actionsRunId:'10',actionsJobId:'20',boundAt:'2026-10-08T00:01:00Z'};
+ const intent={...members[1]!.selection,laneId:binding.laneId,routineSource:testRoutineSource('a'.repeat(40))};
+ const requests=[{requestId:'one',state:'awaiting-source',fleetSelection:members[0]!.selection,
+  fleetSelectionSha256:requestInputDigest(members[0]!.selection)},
+  {requestId:'two',state:'preparing',hostId:binding.hostId,fleetSelection:members[1]!.selection,
+   fleetSelectionSha256:requestInputDigest(members[1]!.selection),fleetBinding:binding,dispatchIntent:intent,dispatchIntentSha256:requestInputDigest(intent)}];
+ const compactBuild={repository:build.repository,channel:build.channel,headSha:build.headSha};
+ // Emulate the actual Mongo history projection, rather than supplying the unprojected plan.
+ let terminal=false;
+ const projected=()=>({suiteId:suite.suiteId,payload:suite,nightlyPlan:{suiteId:suite.suiteId,occurrenceId:'portable-occurrence',
+  startedAt:suite.startedAt,trigger:'nightly',members:members.map(member=>({...member,portable:true,build:compactBuild,
+   ...(terminal?{selection:undefined}:{selection:member.selection})}))},
+  ...(terminal?{nightlyResult:{suiteId:suite.suiteId,occurrenceId:'portable-occurrence',startedAt:suite.startedAt,trigger:'nightly',
+   finishedAt:'2026-10-08T03:00:00Z',expectedCount:2,members:members.map((member,index)=>({memberId:member.memberId,
+    requestId:member.requestId,routineId:member.routineId,platform:member.platform,definitionRevision:member.definitionRevision,
+    routineRevision:member.routineRevision,portable:true,build:compactBuild,status:'incomplete',publicationComplete:false,
+    ...(index===1?{hostId:binding.hostId,laneId:binding.laneId,binding}:{})}))}}:{})});
+ mocks.push(spyOn(TestSuiteModel,'aggregate').mockImplementation(((pipeline:unknown[])=>{
+  expect(pipeline[2]).toEqual(suiteHistoryProjection);
+  return {read(){return this},readConcern(){return this},option(){return this},async exec(){return [projected()]}};
+ }) as any));
+ const queried:string[][]=[];
+ mocks.push(spyOn(TestRequestModel,'find').mockImplementation(((filter:{requestId:{$in:string[]}})=>{
+  queried.push(filter.requestId.$in);return {select(){return this},limit(){return this},read(){return this},readConcern(){return this},
+   setOptions(){return this},async lean(){return requests}};
+ }) as any));
+ let publishedRows:unknown[]=[];
+ const runReads=spyOn(TestRunModel,'find').mockReturnValue({select(){return this},limit(){return this},read(){return this},
+  readConcern(){return this},setOptions(){return this},async lean(){return publishedRows}} as any);mocks.push(runReads);
+ const service=new TestSuiteService(),first=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
+ expect(queried).toEqual([['one','two']]);expect(first).not.toBeInstanceOf(Error);
+ expect(first).toMatchObject({outcome:'running',passed:0,members:[{status:'waiting',requestId:'one'},
+  {status:'waiting',requestId:'two',hostId:binding.hostId,laneId:binding.laneId}]});
+ const input={routineId:intent.routineId,platform:intent.platform,definitionRevision:intent.routineRevision,
+  routineSource:intent.routineSource,laneId:intent.laneId,resources:[],build};
+ Object.assign(requests[1]!,{state:'accepted',input,inputSha256:requestInputDigest(input)});
+ const executable=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
+ expect(executable).not.toBeInstanceOf(Error);
+ expect(executable).toMatchObject({outcome:'running',passed:0,members:[{status:'waiting'},
+  {status:'waiting',hostId:binding.hostId,laneId:binding.laneId}]});
+ const finishedAt='2026-10-08T00:02:00Z';
+ const run={schemaVersion:1,requestId:'two',hostId:binding.hostId,routineId:intent.routineId,
+  definitionRevision:intent.routineRevision,routineSource:intent.routineSource,frameworkBinding:testFrameworkBinding(),
+  platform:'android',laneId:binding.laneId,build,startedAt:binding.boundAt,finishedAt,assets:[],
+  result:{runId:'two',finishedAt,setup:{status:'passed'},test:'passed',steps:[{id:'observe',status:'passed',durationMs:1}],
+   teardown:{ready:true,outcomes:[],errors:[],unavailableResources:[]},failures:[],evidence:[],
+   timing:{startedAt:binding.boundAt,setupMs:0,testMs:1,teardownMs:0}}};
+ const payloadSha256=requestInputDigest(run);
+ publishedRows=[{runId:'two',requestId:'two',payloadSha256,uploadsComplete:true,payload:{build},
+  summaryProjection:createRecordedFrameworkRunSummaryProjection(run,payloadSha256)}];
+ Object.assign(requests[0]!,{state:'terminal',fleetCancellation:{requestedAt:finishedAt,reason:'Occurrence cancelled before assignment.'}});
+ const published=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
+ expect(published).not.toBeInstanceOf(Error);
+ expect(published).toMatchObject({outcome:'running',passed:1,members:[{status:'not-run',publicationComplete:false},
+  {status:'pass',publicationComplete:true,runId:'two',hostId:binding.hostId,laneId:binding.laneId}]});
+ expect(queried.at(-1)).toEqual(['one','two']);
+ terminal=true;const readsBefore=queried.length,runReadsBefore=runReads.mock.calls.length;
+ const final=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
+ expect(final).toMatchObject({outcome:'failed',passed:0,members:[{status:'not-run'},{status:'not-run',hostId:binding.hostId,laneId:binding.laneId}]});
+ expect(queried).toHaveLength(readsBefore);expect(runReads.mock.calls).toHaveLength(runReadsBefore);
 });

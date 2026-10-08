@@ -2,8 +2,8 @@ import {Schema} from "mongoose";
 import {registerModel} from "./register-model";
 
 /** Cloud admission only. Resource ownership lives in the host controller. */
-function executableInputRequired(this: {state?: string; preparationCancellation?: unknown; preparationRejection?: unknown}) {
-  return this.state !== 'preparing' && !this.preparationCancellation && !this.preparationRejection;
+function executableInputRequired(this: {state?: string; preparationCancellation?: unknown; preparationRejection?: unknown; fleetSelection?: unknown; fleetCancellation?: unknown}) {
+  return !this.fleetCancellation && !['preparing', 'awaiting-source', 'awaiting-runner'].includes(this.state ?? '') && !this.preparationCancellation && !this.preparationRejection;
 }
 const schema = new Schema({
   requestId: {type: String, required: true, unique: true},
@@ -15,8 +15,20 @@ const schema = new Schema({
   preparationCancellation: {type: Schema.Types.Mixed},
   preparationRejection: {type: Schema.Types.Mixed},
   preparationCheckedAt: {type: Date},
-  hostId: {type: String, required: true, immutable: true},
-  state: {type: String, required: true, enum: ["preparing", "queued", "accepted", "running", "terminal"]},
+  hostId: {type: String, required: function(this: {fleetSelection?: unknown}) {return !this.fleetSelection;}, immutable: true},
+  fleetSelection: {type: Schema.Types.Mixed, immutable: true},
+  fleetSelectionSha256: {type: String, immutable: true},
+  fleetPreparation: {type: Schema.Types.Mixed, immutable: true},
+  fleetInputSha256: {type: String, immutable: true},
+  fleetDeadline: {type: Date, immutable: true},
+  fleetTarget: {type: Schema.Types.Mixed, immutable: true},
+  fleetBinding: {type: Schema.Types.Mixed, immutable: true},
+  fleetCancellation: {type: Schema.Types.Mixed},
+  fleetDispatch: {type: Schema.Types.Mixed},
+  dispatchCompletion: {type: Schema.Types.Mixed, immutable: true},
+  fleetActionsCancellation: {type: Schema.Types.Mixed},
+  fleetActions: {type: [Schema.Types.Mixed], default: undefined},
+  state: {type: String, required: true, enum: ["awaiting-source", "awaiting-runner", "preparing", "queued", "accepted", "running", "terminal"]},
   hostReceipt: {type: Schema.Types.Mixed},
   hostRejection: {type: Schema.Types.Mixed},
   hostCancellation: {type: Schema.Types.Mixed},

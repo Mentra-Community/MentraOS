@@ -16,6 +16,10 @@ export const routineGlassesRequirementSchema = z.object({models: z.array(glasses
   .refine(value => !value.startSoftware || value.models.includes(value.startSoftware.model), "Starting software must name an accepted glasses model");
 const action = z.object({id, instruction: text, expected: text}).strict();
 export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
+export const routineResourceKindSchema = z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]);
+export const routineResourceRequirementSchema = z.object({kind: routineResourceKindSchema,
+  capabilities: z.array(routineIdentitySchema).max(30)}).strict().refine(value =>
+    new Set(value.capabilities).size === value.capabilities.length, "Resource capabilities must be unique");
 /** Serialized source definition; executable functions remain in the harness repository. */
 export const publishedRoutineDefinitionSchema = z.object({
   id,
@@ -28,6 +32,7 @@ export const publishedRoutineDefinitionSchema = z.object({
   requires: z.array(id).max(30),
   glasses: routineGlassesRequirementSchema.optional(),
   requirements: z.array(text).max(30),
+  resourceRequirements: z.array(routineResourceRequirementSchema).max(9).optional(),
   fixtures: z.array(z.object({provider: id, description: text}).strict()).max(30),
   setup: z.array(action).max(500).optional(),
   steps: z.array(action).min(1).max(500),
@@ -38,6 +43,9 @@ export const publishedRoutineDefinitionSchema = z.object({
   source: z.object({repository: z.string().regex(/^[\w-]+\/[\w.-]+$/),
     revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().regex(/^routines\/[\w.-]+\/routine\.ts$/)}).strict(),
 }).strict().superRefine((definition, ctx) => {
+  const resourceKinds = definition.resourceRequirements?.map(value => value.kind) ?? [];
+  if (new Set(resourceKinds).size !== resourceKinds.length || resourceKinds.some(kind => !definition.execution?.resourceKinds.includes(kind)))
+    ctx.addIssue({code: "custom", message: "Resource requirements must uniquely name declared execution resources"});
   const actions = [...(definition.setup ?? []), ...definition.steps, ...(definition.teardown ?? [])];
   if (new Set(actions.map(action => action.id)).size !== actions.length)
     ctx.addIssue({code: "custom", message: "Setup, test and teardown action identities must be unique"});

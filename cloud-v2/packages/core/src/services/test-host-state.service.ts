@@ -17,6 +17,7 @@ const resource = z
     id: frameworkIdentitySchema,
     kind: z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]),
     laneId: frameworkIdentitySchema.optional(),
+    capabilities: z.array(routineIdentitySchema).max(30).optional(),
   })
   .strict()
 export const glassesInventorySchema = z
@@ -51,11 +52,12 @@ export const hostStateSchema = z
         z
           .object({
             id: frameworkIdentitySchema,
+            descriptorRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
             platform: routinePlatformSchema,
             dispatchMode: z.enum(["automatic", "authoring", "paused"]),
             state: z.enum(["idle", "running", "reserved", "in-repair", "out-of-service", "offline"]),
             resources: z.array(resource),
-            glasses: z.array(glassesInventorySchema).max(30).optional(),
+            glasses: z.array(glassesInventorySchema).max(1).optional(),
             routineAvailability: z.array(routineAvailability).max(1000).optional(),
           })
           .strict()
@@ -63,6 +65,10 @@ export const hostStateSchema = z
             const keys = lane.routineAvailability?.map((row) => `${row.routineId}:${row.definitionRevision}`) ?? []
             if (new Set(keys).size !== keys.length)
               ctx.addIssue({code: "custom", message: "Duplicate lane routine availability identity"})
+            for (const resource of lane.resources) if (new Set(resource.capabilities ?? []).size !== (resource.capabilities ?? []).length)
+              ctx.addIssue({code: "custom", message: "Resource capabilities must be unique"})
+            if(new Set(lane.resources.map(resource=>resource.kind)).size!==lane.resources.length)
+              ctx.addIssue({code:"custom",message:"A dispatch lane offers one provider per resource kind"})
             const ids = lane.resources.map((ref) => ref.id)
             if (new Set(ids).size !== ids.length)
               ctx.addIssue({code: "custom", message: "Duplicate lane resource identity"})
@@ -319,6 +325,17 @@ export class TestHostStateService {
         throw new TestRunError(409, "Controller snapshot advanced concurrently")
       throw error
     }
+  }
+  async list(): Promise<ReceivedTestHostState[]> {
+    let credentials: unknown;
+    try {credentials = JSON.parse(process.env.TEST_HOST_TOKENS ?? 'null')} catch {credentials = null}
+    if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) return [];
+    const hostIds = Object.entries(credentials).filter(([hostId, token]) => frameworkIdentitySchema.safeParse(hostId).success &&
+      typeof token === 'string' && token.length >= 32).map(([hostId]) => hostId);
+    if (hostIds.length > 100) throw new TestRunError(503, 'Enrolled host inventory exceeds its bound');
+    const rows = await TestHostStateModel.find({hostId: {$in: hostIds}}).limit(100).read('primary').readConcern('majority').lean();
+    return rows.map(row => ({...hostStateSchema.parse(row.snapshot), receivedAt: row.receivedAt.toISOString(),
+      frameworkHistory: (row.frameworkHistory ?? []).map(value => frameworkHistoryEntrySchema.parse(value))}));
   }
   async get(hostId: string): Promise<ReceivedTestHostState | null> {
     const row = await TestHostStateModel.findOne({hostId}).lean()

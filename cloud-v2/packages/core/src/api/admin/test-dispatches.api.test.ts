@@ -3,6 +3,8 @@ import {expect, test} from "bun:test";
 import {createTestDispatchAdminApi, HOST_STATE_FRESHNESS_MS} from "./test-dispatches.api";
 import {requestInputDigest, TestRequestService, type StoredRequest} from "../../services/test-request.service";
 import {RoutineDispatchService} from "../../services/routine-dispatch.service";
+import {RoutineJobService, type RoutineJobRepository} from "../../services/routine-job.service";
+import type {StoredRoutineJob} from "../../types/routine-job.types";
 import {routineAdmissionInput} from "../../services/routine-admission.service";
 import type {RoutineDefinitionService} from "../../services/routine-definition.service";
 import type {TestBuildGateway} from "../../services/test-builds.service";
@@ -10,6 +12,19 @@ import type {TestHostStateService} from "../../services/test-host-state.service"
 const selection = {requestId: "request-1", hostId: "mini", laneId: "mac", routineId: "no-glasses", platform: "ios-on-mac",
  source: {channel: "dev", buildRunId: 15, publicationAttempt: 1}, archiveSha256: "c".repeat(64)};
 const resources = [{id: "mac-app", kind: "app"}, {id: "mac-recorder", kind: "recorder"}];
+function fleetJobs(get: (id: string) => StoredRequest | undefined, save: (row: StoredRequest) => void,
+  builds: TestBuildGateway, definitions: RoutineDefinitionService, hosts: TestHostStateService, revision: () => string) {
+  const rows: RoutineJobRepository = {
+    async get(id) {return get(id) as unknown as StoredRoutineJob ?? null;},
+    async insert(row) {save(row as unknown as StoredRequest);},
+    async prepare() {throw new Error("Picker must retain source preparation for the trusted workflow");},
+    async bind() {throw new Error("Picker must never bind a lane");},
+    async cancel() {throw new Error("Unexpected cancellation");},
+  };
+  return new RoutineJobService(rows, builds, {async resolve() {return revision();}, async inventory(commit) {return {commit, files: []};}, async blob() {throw new Error("Unexpected blob read");}},
+    definitions, hosts);
+}
+
 function fixture(changed = false, offline = false, clockSkew = 0, receiptAge = 0) {
   let admitted: StoredRequest | undefined, revision = "a".repeat(40), resolves = 0;
   const service = {get: async (id: string) => admitted?.requestId === id ? admitted : null, prepare: async (hostId: string, dispatchIntent: any) => {
@@ -33,7 +48,8 @@ function fixture(changed = false, offline = false, clockSkew = 0, receiptAge = 0
   const hosts = {get: async () => offline ? null : {hostId: "mini", observedAt:new Date(Date.now()+clockSkew).toISOString(),receivedAt:new Date(Date.now()-receiptAge).toISOString(),lanes:[{id:"mac",platform:"ios-on-mac",dispatchMode:"paused",resources}]}} as unknown as TestHostStateService;
   return {
     app: createTestDispatchAdminApi(service, definitions, builds, hosts, new RoutineDispatchService(definitions, builds, hosts, service, undefined, undefined,
-      {async resolve(override) {return override ?? revision;}, async inventory(commit) {return {commit, files: [{path: "routines/no-glasses/routine.ts", gitBlobSha1: "f".repeat(40), size: 10}]};}})),
+      {async resolve(override) {return override ?? revision;}, async inventory(commit) {return {commit, files: [{path: "routines/no-glasses/routine.ts", gitBlobSha1: "f".repeat(40), size: 10}]};}}),
+      fleetJobs(id => admitted?.requestId === id ? admitted : undefined, row => {admitted = row;}, builds, definitions, hosts, () => revision)),
     input: async () => routineAdmissionInput((await definitions.getExact(selection.routineId, selection.platform, revision, true))!,
       await builds.resolve(selection.source as any, selection.platform as any), {hostId: selection.hostId, laneId: selection.laneId},
       await hosts.get(selection.hostId), Date.now(), {requireAutomatic: false}),
@@ -45,11 +61,21 @@ function fixture(changed = false, offline = false, clockSkew = 0, receiptAge = 0
 const post = (app: ReturnType<typeof createTestDispatchAdminApi>, body: unknown, path="/test-dispatches/picker") => app.request(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
 test("picker freezes fresh main, selected publication and explicit target before host preparation", async () => {
  const f=fixture();expect((await post(f.app,selection)).status).toBe(202);
- expect(f.admitted()).toMatchObject({requestId:"request-1",hostId:"mini",state:"preparing",dispatchIntent:{routineId:"no-glasses",routineRevision:"a".repeat(40),platform:"ios-on-mac",laneId:"mac",build:{headSha:"b".repeat(40),kind:"mac-ci-package",archive:{sha256:"c".repeat(64)}}}});
+ expect(f.admitted()).toMatchObject({requestId:"request-1",state:"awaiting-source",fleetTarget:{hostId:"mini",laneId:"mac"},fleetSelection:{routineId:"no-glasses",routineRevision:"a".repeat(40),platform:"ios-on-mac",build:{headSha:"b".repeat(40),kind:"mac-ci-package",archive:{sha256:"c".repeat(64)}}}});
  expect(f.admitted()!.input).toBeUndefined();
 });
-test("changed artifact and unavailable host refuse execution admission", async () => {
- for(const f of [fixture(true),fixture(false,true)]) {expect((await post(f.app,selection)).status).toBe(409);expect(f.admitted()).toBeUndefined();}
+test("picker refuses a changed publication and retains a job for an unavailable targeted host", async () => {
+ const changed = fixture(true); expect((await post(changed.app,selection)).status).toBe(409); expect(changed.admitted()).toBeUndefined();
+ const offline = fixture(false,true); expect((await post(offline.app,selection)).status).toBe(202);
+ expect(offline.admitted()).toMatchObject({state:"awaiting-source",fleetTarget:{hostId:"mini",laneId:"mac"}});
+});
+test("picker supports fleet-wide and host-only requests while rejecting a lane without a host", async () => {
+ const {hostId, laneId, ...portable} = selection;
+ const fleet = fixture(false,true); expect((await post(fleet.app, portable)).status).toBe(202);
+ expect((fleet.admitted() as unknown as StoredRoutineJob).fleetTarget).toBeUndefined();
+ const host = fixture(false,true); expect((await post(host.app, {...portable, hostId})).status).toBe(202);
+ expect(host.admitted()).toMatchObject({fleetTarget:{hostId}});
+ expect((await post(fixture().app, {...portable, laneId})).status).toBe(400);
 });
 test("lost admission response keeps original definition after re-enrollment", async () => {
  const f=fixture();expect((await post(f.app,selection)).status).toBe(202);const original=f.admitted();f.reEnroll();
@@ -83,10 +109,10 @@ test("direct admission preserves an explicit framework floor and its immutable r
   expect((await post(direct.app, {...request, input: noMinimum}, "/test-dispatches")).status).toBe(409);
 });
 
-test("dispatch freshness uses Core receipt time rather than a skewed controller clock", async () => {
+test("picker keeps the selected source independent of host receipt time and controller clock", async () => {
  for (const skew of [-180000, 86400000]) {
   const live=fixture(false,false,skew);expect((await post(live.app,selection)).status).toBe(202);
-  const stale=fixture(false,false,skew,HOST_STATE_FRESHNESS_MS+1);expect((await post(stale.app,selection)).status).toBe(409);expect(stale.admitted()).toBeUndefined();
+  const stale=fixture(false,false,skew,HOST_STATE_FRESHNESS_MS+1);expect((await post(stale.app,selection)).status).toBe(202);expect(stale.admitted()).toMatchObject({state:"awaiting-source"});
  }
 });
 
@@ -123,7 +149,8 @@ function glassesFixture(
   resources: [...resources, {id: "physical-live", kind: "glasses"}],
   glasses: [{resourceId: "physical-live", deviceId: "live-cid", model: "mentra-live", capabilities}]}]})} as unknown as TestHostStateService;
   return {app: createTestDispatchAdminApi(service, definitions, builds, hosts, new RoutineDispatchService(definitions, builds, hosts, service, undefined, undefined,
-    {async resolve(override) {return override ?? revision;}, async inventory(commit) {return {commit, files: []};}})), admitted, selected, manifest,
+    {async resolve(override) {return override ?? revision;}, async inventory(commit) {return {commit, files: []};}}),
+    fleetJobs(id => admitted.get(id), row => {admitted.set(row.requestId, row);}, builds, definitions, hosts, () => revision)), admitted, selected, manifest,
     input: async () => routineAdmissionInput((await definitions.getExact(selected.routineId, selected.platform, revision, true))!, build as any,
       {hostId: selected.hostId, laneId: selected.laneId}, await hosts.get(selected.hostId), Date.now(), {requireAutomatic: false})};
 }
@@ -184,7 +211,7 @@ test("picker inventory uses source IDs and fresh main without a published-defini
 test("picker optional exact revision and independent framework floor survive immutable retries", async () => {
   const f = fixture(), request = {...selection, routineRevision: "f".repeat(40), minimumFrameworkVersion: 123};
   expect((await post(f.app, request)).status).toBe(202);
-  expect(f.admitted()).toMatchObject({state: "preparing", dispatchIntent: {routineRevision: request.routineRevision, minimumFrameworkVersion: 123}});
+  expect(f.admitted()).toMatchObject({state: "awaiting-source", fleetSelection: {routineRevision: request.routineRevision, minimumFrameworkVersion: 123}});
   f.reEnroll();
   expect((await post(f.app, request)).status).toBe(202);
   expect(f.resolves()).toBe(1);
@@ -194,10 +221,10 @@ test("picker optional exact revision and independent framework floor survive imm
   expect((await post(fixture().app, {...selection, routineRevision: "main"})).status).toBe(400);
 });
 
-test("picker retries require its saved intent digest and never read a fabricated executable input", async () => {
+test("picker retries require its saved selection digest and never read a fabricated executable input", async () => {
   const f = fixture(); expect((await post(f.app, selection)).status).toBe(202);
   const saved = f.admitted()!;
   expect(saved.input).toBeUndefined();
-  saved.dispatchIntentSha256 = "f".repeat(64);
+  (saved as unknown as StoredRoutineJob).fleetSelectionSha256 = "f".repeat(64);
   expect((await post(f.app, selection)).status).toBe(503);
 });

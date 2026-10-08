@@ -5,7 +5,7 @@ import {applyRoutineResult, ROUTINE_BLOCK} from "./release-slack-message.mjs"
 import {jobName, prepareRoutineUpdate, readActionsJson, resolveRoutineNotifications, resolveRoutineSelectors, resolveRoutineResults,
   launchRoutineResultNotifications, stateName, WORKFLOW} from "./release-routine-slack.mjs"
 import {boundRoutineResult} from "./routine-api.mjs"
-import {routineFixture, terminalRoutineFixture} from "./routine-api-fixture.mjs"
+import {routineFixture, terminalRoutineFixture, portableRoutineFixture} from "./routine-api-fixture.mjs"
 import {renderPrRoutineResult, publishPrRoutineResult} from "./pr-routine-result.mjs"
 const repo = {owner: "Mentra-Community", repo: "MentraOS"}, repository = "Mentra-Community/MentraOS"
 const context = {repo, eventName: "workflow_dispatch", ref: "refs/heads/dev", runId: 701}
@@ -24,6 +24,16 @@ test("bound frozen platform archive resolves exact editable release post", async
   const options = {github, context, details: [f.detail], read: async () => ({"slack-release-message.json": f.notification})}
   assert.equal((await resolveRoutineNotifications(options))[0].row.title, f.definition.title)
   f.notification.build.artifacts["ios-on-mac"] = "f".repeat(64); await assert.rejects(resolveRoutineNotifications(options), /archive differs/)
+})
+test("never-assigned portable requests update the tested release with the precise not-run cause", async () => {
+  const f = fixture(), portable = portableRoutineFixture({channel: "dev", status: "not-run"})
+  const github = {rest: {actions: {getWorkflowRunAttempt: async () => ({data: run(10, {run_attempt: 2, path: ".github/workflows/coordinated-release.yml"})}), listWorkflowRunArtifacts: () => {}}},
+    paginate: async () => [{id: 1, name: "release-slack-message-10-2"}]}
+  const [plan] = await resolveRoutineNotifications({github, context, details: [portable.detail], read: async () => ({"slack-release-message.json": f.notification})})
+  assert.equal(plan.row.status, "not-run"); assert.equal(plan.row.resultRunId, undefined)
+  const updated = applyRoutineResult(f.notification, plan.row)
+  assert.match(updated.payload.blocks[1].text.text, /Not run/)
+  assert.match(updated.payload.blocks[1].text.text, /Suite deadline expired while awaiting a compatible lane/)
 })
 test("obsolete release receipt formats are refused rather than adapted", async () => {
   const f = fixture()

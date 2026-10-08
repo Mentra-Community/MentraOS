@@ -2,7 +2,7 @@ import {createHash} from "node:crypto"
 import {execFileSync} from "node:child_process"
 import {writeFile} from "node:fs/promises"
 import {isDeepStrictEqual} from "node:util"
-import {routineApi, requestIdentity, boundRoutineResult, waitForRoutineResult} from "./routine-api.mjs"
+import {routineApi, routineRequestSelection, requestIdentity, boundRoutineResult, waitForRoutineResult} from "./routine-api.mjs"
 import {applyRoutineResult, assertNotification, positive, receiptName, REPOSITORY, requireThat, sha} from "./release-slack-message.mjs"
 
 export const WORKFLOW = ".github/workflows/notify-release-routine.yml"
@@ -117,7 +117,7 @@ export async function resolveRoutineNotifications({github, context, details, rea
     const row = boundRoutineResult(detail)
     if (!row || row.source.channel === "pr") continue
     if (row.status === "skipped") continue
-    const build = (detail.request.input ?? detail.request.dispatchIntent).build
+    const build = routineRequestSelection(detail.request).build
     const {data: buildRun} = await github.rest.actions.getWorkflowRunAttempt({...context.repo,
       run_id: row.source.buildRunId, attempt_number: row.source.publicationAttempt})
     requireThat(buildRun.id === row.source.buildRunId && buildRun.run_attempt === row.source.publicationAttempt &&
