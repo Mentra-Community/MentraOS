@@ -2013,23 +2013,14 @@ class MentraLive : SGCManager() {
 
     fun isPairingYieldActive(): Boolean = pairingYieldActive
 
-    private fun clearSavedGlassesAfterOwnerLoss(reason: String) {
-        Bridge.log("LIVE: Owner loss ($reason) — clearing saved glasses (not generic GATT)")
-        pairingYieldAwaitingReclaim = false
-        pairingYieldActive = false
-        pairingYieldEndRunnable?.let { handler.removeCallbacks(it) }
-        pairingYieldEndRunnable = null
-        try {
-            forget()
-        } catch (e: Exception) {
-            Bridge.log("LIVE: forget after owner loss failed: ${e.message}")
-        }
-        DeviceStore.apply("bluetooth", "default_wearable", "")
-        DeviceStore.apply("bluetooth", "device_name", "")
-        DeviceStore.apply("bluetooth", "device_address", "")
-        Bridge.saveSetting("default_wearable", "")
-        Bridge.saveSetting("device_name", "")
-        Bridge.saveSetting("device_address", "")
+    /**
+     * Another phone took ownership. Stop reconnecting but keep the saved glasses so the app
+     * can explain the loss and offer to pair again or unpair. Bonds and the saved identity
+     * are removed only by forget().
+     */
+    private fun standDownAfterOwnerLoss(reason: String) {
+        Bridge.log("LIVE: Owner loss ($reason) — stopping reconnect, keeping saved glasses")
+        destroy()
         Bridge.sendTypedMessage("owner_replaced", mapOf("reason" to reason))
     }
 
@@ -2492,7 +2483,7 @@ class MentraLive : SGCManager() {
                                                 status == 0x05 ||
                                                 status == 0x0F)
                         ) {
-                            clearSavedGlassesAfterOwnerLoss("gatt_auth_status_$status")
+                            standDownAfterOwnerLoss("gatt_auth_status_$status")
                             return
                         }
 

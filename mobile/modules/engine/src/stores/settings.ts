@@ -351,6 +351,16 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
     nativeAuthoritative: true,
   },
+  // Set when another phone took over the saved Mentra Live (native
+  // `owner_replaced`). The saved identity is kept so the home card can explain
+  // the loss; cleared by a reconnect, unpair, or re-pair.
+  mentra_live_owner_lost: {
+    key: "mentra_live_owner_lost",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",

@@ -226,7 +226,10 @@ const en = {
     livePairingModeTitle: "Ready to pair",
     livePairingModeSubtitle: "Put your glasses into pairing mode before you scan.",
     livePairingModeInfo:
-      "Press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
+      "New glasses enter pairing mode on their own once they finish starting up. Otherwise, press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
+    liveOtherPhoneTipTitle: "Paired to Another Phone",
+    liveOtherPhoneTipBody:
+      "If your Mentra Live was paired to a different phone, press the power button 3 times quickly to put it in pairing mode, then pair it with this phone.",
     liveScanTitle: "Turn on your glasses",
     liveScanSubtitle: "We're looking for your Mentra Live.",
     livePairingFoundTitle: "Glasses found",
@@ -605,6 +608,12 @@ const en = {
     pairController: "Pair ring",
     setupWithoutGlasses: "Set up without glasses",
     connectGlasses: "Connect glasses",
+    pairAgain: "Pair again",
+    liveOwnerLostStatus: "Paired to another phone",
+    liveOwnerLostTitle: "Paired to another phone",
+    liveOwnerLostMessage:
+      "Your Mentra Live was paired to a different phone, so it no longer connects to this one. To use it here, press the power button 3 times quickly and pair again.",
+    liveOwnerLostIosBluetooth: "Then open Settings > Bluetooth on this iPhone and forget Mentra Live.",
     connectRing: "Connect ring",
     connectController: "Connect ring",
     start: "Start",

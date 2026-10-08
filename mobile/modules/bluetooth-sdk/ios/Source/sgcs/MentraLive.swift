@@ -943,7 +943,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.rxCharacteristic = nil
 
             if self.pairingYieldAwaitingReclaim, Self.isPairingAuthFailure(error) {
-                self.clearSavedGlassesAfterOwnerLoss(reason: "ios_auth_fail")
+                self.standDownAfterOwnerLoss(reason: "ios_auth_fail")
                 return
             }
 
@@ -976,7 +976,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.updateConnectionState(ConnTypes.DISCONNECTED)
 
             if self.pairingYieldAwaitingReclaim, Self.isPairingAuthFailure(error) {
-                self.clearSavedGlassesAfterOwnerLoss(reason: "ios_auth_fail")
+                self.standDownAfterOwnerLoss(reason: "ios_auth_fail")
                 return
             }
 
@@ -1791,21 +1791,16 @@ class MentraLive: NSObject, SGCManager {
         return false
     }
 
-    private func clearSavedGlassesAfterOwnerLoss(reason: String) {
-        Bridge.log("LIVE: Owner loss (\(reason)) — clearing saved glasses")
+    /// Another phone took ownership. Stop reconnecting but keep the saved glasses so the app
+    /// can explain the loss and offer to pair again or unpair. Bonds and the saved identity
+    /// are removed only by forget().
+    private func standDownAfterOwnerLoss(reason: String) {
+        Bridge.log("LIVE: Owner loss (\(reason)) — stopping reconnect, keeping saved glasses")
         pairingYieldAwaitingReclaim = false
         pairingYieldActive = false
         pairingYieldEndWorkItem?.cancel()
         pairingYieldEndWorkItem = nil
-        forget()
-        Task { @MainActor in
-            DeviceStore.shared.apply("bluetooth", "default_wearable", "")
-            DeviceStore.shared.apply("bluetooth", "device_name", "")
-            DeviceStore.shared.apply("bluetooth", "device_address", "")
-        }
-        Bridge.saveSetting("default_wearable", "")
-        Bridge.saveSetting("device_name", "")
-        Bridge.saveSetting("device_address", "")
+        destroy()
         Bridge.sendTypedMessage("owner_replaced", body: ["reason": reason])
     }
 

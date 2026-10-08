@@ -25,7 +25,7 @@ import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
-import {useSettingsStore} from "../stores/settings"
+import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {useAppStatusStore} from "../stores/apps"
 import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
@@ -139,6 +139,26 @@ export function startDeviceEventRouter(): void {
       await retirePendingSelectionOnPromotion(event.key, event.value)
     }),
   )
+
+  // Another phone completed pairing with the saved Mentra Live. Native keeps the
+  // saved identity and stops reconnecting; this flag lets the home card explain
+  // the loss instead of showing an endless reconnect.
+  subs.push(
+    BluetoothSdk.addListener("owner_replaced", () => {
+      void useSettingsStore.getState().setSetting(SETTINGS.mentra_live_owner_lost.key, true, false)
+    }),
+  )
+  subs.push({
+    remove: useGlassesStore.subscribe(
+      (s) => isGlassesConnected(s.connection),
+      (connected) => {
+        const settings = useSettingsStore.getState()
+        if (connected && settings.getSetting(SETTINGS.mentra_live_owner_lost.key)) {
+          void settings.setSetting(SETTINGS.mentra_live_owner_lost.key, false, false)
+        }
+      },
+    ),
+  })
 
   // --- coordinators (owns()-gated) ---
 

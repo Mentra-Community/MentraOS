@@ -56,6 +56,25 @@ describe("Even touchpad reset instructions", () => {
     expect(tips.some((tip) => tip.body.includes("5 times"))).toBe(false)
   })
 
+  describe("Mentra Live paired to another phone", () => {
+    afterEach(() => {
+      delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING
+    })
+
+    it("tells users to press three times when secure pairing is enabled", () => {
+      process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "true"
+      const tips = getModelSpecificTips("Mentra Live")
+      expect(tips).toContainEqual({title: en.pairing.liveOtherPhoneTipTitle, body: en.pairing.liveOtherPhoneTipBody})
+    })
+
+    it("keeps the legacy tip when secure pairing is disabled", () => {
+      process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "false"
+      const tips = getModelSpecificTips("Mentra Live")
+      expect(tips.some((tip) => tip.title === en.pairing.liveOtherPhoneTipTitle)).toBe(false)
+      expect(tips.some((tip) => tip.title === "Pairing Mode")).toBe(true)
+    })
+  })
+
   it.each(["Even Realities G2", "Even Realities R1"])(
     "does not suggest a reset in the normal pairing loader for %s",
     (model) => {
