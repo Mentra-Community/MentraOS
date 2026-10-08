@@ -508,6 +508,43 @@ public class AsgConstants {
     /** Minimum spacing between stall probes, so a wedged chip cannot be polled in a tight loop. */
     public static final long BES_STALL_PROBE_MIN_SPACING_MS = 15_000;
 
+    // BES TRACE delivery (mh_rlog / mh_rlog_ack). The BES wakes a sleeping MTK at least every
+    // ten minutes; while awake the tail polls on its own. See mentra-live-bes
+    // docs/uart-log-budget.md and docs/trace-log-policy.md.
+
+    /** Poll interval while awake and caught up. */
+    public static final long BES_TRACE_POLL_IDLE_MS = 1_000;
+
+    /** Spacing between back-to-back reads while the BES reports a backlog (at most 8/s). */
+    public static final long BES_TRACE_POLL_BACKLOG_MS = 125;
+
+    /** A read with no reply by then is retried; the BES skips replies while its UART is busy. */
+    public static final long BES_TRACE_REPLY_TIMEOUT_MS = 500;
+
+    /** Acknowledge at least this often while awake so the BES never needs to wake the MTK. */
+    public static final long BES_TRACE_IDLE_ACK_MS = 60_000;
+
+    /** CPU lease held after hm_rlog_ready so Android does not suspend mid-transfer. */
+    public static final long BES_TRACE_WAKE_LEASE_MS = 25_000;
+
+    /** A BES-announced transfer window; the lease is released earlier once caught up. */
+    public static final long BES_TRACE_WINDOW_MS = 20_000;
+
+    /** Within this many bytes of the BES end the tail counts as caught up. */
+    public static final long BES_TRACE_CAUGHT_UP_BYTES = 1_024;
+
+    /** Rolling store of delivered BES TRACE lines attached to bug reports. */
+    public static final long BES_TRACE_STORE_RETENTION_MS = 30L * 60 * 1000;
+
+    public static final long BES_TRACE_STORE_MAX_BYTES = 2L * 1024 * 1024;
+
+    public static final long BES_TRACE_SEGMENT_MAX_BYTES = 256L * 1024;
+
+    public static final long BES_TRACE_SEGMENT_MAX_AGE_MS = 5L * 60 * 1000;
+
+    /** The BLE incident relay carries only the newest part of the store. */
+    public static final int BES_TRACE_BLE_RELAY_MAX_BYTES = 32 * 1024;
+
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
 
