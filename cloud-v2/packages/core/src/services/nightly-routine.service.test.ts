@@ -12,6 +12,8 @@ import {TestSuiteService} from "./test-suite.service";
 import {requestInputDigest, TestRequestService, type StoredRequest, type StoredPreparingRequest, type TestRequestRepository} from "./test-request.service";
 import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
 import {TestDispatchError} from "./test-builds.service";
+import {RoutineJobService, routineLaneDescriptorRevision, type RoutineJobRepository} from './routine-job.service';
+import type {StoredRoutineJob} from '../types/routine-job.types';
 
 const mainRevision = "7".repeat(40);
 // Old targeted test inputs are adapted into portable submission at the test boundary.
@@ -655,4 +657,84 @@ test('result outages preserve validated binding in live and frozen suite project
     members: [{hostId: 'mini', laneId: 'android', status: 'not-run'}, {hostId: 'mini', laneId: 'ios-on-mac', status: 'pass'}]});
   expect(await state.service.detail(occurrence.occurrenceId)).toEqual(frozen);
   expect(await state.service.complete(occurrence.occurrenceId)).toEqual(frozen);
+});
+
+test('actual fleet service preserves every nightly member through preparation, binding, result outage and frozen restart', async () => {
+  let clock = now, plan: NightlyPlan | null = null, finished: NightlyResult | null = null, reads = 0, dispatches = 0;
+  const requestRows = new Map<string, StoredRoutineJob>(), results = new Map<string, any>();
+  const copy = <T>(value: T): T => structuredClone(value);
+  const rows: RoutineJobRepository = {
+    async get(id) {return copy(requestRows.get(id) ?? null);},
+    async insert(value) {if (requestRows.has(value.requestId)) throw Object.assign(new Error('duplicate'), {code: 11000}); requestRows.set(value.requestId, copy(value));},
+    async prepare(id, digest, preparation, inputSha256) {
+      const value = requestRows.get(id); if (!value || value.fleetCancellation || value.fleetSelectionSha256 !== digest) return null;
+      const next = {...value, state: 'awaiting-runner' as const, fleetPreparation: preparation, fleetInputSha256: inputSha256};
+      requestRows.set(id, next); return copy(next);
+    },
+    async bind(id, digest, binding, intent) {
+      const value = requestRows.get(id); if (!value || value.fleetCancellation || value.fleetBinding || value.fleetInputSha256 !== digest) return null;
+      const next = {...value, state: 'preparing' as const, hostId: binding.hostId, fleetBinding: binding,
+        dispatchIntent: intent, dispatchIntentSha256: requestInputDigest(intent)};
+      requestRows.set(id, next); return copy(next);
+    },
+    async dispatch(id, previous, value) {
+      const current = requestRows.get(id); if (!current || current.fleetBinding || current.fleetCancellation || requestInputDigest(current.fleetDispatch ?? null) !== requestInputDigest(previous ?? null)) return null;
+      const next = {...current, fleetDispatch: value}; requestRows.set(id, next); return copy(next);
+    },
+    async cancel(id, digest, cancellation) {
+      const value = requestRows.get(id); if (!value || value.fleetSelectionSha256 !== digest || value.fleetCancellation) return null;
+      const next = {...value, fleetCancellation: cancellation, ...(!value.fleetBinding ? {state: 'terminal' as const, terminalStatus: 'not-run'} : {})};
+      requestRows.set(id, next); return copy(next);
+    },
+  };
+  const lanes = ['android', 'ios-on-mac'].map(platform => {
+    const lane = {id: platform, platform: platform as 'android' | 'ios-on-mac', state: 'idle' as const, dispatchMode: 'automatic' as const,
+      resources: [{id: `app:${platform}`, kind: 'app' as const}, {id: `recorder:${platform}`, kind: 'recorder' as const}]};
+    return {...lane, descriptorRevision: routineLaneDescriptorRevision(lane)};
+  });
+  const requests = {async get(id: string) {reads++; return copy(requestRows.get(id) ?? null) as any;}, async cancel() {return null;}};
+  const summary = {async summary(id: string) {const result = results.get(id); if (result instanceof Error) throw result; if (!result) throw new TestRunError(404, 'No result'); return result;}, async detail() {throw new TestRunError(404, 'No result');}};
+  const jobs = new RoutineJobService(rows, undefined, undefined, {async getExact() {return null;}},
+    {async get(hostId) {return {hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+      observedAt: new Date(clock).toISOString(), receivedAt: new Date(clock).toISOString(), lanes};}}, requests, summary, () => clock,
+    {async dispatch() {dispatches++;}, async cancel() {}});
+  const repository = {...cancellationRepository(), async get() {return copy(plan);}, async freeze(value: NightlyPlan) {plan ??= copy(value); return copy(plan);},
+    async completed() {return copy(finished);}, async finish(_id: string, value: NightlyResult) {finished ??= copy(value); return copy(finished);}};
+  const catalog = [row('lifecycle-one', 'android'), row('lifecycle-two', 'ios-on-mac')];
+  const create = () => new ActualNightlyRoutineService({async list() {return catalog;}} as any,
+    {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
+    requests, repository, summary, () => clock, undefined, {async resolve() {return mainRevision;}}, jobs);
+  const service = create(), first = await service.start(occurrence), frozenPlan = copy(first.plan);
+  const {nightlySuiteProjection} = await import('./test-suite.service');
+  const project = async () => nightlySuiteProjection(first.plan.suite!, first.plan, await service.detail(occurrence.occurrenceId));
+  expect(dispatches).toBe(2); expect((await project()).members.every(member => member.status === 'waiting' && !member.hostId && !member.laneId)).toBe(true);
+  for (const member of first.plan.members) {
+    const definition = {...row(member.routineId, member.platform).definition, source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: mainRevision, path: `routines/${member.routineId}/routine.ts`}};
+    await jobs.prepared(member.requestId, {inputSha256: requestRows.get(member.requestId)!.fleetSelectionSha256,
+      routineSource: testRoutineSource(mainRevision), definitionSha256: requestInputDigest(definition), definition});
+  }
+  expect((await service.detail(occurrence.occurrenceId)).members.every(member => member.status === 'waiting' && member.unavailableReason === 'Awaiting compatible runner.')).toBe(true);
+  for (const member of first.plan.members) {
+    const preparation = await jobs.preparation(member.requestId), lane = lanes.find(lane => lane.id === member.platform)!;
+    expect((await jobs.bind(member.requestId, 'real-host', {inputSha256: preparation.inputSha256, laneId: lane.id,
+      descriptorRevision: lane.descriptorRevision, actionsRunId: member.platform === 'android' ? '10' : '11', actionsJobId: '20'})).execute).toBe(true);
+  }
+  expect(await project()).toMatchObject({members: [{hostId: 'real-host', laneId: 'android', status: 'waiting'}, {hostId: 'real-host', laneId: 'ios-on-mac', status: 'waiting'}]});
+  for (const member of first.plan.members) {
+    const value = requestRows.get(member.requestId)!, intent = value.dispatchIntent as any;
+    const input = {...preparedRequest(value.hostId!, intent).input, routineSource: testRoutineSource(mainRevision)};
+    requestRows.set(member.requestId, {...value, input, inputSha256: requestInputDigest(input), state: 'accepted'} as any);
+  }
+  const boundMember = first.plan.members[1]!, bound = requestRows.get(boundMember.requestId)!;
+  results.set(boundMember.requestId, {...publishedResult(boundMember, true), hostId: bound.hostId,
+    routineSource: testRoutineSource(mainRevision)});
+  results.set(first.plan.members[0]!.requestId, new TestRunError(503, 'Temporary result outage'));
+  expect(await project()).toMatchObject({passed: 1, members: [{status: 'waiting', hostId: 'real-host', laneId: 'android'}, {status: 'pass', hostId: 'real-host', laneId: 'ios-on-mac'}]});
+  clock += 3 * 3600_000;
+  const terminal = await service.complete(occurrence.occurrenceId);
+  expect(terminal).toMatchObject({status: 'incomplete', expectedCount: 2, passed: 1});
+  expect(nightlySuiteProjection(first.plan.suite!, first.plan, terminal)).toMatchObject({outcome: 'failed', members: [{status: 'not-run', laneId: 'android'}, {status: 'pass', laneId: 'ios-on-mac'}]});
+  const before = reads; requestRows.clear(); results.clear();
+  expect(await create().detail(occurrence.occurrenceId)).toEqual(terminal); expect(reads).toBe(before);
+  expect(await repository.get()).toEqual(frozenPlan); expect(dispatches).toBe(2);
 });

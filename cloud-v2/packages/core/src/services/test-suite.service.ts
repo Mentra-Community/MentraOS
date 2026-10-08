@@ -76,7 +76,8 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
     const build = input?.build ?? expected.build;
     return {...member, routineRevision: "routineRevision" in expected ? expected.routineRevision : expected.definitionRevision,
       hostId: receipt.hostId ?? expected.hostId,
-      ...(input?.laneId ? {laneId: input.laneId} : "dispatchIntent" in expected && expected.dispatchIntent ? {laneId: expected.dispatchIntent.laneId} : {}),
+      ...(input?.laneId ? {laneId: input.laneId} : "dispatchIntent" in receipt && receipt.dispatchIntent ? {laneId: receipt.dispatchIntent.laneId}
+        : "dispatchIntent" in expected && expected.dispatchIntent ? {laneId: expected.dispatchIntent.laneId} : {}),
       ...("dispatchIntent" in receipt && receipt.dispatchIntent ? {dispatchIntent: receipt.dispatchIntent} : {}),
       ...(input?.routineSource ? {routineSource: input.routineSource} : {}), ...(build ? {build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
@@ -239,7 +240,8 @@ export class TestSuiteService {
     if (rows.length > suiteIds.length) throw new TestRunError(503, "Suite identity is ambiguous");
     const membersToRead = (row: typeof rows[number]) => {
       const members = row.nightlyPlan ? (row.nightlyPlan as NightlyPlan).members : row.payload?.members;
-      return Array.isArray(members) ? members.filter(member => !row.nightlyPlan || "dispatchIntent" in member && member.dispatchIntent) : [];
+      return Array.isArray(members) ? members.filter(member => !row.nightlyPlan || "selection" in member && member.selection
+        || "dispatchIntent" in member && member.dispatchIntent) : [];
     };
     const requestIds = [...new Set(rows.flatMap(row => {
       if (row.nightlyPlan && row.nightlyResult) return [];

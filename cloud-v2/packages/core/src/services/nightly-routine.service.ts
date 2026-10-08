@@ -14,7 +14,7 @@ import {GithubTestBuildGateway, TestDispatchError} from "./test-builds.service";
 import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
-import {portableRoutineSelectionSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
+import {portableRoutineSelectionSchema, routineJobBindingSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
 import {RoutineJobService} from "./routine-job.service";
 
 export const nightlyOccurrenceSchema = z.object({occurrenceId: frameworkIdentitySchema,
@@ -276,15 +276,15 @@ export class NightlyRoutineService {
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Request identity differs from the frozen selection."};
         if (!job.fleetBinding) return {...member, status: job.fleetCancellation ? "incomplete" : "waiting", publicationComplete: false,
           unavailableReason: job.fleetCancellation?.reason ?? (job.state === "awaiting-source" ? "Awaiting exact routine source preparation." : "Awaiting compatible runner.")};
-        const intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
-        if (!intent.success || job.fleetBinding.jobId !== member.requestId || job.fleetBinding.requestId !== member.requestId || request.hostId !== job.fleetBinding.hostId || intent.data.laneId !== job.fleetBinding.laneId
+        const binding = routineJobBindingSchema.safeParse(job.fleetBinding), intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
+        if (!binding.success || !intent.success || binding.data.jobId !== member.requestId || binding.data.requestId !== member.requestId || request.hostId !== binding.data.hostId || intent.data.laneId !== binding.data.laneId
           || request.dispatchIntentSha256 !== requestInputDigest(intent.data) || job.fleetPreparation && requestInputDigest(intent.data.routineSource) !== requestInputDigest(job.fleetPreparation.routineSource))
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Bound request identity differs from its assignment."};
         const {laneId: _lane, routineSource: _source, ...boundSelection} = intent.data;
         const {routineSource: selectedSource, ...expectedSelection} = member.selection;
         if (requestInputDigest(boundSelection) !== requestInputDigest(expectedSelection) || selectedSource && requestInputDigest(_source) !== requestInputDigest(selectedSource))
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Bound request source differs from the frozen selection."};
-        boundMember = {...member, hostId: job.fleetBinding.hostId, binding: job.fleetBinding, dispatchIntent: intent.data};
+        boundMember = {...member, hostId: binding.data.hostId, binding: binding.data, dispatchIntent: intent.data};
       } else if (request.requestId !== member.requestId || request.hostId !== member.hostId || request.dispatchIntentSha256 !== requestInputDigest(member.dispatchIntent)
         || !request.dispatchIntent || requestInputDigest(request.dispatchIntent) !== request.dispatchIntentSha256)
         return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Request identity differs from the frozen intent."};
@@ -294,7 +294,7 @@ export class NightlyRoutineService {
           : request.preparation ? {unavailableReason: `${request.preparation.code}: ${request.preparation.reason}`} : {})};
       let input: RequestInput;
       try {input = nightlyPreparedInput(boundMember, request.input, request.inputSha256);}
-      catch {return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Prepared input differs from the frozen intent."};}
+      catch {return {...boundMember, status: "incomplete", publicationComplete: false, unavailableReason: "Prepared input differs from the frozen intent."};}
       const prepared = {...boundMember, input, inputSha256: request.inputSha256};
       try {
         const result = await readers.results.summary(member.requestId), run = result;
