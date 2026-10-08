@@ -80,7 +80,7 @@ test("runner credentials request only the runner grant and share the existing re
   }});
   const initial = {credential: "runner-1", expiresAt: new Date(start + 3600_000).toISOString()};
   expect(await Promise.all(Array.from({length: 10}, () => app.runnerCredential()))).toEqual(Array(10).fill(initial));
-  expect(bodies).toEqual([{repositories: ["Mentra-Automated-Testing"], permissions: {self_hosted_runners: "write"}}]);
+  expect(bodies).toEqual([{repositories: ["Mentra-Automated-Testing"], permissions: {organization_self_hosted_runners: "write"}}]);
   expect(await app.token("runner")).toBe("runner-1");
   now += 58 * 60_000; expect(await app.runnerCredential()).toEqual(initial); expect(issued).toBe(1);
   now += 60_000;

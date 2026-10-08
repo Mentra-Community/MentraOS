@@ -5,7 +5,7 @@ type Scope = "source" | "private" | "harness" | "reporter" | "dispatch" | "runne
 interface Credentials { appId?: string; privateKey?: string; installationId?: string }
 interface InstallationCredential { token: string; expiresAt: number }
 const grants = {
-  runner: { repositories: ["Mentra-Automated-Testing"], permissions: { self_hosted_runners: "write" } },
+  runner: { repositories: ["Mentra-Automated-Testing"], permissions: { organization_self_hosted_runners: "write" } },
   dispatch: { repositories: ["Mentra-Automated-Testing"], permissions: { actions: "write" } },
   reporter: { repositories: ["MentraOS"], permissions: { pull_requests: "write" } },
   source: { repositories: ["MentraOS"], permissions: { actions: "write", contents: "read", pull_requests: "read" } },
