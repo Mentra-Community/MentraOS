@@ -226,6 +226,19 @@ else:sys.exit(9)
                 result = subprocess.run(['jq', '-e', expression], input=json.dumps(config), capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, expected, result.stderr)
 
+    def test_configuration_requires_separate_app_identities(self):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        expression = source.split("jq -e '\n", 1)[1].split("\n' \"$CONFIG\"", 1)[0]
+        config = json.loads((ROOT / 'deployment.config.example.json').read_text())
+        config['sourceImage'] = 'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64
+        for key in ('tenantId', 'coreApiClientId', 'mobileClientId'):
+            config[key] = '11111111-1111-1111-1111-111111111111'
+        for runtime, expected in (('id-acme-mentra-runtime', True), (config['coreIdentityName'], False)):
+            with self.subTest(runtime=runtime):
+                config['runtimeIdentityName'] = runtime
+                result = subprocess.run(['jq', '-e', expression], input=json.dumps(config), capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, expected, result.stderr)
+
     def fake_vault(self, core_exists=False, list_failures=0):
         # A Key Vault and Container Apps stand-in that records every call.
         store = self.path / 'vault'
@@ -352,6 +365,8 @@ elif a[:2]==['group','create']:pass
 elif a[:3]==['deployment','group','create']:print('Succeeded')
 elif a[:2]==['account','get-access-token']:print(os.environ['TOKEN'])
 elif a[:3]==['deployment','group','what-if']:
+ if 'access.bicep' in a[a.index('--template-file')+1] and os.environ.get('ACCESS_ERROR'):
+  print('ERROR: '+os.environ['ACCESS_ERROR'],file=sys.stderr);sys.exit(1)
  if '@' in ' '.join(a): (p/'main-parameters.json').write_text(Path(a[a.index('--parameters')+1][1:]).read_text())
  print(json.dumps({'status':'Succeeded','changes':[{'changeType':'Create','resourceId':'/subscriptions/s/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv'}]}))
 else:sys.exit(9)
@@ -369,6 +384,17 @@ else:sys.exit(9)
         self.assertEqual(result.returncode, 1)
         self.assertIn('az group create --name rg-acme-mentra', result.stderr)
         self.assertFalse(any(c[:3] == ['deployment', 'group', 'what-if'] for c in calls))
+
+    def test_access_preview_is_empty_only_before_the_secrets_exist(self):
+        self.fake_deploy()
+        self.env['ACCESS_ERROR'] = '(ParentResourceNotFound) The parent vault was not found.'
+        result, _ = self.deploy('--what-if')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(json.loads(result.stdout)['access'])
+        self.env['ACCESS_ERROR'] = '(AuthorizationFailed) The client does not have authorization.'
+        result, _ = self.deploy('--what-if')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('AuthorizationFailed', result.stderr)
 
     def test_bootstrap_only_runs_just_the_ownership_template(self):
         self.fake_deploy()

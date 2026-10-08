@@ -73,6 +73,7 @@ jq -e '
   (.environmentName | nonempty) and
   (.coreIdentityName | nonempty) and
   (.runtimeIdentityName | nonempty) and
+  (.coreIdentityName != .runtimeIdentityName) and
   (.communicationName | nonempty) and
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
@@ -139,7 +140,8 @@ ACCESS_PARAMETERS=(keyVaultName="$KEY_VAULT" coreIdentityName="$CORE_IDENTITY" r
 
 umask 077
 PARAMETERS="$(mktemp "${TMPDIR:-/tmp}/mentra-private-parameters.XXXXXX")"
-trap 'rm -f "$PARAMETERS"' EXIT
+ERRORS="$(mktemp "${TMPDIR:-/tmp}/mentra-private-errors.XXXXXX")"
+trap 'rm -f "$PARAMETERS" "$ERRORS"' EXIT
 
 write_parameters() {
 jq -n \
@@ -205,10 +207,13 @@ if [[ "$MODE" == what-if ]]; then
     --template-file "$TEMPLATE_DIR/bootstrap.bicep" --parameters "${BOOTSTRAP_PARAMETERS[@]}" --no-pretty-print --output json)"
   MAIN_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
     --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" --no-pretty-print --output json)"
-  # Access grants need the secrets to exist; before the first install there is nothing to preview.
-  ACCESS_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME-access" --resource-group "$RESOURCE_GROUP" \
-    --template-file "$TEMPLATE_DIR/access.bicep" --parameters "${ACCESS_PARAMETERS[@]}" --no-pretty-print --output json 2>/dev/null)" ||
+  # Access grants need the vault's secrets. Before the first install they don't
+  # exist and there is nothing to preview; any other failure stops the preview.
+  if ! ACCESS_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME-access" --resource-group "$RESOURCE_GROUP" \
+    --template-file "$TEMPLATE_DIR/access.bicep" --parameters "${ACCESS_PARAMETERS[@]}" --no-pretty-print --output json 2>"$ERRORS")"; then
+    grep -Eq 'ResourceNotFound|ParentResourceNotFound|SecretNotFound|VaultNotFound' "$ERRORS" || { cat "$ERRORS" >&2; exit 1; }
     ACCESS_PREVIEW=null
+  fi
   jq -n --argjson bootstrap "$BOOTSTRAP_PREVIEW" --argjson main "$MAIN_PREVIEW" --argjson access "$ACCESS_PREVIEW" \
     '{bootstrap:$bootstrap,access:$access,main:$main}'
   exit 0
