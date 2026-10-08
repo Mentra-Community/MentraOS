@@ -109,7 +109,7 @@ export class NightlyRoutineService {
     private readonly logSelectionError: (error: unknown, context: {occurrenceId: string; platform: TestBuildPlatform; stage: NightlySelectionError["stage"]}) => void
       = (error, context) => logger.error({err: error, ...context}, "Nightly selection failed"),
     private readonly sources: Pick<GithubRoutineSourceGateway, "resolve"> = new GithubRoutineSourceGateway(),
-    private readonly jobs: Pick<RoutineJobService, "submitFrozen" | "cancel"> = new RoutineJobService()) {}
+    private readonly jobs: Pick<RoutineJobService, "submitFrozen" | "cancelFrozen" | "cancel"> = new RoutineJobService()) {}
 
   private selectionError(error: unknown, stage: NightlySelectionError["stage"], occurrenceId: string, platform: TestBuildPlatform): NightlySelectionError {
     if (error instanceof TestRunError || error instanceof TestDispatchError)
@@ -231,8 +231,8 @@ export class NightlyRoutineService {
     const eligible = plan.members.filter(member => member.selection);
     const deadline = new Date(Date.parse(plan.startedAt) + 3 * 3600_000).toISOString();
     const cancellations = await Promise.allSettled(eligible.map(async member => {
-      await this.jobs.submitFrozen(member.selection!, deadline);
-      await this.jobs.cancel(member.requestId, {reason: cancellation?.reason ?? "Nightly occurrence reached its completion boundary."});
+      await this.jobs.cancelFrozen(member.selection!, deadline,
+        {reason: cancellation?.reason ?? "Nightly occurrence reached its completion boundary."});
     }));
     cancellations.forEach((result, index) => {
       if (result.status === "rejected") logger.error({err: result.reason, requestId: eligible[index]!.requestId}, "Nightly deadline cancellation failed");

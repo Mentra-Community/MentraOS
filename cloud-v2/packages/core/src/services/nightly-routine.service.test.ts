@@ -26,7 +26,9 @@ class NightlyRoutineService extends ActualNightlyRoutineService {
     sources?: ConstructorParameters<typeof ActualNightlyRoutineService>[7]]) {
     const [catalog, builds, _hosts, requests, repository, _bindings, results, now, log, sources] = legacy;
     const admitted = new Map<string, any>();
-    const jobs = {async submitFrozen(selection: any) {
+    const jobs = {async cancelFrozen(selection: any, _deadline: string, value: {reason: string}) {
+      return this.cancel(selection.requestId, value);
+    }, async submitFrozen(selection: any) {
       if (admitted.has(selection.requestId)) return admitted.get(selection.requestId);
       const intent = routineDispatchIntentSchema.parse({...selection, laneId: selection.platform});
       const row = await requests!.prepare('mini', intent);
@@ -550,6 +552,12 @@ test('fleet nightly stores every portable member without a host and cancels abse
     if (!requestRows.has(selection.requestId)) requestRows.set(selection.requestId, {requestId: selection.requestId,
       state: 'awaiting-source', fleetSelection: selection, fleetSelectionSha256: requestInputDigest(selection)});
     return requestRows.get(selection.requestId);
+  }, async cancelFrozen(selection: any, _deadline: string, value: {reason: string}) {
+    cancelled.push(selection.requestId);
+    const retained = requestRows.get(selection.requestId) ?? {requestId: selection.requestId, fleetSelection: selection,
+      fleetSelectionSha256: requestInputDigest(selection)};
+    requestRows.set(selection.requestId, {...retained, state: 'terminal', fleetCancellation: value});
+    return {} as any;
   }, async cancel(id: string, value: {reason: string}) {cancelled.push(id); requestRows.get(id).fleetCancellation = value; return {} as any;}};
   const repository = {...cancellationRepository(), async get() {return plan;}, async freeze(value: NightlyPlan) {plan ??= value; return plan;},
     async completed() {return null;}, async finish(_id: string, value: NightlyResult) {return value;}};
@@ -568,8 +576,43 @@ test('fleet nightly stores every portable member without a host and cancels abse
   clock += 3 * 3600_000;
   const terminal = await service.complete(occurrence.occurrenceId);
   expect(cancelled).toEqual(first.plan.members.map(member => member.requestId));
+  expect(submitted).toHaveLength(2);
   expect(terminal).toMatchObject({status: 'incomplete', expectedCount: 2, passed: 0});
   expect(terminal.members.every(member => member.status === 'incomplete' && !member.runId)).toBe(true);
+});
+
+test('early suite cancellation retains absent member fences without launching and retries a lost acknowledgement', async () => {
+  let plan: NightlyPlan | null = null, launches = 0, loseAcknowledgement = true;
+  const requestRows = new Map<string, any>(), cancellations: any[] = [];
+  const jobs = {async submitFrozen() {launches++; throw new TestRunError(503, 'Admission unavailable');},
+    async cancelFrozen(selection: any, deadline: string, value: {reason: string}) {
+      cancellations.push({selection: structuredClone(selection), deadline, reason: value.reason});
+      if (!requestRows.has(selection.requestId)) requestRows.set(selection.requestId, {requestId: selection.requestId,
+        fleetSelection: selection, fleetSelectionSha256: requestInputDigest(selection), state: 'terminal', fleetCancellation: value});
+      if (loseAcknowledgement && selection.requestId === plan!.members[0]!.requestId) {
+        loseAcknowledgement = false;
+        throw new TestRunError(503, 'Cancellation acknowledgement lost');
+      }
+      return {} as any;
+    }, async cancel() {throw new Error('Must not submit before the cancellation fence');}};
+  const repository = {...cancellationRepository(), async get() {return plan;}, async freeze(value: NightlyPlan) {plan ??= value; return plan;},
+    async completed() {return null;}, async finish(_id: string, value: NightlyResult) {return value;}};
+  const create = () => new ActualNightlyRoutineService({async list() {return [row('cancel-one', 'android'), row('cancel-two', 'ios-on-mac')];}} as any,
+    {async latestDev(platform) {return build(platform);}, async resolve(source, platform) {return {...build(platform), source};}},
+    {async get(id) {return requestRows.get(id) ?? null;}}, repository, undefined, () => now, undefined,
+    {async resolve() {return mainRevision;}}, jobs);
+  const first = await create().start(occurrence);
+  expect(launches).toBe(2);
+  expect(first.admissions.every(admission => !admission.admitted)).toBe(true);
+  await expect(create().cancel(occurrence.occurrenceId, {reason: 'Superseded'})).rejects.toThrow('retry this occurrence cancellation');
+  expect(requestRows.size).toBe(2);
+  expect(await create().start(occurrence)).toMatchObject({admissions: []});
+  expect(await create().cancel(occurrence.occurrenceId, {reason: 'Changed retry reason'})).toMatchObject({requestsCancellationRecorded: true});
+  expect(launches).toBe(2);
+  expect(cancellations.every(value => value.reason === 'Superseded' && value.deadline === new Date(now + 3 * 3600_000).toISOString())).toBe(true);
+  expect(cancellations.map(value => requestInputDigest(value.selection))).toEqual([
+    ...first.plan.members, ...first.plan.members, ...first.plan.members].map(member => requestInputDigest(member.selection)));
+  expect([...requestRows.values()].every(value => value.fleetCancellation.reason === 'Superseded' && !value.fleetBinding)).toBe(true);
 });
 
 test('fleet nightly rejects a changed bound app selection before using host result evidence', async () => {

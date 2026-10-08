@@ -154,6 +154,54 @@ test('frozen suite admissions retain expired members and reject deadlines beyond
   expect(future.row).toBeNull();
 });
 
+test('cancelling an absent frozen member inserts its fence atomically and no retry can dispatch or bind it',async()=>{
+ const f=fixture(),frozen=await f.service.freezeSelection(selection),deadline='2026-10-08T03:00:00Z';let dispatches=0;
+ (f.service as any).actionsTransport={async dispatch(){dispatches++},async runs(){return []},async cancel(){}};
+ const insert=f.rows.insert.bind(f.rows);f.rows.insert=async row=>{
+  if(f.row)return insert(row);
+  expect(row).toMatchObject({state:'terminal',terminalStatus:'not-run',fleetCancellation:{reason:'Suite cancelled'}});
+  await insert(row);
+  // A reconciliation read can observe the first durable row immediately after insertion.
+  expect(await f.service.observation(row.requestId)).toMatchObject({terminal:true,terminalStatus:'not-run'});
+ };
+ const first=await f.service.cancelFrozen(frozen,deadline,{reason:'Suite cancelled'});
+ expect(first).toMatchObject({terminal:true,terminalStatus:'not-run',waitingReason:'Suite cancelled'});expect(dispatches).toBe(0);
+ const original=f.row!.fleetCancellation;await f.service.cancelFrozen(frozen,deadline,{reason:'Suite cancelled'});
+ await f.service.submitFrozen(frozen,deadline);expect(f.row!.fleetCancellation).toEqual(original);expect(dispatches).toBe(0);
+ await f.service.prepared(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),
+  definitionSha256:requestInputDigest(definition),definition});
+ await expect(f.service.bind(selection.requestId,'mini',{inputSha256:f.row!.fleetSelectionSha256,laneId:f.lane.id,
+  descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'})).rejects.toThrow();
+ expect(f.row?.fleetBinding).toBeUndefined();expect(dispatches).toBe(0);
+ await expect(f.service.cancelFrozen({...frozen,routineRevision:'b'.repeat(40)},deadline,{reason:'Suite cancelled'})).rejects.toThrow('different exact inputs');
+ const lost=fixture(),save=lost.rows.insert.bind(lost.rows);
+ (lost.service as any).actionsTransport={async dispatch(){dispatches++},async runs(){return []},async cancel(){}};
+ lost.rows.insert=async row=>{await save(row);throw Error('Insert acknowledgement lost')};
+ await expect(lost.service.cancelFrozen(frozen,deadline,{reason:'Suite cancelled'})).rejects.toThrow('Insert acknowledgement lost');
+ expect(lost.row).toMatchObject({state:'terminal',fleetCancellation:{reason:'Suite cancelled'}});
+ await lost.service.cancelFrozen(frozen,deadline,{reason:'Suite cancelled'});await lost.service.submitFrozen(frozen,deadline);
+ expect(dispatches).toBe(0);expect(lost.row?.fleetBinding).toBeUndefined();
+});
+
+
+test('cancelFrozen reconciles an existing bound member through its original host cancellation and custody receipt',async()=>{
+ const f=fixture(),prepared=await f.prepare(),cancelled:unknown[][]=[];let dispatches=0;
+ const {TestRunError}=await import('./test-result-error');(f.service as any).results={async detail(){throw new TestRunError(404,'missing')}};
+ (f.service as any).requests={async cancel(...args:unknown[]){cancelled.push(args);return f.row}};
+ (f.service as any).actionsTransport={async dispatch(){dispatches++},async runs(){return []},async cancel(){}};
+ const bound=await f.service.bind(selection.requestId,'mini',{inputSha256:prepared.inputSha256,laneId:f.lane.id,
+  descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'});
+ f.accepted('c'.repeat(64));const frozen=f.row!.fleetSelection,deadline=f.row!.fleetDeadline.toISOString();
+ expect(await f.service.cancelFrozen(frozen,deadline,{reason:'Suite cancelled'})).toMatchObject({state:'accepted',terminal:false});
+ expect(cancelled).toHaveLength(1);expect(cancelled[0]?.[0]).toBe(selection.requestId);
+ expect(cancelled[0]?.[1]).toBe(f.row!.fleetCancellation!.requestedAt);expect(cancelled[0]?.[2]).toBe('Suite cancelled');
+ expect(f.row!.fleetBinding).toEqual(bound.binding);
+ const cancellation=f.row!.fleetCancellation;await f.service.cancelFrozen(frozen,deadline,{reason:'Suite cancelled'});
+ expect(f.row!.fleetCancellation).toEqual(cancellation);expect(dispatches).toBe(0);
+ await f.service.complete(selection.requestId,'mini',{inputSha256:'c'.repeat(64),disposition:'clean',completedAt:'2026-10-08T00:01:00Z'});
+ expect(await f.service.observation(selection.requestId)).toMatchObject({terminal:true,terminalStatus:'cancelled',cleanupDisposition:'clean'});
+ expect(f.row!.fleetBinding).toEqual(bound.binding);expect(dispatches).toBe(0);
+});
 
 test('cancelled accepted custody finishes only after exact host cleanup receipt without claiming a passing run',async()=>{
   const f=fixture(),prepared=await f.prepare();

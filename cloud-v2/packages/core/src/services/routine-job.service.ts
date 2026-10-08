@@ -206,6 +206,24 @@ export class RoutineJobService {
       await this.cancel(retained.requestId, {reason: 'Routine job reached its three-hour deadline'});
     return this.deliver(await this.job(row.requestId));
   }
+  /** A cancelled absent member first becomes visible with its fence; it is never admitted for cancellation. */
+  async cancelFrozen(selection: PortableRoutineSelection, deadline: string, value: {reason: string}, target?: StoredRoutineJob['fleetTarget']) {
+    const frozen = portableRoutineSelectionSchema.parse(selection), date = z.string().datetime({offset: true}).parse(deadline);
+    if (Date.parse(date) > this.now() + 3 * 3600_000) throw new TestRunError(400, 'Routine job deadline must be within three hours');
+    const cancellation = z.object({reason: z.string().min(1).max(2000)}).strict().parse(value);
+    const validatedTarget = target ? routineJobTargetSchema.parse(target) : undefined;
+    const row: StoredRoutineJob = {requestId: frozen.requestId, state: 'terminal', terminalStatus: 'not-run', fleetSelection: frozen,
+      fleetSelectionSha256: requestInputDigest(frozen), fleetDeadline: new Date(date),
+      fleetCancellation: {requestedAt: new Date(this.now()).toISOString(), reason: cancellation.reason},
+      ...(validatedTarget ? {fleetTarget: validatedTarget} : {})};
+    try {await this.rows.insert(row);}
+    catch (error) {if ((error as {code?: number}).code !== 11000) throw error;}
+    const retained = await this.job(row.requestId);
+    if (retained.fleetSelectionSha256 !== row.fleetSelectionSha256 || retained.fleetDeadline.getTime() !== row.fleetDeadline.getTime() ||
+      requestInputDigest(retained.fleetTarget ?? null) !== requestInputDigest(row.fleetTarget ?? null))
+      throw new TestRequestConflict('Routine job identity already has different exact inputs');
+    return this.cancel(row.requestId, cancellation);
+  }
   private async discover(row: StoredRoutineJob) {
     if (!this.actionsTransport?.runs || !row.fleetDispatch) return [];
     const runs = await this.actionsTransport.runs(row.requestId, row.fleetDispatch.firstAttemptAt ?? row.createdAt?.toISOString() ?? row.fleetDispatch.lastAttemptAt);
