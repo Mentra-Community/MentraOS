@@ -139,6 +139,14 @@ export const routineWorkAcceptanceSchema = z
     acceptedAt: z.string().datetime({offset: true}),
   })
   .strict()
+/** The enrolled host registers an already accepted local job with its exact pins. */
+export const routineWorkLocalRegistrationSchema = z.object({
+  work: authoringWorkSchema,
+  receipt: routineWorkAcceptanceSchema,
+}).strict().superRefine((value, ctx) => {
+  if (value.work.origin || value.work.workId !== value.receipt.workId || value.work.target.hostId !== value.receipt.hostId)
+    ctx.addIssue({code: 'custom', message: 'Local registration requires its originless accepted host and work'})
+})
 const publicText = z.string().min(1).max(4000)
 const githubPr = z.string().regex(/^https:\/\/github\.com\/Mentra-Community\/Mentra-Automated-Testing\/pull\/[1-9]\d*$/)
 export const routineWorkProgressSchema = z

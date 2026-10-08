@@ -83,6 +83,9 @@ export function createRoutineWorkDeliveriesApi(
   app.get('/', async (c) =>
     c.json(await service.queued(c.var.testHostId, c.req.query('after'), Number(c.req.query('limit') ?? 10))),
   )
+  app.post('/local', frameworkBodyLimit(256 * 1024 + 4096), async (c) =>
+    c.json({receipt: await service.registerLocal(await frameworkJson(c), c.var.testHostId)}),
+  )
   app.post('/:workId/accept', frameworkBodyLimit(4096), async (c) => {
     const value = (await frameworkJson(c)) as {workId?: unknown}
     if (value?.workId !== c.req.param('workId')) return c.json({error: 'invalid_authoring_identity'}, 400)
