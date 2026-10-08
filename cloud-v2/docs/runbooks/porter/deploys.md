@@ -38,8 +38,8 @@ The Mentra Miniapp Store deploys independently from the private
 Its `main` branch serves one production catalog, currently at the temporary
 `store.dev.us-west-2.mentraglass.com` backend hostname. Public Cloud V2 builds
 contain no Store service. Core uses the explicitly configured
-`MENTRA_STORE_INTERNAL_URL` for developer attestation verification; it does not
-select a catalog by Core environment. See [Store integration](../../store-integration.md)
+`MENTRA_STORE_INTERNAL_URL` to ask the Store for a workspace's package count
+before deleting the workspace; it does not select a catalog by Core environment. See [Store integration](../../store-integration.md)
 for the service/authentication contract and private deployment ownership.
 
 ## The deploy model

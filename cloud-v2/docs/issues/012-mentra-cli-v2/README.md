@@ -15,9 +15,9 @@ public developer entrypoint should become `@mentra/cli` with the `mentra` binary
 
 - Publish a new major version of `@mentra/cli` for cloud-v2.
 - Keep day-to-day commands short and context-aware.
-- Store CLI login credentials and developer signing keys securely.
+- Store CLI login credentials and publisher signing keys securely.
 - Reuse miniapp build/pack/manifest logic instead of duplicating it.
-- Support dev-mode package attestation for miniapp auto-auth.
+- Run local dev builds under their manifest package name, with no login.
 - Support release provenance by signing bundle manifests.
 
 ## Non-goals
@@ -37,11 +37,10 @@ public developer entrypoint should become `@mentra/cli` with the `mentra` binary
   reusable build, pack, manifest, schema, dev-server helpers
 ```
 
-`@mentra/miniapp-cli` stays usable as a standalone CLI, but standalone usage is
-unsigned. Signed release metadata and signed dev attestations are provided only
-by `@mentra/cli`, which calls the miniapp package through its programmatic API
-instead of shelling out or passing private signing keys through environment
-variables.
+`@mentra/miniapp-cli` stays usable as a standalone CLI. `@mentra/cli` calls it
+through its programmatic API instead of shelling out, and both produce the same
+dev server and the same opt-in publisher signatures (see
+[016](../016-miniapp-signing-and-dev-attestation/)).
 
 The public docs should prefer Bun scripts:
 
@@ -89,13 +88,13 @@ mentra miniapp publish ./path/to/miniapp
 
 ### `mentra dev`
 
-- Starts the local miniapp dev server.
-- Prints QR/deep link for the phone.
-- Signs a short-lived dev attestation if the developer is logged in.
-- Calls the `@mentra/miniapp-cli` dev API with a signing callback; the SDK tool
-  selects the final reachable dev URL and `@mentra/cli` signs it.
-- Keeps working without login for purely local unauthenticated miniapps, but
-  `session.auth.getToken()` remains unavailable.
+- Starts the local miniapp dev server through the `@mentra/miniapp-cli` dev API,
+  which selects the reachable dev URL.
+- Prints QR/deep link for the phone. Needs no login and makes no backend call.
+- The phone runs the build as the manifest package: over an unsigned install or
+  none, never over an install with a publisher signature (the user uninstalls
+  first). `session.auth.getToken()` returns a token for that package exactly as
+  for an installed miniapp.
 
 ### `mentra build`
 
@@ -114,8 +113,8 @@ mentra miniapp publish ./path/to/miniapp
 
 - Runs `pack`.
 - Ensures the package is claimed by the current developer org.
-- Signs publish metadata with the local developer signing key.
-- Uploads the release bundle zip to Cloud Core.
+- Uploads the release bundle zip as packed; a bundle signed with
+  `mentra pack --sign` keeps its embedded publisher signature.
 - Creates a `MiniAppRelease` row with bundle hash, size, and storage metadata.
 
 The first implemented path posts the bundle zip as base64 to Core. This is good
@@ -196,80 +195,40 @@ Used to authorize Cloud Core API calls.
 mentra login -> browser AuthKit/Console2 flow -> CLI stores credential in Keychain
 ```
 
-### Developer Signing Key
+### Publisher Signing Key
 
-Generated locally and registered with Cloud Core.
+One Ed25519 key per package, generated and kept locally (Keychain, or a
+mode-`0600` file). Signing is opt-in with `mentra pack --sign`; the bundle embeds
+its public key and fingerprint, so no key is registered with any service.
+[016](../016-miniapp-signing-and-dev-attestation/) describes the signature format
+and how the Store and phones pin a package to its first signer.
 
-```ts
-interface DeveloperSigningKey {
-  id: string
-  developerOrgId: string
-  workosUserId: string
-  publicKeyJwk: JsonWebKey
-  status: "active" | "revoked"
-  createdAt: string
-  lastUsedAt?: string
-}
-```
+### Development Builds
 
-The private key stays on the developer machine, ideally in Keychain.
-
-### Bundle Signature
-
-```ts
-interface BundleSignaturePayload {
-  packageName: string
-  version: string
-  bundleSha256: string
-  manifestSha256: string
-  createdAt: string
-}
-```
-
-Cloud Core verifies the signature and stores the signing key id on the bundle.
-
-### Dev Attestation
-
-Used for local dev miniapp auto-auth.
-
-```ts
-interface DevMiniappAttestation {
-  packageName: string
-  devServerUrl: string
-  nonce: string
-  expiresAt: string
-  signingKeyId: string
-  signature: string
-}
-```
-
-Mobile/Core must not mint a miniapp backend token for a claimed package unless a
-dev attestation is valid and the signing key belongs to an org allowed to develop
-that package.
-
-If the attestation expires while the miniapp is still running, the next token
-mint or refresh fails. The developer should rescan a fresh `mentra dev` QR. The
-system must not silently mint a token from the unsigned `com.dev` package claim.
+A dev build of a package is that package. The phone applies its signer rule to
+it: unsigned dev code runs over an unsigned install or none and is refused over
+a signed install. Core mints its miniapp token like any installed miniapp's.
 
 ## User Stories
 
 1. A new developer runs `bunx @mentra/cli login` and authorizes in the browser.
 2. A developer runs `bun run dev` and scans a QR code.
-3. Local Merge calls `session.auth.getToken()` in dev mode; Core verifies the dev
-   attestation before minting an audience-scoped miniapp token.
-4. A developer runs `bun run publish`; a signed bundle appears in Console2.
-5. A teammate can verify who signed and uploaded a bundle.
-6. A revoked developer signing key can no longer publish or attest dev miniapps.
+3. Local Merge calls `session.auth.getToken()` in dev mode and receives a token
+   for its package, as it would installed.
+4. A developer packs with `--sign` and publishes; the signed bundle appears in
+   Console2 with its publisher fingerprint.
+5. A developer scanning a dev build of a package installed with a publisher
+   signature is told to uninstall it first.
 
 ## Faults To Test
 
 | Fault | Expected behavior |
 | --- | --- |
-| Not logged in | `publish` fails with login prompt; `dev` works without auth token |
-| Signing key missing | CLI creates/registers one after login |
-| Signing key revoked | Publish/dev attestation rejected; CLI prompts to create new key |
+| Not logged in | `publish` fails with login prompt; `dev` works, login is not needed |
+| `pack --sign` without a publisher key | CLI explains how to create or import the package key |
+| Signed upload with a different key | Store rejects the release |
 | Package not claimed | Publish rejected by Core |
-| Dev attestation expired | Miniapp runs, but backend auto-auth unavailable |
+| Dev build over a signed install | Phone refuses it until the user uninstalls the package |
 | Upload interrupted | Bundle remains unfinalized and can be retried |
 | Hash mismatch after upload | Finalize rejected |
 | Duplicate version | Core rejects the release; developer bumps `miniapp.json` version |

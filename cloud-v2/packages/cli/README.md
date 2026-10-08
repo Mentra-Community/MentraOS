@@ -27,7 +27,7 @@ bunx @mentra/cli@dev --help
 
 ```bash
 mentra login              # sign in to the Mentra Developer Console
-mentra dev                # local dev server with a signed Cloud V2 identity
+mentra dev                # local dev server; the phone runs it as the manifest package
 mentra build              # build the current miniapp
 mentra pack               # build and pack locally (use --sign to sign)
 mentra publish --no-submit # build and upload an unsigned draft
@@ -101,6 +101,14 @@ Phones that already installed a signed release retain its publisher pin and
 require that same key for future release updates. Accepting unsigned uploads
 in the Store does not clear existing device pins. Store-side publisher records
 also remain intact; an optional signed upload must match its recorded key.
+
+Phones apply the same rule to development builds. `mentra dev` serves unsigned
+code under the manifest package name, so a phone runs it in place of an unsigned
+install of that package (or when none is installed) and refuses it while the
+package is installed with a publisher signature. Uninstall the signed miniapp
+from the phone first; uninstalling clears its recorded key. A dev build needs no
+login: the phone requests the miniapp's `session.auth` token for that package
+exactly as it does for an installed one.
 
 ## Stable and beta releases
 

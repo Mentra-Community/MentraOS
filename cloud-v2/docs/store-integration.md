@@ -14,22 +14,25 @@ miniapp, Developer Console and staff moderation. Public builds do not clone it.
 - Core issues miniapp JWTs with `kid=mentra-miniapp-1`, `iss=cloud-core`,
   `aud=<miniapp package>`, `sub=<Mentra user ID>` and `tenantId`. The Store
   verifies the configured Store package audience against Core's public JWKS.
-- Core calls `POST /api/internal/dev-attestations/verify` at
-  `MENTRA_STORE_INTERNAL_URL` only when a development attestation is supplied.
-  Body: `{packageName, attestation}`; success: `{valid: true}`. Its service
-  signature is HMAC-SHA256 over `<timestamp>\n<exact JSON request body>`.
+- Core mints a miniapp token for any package the phone runs, including a
+  development build of that package, from the user's access token and the
+  package name alone. Core does not call the Store to mint it.
 - Store calls Core's `POST /api/internal/identity/resolve-email` with `{email}`.
   Its service signature is HMAC-SHA256 over
-  `<timestamp>\n<trimmed lowercase email>`. Success returns `{mentraUserId}`;
-  an unknown email returns 404.
-- Both service requests use `x-mentra-service-timestamp` (Unix milliseconds)
-  and `x-mentra-service-signature` (base64url), allowing 60 seconds of clock
-  skew. Configure the same `MENTRA_SERVICE_AUTH_SECRET` on both services.
-  Existing installations retain the `WORKOS_API_KEY` fallback during cutover.
+  `<timestamp>\n<trimmed lowercase email>`, sent in
+  `x-mentra-service-timestamp` (Unix milliseconds) and
+  `x-mentra-service-signature` (base64url), allowing 60 seconds of clock skew.
+  Success returns `{mentraUserId}`; an unknown email returns 404. Core verifies
+  it with `MENTRA_SERVICE_AUTH_SECRET` (falling back to `WORKOS_API_KEY`); the
+  Store signs it with the same value as `MENTRA_CORE_IDENTITY_SECRET`.
 - Public SDK/CLI contracts remain in this repo. Store uploads accept unsigned releases. The CLI publishes without signing;
   signatures supplied explicitly in an archive are still verified. Once a publisher is
   pinned, the host enforces continuity. Automatic updates defer while a miniapp
   runs; the host displays progress and blocks opens during an accepted update.
+- The phone applies the same signer rule to development builds, which run
+  unsigned under their manifest package name: a dev build runs in place of an
+  unsigned install (or none) and is refused while the package is installed
+  with a publisher signature, until the user uninstalls it.
 
 ## Workspaces, credentials and the Core service API
 
@@ -125,9 +128,6 @@ URL and no secret, Core cannot ask and answers workspace deletion with
 without a Store URL has no packages and deletes freely. The local `bun run dev`
 stack defaults `MENTRA_STORE_INTERNAL_URL`, so set the secret there too if you
 delete workspaces locally.
-
-The dev-attestation check keeps its own secret (`MENTRA_SERVICE_AUTH_SECRET`,
-above) and is unchanged.
 
 ### The Store proxy
 
@@ -249,7 +249,8 @@ For Store work, start the private backend separately on port 3003 and Console
 on 5173. Configure `MENTRA_STORE_INTERNAL_URL=http://127.0.0.1:3003` in Core,
 `MENTRA_CORE_INTERNAL_URL=http://127.0.0.1:3000` and
 `MENTRA_STORE_CORE_JWKS_URL=http://127.0.0.1:3000/.well-known/jwks.json` in Store,
-and the same service secret. For workspaces, pair the secrets as described above:
+and Core's `MENTRA_SERVICE_AUTH_SECRET` as the Store's `MENTRA_CORE_IDENTITY_SECRET`
+for identity lookups. For workspaces, pair the secrets as described above:
 a value in Core's `CLOUD_CORE_SERVICE_SECRETS` (`{"store":["dev-secret"]}`) as the
 Store's `MENTRA_CORE_WORKSPACE_SERVICE_SECRET`, and Core's
 `CLOUD_CORE_STORE_SERVICE_SECRET` in the Store's `MENTRA_STORE_CORE_SERVICE_SECRETS`.
@@ -272,8 +273,7 @@ backend is `https://store.dev.us-west-2.mentraglass.com` and its website is
 `https://apps-dev.mentraglass.com`. These names do not select a dev catalog.
 The CLI and bundled Store select their Store explicitly, independently of Core's
 environment. Each official Core environment's Doppler config points
-`MENTRA_STORE_INTERNAL_URL` at the same Store for developer attestation
-verification and workspace package counts. Local/self-hosted services can configure explicit URLs.
+`MENTRA_STORE_INTERNAL_URL` at the same Store for workspace package counts. Local/self-hosted services can configure explicit URLs.
 
 Store preserves its existing data, developer accounts, storage and signing keys.
 Moving the website to `apps.mentraglass.com` later is a domain change, not a catalog
@@ -285,9 +285,8 @@ The Store may verify miniapp tokens from several explicitly trusted Core JWKS
 endpoints. Core environments with separate account databases retain distinct opaque
 user identities; private Store invitations resolve through the canonical production
 Core. Configure Store's `MENTRA_CORE_IDENTITY_SECRET` for that lookup and its
-`MENTRA_STORE_CORE_SERVICE_SECRETS` JSON list for accepted Core attestation callers.
-Core's developer-attestation requests keep using its own service secret
-(`MENTRA_SERVICE_AUTH_SECRET`); its workspace package-count requests use
+`MENTRA_STORE_CORE_SERVICE_SECRETS` JSON list for the Core deployments whose
+workspace package-count requests it accepts. Core signs those requests with
 `CLOUD_CORE_STORE_SERVICE_SECRET` (see Secret pairing above).
 
 Core owns browser login, callback, organization selection and logout at
