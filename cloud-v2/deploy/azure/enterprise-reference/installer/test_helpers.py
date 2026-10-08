@@ -504,9 +504,19 @@ p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
 if a[:2]==['identity','show']:print('runtime')
 elif a[:2]==['keyvault','show']:print(os.environ['FAKE_VAULT_ID'])
 elif a[:3]==['role','assignment','list']:print((p/'grants.json').read_text())
-elif a[:3]==['role','assignment','delete']:(p/'deleted').write_text(json.dumps(a[a.index('--ids')+1:a.index('--output')]))
+elif a[:3]==['role','assignment','delete']:
+ if os.environ.get('DELETE_FAILS'):print('ERROR: (AuthorizationFailed) no',file=sys.stderr);sys.exit(1)
+ (p/'deleted').write_text(json.dumps(a[a.index('--ids')+1:a.index('--output')]))
 else:sys.exit(9)
 ''')
+        # A deletion that fails stops the rollout: Runtime must not keep the old access.
+        self.env['DELETE_FAILS'] = '1'
+        script = ('set -euo pipefail\nRUNTIME_IDENTITY=id-rt\nRESOURCE_GROUP=rg\nKEY_VAULT=kv\n'
+                  f'ERRORS={self.path / "errors"}\nTEAMS_CLIENT_ID=bbbb\n' + block)
+        result = subprocess.run(['bash', '-c', script], env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('still has access to the previous app secret', result.stderr)
+        del self.env['DELETE_FAILS']
         for current, expected in (('bbbb', ['old']), ('', ['old', 'current'])):
             (self.path / 'deleted').unlink(missing_ok=True)
             script = ('set -euo pipefail\nRUNTIME_IDENTITY=id-rt\nRESOURCE_GROUP=rg\nKEY_VAULT=kv\n'
