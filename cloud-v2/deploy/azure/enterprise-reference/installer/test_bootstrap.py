@@ -154,6 +154,27 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(self.active(), 'packages/3.3.0-dev.700/mentra-private-cloud')
         self.assertIn('./packages/3.3.0-dev.711/mentra-private-cloud/setup.sh --directory ./mentra-setup', result.stdout)
 
+    def test_a_killed_download_does_not_break_later_runs(self):
+        self.publish('3.3.0-dev.700')
+        self.assertEqual(self.run_bootstrap().returncode, 0)
+        self.save_state('3.3.0-dev.700', 'infrastructure_verified')
+        # Closing Cloud Shell mid-download leaves the hidden staging folder.
+        staging = self.install / 'packages/.3.3.0-dev.700.abcd/mentra-private-cloud'
+        staging.mkdir(parents=True)
+        (staging / 'release.json').write_text(json.dumps({'releaseTag': '3.3.0-dev.700'}))
+        self.publish('3.3.0-dev.711')
+        result = self.run_bootstrap()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Upgrade available: 3.3.0-dev.700 -> 3.3.0-dev.711', result.stdout)
+
+    def test_a_missing_deployed_package_names_the_version_to_fetch(self):
+        self.publish('3.3.0-dev.711')
+        self.assertEqual(self.run_bootstrap().returncode, 0)
+        self.save_state('3.3.0-dev.700', 'infrastructure_verified')
+        (self.install / 'mentra-state/deployment.config.json').write_text(json.dumps({'releaseTag': '3.3.0-dev.700'}))
+        result = self.run_bootstrap()
+        self.assertIn('MENTRA_VERSION=3.3.0-dev.700 bash mentra-install.sh', result.stdout + result.stderr)
+
     def test_setup_in_progress_finishes_on_its_own_release(self):
         # upgrade needs a verified deployment, so mid-setup continues on its release.
         result = self.install_then_publish('3.3.0-dev.700', 'identity_configured')

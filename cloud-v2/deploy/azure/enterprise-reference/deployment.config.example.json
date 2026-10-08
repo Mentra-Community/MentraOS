@@ -35,5 +35,6 @@
   "privacyPolicyUrl": "https://legal.acme.example/mentra/privacy",
   "termsOfServiceUrl": "https://legal.acme.example/mentra/terms",
   "documentationUrl": "",
-  "supportUrl": ""
+  "supportUrl": "",
+  "resourceTags": {}
 }

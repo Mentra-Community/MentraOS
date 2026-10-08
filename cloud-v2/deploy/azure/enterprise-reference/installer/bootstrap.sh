@@ -211,13 +211,23 @@ def deployment_plan(home, package, state_dir):
         return None, None, f'Cannot read {state_dir}; the active package was left unchanged.'
     # The only package that can operate this state, including a pending upgrade's target.
     required = pending.get('targetReleaseHash') or state.get('releaseHash')
-    current = next((p for p in sorted((home / 'packages').iterdir()) if release_hash(p) == required), None)
+    # Only finished downloads; a killed one leaves a hidden staging folder behind.
+    packages = sorted(p for p in (home / 'packages').iterdir() if p.is_dir() and VERSION.fullmatch(p.name))
+    current = next((p for p in packages if release_hash(p) == required), None)
+    try:
+        config = json.loads((state_dir / 'deployment.config.json').read_text())
+    except (OSError, ValueError):
+        config = {}
     if current is None:
-        return None, None, (f'The package for the deployment in {state_dir} is not in {home / "packages"}, '
-                            'so the active package was left unchanged.')
+        tag = config.get('releaseTag', '')
+        return None, None, (f'The package this deployment runs ({tag or "unknown"}) is not in {home / "packages"}. '
+                            + (f'Get it with: MENTRA_VERSION={tag} bash mentra-install.sh' if VERSION.fullmatch(tag) else
+                               'The active package was left unchanged.'))
     if current == package or order(package.name) <= order(current.name):
         return current, setup(current), None
-    if state.get('phase') == 'infrastructure_verified' and not pending:
+    # Mirrors setup's upgradable_phase: verified, or deployed but failing verification.
+    deployed = state.get('phase') == 'deployed' and (not config.get('workspaceHostname') or state.get('domainVerified'))
+    if (state.get('phase') == 'infrastructure_verified' or deployed) and not pending:
         # Guided setup in the new package previews the upgrade and asks before changing anything.
         return current, setup(package), (f'Upgrade available: {current.name} -> {package.name}. '
                                                        'Your deployment keeps running until you confirm.')

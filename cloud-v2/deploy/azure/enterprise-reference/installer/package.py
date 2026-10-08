@@ -14,7 +14,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parents[3]
 FILES = ('setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep', 'access.bicep',
-         'deployment.config.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
+         'deployment.config.example.json', 'answers.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
          'scripts/ensure-vault-secrets.sh', 'scripts/import-runtime-image.sh', 'scripts/smoke-test.sh')
 
 
@@ -70,18 +70,22 @@ Run it in Azure Cloud Shell (Bash) from any browser, or any Bash terminal with A
 The Mentra install command unpacks this package into ~/mentra-install/packages/VERSION, links it as
 ~/mentra-install/mentra-private-cloud, and starts guided setup.
 
-Guided setup is one command. Run it again at any time to continue an interrupted install, finish after a
-DNS or admin handoff, or upgrade to a newer package:
+Guided setup is one command. Run it again at any time to continue an interrupted install, or to finish
+after a DNS or admin handoff:
 
   ~/mentra-install/mentra-private-cloud/setup.sh
+
+To upgrade, run the install command from the documentation again: it downloads the new release and
+starts its guided setup, which previews the change and asks before upgrading.
 
 It creates the Microsoft sign-in apps, previews the Azure resources with Azure what-if, installs, adds
 DNS records when the zone is in Azure, verifies the deployment and creates the administrator key.
 Signing keys and the administrator key are created in your Azure Key Vault; nothing secret is stored here.
-Setup state (non-secret) is kept in ~/mentra-install/mentra-state.
+Setup state (non-secret) is kept in ~/mentra-install/mentra-state. Keep Cloud Shell's storage mounted;
+if the folder is lost, run the install command with the same answers and setup continues the deployment.
 
 Teams meeting creation is optional:  setup.sh configure-teams
-Automation:  setup.sh --yes --config answers.json   (see deployment.config.example.json)
+Automation:  setup.sh --yes --config answers.json --employees EMAIL,GROUP   (start from answers.example.json)
 Advanced steps remain available:  setup.sh --help
 Read release.json and verify the archive checksum and publisher attestations before executing.
 '''
