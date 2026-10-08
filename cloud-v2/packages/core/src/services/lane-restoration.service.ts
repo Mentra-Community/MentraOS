@@ -6,6 +6,8 @@ import {
   type LaneRestorationList,
   type LaneOverviewList,
   laneActivitySchema,
+  laneRepairStatusSchema,
+  type LaneRepairStatus,
 } from "../types/lane-restoration.types"
 import {frameworkBindingSchema} from '../types/framework-version.types'
 import {frameworkIdentitySchema} from '../types/framework-request.types'
@@ -29,6 +31,10 @@ export const laneOverviewFields = {
   'snapshot.hostId': 1, 'snapshot.observedAt': 1,
   'snapshot.lanes.id': 1, 'snapshot.lanes.platform': 1, 'snapshot.lanes.state': 1,
   'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.glasses.model': 1, 'snapshot.lanes.activity': 1,
+  'snapshot.restoration.schemaVersion': 1, 'snapshot.restoration.attempts.executionId': 1,
+  'snapshot.restoration.attempts.interruptionId': 1, 'snapshot.restoration.attempts.laneId': 1,
+  'snapshot.restoration.attempts.state': 1, 'snapshot.restoration.attempts.current': 1,
+  'snapshot.restoration.attempts.startedAt': 1, 'snapshot.restoration.attempts.finishedAt': 1,
   'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.deployment': 1,
   frameworkHistory: {$slice: -1}, receivedAt: 1, deploymentObservation: 1, deploymentReceivedAt: 1, _id: 0,
 } as const
@@ -67,12 +73,18 @@ const currentSnapshotSchema = z.object({
   })).max(100),
   frameworkBinding: frameworkBindingSchema.optional(), frameworkAcceptedAt: z.string().datetime({offset: true}).optional(),
   deployment: frameworkDeploymentSchema.optional(),
+  restoration: z.object({schemaVersion: z.literal(1), attempts: z.array(laneRepairStatusSchema).max(100)}).optional(),
 }).superRefine((snapshot, ctx) => {
   if (new Set(snapshot.lanes.map(lane => lane.id)).size !== snapshot.lanes.length)
     ctx.addIssue({code: 'custom', message: 'Duplicate lane identity'})
   if ((snapshot.frameworkBinding === undefined) !== (snapshot.frameworkAcceptedAt === undefined))
     ctx.addIssue({code: 'custom', message: 'Accepted framework requires its recorded acceptance time'})
 })
+function repairForLane(lane: {id: string; activity?: z.infer<typeof laneActivitySchema>}, attempts: LaneRepairStatus[] = []) {
+  if (lane.activity?.owner.kind !== 'fixer') return undefined
+  const matches = attempts.filter(attempt => attempt.executionId === lane.activity!.owner.id && attempt.laneId === lane.id)
+  return matches.length === 1 ? laneRepairStatusSchema.parse(matches[0]) : undefined
+}
 /** Controller snapshots are observations, never permission to resume or start a repair agent. */
 export class LaneRestorationService {
   constructor(
@@ -85,12 +97,15 @@ export class LaneRestorationService {
       const parsed = currentSnapshotSchema.safeParse(row.snapshot)
       if (!parsed.success || !Number.isFinite(row.receivedAt?.getTime()))
         throw new TestRunError(503, 'Stored current lane observation is unavailable.')
-      const {hostId, observedAt, lanes, frameworkBinding, frameworkAcceptedAt, deployment} = parsed.data
+      const {hostId, observedAt, lanes, frameworkBinding, frameworkAcceptedAt, deployment, restoration} = parsed.data
       const updater = row.deploymentObservation ? frameworkDeploymentSchema.parse(row.deploymentObservation) : undefined
       const latestDeployment = updater ?? deployment
       return {hostId, observedAt, receivedAt: row.receivedAt.toISOString(),
-        lanes: lanes.map(({glasses, ...lane}) => ({...lane,
-          ...(glasses ? {glassesModels: [...new Set(glasses.map(value => value.model))].sort()} : {})})),
+        lanes: lanes.map(({glasses, ...lane}) => {
+          const repair = repairForLane(lane, restoration?.attempts)
+          return {...lane, ...(repair ? {repair} : {}),
+            ...(glasses ? {glassesModels: [...new Set(glasses.map(value => value.model))].sort()} : {})}
+        }),
         ...(frameworkBinding ? {frameworkBinding, frameworkAcceptedAt} : {}),
         ...(row.frameworkHistory?.length ? {frameworkCurrentInterval: frameworkHistoryEntrySchema.parse(row.frameworkHistory.at(-1))} : {}),
         ...(latestDeployment ? {deployment: latestDeployment, deploymentReceivedAt:
@@ -116,9 +131,12 @@ export class LaneRestorationService {
         hostId,
         observedAt,
         receivedAt: row.receivedAt.toISOString(),
-        lanes: lanes.map(({id, platform, state, dispatchMode, glasses, activity}) => ({id, platform, state, dispatchMode,
-          ...(glasses ? {glassesModels: [...new Set(glasses.map(value => value.model))].sort()} : {}),
-          ...(activity ? {activity} : {})})),
+        lanes: lanes.map(({id, platform, state, dispatchMode, glasses, activity}) => {
+          const repair = repairForLane({id, activity}, restoration?.attempts)
+          return {id, platform, state, dispatchMode,
+            ...(glasses ? {glassesModels: [...new Set(glasses.map(value => value.model))].sort()} : {}),
+            ...(activity ? {activity} : {}), ...(repair ? {repair} : {})}
+        }),
         restoration: restoration ?? null,
         ...(frameworkBinding ? {frameworkBinding, frameworkAcceptedAt} : {}),
         frameworkHistory: (row.frameworkHistory ?? []).map((value) => frameworkHistoryEntrySchema.parse(value)),

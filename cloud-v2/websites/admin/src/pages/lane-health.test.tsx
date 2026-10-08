@@ -3,7 +3,7 @@ import {renderToStaticMarkup} from "react-dom/server";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
 import {FrameworkHealth, LaneHealthHost, LaneHealthSection, laneOverviewQuery} from "./lane-health"
 import {SystemHealthPage} from "./system-health";
-import type {LaneRestorationHost} from "../../../../packages/core/src/types/lane-restoration.types";
+import type {LaneRepairStatus, LaneRestorationHost} from "../../../../packages/core/src/types/lane-restoration.types";
 
 const now = Date.parse("2026-10-06T03:00:00Z"), at = new Date(now).toISOString();
 const host: LaneRestorationHost = {hostId: "mini-controller", observedAt: at, receivedAt: at, restoration: null,
@@ -167,3 +167,31 @@ test('stale owner context is explicitly historical and cannot link to a current 
   expect(html).not.toContain('/?testRun=')
   expect(html).toContain('No glasses')
 })
+
+const repair: LaneRepairStatus = {executionId: 'fixer:actual', interruptionId: 'repair:mac:79', laneId: 'mini-mac',
+  state: 'working', current: true, startedAt: at, finishedAt: null};
+const repairHost = {...host, lanes: [{...host.lanes[0], state: 'out-of-service',
+  activity: {generation: 80, owner: {id: repair.executionId, kind: 'fixer' as const}}, repair}]};
+
+test('halted repair custody is explicit and never implies that an agent is running', () => {
+  const html = renderToStaticMarkup(<LaneHealthHost host={{...repairHost, lanes: [{...repairHost.lanes[0],
+    repair: {...repair, state: 'halted', current: false, finishedAt: at}}]}} fresh />);
+  for (const text of ['Out of service', 'Repair custody', 'Repair halted', 'Generation 80', repair.executionId])
+    expect(html).toContain(text);
+  expect(html).not.toContain('Repair running');
+  expect(html).not.toContain('State repair');
+});
+
+test('repair running requires the exact active invocation and a fresh controller observation', () => {
+  expect(renderToStaticMarkup(<LaneHealthHost host={repairHost} fresh />)).toContain('Repair running');
+  for (const changed of [undefined, {...repair, startedAt: null}, {...repair, finishedAt: at}, {...repair, current: false},
+    {...repair, executionId: 'fixer:foreign'}, {...repair, laneId: 'another-lane'}]) {
+    const html = renderToStaticMarkup(<LaneHealthHost host={{...repairHost, lanes: [{...repairHost.lanes[0], repair: changed}]}} fresh />);
+    expect(html).toContain('Repair execution unknown');
+    expect(html).not.toContain('Repair running');
+  }
+  const stale = renderToStaticMarkup(<LaneHealthHost host={repairHost} fresh={false} />);
+  expect(stale).toContain('Last reported owner');
+  expect(stale).toContain('Repair execution unknown');
+  expect(stale).not.toContain('Repair running');
+});
