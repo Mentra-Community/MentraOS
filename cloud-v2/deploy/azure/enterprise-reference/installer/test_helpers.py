@@ -35,8 +35,7 @@ class HelperTests(unittest.TestCase):
 from pathlib import Path
 p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
 assert 'private-value' not in a
-if a[:3]==['acr','repository','list']: print('[]')
-elif a[:2]==['acr','show']: print('/subscriptions/test/registries/test')
+if a[:2]==['acr','show']: print('/subscriptions/test/registries/test')
 elif a[:1]==['rest']:
  d=json.loads(Path(a[a.index('--body')+1][1:]).read_text())
  assert d['source']['registryUri']=='mirror.example.com'
@@ -355,26 +354,38 @@ print('ERROR: (Forbidden) Client address is not authorized. Inner error: {"code"
         self.assertNotEqual((store / 'mentra-jwt-public-key').read_text(), 'from-an-interrupted-run')
         self.assertEqual(len(list(store.iterdir())), 5)
 
-    def test_image_import_waits_for_a_new_registry_to_resolve(self):
+    def import_with(self, fake):
         self.env.update(HELPER_TEST_DIRECTORY=str(self.path), MENTRA_ACR_DNS_RETRY_SECONDS='0', TMPDIR=str(self.path))
-        self.executable('az', '''import json,os,sys
-from pathlib import Path
-p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
-if a[:3]==['acr','repository','list']:
- n=p/'lookups';count=int(n.read_text()) if n.exists() else 0;n.write_text(str(count+1))
- if count<2:print("ERROR: Could not connect to the registry login server 'x.azurecr.io'.",file=sys.stderr);sys.exit(1)
- print('[]')
-elif a[:2]==['acr','import']:(p/'imported').touch()
-elif a[:3]==['acr','repository','show']:print('sha256:'+'a'*64)
-else:sys.exit(9)
-''')
+        self.executable('az', 'import json,os,sys\nfrom pathlib import Path\np=Path(os.environ["HELPER_TEST_DIRECTORY"]);a=sys.argv[1:]\n'
+                        'with (p/"calls").open("a") as f:f.write(json.dumps(a)+"\\n")\n' + fake)
         result = subprocess.run(['bash', str(ROOT / 'scripts/import-runtime-image.sh'), 'testregistry',
                                  'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64, 'release-1'],
                                 env=self.env, text=True, capture_output=True)
+        calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()]
+        return result, calls
+
+    def test_a_new_registry_is_imported_into_without_resolving_its_address(self):
+        result, calls = self.import_with('if a[:2]==["acr","import"]:pass\nelse:print("ERROR: Could not connect to the registry login server",file=sys.stderr);sys.exit(1)\n')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.path / 'lookups').read_text(), '3')
-        self.assertTrue((self.path / 'imported').exists())
-        self.assertFalse(list(self.path.glob('mentra-acr-list.*')))
+        self.assertEqual(result.stdout.strip(), 'testregistry.azurecr.io/mentra-cloud-enterprise@sha256:' + 'a' * 64)
+        self.assertEqual([c[:2] for c in calls], [['acr', 'import']])
+        self.assertFalse(list(self.path.glob('mentra-acr-errors.*')))
+
+    def test_a_rerun_checks_the_existing_tag_and_waits_for_the_address(self):
+        for digest, code in (('sha256:' + 'a' * 64, 0), ('sha256:' + 'b' * 64, 1)):
+            with self.subTest(digest=digest):
+                (self.path / 'calls').unlink(missing_ok=True)
+                (self.path / 'lookups').unlink(missing_ok=True)
+                fake = ('if a[:2]==["acr","import"]:print("ERROR: (Conflict) Tag mentra-cloud-enterprise:release-1 already exists in target registry.",file=sys.stderr);sys.exit(1)\n'
+                        'elif a[:3]==["acr","repository","show"]:\n'
+                        ' n=p/"lookups";k=int(n.read_text()) if n.exists() else 0;n.write_text(str(k+1))\n'
+                        ' if k<2:print("ERROR: Could not connect to the registry login server",file=sys.stderr);sys.exit(1)\n'
+                        f' print("{digest}")\nelse:sys.exit(9)\n')
+                result, calls = self.import_with(fake)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual((self.path / 'lookups').read_text(), '3')
+                if code:
+                    self.assertIn('already points to another digest', result.stderr)
 
     def test_image_import_stops_on_other_registry_errors(self):
         self.env.update(HELPER_TEST_DIRECTORY=str(self.path), MENTRA_ACR_DNS_RETRY_SECONDS='0', TMPDIR=str(self.path))
