@@ -682,6 +682,9 @@ def ensure_group(config, state, checks=None):
 
 def install(args, directory, config, state):
     # Returns the resulting status; signing keys are created in Key Vault by deploy.sh.
+    if state['phase'] == 'deployed' and (not config['workspaceHostname'] or state.get('domainVerified')):
+        # The final deployment already finished; only its verification remained.
+        return verify(args, directory, config, state)
     checks = preflight(config, require_identity=True)
     checkpoint(directory, state, state['phase'], checks=checks)
     run(['bash', str(ROOT / 'scripts/deploy.sh'), '--validate-only', str(directory / 'deployment.config.json')],
@@ -712,7 +715,7 @@ def verify(args, directory, config, state):
         raise SetupError('No deployment outputs saved. Run resume first.')
     if config['workspaceHostname'] and (not state.get('domainVerified') or origin != 'https://' + config['workspaceHostname']):
         raise SetupError('Final customer domain is not deployed yet. Complete DNS and run resume --dns-ready.')
-    run(['bash', str(ROOT / 'scripts/smoke-test.sh'), origin], env=environment(config))
+    run(['bash', str(ROOT / 'scripts/smoke-test.sh'), origin], env=environment(config), explain=True)
     # Azure resource administrators need not have Entra license-read rights.
     # Check when possible, but report an unknown result rather than blocking
     # working Core/guest joining or interpreting permission errors as no license.

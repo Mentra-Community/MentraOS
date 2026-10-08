@@ -269,20 +269,23 @@ az deployment group create \
   --query properties.provisioningState \
   --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
 
-# ARM completion precedes Container Apps readiness. Wait for the deployed Core
-# revision before probing its report token or claiming the storage upgrade works.
-CORE_READY=false
-for attempt in $(seq 1 30); do
-  if az containerapp show --name "$CORE_NAME" --resource-group "$RESOURCE_GROUP" --output json | jq -e '
-    .properties | (.latestRevisionName != null and .latestRevisionName != "" and
-    .latestRevisionName == .latestReadyRevisionName)
-  ' >/dev/null; then
-    CORE_READY=true
-    break
-  fi
-  sleep 10
+# ARM completion precedes Container Apps readiness. Wait until both services run
+# their new revisions; until then the previous Runtime still serves the old
+# manifest (for example the Azure address instead of the custom one).
+for app in "$CORE_NAME" "$(jq -r .runtimeName "$CONFIG")"; do
+  READY=false
+  for attempt in $(seq 1 "${MENTRA_READY_ATTEMPTS:-60}"); do
+    if az containerapp show --name "$app" --resource-group "$RESOURCE_GROUP" --output json | jq -e '
+      .properties | (.latestRevisionName != null and .latestRevisionName != "" and
+      .latestRevisionName == .latestReadyRevisionName)
+    ' >/dev/null; then
+      READY=true
+      break
+    fi
+    sleep 10
+  done
+  [[ "$READY" == true ]] || { printf '%s revision did not become ready. Check its revision logs in the Azure portal, then run setup again.\n' "$app" >&2; exit 1; }
 done
-[[ "$CORE_READY" == true ]] || { printf 'Core revision did not become ready\n' >&2; exit 1; }
 
 WORKSPACE="$(az deployment group show \
   --name "$DEPLOYMENT_NAME" \
