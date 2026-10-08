@@ -4,6 +4,7 @@ import {renderToStaticMarkup} from "react-dom/server"
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query"
 import {
   FrameworkRunPage,
+  runFailureSummary,
   FrameworkRunsPage,
   RoutineCatalogCard,
   RoutineCatalogList,
@@ -530,6 +531,9 @@ test("routine lifecycle rows report real actions without video and keep failures
   expect(teardown).not.toContain("0s")
   expect(teardown).toContain("lost-ownership")
   expect(teardown).toContain("Fixture removal failed")
+  expect(html).toContain("Teardown: Fixture removal failed");
+  expect(html).toContain("Go to failure");
+  expect(teardown).toContain('id="run-failure-teardown-0"');
   for (const phase of [setup, teardown]) {
     expect(phase).not.toContain("<video")
     expect(phase).not.toContain("Watch this step")
@@ -1004,4 +1008,22 @@ test("history search matches PR identities and SHA prefixes while retaining memb
   const suite = {kind: "suite", suiteId: "s", channel: "pr", trigger: "pr", build: run.build, startedAt: run.startedAt, outcome: "running", expectedCount: 2, passed: 0, failedCount: 0, rerunCount: 0, lanes: []} as const;
   expect(matchesHistorySearch(suite as any, [], {...EMPTY_ROUTINE_FILTERS, search: "#698"})).toBe(true);
   expect(matchesHistorySearch(suite as any, [], {...EMPTY_ROUTINE_FILTERS, search: "#698", platform: "android"})).toBe(false);
+});
+
+
+test("failure summary follows the execution verdict and stays brief", () => {
+  const run = {result: {failures: [
+    {phase: "evidence", actionId: "upload", message: "Upload failed"},
+    {phase: "test", actionId: "connect", message: "Meeting did not connect.\nDetailed diagnostic"},
+    {phase: "setup", actionId: "prepare", message: "Software preparation timed out"},
+  ], teardown: {unavailableResources: [{cause: "Camera is still active"}]}}} as any;
+  expect(runFailureSummary(run, "failed", "failed")).toEqual({phase: "test", actionId: "connect", reason: "Test: Meeting did not connect.", target: "run-failure-test-0"});
+  expect(runFailureSummary(run, "setup-failed", "failed")?.reason).toBe("Setup: Software preparation timed out");
+  expect(runFailureSummary(run, "teardown-failed", "failed")).toMatchObject({reason: "Teardown: Camera is still active", target: "run-phase-teardown"});
+  expect(runFailureSummary(run, "pass", "failed")?.reason).toBe("Evidence: Upload failed");
+  expect(runFailureSummary(run, "pass", "complete")).toBeNull();
+  run.result.failures = [];
+  expect(runFailureSummary(run, "failed", "complete")?.reason).toBe("Test: Test failed. No detailed reason was recorded.");
+  run.result.failures = [{phase: "test", actionId: "connect", message: "x".repeat(300)}];
+  expect(runFailureSummary(run, "failed", "complete")?.reason.length).toBe(164);
 });
