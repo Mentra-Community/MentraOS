@@ -8,21 +8,7 @@ import {requestInputDigest} from './test-request.service';
 import {compatibleRoutineLane, routineJobInputDigest, routinePortableRequirements} from './routine-job.service';
 import {TestHostStateService, type ReceivedTestHostState} from './test-host-state.service';
 import {TestRunError} from './test-result-error';
-import {pendingRequestFilter, cancelledRequestFilter, hostCancellationDeliveryFilter, requestActivity} from './test-request-activity';
-
-const freshHost = (host: ReceivedTestHostState, now: number) => Number.isFinite(Date.parse(host.receivedAt)) &&
-  now >= Date.parse(host.receivedAt) && now - Date.parse(host.receivedAt) <= 120_000;
-/** Only the reporting controller can associate current custody with a request. */
-export function currentRequestCustody(requestId: string, hosts: ReceivedTestHostState[], now: number) {
-  return hosts.filter(host => freshHost(host, now)).flatMap(host => host.lanes.flatMap(lane => {
-    const owner = lane.activity?.owner;
-    if (!owner || ['idle', 'offline'].includes(lane.state)) return [];
-    const matches = owner.kind === 'run' && owner.id === requestId && owner.requestId === requestId ||
-      owner.kind === 'fixer' && host.restoration?.attempts.some(attempt => attempt.current && attempt.requestId === requestId &&
-        attempt.laneId === lane.id && attempt.executionId === owner.id);
-    return matches ? [{hostId: host.hostId, laneId: lane.id, ownerId: owner.id, ownerKind: owner.kind}] : [];
-  }));
-}
+import {pendingRequestFilter} from './test-request-activity';
 
 /** Read-only projection; compatible hardware is distinct from current acceptance. */
 function projectPendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostState[], now: number): PendingQueueItem {
@@ -42,7 +28,7 @@ function projectPendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostS
     return {...base, reason: 'Stored request identity is unavailable.'};
   const selected = selection.data;
   const item: PendingQueueItem = {...base, routineId: selected.routineId, platform: selected.platform, build: selected.build,
-    reason: row.fleetCancellation?.reason ?? row.preparation?.reason ?? row.fleetDispatch?.error,
+    reason: row.preparation?.reason ?? row.fleetDispatch?.error,
     ...(row.fleetBinding ? {assignment: {hostId: row.fleetBinding.hostId, laneId: row.fleetBinding.laneId}} : {})};
   let requirements;
   if (row.fleetPreparation) {
@@ -72,12 +58,6 @@ export function pendingQueueItem(row: StoredRoutineJob, hosts: ReceivedTestHostS
   catch {return {requestId: row.requestId, state: row.state, compatibilityKnown: false,
     compatibleLanes: [], platformCandidates: [], reason: 'Stored request metadata is unavailable.'};}
 }
-export function cancellationQueueItem(row: StoredRoutineJob & {cancellationAcknowledged?: boolean}, hosts: ReceivedTestHostState[], now: number) {
-  const item = pendingQueueItem(row, hosts, now), custody = currentRequestCustody(row.requestId, hosts, now);
-  return {...item, reason: row.fleetCancellation?.reason ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ?? item.reason,
-    cancellation: {acknowledged: row.cancellationAcknowledged === true,
-    cleanupPending: !!row.fleetBinding && !row.dispatchCompletion || custody.length > 0, custody}};
-}
 export class TestPendingQueueService {
   constructor(private readonly hosts = new TestHostStateService(), private readonly now = Date.now) {}
   async list(cursor?: string): Promise<PendingQueuePage> {
@@ -89,26 +69,7 @@ export class TestPendingQueueService {
       TestRequestModel.countDocuments(filter).read('primary').readConcern('majority'), this.hosts.list(),
     ]);
     const now = this.now(), page = rows.slice(0, 50);
-    const currentIds = [...new Set(hosts.filter(host => freshHost(host, now)).flatMap(host => [
-      ...host.lanes.flatMap(lane => lane.activity?.owner.kind === 'run' ? [lane.activity.owner.requestId!] : []),
-      ...(host.restoration?.attempts.filter(attempt => attempt.current && attempt.requestId).map(attempt => attempt.requestId!) ?? []),
-    ]))].filter(requestId => currentRequestCustody(requestId, hosts, now).length > 0);
-    // Acknowledged historical rows stay in history. Keep outstanding delivery, missing
-    // fleet cleanup receipts and exact current controller custody visible separately.
-    const [owned, outstanding] = await Promise.all([
-      currentIds.length ? TestRequestModel.find({state: {$ne: 'terminal'}, ...cancelledRequestFilter, requestId: {$in: currentIds}})
-        .sort({requestId: 1}).limit(51).read('primary').readConcern('majority').lean() : [],
-      TestRequestModel.find({state: {$ne: 'terminal'}, ...(currentIds.length ? {requestId: {$nin: currentIds}} : {}),
-        $or: [hostCancellationDeliveryFilter(),
-          {fleetCancellation: {$exists: true}, fleetBinding: {$exists: true}, dispatchCompletion: {$exists: false}}]})
-        .sort({requestId: 1}).limit(51).read('primary').readConcern('majority').lean(),
-    ]);
-    // Prioritize current custody before delivery-only cancellations. A concurrent
-    // acknowledgement cannot bury the currently held request behind old receipts.
-    const cancellationRows = [...owned, ...outstanding];
     return {items: page.map(row => pendingQueueItem(row as unknown as StoredRoutineJob, hosts, now)), total,
-      cancellations: cancellationRows.slice(0, 50).filter(row => requestActivity(row) === 'cancellation')
-        .map(row => cancellationQueueItem(row as unknown as StoredRoutineJob, hosts, now)), cancellationsTruncated: cancellationRows.length > 50,
       ...(rows.length > 50 ? {nextCursor: page.at(-1)!.requestId} : {}), observedAt: new Date(now).toISOString()};
   }
 }

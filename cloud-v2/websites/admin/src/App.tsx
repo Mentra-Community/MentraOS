@@ -15,6 +15,7 @@ import {
 import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
 import {readLaneSelection} from "./lib/lane-links";
+import {readSystemHealthTab, systemHealthLocation, type SystemHealthTab} from "./lib/system-health-links";
 import { RecordingVideo } from "./components/recording-video";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
@@ -175,7 +176,7 @@ const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
 const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
-const initialRestoration = new URLSearchParams(window.location.search).get("restoration") === "1";
+const initialHealthTab = readSystemHealthTab(window.location.search);
 const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
 
 function AdminPage() {
@@ -186,7 +187,7 @@ function AdminPage() {
   );
   const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
-  const [restoration, setRestoration] = useState(initialRestoration);
+  const [healthTab, setHealthTab] = useState(initialHealthTab);
   const [laneSelection, setLaneSelection] = useState(() => readLaneSelection(window.location.search));
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
@@ -227,7 +228,7 @@ function AdminPage() {
   useEffect(() => {
     const restore = () => {
       const search = new URLSearchParams(window.location.search);
-      setRestoration(search.get("restoration") === "1");
+      setHealthTab(readSystemHealthTab(window.location.search));
       setLaneSelection(readLaneSelection(window.location.search));
       if (search.get("systemHealth") === "1") { setPage("system-health"); return; }
       const rerun = readRerunId(window.location.search);
@@ -245,6 +246,12 @@ function AdminPage() {
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
+
+  function selectHealthTab(tab: SystemHealthTab) {
+    setHealthTab(tab);
+    setLaneSelection(null);
+    window.history.pushState(null, "", systemHealthLocation(window.location.href, tab));
+  }
 
   function selectTestRun(selection: TestRunLink | null, replace = false) {
     setRerunId(null);
@@ -393,9 +400,9 @@ function AdminPage() {
       activeKey={page}
       onSelect={key => {
         setPage(key as AdminPageKey);
-        setRestoration(false);
+        setHealthTab("lanes");
         const location = new URL(window.location.href);
-        for (const param of ["systemHealth", "restoration", "hostId", "laneId", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
+        for (const param of ["systemHealth", "healthTab", "restoration", "hostId", "laneId", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
@@ -466,7 +473,7 @@ function AdminPage() {
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
       <div className={["test-runs", "routine-catalog", "system-health"].includes(page) ? "testing-workspace" : undefined}>
       {page === "test-runs" ? <SystemHealthSummary /> : null}
-      {page === "system-health" ? <SystemHealthPage restoration={restoration} lane={laneSelection} /> : null}
+      {page === "system-health" ? <SystemHealthPage tab={healthTab} lane={laneSelection} onTabChange={selectHealthTab} /> : null}
       {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
       {page === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
       {page === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}

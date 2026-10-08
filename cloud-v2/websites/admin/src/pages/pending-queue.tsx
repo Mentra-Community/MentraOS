@@ -16,11 +16,10 @@ export function PendingQueueSection() {
   const query = useQuery({queryKey: ['test-pending-queue', cursor], refetchInterval: 15_000,
     queryFn: () => api<PendingQueuePage>(`/api/admin/test-runs/pending-queue${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`)});
   const data = query.data;
-  const cancellations = data?.cancellations ?? [];
   return <section className={TESTING_PANEL}>
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Pending queue{data ? ` · ${data.total}` : ''}</h2>
       <TestingButton onClick={() => {void query.refetch();}}>Refresh queue</TestingButton></div>
-    <p className="mt-2 text-sm text-[#68746d]">Waiting and active requests, excluding cancelled jobs.</p>
+    <p className="mt-2 text-sm text-[#68746d]">Waiting to start.</p>
     {query.isError ? <p className="mt-4 text-sm text-[#a64235]">Pending queue could not refresh. Lane availability is unknown.</p> : query.isPending ?
       <LoadingIndicator label="Loading pending queue" className="mt-4" /> : <>
       {!data?.items.length ? <p className="mt-4 text-sm text-[#68746d]">{cursor ? 'No requests remain on this page.' : 'No pending requests.'}</p> :
@@ -41,21 +40,6 @@ export function PendingQueueSection() {
         </article>)}</div>}
       <div className="mt-3 flex gap-2">{cursor && <TestingButton onClick={() => setCursor(undefined)}>First page</TestingButton>}
         {data?.nextCursor && <TestingButton onClick={() => setCursor(data.nextCursor)}>Next page</TestingButton>}</div>
-      {!!cancellations.length && <div className="mt-5 border-t border-[#e0e4de] pt-4">
-        <h3 className="font-semibold">Cancellation and cleanup</h3>
-        <p className="mt-1 text-sm text-[#68746d]">Waiting for cancellation acknowledgement or cleanup.</p>
-        {cancellations.map(item => <article key={item.requestId} className="mt-3">
-          <a className={TESTING_LINK} href={`/?testRun=${encodeURIComponent(item.requestId)}`}>{item.routineId ?? item.requestId}</a>
-          <span className="ml-2 text-sm">{item.cancellation?.cleanupPending ? 'Cleanup pending' : 'Cancellation acknowledgement pending'}</span>
-          {item.cancellation?.cleanupPending && !item.cancellation.acknowledged && <span className="ml-2 text-sm">Cancellation acknowledgement pending</span>}
-          {item.reason && <p className="mt-1 text-sm text-[#68746d]">{item.reason}</p>}
-          {item.cancellation?.acknowledged && <p className="mt-1 text-xs text-[#68746d]">Cancellation acknowledged</p>}
-          {item.cancellation?.custody.map(owner => <p key={`${owner.hostId}/${owner.laneId}`} className="mt-1 text-sm">
-            Current {readableLaneIdentity(owner.ownerKind)} custody: <a className={TESTING_LINK} href={laneHistoryHref(owner.hostId, owner.laneId)}>{readableLaneIdentity(owner.hostId)} · {readableLaneIdentity(owner.laneId)}</a>
-          </p>)}
-        </article>)}
-        {data?.cancellationsTruncated && <p className="mt-2 text-sm text-[#68746d]">Showing the first 50 cancellations requiring attention.</p>}
-      </div>}
     </>}
   </section>;
 }
