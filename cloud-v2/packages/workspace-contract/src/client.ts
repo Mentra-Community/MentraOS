@@ -1,10 +1,21 @@
 /** Signed client for Core's internal workspace service API (`/api/internal/workspaces/*`). */
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
-import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, USER_NOT_FOUND_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
+import {
+  HISTORY_WINDOW_EXCEEDED_ERROR,
+  INVALID_TOKEN_ERROR,
+  MAX_MEMBERSHIP_AS_OF_QUERIES,
+  SERVICE_UNAUTHORIZED_ERROR,
+  USER_NOT_FOUND_ERROR,
+  WORKSPACE_NOT_FOUND_ERROR,
+} from "./types"
 import type {
   AuthorizeRequest,
   AuthorizeResponse,
+  MembershipAsOfBatchResponse,
+  MembershipAsOfQuery,
+  MembershipAsOfResponse,
   MembershipCheckEntry,
+  MembershipHistoryResponse,
   PrincipalResponse,
   WorkspaceChangeEvent,
   WorkspaceSummary,
@@ -22,6 +33,8 @@ export type CoreWorkspaceClientErrorCode =
   | "unauthorized"
   /** This service is not allowed to call the endpoint (HTTP 403). */
   | "forbidden"
+  /** A history or as-of request asked about a time before Core's lookback (HTTP 400 `history_window_exceeded`). */
+  | "history_window_exceeded"
   /** Core rejected the request itself (other 4xx). */
   | "bad_request"
   /** The response was not valid JSON or did not have the documented shape. */
@@ -63,6 +76,24 @@ export interface CoreWorkspaceClient {
    * first use). Null only when Core says no account has it verified (HTTP 404 `user_not_found`).
    */
   resolveEmail(email: string): Promise<string | null>
+  /**
+   * Fleet only. The membership generations `mentraUserId` had in `workspaceId` that were in effect at
+   * or after `since` (an ISO 8601 time; default: the start of Core's lookback), oldest first, each
+   * with the roles held during it. Asking about a time before the lookback throws
+   * `history_window_exceeded`.
+   */
+  membershipHistory(
+    workspaceId: string,
+    mentraUserId: string,
+    options?: {since?: string},
+  ): Promise<MembershipHistoryResponse>
+  /** Fleet only. The membership and role `mentraUserId` held in `workspaceId` at `at` (default: now), or none. */
+  membershipAsOf(query: MembershipAsOfQuery): Promise<MembershipAsOfResponse>
+  /**
+   * Fleet only. {@link membershipAsOf} for up to 100 queries in one call, answered in the order asked.
+   * One query before the lookback fails the whole call with `history_window_exceeded`.
+   */
+  membershipsAsOf(queries: MembershipAsOfQuery[]): Promise<MembershipAsOfBatchResponse>
 }
 
 export interface CoreWorkspaceClientOptions {
@@ -178,7 +209,38 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
       return new CoreWorkspaceClientError(code, message, status)
     }
     if (status === 403) return new CoreWorkspaceClientError("forbidden", message, status)
+    if (status === 400 && error === HISTORY_WINDOW_EXCEEDED_ERROR) {
+      return new CoreWorkspaceClientError("history_window_exceeded", message, status)
+    }
     return new CoreWorkspaceClientError("bad_request", message, status)
+  }
+
+  function checkTime(path: string, value: unknown, what: string): string {
+    if (typeof value !== "string" || Number.isNaN(Date.parse(value))) throw badResponse(path, `${what} is not a time`)
+    return value
+  }
+
+  function checkRoles(path: string, value: unknown): void {
+    if (!Array.isArray(value) || value.length === 0) throw badResponse(path, "a membership has no roles")
+    for (const interval of value) {
+      const checked = checkRecord(path, interval, "a role interval")
+      if (typeof checked.role !== "string" || typeof checked.authorizationRevision !== "number") {
+        throw badResponse(path, "a role interval has no role or authorizationRevision")
+      }
+      checkTime(path, checked.from, "a role interval's from")
+    }
+  }
+
+  function checkAsOfResult(path: string, value: unknown): void {
+    const result = checkRecord(path, value, "an as-of result")
+    if (typeof result.workspaceId !== "string" || typeof result.mentraUserId !== "string") {
+      throw badResponse(path, "an as-of result has no workspaceId or mentraUserId")
+    }
+    checkTime(path, result.at, "an as-of result's at")
+    if (result.membership === null) return
+    const membership = checkRecord(path, result.membership, "an as-of membership")
+    if (typeof membership.membershipId !== "string") throw badResponse(path, "an as-of membership has no membershipId")
+    checkRoles(path, [membership.role])
   }
 
   return {
@@ -262,6 +324,46 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         throw badResponse(path, "missing mentraUserId")
       }
       return raw.mentraUserId
+    },
+
+    async membershipHistory(workspaceId, mentraUserId, options = {}) {
+      const query = new URLSearchParams({mentraUserId})
+      if (options.since !== undefined) query.set("since", options.since)
+      const path = `${API_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}/memberships/history?${query}`
+      const raw = checkRecord(path, await call("GET", path), "the membership history")
+      checkTime(path, raw.windowStart, "windowStart")
+      if (!Array.isArray(raw.items)) throw badResponse(path, "missing items")
+      for (const item of raw.items) {
+        const generation = checkRecord(path, item, "a membership")
+        if (typeof generation.membershipId !== "string") throw badResponse(path, "a membership has no membershipId")
+        checkTime(path, generation.startedAt, "a membership's startedAt")
+        checkRoles(path, generation.roles)
+      }
+      return raw as unknown as MembershipHistoryResponse
+    },
+
+    async membershipAsOf({workspaceId, mentraUserId, at}) {
+      const query = new URLSearchParams({mentraUserId})
+      if (at !== undefined) query.set("at", at)
+      const path = `${API_PREFIX}/workspaces/${encodeURIComponent(workspaceId)}/memberships/as-of?${query}`
+      const raw = await call("GET", path)
+      checkAsOfResult(path, raw)
+      checkTime(path, (raw as Json).windowStart, "windowStart")
+      return raw as MembershipAsOfResponse
+    },
+
+    async membershipsAsOf(queries) {
+      if (queries.length > MAX_MEMBERSHIP_AS_OF_QUERIES) {
+        throw new RangeError(`membershipsAsOf takes at most ${MAX_MEMBERSHIP_AS_OF_QUERIES} queries`)
+      }
+      const path = `${API_PREFIX}/memberships/as-of`
+      const raw = checkRecord(path, await call("POST", path, {items: queries}), "the as-of answer")
+      checkTime(path, raw.windowStart, "windowStart")
+      if (!Array.isArray(raw.items) || raw.items.length !== queries.length) {
+        throw badResponse(path, "items do not match the queries")
+      }
+      for (const item of raw.items) checkAsOfResult(path, item)
+      return raw as unknown as MembershipAsOfBatchResponse
     },
   }
 }

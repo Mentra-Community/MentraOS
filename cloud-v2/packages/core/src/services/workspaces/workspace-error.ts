@@ -19,6 +19,7 @@ export type WorkspaceErrorCode =
   | "email_unverified"
   | "invitation_expired"
   | "invitation_not_found"
+  | "history_window_exceeded"
 
 const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   not_found: 404,
@@ -33,6 +34,7 @@ const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   email_unverified: 403,
   invitation_expired: 410,
   invitation_not_found: 404,
+  history_window_exceeded: 400,
 }
 
 export class WorkspaceError extends Error {

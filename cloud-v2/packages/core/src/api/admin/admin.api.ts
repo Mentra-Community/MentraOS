@@ -3,7 +3,7 @@ import {Hono, type MiddlewareHandler} from "hono"
 import {organizationCapabilities} from "../../services/workspaces/authorization.service"
 import {listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppEnv} from "../../types/hono.types"
-import {adminFleetApi} from "../fleet/fleet-forwarding"
+import {adminFleetApi, fleetInstalled} from "../fleet/fleet-forwarding"
 import {principalAuth, requireOrganizationCapability} from "../middleware/principal.middleware"
 import reports from "./reports.api"
 import {createRoutineCatalogApi} from "./routine-catalog.api"
@@ -37,7 +37,11 @@ const app = new Hono<AppEnv>()
 app.get("/health", c => c.json({status: "ok", service: "cloud-core-admin"}))
 app.use("*", principalAuth)
 
-/** Who is calling and what they may do here; open to every principal. */
+/**
+ * Who is calling and what they may do here; open to every principal. `fleet.installed` says whether
+ * the optional Fleet integration is configured (the same answer as `/api/client/capabilities`), so
+ * the dashboard knows whether to offer Fleet at all; Fleet itself decides what the caller may see.
+ */
 app.get("/me", async c => {
   const principal = c.get("principal")
   if (!principal) return c.json({error: "unauthorized"}, 401)
@@ -47,6 +51,7 @@ app.get("/me", async c => {
     credential: {credentialId: string; label: string} | null
     organization: {capabilities: OrganizationCapability[]}
     workspaces: PrincipalResponse["workspaces"]
+    fleet: {installed: boolean}
   } = {
     authenticated: true,
     user: principal.kind === "user" ? {mentraUserId: principal.mentraUserId, email: principal.email} : null,
@@ -57,6 +62,7 @@ app.get("/me", async c => {
       capabilities: [...organizationCapabilities(principal)].sort(),
     },
     workspaces: principal.kind === "user" ? await listWorkspacesForUser(principal.mentraUserId) : [],
+    fleet: {installed: fleetInstalled()},
   }
   return c.json(body)
 })

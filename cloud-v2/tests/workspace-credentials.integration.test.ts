@@ -49,6 +49,7 @@ import {
   type Actor,
 } from "../packages/core/src/services/workspaces/workspace.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 
 const MODELS = [
   WorkspaceModel,
@@ -106,16 +107,18 @@ async function addMember(
   fields: Record<string, unknown> = {},
 ) {
   const membershipId = `wm_${nextId()}`
-  await WorkspaceMembershipModel.create({
-    membershipId,
-    workspaceId,
-    mentraUserId,
-    email: `${mentraUserId ?? "pending"}@example.test`,
-    role,
-    status: "active",
-    startedAt: new Date(),
-    ...fields,
-  })
+  await WorkspaceMembershipModel.create(
+    membershipRow({
+      membershipId,
+      workspaceId,
+      mentraUserId,
+      email: `${mentraUserId ?? "pending"}@example.test`,
+      role,
+      status: "active",
+      startedAt: new Date(),
+      ...fields,
+    }),
+  )
   return membershipId
 }
 

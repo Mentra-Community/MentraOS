@@ -20,7 +20,9 @@
  * at the same time end with exactly one owner.
  *
  * Memberships are never deleted: ending one keeps the row as history, and a
- * later re-join is a new row with a new `membershipId`.
+ * later re-join is a new row with a new `membershipId`. Every write that starts
+ * a membership or changes its role appends the role to its `roleHistory` in the
+ * same update, stamped with the workspace revision that write produced.
  */
 
 import {createLogger} from "@mentra/cloud-shared"
@@ -38,7 +40,11 @@ import {ulid} from "ulid"
 import {withTransaction} from "../../connections/mongo.connection"
 import {AccessCredentialModel} from "../../models/access-credential.model"
 import {WorkspaceInvitationModel} from "../../models/workspace-invitation.model"
-import {WorkspaceMembershipModel, type WorkspaceMembershipRow} from "../../models/workspace-membership.model"
+import {
+  WorkspaceMembershipModel,
+  type WorkspaceMembershipEndedReason,
+  type WorkspaceMembershipRow,
+} from "../../models/workspace-membership.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {fail, WorkspaceError, type WorkspaceErrorCode} from "./workspace-error"
@@ -129,17 +135,6 @@ export async function listMembers(workspaceId: string): Promise<MembershipRow[]>
     .lean<MembershipRow[]>()
 }
 
-/**
- * Every membership one person has had in a workspace, oldest first: ended rows are history, and the
- * active one (if any) has no `endedAt`. Only claimed rows can match, so a migrated membership still
- * waiting for its first sign-in belongs to nobody here.
- */
-export async function listMembershipHistory(workspaceId: string, mentraUserId: string): Promise<MembershipRow[]> {
-  // A missing id must not become a `null` filter, which would match every unclaimed row.
-  if (!isId(workspaceId) || !isId(mentraUserId)) return []
-  return WorkspaceMembershipModel.find({workspaceId, mentraUserId}).sort({startedAt: 1, _id: 1}).lean<MembershipRow[]>()
-}
-
 export async function countActiveOwners(workspaceId: string, session?: ClientSession): Promise<number> {
   return WorkspaceMembershipModel.countDocuments({workspaceId, role: "owner", status: "active"}).session(
     session ?? null,
@@ -192,6 +187,7 @@ export async function createWorkspace(actor: Actor & {kind: "user"}, input: {nam
           email: actor.email,
           name: displayName(actor.name),
           role: "owner",
+          roleHistory: [roleEntry("owner", now, 0)],
           status: "active",
           startedAt: now,
         },
@@ -311,7 +307,7 @@ export async function changeRole(
     const updated = await bumpRevision(session, workspaceId, expectedRevision)
     const changed = await WorkspaceMembershipModel.updateOne(
       {membershipId, workspaceId, status: "active", role: fromRole},
-      {$set: {role: toRole}},
+      {$set: {role: toRole}, $push: {roleHistory: roleEntry(toRole, new Date(), updated.authorizationRevision)}},
       {session},
     )
     if (changed.modifiedCount !== 1) fail("membership_changed")
@@ -399,10 +395,16 @@ export async function recoverOwnership(
     if (existing?.role === "owner") return toSummary(workspace)
 
     const updated = await bumpRevision(session, workspaceId, undefined)
+    const now = new Date()
+    const owner = roleEntry("owner", now, updated.authorizationRevision)
     let membershipId: string
     if (existing) {
       membershipId = existing.membershipId
-      await WorkspaceMembershipModel.updateOne({membershipId, status: "active"}, {$set: {role: "owner"}}, {session})
+      await WorkspaceMembershipModel.updateOne(
+        {membershipId, status: "active"},
+        {$set: {role: "owner"}, $push: {roleHistory: owner}},
+        {session},
+      )
     } else {
       membershipId = `wm_${ulid()}`
       await WorkspaceMembershipModel.create(
@@ -412,8 +414,9 @@ export async function recoverOwnership(
             workspaceId,
             mentraUserId: target,
             role: "owner",
+            roleHistory: [owner],
             status: "active",
-            startedAt: new Date(),
+            startedAt: now,
           },
         ],
         {session},
@@ -445,6 +448,18 @@ function toSummary(
     status: row.status as WorkspaceSummary["status"],
     authorizationRevision: row.authorizationRevision ?? 0,
   }
+}
+
+/**
+ * A `roleHistory` entry: `role`, held from `from`, granted by the write that took the workspace to
+ * `authorizationRevision`. The entry lasts until the next one starts or the membership ends.
+ */
+export function roleEntry(
+  role: WorkspaceRole,
+  from: Date,
+  authorizationRevision: number,
+): {role: WorkspaceRole; from: Date; authorizationRevision: number} {
+  return {role, from, authorizationRevision}
 }
 
 export function isId(value: unknown): value is string {
@@ -580,7 +595,8 @@ export async function touchWorkspace(session: ClientSession, workspaceId: string
 /**
  * End a membership, revoke the credentials it created and record the audit
  * event. The caller has already bumped the workspace's revision in the same
- * transaction.
+ * transaction. Ending closes the membership's last `roleHistory` entry at
+ * `endedAt`, so nothing is appended to it.
  */
 export async function endMembership(
   session: ClientSession,
@@ -588,7 +604,7 @@ export async function endMembership(
     workspace: WorkspaceRow
     actor: Actor
     membership: MembershipRow
-    reason: "removed" | "left"
+    reason: Exclude<WorkspaceMembershipEndedReason, "workspace_deleted">
     action: "membership.removed" | "membership.left"
   },
 ): Promise<WorkspaceSummary> {

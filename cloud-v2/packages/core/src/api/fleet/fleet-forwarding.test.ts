@@ -9,13 +9,21 @@
 
 import {createHmac} from "node:crypto"
 import type {CorePrincipal} from "@mentra/workspace-contract"
-import {SERVICE_HEADERS, verifyServiceRequest} from "@mentra/workspace-contract/server"
+import {
+  FORWARDED_PRINCIPAL_HEADERS,
+  SERVICE_HEADERS,
+  verifyForwardedPrincipal,
+  verifyServiceRequest,
+} from "@mentra/workspace-contract/server"
 import {afterAll, afterEach, beforeEach, describe, expect, test} from "bun:test"
 import {Hono} from "hono"
 import type {AppEnv} from "../../types/hono.types"
 import adminApi from "../admin/admin.api"
 import {createApp} from "../app"
-import {clientFleetApi, FLEET_HEADERS} from "./fleet-forwarding"
+import {requestContext} from "../middleware/context.middleware"
+import {clientFleetApi} from "./fleet-forwarding"
+
+const FLEET_HEADERS = FORWARDED_PRINCIPAL_HEADERS
 
 const SECRET = "fleet-secret-for-tests"
 
@@ -216,6 +224,46 @@ describe("what Core sends to Fleet", () => {
     expect(principalSignatureVerifies(call)).toBe(true)
   })
 
+  test("the contract's verifyForwardedPrincipal accepts what Core sends, on both surfaces", async () => {
+    configure()
+    const member = as("member-verify", person(false))
+
+    await phone("/fleet/observations?batch=1", {method: "POST", body: '{"records":[]}'})
+    await admin(member, "/fleet/devices?page=2")
+
+    const verified = calls.map((call) =>
+      verifyForwardedPrincipal(
+        {method: call.method, pathWithQuery: call.pathWithQuery, body: call.body, headers: call.headers},
+        [SECRET],
+      ),
+    )
+    expect(verified).toEqual([
+      {kind: "phone", mentraUserId: "mu_phone", tenantId: "tenant_1", sessionId: "sess_1"},
+      {kind: "user", mentraUserId: "mu_1", email: "person@example.test", emailVerified: true, isOrganizationAdmin: false},
+    ])
+    // Another secret, or a body changed in transit, verifies nothing.
+    const [call] = calls
+    const request = {method: call.method, pathWithQuery: call.pathWithQuery, body: call.body, headers: call.headers}
+    expect(verifyForwardedPrincipal(request, ["another-secret"])).toBeNull()
+    expect(verifyForwardedPrincipal({...request, body: '{"records":[1]}'}, [SECRET])).toBeNull()
+  })
+
+  test("Core's request id goes upstream as x-request-id, and a fresh one when the request has none", async () => {
+    configure()
+    const withId = new Hono<AppEnv>()
+    withId.use("*", async (c, next) => {
+      c.set("reqId", "01CORE-REQUEST-ID")
+      await next()
+    })
+    withId.route("/", root)
+
+    await withId.request("http://localhost/api/client/fleet/devices", {headers: {"x-test-phone": "mu_phone"}})
+    await phone("/fleet/devices")
+
+    expect(calls[0].headers.get("x-request-id")).toBe("01CORE-REQUEST-ID")
+    expect(calls[1].headers.get("x-request-id")).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/)
+  })
+
   test("the body, method and content-type are copied, and the signature covers the body", async () => {
     configure()
     const body = JSON.stringify({name: "café ☕", n: 3})
@@ -249,6 +297,8 @@ describe("what Core sends to Fleet", () => {
 
     const head = await phone("/fleet/devices", {method: "HEAD"})
     expect(head.status).toBe(200)
+    expect(await head.text()).toBe("")
+    expect(head.headers.get("content-type")).toBe("application/json")
     const get = await phone("/fleet/devices", {method: "GET"})
     expect(get.status).toBe(200)
 
@@ -580,6 +630,23 @@ describe("limits and failures", () => {
     expect((await phone("/fleet/devices/1", {method: "DELETE"})).status).toBe(204)
   })
 
+  test("a HEAD answer declaring a body over the cap is not an outage: no body is read for it", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: "16"})
+    // A HEAD answer's content-length describes the body a GET would get (here, a large export).
+    respond = (request) =>
+      request.method === "HEAD"
+        ? new Response(null, {status: 200, headers: {"content-type": "text/csv", "content-length": "1048576"}})
+        : new Response("x".repeat(17), {headers: {"content-type": "text/csv"}})
+
+    const head = await phone("/fleet/exports/devices.csv", {method: "HEAD"})
+    const get = await phone("/fleet/exports/devices.csv")
+
+    expect(head.status).toBe(200)
+    expect(head.headers.get("content-type")).toBe("text/csv")
+    expect(await head.text()).toBe("")
+    expect(get.status).toBe(503)
+  })
+
   test("an upstream 5xx is a 503, never its own answer", async () => {
     configure()
     for (const status of [500, 502, 503, 504]) {
@@ -604,6 +671,18 @@ describe("limits and failures", () => {
     expect(await response.json()).toEqual({error: "fleet_unavailable"})
   })
 
+  test("a 304 is relayed as it is, not taken for a redirect", async () => {
+    configure()
+    respond = () => new Response(null, {status: 304, headers: {"cache-control": "private, max-age=5"}})
+
+    const response = await phone("/fleet/devices")
+
+    expect(response.status).toBe(304)
+    expect(await response.text()).toBe("")
+    expect(response.headers.get("content-type")).toBeNull()
+    expect(response.headers.get("cache-control")).toBe("private, max-age=5")
+  })
+
   test("a redirect is not followed and is a 503", async () => {
     configure()
     for (const status of [301, 302, 303, 307, 308]) {
@@ -621,7 +700,7 @@ describe("limits and failures", () => {
 })
 
 describe("what comes back", () => {
-  test("status, body, content-type and cache-control pass through and nothing else does", async () => {
+  test("status, body, content-type, cache-control, retry-after and x-request-id pass through and nothing else does", async () => {
     configure()
     respond = () =>
       new Response('{"created":true}', {
@@ -629,9 +708,13 @@ describe("what comes back", () => {
         headers: {
           "content-type": "application/json; charset=utf-8",
           "cache-control": "private, max-age=5",
+          "retry-after": "30",
+          "x-request-id": "fleet-request-1",
           "set-cookie": "upstream=1",
           "x-internal-trace": "abc",
           "access-control-allow-origin": "*",
+          etag: '"v1"',
+          location: "/v1/client/devices/1",
         },
       })
 
@@ -641,9 +724,53 @@ describe("what comes back", () => {
     expect(await response.text()).toBe('{"created":true}')
     expect(response.headers.get("content-type")).toBe("application/json; charset=utf-8")
     expect(response.headers.get("cache-control")).toBe("private, max-age=5")
+    expect(response.headers.get("retry-after")).toBe("30")
+    expect(response.headers.get("x-request-id")).toBe("fleet-request-1")
     expect(response.headers.get("set-cookie")).toBeNull()
     expect(response.headers.get("x-internal-trace")).toBeNull()
     expect(response.headers.get("access-control-allow-origin")).toBeNull()
+    expect(response.headers.get("etag")).toBeNull()
+    expect(response.headers.get("location")).toBeNull()
+  })
+
+  test("a 429 with Retry-After reaches the caller with it", async () => {
+    configure()
+    respond = () => Response.json({error: "rate_limited"}, {status: 429, headers: {"retry-after": "120"}})
+
+    const response = await phone("/fleet/observations", {method: "POST", body: "{}"})
+
+    expect(response.status).toBe(429)
+    expect(response.headers.get("retry-after")).toBe("120")
+    expect(await response.json()).toEqual({error: "rate_limited"})
+  })
+
+  test("without an x-request-id from Fleet, the answer carries the id Core sent upstream", async () => {
+    configure()
+
+    const response = await phone("/fleet/devices")
+
+    expect(response.headers.get("x-request-id")).toBe(calls[0].headers.get("x-request-id"))
+  })
+
+  test("behind Core's request-context middleware, the request's id reaches Fleet and comes back", async () => {
+    configure()
+    respond = (request) => Response.json({ok: true}, {headers: {"x-request-id": request.headers.get("x-request-id") ?? ""}})
+    const withContext = new Hono<AppEnv>()
+    withContext.use("/api/*", requestContext)
+    withContext.route("/", root)
+
+    const chosen = await withContext.request("http://localhost/api/client/fleet/devices", {
+      headers: {"x-test-phone": "mu_phone", "x-request-id": "caller-chosen-id"},
+    })
+    const minted = await withContext.request("http://localhost/api/client/fleet/devices", {
+      headers: {"x-test-phone": "mu_phone"},
+    })
+
+    expect(chosen.status).toBe(200)
+    expect(calls[0].headers.get("x-request-id")).toBe("caller-chosen-id")
+    expect(chosen.headers.get("x-request-id")).toBe("caller-chosen-id")
+    expect(minted.headers.get("x-request-id")).toBe(calls[1].headers.get("x-request-id"))
+    expect(minted.headers.get("x-request-id")).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/)
   })
 
   test("an upstream 401 reaches the caller as a 403 with Fleet's body, on both surfaces", async () => {
@@ -670,13 +797,29 @@ describe("what comes back", () => {
     }
   })
 
-  test("a 204 stays empty", async () => {
+  test("a 204 or 205 stays empty and gets no content-type Fleet did not send", async () => {
     configure()
-    respond = () => new Response(null, {status: 204})
+    for (const status of [204, 205]) {
+      respond = () => new Response(null, {status, headers: {"retry-after": "5"}})
 
-    const response = await phone("/fleet/devices/1", {method: "DELETE"})
+      const response = await phone("/fleet/devices/1", {method: "DELETE"})
 
-    expect(response.status).toBe(204)
+      expect(response.status).toBe(status)
+      expect(await response.text()).toBe("")
+      expect(response.headers.get("content-type")).toBeNull()
+      expect(response.headers.get("content-length") ?? "0").toBe("0")
+      expect(response.headers.get("retry-after")).toBe("5")
+    }
+  })
+
+  test("a HEAD answer passes its status and headers through without a body", async () => {
+    configure()
+    respond = () => new Response(null, {status: 404, headers: {"content-type": "application/json"}})
+
+    const response = await phone("/fleet/devices/9", {method: "HEAD"})
+
+    expect(response.status).toBe(404)
+    expect(response.headers.get("content-type")).toBe("application/json")
     expect(await response.text()).toBe("")
   })
 })

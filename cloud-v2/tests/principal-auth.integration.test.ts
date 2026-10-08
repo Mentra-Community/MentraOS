@@ -54,6 +54,7 @@ import {
   type OrganizationCapability,
 } from "../packages/workspace-contract/src/index"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 
 // Index builds and per-test cleanup on a shared, busy local replica set can take longer than the 5 s default.
 setDefaultTimeout(30_000)
@@ -151,16 +152,18 @@ function actorOf(p: Person, isOrganizationAdmin = false): Actor & {kind: "user"}
 let membershipCounter = 0
 async function addMember(workspaceId: string, p: Person, role: string, fields: Record<string, unknown> = {}) {
   const membershipId = `wm_test_${membershipCounter++}`
-  await WorkspaceMembershipModel.create({
-    membershipId,
-    workspaceId,
-    mentraUserId: p.mentraUserId,
-    email: p.email,
-    role,
-    status: "active",
-    startedAt: new Date(),
-    ...fields,
-  })
+  await WorkspaceMembershipModel.create(
+    membershipRow({
+      membershipId,
+      workspaceId,
+      mentraUserId: p.mentraUserId,
+      email: p.email,
+      role,
+      status: "active",
+      startedAt: new Date(),
+      ...fields,
+    }),
+  )
   return membershipId
 }
 
@@ -365,16 +368,18 @@ describe("principalAuth", () => {
   test("a first sign-in links the WorkOS user and claims a migrated membership", async () => {
     const {workspaceId} = await newWorkspace()
     identities.set("tok-migrated", {id: "workos_migrated", email: "migrated@example.test", emailVerified: true})
-    await WorkspaceMembershipModel.create({
-      membershipId: "wm_migrated",
-      workspaceId,
-      mentraUserId: null,
-      pendingWorkosUserId: "workos_migrated",
-      email: "migrated@example.test",
-      role: "developer",
-      status: "active",
-      startedAt: new Date(),
-    })
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: "wm_migrated",
+        workspaceId,
+        mentraUserId: null,
+        pendingWorkosUserId: "workos_migrated",
+        email: "migrated@example.test",
+        role: "developer",
+        status: "active",
+        startedAt: new Date(),
+      }),
+    )
 
     const response = await get(`/workspaces/${workspaceId}/publish`, bearer("tok-migrated"))
 

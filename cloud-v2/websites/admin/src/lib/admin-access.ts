@@ -9,6 +9,8 @@ export interface AdminMe {
   credential: { credentialId: string; label: string } | null;
   organization: { capabilities: OrganizationCapability[] };
   workspaces: PrincipalResponse["workspaces"];
+  /** Whether the optional Fleet integration is installed on this Core. */
+  fleet: { installed: boolean };
 }
 
 /** The pages in navigation order. The first one a principal can see is their default page. */

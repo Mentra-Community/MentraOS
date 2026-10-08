@@ -30,6 +30,7 @@ import {resolveWorkosUser} from "../packages/core/src/services/workspaces/identi
 import * as developerAuth from "../packages/developer-auth/src/index"
 import {ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 
 const MODELS = [
   AccessCredentialModel,
@@ -673,17 +674,19 @@ describe("members", () => {
   test("an admin lists members with their membership ids, roles and start times", async () => {
     const ws = await newWorkspace()
     // A migrated member who has not signed in yet is listed, marked pending.
-    await WorkspaceMembershipModel.create({
-      membershipId: "wm_pending",
-      workspaceId: ws.workspaceId,
-      mentraUserId: null,
-      pendingWorkosUserId: "workos_not_yet",
-      email: "later@example.test",
-      name: "Later",
-      role: "developer",
-      status: "active",
-      startedAt: new Date("2026-01-02T03:04:05.000Z"),
-    })
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: "wm_pending",
+        workspaceId: ws.workspaceId,
+        mentraUserId: null,
+        pendingWorkosUserId: "workos_not_yet",
+        email: "later@example.test",
+        name: "Later",
+        role: "developer",
+        status: "active",
+        startedAt: new Date("2026-01-02T03:04:05.000Z"),
+      }),
+    )
 
     const reply = await call("GET", `/api/workspaces/${ws.workspaceId}/members`, {as: ws.admin})
 
@@ -1095,6 +1098,33 @@ describe("workspace credentials", () => {
 // --- Audit -----------------------------------------------------------------
 
 describe("audit", () => {
+  test("each event records the id of the request that caused it", async () => {
+    const owner = await person("request-id-owner")
+
+    const chosen = await app.request("http://localhost/api/workspaces", {
+      method: "POST",
+      headers: {authorization: `Bearer ${owner.bearer}`, "content-type": "application/json", "x-request-id": "caller-req-1"},
+      body: JSON.stringify({name: "Traced"}),
+    })
+    const minted = await app.request("http://localhost/api/workspaces", {
+      method: "POST",
+      headers: {authorization: `Bearer ${owner.bearer}`, "content-type": "application/json"},
+      body: JSON.stringify({name: "Minted"}),
+    })
+    expect([chosen.status, minted.status]).toEqual([201, 201])
+
+    const traced = await WorkspaceAuditEventModel.findOne({
+      workspaceId: ((await chosen.json()) as {workspaceId: string}).workspaceId,
+    }).lean()
+    expect(traced!.requestId).toBe("caller-req-1")
+    const mintedId = minted.headers.get("x-request-id")
+    expect(mintedId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/)
+    const mintedEvent = await WorkspaceAuditEventModel.findOne({
+      workspaceId: ((await minted.json()) as {workspaceId: string}).workspaceId,
+    }).lean()
+    expect(mintedEvent!.requestId).toBe(mintedId)
+  })
+
   test("only an admin or owner reads the audit trail", async () => {
     const ws = await newWorkspace()
 

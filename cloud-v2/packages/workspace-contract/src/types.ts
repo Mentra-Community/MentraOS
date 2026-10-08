@@ -102,9 +102,16 @@ export interface ResolveEmailResponse {
 }
 
 /**
- * One entry of Core's change feed. `eventId` identifies the event; `seq` is its position in the
- * feed, assigned in commit order with no gaps, and is the only thing to page by: pass the
- * last `seq` you processed (as a decimal string) as the next request's `after`.
+ * One entry of Core's change feed. `eventId` identifies the event; `seq` is its position in Core's
+ * audit trail, assigned in commit order, and is the only thing to page by: pass the last `seq` you
+ * processed (as a decimal string) as the next request's `after`. The feed leaves out
+ * organization-level events (operator keys), so consecutive feed events can skip `seq` numbers;
+ * a skipped number is never a missed workspace event.
+ *
+ * `workspaceId` is null only for user-level tombstones ({@link USER_DELETED_ACTION}). `target`,
+ * `before` and `after` are snapshots whose shape depends on `action` (see the event catalog in
+ * Core's `docs/fleet-integration.md`), with every credential-looking key (`token`, `secret`,
+ * `hash`, `password`) removed.
  */
 export interface WorkspaceChangeEvent {
   eventId: string
@@ -113,7 +120,145 @@ export interface WorkspaceChangeEvent {
   action: string
   occurredAt: string
   target: Record<string, unknown>
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
 }
+
+/**
+ * `action` of the change-feed tombstone recorded when a Mentra account is deleted: `workspaceId` is
+ * null and `target` is `{mentraUserId}`. Each membership it ended was recorded before it as a
+ * `membership.removed` event with `after.endedReason: "account_deleted"`.
+ */
+export const USER_DELETED_ACTION = "user.deleted"
+
+// --- Membership history (Fleet) --------------------------------------------
+
+/** Why a membership generation ended. */
+export const MEMBERSHIP_ENDED_REASONS = ["removed", "left", "workspace_deleted", "account_deleted"] as const
+export type MembershipEndedReason = (typeof MEMBERSHIP_ENDED_REASONS)[number]
+
+/**
+ * One role a person held within one membership generation, over the half-open interval
+ * `[from, to)`. `to` is the next role's `from` or the generation's `endedAt`, and null while the
+ * role is still held. `authorizationRevision` is the workspace's revision from the change that
+ * started this role (the revision `/authorize` reported from then on); a role imported from the
+ * Store carries the workspace's revision at import.
+ */
+export interface MembershipRoleInterval {
+  role: WorkspaceRole
+  from: string
+  to: string | null
+  authorizationRevision: number
+}
+
+/**
+ * One membership generation: joining starts one, and leaving, removal, workspace deletion or
+ * account deletion ends it. Rejoining is a new generation with a new `membershipId`. `roles` lists
+ * the roles held during it, oldest first, without gaps.
+ */
+export interface MembershipGeneration {
+  membershipId: string
+  startedAt: string
+  endedAt: string | null
+  endedReason: MembershipEndedReason | null
+  roles: MembershipRoleInterval[]
+}
+
+/**
+ * `GET /workspaces/:workspaceId/memberships/history`: the generations of one person in one workspace
+ * that were in effect at or after `windowStart`, oldest first. A generation or role that began
+ * before `windowStart` and was still in effect at it is returned whole, with its real start;
+ * anything that ended at or before `windowStart` is left out.
+ */
+export interface MembershipHistoryResponse {
+  windowStart: string
+  items: MembershipGeneration[]
+}
+
+/** The membership generation, and the role within it, in effect at one time. */
+export interface MembershipAtTime {
+  membershipId: string
+  startedAt: string
+  endedAt: string | null
+  endedReason: MembershipEndedReason | null
+  role: MembershipRoleInterval
+}
+
+/** One question of an as-of lookup: the membership `mentraUserId` had in `workspaceId` at `at` (default: now). */
+export interface MembershipAsOfQuery {
+  workspaceId: string
+  mentraUserId: string
+  /** An ISO 8601 time with a time zone, e.g. `2026-10-08T12:00:00.000Z`. */
+  at?: string
+}
+
+/** One answer of an as-of lookup. `membership` is null when the person was not a member then. */
+export interface MembershipAsOfResult {
+  workspaceId: string
+  mentraUserId: string
+  /** The time asked about, normalized to ISO 8601 UTC. */
+  at: string
+  membership: MembershipAtTime | null
+}
+
+/** `GET /workspaces/:workspaceId/memberships/as-of`. */
+export interface MembershipAsOfResponse extends MembershipAsOfResult {
+  windowStart: string
+}
+
+/** `POST /memberships/as-of`: one result per query, in the order asked. */
+export interface MembershipAsOfBatchResponse {
+  windowStart: string
+  items: MembershipAsOfResult[]
+}
+
+/**
+ * `error` value of the 400 a history or as-of request answers when it asks about a time before the
+ * lookback Core keeps for Fleet (`CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`, 90 days by default).
+ */
+export const HISTORY_WINDOW_EXCEEDED_ERROR = "history_window_exceeded"
+
+/** The most queries one `POST /memberships/as-of` may carry. */
+export const MAX_MEMBERSHIP_AS_OF_QUERIES = 100
+
+// --- Forwarded principals (Core -> Fleet) ----------------------------------
+
+/**
+ * The headers Core adds to a request it forwards to the Fleet integration, beyond the service
+ * signature headers (`SERVICE_HEADERS`, with `x-mentra-service: core`). `principal` is the caller as
+ * base64url JSON ({@link ForwardedPrincipal}); `principalSignature` is a base64url HMAC-SHA256,
+ * keyed with the same secret as the service signature, over `<timestamp>\n<principal header>`.
+ * Verify both with `verifyForwardedPrincipal` from `@mentra/workspace-contract/server`.
+ */
+export const FORWARDED_PRINCIPAL_HEADERS = {
+  principal: "x-mentra-principal",
+  principalSignature: "x-mentra-principal-signature",
+} as const
+
+/** The `x-mentra-service` value of every request Core forwards. */
+export const FORWARDING_SERVICE = "core"
+
+/**
+ * Who a forwarded request is from. `/v1/client` only ever receives `phone` principals and
+ * `/v1/admin` only `user` or `credential` principals.
+ *
+ * - `phone`: a signed-in phone session.
+ * - `user`: a signed-in person. `isOrganizationAdmin` comes from a verified identity email;
+ *   `email` may be unverified (`emailVerified`) and is never an authorization.
+ * - `credential`: a Core credential. Core never forwards the bearer, so the receiver cannot ask
+ *   `/authorize` about it and must apply `scopes` and a non-empty `packageNames` itself.
+ */
+export type ForwardedPrincipal =
+  | {kind: "phone"; mentraUserId: string; tenantId: string; sessionId: string}
+  | {kind: "user"; mentraUserId: string; email: string | null; emailVerified: boolean; isOrganizationAdmin: boolean}
+  | {
+      kind: "credential"
+      credentialId: string
+      credentialKind: "workspace" | "organization"
+      workspaceId: string | null
+      scopes: string[]
+      packageNames: string[]
+    }
 
 /**
  * `error` values on 401 responses from the internal service API. The client treats only `invalid_token`

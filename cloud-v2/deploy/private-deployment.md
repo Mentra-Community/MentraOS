@@ -114,6 +114,7 @@ on the next request. The values shown are placeholders.
 - `CLOUD_CORE_FLEET_URL` (public): base URL (optional path prefix) of the optional Fleet integration. Unset or blank means Fleet is not installed. See [Fleet integration](../docs/fleet-integration.md).
 - `CLOUD_CORE_FLEET_SECRET` (secret): the secret that signs what Core forwards to Fleet; required when `CLOUD_CORE_FLEET_URL` is set.
 - `CLOUD_CORE_FLEET_MAX_BODY_BYTES`, `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`, `CLOUD_CORE_FLEET_TIMEOUT_MS` (public): the largest request body Core forwards (default `1048576`), the largest Fleet response body Core buffers (default `10485760`; a larger one is a `503 fleet_unavailable`) and how long Fleet may take to answer (default `10000`). Values that are not positive integers fall back to the defaults.
+- `CLOUD_CORE_FLEET_HISTORY_MAX_DAYS` (public): how many days back Fleet may ask about membership history (default `90`); earlier is `400 history_window_exceeded`. A value that is not a positive integer falls back to the default.
 
 Example (placeholders only):
 

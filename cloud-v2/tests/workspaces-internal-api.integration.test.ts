@@ -37,9 +37,13 @@ import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {createWorkspaceCredential} from "../packages/core/src/services/workspaces/credential.service"
 import {resolveWorkosUser} from "../packages/core/src/services/workspaces/identity-link.service"
 import {
+  changeRole,
   createWorkspace,
   deleteWorkspace,
+  getWorkspace,
   leaveWorkspace,
+  recoverOwnership,
+  removeMember,
   type Actor,
 } from "../packages/core/src/services/workspaces/workspace.service"
 import * as developerAuth from "../packages/developer-auth/src/index"
@@ -50,8 +54,9 @@ import {
   signServiceRequest,
   type CoreWorkspaceClient,
 } from "../packages/workspace-contract/src/server"
-import {capabilitiesForRole} from "../packages/workspace-contract/src/index"
+import {capabilitiesForRole, type WorkspaceRole} from "../packages/workspace-contract/src/index"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 
 // Index builds and per-test cleanup on a shared, busy local replica set can take longer than the 5 s default.
 setDefaultTimeout(30_000)
@@ -73,6 +78,7 @@ const ENV_KEYS = [
   "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
   "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
   "CLOUD_CORE_ENVIRONMENT",
+  "CLOUD_CORE_FLEET_HISTORY_MAX_DAYS",
   "CLOUD_CORE_SERVICE_SECRETS",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
@@ -153,16 +159,18 @@ function actorOf(p: Person, isOrganizationAdmin = false): Actor & {kind: "user"}
 let membershipCounter = 0
 async function addMember(workspaceId: string, p: Person, role: string, fields: Record<string, unknown> = {}) {
   const membershipId = `wm_test_${membershipCounter++}`
-  await WorkspaceMembershipModel.create({
-    membershipId,
-    workspaceId,
-    mentraUserId: p.mentraUserId,
-    email: p.email,
-    role,
-    status: "active",
-    startedAt: new Date(),
-    ...fields,
-  })
+  await WorkspaceMembershipModel.create(
+    membershipRow({
+      membershipId,
+      workspaceId,
+      mentraUserId: p.mentraUserId,
+      email: p.email,
+      role,
+      status: "active",
+      startedAt: new Date(),
+      ...fields,
+    }),
+  )
   return membershipId
 }
 
@@ -368,6 +376,8 @@ describe("service authentication", () => {
       ["GET", `${API}/workspaces/ws_1`],
       ["GET", `${API}/changes`],
       ["GET", `${API}/workspaces/ws_1/memberships/history?mentraUserId=mu_1`],
+      ["GET", `${API}/workspaces/ws_1/memberships/as-of?mentraUserId=mu_1`],
+      ["POST", `${API}/memberships/as-of`],
       ["GET", `${API}/no-such-route`],
     ] as const) {
       const reply = await send(method, path, {}, method === "POST" ? "{}" : undefined)
@@ -1048,16 +1058,18 @@ describe("POST /memberships/check", () => {
   test("a membership that ended, or one waiting for its first sign-in, is null", async () => {
     const {workspaceId, developer, member} = await newWorkspace()
     await leaveWorkspace(actorOf(member), workspaceId)
-    await WorkspaceMembershipModel.create({
-      membershipId: "wm_pending",
-      workspaceId,
-      mentraUserId: null,
-      pendingWorkosUserId: "workos_pending",
-      email: "pending@example.test",
-      role: "admin",
-      status: "active",
-      startedAt: new Date(),
-    })
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: "wm_pending",
+        workspaceId,
+        mentraUserId: null,
+        pendingWorkosUserId: "workos_pending",
+        email: "pending@example.test",
+        role: "admin",
+        status: "active",
+        startedAt: new Date(),
+      }),
+    )
 
     const left = await store().checkMemberships(member.mentraUserId, [workspaceId])
     const stillIn = await store().checkMemberships(developer.mentraUserId, [workspaceId])
@@ -1176,12 +1188,12 @@ describe("GET /workspaces/:workspaceId", () => {
 
 // --- GET /changes ----------------------------------------------------------
 
-async function seedEvents(count: number, firstSeq = 1) {
+async function seedEvents(count: number, firstSeq = 1, workspaceId: string | null = "ws_seed") {
   await WorkspaceAuditEventModel.insertMany(
     Array.from({length: count}, (_, index) => ({
       eventId: `evt_${String(firstSeq + index).padStart(5, "0")}`,
       seq: firstSeq + index,
-      workspaceId: null,
+      workspaceId,
       action: "test.event",
       actor: {kind: "system"},
       target: {n: firstSeq + index},
@@ -1264,105 +1276,335 @@ describe("GET /changes", () => {
 
     expect((await clientFor("fleet").listChanges(null)).events).toHaveLength(1)
   })
+
+  test("events carry before and after, so a membership change says which roles", async () => {
+    const {workspaceId, owner, member} = await newWorkspace()
+    const membershipId = (await WorkspaceMembershipModel.findOne({workspaceId, mentraUserId: member.mentraUserId}).lean())!
+      .membershipId
+    const revision = (await getWorkspace(workspaceId))!.authorizationRevision
+    await changeRole(actorOf(owner), workspaceId, membershipId, "developer", revision)
+    await removeMember(actorOf(owner), workspaceId, membershipId, revision + 1)
+
+    const {events} = await clientFor("fleet").listChanges(null, 500)
+
+    expect(events.map(event => event.action)).toEqual([
+      "workspace.created",
+      "membership.role_changed",
+      "membership.removed",
+    ])
+    expect(events[0]).toMatchObject({workspaceId, before: null, after: {name: "Acme", role: "owner"}})
+    expect(events[1]).toMatchObject({
+      workspaceId,
+      target: {membershipId, mentraUserId: member.mentraUserId},
+      before: {role: "member"},
+      after: {role: "developer"},
+    })
+    expect(events[2]).toMatchObject({
+      target: {membershipId, mentraUserId: member.mentraUserId},
+      before: {role: "developer", status: "active"},
+      after: {status: "ended", endedReason: "removed", revokedCredentialIds: []},
+    })
+  })
+
+  test("credential-looking keys are removed from before and after at any depth", async () => {
+    await WorkspaceAuditEventModel.create({
+      eventId: "evt_secret",
+      seq: 1,
+      workspaceId: "ws_1",
+      action: "test.secret",
+      actor: {kind: "system"},
+      target: {id: "x", tokenHash: "target-hash"},
+      before: {apiToken: "before-token", keep: 1},
+      after: {nested: {clientSecret: "after-secret", password: "pw", keep: 2}, list: [{hash: "h", keep: 3}]},
+      occurredAt: new Date(),
+    })
+
+    const reply = await raw("GET", `${API}/changes`)
+
+    expect(reply.json.events[0]).toMatchObject({
+      target: {id: "x"},
+      before: {keep: 1},
+      after: {nested: {keep: 2}, list: [{keep: 3}]},
+    })
+    for (const leaked of ["target-hash", "before-token", "after-secret", '"pw"', '"h"']) expect(reply.text).not.toContain(leaked)
+  })
+
+  test("organization-level events (operator keys) are left out; user tombstones are kept", async () => {
+    await seedEvents(2, 1, "ws_1")
+    await seedEvents(3, 3, null)
+    await WorkspaceAuditEventModel.create({
+      eventId: "evt_00006",
+      seq: 6,
+      workspaceId: null,
+      action: "user.deleted",
+      actor: {kind: "user", mentraUserId: "mu_gone"},
+      target: {mentraUserId: "mu_gone"},
+      occurredAt: new Date(),
+    })
+    await seedEvents(1, 7, "ws_1")
+
+    const all = await store().listChanges(null, 500)
+    expect(all.events.map(event => [event.seq, event.action])).toEqual([
+      [1, "test.event"],
+      [2, "test.event"],
+      [6, "user.deleted"],
+      [7, "test.event"],
+    ])
+    expect(all.events[2]).toMatchObject({workspaceId: null, target: {mentraUserId: "mu_gone"}, before: null, after: null})
+
+    // A full page ends on the last event returned, so paging skips the left-out numbers and loses nothing.
+    const first = await store().listChanges(null, 2)
+    expect(first.events.map(event => event.seq)).toEqual([1, 2])
+    expect(first.next).toBe("2")
+    const second = await store().listChanges(first.next, 2)
+    expect(second.events.map(event => event.seq)).toEqual([6, 7])
+  })
+
+  test("an operator key's creation never reaches the feed", async () => {
+    const {workspaceId, developer} = await newWorkspace()
+    await createWorkspaceCredential(actorOf(developer), workspaceId, {name: "CI"})
+    await WorkspaceAuditEventModel.create({
+      eventId: "evt_operator",
+      seq: 1000,
+      workspaceId: null,
+      action: "credential.created",
+      actor: {kind: "user", mentraUserId: "mu_admin"},
+      target: {credentialId: "01OPERATOR", prefix: "mak", credentialKind: "organization", workspaceId: null},
+      occurredAt: new Date(),
+    })
+
+    const {events} = await store().listChanges(null, 500)
+
+    expect(events.map(event => event.action)).toEqual(["workspace.created", "credential.created"])
+    expect(events.every(event => event.workspaceId === workspaceId)).toBe(true)
+  })
 })
 
-// --- GET /workspaces/:workspaceId/memberships/history ----------------------
+// --- Membership history (Fleet) -------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000
+const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS)
+const iso = (date: Date) => date.toISOString()
+
+/** A role interval as the history routes answer it. */
+const interval = (role: WorkspaceRole, from: Date, to: Date | null, authorizationRevision: number) => ({
+  role,
+  from: iso(from),
+  to: to ? iso(to) : null,
+  authorizationRevision,
+})
+
+/** A claimed membership generation written by hand, with the given role history. */
+async function generation(
+  workspaceId: string,
+  p: Person,
+  roles: Array<[role: string, from: Date, revision: number]>,
+  end: {endedAt: Date; endedReason: string} | null = null,
+  membershipId = `wm_gen_${membershipCounter++}`,
+) {
+  await WorkspaceMembershipModel.create({
+    membershipId,
+    workspaceId,
+    mentraUserId: p.mentraUserId,
+    role: roles[roles.length - 1]![0],
+    roleHistory: roles.map(([role, from, authorizationRevision]) => ({role, from, authorizationRevision})),
+    status: end ? "ended" : "active",
+    startedAt: roles[0]![1],
+    endedAt: end?.endedAt ?? null,
+    endedReason: end?.endedReason ?? null,
+  })
+  return membershipId
+}
+
+/** A workspace and a person who is not (yet) a member of it. */
+async function workspaceAndPerson() {
+  const owner = await person("history-owner")
+  const subject = await person("history-subject")
+  const {workspaceId} = await createWorkspace(actorOf(owner), {name: "History"})
+  return {workspaceId, owner, subject}
+}
 
 describe("GET /workspaces/:workspaceId/memberships/history", () => {
-  const history = (workspaceId: string, mentraUserId: string, options: RawOptions = {service: "fleet"}) =>
+  const history = (workspaceId: string, mentraUserId: string, query = "", options: RawOptions = {service: "fleet"}) =>
     raw(
       "GET",
-      `${API}/workspaces/${workspaceId}/memberships/history?mentraUserId=${encodeURIComponent(mentraUserId)}`,
+      `${API}/workspaces/${workspaceId}/memberships/history?mentraUserId=${encodeURIComponent(mentraUserId)}${query}`,
       options,
     )
 
-  test("lists every membership interval of the person in the workspace, oldest first", async () => {
-    const {workspaceId, member} = await newWorkspace()
-    const first = new Date("2026-01-01T00:00:00.000Z")
-    const firstEnd = new Date("2026-02-01T00:00:00.000Z")
-    const second = new Date("2026-03-01T00:00:00.000Z")
-    // The seeded active row is the newest; rewrite its start so the three intervals are in a known order.
-    await WorkspaceMembershipModel.updateOne(
-      {workspaceId, mentraUserId: member.mentraUserId},
-      {startedAt: second, role: "admin"},
-    )
-    await WorkspaceMembershipModel.create([
+  test("records every role a person held, when, and the revision that granted it, across generations", async () => {
+    const {workspaceId, owner, member} = await newWorkspace()
+    const first = (await WorkspaceMembershipModel.findOne({workspaceId, mentraUserId: member.mentraUserId}).lean())!
+    const revision = (await getWorkspace(workspaceId))!.authorizationRevision
+
+    const toDeveloper = await changeRole(actorOf(owner), workspaceId, first.membershipId, "developer", revision)
+    const toAdmin = await changeRole(actorOf(owner), workspaceId, first.membershipId, "admin", toDeveloper.authorizationRevision)
+    const removed = await removeMember(actorOf(owner), workspaceId, first.membershipId, toAdmin.authorizationRevision)
+    const recovered = await recoverOwnership({kind: "system"}, workspaceId, member.mentraUserId)
+    expect(new Set([toDeveloper, toAdmin, removed, recovered].map(summary => summary.authorizationRevision)).size).toBe(4)
+
+    const answer = await clientFor("fleet").membershipHistory(workspaceId, member.mentraUserId)
+
+    const rows = await WorkspaceMembershipModel.find({workspaceId, mentraUserId: member.mentraUserId}).sort({startedAt: 1}).lean()
+    expect(rows).toHaveLength(2)
+    const [ended, current] = rows
+    const changes = ended!.roleHistory.map(entry => entry.from)
+    expect(answer.items).toEqual([
       {
-        membershipId: "wm_old_b",
-        workspaceId,
-        mentraUserId: member.mentraUserId,
-        role: "member",
-        status: "ended",
-        startedAt: new Date("2026-02-15T00:00:00.000Z"),
-        endedAt: new Date("2026-02-20T00:00:00.000Z"),
-        endedReason: "left",
+        membershipId: first.membershipId,
+        startedAt: iso(first.startedAt),
+        endedAt: iso(ended!.endedAt!),
+        endedReason: "removed",
+        roles: [
+          interval("member", first.startedAt, changes[1]!, 0),
+          interval("developer", changes[1]!, changes[2]!, toDeveloper.authorizationRevision),
+          interval("admin", changes[2]!, ended!.endedAt!, toAdmin.authorizationRevision),
+        ],
       },
       {
-        membershipId: "wm_old_a",
-        workspaceId,
-        mentraUserId: member.mentraUserId,
-        role: "developer",
-        status: "ended",
-        startedAt: first,
-        endedAt: firstEnd,
-        endedReason: "removed",
+        membershipId: current!.membershipId,
+        startedAt: iso(current!.startedAt),
+        endedAt: null,
+        endedReason: null,
+        roles: [interval("owner", current!.startedAt, null, recovered.authorizationRevision)],
+      },
+    ])
+    expect(Date.parse(answer.windowStart)).toBeLessThanOrEqual(Date.now() - 90 * DAY_MS)
+    expect(Date.parse(answer.windowStart)).toBeGreaterThan(Date.now() - 90 * DAY_MS - 60_000)
+  })
+
+  test("a workspace's creator starts as owner at revision 0, and ownership recovery appends to the row it raises", async () => {
+    const {workspaceId, owner, admin} = await newWorkspace()
+    const created = await clientFor("fleet").membershipHistory(workspaceId, owner.mentraUserId)
+    expect(created.items).toHaveLength(1)
+    expect(created.items[0]!.roles).toEqual([
+      {role: "owner", from: created.items[0]!.startedAt, to: null, authorizationRevision: 0},
+    ])
+
+    const recovered = await recoverOwnership({kind: "system"}, workspaceId, admin.mentraUserId)
+    const raised = await clientFor("fleet").membershipHistory(workspaceId, admin.mentraUserId)
+    expect(raised.items).toHaveLength(1)
+    expect(raised.items[0]!.roles.map(entry => [entry.role, entry.authorizationRevision])).toEqual([
+      ["admin", 0],
+      ["owner", recovered.authorizationRevision],
+    ])
+    expect(raised.items[0]!.roles[0]!.to).toBe(raised.items[0]!.roles[1]!.from)
+  })
+
+  test("reads are bounded by CLOUD_CORE_FLEET_HISTORY_MAX_DAYS; what overlaps the window is returned whole", async () => {
+    process.env.CLOUD_CORE_FLEET_HISTORY_MAX_DAYS = "30"
+    const {workspaceId, subject} = await workspaceAndPerson()
+    // Ended before the window: left out.
+    await generation(workspaceId, subject, [["member", daysAgo(60), 1]], {endedAt: daysAgo(45), endedReason: "left"}, "wm_gone")
+    // Began before the window and still current: its first role ended before the window and is left
+    // out; the role in effect at the window's start is returned with its real start.
+    const started = daysAgo(40)
+    const developer = daysAgo(35)
+    const admin = daysAgo(10)
+    await generation(
+      workspaceId,
+      subject,
+      [
+        ["member", started, 2],
+        ["developer", developer, 3],
+        ["admin", admin, 4],
+      ],
+      null,
+      "wm_now",
+    )
+
+    const reply = await history(workspaceId, subject.mentraUserId)
+
+    expect(reply.status).toBe(200)
+    expect(Date.parse(reply.json.windowStart)).toBeGreaterThan(daysAgo(30).getTime() - 60_000)
+    expect(reply.json.items).toEqual([
+      {
+        membershipId: "wm_now",
+        startedAt: iso(started),
+        endedAt: null,
+        endedReason: null,
+        roles: [interval("developer", developer, admin, 3), interval("admin", admin, null, 4)],
       },
     ])
 
-    const reply = await history(workspaceId, member.mentraUserId)
+    // `since` narrows it further.
+    const since = await history(workspaceId, subject.mentraUserId, `&since=${encodeURIComponent(iso(daysAgo(5)))}`)
+    expect(since.status).toBe(200)
+    expect(since.json.items[0].roles.map((entry: {role: string}) => entry.role)).toEqual(["admin"])
+  })
 
-    expect(reply.status).toBe(200)
-    expect(reply.json).toEqual({
-      items: [
-        {membershipId: "wm_old_a", role: "developer", startedAt: first.toISOString(), endedAt: firstEnd.toISOString()},
-        {
-          membershipId: "wm_old_b",
-          role: "member",
-          startedAt: "2026-02-15T00:00:00.000Z",
-          endedAt: "2026-02-20T00:00:00.000Z",
-        },
-        {membershipId: expect.stringMatching(/^wm_/), role: "admin", startedAt: second.toISOString(), endedAt: null},
-      ],
-    })
+  test("asking for history before the window is 400 history_window_exceeded", async () => {
+    process.env.CLOUD_CORE_FLEET_HISTORY_MAX_DAYS = "30"
+    const {workspaceId, subject} = await workspaceAndPerson()
+
+    const reply = await history(workspaceId, subject.mentraUserId, `&since=${encodeURIComponent(iso(daysAgo(31)))}`)
+
+    expect(reply.status).toBe(400)
+    expect(reply.json.error).toBe("history_window_exceeded")
+    await expectClientError(
+      clientFor("fleet").membershipHistory(workspaceId, subject.mentraUserId, {since: iso(daysAgo(31))}),
+      "history_window_exceeded",
+      400,
+    )
+  })
+
+  test("an unusable lookback setting falls back to 90 days", async () => {
+    const {workspaceId, subject} = await workspaceAndPerson()
+    for (const value of ["0", "-5", "abc", "1.5", ""]) {
+      process.env.CLOUD_CORE_FLEET_HISTORY_MAX_DAYS = value
+      const reply = await history(workspaceId, subject.mentraUserId)
+      const windowStart = Date.parse(reply.json.windowStart)
+      expect({value, ok: Math.abs(windowStart - daysAgo(90).getTime()) < 60_000}).toEqual({value, ok: true})
+    }
+  })
+
+  test("a since that is not an ISO time with a zone, or is in the future, is 400 invalid_request", async () => {
+    const {workspaceId, subject} = await workspaceAndPerson()
+    for (const since of ["yesterday", "2026-10-08", "1760000000000", "10/08/2026 10:00", iso(new Date(Date.now() + 5 * 60_000))]) {
+      const reply = await history(workspaceId, subject.mentraUserId, `&since=${encodeURIComponent(since)}`)
+      expect({since, status: reply.status, error: reply.json?.error}).toEqual({since, status: 400, error: "invalid_request"})
+    }
   })
 
   test("never includes another person's or another workspace's membership, or an unclaimed one", async () => {
     const {workspaceId, member, admin} = await newWorkspace()
     const otherWorkspace = await createWorkspace(actorOf(admin), {name: "Other"})
     await addMember(otherWorkspace.workspaceId, member, "owner")
-    await WorkspaceMembershipModel.create({
-      membershipId: "wm_unclaimed",
-      workspaceId,
-      mentraUserId: null,
-      pendingWorkosUserId: "workos_pending",
-      role: "admin",
-      status: "active",
-      startedAt: new Date(),
-    })
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: "wm_unclaimed",
+        workspaceId,
+        mentraUserId: null,
+        pendingWorkosUserId: "workos_pending",
+        role: "admin",
+        status: "active",
+        startedAt: new Date(),
+      }),
+    )
 
     const reply = await history(workspaceId, member.mentraUserId)
 
     expect(reply.status).toBe(200)
     expect(reply.json.items).toHaveLength(1)
-    expect(reply.json.items[0]).toMatchObject({role: "member", endedAt: null})
+    expect(reply.json.items[0]).toMatchObject({endedAt: null, roles: [{role: "member", to: null}]})
   })
 
-  test("a person with no memberships, and a workspace that does not exist, have no intervals", async () => {
+  test("a person with no memberships, and a workspace that does not exist, have no history", async () => {
     const {workspaceId, stranger} = await newWorkspace()
 
     const none = await history(workspaceId, stranger.mentraUserId)
     const missing = await history("ws_missing", stranger.mentraUserId)
 
     expect(none.status).toBe(200)
-    expect(none.json).toEqual({items: []})
+    expect(none.json.items).toEqual([])
     expect(missing.status).toBe(200)
-    expect(missing.json).toEqual({items: []})
+    expect(missing.json.items).toEqual([])
   })
 
   test("only the Fleet service may ask: the Store is 403 forbidden", async () => {
     const {workspaceId, member} = await newWorkspace()
 
-    const reply = await history(workspaceId, member.mentraUserId, {service: "store"})
+    const reply = await history(workspaceId, member.mentraUserId, "", {service: "store"})
 
     expect(reply.status).toBe(403)
     expect(reply.json).toEqual({error: "forbidden"})
@@ -1373,7 +1615,7 @@ describe("GET /workspaces/:workspaceId/memberships/history", () => {
     const path = `${API}/workspaces/${workspaceId}/memberships/history?mentraUserId=${member.mentraUserId}`
 
     expect((await send("GET", path, {})).status).toBe(401)
-    expect((await history(workspaceId, member.mentraUserId, {service: "fleet", secret: "wrong"})).status).toBe(401)
+    expect((await history(workspaceId, member.mentraUserId, "", {service: "fleet", secret: "wrong"})).status).toBe(401)
   })
 
   test("a missing or blank mentraUserId is 400", async () => {
@@ -1387,6 +1629,166 @@ describe("GET /workspaces/:workspaceId/memberships/history", () => {
         error: "invalid_request",
       })
     }
+  })
+})
+
+describe("GET /workspaces/:workspaceId/memberships/as-of", () => {
+  const asOf = (workspaceId: string, mentraUserId: string, at?: string, options: RawOptions = {service: "fleet"}) =>
+    raw(
+      "GET",
+      `${API}/workspaces/${workspaceId}/memberships/as-of?mentraUserId=${encodeURIComponent(mentraUserId)}${
+        at === undefined ? "" : `&at=${encodeURIComponent(at)}`
+      }`,
+      options,
+    )
+
+  test("answers the generation and role in effect at a time, or none, with half-open intervals", async () => {
+    const {workspaceId, subject} = await workspaceAndPerson()
+    const joined = daysAgo(20)
+    const promoted = daysAgo(15)
+    const removed = daysAgo(10)
+    const rejoined = daysAgo(5)
+    await generation(workspaceId, subject, [["member", joined, 3], ["admin", promoted, 4]], {endedAt: removed, endedReason: "removed"}, "wm_first")
+    await generation(workspaceId, subject, [["developer", rejoined, 7]], null, "wm_second")
+    const fleet = clientFor("fleet")
+    const at = async (time: Date) => (await fleet.membershipAsOf({workspaceId, mentraUserId: subject.mentraUserId, at: iso(time)})).membership
+
+    expect(await at(daysAgo(25))).toBeNull()
+    expect(await at(joined)).toEqual({
+      membershipId: "wm_first",
+      startedAt: iso(joined),
+      endedAt: iso(removed),
+      endedReason: "removed",
+      role: interval("member", joined, promoted, 3),
+    })
+    expect((await at(new Date(promoted.getTime() - 1)))!.role.role).toBe("member")
+    expect((await at(promoted))!.role).toEqual(interval("admin", promoted, removed, 4))
+    expect(await at(removed)).toBeNull()
+    expect(await at(daysAgo(7))).toBeNull()
+    expect(await at(rejoined)).toMatchObject({membershipId: "wm_second", role: interval("developer", rejoined, null, 7)})
+
+    // No `at` is now.
+    const now = await fleet.membershipAsOf({workspaceId, mentraUserId: subject.mentraUserId})
+    expect(now.membership).toMatchObject({membershipId: "wm_second", endedAt: null})
+    expect(Math.abs(Date.parse(now.at) - Date.now())).toBeLessThan(60_000)
+    expect(now).toMatchObject({workspaceId, mentraUserId: subject.mentraUserId})
+  })
+
+  test("follows real role changes and an account's removal", async () => {
+    const {workspaceId, owner, member} = await newWorkspace()
+    const row = (await WorkspaceMembershipModel.findOne({workspaceId, mentraUserId: member.mentraUserId}).lean())!
+    const revision = (await getWorkspace(workspaceId))!.authorizationRevision
+    const beforeChange = new Date()
+    await new Promise(resolve => setTimeout(resolve, 5))
+    const changed = await changeRole(actorOf(owner), workspaceId, row.membershipId, "admin", revision)
+
+    const fleet = clientFor("fleet")
+    const before = await fleet.membershipAsOf({workspaceId, mentraUserId: member.mentraUserId, at: iso(beforeChange)})
+    const after = await fleet.membershipAsOf({workspaceId, mentraUserId: member.mentraUserId})
+    expect(before.membership!.role).toMatchObject({role: "member", authorizationRevision: 0})
+    expect(after.membership!.role).toMatchObject({role: "admin", to: null, authorizationRevision: changed.authorizationRevision})
+  })
+
+  test("a time before the window is 400 history_window_exceeded; a malformed or future one is 400 invalid_request", async () => {
+    process.env.CLOUD_CORE_FLEET_HISTORY_MAX_DAYS = "7"
+    const {workspaceId, subject} = await workspaceAndPerson()
+
+    const old = await asOf(workspaceId, subject.mentraUserId, iso(daysAgo(8)))
+    expect(old.status).toBe(400)
+    expect(old.json.error).toBe("history_window_exceeded")
+    for (const at of ["", "now", "2026-10-08", iso(new Date(Date.now() + 5 * 60_000))]) {
+      const reply = await asOf(workspaceId, subject.mentraUserId, at)
+      expect({at, status: reply.status, error: reply.json?.error}).toEqual({at, status: 400, error: "invalid_request"})
+    }
+    // Within the signature's clock skew is fine.
+    expect((await asOf(workspaceId, subject.mentraUserId, iso(new Date(Date.now() + 30_000)))).status).toBe(200)
+  })
+
+  test("only the Fleet service may ask, and mentraUserId is required", async () => {
+    const {workspaceId, subject} = await workspaceAndPerson()
+
+    expect((await asOf(workspaceId, subject.mentraUserId, undefined, {service: "store"})).status).toBe(403)
+    const missing = await raw("GET", `${API}/workspaces/${workspaceId}/memberships/as-of`, {service: "fleet"})
+    expect(missing.status).toBe(400)
+    expect(missing.json.error).toBe("invalid_request")
+  })
+})
+
+describe("POST /memberships/as-of", () => {
+  test("answers each query in the order asked, null where the person was not a member", async () => {
+    const {workspaceId, subject, owner} = await workspaceAndPerson()
+    const other = await createWorkspace(actorOf(owner), {name: "Other"})
+    const asked = daysAgo(15)
+    await generation(workspaceId, subject, [["member", daysAgo(20), 2]], {endedAt: daysAgo(10), endedReason: "left"}, "wm_left")
+    await generation(other.workspaceId, subject, [["admin", daysAgo(3), 5]], null, "wm_other")
+
+    const answer = await clientFor("fleet").membershipsAsOf([
+      {workspaceId, mentraUserId: subject.mentraUserId, at: iso(asked)},
+      {workspaceId, mentraUserId: subject.mentraUserId},
+      {workspaceId: other.workspaceId, mentraUserId: subject.mentraUserId, at: iso(daysAgo(1))},
+      {workspaceId: other.workspaceId, mentraUserId: subject.mentraUserId, at: iso(daysAgo(4))},
+      {workspaceId: "ws_missing", mentraUserId: subject.mentraUserId},
+      {workspaceId, mentraUserId: owner.mentraUserId},
+      {workspaceId, mentraUserId: subject.mentraUserId, at: iso(asked)},
+    ])
+
+    expect(answer.items.map(item => [item.workspaceId, item.membership?.membershipId ?? null, item.membership?.role.role ?? null])).toEqual([
+      [workspaceId, "wm_left", "member"],
+      [workspaceId, null, null],
+      [other.workspaceId, "wm_other", "admin"],
+      [other.workspaceId, null, null],
+      ["ws_missing", null, null],
+      [workspaceId, expect.stringMatching(/^wm_/), "owner"],
+      [workspaceId, "wm_left", "member"],
+    ])
+    expect(answer.items[0]!.at).toBe(iso(asked))
+    expect(answer.items[0]!.membership).toMatchObject({endedReason: "left", role: {authorizationRevision: 2}})
+  })
+
+  test("an empty batch is fine, more than 100 queries or a malformed one is 400", async () => {
+    const {subject} = await workspaceAndPerson()
+    const post = (body: unknown) => raw("POST", `${API}/memberships/as-of`, {service: "fleet", body})
+
+    const empty = await post({items: []})
+    expect(empty.status).toBe(200)
+    expect(empty.json.items).toEqual([])
+    const query = {workspaceId: "ws_1", mentraUserId: subject.mentraUserId}
+    for (const body of [
+      {},
+      {items: "nope"},
+      {items: Array.from({length: 101}, () => query)},
+      {items: [null]},
+      {items: [{...query, workspaceId: ""}]},
+      {items: [{...query, mentraUserId: 7}]},
+      {items: [{...query, at: "yesterday"}]},
+    ]) {
+      const reply = await post(body)
+      expect({body: JSON.stringify(body).slice(0, 60), status: reply.status, error: reply.json?.error}).toEqual({
+        body: JSON.stringify(body).slice(0, 60),
+        status: 400,
+        error: "invalid_request",
+      })
+    }
+    expect((await post({items: Array.from({length: 100}, () => query)})).status).toBe(200)
+  })
+
+  test("one query before the window fails the batch with history_window_exceeded", async () => {
+    process.env.CLOUD_CORE_FLEET_HISTORY_MAX_DAYS = "7"
+    const {workspaceId, subject} = await workspaceAndPerson()
+
+    await expectClientError(
+      clientFor("fleet").membershipsAsOf([
+        {workspaceId, mentraUserId: subject.mentraUserId},
+        {workspaceId, mentraUserId: subject.mentraUserId, at: iso(daysAgo(8))},
+      ]),
+      "history_window_exceeded",
+      400,
+    )
+  })
+
+  test("only the Fleet service may ask", async () => {
+    const reply = await raw("POST", `${API}/memberships/as-of`, {service: "store", body: {items: []}})
+    expect(reply.status).toBe(403)
   })
 })
 

@@ -229,6 +229,7 @@ describe("GET /api/admin/me", () => {
         credential: {credentialId: "01HZKEY", label: "ci key"},
         organization: {capabilities: ["organization.incidents.read", "organization.testing.read"]},
         workspaces: [],
+        fleet: {installed: false},
       },
     })
   })
@@ -243,6 +244,7 @@ describe("GET /api/admin/me", () => {
         credential: {credentialId: "01HZKEY", label: "ci key"},
         organization: {capabilities: []},
         workspaces: [],
+        fleet: {installed: false},
       },
     })
   })

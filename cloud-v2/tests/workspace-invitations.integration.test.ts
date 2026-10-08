@@ -44,6 +44,7 @@ import {
   type Actor,
 } from "../packages/core/src/services/workspaces/workspace.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 
 const MODELS = [
   WorkspaceModel,
@@ -86,15 +87,17 @@ const nextId = () => `${Date.now().toString(36)}${(counter++).toString(36)}`
 /** Add an active membership directly. */
 async function addMember(workspaceId: string, mentraUserId: string, role: string) {
   const membershipId = `wm_${nextId()}`
-  await WorkspaceMembershipModel.create({
-    membershipId,
-    workspaceId,
-    mentraUserId,
-    email: `${mentraUserId}@example.test`,
-    role,
-    status: "active",
-    startedAt: new Date(),
-  })
+  await WorkspaceMembershipModel.create(
+    membershipRow({
+      membershipId,
+      workspaceId,
+      mentraUserId,
+      email: `${mentraUserId}@example.test`,
+      role,
+      status: "active",
+      startedAt: new Date(),
+    }),
+  )
   return membershipId
 }
 
@@ -713,6 +716,8 @@ describe("acceptInvitation", () => {
     expect(membership.startedAt).toBeInstanceOf(Date)
     expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ws})).toBe(beforeMembers + 1)
     expect(await revisionOf(ws)).toBe(before + 1)
+    // The role history starts with the invited role, from the start, at the revision the accept produced.
+    expect(membership.roleHistory as unknown).toEqual([{role: "developer", from: membership.startedAt, authorizationRevision: before + 1}])
 
     const row = (await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!
     expect(row).toMatchObject({status: "accepted", acceptedMembershipId: result.membershipId})

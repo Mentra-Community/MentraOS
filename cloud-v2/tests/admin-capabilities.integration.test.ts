@@ -66,6 +66,8 @@ const ENV_KEYS = [
   "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
   "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
   "CLOUD_CORE_ENVIRONMENT",
+  "CLOUD_CORE_FLEET_SECRET",
+  "CLOUD_CORE_FLEET_URL",
   "CLOUD_CORE_WORKSPACE_CREATION",
   "CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE",
   "RESEND_API_KEY",
@@ -249,6 +251,8 @@ beforeEach(async () => {
   delete process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS
   delete process.env.CLOUD_CORE_ENVIRONMENT
   delete process.env.CLOUD_CORE_WORKSPACE_CREATION
+  delete process.env.CLOUD_CORE_FLEET_URL
+  delete process.env.CLOUD_CORE_FLEET_SECRET
   delete process.env.RESEND_API_KEY
   process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE = `${INVITE_PREFIX}{token}`
   process.env.SUPABASE_URL = directory.url.origin
@@ -290,6 +294,7 @@ describe("GET /api/admin/me", () => {
       credential: null,
       organization: {capabilities: [...ORGANIZATION_CAPABILITIES].sort()},
       workspaces: [],
+      fleet: {installed: false},
     })
   })
 
@@ -340,8 +345,21 @@ describe("GET /api/admin/me", () => {
         capabilities: ["organization.incidents.read", "organization.testing.read"],
       },
       workspaces: [],
+      fleet: {installed: false},
     })
     expect(reply.text).not.toContain(key.token)
+  })
+
+  test("says whether Fleet is installed, by the same rule as the phone's capabilities", async () => {
+    const owner = await person("fleet-owner")
+
+    expect((await call("GET", "/api/admin/me", {as: owner})).json.fleet).toEqual({installed: false})
+    process.env.CLOUD_CORE_FLEET_URL = "https://fleet.example.test"
+    expect((await call("GET", "/api/admin/me", {as: owner})).json.fleet).toEqual({installed: false})
+    process.env.CLOUD_CORE_FLEET_SECRET = "fleet-secret"
+    expect((await call("GET", "/api/admin/me", {as: owner})).json.fleet).toEqual({installed: true})
+    process.env.CLOUD_CORE_FLEET_URL = "not a url"
+    expect((await call("GET", "/api/admin/me", {as: owner})).json.fleet).toEqual({installed: false})
   })
 
   test("a workspace key is a principal with no organization capabilities and no workspaces", async () => {
@@ -356,6 +374,7 @@ describe("GET /api/admin/me", () => {
       credential: {credentialId: ws.credentialId, label: "ci"},
       organization: {capabilities: []},
       workspaces: [],
+      fleet: {installed: false},
     })
     expect(reply.text).not.toContain(ws.token)
   })

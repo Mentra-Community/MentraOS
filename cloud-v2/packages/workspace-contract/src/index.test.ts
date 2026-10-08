@@ -20,8 +20,16 @@ describe("package entry points", () => {
     expect(root.INVALID_TOKEN_ERROR).toBe("invalid_token")
     expect(root.SERVICE_UNAUTHORIZED_ERROR).toBe("service_unauthorized")
     expect(root.WORKSPACE_NOT_FOUND_ERROR).toBe("workspace_not_found")
+    expect(root.HISTORY_WINDOW_EXCEEDED_ERROR).toBe("history_window_exceeded")
+    expect(root.USER_DELETED_ACTION).toBe("user.deleted")
+    expect(root.FORWARDED_PRINCIPAL_HEADERS).toEqual({
+      principal: "x-mentra-principal",
+      principalSignature: "x-mentra-principal-signature",
+    })
+    expect(root.FORWARDING_SERVICE).toBe("core")
     expect(Object.keys(root)).not.toContain("signServiceRequest")
     expect(Object.keys(root)).not.toContain("createCoreWorkspaceClient")
+    expect(Object.keys(root)).not.toContain("verifyForwardedPrincipal")
   })
 
   test("the server entry exposes signing and the Core client", () => {
@@ -29,6 +37,8 @@ describe("package entry points", () => {
     expect(typeof server.verifyServiceRequest).toBe("function")
     expect(typeof server.createCoreWorkspaceClient).toBe("function")
     expect(typeof server.CoreWorkspaceClientError).toBe("function")
+    expect(typeof server.signForwardedPrincipal).toBe("function")
+    expect(typeof server.verifyForwardedPrincipal).toBe("function")
     expect(server.SERVICE_HEADERS.service).toBe("x-mentra-service")
     expect(server.INVALID_TOKEN_ERROR).toBe("invalid_token")
   })

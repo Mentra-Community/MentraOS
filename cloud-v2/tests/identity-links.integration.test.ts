@@ -36,6 +36,7 @@ import {
   type WorkosIdentity,
 } from "../packages/core/src/services/workspaces/identity-link.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 
 const MODELS = [
   AccessCredentialModel,
@@ -115,18 +116,20 @@ function identity(overrides: Partial<WorkosIdentity> = {}): WorkosIdentity {
 }
 
 async function seedMembership(fields: Record<string, unknown>) {
-  return WorkspaceMembershipModel.create({
-    membershipId: `wm_${Math.random().toString(36).slice(2)}`,
-    workspaceId: "ws_1",
-    mentraUserId: null,
-    pendingWorkosUserId: null,
-    email: "dev@example.test",
-    name: "Dev One",
-    role: "developer",
-    status: "active",
-    startedAt: new Date("2026-01-01T00:00:00Z"),
-    ...fields,
-  })
+  return WorkspaceMembershipModel.create(
+    membershipRow({
+      membershipId: `wm_${Math.random().toString(36).slice(2)}`,
+      workspaceId: "ws_1",
+      mentraUserId: null,
+      pendingWorkosUserId: null,
+      email: "dev@example.test",
+      name: "Dev One",
+      role: "developer",
+      status: "active",
+      startedAt: new Date("2026-01-01T00:00:00Z"),
+      ...fields,
+    }),
+  )
 }
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -757,6 +760,13 @@ describe("resolveWorkosUser: claiming pending migrated memberships", () => {
     const activeOwners = {workspaceId: "ws_1", role: "owner", status: "active"}
     expect(await WorkspaceMembershipModel.countDocuments(activeOwners)).toBe(1)
     expect((await WorkspaceModel.findOne({workspaceId: "ws_1"}).lean())?.authorizationRevision).toBe(5)
+    // The raise is a new role interval on the surviving row, granted at the bumped revision.
+    const kept = (await WorkspaceMembershipModel.findOne({membershipId: held.membershipId}).lean())!
+    expect(kept.roleHistory.map(entry => [entry.role, entry.authorizationRevision])).toEqual([
+      ["member", 0],
+      ["owner", 5],
+    ])
+    expect(kept.roleHistory[1]!.from.getTime()).toBeGreaterThanOrEqual(kept.roleHistory[0]!.from.getTime())
     const events = await WorkspaceAuditEventModel.find({}).lean()
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({

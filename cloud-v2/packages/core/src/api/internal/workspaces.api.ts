@@ -13,7 +13,9 @@
  * | `POST /memberships/check`                           | any     | `{memberships}`                              |
  * | `GET /workspaces/:workspaceId`                      | any     | `WorkspaceSummary`, or 404                   |
  * | `GET /changes?after=&limit=`                        | any     | `{events, next}`                             |
- * | `GET /workspaces/:workspaceId/memberships/history`  | fleet   | `{items}`                                    |
+ * | `GET /workspaces/:workspaceId/memberships/history`  | fleet   | `MembershipHistoryResponse`                  |
+ * | `GET /workspaces/:workspaceId/memberships/as-of`    | fleet   | `MembershipAsOfResponse`                     |
+ * | `POST /memberships/as-of`                           | fleet   | `MembershipAsOfBatchResponse`                |
  * | `POST /credentials`                                 | store   | `{credentialId, token}`                      |
  * | `POST /users/resolve-email`                         | store   | `{mentraUserId}`, or 404 `user_not_found`    |
  *
@@ -27,6 +29,11 @@
  * `{error: "identity_unavailable"}`, retryable; expected failures of the
  * services behind a route (`WorkspaceError`) are rendered by the app's error
  * handler.
+ *
+ * The membership history routes are Fleet's, for attributing delayed uploads to the membership and
+ * role in effect when they were observed (`membership-history.service`). They are bounded by
+ * `CLOUD_CORE_FLEET_HISTORY_MAX_DAYS`: asking about an earlier time is 400 `history_window_exceeded`.
+ * They do not limit which workspaces Fleet may ask about yet (`historyScopeAllows`).
  *
  * `POST /users/resolve-email` turns an account email into the opaque Mentra user
  * id (the Store's private-miniapp and beta invitations). Core stays the only
@@ -42,12 +49,16 @@
 
 import {
   INVALID_TOKEN_ERROR,
+  MAX_MEMBERSHIP_AS_OF_QUERIES,
   USER_NOT_FOUND_ERROR,
   WORKSPACE_NOT_FOUND_ERROR,
   type AuthorizeCredential,
   type AuthorizeResponse,
   type CorePrincipal,
+  type MembershipAsOfBatchResponse,
+  type MembershipAsOfResponse,
   type MembershipCheckResponse,
+  type MembershipHistoryResponse,
   type PrincipalResponse,
   type ResolveEmailResponse,
   type ServiceCredentialResponse,
@@ -61,7 +72,15 @@ import {authorize, principalFromToken} from "../../services/workspaces/authoriza
 import {listChanges} from "../../services/workspaces/audit.service"
 import {isCredentialToken, mintServiceCredential} from "../../services/workspaces/credential.service"
 import {IdentityUnavailableError} from "../../services/workspaces/identity-link.service"
-import {getWorkspace, listMembershipHistory, listWorkspacesForUser} from "../../services/workspaces/workspace.service"
+import {
+  historyScopeAllows,
+  historyWindowStart,
+  listMembershipHistory,
+  membershipsAsOf,
+  parseHistoryTime,
+} from "../../services/workspaces/membership-history.service"
+import {fail} from "../../services/workspaces/workspace-error"
+import {getWorkspace, listWorkspacesForUser} from "../../services/workspaces/workspace.service"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidRequest} from "../../types/oauth.types"
 import {requireService, serviceAuth} from "../middleware/service-auth.middleware"
@@ -155,20 +174,61 @@ app.get("/workspaces/:workspaceId", async c => {
   return c.json(workspace)
 })
 
-app.get("/workspaces/:workspaceId/memberships/history", requireService("fleet"), async c => {
-  const mentraUserId = c.req.query("mentraUserId")
-  if (!mentraUserId?.trim()) throw new InvalidRequest("mentraUserId is required")
+// --- Membership history (Fleet) --------------------------------------------
+// A workspace that does not exist, or a person who never belonged to it, simply has no history.
 
-  // A workspace that does not exist simply has no history for anyone.
-  const rows = await listMembershipHistory(c.req.param("workspaceId"), mentraUserId)
-  return c.json({
-    items: rows.map(row => ({
-      membershipId: row.membershipId,
-      role: row.role,
-      startedAt: row.startedAt.toISOString(),
-      endedAt: row.endedAt ? row.endedAt.toISOString() : null,
-    })),
+app.get("/workspaces/:workspaceId/memberships/history", requireService("fleet"), async c => {
+  const workspaceId = historyWorkspace(c)
+  const mentraUserId = requiredQueryId(c, "mentraUserId")
+  const now = new Date()
+  const windowStart = historyWindowStart(now)
+  const sinceParam = c.req.query("since")
+  const since = sinceParam === undefined ? windowStart : parseHistoryTime(sinceParam, "since", now, windowStart)
+
+  const history: MembershipHistoryResponse = {
+    windowStart: windowStart.toISOString(),
+    items: await listMembershipHistory(workspaceId, mentraUserId, since),
+  }
+  return c.json(history)
+})
+
+app.get("/workspaces/:workspaceId/memberships/as-of", requireService("fleet"), async c => {
+  const workspaceId = historyWorkspace(c)
+  const mentraUserId = requiredQueryId(c, "mentraUserId")
+  const now = new Date()
+  const windowStart = historyWindowStart(now)
+  const atParam = c.req.query("at")
+  const at = atParam === undefined ? now : parseHistoryTime(atParam, "at", now, windowStart)
+
+  const [result] = await membershipsAsOf([{workspaceId, mentraUserId, at}])
+  const answer: MembershipAsOfResponse = {windowStart: windowStart.toISOString(), ...result!}
+  return c.json(answer)
+})
+
+app.post("/memberships/as-of", requireService("fleet"), async c => {
+  const service = c.get("service")!
+  const items = jsonBody(c).items
+  if (!Array.isArray(items)) throw new InvalidRequest("items must be an array")
+  if (items.length > MAX_MEMBERSHIP_AS_OF_QUERIES) {
+    throw new InvalidRequest(`items may hold at most ${MAX_MEMBERSHIP_AS_OF_QUERIES} queries`)
+  }
+  const now = new Date()
+  const windowStart = historyWindowStart(now)
+  const queries = items.map((item, index) => {
+    if (!isRecord(item)) throw new InvalidRequest(`items[${index}] must be an object`)
+    const workspaceId = requiredId(item, "workspaceId", `items[${index}].`)
+    const mentraUserId = requiredId(item, "mentraUserId", `items[${index}].`)
+    if (!historyScopeAllows(service, workspaceId)) fail("forbidden", "outside this service's workspace scope")
+    const at =
+      item.at === undefined || item.at === null ? now : parseHistoryTime(item.at, `items[${index}].at`, now, windowStart)
+    return {workspaceId, mentraUserId, at}
   })
+
+  const answer: MembershipAsOfBatchResponse = {
+    windowStart: windowStart.toISOString(),
+    items: await membershipsAsOf(queries),
+  }
+  return c.json(answer)
 })
 
 // --- Change feed -----------------------------------------------------------
@@ -234,10 +294,25 @@ const isRecord = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
 /** A string that is not blank: an id with nothing in it names nobody. */
-function requiredId(body: JsonObject, field: string): string {
+function requiredId(body: JsonObject, field: string, label = ""): string {
   const value = body[field]
-  if (typeof value !== "string" || !value.trim()) throw new InvalidRequest(`${field} must be a non-empty string`)
+  if (typeof value !== "string" || !value.trim()) throw new InvalidRequest(`${label}${field} must be a non-empty string`)
   return value
+}
+
+/** A query parameter that must be a non-blank id. */
+function requiredQueryId(c: AppContext, name: string): string {
+  const value = c.req.query(name)
+  if (!value?.trim()) throw new InvalidRequest(`${name} is required`)
+  return value
+}
+
+/** The workspace a history route names, once the calling service may read its history. */
+function historyWorkspace(c: AppContext): string {
+  const workspaceId = c.req.param("workspaceId")
+  if (!workspaceId?.trim()) throw new InvalidRequest("workspaceId is required")
+  if (!historyScopeAllows(c.get("service")!, workspaceId)) fail("forbidden", "outside this service's workspace scope")
+  return workspaceId
 }
 
 function parseCredential(value: unknown): AuthorizeCredential {

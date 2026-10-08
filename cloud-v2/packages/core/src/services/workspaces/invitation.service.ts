@@ -43,6 +43,7 @@ import {
   isWorkspaceRole,
   loadActiveWorkspace,
   requireMembershipManager,
+  roleEntry,
   touchWorkspace,
   type Actor,
 } from "./workspace.service"
@@ -286,7 +287,8 @@ export async function acceptInvitation(
       {session},
     )
     if (claimed.modifiedCount !== 1) fail("invitation_not_found", "invitation not found")
-    await bumpRevision(session, invitation.workspaceId, undefined)
+    const updated = await bumpRevision(session, invitation.workspaceId, undefined)
+    const now = new Date()
     await WorkspaceMembershipModel.create(
       [
         {
@@ -296,8 +298,9 @@ export async function acceptInvitation(
           email: actor.email?.trim() || null,
           name: displayName(actor.name),
           role,
+          roleHistory: [roleEntry(role, now, updated.authorizationRevision)],
           status: "active",
-          startedAt: new Date(),
+          startedAt: now,
         },
       ],
       {session},

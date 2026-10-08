@@ -13,6 +13,7 @@ import {findOrCreateUser} from "../user.service"
 import {sendEmail} from "../email/email.service"
 import * as gotrue from "./gotrue.client"
 import {SupportProfileModel} from "../../models/support-profile.model"
+import {removeDeletedUserFromWorkspaces} from "../workspaces/account-deletion.service"
 import {UserModel} from "../../models/user.model"
 import * as otc from "./one-time-code.service"
 import {AccountError} from "./account-error"
@@ -162,19 +163,27 @@ export async function requestAccountDeletion(email: string, tenantUserId: string
 
 export async function confirmAccountDeletion(mentraUserId: string, tenantUserId: string, code: string): Promise<void> {
   await otc.consumeCode({code, purpose: "account_deletion", expectSubject: tenantUserId})
-  // Order: kill V2 sessions, remove the operational support profile/outbox,
-  // then delete the Supabase user. Everything human-identifying (email,
-  // password, name) lives in GoTrue and dies here.
+  // Order: kill V2 sessions, end workspace access, remove the operational
+  // support profile/outbox, then delete the Supabase user. Everything
+  // human-identifying (email, password, name) lives in GoTrue and dies here.
+  //
+  // Workspace access ends before the GoTrue user goes: its memberships, the
+  // credentials they created and its identity links are gone in one
+  // transaction, which also puts the `user.deleted` tombstone on the change
+  // feed. Should anything after it fail, the account still exists and the
+  // person can request deletion again; the other order could leave a deleted
+  // account still holding workspace access.
   //
   // OPEN DECISION (deferred, revisit in a future PR): the Mongo users row
   // ({mentraUserId, tenantId, tenantUserId}) is intentionally kept as a
   // tombstone for identifier stability and audit lineage. If we want
-  // gone-means-gone, hard-delete it here. This flow also still needs an
-  // integration test covering the cascade.
+  // gone-means-gone, hard-delete it here. tests/account-deletion.integration.test.ts
+  // covers this flow and its workspace cascade.
   //
   // Cloud V1 is a different system with its own database; its data lifecycle
   // is not a cloud-v2 concern and no code here talks to it.
   await revokeAllSessionsForUser({mentraUserId})
+  await removeDeletedUserFromWorkspaces(mentraUserId)
   // Set the tombstone before removing the profile so no new support write can
   // recreate it. A PostHog capture already in flight when the tombstone lands
   // may still deliver; delivered analytics data is governed by that project's

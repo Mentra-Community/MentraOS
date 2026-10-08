@@ -29,9 +29,9 @@
  *  - not installed: 404 `{error: "fleet_not_installed"}`;
  *  - the URL is set but unusable or the secret is missing: 503 `{error: "fleet_unavailable"}` and an
  *    error log that names the variable (never its value);
- *  - a network error, a timeout, an upstream 5xx, any upstream 3xx (redirects are never followed) or
- *    an upstream body over `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`: 503 `{error: "fleet_unavailable"}`.
- *    Never an empty success;
+ *  - a network error, a timeout, an upstream 5xx, an upstream 3xx other than 304 (redirects are never
+ *    followed) or an upstream body over `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`: 503
+ *    `{error: "fleet_unavailable"}`. Never an empty success;
  *  - a body over the limit: 413 `{error: "payload_too_large"}`; a body that is not valid UTF-8: 400
  *    `{error: "invalid_body"}`; a path with a `.` / `..` segment, an encoded or literal separator
  *    (`%2f`, `%5c`, `\`), a control character or a bad escape: 400 `{error: "invalid_path"}`.
@@ -41,7 +41,13 @@
  *  - an upstream 401 reaches the caller as a 403 with Fleet's body: phones and the admin dashboard
  *    read a 401 as "your session ended, sign in again", and a Fleet answer never means that. Fleet
  *    should answer 403 for "not allowed" itself;
- *  - any other upstream status and body pass through, with `content-type` and `cache-control` only.
+ *  - any other upstream status and body pass through, with `content-type`, `cache-control` and
+ *    `retry-after` only. A 204, 205 or 304, and any answer to a `HEAD`, has no body: Core does not
+ *    read one and adds no `content-type` of its own.
+ *
+ * Correlation: Core sends Fleet its request id (`x-request-id`, the id `requestContext` gave this
+ * request) and answers with Fleet's `x-request-id` when Fleet returns one, Core's otherwise. Core
+ * logs both when they differ.
  *
  * What Fleet receives. Core copies the method, the query, the body and the `content-type` and
  * `accept` headers. Every other inbound header is dropped, so nothing the caller sent under
@@ -50,45 +56,43 @@
  *
  *  - `x-mentra-service: core`, `x-mentra-service-timestamp: <ts>` and `x-mentra-service-signature`:
  *    `signServiceRequest` from `@mentra/workspace-contract/server` over `<ts>`, the method, the
- *    upstream path with its query (as sent, prefix included) and the body. Verify it with
- *    `verifyServiceRequest`;
- *  - `x-mentra-principal`: who is calling, as base64url JSON, one of
- *      `{kind: "phone", mentraUserId, tenantId, sessionId}`,
- *      `{kind: "user", mentraUserId, email, emailVerified, isOrganizationAdmin}` or
- *      `{kind: "credential", credentialId, credentialKind, workspaceId, scopes, packageNames}`.
- *    `emailVerified` says whether the identity provider verified `email`; never match on an
- *    unverified one. A credential with a non-empty `packageNames` may act only on those packages:
- *    Fleet cannot ask Core's `/authorize` about it (Core never forwards the bearer), so it must apply
- *    that restriction itself;
- *  - `x-mentra-principal-signature`: base64url HMAC-SHA256, keyed with the same secret, of
- *    `<ts>\n<x-mentra-principal value>`, using the same `<ts>`.
+ *    upstream path with its query (as sent, prefix included) and the body;
+ *  - `x-mentra-principal` and `x-mentra-principal-signature` (`FORWARDED_PRINCIPAL_HEADERS`): who is
+ *    calling, a `ForwardedPrincipal` as base64url JSON, and its signature with the same secret and
+ *    `<ts>` (`signForwardedPrincipal`). A credential with a non-empty `packageNames` may act only on
+ *    those packages: Fleet cannot ask Core's `/authorize` about it (Core never forwards the bearer),
+ *    so it must apply that restriction itself;
+ *  - `x-request-id`: Core's request id.
  *
- * Fleet knows which organization is calling from the secret it shares with that Core, so no header
- * names the organization. The service signature does not cover the identity header, so without the
- * principal signature anyone who captured one signed request could replay it with another identity
- * inside the skew window. Fleet must verify both signatures before it trusts the principal. The two
- * signed strings cannot be mistaken for each other: the service one has three newlines, this one has
- * one, and neither a header value nor a path can contain a newline.
+ * Fleet verifies all of it with `verifyForwardedPrincipal` from `@mentra/workspace-contract/server`,
+ * which checks both signatures against the same timestamp and secret and returns the typed
+ * principal. Fleet knows which organization is calling from the secret it shares with that Core, so
+ * no header names the organization. The service signature does not cover the identity header, so
+ * without the principal signature anyone who captured one signed request could replay it with
+ * another identity inside the skew window. The two signed strings cannot be mistaken for each other:
+ * the service one has three newlines, this one has one, and neither a header value nor a path can
+ * contain a newline.
  *
  * Request bodies are treated as UTF-8 text (the Fleet API is JSON): the signature covers the text
  * and the same bytes are sent.
  */
 
-import {createHmac} from "node:crypto"
 import {createLogger} from "@mentra/cloud-shared"
-import {SERVICE_HEADERS, signServiceRequest} from "@mentra/workspace-contract/server"
+import {
+  FORWARDED_PRINCIPAL_HEADERS,
+  FORWARDING_SERVICE,
+  SERVICE_HEADERS,
+  signForwardedPrincipal,
+  signServiceRequest,
+  type ForwardedPrincipal,
+} from "@mentra/workspace-contract/server"
 import {Hono, type Handler, type MiddlewareHandler} from "hono"
 import {bodyLimit} from "hono/body-limit"
+import {ulid} from "ulid"
 import {isDeployedEnvironment} from "../../services/workspaces/organization"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 
 const logger = createLogger("core").child({service: "fleet-forwarding"})
-
-/** Headers Core adds beyond `SERVICE_HEADERS`, for the Fleet service to read and verify. */
-export const FLEET_HEADERS = {
-  principal: "x-mentra-principal",
-  principalSignature: "x-mentra-principal-signature",
-} as const
 
 const URL_VARIABLE = "CLOUD_CORE_FLEET_URL"
 const SECRET_VARIABLE = "CLOUD_CORE_FLEET_SECRET"
@@ -106,11 +110,13 @@ const LOCAL_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1"])
 /** The only inbound headers copied upstream. Everything else, `x-mentra-*` included, is dropped. */
 const FORWARDED_REQUEST_HEADERS = ["content-type", "accept"] as const
 
-/** The only upstream headers copied back. */
-const PASSED_RESPONSE_HEADERS = ["content-type", "cache-control"] as const
+/** The only upstream headers copied back, besides `x-request-id`. */
+const PASSED_RESPONSE_HEADERS = ["content-type", "cache-control", "retry-after"] as const
 
-/** Statuses a `Response` cannot carry a body with. */
-const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([204, 205])
+/** Statuses that never carry a body. */
+const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([204, 205, 304])
+
+const REQUEST_ID_HEADER = "x-request-id"
 
 type Audience = "client" | "admin"
 
@@ -258,8 +264,13 @@ async function readCapped(upstream: Response, limit: number): Promise<Uint8Array
   return bytes
 }
 
+/** Whether Fleet is installed: its URL and secret are both usable. What `/api/client/capabilities` and `/api/admin/me` report. */
+export function fleetInstalled(): boolean {
+  return fleetConfig().state === "ready"
+}
+
 /** The caller as Fleet is told about it, or null when the request has none. */
-function callerPrincipal(c: AppContext, audience: Audience): Record<string, unknown> | null {
+function callerPrincipal(c: AppContext, audience: Audience): ForwardedPrincipal | null {
   if (audience === "client") {
     const user = c.get("user")
     if (!user) return null
@@ -331,16 +342,15 @@ function forward(audience: Audience): Handler<AppEnv> {
     const target = new URL(`${fleet.baseUrl.origin}${basePath}/v1/${audience}${suffix}${query}`)
     const method = c.req.method
     const timestampMs = Date.now()
-    const timestamp = String(timestampMs)
-    const principalHeader = Buffer.from(JSON.stringify(principal)).toString("base64url")
+    const requestId = c.get("reqId") ?? ulid()
 
     const headers = new Headers()
     for (const name of FORWARDED_REQUEST_HEADERS) {
       const value = c.req.header(name)
       if (value) headers.set(name, value)
     }
-    headers.set(SERVICE_HEADERS.service, "core")
-    headers.set(SERVICE_HEADERS.timestamp, timestamp)
+    headers.set(SERVICE_HEADERS.service, FORWARDING_SERVICE)
+    headers.set(SERVICE_HEADERS.timestamp, String(timestampMs))
     headers.set(
       SERVICE_HEADERS.signature,
       signServiceRequest({
@@ -351,13 +361,10 @@ function forward(audience: Audience): Handler<AppEnv> {
         timestampMs,
       }),
     )
-    headers.set(FLEET_HEADERS.principal, principalHeader)
-    headers.set(
-      FLEET_HEADERS.principalSignature,
-      createHmac("sha256", fleet.secret)
-        .update(`${timestamp}\n${principalHeader}`)
-        .digest("base64url"),
-    )
+    const signed = signForwardedPrincipal({secret: fleet.secret, timestampMs, principal})
+    headers.set(FORWARDED_PRINCIPAL_HEADERS.principal, signed.principal)
+    headers.set(FORWARDED_PRINCIPAL_HEADERS.principalSignature, signed.signature)
+    headers.set(REQUEST_ID_HEADER, requestId)
 
     const log = c.get("logger") ?? logger
     let status: number
@@ -375,16 +382,22 @@ function forward(audience: Audience): Handler<AppEnv> {
       })
       status = upstream.status
       upstreamHeaders = upstream.headers
-      if (status >= 500 || (status >= 300 && status < 400)) {
+      if (status >= 500 || (status >= 300 && status < 400 && status !== 304)) {
         // Not an answer Core relays: a failure, or a redirect it never follows.
         await upstream.body?.cancel()
         log.warn({audience, upstreamStatus: status}, "Fleet answered with a failure or a redirect")
         return unavailable(c)
       }
-      payload = await readCapped(upstream, maxResponseBytes())
-      if (!payload) {
-        log.warn({audience, limit: maxResponseBytes()}, "Fleet answered with a body over the response limit")
-        return unavailable(c)
+      if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
+        // No body to relay. A HEAD answer's `content-length` describes the body a GET would get, so it
+        // is not checked against the response cap either.
+        await upstream.body?.cancel()
+      } else {
+        payload = await readCapped(upstream, maxResponseBytes())
+        if (!payload) {
+          log.warn({audience, limit: maxResponseBytes()}, "Fleet answered with a body over the response limit")
+          return unavailable(c)
+        }
       }
     } catch (err) {
       log.warn({audience, reason: err instanceof Error ? err.name : "unknown"}, "Fleet request failed")
@@ -396,9 +409,14 @@ function forward(audience: Audience): Handler<AppEnv> {
       const value = upstreamHeaders.get(name)
       if (value) responseHeaders.set(name, value)
     }
+    const upstreamRequestId = upstreamHeaders.get(REQUEST_ID_HEADER)
+    if (upstreamRequestId && upstreamRequestId !== requestId) {
+      log.info({audience, upstreamRequestId}, "Fleet answered under its own request id")
+    }
+    responseHeaders.set(REQUEST_ID_HEADER, upstreamRequestId || requestId)
     // A 401 from Core means "sign in again" to every client; Fleet's never does, so it is relayed as a 403.
     if (status === 401) status = 403
-    return new Response(NULL_BODY_STATUSES.has(status) ? null : payload, {status, headers: responseHeaders})
+    return new Response(payload, {status, headers: responseHeaders})
   }
 }
 
@@ -410,7 +428,7 @@ export const clientFleetApi = new Hono<AppEnv>()
 
 clientFleetApi.get("/capabilities", (c) => {
   if (!c.get("user")) return c.json({error: "unauthorized"}, 401)
-  return c.json({fleet: {installed: fleetConfig().state === "ready"}})
+  return c.json({fleet: {installed: fleetInstalled()}})
 })
 clientFleetApi.all("/fleet/*", limitBody, forward("client"))
 

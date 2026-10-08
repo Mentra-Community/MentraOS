@@ -18,13 +18,20 @@
  * The cost is that audited mutations serialize on the counter. They are rare
  * admin operations, and every caller records its event as its last write so
  * the counter is held only briefly before commit.
+ *
+ * The change feed services read is this trail with organization-level events
+ * (operator keys: `workspaceId` null) left out, except user-level tombstones
+ * (`user.deleted`). Nothing is ever pruned, so a service can replay from the
+ * beginning at any time. Each event's `requestId` is the id of the request that
+ * caused it (`currentRequestId`), unless the caller supplies one.
  */
 
-import type {WorkspaceChangeEvent} from "@mentra/workspace-contract"
+import {USER_DELETED_ACTION, type WorkspaceChangeEvent} from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
 import {monotonicFactory} from "ulid"
 import {WORKSPACE_AUDIT_COUNTER_ID, WorkspaceAuditCounterModel} from "../../models/workspace-audit-counter.model"
 import {WorkspaceAuditEventModel, type WorkspaceAuditEventRow} from "../../models/workspace-audit-event.model"
+import {currentRequestId} from "../request-context"
 import {fail} from "./workspace-error"
 
 const nextEventId = monotonicFactory()
@@ -57,7 +64,7 @@ export async function recordWorkspaceEvent(session: ClientSession, event: Worksp
   const seq = await nextSeq(session)
   const eventId = nextEventId()
   await WorkspaceAuditEventModel.create(
-    [{...event, requestId: event.requestId ?? null, eventId, seq, occurredAt: new Date()}],
+    [{...event, requestId: event.requestId ?? currentRequestId(), eventId, seq, occurredAt: new Date()}],
     {session},
   )
   return eventId
@@ -80,12 +87,15 @@ async function nextSeq(session: ClientSession): Promise<number> {
 }
 
 /**
- * Events after the cursor, oldest first. `after` is the
- * `seq` of the last event already seen as a decimal string (`null` starts from
- * the beginning); `next` is the last event's `seq` as a decimal string when the
- * page is full and there may be more, otherwise null. Only ids, `seq`, the
- * action, the time and `target` are returned, and credential-looking keys are
- * removed from `target`, so this feed can be handed to another service.
+ * Feed events after the cursor, oldest first: every workspace-scoped event and every user-level
+ * tombstone, never an organization-level one (operator keys stay in Core's own audit). `after` is
+ * the `seq` of the last event already seen as a decimal string (`null` starts from the beginning);
+ * `next` is the last event's `seq` as a decimal string when the page is full and there may be
+ * more, otherwise null. Leaving events out means consecutive feed events can skip `seq` numbers.
+ *
+ * Each event carries its ids, `seq`, workspace, action, time, and `target`, `before` and `after`
+ * with credential-looking keys removed at any depth, so the feed can be handed to another service.
+ * The actor and the request id are not part of it.
  */
 export async function listChanges(
   after: string | null,
@@ -93,8 +103,11 @@ export async function listChanges(
 ): Promise<{events: WorkspaceChangeEvent[]; next: string | null}> {
   const cursor = parseCursor(after)
   const size = clampPageSize(limit)
-  const rows = await WorkspaceAuditEventModel.find({seq: {$gt: cursor}})
-    .select({_id: 0, eventId: 1, seq: 1, workspaceId: 1, action: 1, occurredAt: 1, target: 1})
+  const rows = await WorkspaceAuditEventModel.find({
+    seq: {$gt: cursor},
+    $or: [{workspaceId: {$type: "string"}}, {action: USER_DELETED_ACTION}],
+  })
+    .select({_id: 0, eventId: 1, seq: 1, workspaceId: 1, action: 1, occurredAt: 1, target: 1, before: 1, after: 1})
     .sort({seq: 1})
     .limit(size)
     .lean()
@@ -105,8 +118,15 @@ export async function listChanges(
     action: row.action,
     occurredAt: row.occurredAt.toISOString(),
     target: redactSecrets(row.target ?? {}) as Record<string, unknown>,
+    before: snapshot(row.before),
+    after: snapshot(row.after),
   }))
   return {events, next: events.length === size ? String(events[events.length - 1]!.seq) : null}
+}
+
+/** A stored `before`/`after` snapshot for another service: null when absent, credential-looking keys removed. */
+function snapshot(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (redactSecrets(value) as Record<string, unknown>) : null
 }
 
 function parseCursor(after: string | null): number {

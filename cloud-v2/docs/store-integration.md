@@ -74,13 +74,53 @@ the documented shape.
   workspaces, `null` for a non-member.
 - `GET /workspaces/:workspaceId`: name, status and authorization revision, or
   `404 workspace_not_found`.
-- `GET /changes?after=&limit=`: the change feed, paged by `seq`.
+- `GET /changes?after=&limit=`: the change feed, paged by `seq` (below).
 - `POST /credentials` (Store only): mints a workspace credential for a package on
   behalf of a staff member; the token is returned once.
 - `POST /users/resolve-email` (Store only): `{email}` to `{mentraUserId}`, the
   Mentra user of the account that has that email verified (created on first
   use), or `404 user_not_found` when no account has it verified. Core stays the
   only service that maps account-provider identities to Mentra users.
+
+Fleet also has membership history routes the Store cannot call
+([Fleet integration](fleet-integration.md#membership-history)).
+
+### Change feed
+
+`GET /changes` is how the Store learns about workspace changes it did not make,
+such as a workspace deleted from the Core admin dashboard:
+
+- **Paging and replay.** Pass the `seq` of the last event processed as `after`
+  (omit it to start from the beginning); `next` is the following cursor, or null
+  when the page was not full. Events come in commit order. Nothing is ever
+  pruned, so replaying from the beginning rebuilds everything at any time.
+- **Contents.** `{eventId, seq, workspaceId, action, occurredAt, target, before,
+  after}`, with credential-looking keys (`token`, `secret`, `hash`, `password`)
+  removed from the snapshots. Membership events carry the roles in `before` and
+  `after`. Treat unknown actions as no-ops.
+- **Scope.** Workspace events and user-level tombstones only. Organization-level
+  events (operator keys) stay in Core's own audit trail, so consecutive `seq`
+  numbers on the feed can skip; a skipped number is never a missed workspace
+  event.
+
+The actions: `workspace.created`, `workspace.renamed`, `workspace.deleted`,
+`workspace.imported`, `membership.added`, `membership.role_changed`,
+`membership.removed`, `membership.left`, `membership.claimed`,
+`membership.merged_duplicate`, `membership.ownership_recovered`,
+`invitation.created`, `invitation.revoked`, `invitation.accepted`,
+`credential.created`, `credential.revoked` and `user.deleted`. The
+[event catalog](fleet-integration.md#event-catalog) gives each one's `target`,
+`before` and `after`. Two matter to the Store:
+
+- `workspace.deleted`: the workspace's memberships, credentials and invitations
+  are gone in Core (no per-membership events follow); its miniapps wait for a
+  Store operator (below).
+- `user.deleted` (`workspaceId` null, `target: {mentraUserId}`): a Mentra account
+  was deleted. Its memberships ended first, each as `membership.removed` with
+  `endedReason: "account_deleted"`, and the credentials those memberships created
+  were revoked. What the Store keeps keyed by that `mentraUserId` (private-miniapp
+  and beta grants, say) is the Store's to delete when it processes the tombstone,
+  idempotently: a retried deletion can record a second one.
 
 Core's public workspace API (`/api/workspaces`, `/api/organization`) is what
 people use through the dashboard, the CLI and the Store proxy. Core credentials

@@ -2,7 +2,15 @@ import {describe, expect, test} from "bun:test"
 import {CoreWorkspaceClientError, createCoreWorkspaceClient} from "./client"
 import {SERVICE_HEADERS, verifyServiceRequest} from "./service-signature"
 import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR} from "./types"
-import type {AuthorizeResponse, PrincipalResponse, WorkspaceChangeEvent, WorkspaceSummary} from "./types"
+import type {WorkspaceRole} from "./capabilities"
+import type {
+  AuthorizeResponse,
+  MembershipAtTime,
+  MembershipHistoryResponse,
+  PrincipalResponse,
+  WorkspaceChangeEvent,
+  WorkspaceSummary,
+} from "./types"
 
 const SECRET = "client-secret"
 const BASE = "https://core.test"
@@ -80,6 +88,8 @@ const changeEvent = (): WorkspaceChangeEvent => ({
   action: "membership.added",
   occurredAt: "2026-01-01T00:00:00.000Z",
   target: {membershipId: "mem_1"},
+  before: {role: null},
+  after: {role: "developer"},
 })
 
 async function expectClientError(promise: Promise<unknown>, code: CoreWorkspaceClientError["code"]) {
@@ -315,6 +325,127 @@ describe("operations", () => {
     for (const body of [{}, {mentraUserId: ""}, {mentraUserId: 7}, ["user_1"]]) {
       const {client} = clientFor(() => json(body))
       await expectClientError(client.resolveEmail("a@example.com"), "bad_response")
+    }
+  })
+})
+
+describe("membership history (Fleet)", () => {
+  const interval = (role: WorkspaceRole, from: string, to: string | null, authorizationRevision: number) => ({
+    role,
+    from,
+    to,
+    authorizationRevision,
+  })
+  const history: MembershipHistoryResponse = {
+    windowStart: "2026-07-10T00:00:00.000Z",
+    items: [
+      {
+        membershipId: "wm_1",
+        startedAt: "2026-08-01T00:00:00.000Z",
+        endedAt: null,
+        endedReason: null,
+        roles: [
+          interval("member", "2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", 4),
+          interval("admin", "2026-09-01T00:00:00.000Z", null, 7),
+        ],
+      },
+    ],
+  }
+  const asOf = (at: string, membership: MembershipAtTime | null = null) => ({
+    workspaceId: "ws_1",
+    mentraUserId: "mu_1",
+    at,
+    membership,
+  })
+
+  test("membershipHistory asks for one person in one workspace, with since only when given", async () => {
+    const {client, calls} = clientFor(() => json(history))
+    expect(await client.membershipHistory("ws/1", "mu 1")).toEqual(history)
+    await client.membershipHistory("ws_1", "mu_1", {since: "2026-08-01T00:00:00.000Z"})
+    expect(calls.map((call) => call.url.slice(BASE.length))).toEqual([
+      "/api/internal/workspaces/workspaces/ws%2F1/memberships/history?mentraUserId=mu+1",
+      "/api/internal/workspaces/workspaces/ws_1/memberships/history?mentraUserId=mu_1&since=2026-08-01T00%3A00%3A00.000Z",
+    ])
+    expect(calls[0].method).toBe("GET")
+  })
+
+  test("membershipAsOf asks about one time, and returns the membership in effect or none", async () => {
+    const membership: MembershipAtTime = {
+      membershipId: "wm_1",
+      startedAt: "2026-08-01T00:00:00.000Z",
+      endedAt: null,
+      endedReason: null,
+      role: interval("member", "2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", 4),
+    }
+    const {client, calls} = clientFor((request) =>
+      request.url.includes("at=")
+        ? json({windowStart: history.windowStart, ...asOf("2026-08-15T00:00:00.000Z", membership)})
+        : json({windowStart: history.windowStart, ...asOf("2026-10-08T00:00:00.000Z")}),
+    )
+    expect((await client.membershipAsOf({workspaceId: "ws_1", mentraUserId: "mu_1", at: "2026-08-15T00:00:00.000Z"})).membership).toEqual(
+      membership,
+    )
+    expect((await client.membershipAsOf({workspaceId: "ws_1", mentraUserId: "mu_1"})).membership).toBeNull()
+    expect(calls.map((call) => call.url.slice(BASE.length))).toEqual([
+      "/api/internal/workspaces/workspaces/ws_1/memberships/as-of?mentraUserId=mu_1&at=2026-08-15T00%3A00%3A00.000Z",
+      "/api/internal/workspaces/workspaces/ws_1/memberships/as-of?mentraUserId=mu_1",
+    ])
+  })
+
+  test("membershipsAsOf posts the queries and returns one answer per query", async () => {
+    const queries = [
+      {workspaceId: "ws_1", mentraUserId: "mu_1", at: "2026-08-15T00:00:00.000Z"},
+      {workspaceId: "ws_2", mentraUserId: "mu_1"},
+    ]
+    const answer = {
+      windowStart: history.windowStart,
+      items: [asOf("2026-08-15T00:00:00.000Z"), {...asOf("2026-10-08T00:00:00.000Z"), workspaceId: "ws_2"}],
+    }
+    const {client, calls} = clientFor(() => json(answer))
+    expect(await client.membershipsAsOf(queries)).toEqual(answer)
+    expect(calls[0].url).toBe(`${BASE}/api/internal/workspaces/memberships/as-of`)
+    expect(calls[0].method).toBe("POST")
+    expect(JSON.parse(calls[0].body)).toEqual({items: queries})
+  })
+
+  test("membershipsAsOf refuses more than 100 queries before calling Core", async () => {
+    const {client, calls} = clientFor(() => json({windowStart: history.windowStart, items: []}))
+    const queries = Array.from({length: 101}, (_, index) => ({workspaceId: `ws_${index}`, mentraUserId: "mu_1"}))
+    await expect(client.membershipsAsOf(queries)).rejects.toThrow(RangeError)
+    expect(calls).toHaveLength(0)
+  })
+
+  test("a history_window_exceeded 400 has its own error code; another 400 is bad_request", async () => {
+    const exceeded = clientFor(() => json({error: "history_window_exceeded"}, 400))
+    const error = await expectClientError(exceeded.client.membershipHistory("ws_1", "mu_1"), "history_window_exceeded")
+    expect(error.status).toBe(400)
+    await expectClientError(exceeded.client.membershipAsOf({workspaceId: "ws_1", mentraUserId: "mu_1"}), "history_window_exceeded")
+    await expectClientError(exceeded.client.membershipsAsOf([]), "history_window_exceeded")
+    const other = clientFor(() => json({error: "invalid_request"}, 400))
+    await expectClientError(other.client.membershipHistory("ws_1", "mu_1"), "bad_request")
+  })
+
+  test("refuses answers without the documented shape", async () => {
+    const generation = history.items[0]!
+    for (const body of [
+      {items: []},
+      {windowStart: "not a time", items: []},
+      {windowStart: history.windowStart},
+      {windowStart: history.windowStart, items: [{...generation, membershipId: 1}]},
+      {windowStart: history.windowStart, items: [{...generation, roles: []}]},
+      {windowStart: history.windowStart, items: [{...generation, roles: [{role: "admin", from: "x", authorizationRevision: 1}]}]},
+      {windowStart: history.windowStart, items: [{...generation, roles: [{role: "admin", from: generation.startedAt}]}]},
+    ]) {
+      const {client} = clientFor(() => json(body))
+      await expectClientError(client.membershipHistory("ws_1", "mu_1"), "bad_response")
+    }
+    for (const body of [
+      {items: [asOf("2026-08-15T00:00:00.000Z")]},
+      {windowStart: history.windowStart, items: []},
+      {windowStart: history.windowStart, items: [{...asOf("2026-08-15T00:00:00.000Z"), membership: {membershipId: "wm_1"}}]},
+    ]) {
+      const {client} = clientFor(() => json(body))
+      await expectClientError(client.membershipsAsOf([{workspaceId: "ws_1", mentraUserId: "mu_1"}]), "bad_response")
     }
   })
 })

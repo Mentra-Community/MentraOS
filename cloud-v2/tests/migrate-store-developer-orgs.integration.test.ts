@@ -45,6 +45,7 @@ import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-me
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {validateCredentialToken} from "../packages/core/src/services/workspaces/credential.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 
 // Each apply is several transactions and some tests start subprocesses; a loaded CI machine needs headroom.
 setDefaultTimeout(30_000)
@@ -586,6 +587,10 @@ describe("apply", () => {
     expect(byId[`wm_${undatedHex}`]).toMatchObject({role: "developer", email: null})
     // Nobody has signed in yet: every migrated membership is still pending.
     expect(acme.every(row => row.mentraUserId === null)).toBe(true)
+    // Each starts its role history with its role, from its start, at the new workspace's revision 0.
+    for (const row of acme) {
+      expect(row.roleHistory as unknown).toEqual([{role: row.role, from: row.startedAt, authorizationRevision: 0}])
+    }
   })
 
   test("keeps the highest role of a duplicated member", async () => {
@@ -1093,24 +1098,31 @@ describe("re-running apply carries access removals made in the Store", () => {
     expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${devHex}`}).lean()).toMatchObject({
       status: "ended",
     })
-    expect(await WorkspaceMembershipModel.findOne({membershipId: `wm_${String(insertedId)}`}).lean()).toMatchObject({
+    const readded = (await WorkspaceMembershipModel.findOne({membershipId: `wm_${String(insertedId)}`}).lean())!
+    expect(readded).toMatchObject({
       status: "active",
       role: "admin",
       pendingWorkosUserId: U.acmeDev,
     })
+    // Imported into an existing workspace: its role history starts at the revision the re-run left.
+    const revision = (await WorkspaceModel.findOne({workspaceId: ORG_ACME}).lean())!.authorizationRevision
+    expect(revision).toBeGreaterThan(0)
+    expect(readded.roleHistory as unknown).toEqual([{role: "admin", from: readded.startedAt, authorizationRevision: revision}])
   })
 
   test("a membership that collides with an unclaimed one is reported and the rest of the org still imports", async () => {
     // A Core row already holds BETA's creator as a pending member under another id, so the synthesized
     // owner would violate the unique (workspace, pending WorkOS user) index.
-    await WorkspaceMembershipModel.create({
-      membershipId: "wm_preexisting",
-      workspaceId: ORG_BETA,
-      pendingWorkosUserId: U.betaOwner,
-      role: "member",
-      status: "active",
-      startedAt: NOW,
-    })
+    await WorkspaceMembershipModel.create(
+      membershipRow({
+        membershipId: "wm_preexisting",
+        workspaceId: ORG_BETA,
+        pendingWorkosUserId: U.betaOwner,
+        role: "member",
+        status: "active",
+        startedAt: NOW,
+      }),
+    )
 
     const dry = await withReadOnlyTarget(target => run({target}))
     const report = await run({apply: true})

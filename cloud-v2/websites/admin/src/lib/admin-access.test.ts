@@ -18,6 +18,7 @@ function me(capabilities: OrganizationCapability[], workspaces: AdminMe["workspa
     credential: null,
     organization: { capabilities },
     workspaces,
+    fleet: { installed: false },
   };
 }
 

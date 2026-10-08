@@ -37,6 +37,7 @@ import {isWorkosConfigured} from "../developer-auth.service"
 import {findOrCreateUser} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
 import {isDeployedEnvironment} from "./organization"
+import {roleEntry} from "./workspace.service"
 
 const logger = createLogger("core").child({service: "identity-link.service"})
 
@@ -213,11 +214,18 @@ async function claimPendingMemberships(
     // may do. Either way the workspace document is written, first, like every workspace mutation: that
     // invalidates cached authorization and makes this write conflict with a concurrent leave or remove
     // that counts owners, so the last-owner guard cannot be raced past.
-    await WorkspaceModel.updateOne({workspaceId: duplicate.workspaceId}, {$inc: {authorizationRevision: 1}}, {session})
+    const workspace = await WorkspaceModel.findOneAndUpdate(
+      {workspaceId: duplicate.workspaceId},
+      {$inc: {authorizationRevision: 1}},
+      {new: true, session},
+    ).lean()
     if (raised) {
       await WorkspaceMembershipModel.updateOne(
         {membershipId: kept.membershipId, status: "active"},
-        {$set: {role: pendingRole}},
+        {
+          $set: {role: pendingRole},
+          $push: {roleHistory: roleEntry(pendingRole, now, workspace?.authorizationRevision ?? 0)},
+        },
         {session},
       )
     }

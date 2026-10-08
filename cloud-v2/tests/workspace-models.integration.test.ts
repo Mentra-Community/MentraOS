@@ -29,6 +29,7 @@ import { WorkspaceMembershipModel } from "../packages/core/src/models/workspace-
 import { WorkspaceModel } from "../packages/core/src/models/workspace.model";
 import { runStartupMigrations } from "../packages/core/src/migrations/startup.migrations";
 import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { membershipRow } from "./support/membership-row";
 
 const MODELS = [
   WorkspaceModel,
@@ -261,14 +262,15 @@ describe("workspace models (local replica set)", () => {
     await Promise.all(MODELS.map(model => model.deleteMany({})));
   });
 
-  const membership = (overrides: Record<string, unknown> = {}) => ({
-    membershipId: `wm_${Math.random().toString(36).slice(2)}`,
-    workspaceId: "ws_1",
-    mentraUserId: "mu_1",
-    role: "member",
-    startedAt: new Date(),
-    ...overrides,
-  });
+  const membership = (overrides: Record<string, unknown> = {}) =>
+    membershipRow({
+      membershipId: `wm_${Math.random().toString(36).slice(2)}`,
+      workspaceId: "ws_1",
+      mentraUserId: "mu_1",
+      role: "member",
+      startedAt: new Date(),
+      ...overrides,
+    } as { role: string; startedAt: Date });
 
   describe("workspaces", () => {
     test("applies defaults and timestamps", async () => {
@@ -358,6 +360,48 @@ describe("workspace models (local replica set)", () => {
       for (const role of ["owner", "admin", "developer", "member"]) {
         await WorkspaceMembershipModel.create(membership({ membershipId: `wm_${role}`, mentraUserId: `mu_${role}`, role }));
       }
+    });
+
+    test("requires a role history of valid entries, and keeps it in order", async () => {
+      const missing = await thrown(() =>
+        WorkspaceMembershipModel.create(membership({ membershipId: "wm_none", mentraUserId: "mu_none", roleHistory: [] })),
+      );
+      expect(missing.name).toBe("ValidationError");
+      const badRole = await thrown(() =>
+        WorkspaceMembershipModel.create(
+          membership({
+            membershipId: "wm_bad",
+            mentraUserId: "mu_bad",
+            roleHistory: [{ role: "superuser", from: new Date(), authorizationRevision: 0 }],
+          }),
+        ),
+      );
+      expect(badRole.name).toBe("ValidationError");
+      const noRevision = await thrown(() =>
+        WorkspaceMembershipModel.create(
+          membership({ membershipId: "wm_norev", mentraUserId: "mu_norev", roleHistory: [{ role: "member", from: new Date() }] }),
+        ),
+      );
+      expect(noRevision.name).toBe("ValidationError");
+
+      const first = new Date("2026-01-01T00:00:00.000Z");
+      const second = new Date("2026-02-01T00:00:00.000Z");
+      await WorkspaceMembershipModel.create(
+        membership({
+          membershipId: "wm_ok",
+          role: "admin",
+          startedAt: first,
+          roleHistory: [
+            { role: "member", from: first, authorizationRevision: 1 },
+            { role: "admin", from: second, authorizationRevision: 4 },
+          ],
+        }),
+      );
+      const row = await WorkspaceMembershipModel.findOne({ membershipId: "wm_ok" }).lean();
+      expect(row!.roleHistory as unknown).toEqual([
+        { role: "member", from: first, authorizationRevision: 1 },
+        { role: "admin", from: second, authorizationRevision: 4 },
+      ]);
     });
   });
 

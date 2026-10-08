@@ -46,7 +46,9 @@
  * What is imported:
  *  - Memberships: `status: "active"` rows only. owner -> owner, admin -> admin,
  *    member -> developer. They keep the WorkOS user id as `pendingWorkosUserId`
- *    and are claimed by the person's first sign-in. A person with several active
+ *    and are claimed by the person's first sign-in. Each starts its role history
+ *    with that role, from the Store membership's creation time, at the workspace's
+ *    revision at import (0 for a new workspace). A person with several active
  *    rows keeps the highest role. An org with no owner membership is given one
  *    from its `ownerUserId` (the recorded owner): a person with an active row is
  *    promoted to owner (`promotedOwners`), a person with no row at all gets a
@@ -92,6 +94,7 @@ import {markRevoked} from "../src/services/workspaces/credential.service"
 import {
   bumpRevision,
   endMembership,
+  roleEntry,
   touchWorkspace,
   type MembershipRow,
 } from "../src/services/workspaces/workspace.service"
@@ -867,6 +870,15 @@ async function importOrg(plan: OrgPlan, log: (message: string) => void): Promise
         {session},
       )
       const inserted = workspace.upsertedCount === 1
+      // A membership imported now starts its role history at the workspace's current revision (0 for
+      // a workspace this run inserted), dated from when the Store membership began.
+      const revision =
+        (
+          await WorkspaceModel.findOne({workspaceId: orgId})
+            .select({_id: 0, authorizationRevision: 1})
+            .session(session)
+            .lean<{authorizationRevision?: number}>()
+        )?.authorizationRevision ?? 0
 
       const memberships = await bulkInsertOnly(
         WorkspaceMembershipModel,
@@ -882,6 +894,7 @@ async function importOrg(plan: OrgPlan, log: (message: string) => void): Promise
                 email: membership.email,
                 name: membership.name,
                 role: membership.role,
+                roleHistory: [roleEntry(membership.role, membership.startedAt, revision)],
                 status: "active",
                 startedAt: membership.startedAt,
                 endedAt: null,

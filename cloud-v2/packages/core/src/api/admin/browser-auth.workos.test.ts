@@ -133,6 +133,7 @@ test("Core's actual WorkOS callback cookie authenticates /me through the shared 
     credential: null,
     organization: {capabilities: [...ORGANIZATION_CAPABILITIES].sort()},
     workspaces: [],
+    fleet: {installed: false},
   })
   expect(linking).toHaveBeenCalledWith(expect.objectContaining({workosUserId: user.id, email: user.email, emailVerified: true}))
   expect(jwksRequests).toEqual([`https://api.workos.com/sso/jwks/${clientId}`])

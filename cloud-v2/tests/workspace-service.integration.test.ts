@@ -46,6 +46,7 @@ import {
   type Actor,
 } from "../packages/core/src/services/workspaces/workspace.service"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {membershipRow} from "./support/membership-row"
 
 const MODELS = [
   WorkspaceModel,
@@ -89,16 +90,18 @@ async function addMember(
   fields: Record<string, unknown> = {},
 ) {
   const membershipId = `wm_${nextId()}`
-  await WorkspaceMembershipModel.create({
-    membershipId,
-    workspaceId,
-    mentraUserId,
-    email: `${mentraUserId}@example.test`,
-    role,
-    status: "active",
-    startedAt: new Date(),
-    ...fields,
-  })
+  await WorkspaceMembershipModel.create(
+    membershipRow({
+      membershipId,
+      workspaceId,
+      mentraUserId,
+      email: `${mentraUserId}@example.test`,
+      role,
+      status: "active",
+      startedAt: new Date(),
+      ...fields,
+    }),
+  )
   return membershipId
 }
 
@@ -193,6 +196,7 @@ describe("createWorkspace", () => {
       email: "mu_creator@example.test",
     })
     expect(membership!.membershipId).toMatch(/^wm_[0-9A-HJKMNP-TV-Z]{26}$/)
+    expect(membership!.roleHistory as unknown).toEqual([{role: "owner", from: membership!.startedAt, authorizationRevision: 0}])
 
     const listed = await listWorkspacesForUser("mu_creator")
     expect(listed).toHaveLength(1)
@@ -284,6 +288,24 @@ describe("changeRole", () => {
     const ownerGrant = await changeRole(user("mu_owner"), ws, memberId, "admin", 1)
     expect(ownerGrant.authorizationRevision).toBe(2)
     expect((await getActiveMembership(ws, "mu_member"))!.role).toBe("admin")
+
+    // Each change appended a role interval at the revision it produced; refused changes appended nothing.
+    const history = (await getActiveMembership(ws, "mu_member"))!.roleHistory
+    expect(history.map(entry => [entry.role, entry.authorizationRevision])).toEqual([
+      ["member", 0],
+      ["developer", 1],
+      ["admin", 2],
+    ])
+    expect(history[1]!.from.getTime()).toBeLessThanOrEqual(history[2]!.from.getTime())
+  })
+
+  test("changing to the same role appends nothing", async () => {
+    const ws = await newWorkspace()
+    const memberId = await addMember(ws, "mu_member", "member")
+
+    await changeRole(user("mu_owner"), ws, memberId, "member", await revisionOf(ws))
+
+    expect((await getActiveMembership(ws, "mu_member"))!.roleHistory).toHaveLength(1)
   })
 
   test("a role change is audited with before and after and bumps the revision once", async () => {
@@ -854,7 +876,7 @@ describe("audit", () => {
     expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
   })
 
-  test("listChanges pages by seq and never includes secrets or token hashes", async () => {
+  test("listChanges pages by seq, leaves organization-level events out and never includes secrets or token hashes", async () => {
     const ws = await newWorkspace()
     const memberId = await addMember(ws, "mu_member", "member")
     await changeRole(user("mu_owner"), ws, memberId, "developer", 0)
@@ -885,8 +907,9 @@ describe("audit", () => {
         requestId: null,
       })
     })
-    const total = await WorkspaceAuditEventModel.countDocuments({})
-    expect(total).toBe(6)
+    expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(6)
+    // The organization-level event stays in Core's audit trail and is not on the feed.
+    const total = 5
 
     const collected: Awaited<ReturnType<typeof listChanges>>["events"] = []
     let cursor: string | null = null
@@ -900,24 +923,25 @@ describe("audit", () => {
       cursor = page.next
     } while (cursor)
 
-    expect(pages).toBe(4) // 2 + 2 + 2 + the empty page after a full one
+    expect(pages).toBe(3) // 2 + 2 + 1
     expect(collected).toHaveLength(total)
     const eventIds = collected.map(event => event.eventId)
     expect([...eventIds].sort()).toEqual(eventIds)
     expect(new Set(eventIds).size).toBe(total)
     // seq is the feed position: 1..n in order, and what `next` hands back as the cursor.
-    expect(collected.map(event => event.seq)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(collected.map(event => event.seq)).toEqual([1, 2, 3, 4, 5])
     expect(collected.map(event => event.action)).toEqual([
       "workspace.created",
       "membership.role_changed",
       "workspace.renamed",
       "membership.removed",
       "invitation.created",
-      "credential.revoked",
     ])
     for (const event of collected) {
       expect(Object.keys(event).sort()).toEqual([
         "action",
+        "after",
+        "before",
         "eventId",
         "occurredAt",
         "seq",
@@ -925,20 +949,26 @@ describe("audit", () => {
         "workspaceId",
       ])
       expect(new Date(event.occurredAt).toISOString()).toBe(event.occurredAt)
+      expect(event.workspaceId).toBe(ws)
     }
-    expect(collected[0]!.workspaceId).toBe(ws)
-    expect(collected[5]!.workspaceId).toBeNull()
+    // Before and after carry the change itself, e.g. the roles of a role change.
+    expect(collected[1]).toMatchObject({before: {role: "member"}, after: {role: "developer"}})
+    expect(collected[2]).toMatchObject({before: {name: "Acme"}, after: {name: "Acme Two"}})
 
     const serialized = JSON.stringify(collected)
     for (const secret of ["deadbeef", "s3cr3t", "tok-value", "tokenHash", "req_1", "mu_owner@example.test"]) {
       expect(serialized).not.toContain(secret)
     }
     expect(collected[4]!.target).toEqual({invitationId: "winv_1", nested: {note: "kept"}, list: [{id: "keep"}]})
+    expect(collected[4]!.before).toEqual({})
+    expect(collected[4]!.after).toEqual({})
+    expect(collected[0]!.before).toBeNull()
 
     // The cursor is exclusive: resuming after a seq returns only later events.
     const resumed = await listChanges("3", 100)
     expect(resumed.events.map(event => event.eventId)).toEqual(eventIds.slice(3))
     expect(resumed.next).toBeNull()
+    expect((await listChanges("5", 10)).events).toEqual([])
     expect((await listChanges("6", 10)).events).toEqual([])
     expect((await listChanges("99", 10)).events).toEqual([])
     expect((await listChanges("0", 3)).events.map(event => event.eventId)).toEqual(eventIds.slice(0, 3))
@@ -962,7 +992,7 @@ describe("audit", () => {
     }
   })
 
-  test("seq is one sequence across every workspace and organization-level event, all served in order", async () => {
+  test("seq is one sequence across every workspace and organization-level event; the feed serves the workspace ones", async () => {
     const record = (workspaceId: string | null, n: number) =>
       withTransaction(session =>
         recordWorkspaceEvent(session, {
@@ -988,10 +1018,8 @@ describe("audit", () => {
     expect((await WorkspaceAuditCounterModel.findById(WORKSPACE_AUDIT_COUNTER_ID).lean())!.seq).toBe(4)
     const feed = await listChanges(null, 10)
     expect(feed.events.map(event => [event.action, event.seq])).toEqual([
-      ["test.1", 1],
       ["test.2", 2],
       ["test.3", 3],
-      ["test.4", 4],
     ])
   })
 
