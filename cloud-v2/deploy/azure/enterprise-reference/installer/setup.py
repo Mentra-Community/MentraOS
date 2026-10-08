@@ -1461,6 +1461,9 @@ def configure_teams(args, directory, config, state, interactive=None):
         if not user:
             raise SetupError(f'{organizer} was not found in Entra.')
         organizer = user['id']
+    # Until the rollout below completes, the deployment counts as unfinished, so
+    # running setup again retries it rather than reporting a finished install.
+    checkpoint(directory, state, 'deploying')
     changes = {k: v for k, v in (('teamsGraphTenantId', config['tenantId']), ('teamsGraphClientId', client_id),
                                  ('teamsGraphOrganizerId', organizer)) if config.get(k, '') != v}
     if changes:
