@@ -11,8 +11,9 @@ const definition = {id:'new-routine',minimumRoutineApiVersion:1,title:'A check',
   requires:[],requirements:[],fixtures:[],steps:[{id:'check',instruction:'Check',expected:'Checked'}],
   execution:{resourceKinds:['app','network']},resourceRequirements:[{kind:'network',capabilities:['independent-uplink']}],
   source:{repository:'Mentra-Community/Mentra-Automated-Testing',revision:selection.routineRevision,path:'routines/new-routine/routine.ts'}};
-function fixture() {
+function fixture(selectedDefinition: Omit<typeof definition, 'requires'> & {requires: string[]; glasses?: {models: string[]}} = definition) {
   let time = Date.parse('2026-10-08T00:00:00Z'), row:StoredRoutineJob|null=null, resolves=0, sources=0;
+  let offeredHosts: ReceivedTestHostState[] | undefined;
   const copy = <T>(value:T):T => structuredClone(value);
   const rows:RoutineJobRepository={
     async get(id){return row?.requestId===id?copy(row):null},async insert(value){if(row)throw Object.assign(Error('duplicate'),{code:11000});row=copy(value)},
@@ -32,13 +33,36 @@ function fixture() {
   const service=new RoutineJobService(rows,{async resolve(value,platform){resolves++;return {source:value,platform,availability:'available',title:'App',headSha:'c'.repeat(40),createdAt:new Date(time).toISOString(),buildUrl:'https://github.com/Mentra-Community/MentraOS/actions/runs/55',
     archive:{name:'app.apk',size:100,sha256:'d'.repeat(64),url:'https://artifactscdn.mentraglass.com/app.apk'},receipt:{size:10,sha256:'e'.repeat(64),url:'https://artifactscdn.mentraglass.com/receipt.json'}}}},
     {async resolve(revision){sources++;return revision??selection.routineRevision},async inventory(commit){return {commit,files:[]}},async blob(){return new Uint8Array()}},
-    {async getExact(){return null}}, {async get(hostId){return host(hostId)}}, {async cancel(){if(row && row.state!=='terminal')row={...row,state:'terminal',terminalStatus:'cancelled'};return null}},
+    {async getExact(){return null}}, {async get(hostId){return offeredHosts?.find(host => host.hostId === hostId) ?? host(hostId)}, async list(){return offeredHosts ?? []}}, {async cancel(){if(row && row.state!=='terminal')row={...row,state:'terminal',terminalStatus:'cancelled'};return null}},
     {async detail(){throw Object.assign(new Error('missing'),{status:404})}},()=>time);
   // Result lookup intentionally uses the same 404 class as existing Core result APIs.
   const prepare=async()=>{const first=await service.submit(selection);await service.prepared(selection.requestId,{inputSha256:first.fleetSelectionSha256,
-    routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(definition),definition});return service.preparation(selection.requestId)};
-  return {service,rows,lane,prepare,settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256} as any},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
+    routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(selection.requestId)};
+  return {service,rows,lane,prepare,offer(hosts: ReceivedTestHostState[]){offeredHosts=copy(hosts)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256} as any},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
 }
+test('run routing chooses an accepting alternate model, refreshes availability and retains exact target and input', async () => {
+  const f = fixture({...definition, requires: ['camera'], glasses: {models: ['g1', 'mentra-live']}, execution: {resourceKinds: ['app', 'network', 'glasses']}});
+  const time = Date.parse('2026-10-08T00:00:00Z');
+  const lane = (model: string, state: ReceivedTestHostState['lanes'][number]['state'], dispatchMode: ReceivedTestHostState['lanes'][number]['dispatchMode']) => ({...f.lane,
+    id: model, state, dispatchMode, resources: [...f.lane.resources, {id: `glasses:${model}`, kind: 'glasses' as const}],
+    glasses: [{resourceId: `glasses:${model}`, deviceId: model, model, capabilities: ['camera']}]});
+  const host: ReceivedTestHostState = {hostId: 'healthy', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: new Date(time).toISOString(), receivedAt: new Date(time).toISOString(), lanes: [lane('g1', 'idle', 'paused'), lane('mentra-live', 'idle', 'automatic')]};
+  f.offer([host]);
+  const prepared = await f.prepare(), digest = prepared.inputSha256, frozen = structuredClone(f.row!.fleetSelection);
+  expect(prepared.chosenModel).toBe('mentra-live'); expect(prepared.waitingReason).toBeUndefined();
+  expect(prepared.routingLabels).toEqual(routineRequirementLabels(prepared.prepared!.requirements, 'mentra-live'));
+  host.lanes[0]!.dispatchMode = 'automatic'; host.lanes[0]!.state = 'in-repair'; f.offer([host]);
+  expect((await f.service.preparation(selection.requestId)).chosenModel).toBe('mentra-live');
+  host.lanes[0]!.state = 'running'; host.lanes[1]!.state = 'running'; f.offer([host]);
+  expect(await f.service.preparation(selection.requestId)).toMatchObject({state: 'awaiting-runner', waitingReason: 'Awaiting an idle compatible enrolled runner', inputSha256: digest});
+  host.lanes[0]!.state = 'idle'; f.offer([host]);
+  expect((await f.service.preparation(selection.requestId)).chosenModel).toBe('g1');
+  expect(f.row!.fleetSelection).toEqual(frozen); expect(f.row!.fleetInputSha256).toBe(digest);
+  const {routineJobRouting} = await import('./routine-job.service');
+  expect(routineJobRouting(prepared.prepared!.requirements, [host], time, {hostId: 'elsewhere'})).toMatchObject({waitingReason: 'Awaiting a compatible enrolled runner'});
+  expect(routineJobRouting(prepared.prepared!.requirements, [host], time, {hostId: host.hostId, laneId: 'mentra-live'})).toMatchObject({waitingReason: 'Awaiting an idle compatible enrolled runner'});
+});
 test('offline requirements and exact app/source freeze before host selection; retries preserve them',async()=>{
   const f=fixture(),prepared=await f.prepare();expect(prepared).toMatchObject({state:'awaiting-runner',prepared:{requirements:{platform:'android',resources:[{kind:'app',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}]}}});
   const calls=f.sources;await f.service.submit(selection);expect(f.sources).toBe(calls);expect(f.resolves).toBe(1);expect(f.row?.hostId).toBeUndefined();

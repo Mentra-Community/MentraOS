@@ -126,6 +126,18 @@ export function routineRequirementLabels(requirements: PortableRequirements, mod
     ...(target?.hostId ? [`mentra-host-${token(target.hostId)}`] : []),
     ...(target?.laneId ? [`mentra-lane-${token(`${target.hostId}:${target.laneId}`)}`] : [])])].sort();
 }
+/** Queue model choice follows current accepting lanes; the portable alternatives stay immutable. */
+export function routineJobRouting(requirements: PortableRequirements, hosts: ReceivedTestHostState[], now: number, target?: StoredRoutineJob['fleetTarget']) {
+  const compatible = hosts.filter(host => Number.isFinite(Date.parse(host.receivedAt)) && now - Date.parse(host.receivedAt) <= 120_000 &&
+    (!target?.hostId || target.hostId === host.hostId)).flatMap(host => host.lanes.filter(lane =>
+      (!target?.laneId || target.laneId === lane.id) && lane.dispatchMode === 'automatic' && lane.state !== 'offline' && lane.state !== 'out-of-service' && compatibleRoutineLane(requirements, lane)));
+  const accepting = compatible.filter(lane => lane.state === 'idle');
+  const chosenModel = requirements.glasses ? [...new Set(accepting.flatMap(lane => (lane.glasses ?? []).filter(glasses =>
+    requirements.glasses!.models.includes(glasses.model) && requirements.glasses!.capabilities.every(value => glasses.capabilities.includes(value))).map(glasses => glasses.model)))].sort()[0]
+    ?? [...requirements.glasses.models].sort()[0] : undefined;
+  return {routingLabels: routineRequirementLabels(requirements, chosenModel, target), ...(chosenModel ? {chosenModel} : {}),
+    ...(!accepting.length ? {waitingReason: compatible.length ? 'Awaiting an idle compatible enrolled runner' : 'Awaiting a compatible enrolled runner'} : {})};
+}
 export const routineJobInputDigest = (row: Pick<StoredRoutineJob, 'fleetSelection' | 'fleetPreparation' | 'fleetDeadline' | 'fleetTarget'>) =>
   requestInputDigest({selection: row.fleetSelection, prepared: row.fleetPreparation, deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null});
 
@@ -266,21 +278,12 @@ export class RoutineJobService {
   }
   async preparation(jobId: string) {
     const row = await this.job(jobId);
-    const routing = row.fleetPreparation ? await this.routing(row) : {};
+    const routing: Partial<ReturnType<typeof routineJobRouting>> = row.fleetPreparation ? await this.routing(row) : {};
     return {jobId, kind: 'run' as const, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256, deadline: row.fleetDeadline.toISOString(),
       state: row.state, ...routing, selection: row.fleetSelection, ...(row.fleetTarget ? {target: row.fleetTarget} : {}), ...(row.fleetPreparation ? {prepared: row.fleetPreparation} : {})};
   }
   private async routing(row: StoredRoutineJob) {
-    const requirements = row.fleetPreparation!.requirements;
-    const hosts = await this.hosts.list?.() ?? [];
-    const compatible = hosts.filter(host => Number.isFinite(Date.parse(host.receivedAt)) && this.now() - Date.parse(host.receivedAt) <= 120_000 &&
-      (!row.fleetTarget?.hostId || row.fleetTarget.hostId === host.hostId)).flatMap(host => host.lanes.filter(lane =>
-        (!row.fleetTarget?.laneId || row.fleetTarget.laneId === lane.id) && compatibleRoutineLane(requirements, lane)));
-    const model = requirements.glasses ? [...new Set(compatible.flatMap(lane => (lane.glasses ?? []).filter(glasses =>
-      requirements.glasses!.models.includes(glasses.model) && requirements.glasses!.capabilities.every(value => glasses.capabilities.includes(value))).map(glasses => glasses.model)))].sort()[0]
-      ?? [...requirements.glasses.models].sort()[0] : undefined;
-    return {routingLabels: routineRequirementLabels(requirements, model, row.fleetTarget), ...(model ? {chosenModel: model} : {}),
-      ...(!compatible.length ? {waitingReason: 'Awaiting a compatible enrolled runner'} : {})};
+    return routineJobRouting(row.fleetPreparation!.requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetTarget);
   }
   async inventory(jobId: string) {const row = await this.job(jobId); return this.sources.inventory(row.fleetSelection.routineRevision);}
   async blob(jobId: string, sha: string) {

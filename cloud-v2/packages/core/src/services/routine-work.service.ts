@@ -18,7 +18,7 @@ import {selectedBuildInput} from '../types/test-build.types'
 import {TestHostStateService} from './test-host-state.service'
 import {GithubRoutineSourceGateway} from './routine-source-selection.service'
 import {routineJobBindInputSchema, portableRequirementsSchema, type RoutineJobBinding, type PortableRequirements, routineJobActionsSchema, routineJobCompletionSchema, type RoutineJobCompletion} from '../types/routine-job.types'
-import {compatibleRoutineLane, routineLaneDescriptorRevision, routineRequirementLabels} from './routine-job.service'
+import {compatibleRoutineLane, routineJobRouting, routineLaneDescriptorRevision} from './routine-job.service'
 import {requestInputDigest, TestRequestConflict} from './test-request.service'
 import {TestRunError} from './test-result-error'
 import {RoutineWorkNotification} from './routine-work-notification'
@@ -341,15 +341,12 @@ export class RoutineWorkService {
   async preparation(jobId: string) {
     const row = await this.inspect(jobId)
     if (!row.fleetSelection || !row.fleetDeadline || !row.fleetInputSha256) throw new TestRunError(404, 'Authoring fleet job was not found')
-    const requirements = this.requirements(row.fleetSelection), hosts = await this.hosts.list?.() ?? []
-    const compatible = hosts.filter(host => this.now() - Date.parse(host.receivedAt) <= 120_000 && (!row.fleetSelection!.target?.hostId || row.fleetSelection!.target.hostId === host.hostId))
-      .flatMap(host => host.lanes.filter(lane => (!row.fleetSelection!.target?.laneId || lane.id === row.fleetSelection!.target.laneId) && compatibleRoutineLane(requirements, lane)))
-    const chosenModel = requirements.glasses ? [...new Set(compatible.flatMap(lane => (lane.glasses ?? []).filter(glasses => requirements.glasses!.models.includes(glasses.model)
-      && requirements.glasses!.capabilities.every(capability => glasses.capabilities.includes(capability))).map(glasses => glasses.model)))].sort()[0] ?? [...requirements.glasses.models].sort()[0] : undefined
+    const requirements = this.requirements(row.fleetSelection)
+    const routing = routineJobRouting(requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetSelection.target)
     return {jobId, kind: 'author' as const, inputSha256: row.fleetInputSha256, deadline: row.fleetDeadline.toISOString(),
-      routingLabels: routineRequirementLabels(requirements, chosenModel, row.fleetSelection.target), ...(chosenModel ? {chosenModel} : {}),
+      ...routing,
       ...(row.fleetSelection.target ? {target: row.fleetSelection.target} : {}), state: row.fleetBinding ? row.status?.state ?? 'bound' : row.fleetCancellation ? 'terminal' : 'awaiting-runner',
-      selection: row.fleetSelection, prepared: {requirements: this.requirements(row.fleetSelection)}}
+      selection: row.fleetSelection, prepared: {requirements}}
   }
   async bind(jobId: string, hostId: string, value: unknown): Promise<{binding: RoutineJobBinding; execute: boolean; observation: unknown}> {
     const input = routineJobBindInputSchema.parse(value), row = await this.inspect(jobId)

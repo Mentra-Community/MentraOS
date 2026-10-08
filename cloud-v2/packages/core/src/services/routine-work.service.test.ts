@@ -62,6 +62,38 @@ test('invalid portable author fixtures fail intake before any persistence or Act
     else process.env.TEST_RUN_INGEST_TOKEN = previous
   }
 })
+test('author routing uses an accepting alternate model and refreshes labels without changing its portable input', async () => {
+  const {routineRequirementLabels} = await import('./routine-job.service')
+  type Host = import('./test-host-state.service').ReceivedTestHostState
+  const time = Date.parse('2026-10-08T00:00:00Z'), rows = new Map<string, RoutineWorkDelivery>()
+  const unexpected = async (): Promise<never> => {throw new Error('Unexpected host operation')}
+  const repository: RoutineWorkRepository = {async get(id) {return structuredClone(rows.get(id) ?? null)}, async insert(row) {rows.set(row.workId, structuredClone(row))},
+    queued: unexpected, accept: unexpected, updateStatus: unexpected}
+  const resources = [...input.requirements.resources, {kind: 'glasses' as const, capabilities: []}]
+  const lane = (model: string, state: Host['lanes'][number]['state'], dispatchMode: Host['lanes'][number]['dispatchMode']) => ({id: model, platform: 'android' as const,
+    state, dispatchMode, resources: resources.map(resource => ({id: `${resource.kind}:${model}`, kind: resource.kind})),
+    glasses: [{resourceId: `glasses:${model}`, deviceId: model, model, capabilities: ['camera']}]})
+  const host: Host = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: new Date(time).toISOString(), receivedAt: new Date(time).toISOString(), lanes: [lane('g1', 'idle', 'paused'), lane('mentra-live', 'idle', 'automatic')]}
+  const service = new ActualRoutineWorkService(repository, {async resolve(source, platform) {return {source, platform, availability: 'available',
+    headSha: input.origin.headSha, title: 'Candidate', buildUrl: 'https://github.com/build', createdAt: new Date(time).toISOString(),
+    archive: {name: 'candidate.apk', url: 'https://artifactscdn.mentraglass.com/candidate.apk', size: 100, sha256: 'c'.repeat(64)},
+    receipt: {url: 'https://artifactscdn.mentraglass.com/receipt.json', size: 50, sha256: 'd'.repeat(64)}}}},
+    {get: unexpected, async list() {return [structuredClone(host)]}}, {async publish() {}}, {async resolve() {return 'a'.repeat(40)}}, () => time, null)
+  const {target: _target, ...portable} = input
+  const row = await service.submit({...portable, requirements: {...input.requirements, resources, glasses: ['g1', 'mentra-live'], capabilities: ['camera']}})
+  const first = await service.preparation(row.workId), frozen = structuredClone(row.fleetSelection)
+  expect(first.chosenModel).toBe('mentra-live'); expect(first.waitingReason).toBeUndefined()
+  expect(first.routingLabels).toEqual(routineRequirementLabels(first.prepared.requirements, 'mentra-live'))
+  host.lanes[0]!.dispatchMode = 'automatic'; host.lanes[0]!.state = 'in-repair'
+  expect((await service.preparation(row.workId)).chosenModel).toBe('mentra-live')
+  host.lanes[1]!.state = 'running'
+  expect(await service.preparation(row.workId)).toMatchObject({state: 'awaiting-runner', waitingReason: 'Awaiting an idle compatible enrolled runner', inputSha256: first.inputSha256})
+  host.lanes[0]!.state = 'idle'
+  expect((await service.preparation(row.workId)).chosenModel).toBe('g1')
+  expect((await service.inspect(row.workId)).fleetSelection).toEqual(frozen)
+  expect((await service.inspect(row.workId)).fleetInputSha256).toBe(first.inputSha256)
+})
 function fixture(options: {buildHead?: string; noHost?: boolean; notificationFailure?: boolean} = {}) {
   const rows = new Map<string, RoutineWorkDelivery>()
   let resolves = 0,
