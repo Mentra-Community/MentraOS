@@ -18,6 +18,11 @@ import org.robolectric.Robolectric;
 import static org.robolectric.Shadows.shadowOf;
 import android.app.Application;
 import org.robolectric.util.ReflectionHelpers;
+import android.os.Looper;
+import java.time.Duration;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import com.mentra.asg_client.service.system.interfaces.ISystemController;
+import org.mockito.MockedStatic;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -163,5 +168,41 @@ public class OtaHelperInlineMtkTest {
                 assertThat(restarted.getStatus()).isEqualTo(targetBoot ? "complete" : "failed");
             }
         } finally {helper.getSessionManager().clear(); helper.cleanup(); OtaHelper.setMtkOtaInProgress(false);}
+    }
+
+    @Test public void serviceRestartRecoversOnlyTheRecordedPendingReboot() throws Exception {
+        Context context = ApplicationProvider.getApplicationContext();
+        context.getSharedPreferences("ota_session", Context.MODE_PRIVATE).edit().clear().commit();
+        OtaHelper original = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        original.getSessionManager().createMtkRestore("firmware-" + "b".repeat(32), "a".repeat(64),
+                new JSONObject(manifest()).getJSONObject("mtk_full_ota"), "20260709", "11111111-1111-4111-8111-111111111111");
+        original.getSessionManager().markMtkInstallDispatched();
+        original.getSessionManager().stageMtkRestoreForReboot();
+        OtaHelper replacement = spy(new OtaHelper(context, mock(IBesOtaRegistry.class)));
+        ISystemController system = mock(ISystemController.class);
+        try (MockedStatic<SystemControllerFactory> factory = mockStatic(SystemControllerFactory.class)) {
+            factory.when(() -> SystemControllerFactory.get(any())).thenReturn(system);
+            doReturn("20260709").when(replacement).readMtkSourceVersion();
+            doReturn("11111111-1111-4111-8111-111111111111").when(replacement).readMtkSourceBoot();
+            OtaService service = Robolectric.buildService(OtaService.class).get();
+            ReflectionHelpers.setField(service, "otaHelper", replacement);
+            ReflectionHelpers.callInstanceMethod(service, "recoverInlineMtkAfterRestart");
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(3));
+            verify(system, times(1)).reboot();
+            verify(system, never()).installSystemOta(anyString());
+            assertThat(replacement.getSessionManager().hasActiveMtkRestore()).isTrue();
+            assertThat(replacement.startVersionCheckWithUrl(context, "https://cdn/other.json")).isFalse();
+
+            OtaHelper.setMtkOtaInProgress(false);
+            replacement.getSessionManager().clear();
+            replacement.getSessionManager().createMtkRestore("firmware-" + "c".repeat(32), "a".repeat(64),
+                    new JSONObject(manifest()).getJSONObject("mtk_full_ota"), "20260709", "11111111-1111-4111-8111-111111111111");
+            replacement.getSessionManager().markMtkInstallDispatched();
+            OtaService uncertain = Robolectric.buildService(OtaService.class).get();
+            ReflectionHelpers.setField(uncertain, "otaHelper", replacement);
+            ReflectionHelpers.callInstanceMethod(uncertain, "recoverInlineMtkAfterRestart");
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(3));
+            verify(system, times(1)).reboot();
+        } finally {replacement.getSessionManager().clear(); replacement.cleanup(); original.cleanup(); OtaHelper.setMtkOtaInProgress(false);}
     }
 }

@@ -63,7 +63,7 @@ public class OtaService extends Service {
 
         stopLegacyOtaUpdaterIfPresent();
 
-        otaHelper.reconcileInlineMtkAfterRestart();
+        recoverInlineMtkAfterRestart();
 
         // Check if ASG client was just updated - if so, auto-resume OTA for MTK/BES
         checkAndResumeAfterApkUpdate();
@@ -95,6 +95,15 @@ public class OtaService extends Service {
             }, "inline-mtk-ota").start();
         }
         return START_STICKY;
+    }
+
+    private void recoverInlineMtkAfterRestart() {
+        otaHelper.reconcileInlineMtkAfterRestart();
+        if (otaHelper.getSessionManager().hasActiveMtkRestore()
+                && "awaiting_reboot".equals(otaHelper.getSessionManager().getCurrentPhase())
+                && otaHelper.consumeRebootAfterMtkInstall()) {
+            scheduleMtkRebootToApplyUpdate();
+        }
     }
 
     @Override
