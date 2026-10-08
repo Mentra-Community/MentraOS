@@ -1046,6 +1046,19 @@ def configure_entra(args, directory, config, state):
     preflight(config)
     if state.get('outputs') or state.get('configHash'):
         raise SetupError('Do not replace identity registrations after deployment. Reconcile existing IDs through the standalone helper.')
+    core, mobile = (getattr(args, 'core_client_id', None) or '').lower(), (getattr(args, 'mobile_client_id', None) or '').lower()
+    if core or mobile:
+        # Apps an Entra administrator created with the helper; only read them here.
+        if not (GUID.fullmatch(core) and GUID.fullmatch(mobile)):
+            raise SetupError('Give both --core-client-id and --mobile-client-id.')
+        for client_id in (core, mobile):
+            found = graph(config, 'GET', graph_filter('applications', f'appId eq {odata(client_id)}', 'signInAudience'))['value']
+            if not found or found[0].get('signInAudience') != 'AzureADMyOrg':
+                raise SetupError(f'{client_id} is not a single-tenant app registration in tenant {config["tenantId"]}.')
+        write_json(directory / 'identity.pending.json', dict(previousBinding=state['binding'],
+                   previousConfigHash=digest(directory / 'deployment.config.json'), coreApiClientId=core, mobileClientId=mobile))
+        recover_identity(directory, config, state)
+        return {'status': 'configured', 'next': 'Run setup again to continue.'}
     argv = ['bash', str(ROOT / 'scripts/configure-entra.sh'), '--core-name', config['displayName'] + ' Mentra Core',
             '--mobile-name', config['displayName'] + ' Mentra Mobile', '--installer-owner', state['owner']]
     for field, flag in (('coreApiClientId', '--core-client-id'), ('mobileClientId', '--mobile-client-id')):
@@ -1464,6 +1477,18 @@ def assign_employees(config, sp_id, entries):
     return assigned, problems
 
 
+def entra_handoff(config, state):
+    # For an Entra administrator; setup itself only needs the two IDs it prints.
+    name = config['displayName']
+    return {'step': 'Sign-in apps', 'action': (
+        f"An Application Administrator or Cloud Application Administrator, signed in to tenant {config['tenantId']}, "
+        f'downloads the installer as in the guide (prefix the command with MENTRA_START=0 so setup does not start) and runs:\n'
+        f'    ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh --core-name "{name} Mentra Core" '
+        f'--mobile-name "{name} Mentra Mobile" --installer-owner {state["owner"]} --grant-admin-consent\n'
+        f'  It prints coreApiClientId and mobileClientId. Then run: {setup_command()} configure-entra '
+        '--core-client-id CORE_ID --mobile-client-id MOBILE_ID')}
+
+
 def entra_handoffs(args, config, interactive):
     """Consent and employee access; returns any remaining administrator steps."""
     handoffs = []
@@ -1797,6 +1822,14 @@ def relink():
         temporary.replace(link)
 
 
+def report_storage_account(config):
+    try:
+        return azure(config, 'storage', 'account', 'list', '--resource-group', config['resourceGroup'],
+                     '--query', '[0].name') or 'STORAGE_ACCOUNT'
+    except SetupError:
+        return 'STORAGE_ACCOUNT'
+
+
 def upgrade_command(args, directory, interactive=None):
     interactive = sys.stdin.isatty() and not getattr(args, 'yes', False) if interactive is None else interactive
     state = read_json(directory / 'state.json')
@@ -1823,8 +1856,11 @@ def upgrade_command(args, directory, interactive=None):
             print_preview(preview(directory, upcoming, state), upcoming)
         except SetupError as error:
             print(f'  Preview unavailable: {error}')
-        print('Signing keys are safe in Key Vault. Back up the Cosmos DB database and the report file share first;\n'
-              'a software image can be rolled back, but database changes cannot.')
+        print('Signing keys are safe in Key Vault. The database can be restored to any point in the last 7 days from the\n'
+              'Azure portal (Cosmos DB > Point In Time Restore). Snapshot the report files first:\n'
+              f"  az storage share-rm snapshot --resource-group {config['resourceGroup']} --name core-attachments "
+              f"--storage-account {report_storage_account(config)}\n"
+              'A software image can be rolled back, but database changes cannot.')
         confirmed = getattr(args, 'backup_confirmed', False) or confirm(
             'Have you backed up the database and report files, and are you ready to upgrade?', False, interactive)
         if not confirmed:
@@ -1880,7 +1916,13 @@ def guided(args, directory):
             return finish(directory, {'status': 'stopped', 'next': done + ' Run setup again when you are ready.'})
     if entra_missing:
         section('Creating the Microsoft sign-in apps')
-        configure_entra(argparse.Namespace(**dict(vars(args), grant_admin_consent=False)), directory, config, state)
+        try:
+            configure_entra(argparse.Namespace(**dict(vars(args), grant_admin_consent=False, core_client_id=None,
+                                                      mobile_client_id=None)), directory, config, state)
+        except SetupError as error:
+            print(f'  Setup could not create them with your account: {error}')
+            checkpoint(directory, state, state['phase'], handoffs=[entra_handoff(config, state)])
+            return finish(directory, {'status': 'awaiting_entra', 'next': 'Run setup again after the Entra administrator has run the command above.'})
         config, state, release = load(directory)
     section('Employee sign-in')
     handoffs = entra_handoffs(args, config, interactive)
@@ -1977,6 +2019,8 @@ def main():
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--dns-ready', action='store_true')
     parser.add_argument('--grant-admin-consent', action='store_true')
+    parser.add_argument('--core-client-id', help='configure-entra: Core app an Entra administrator created')
+    parser.add_argument('--mobile-client-id', help='configure-entra: Mobile app an Entra administrator created')
     parser.add_argument('--employees', help='Comma-separated employee emails or group names allowed to sign in')
     parser.add_argument('--mirror', help='Approved Azure registry/repository for configure-mirror; release digest stays pinned')
     parser.add_argument('--dns-zone', help='Existing Azure DNS zone for configure-azure-dns')
