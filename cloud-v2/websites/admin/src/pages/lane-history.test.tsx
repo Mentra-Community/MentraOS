@@ -54,6 +54,21 @@ test('lane details fetch retained history for the selected host only', async () 
   try {await (query.options.queryFn as Function)({}); expect(url).toBe('/api/admin/test-runs/restoration/list?hostId=mini')}
   finally {globalThis.fetch = original; client.clear()}
 });
+
+test('selected-host history remains visible when the cold fleet overview fails or omits this host', () => {
+  for (const mode of ['failed', 'truncated'] as const) {
+    const {client, render} = fixture();
+    client.setQueryData(['lane-overview'], {hosts: [], freshForMs: 120000, truncated: mode === 'truncated'});
+    if (mode === 'failed') client.getQueryCache().find({queryKey: ['lane-overview']})!
+      .setState({status: 'error', data: undefined, error: new Error('Overview failed')});
+    const html = render();
+    expect(html).toContain('resume:mac');
+    expect(html).toContain('Scheduling resumed');
+    expect(html).not.toContain('Restoration history is unavailable for this lane.');
+    expect(html).toContain('Current status is unknown.');
+    client.clear();
+  }
+});
 test("cached refresh failures keep history but current lane status becomes unknown", () => {
   const {client, render} = fixture();
   for (const queryKey of [["lane-overview"], ["lane-runs", "mini", "mac"]]) client.getQueryCache().find({queryKey})!.setState({status: "error", error: new Error("Refresh failed")});
