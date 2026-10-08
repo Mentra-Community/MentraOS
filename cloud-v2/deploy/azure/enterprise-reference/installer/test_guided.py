@@ -469,6 +469,22 @@ class GuidedTests(unittest.TestCase):
         self.assertFalse(any(path.endswith('/addPassword') for method, path in calls))
         vault_set.assert_not_called()
 
+    def test_a_saved_secret_that_no_longer_signs_in_is_not_reactivated(self):
+        state = self.write_state('infrastructure_verified', outputs={'keyVaultName': 'kvacmementra12345678'})
+        self.args.teams_client_id = SUB
+        with patch.object(setup, 'vault_get', return_value={'value': 'expired'}), \
+             patch.object(setup, 'check_graph_secret', side_effect=setup.SetupError('rejected')), \
+             patch.object(setup, 'update_configuration') as update, patch.object(setup, 'install') as install:
+            with self.assertRaisesRegex(setup.SetupError, 'no longer signs in'):
+                setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
+        update.assert_not_called()
+        install.assert_not_called()
+
+    def test_meeting_settings_wait_for_configure_teams(self):
+        with self.assertRaisesRegex(setup.SetupError, 'configure-teams'):
+            self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',
+                                teamsGraphClientId=SUB))
+
     def test_a_rejected_secret_changes_nothing(self):
         state = self.write_state('infrastructure_verified', outputs={'keyVaultName': 'kvacmementra12345678'})
         self.args.teams_client_id = SUB
@@ -512,13 +528,14 @@ class GuidedTests(unittest.TestCase):
         # The same app keeps its saved secret.
         self.args.teams_client_id = SUB
         with patch.object(setup, 'vault_get', side_effect=saved), patch.object(setup, 'meetings_consent', return_value=True), \
+             patch.object(setup, 'check_graph_secret'), \
              patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}), patch.object(setup, 'update_configuration'):
             self.assertEqual(setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)['adminConsent'], 'granted')
 
     def test_a_failed_teams_rollout_stays_pending_for_the_next_run(self):
         state = self.write_state('infrastructure_verified', outputs={'keyVaultName': 'kvacmementra12345678'})
         self.args.teams_client_id = SUB
-        with patch.object(setup, 'vault_get', return_value={'value': 'saved'}), \
+        with patch.object(setup, 'vault_get', return_value={'value': 'saved'}), patch.object(setup, 'check_graph_secret'), \
              patch.object(setup, 'update_configuration'), \
              patch.object(setup, 'meetings_consent', return_value=True), \
              patch.object(setup, 'install', side_effect=setup.SetupError('preflight failed')):
