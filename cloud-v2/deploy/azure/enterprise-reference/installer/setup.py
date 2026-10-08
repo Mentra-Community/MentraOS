@@ -191,7 +191,9 @@ def load(directory):
     release = check_release()
     recover_upgrade(directory, config, state)
     if state['releaseHash'] != digest(ROOT / 'release.json'):
-        raise SetupError('Installer release differs from saved state. Use the original package; upgrades require a new reviewed release.')
+        matching = find_previous_package(state)
+        raise SetupError((f'This deployment is managed by {matching / "setup.sh"}; run that instead. ' if matching else
+                          'This package is not the one the deployment runs. ') + 'To upgrade, run the install command again.')
     recover_identity(directory, config, state)
     recover_configuration(directory, config, state)
     for key in BINDING_KEYS:
@@ -271,6 +273,16 @@ def check_upgradable(config):
                          'and it cannot be upgraded. Install a new deployment with this package instead.')
 
 
+def upgradable_phase(config, state):
+    # Deployed and verified, or deployed but failing verification (a newer release may fix that).
+    return state['phase'] == 'infrastructure_verified' or (
+        state['phase'] == 'deployed' and (not config.get('workspaceHostname') or state.get('domainVerified')))
+
+
+def config_for_phase(directory):
+    return read_json(directory / 'deployment.config.json')
+
+
 def select_upgrade(args, directory):
     if not args.backup_confirmed:
         raise SetupError('Upgrade requires --backup-confirmed after backing up the database, attachments and original signing material')
@@ -287,7 +299,7 @@ def select_upgrade(args, directory):
     spec.loader.exec_module(previous)
     config, state, old_release = previous.load(directory)
     check_upgradable(config)
-    if state['phase'] != 'infrastructure_verified':
+    if not upgradable_phase(config, state):
         raise SetupError('Verify the current deployment with its original package before upgrade')
     target = check_release()
     if release_version(target) < release_version(old_release):
@@ -408,7 +420,7 @@ def clean_answer(key, value):
     if key == 'displayName':
         return value or None
     if key == 'deploymentId':
-        return value if re.fullmatch(r'[a-z][a-z0-9-]{2,17}[a-z0-9]', value) else None
+        return value if re.fullmatch(r'[a-z][a-z0-9-]{2,17}[a-z0-9]', value) and '--' not in value else None
     if key == 'location':
         value = value.lower().replace(' ', '')
         return value if re.fullmatch(r'[a-z0-9]+', value) else None
@@ -422,7 +434,7 @@ def clean_answer(key, value):
 
 
 ANSWER_HELP = {'subscriptionId': 'an Azure subscription ID (a UUID)', 'tenantId': 'a Microsoft Entra tenant ID (a UUID)',
-               'displayName': 'a company name', 'deploymentId': '4-19 lowercase letters, digits or hyphens, starting with a letter',
+               'displayName': 'a company name', 'deploymentId': '4-19 lowercase letters, digits or single hyphens, starting with a letter',
                'location': 'an Azure region such as westus2 or westeurope',
                'workspaceHostname': 'a subdomain such as mentra.example.com, or nothing'}
 
@@ -640,7 +652,7 @@ def check_source_image(config):
         raise SetupError('Cannot read the pinned release image. '
                          'For a private release, obtain package read access or an approved ACR mirror from Mentra and set '
                          'SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD in this shell. '
-                         'Run configure-mirror --mirror REGISTRY.azurecr.io/REPOSITORY to correct the distribution endpoint, then resume. '
+                         'Run configure-mirror --mirror REGISTRY.azurecr.io/REPOSITORY to correct the distribution endpoint, then run setup again. '
                          'No Azure resources are changed by this image-access check.') from None
     return 'authenticated' if username else 'public'
 
@@ -725,6 +737,8 @@ def deploy(directory, config, state, hostname):
                ('workspaceOrigin', 'coreOrigin', 'generatedRuntimeHostname', 'generatedCoreHostname', 'customDomainVerificationId',
                 'communicationResourceId', 'registryLoginServer', 'keyVaultName')}
     checkpoint(directory, state, 'deployed', outputs=outputs)
+    # Lets setup continue this deployment from another computer (see init).
+    azure(config, 'group', 'update', '--name', config['resourceGroup'], '--set', f"tags.mentraRelease={config['releaseTag']}")
     return outputs
 
 
@@ -807,7 +821,7 @@ def ensure_group(config, state, checks=None):
     checks = checks or preflight(config)
     if checks['resourceGroup'] == 'new':
         azure(config, 'group', 'create', '--name', config['resourceGroup'], '--location', config['location'],
-              '--tags', 'mentraInstallerOwner=' + state['owner'], 'mentraDeploymentId=' + config['deploymentId'])
+              '--tags', *[f'{key}={value}' for key, value in config['resourceTags'].items()])
     return checks
 
 
@@ -1118,7 +1132,13 @@ def vault_az(config, *args, missing_ok=False):
             return json.loads(result.stdout or 'null')
         if missing_ok and 'SecretNotFound' in result.stderr:
             return None
-        if 'Forbidden' not in result.stderr or attempt + 1 == VAULT_RETRIES:
+        # Role propagation shows as ForbiddenByRbac (or a bare Forbidden on older CLIs);
+        # a firewall or policy block will not clear by waiting.
+        rbac = 'ForbiddenByRbac' in result.stderr or ('Forbidden' in result.stderr and 'ForbiddenBy' not in result.stderr)
+        if not rbac:
+            reason = next((line for line in result.stderr.splitlines() if line.startswith('ERROR')), 'no details')
+            raise SetupError(f"Key Vault {config['keyVaultName']} refused the request: {reason[:300]}")
+        if attempt + 1 == VAULT_RETRIES:
             break
         if not granted:
             grant_vault_access(config)
@@ -1288,7 +1308,9 @@ def summarize_preview(preview):
                 changed.append(f'{kind} {name}: removed')
             else:
                 unchanged += 1
-    return {'create': sorted(set(created)), 'change': sorted(set(changed)), 'unchanged': unchanged}
+    def counted(items):
+        return sorted(f'{item} (x{items.count(item)})' if items.count(item) > 1 else item for item in set(items))
+    return {'create': counted(created), 'change': counted(changed), 'unchanged': unchanged}
 
 
 def preview(directory, config, state):
@@ -1524,10 +1546,16 @@ def handle_dns(args, directory, config, state, interactive):
     if zone and confirm(f"The DNS zone {zone['name']} is in this Azure subscription. Add the two records now?", True, interactive):
         dns_args = argparse.Namespace(**dict(vars(args), dns_zone=zone['name'], dns_resource_group=zone['resourceGroup'],
                                              dns_subscription=None))
-        configure_azure_dns(dns_args, directory, config, state)
-        print('  Records added. Waiting for them to resolve...')
-        if wait_for_dns(config, state):
-            return True
+        try:
+            configure_azure_dns(dns_args, directory, config, state)
+        except SetupError as error:
+            print(f'  Setup could not add the records itself: {error}')
+        else:
+            print('  Records added. Waiting for them to resolve...')
+            if wait_for_dns(config, state):
+                return True
+            print(f"  They don't resolve yet. If {zone['name']} is not delegated to Azure DNS at your domain registrar "
+                  '(check its NS records), add the records where your DNS is actually hosted.')
     print(f'Your DNS administrator needs to add these records for {host} (DNS only, no proxy; leave mail records alone):')
     for record in state['dns']:
         print(f"  {record['type']:5} {record['name']}  ->  {record['value']}")
@@ -1780,8 +1808,11 @@ def upgrade_command(args, directory, interactive=None):
             raise SetupError('Cannot find the package this deployment runs. Pass --previous-package PATH to it.')
         old = read_json(previous / 'release.json')
         target = check_release()
+        if release_version(target) < release_version(old):
+            raise SetupError(f"This package ({target['releaseTag']}) is older than the deployment's ({old['releaseTag']}). "
+                             f'Run {previous / "setup.sh"} instead.')
         section(f"Upgrade from {old['releaseTag']} to {target['releaseTag']}")
-        if state['phase'] != 'infrastructure_verified':
+        if not upgradable_phase(config_for_phase(directory), state):
             raise SetupError(f"The current deployment has not finished setup ({state['phase']}). "
                              f'Finish it with {previous / "setup.sh"} first, then upgrade.')
         config = read_json(directory / 'deployment.config.json')
@@ -1822,6 +1853,7 @@ def guided(args, directory):
         result = upgrade_command(args, directory, interactive)
         return finish(directory, result)
     config, state, release = load(directory)
+    relink()
     section('Checking the Azure subscription')
     ensure_providers(config, interactive)
     preflight(config)
@@ -1841,9 +1873,11 @@ def guided(args, directory):
         if not confirm('Create these resources now? This takes about 15 minutes.', True, interactive):
             if checks['resourceGroup'] == 'new':
                 # The group was created only for the preview and is still empty.
-                run(['az', 'group', 'delete', '--name', config['resourceGroup'], '--yes', '--no-wait',
+                print('  Removing the empty resource group created for the preview...')
+                run(['az', 'group', 'delete', '--name', config['resourceGroup'], '--yes',
                      '--subscription', config['subscriptionId']])
-            return {'status': 'stopped', 'next': 'Nothing was created. Run setup again when you are ready.'}
+            done = 'Nothing was created.' if entra_missing else 'No Azure resources were created.'
+            return finish(directory, {'status': 'stopped', 'next': done + ' Run setup again when you are ready.'})
     if entra_missing:
         section('Creating the Microsoft sign-in apps')
         configure_entra(argparse.Namespace(**dict(vars(args), grant_admin_consent=False)), directory, config, state)
@@ -1858,12 +1892,12 @@ def guided(args, directory):
         if state['phase'] == 'awaiting_dns':
             dns_ready = handle_dns(args, directory, config, state, interactive)
             if not dns_ready:
-                return {'status': 'awaiting_dns', 'next': 'Run setup again once the DNS records are in place.'}
+                return finish(directory, {'status': 'awaiting_dns', 'next': 'Run setup again once the DNS records are in place.'})
         result = install(argparse.Namespace(**dict(vars(args), dns_ready=dns_ready)), directory, config, state)
         if result['status'] == 'awaiting_dns':
             section('Your web address')
             if not handle_dns(args, directory, config, state, interactive):
-                return {'status': 'awaiting_dns', 'next': 'Run setup again once the DNS records are in place.'}
+                return finish(directory, {'status': 'awaiting_dns', 'next': 'Run setup again once the DNS records are in place.'})
             result = install(argparse.Namespace(**dict(vars(args), dns_ready=True)), directory, config, state)
         config, state, release = load(directory)
     section('Administrator key')
@@ -1906,6 +1940,9 @@ def finish(directory, result):
         print(f'Mentra Private Cloud is running at {origin}')
         print(f'Employees: install the Mentra App, choose Connect to organization, and enter {origin.removeprefix("https://")}.')
         print(f'Administrator key: {admin_key_command(config)}')
+        core = state.get('outputs', {}).get('coreOrigin')
+        if core:
+            print(f'Feedback reports: curl -H "Authorization: Bearer $({admin_key_command(config)})" {core}/api/admin/reports')
         teams = result.get('teams')
         if teams:
             print_teams(teams)
@@ -1920,14 +1957,16 @@ def finish(directory, result):
                 print(f"Teams policy commands for meeting creation are saved in {directory / 'teams-policy.ps1'}.")
     for handoff in state.get('handoffs') or []:
         print(f"Still to do - {handoff['step']}: {handoff['action']}")
-    print(f'To check status, resume or upgrade later, run: {setup_command()}')
+    print(f'To check status or continue later, run: {setup_command()}')
+    print('To upgrade later, run the install command from the documentation again.')
     return dict(result, phase=state['phase'], workspace=origin)
 
 
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
-        epilog='Run without a command for guided setup: it installs, continues an interrupted install, and upgrades.')
+        epilog='Run without a command for guided setup: it installs and continues an interrupted install. '
+               'To upgrade, run the install command again; it downloads the new release and starts its setup.')
     parser.add_argument('command', nargs='?', default='guided',
                         choices=('guided', 'init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'configure-azure-dns',
                                  'configure-teams', 'check-teams', 'install', 'resume', 'status', 'verify', 'bootstrap-admin',
@@ -1968,6 +2007,7 @@ def main():
                 emit(args, result) if args.json else finish(directory, result)
                 return
             config, state, release = load(directory)
+            relink()
             commands = {
                 'preflight': lambda: preflight(config),
                 'plan': lambda: plan(args, directory, config, state),
