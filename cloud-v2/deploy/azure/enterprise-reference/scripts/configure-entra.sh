@@ -6,6 +6,7 @@ MOBILE_NAME="${MOBILE_NAME:-Mentra Mobile}"
 CORE_CLIENT_ID="${CORE_CLIENT_ID:-}"
 MOBILE_CLIENT_ID="${MOBILE_CLIENT_ID:-}"
 GRANT_ADMIN_CONSENT=false
+CONSENT_ONLY=false
 IOS_REDIRECT="msauth.com.mentra.mentra://auth"
 APK_REDIRECT="msauth://com.mentra.mentra/q%2FZbvbReOLgD1T6V3o1PK%2Fzjwz0%3D"
 PLAY_REDIRECT="msauth://com.mentra.mentra/Pwi%2FLvF9HHWTAMonaqwan%2BeIX6A%3D"
@@ -23,6 +24,7 @@ usage() {
     "  --core-client-id UUID     Reconcile this existing Core registration" \
     "  --mobile-client-id UUID      Reconcile this existing Mobile registration" \
     "  --grant-admin-consent        Grant tenant-wide consent after configuring permissions" \
+    "  --consent-only               Only grant consent for --mobile-client-id; change nothing else" \
     "  --help                       Show this help" \
     "" \
     "Run while signed into the customer's tenant as an Application/Cloud Application or Global Administrator."
@@ -35,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --core-client-id) CORE_CLIENT_ID="$2"; shift 2 ;;
     --mobile-client-id) MOBILE_CLIENT_ID="$2"; shift 2 ;;
     --grant-admin-consent) GRANT_ADMIN_CONSENT=true; shift ;;
+    --consent-only) CONSENT_ONLY=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -76,6 +79,14 @@ if [[ -n "${MENTRA_EXPECTED_TENANT_ID:-}" && "$(tr '[:upper:]' '[:lower:]' <<<"$
   exit 1
 fi
 [[ -n "$TENANT_ID" ]] || { printf 'Azure CLI is not signed in\n' >&2; exit 1; }
+
+if [[ "${CONSENT_ONLY:-false}" == true ]]; then
+  [[ "$MOBILE_CLIENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { printf -- '--consent-only requires --mobile-client-id\n' >&2; exit 2; }
+  az ad app permission admin-consent --id "$MOBILE_CLIENT_ID"
+  jq -n --arg tenantId "$TENANT_ID" --arg mobileClientId "$MOBILE_CLIENT_ID" \
+    '{tenantId:$tenantId,mobileClientId:$mobileClientId,consent:"granted"}'
+  exit 0
+fi
 
 find_or_create_app() {
   local client_id="$1"

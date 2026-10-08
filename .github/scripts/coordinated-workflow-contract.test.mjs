@@ -413,7 +413,9 @@ test("Private Deployment remains release-matched without gating the dev release"
   assert.doesNotMatch(privateDeployment, /az acr build/)
   assert.match(privateDeployment, /ghcr\.io\/mentra-community\/mentra-cloud/)
   assert.match(privateDeployment, /coreApiClientId:\{value:\$coreApiClientId\}/)
-  assert.match(privateDeployment, /MENTRA_JWT_PRIVATE_KEY/)
+  // Signing keys stay in the stack's Key Vault; the workflow passes only its name.
+  assert.match(privateDeployment, /keyVaultName:\{value:\$keyVaultName\}/)
+  assert.doesNotMatch(privateDeployment, /MENTRA_JWT_PRIVATE_KEY|REFRESH_TOKEN_PEPPER|TEAMS_GRAPH_CLIENT_SECRET|manageAcrPullRoleAssignment/)
   assert.match(privateDeployment, /source_digest.*image_digest|image_digest.*source_digest/s)
   assert.match(privateDeployment, /--arg workspaceHostname "mentra\.acmeworkspace\.com"/)
   assert.match(privateDeployment, /workspaceCertificateName:\{value:"ca-mentra-enterprise-reference-acme-workspace"\}/)

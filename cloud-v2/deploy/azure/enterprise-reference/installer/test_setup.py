@@ -55,9 +55,8 @@ class InstallerTests(unittest.TestCase):
         old = dict(RELEASE, releaseTag='3.3.0-dev.1')
         target = target or dict(old, releaseTag='3.3.0-dev.2', sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'c' * 64)
         self.config.update(sourceImage=old['sourceImage'], releaseTag=old['releaseTag'])
-        self.state.update(phase='infrastructure_verified', secretsCreated=True)
+        self.state.update(phase='infrastructure_verified')
         self.save()
-        setup.write_json(self.directory / 'secrets.json', {'signing': 'original-private-key'})
         self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
         self.save()
         self.args.previous_package = str(self.directory / 'previous-package')
@@ -74,17 +73,15 @@ class InstallerTests(unittest.TestCase):
              patch.object(setup, 'preflight') as preflight, patch.object(setup, 'emit'):
             yield preflight
 
-    def test_upgrade_preserves_original_keys_bindings_and_exact_backup(self):
+    def test_upgrade_preserves_bindings_and_exact_backup(self):
         with self.upgrade_context():
             before = (self.directory / 'deployment.config.json').read_bytes()
-            key = (self.directory / 'secrets.json').read_bytes()
-            setup.upgrade(self.args, self.directory)
+            setup.select_upgrade(self.args, self.directory)
             state = setup.read_json(self.directory / 'state.json')
             config = setup.read_json(self.directory / 'deployment.config.json')
             self.assertEqual(state['releaseHash'], 'target-release')
             self.assertEqual(config['releaseTag'], '3.3.0-dev.2')
             self.assertEqual(state['binding'], self.state['binding'])
-            self.assertEqual((self.directory / 'secrets.json').read_bytes(), key)
             self.assertEqual((self.directory / 'upgrades/target-release/deployment.config.json').read_bytes(), before)
             self.assertFalse((self.directory / 'upgrade.pending.json').exists())
 
@@ -92,7 +89,7 @@ class InstallerTests(unittest.TestCase):
         with self.upgrade_context():
             with patch.object(setup, 'checkpoint', side_effect=OSError('interrupted')):
                 with self.assertRaises(OSError):
-                    setup.upgrade(self.args, self.directory)
+                    setup.select_upgrade(self.args, self.directory)
             self.assertTrue((self.directory / 'upgrade.pending.json').exists())
             config, state, release = setup.load(self.directory)
             self.assertEqual(state['releaseHash'], 'target-release')
@@ -104,7 +101,7 @@ class InstallerTests(unittest.TestCase):
             before = (self.directory / 'state.json').read_bytes()
             preflight.side_effect = setup.SetupError('image inaccessible')
             with self.assertRaisesRegex(setup.SetupError, 'inaccessible'):
-                setup.upgrade(self.args, self.directory)
+                setup.select_upgrade(self.args, self.directory)
             self.assertEqual((self.directory / 'state.json').read_bytes(), before)
             self.assertFalse((self.directory / 'upgrades').exists())
 
@@ -113,7 +110,7 @@ class InstallerTests(unittest.TestCase):
                        dict(RELEASE, releaseTag='3.3.0-dev.1', sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'c' * 64)):
             with self.upgrade_context(target):
                 with self.assertRaisesRegex(setup.SetupError, 'downgrade|cannot change'):
-                    setup.upgrade(self.args, self.directory)
+                    setup.select_upgrade(self.args, self.directory)
                 self.assertFalse((self.directory / 'upgrade.pending.json').exists())
 
     def test_upgrade_rejects_noncanonical_semantic_release_identities(self):
@@ -127,18 +124,18 @@ class InstallerTests(unittest.TestCase):
         with self.upgrade_context():
             self.args.backup_confirmed = False
             with self.assertRaisesRegex(setup.SetupError, 'backup-confirmed'):
-                setup.upgrade(self.args, self.directory)
+                setup.select_upgrade(self.args, self.directory)
             self.args.backup_confirmed = True
             self.state['phase'] = 'deploying'
             self.save()
             with self.assertRaisesRegex(setup.SetupError, 'Verify the current'):
-                setup.upgrade(self.args, self.directory)
+                setup.select_upgrade(self.args, self.directory)
 
     def test_pending_upgrade_cannot_adopt_foreign_resource_binding(self):
         with self.upgrade_context():
             with patch.object(setup, 'checkpoint', side_effect=OSError('interrupted')):
                 with self.assertRaises(OSError):
-                    setup.upgrade(self.args, self.directory)
+                    setup.select_upgrade(self.args, self.directory)
             pending = setup.read_json(self.directory / 'upgrade.pending.json')
             pending['updatedConfig']['subscriptionId'] = 'foreign'
             setup.write_json(self.directory / 'upgrade.pending.json', pending)
@@ -148,7 +145,7 @@ class InstallerTests(unittest.TestCase):
 
     def test_verify_cannot_certify_selected_but_undeployed_upgrade(self):
         with self.upgrade_context():
-            setup.upgrade(self.args, self.directory)
+            setup.select_upgrade(self.args, self.directory)
             state = setup.read_json(self.directory / 'state.json')
             with patch.object(setup, 'run') as run:
                 for phase in ('upgrade_ready', 'deploying'):
@@ -180,9 +177,10 @@ class InstallerTests(unittest.TestCase):
                  patch.object(setup, 'digest', return_value='release-hash'), patch.object(setup, 'emit'):
                 setup.init(args, directory)
             value = setup.read_json(directory / 'deployment.config.json')
-            names.append((value['registryName'], value['communicationName']))
-        self.assertNotEqual(names[0][0], names[1][0])
-        self.assertNotEqual(names[0][1], names[1][1])
+            names.append((value['registryName'], value['communicationName'], value['keyVaultName']))
+            self.assertRegex(value['keyVaultName'], r'^kv[a-z0-9]{3,22}$')
+        for index in range(3):
+            self.assertNotEqual(names[0][index], names[1][index])
 
     def test_interrupted_identity_update_recovers_without_new_registrations(self):
         self.config['displayName'] = 'Example'
@@ -216,12 +214,6 @@ class InstallerTests(unittest.TestCase):
         with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'release differs'):
             setup.load(self.directory)
 
-    def test_missing_original_keys_cannot_be_regenerated(self):
-        self.state['secretsCreated'] = True
-        self.save()
-        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'Original secrets file is missing'):
-            setup.load(self.directory)
-
     def test_shared_setup_directory_stops_before_writing_state_or_secrets(self):
         self.directory.chmod(0o777)
         with self.assertRaisesRegex(setup.SetupError, 'clouddrive SMB share'):
@@ -229,20 +221,6 @@ class InstallerTests(unittest.TestCase):
                 self.fail('Shared directory was accepted')
         self.assertFalse((self.directory / '.setup-lock').exists())
         self.directory.chmod(0o700)
-
-    def test_shared_or_symlinked_secrets_are_rejected(self):
-        secrets = self.directory / 'secrets.json'
-        secrets.write_text('{}')
-        secrets.chmod(0o644)
-        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'accessible only'):
-            setup.load(self.directory)
-        secrets.unlink()
-        target = self.directory / 'target'
-        target.write_text('{}')
-        target.chmod(0o600)
-        secrets.symlink_to(target)
-        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'regular file'):
-            setup.load(self.directory)
 
     def test_config_is_frozen_after_first_azure_write(self):
         self.state['configHash'] = 'old-hash'
@@ -298,27 +276,25 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(setup.SetupError, 'does not match'):
                 setup.preflight(self.config)
 
-    def test_interrupted_deploy_preserves_secrets_and_can_resume(self):
+    def test_install_never_generates_or_stores_secrets_locally(self):
         calls = []
         def run(argv, **kwargs):
             calls.append(argv)
-            if 'generate-private-secrets.sh' in argv[1]:
-                setup.write_json(self.directory / 'secrets.json', {'private': 'same-key'})
             return ''
         with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
              patch.object(setup, 'run', side_effect=run), \
-             patch.object(setup, 'deploy', side_effect=setup.SetupError('interrupted')), \
-             patch.object(setup, 'emit'):
+             patch.object(setup, 'deploy', side_effect=setup.SetupError('interrupted')):
             with self.assertRaisesRegex(setup.SetupError, 'interrupted'):
                 setup.install(self.args, self.directory, self.config, self.state)
-        self.assertTrue(setup.read_json(self.directory / 'state.json')['secretsCreated'])
         with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
              patch.object(setup, 'run', side_effect=run), patch.object(setup, 'deploy'), \
-             patch.object(setup, 'verify'), patch.object(setup, 'emit'):
-            setup.install(self.args, self.directory, self.config, self.state)
-        self.assertEqual(sum('generate-private-secrets.sh' in argv[1] for argv in calls), 1)
-        self.assertEqual(setup.read_json(self.directory / 'secrets.json')['private'], 'same-key')
-
+             patch.object(setup, 'verify', return_value={'status': 'infrastructure_verified'}):
+            self.assertEqual(setup.install(self.args, self.directory, self.config, self.state)['status'], 'infrastructure_verified')
+        validate = [argv for argv in calls if '--validate-only' in argv]
+        self.assertEqual(len(validate), 2)
+        self.assertEqual(validate[0][-1], str(self.directory / 'deployment.config.json'))
+        self.assertFalse(any('secrets' in part for argv in calls for part in argv))
+        self.assertEqual(sorted(p.name for p in self.directory.iterdir() if 'secret' in p.name), [])
     def test_dns_handoff_cannot_be_verified_as_final_customer_domain(self):
         self.config['workspaceHostname'] = 'mentra.example.com'
         self.state['outputs'] = {'workspaceOrigin': 'https://azure.example.com'}
@@ -344,7 +320,6 @@ class InstallerTests(unittest.TestCase):
              patch.object(setup, 'check_source_image', side_effect=setup.SetupError('package read access')):
             with self.assertRaisesRegex(setup.SetupError, 'package read access'):
                 setup.install(self.args, self.directory, self.config, self.state)
-        self.assertFalse((self.directory / 'secrets.json').exists())
 
     def test_registry_auth_errors_withhold_credentials_and_server_body(self):
         import urllib.error
@@ -466,26 +441,47 @@ class InstallerTests(unittest.TestCase):
                 setup.configure_mirror(self.args, self.directory, self.config, self.state)
         self.assertEqual(original, {p.name: p.read_bytes() for p in self.directory.glob('*.json')})
 
-    def test_admin_bootstrap_retries_saved_credential_and_preserves_existing_allowlist(self):
-        self.config['coreName'] = 'ca-test-core'
-        self.state['binding']['coreName'] = 'ca-test-core'
+    def admin_fixture(self):
+        self.config.update(coreName='ca-test-core', keyVaultName='kvtest1234')
+        self.state['binding'].update(coreName='ca-test-core', keyVaultName='kvtest1234')
         self.save()
         self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
         self.state['outputs'] = {'coreOrigin': 'https://core.example'}
-        setup.write_json(self.directory/'admin-key.json',dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR',value='msk_local_test.secret'))
         calls = []
-        def azure(config,*args):
+        def azure(config, *args):
             calls.append(args)
-            if args[:2]==('containerapp','show'):
-                return {'properties':{'template':{'containers':[{'env':[{'name':'CLOUD_CORE_ADMIN_EMAILS','value':'existing@example.com'}]}]}}}
+            if args[:2] == ('containerapp', 'show'):
+                return {'properties': {'template': {'containers': [{'env': [{'name': 'CLOUD_CORE_ADMIN_EMAILS', 'value': 'existing@example.com'}]}]}}}
             return {}
-        with patch.object(setup,'azure',side_effect=azure), patch.object(setup,'execute_admin_script',return_value=argparse.Namespace(stdout='MENTRA_ADMIN_END')) as cleanup, patch.object(setup,'emit'):
-            setup.bootstrap_admin(self.args,self.directory,self.config,self.state)
-        self.assertIn(b'fs.unlinkSync', cleanup.call_args.args[3])
-        self.assertIn('existing@example.com',self.config['coreAdminEmails'])
-        self.assertIn('api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local',self.config['coreAdminEmails'])
-        self.assertEqual(setup.digest(self.directory/'deployment.config.json'),self.state['configHash'])
+        return azure, calls
 
+    def test_admin_key_reuses_key_vault_copy_and_preserves_existing_allowlist(self):
+        azure, calls = self.admin_fixture()
+        saved = {'value': 'msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.secret', 'tags': {'keyId': '01M3ZG55PT8Z7J3HFVFZ49QWPR'}}
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=saved), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script') as script, \
+             patch.object(setup, 'check_admin_access') as access:
+            result = setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        script.assert_not_called()
+        vault_set.assert_not_called()
+        access.assert_called_once_with('https://core.example', saved['value'])
+        self.assertIn('existing@example.com', self.config['coreAdminEmails'])
+        self.assertIn('api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local', self.config['coreAdminEmails'])
+        self.assertEqual(setup.digest(self.directory / 'deployment.config.json'), self.state['configHash'])
+        self.assertIn('az keyvault secret show --vault-name kvtest1234 --name mentra-admin-key', result['read'])
+        self.assertNotIn(saved['value'], json.dumps(result))
+        self.assertFalse((self.directory / 'admin-key.json').exists())
+
+    def test_new_admin_key_goes_to_key_vault_not_disk(self):
+        azure, calls = self.admin_fixture()
+        credential = {'id': '01M3ZG55PT8Z7J3HFVFZ49QWPR', 'value': 'msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.secret'}
+        output = argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(credential) + 'MENTRA_ADMIN_END')
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script', return_value=output), \
+             patch.object(setup, 'check_admin_access'):
+            setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        vault_set.assert_called_once_with(self.config, 'mentra-admin-key', credential['value'], keyId=credential['id'])
+        self.assertNotIn(credential['value'], ''.join(p.read_text() for p in self.directory.glob('*.json')))
     def test_admin_allowlist_update_recovers_interrupted_checkpoint(self):
         self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
         self.save()
@@ -545,9 +541,8 @@ class InstallerTests(unittest.TestCase):
             def __exit__(self, *args): pass
             def read(self): return json.dumps({'value': []}).encode()
         with patch.object(setup, 'run', return_value=json.dumps({'accessToken': 'fixture'})) as run, \
-             patch.object(setup.urllib.request, 'urlopen', return_value=Response()), patch.object(setup, 'emit') as emit:
-            setup.check_teams(self.args, self.directory, self.config, self.state)
-        result = emit.call_args.args[1]
+             patch.object(setup.urllib.request, 'urlopen', return_value=Response()):
+            result = setup.check_teams(self.args, self.directory, self.config, self.state)
         self.assertEqual(result['teamsSubscription'], 'missing')
         self.assertIn('Business Basic without Teams is insufficient', result['next'])
         self.assertNotIn('--subscription', run.call_args.args[0])
@@ -564,10 +559,8 @@ class InstallerTests(unittest.TestCase):
         product = {'capabilityStatus': 'Enabled', 'servicePlans': [{'servicePlanName': 'TEAMS1'}]}
         license = {'servicePlans': [{'servicePlanName': 'TEAMS1', 'provisioningStatus': 'Success'}]}
         with patch.object(setup, 'run', return_value=json.dumps({'accessToken': 'fixture'})), \
-             patch.object(setup.urllib.request, 'urlopen', side_effect=[Response([product]), Response([license]), Response([])]), \
-             patch.object(setup, 'emit') as emit:
-            setup.check_teams(self.args, self.directory, self.config, self.state)
-        identities = emit.call_args.args[1]['identities']
+             patch.object(setup.urllib.request, 'urlopen', side_effect=[Response([product]), Response([license]), Response([])]):
+            identities = setup.check_teams(self.args, self.directory, self.config, self.state)['identities']
         self.assertEqual(identities[0]['teamsLicense'], 'enabled')
         self.assertEqual(identities[1]['teamsLicense'], 'missing_or_provisioning')
         self.assertIn('Unlicensed employees may join as guests', identities[1]['next'])
@@ -589,10 +582,8 @@ class InstallerTests(unittest.TestCase):
     def test_verification_guides_azure_operator_without_license_read_permission(self):
         self.state['outputs'] = {'workspaceOrigin': 'https://azure.example.com'}
         with patch.object(setup, 'run'), \
-             patch.object(setup, 'inspect_teams', side_effect=setup.SetupError('Ask an Entra administrator to run check-teams')), \
-             patch.object(setup, 'emit') as emit:
-            setup.verify(self.args, self.directory, self.config, self.state)
-        result = emit.call_args.args[1]
+             patch.object(setup, 'inspect_teams', side_effect=setup.SetupError('Ask an Entra administrator to run check-teams')):
+            result = setup.verify(self.args, self.directory, self.config, self.state)
         self.assertEqual(result['status'], 'infrastructure_verified')
         self.assertEqual(result['teamsSetup']['teamsSubscription'], 'unknown')
         self.assertIn('Entra administrator', result['teamsSetup']['next'])
@@ -613,9 +604,8 @@ class InstallerTests(unittest.TestCase):
         for failure in (http.client.IncompleteRead(b'private-partial-body'), ConnectionResetError('private-provider-body')):
             with self.subTest(failure=type(failure).__name__), \
                  patch.object(setup, 'run', return_value=json.dumps({'accessToken': 'fixture'})), \
-                 patch.object(setup.urllib.request, 'urlopen', side_effect=failure), patch.object(setup, 'emit') as emit:
-                setup.verify(self.args, self.directory, self.config, self.state)
-            result = emit.call_args.args[1]
+                 patch.object(setup.urllib.request, 'urlopen', side_effect=failure):
+                result = setup.verify(self.args, self.directory, self.config, self.state)
             self.assertEqual(result['status'], 'infrastructure_verified')
             self.assertEqual(result['teamsSetup']['teamsSubscription'], 'unknown')
             self.assertNotIn('private', json.dumps(result))
