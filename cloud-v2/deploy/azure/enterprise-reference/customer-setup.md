@@ -66,33 +66,23 @@ cp cloud-v2/deploy/azure/enterprise-reference/deployment.config.example.json \
   /secure/path/mentra-private.config.json
 ```
 
-Generate the customer-owned signing material before deployment. Keep this file
-outside the repository, import it into the customer's approved secret manager,
-and reuse the same values across ordinary upgrades:
+Nothing secret goes in this file or on disk. Validate it, preview the Azure
+changes with Azure's own `what-if`, then deploy:
 
 ```bash
-cloud-v2/deploy/azure/enterprise-reference/scripts/generate-private-secrets.sh \
-  /secure/path/mentra-private-secrets.json
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --validate-only /secure/path/mentra-private.config.json
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --what-if /secure/path/mentra-private.config.json
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh /secure/path/mentra-private.config.json
 ```
 
-Validate both files locally before making Azure changes:
-
-```bash
-cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --validate-only \
-  /secure/path/mentra-private.config.json \
-  /secure/path/mentra-private-secrets.json
-```
-
-The deployment helper performs the proven sequence: create/update the resource
-group, bootstrap ACR, import and verify the release digest, construct a
-mode-0600 temporary Azure parameter file, deploy, remove that temporary file,
-and run the smoke test:
-
-```bash
-cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh \
-  /secure/path/mentra-private.config.json \
-  /secure/path/mentra-private-secrets.json
-```
+The deployment helper runs `bootstrap.bicep` (registry, managed identity,
+purge-protected Key Vault and the role assignments; needs Owner or User Access
+Administrator). It grants whoever runs it Key Vault Secrets Officer on that
+vault and creates the signing keys and refresh pepper directly in Key Vault,
+once. It then imports and verifies the release digest, deploys `main.bicep`
+(Contributor is enough) and runs the smoke test. A deployed Core is never given
+new keys: if Key Vault is missing one, the helper refuses and points to
+`az keyvault secret recover`.
 
 The templates create:
 
@@ -100,9 +90,12 @@ The templates create:
 - separate Core and meetings-only Runtime apps using the same digest;
 - Cosmos DB with MongoDB-compatible API for Core identity/session state;
 - customer-owned ACS;
-- managed ACR pull identity;
+- one managed identity that pulls the image and reads Key Vault;
+- a purge-protected Key Vault holding the signing keys, refresh pepper,
+  administrator key and optional Graph client secret;
 - a generated deployment manifest; and
-- Container App secrets for ACS, Mongo, signing keys, and refresh pepper.
+- Container App secrets that reference Key Vault, plus ACS and Mongo
+  connection strings derived from their resources.
 
 For customer production, use the customer's normal database, backup, private
 networking, and secret-management requirements. The template's public network

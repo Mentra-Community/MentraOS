@@ -1174,7 +1174,8 @@ def ensure_providers(config, interactive):
         raise SetupError('Register these resource providers, then run setup again: ' + ', '.join(missing))
     for namespace in missing:
         print(f'  Registering {namespace} (this can take a few minutes)...')
-        azure(config, 'provider', 'register', '--namespace', namespace, '--wait')
+        run(['az', 'provider', 'register', '--namespace', namespace, '--wait', '--subscription', config['subscriptionId'],
+             '--output', 'none'])
 
 
 def grant_admin_consent(config):
