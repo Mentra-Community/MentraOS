@@ -95,6 +95,14 @@ one: Core checks the creator's email against the allowlist on every request, so
 removing that person from `CLOUD_CORE_ADMIN_EMAILS` (or their domain from
 `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`) ends every key they created. Create shared and
 automation keys from an admin who will stay.
+
+An admin API key whose address `api-key@<keyId>.local` is listed in
+`CLOUD_CORE_ADMIN_EMAILS` (an `msk_...` developer-organization key of this Core,
+such as an earlier installer's administrator key) is an operator key too. When
+Core starts it gives each listed key the operator scopes, keeping its token, so
+the key works while its address stays listed. Removing the address ends it like
+any operator key, and revoking it under **Operator keys** ends it for good. New
+keys are `mak_...` operator keys.
 Core reads the variables below when it uses them, so a changed value takes effect
 on the next request. The values shown are placeholders.
 

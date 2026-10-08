@@ -4,8 +4,10 @@
  * Workspace credentials (`msk_<env>_<ulid>.<secret>`, `credentialKind:
  * "workspace"`) belong to a workspace and are minted by a member, or by a
  * trusted service such as the Store for package keys. Organization operator
- * credentials (`mak_<env>_<ulid>.<secret>`, `credentialKind: "organization"`)
- * have no workspace.
+ * credentials (`credentialKind: "organization"`) have no workspace; Core issues
+ * them as `mak_<env>_<ulid>.<secret>`, and an admin API key made before operator
+ * keys is one that keeps its `msk_` token. `prefix` is the prefix the token
+ * carries and `credentialKind` what the key is.
  *
  * Only the SHA-256 hex of `<secret>` is stored (`hash`), plus `last4` for
  * display. The plaintext is shown once at creation.

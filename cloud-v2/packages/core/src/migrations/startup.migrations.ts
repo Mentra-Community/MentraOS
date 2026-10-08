@@ -21,6 +21,7 @@ import {WorkspaceAuditEventModel} from "../models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../models/workspace-membership.model"
 import {WorkspaceModel} from "../models/workspace.model"
+import {convertLegacyAdminKeys} from "../services/workspaces/legacy-admin-keys"
 
 const logger = createLogger("core").child({component: "startup-migrations"})
 const USERS = "users"
@@ -82,6 +83,8 @@ export async function runStartupMigrations(): Promise<void> {
       await model.createIndexes()
     }),
   )
+  // Allowlisted admin API keys keep working as operator keys, before any request is served.
+  await convertLegacyAdminKeys()
   await ensureMentraAccountOem()
 }
 

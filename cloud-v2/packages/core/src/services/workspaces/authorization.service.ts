@@ -16,8 +16,8 @@
  * Authorization has two separate scopes:
  *  - organization capabilities (`organizationCapabilities`): what the caller may
  *    do to the deployment itself. Organization Admins have all of them, an
- *    operator key (`mak_`) has the operator scopes it was created with and a
- *    workspace credential (`msk_`) has none;
+ *    operator key has the operator scopes it was created with and a workspace
+ *    credential has none;
  *  - workspace capabilities (`authorize`): what the caller may do inside one
  *    workspace. A member has their role's capabilities, an Organization Admin
  *    acts as owner anywhere (as `workspace.service` does for every mutation), a

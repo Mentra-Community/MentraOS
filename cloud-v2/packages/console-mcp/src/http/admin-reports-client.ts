@@ -8,8 +8,8 @@
  *   GET /api/admin/me                                     — who the token is and what it may do
  *
  * The report routes need the `organization.incidents.read` capability; requests
- * authenticate with "Authorization: Bearer <MENTRA_ADMIN_TOKEN>" (a mak_
- * operator key with that scope, or a WorkOS access token of an Organization Admin).
+ * authenticate with "Authorization: Bearer <MENTRA_ADMIN_TOKEN>" (an operator
+ * key with that scope, or a WorkOS access token of an Organization Admin).
  */
 
 import type { ConsoleMcpConfig } from "../config";

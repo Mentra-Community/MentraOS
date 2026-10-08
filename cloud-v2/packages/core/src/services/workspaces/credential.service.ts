@@ -6,14 +6,20 @@
  * random bytes in base64url. Only the SHA-256 hex of `<secret>` is stored, and
  * the token is returned exactly once, by the call that creates it.
  *
+ * The row decides what a key is. Core issues workspace credentials as `msk_` and
+ * operator keys as `mak_`; an admin API key made before operator keys is an
+ * operator key that keeps its `msk_` token (`legacy-admin-keys.ts`). A token is
+ * accepted only with the prefix its row records.
+ *
  * Who a key acts for is decided on every validation, never cached:
- *  - `mak_`: allowed only while the creator's email is still an Organization
- *    Admin, so removing the address from the allowlist ends the key on the next
- *    request. Scopes are the operator scopes the key was created with, which
- *    never include workspace administration.
- *  - `msk_` issued by a service (the Store, for package keys): its own scopes,
- *    limited to its package names. It does not depend on anyone's membership.
- *  - `msk_` created by a member: its scopes intersected with what the creator's
+ *  - an operator key (`credentialKind: "organization"`): allowed only while the
+ *    creator's email is still an Organization Admin, so removing the address from
+ *    the allowlist ends the key on the next request. Scopes are the operator
+ *    scopes the key was created with, which never include workspace administration.
+ *  - a workspace credential issued by a service (the Store, for package keys): its
+ *    own scopes, limited to its package names. It does not depend on anyone's
+ *    membership.
+ *  - a workspace credential created by a member: its scopes intersected with what the creator's
  *    membership role grants now. Demoting the creator narrows the key, removing
  *    them ends it (the membership row ends, and removal also revokes the key),
  *    and rejoining is a new membership row, so it never revives the old key. A
@@ -373,8 +379,8 @@ export async function validateCredentialToken(token: string): Promise<ValidatedC
 
   const row = await AccessCredentialModel.findOne({credentialId}).lean<CredentialRow>()
   if (!row || row.revokedAt) return null
-  // The hash covers only the secret, so the prefix has to be bound to the row too, or a workspace key
-  // could be presented as an operator key.
+  // The hash covers only the secret, so the token's prefix must be the one its row records. What the
+  // key is comes from the row's `credentialKind`, never from the prefix.
   if (row.prefix !== prefix || row.env !== env) return null
   if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return null
   if (!secretMatches(row.hash, secret)) return null
@@ -396,8 +402,8 @@ export async function validateCredentialToken(token: string): Promise<ValidatedC
 
 /** What the credential may do right now, or null when it may do nothing. */
 async function effectiveGrant(row: CredentialRow): Promise<{scopes: string[]; packageNames: string[]} | null> {
-  if (row.prefix === "mak") {
-    if (row.credentialKind !== "organization") return null
+  if (row.credentialKind === "organization") {
+    if (row.workspaceId) return null
     // Checked on every call: an operator key is only as good as its creator's admin status today.
     if (!isOrganizationAdminEmail(row.createdByEmail ?? null, true)) return null
     return {scopes: [...row.scopes], packageNames: []}
@@ -503,7 +509,8 @@ async function insertCredential(
   }
 }
 
-async function recordCreated(
+/** Record `credential.created` for a new row inside the caller's transaction, as its last write. */
+export async function recordCreated(
   session: ClientSession,
   row: CredentialRow,
   actor: WorkspaceAuditEventInput["actor"],

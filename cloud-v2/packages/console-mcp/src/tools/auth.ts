@@ -21,8 +21,9 @@ export function registerAuthTools(server: McpServer, config: ConsoleMcpConfig): 
         capabilities: config.capabilities,
         hints: {
           reports:
-            "Set MENTRA_ADMIN_TOKEN: an operator key (mak_...) with the organization.incidents.read scope, " +
-            "or a WorkOS access token of an Organization Admin. mak_ keys are env-pinned — match MENTRA_CORE_URL/MENTRA_ENV.",
+            "Set MENTRA_ADMIN_TOKEN: an operator key with the organization.incidents.read scope (mak_..., or an " +
+            "allowlisted msk_... admin key), or a WorkOS access token of an Organization Admin. Operator keys are " +
+            "env-pinned — match MENTRA_CORE_URL/MENTRA_ENV.",
         },
       };
 

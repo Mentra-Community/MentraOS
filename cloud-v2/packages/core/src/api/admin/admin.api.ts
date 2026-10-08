@@ -20,7 +20,7 @@ import testDispatches from "./test-dispatches.api"
  * `/health` is open. Everything else needs a principal (`principalAuth`: a
  * signed-in person or a Core credential), and each area then needs its own
  * organization capability, an Organization Admin having all of them and an
- * operator key (`mak_`) only the scopes it was created with:
+ * operator key only the scopes it was created with:
  *
  *  - `/reports`: `organization.incidents.read`;
  *  - `/support-profiles`: `organization.supportProfiles.read`;

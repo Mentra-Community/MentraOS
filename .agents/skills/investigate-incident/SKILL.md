@@ -48,10 +48,12 @@ Check whether a variable is set without printing its value. Do not print
 credentials, enable shell tracing, put tokens in committed files, or extract
 browser sessions. If no suitable credential is available, request that the user
 configure `MENTRA_ADMIN_TOKEN` in the environment. Authentication requires an
-operator key (`mak_...`) with the incident read scope
-(`organization.incidents.read`), or the WorkOS access token of an Organization
-Admin. Workspace credentials (`msk_...`) do not work: they carry no
-organization capability.
+operator key with the incident read scope (`organization.incidents.read`), or the
+WorkOS access token of an Organization Admin. An existing admin key (`msk_...`,
+whose `api-key@<keyId>.local` address is on that backend's
+`CLOUD_CORE_ADMIN_EMAILS`) is an operator key and keeps working with the same
+token; new operator keys are `mak_...`. Any other `msk_...` key is a workspace
+credential and does not work: it carries no organization capability.
 
 An operator key belongs to one Core deployment (organization), so keep one per
 backend, which is why `MENTRA_ADMIN_TOKEN_PROD`, `MENTRA_ADMIN_TOKEN_STAGING` and
