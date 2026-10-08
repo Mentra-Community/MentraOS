@@ -1551,6 +1551,15 @@ def guided(args, directory):
     return finish(directory, dict(result, admin=admin))
 
 
+def print_teams(teams):
+    print(f"Meeting creation uses Graph app {teams['graphClientId']}; its secret is in Key Vault.")
+    if teams.get('consentLink'):
+        print('An Entra administrator grants its permission here: ' + teams['consentLink'])
+    print('A Teams administrator runs these once in Cloud Shell (Switch to PowerShell):')
+    for line in teams['teamsPolicy']:
+        print('  ' + line)
+
+
 def finish(directory, result):
     state = read_json(directory / 'state.json')
     config = read_json(directory / 'deployment.config.json')
@@ -1562,11 +1571,7 @@ def finish(directory, result):
         print(f'Administrator key: {admin_key_command(config)}')
         teams = result.get('teams')
         if teams:
-            print('Teams admin: run these in Cloud Shell (Switch to PowerShell) to allow meeting creation:')
-            for line in teams['teamsPolicy']:
-                print('  ' + line)
-            if teams.get('consentLink'):
-                print('Then an Entra admin grants the app permission: ' + teams['consentLink'])
+            print_teams(teams)
         elif not config.get('teamsGraphClientId'):
             print(f'Teams meeting creation is off. Turn it on later with: {setup_command()} configure-teams')
     for handoff in state.get('handoffs') or []:
@@ -1613,7 +1618,8 @@ def main():
                 emit(args, init(args, directory))
                 return
             if args.command == 'upgrade':
-                emit(args, upgrade_command(args, directory))
+                result = upgrade_command(args, directory)
+                emit(args, result) if args.json else finish(directory, result)
                 return
             config, state, release = load(directory)
             commands = {
@@ -1631,7 +1637,11 @@ def main():
                 'status': lambda: state,
                 'diagnostics': lambda: diagnostics(directory, state, release),
             }
-            emit(args, commands[args.command]())
+            result = commands[args.command]()
+            if args.command == 'configure-teams' and not args.json:
+                print_teams(result)
+            else:
+                emit(args, result)
     except (SetupError, KeyError, TypeError, ValueError, OSError) as exc:
         print(f'Setup stopped: {exc}', file=sys.stderr)
         sys.exit(1)

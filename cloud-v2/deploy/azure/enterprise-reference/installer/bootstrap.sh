@@ -218,8 +218,8 @@ def deployment_plan(home, package, state_dir):
     if current == package or order(package.name) <= order(current.name):
         return current, setup(current), None
     if state.get('phase') == 'infrastructure_verified' and not pending:
-        # The new package previews the upgrade and asks before changing anything.
-        return current, setup(package) + ['upgrade'], (f'Upgrade available: {current.name} -> {package.name}. '
+        # Guided setup in the new package previews the upgrade and asks before changing anything.
+        return current, setup(package), (f'Upgrade available: {current.name} -> {package.name}. '
                                                        'Your deployment keeps running until you confirm.')
     return current, setup(current), (f'Setup with {current.name} is not finished yet; it continues now. '
                                      f'Run this command again afterwards to upgrade to {package.name}.')
