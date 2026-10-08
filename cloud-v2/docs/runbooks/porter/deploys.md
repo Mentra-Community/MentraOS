@@ -37,9 +37,8 @@ The Mentra Miniapp Store deploys independently from the private
 [miniapp-store](https://github.com/Mentra-Community/miniapp-store) repository.
 Its `main` branch serves one production catalog, currently at the temporary
 `store.dev.us-west-2.mentraglass.com` backend hostname. Public Cloud V2 builds
-contain no Store service. Core uses the explicitly configured
-`MENTRA_STORE_INTERNAL_URL` to ask the Store for a workspace's package count
-before deleting the workspace; it does not select a catalog by Core environment. See [Store integration](../../store-integration.md)
+contain no Store service, and Core has no Store setting: the Store calls Core,
+never the reverse. See [Store integration](../../store-integration.md)
 for the service/authentication contract and private deployment ownership.
 
 ## The deploy model
@@ -76,8 +75,7 @@ get layer-cached so re-builds are faster).
 
 ## Where do env vars come from?
 
-Doppler owns every application setting and secret, including
-`MENTRA_STORE_INTERNAL_URL`. Each `porter.*.yaml` links exactly one Doppler
+Doppler owns every application setting and secret. Each `porter.*.yaml` links exactly one Doppler
 environment group (`cloud-v2-dev-doppler`, `cloud-v2-staging-doppler`,
 `cloud-v2-prod-doppler-sync`, …) and carries no `env:` block; the Doppler
 Porter health workflow rejects manifest `env:` and Porter app overrides. See

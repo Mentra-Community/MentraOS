@@ -49,7 +49,6 @@ import {
   revokeInvitation,
   type InvitationRow,
 } from "../../services/workspaces/invitation.service"
-import {countStorePackages} from "../../services/workspaces/store-package-count"
 import {fail} from "../../services/workspaces/workspace-error"
 import {
   changeRole,
@@ -135,11 +134,7 @@ app.patch("/:workspaceId", requireWorkspaceCapability("workspace.settings.manage
 
 app.delete("/:workspaceId", requireWorkspaceCapability("workspace.delete"), async (c) => {
   const body = await readJsonObject(c)
-  const workspaceId = c.req.param("workspaceId")
-  await deleteWorkspace(userActor(c), workspaceId, {
-    confirmName: requiredString(body, "confirmName"),
-    ownedPackageCount: () => countStorePackages(workspaceId),
-  })
+  await deleteWorkspace(userActor(c), c.req.param("workspaceId"), {confirmName: requiredString(body, "confirmName")})
   return c.body(null, 204)
 })
 

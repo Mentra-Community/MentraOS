@@ -239,38 +239,19 @@ export async function renameWorkspace(
 }
 
 /**
- * Delete a workspace after confirming its name and checking, outside the
- * transaction (it calls the Store), that it owns no packages. Deleting ends
- * every membership, revokes every credential and pending invitation, and keeps
- * the workspace row (`status: "deleted"`) so audit history stays resolvable.
+ * Delete a workspace after confirming its name. Deleting ends every membership,
+ * revokes every credential and pending invitation, bumps the authorization
+ * revision, and keeps the workspace row (`status: "deleted"`) so audit history
+ * stays resolvable. The `workspace.deleted` event goes on the change feed.
  *
- * A package published between the count and the deletion is not caught here:
- * the Store must refuse new packages for a workspace Core reports as deleted.
+ * Core asks no other service first. Services that keep records owned by a
+ * workspace decide what happens to them: the Store refuses a Developer Console
+ * delete while the workspace publishes miniapps, and holds the miniapps of a
+ * workspace deleted elsewhere until a Store operator assigns them to another
+ * workspace.
  */
-export async function deleteWorkspace(
-  actor: Actor,
-  workspaceId: string,
-  opts: {confirmName: string; ownedPackageCount: () => Promise<number>},
-): Promise<void> {
-  // Cheap refusals first, so the Store is only asked once the request is authorized and confirmed.
-  await assertCanDelete(null, actor, workspaceId, opts.confirmName)
-
-  let packages: number
-  try {
-    packages = await opts.ownedPackageCount()
-  } catch (err) {
-    logger.warn({err, workspaceId}, "could not count the workspace's packages")
-    fail("store_unavailable", "could not check the workspace's packages with the Store")
-  }
-  if (!Number.isInteger(packages) || packages < 0) {
-    fail("store_unavailable", "the Store returned an unusable package count")
-  }
-  if (packages > 0) {
-    fail("workspace_has_packages", `the workspace still owns ${packages} package(s); transfer or delete them first`)
-  }
-
+export async function deleteWorkspace(actor: Actor, workspaceId: string, opts: {confirmName: string}): Promise<void> {
   await withTransaction(async session => {
-    // State may have changed while the Store was being asked; decide again on current data.
     const workspace = await assertCanDelete(session, actor, workspaceId, opts.confirmName)
     const now = new Date()
     await bumpRevision(session, workspaceId, undefined, {status: "deleted", deletedAt: now})
@@ -293,7 +274,7 @@ export async function deleteWorkspace(
 }
 
 async function assertCanDelete(
-  session: ClientSession | null,
+  session: ClientSession,
   actor: Actor,
   workspaceId: string,
   confirmName: string,

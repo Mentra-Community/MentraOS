@@ -103,7 +103,6 @@ on the next request. The values shown are placeholders.
 - `CLOUD_CORE_WORKSPACE_CREATION` (public): `open` (default) lets any signed-in person create a workspace. `organization-admins` limits creation to Organization Admins. Any other value is a configuration error and workspace creation fails.
 - `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE` (public): absolute http(s) URL that contains `{token}`. It becomes the invitation link in the email and in the inviter's response, so it must open a page that accepts invitations. Two forms work: the admin dashboard's `https://<admin-host>/?workspaceInvite={token}` (it also accepts `https://<admin-host>/invite/{token}`), and the Developer Console's `https://<console-host>/invite/{token}`. A Private Deployment runs the admin dashboard and no Developer Console, so use the admin form. Without a usable value, inviting fails rather than minting a link that cannot work.
 - `CLOUD_CORE_SERVICE_SECRETS` (secret): JSON object of service name (`store`, `fleet`) to a list of shared secrets, newest first, for example `{"store":["<new>","<old>"],"fleet":["<secret>"]}`. Core verifies callers of `/api/internal/workspaces/*` with them; list the old secret beside the new one to rotate. Unset means no service can call; a value that is not that shape (including a service whose list is empty or holds only blank secrets) answers every call 503 `service_auth_misconfigured`. Unknown names are ignored with a warning.
-- `CLOUD_CORE_STORE_SERVICE_SECRET` (secret): the secret Core signs with when it asks the Store (`MENTRA_STORE_INTERNAL_URL`) how many miniapp packages a workspace holds before deleting it. **Required whenever `MENTRA_STORE_INTERNAL_URL` is set**: without it workspace deletion answers 503 `store_unavailable`. The Store must list it in its `MENTRA_STORE_CORE_SERVICE_SECRETS`. With no Store URL, deletion treats the workspace as having no packages.
 - `CLOUD_CORE_FLEET_URL` (public): base URL (optional path prefix) of the optional Fleet integration. Unset or blank means Fleet is not installed. See [Fleet integration](../docs/fleet-integration.md).
 - `CLOUD_CORE_FLEET_SECRET` (secret): the secret that signs what Core forwards to Fleet; required when `CLOUD_CORE_FLEET_URL` is set.
 - `CLOUD_CORE_FLEET_MAX_BODY_BYTES`, `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`, `CLOUD_CORE_FLEET_TIMEOUT_MS` (public): the largest request body Core forwards (default `1048576`), the largest Fleet response body Core buffers (default `10485760`; a larger one is a `503 fleet_unavailable`) and how long Fleet may take to answer (default `10000`). Values that are not positive integers fall back to the defaults.
@@ -115,7 +114,6 @@ CLOUD_CORE_CREDENTIAL_ENVIRONMENTS=private
 CLOUD_CORE_WORKSPACE_CREATION=organization-admins
 CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE=https://admin.acme.example/?workspaceInvite={token}
 CLOUD_CORE_SERVICE_SECRETS={"store":["<store-secret>"],"fleet":["<fleet-secret>"]}
-CLOUD_CORE_STORE_SERVICE_SECRET=<core-to-store-secret>
 CLOUD_CORE_FLEET_URL=https://fleet.acme.example
 CLOUD_CORE_FLEET_SECRET=<core-to-fleet-secret>
 ```

@@ -41,7 +41,7 @@ Core owns who belongs to a developer workspace and what they may do. A
 `member`) inside an **organization**, which is one Core deployment. Core stores
 workspaces, memberships, invitations, workspace credentials
 (`msk_<env>_<ulid>.<secret>`, kept only as a SHA-256 hash of the secret) and an
-audit trail with a replayable change feed. The Store no longer stores
+audit trail with a replayable change feed. The Store does not store
 membership: it neither writes nor checks member, invitation or API-key records
 (the legacy collections stay in its database, read only by the grant backfill
 below) and asks Core instead. It keeps what is about miniapps: listings,
@@ -91,15 +91,11 @@ learn which organization capabilities it holds.
 
 ### Secret pairing
 
-Two secrets, one per direction. Keep both in the secret manager.
-
-- **Store asks Core** (everything above): Core's `CLOUD_CORE_SERVICE_SECRETS` is a
-  JSON object whose `store` list holds the accepted secrets, newest first, for
-  example `{"store":["<new>","<old>"]}`. The Store's
-  `MENTRA_CORE_WORKSPACE_SERVICE_SECRET` is one value from that list.
-- **Core asks Store** (the package count before a workspace is deleted): Core's
-  `CLOUD_CORE_STORE_SERVICE_SECRET` must be listed in the Store's
-  `MENTRA_STORE_CORE_SERVICE_SECRETS`, a JSON array.
+The Store calls Core; Core never calls the Store and does not know its URL.
+Core's `CLOUD_CORE_SERVICE_SECRETS` is a JSON object whose `store` list holds the
+accepted secrets, newest first, for example `{"store":["<new>","<old>"]}`. The
+Store's `MENTRA_CORE_WORKSPACE_SERVICE_SECRET` is one value from that list. Keep
+both in the secret manager.
 
 The Store also needs `MENTRA_CORE_INTERNAL_URL` (Core's origin). Without it or
 the secret the Store fails closed: Console requests answer
@@ -119,15 +115,25 @@ same WorkOS environment. Two things depend on it:
   Core sees the same WorkOS user id, which another environment never issues. Those
   memberships would stay pending for good.
 
-`CLOUD_CORE_STORE_SERVICE_SECRET` is **required whenever Core has
-`MENTRA_STORE_INTERNAL_URL`**. Core asks the Store
-(`GET /api/internal/workspaces/:workspaceId/package-count`) before it deletes a
-workspace, so a workspace that still owns packages is never orphaned. With a Store
-URL and no secret, Core cannot ask and answers workspace deletion with
-`503 store_unavailable` rather than assume there are no packages. A deployment
-without a Store URL has no packages and deletes freely. The local `bun run dev`
-stack defaults `MENTRA_STORE_INTERNAL_URL`, so set the secret there too if you
-delete workspaces locally.
+### Deleting a workspace
+
+Core deletes a workspace by its own rules: an owner (or an Organization Admin)
+confirms the workspace name. Deleting ends every membership and invitation,
+revokes every credential, invalidates cached authorization and puts
+`workspace.deleted` on the change feed. Core asks no other service first.
+
+The Store decides what happens to the miniapps a workspace publishes:
+
+- The Developer Console deletes through the Store proxy. While the workspace owns
+  miniapps that are not deleted, the Store answers
+  `DELETE /api/console/workspaces/:workspaceId` with
+  `409 {"error":"workspace_has_miniapps","count":N}` and does not call Core. The
+  Console asks the person to move or delete those miniapps first.
+- A workspace deleted from the Core admin dashboard keeps its miniapps published.
+  The dashboard warns about this before deleting. Nobody can manage those
+  miniapps, because Core refuses every request in a deleted workspace. Store
+  moderation shows their owner workspace as deleted, and a Store operator assigns
+  each one to another workspace.
 
 ### The Store proxy
 
@@ -246,14 +252,12 @@ Run apply again immediately before the Store cutover so Core is current.
 
 `bun run dev` starts Core, Runtime and the test OEM without Store source.
 For Store work, start the private backend separately on port 3003 and Console
-on 5173. Configure `MENTRA_STORE_INTERNAL_URL=http://127.0.0.1:3003` in Core,
-`MENTRA_CORE_INTERNAL_URL=http://127.0.0.1:3000` and
+on 5173. Configure `MENTRA_CORE_INTERNAL_URL=http://127.0.0.1:3000` and
 `MENTRA_STORE_CORE_JWKS_URL=http://127.0.0.1:3000/.well-known/jwks.json` in Store,
 and Core's `MENTRA_SERVICE_AUTH_SECRET` as the Store's `MENTRA_CORE_IDENTITY_SECRET`
-for identity lookups. For workspaces, pair the secrets as described above:
-a value in Core's `CLOUD_CORE_SERVICE_SECRETS` (`{"store":["dev-secret"]}`) as the
-Store's `MENTRA_CORE_WORKSPACE_SERVICE_SECRET`, and Core's
-`CLOUD_CORE_STORE_SERVICE_SECRET` in the Store's `MENTRA_STORE_CORE_SERVICE_SECRETS`.
+for identity lookups. For workspaces, pair the secret as described above: a value
+in Core's `CLOUD_CORE_SERVICE_SECRETS` (`{"store":["dev-secret"]}`) as the Store's
+`MENTRA_CORE_WORKSPACE_SERVICE_SECRET`. Core needs no Store configuration.
 Core admin remains on 5174 and uses `CORE_URL`.
 
 ## Bundled Store artifact
@@ -272,8 +276,8 @@ Core and Runtime remain in the coordinated Cloud V2 release. The private Store's
 backend is `https://store.dev.us-west-2.mentraglass.com` and its website is
 `https://apps-dev.mentraglass.com`. These names do not select a dev catalog.
 The CLI and bundled Store select their Store explicitly, independently of Core's
-environment. Each official Core environment's Doppler config points
-`MENTRA_STORE_INTERNAL_URL` at the same Store for workspace package counts. Local/self-hosted services can configure explicit URLs.
+environment. Core has no Store setting. Local/self-hosted services can configure
+explicit URLs.
 
 Store preserves its existing data, developer accounts, storage and signing keys.
 Moving the website to `apps.mentraglass.com` later is a domain change, not a catalog
@@ -284,10 +288,7 @@ existing domain, login, report deep links and incident APIs.
 The Store may verify miniapp tokens from several explicitly trusted Core JWKS
 endpoints. Core environments with separate account databases retain distinct opaque
 user identities; private Store invitations resolve through the canonical production
-Core. Configure Store's `MENTRA_CORE_IDENTITY_SECRET` for that lookup and its
-`MENTRA_STORE_CORE_SERVICE_SECRETS` JSON list for the Core deployments whose
-workspace package-count requests it accepts. Core signs those requests with
-`CLOUD_CORE_STORE_SERVICE_SECRET` (see Secret pairing above).
+Core. Configure Store's `MENTRA_CORE_IDENTITY_SECRET` for that lookup.
 
 Core owns browser login, callback, organization selection and logout at
 `/api/console/auth/*` for both public websites. Configure Core

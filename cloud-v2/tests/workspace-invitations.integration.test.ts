@@ -305,7 +305,7 @@ describe("createInvitation", () => {
       404,
     )
     const ws = await newWorkspace()
-    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"})
     await expectError(
       () => createInvitation(user("mu_owner"), ws, {email: "x@example.test", role: "member"}),
       "workspace_deleted",
@@ -346,7 +346,7 @@ describe("createInvitation", () => {
     const ws = await newWorkspace()
     await addMember(ws, "mu_dev", "developer")
     const deleted = await newWorkspace("Gone")
-    await deleteWorkspace(user("mu_owner"), deleted, {confirmName: "Gone", ownedPackageCount: async () => 0})
+    await deleteWorkspace(user("mu_owner"), deleted, {confirmName: "Gone"})
     delete process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE
     const input = {email: "x@example.test", role: "member"} as const
 
@@ -435,7 +435,7 @@ describe("createInvitation racing other mutations", () => {
 
       const [created] = await Promise.allSettled([
         createInvitation(user("mu_owner"), ws, {email: "dev@example.test", role: "member"}),
-        deleteWorkspace(user("mu_owner"), ws, {confirmName: `Race ${round}`, ownedPackageCount: async () => 0}),
+        deleteWorkspace(user("mu_owner"), ws, {confirmName: `Race ${round}`}),
       ])
 
       expect((await getWorkspace(ws))!.status).toBe("deleted")
@@ -635,7 +635,7 @@ describe("revokeInvitation", () => {
     await expectError(() => revokeInvitation(user("mu_owner"), "ws_missing", elsewhere.invitationId), "not_found", 404)
     expect(await peekInvitation(elsewhere.token)).not.toBeNull()
 
-    await deleteWorkspace(user("mu_owner"), other, {confirmName: "Other", ownedPackageCount: async () => 0})
+    await deleteWorkspace(user("mu_owner"), other, {confirmName: "Other"})
     await expectError(() => revokeInvitation(user("mu_owner"), other, elsewhere.invitationId), "workspace_deleted", 410)
   })
 })
@@ -683,7 +683,7 @@ describe("peekInvitation", () => {
       "pending",
     )
 
-    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"})
     expect(await peekInvitation(live.token)).toBeNull()
   })
 })
@@ -843,7 +843,7 @@ describe("acceptInvitation", () => {
       )
     }
 
-    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"})
     await expectError(
       () => acceptInvitation(user("mu_live", {email: "live@example.test"}), live.token),
       "invitation_not_found",
@@ -965,7 +965,7 @@ describe("acceptInvitation", () => {
 
       const [accepted] = await Promise.allSettled([
         acceptInvitation(user(`mu_dev${round}`, {email: "dev@example.test"}), created.token),
-        deleteWorkspace(user("mu_owner"), ws, {confirmName: `Race ${round}`, ownedPackageCount: async () => 0}),
+        deleteWorkspace(user("mu_owner"), ws, {confirmName: `Race ${round}`}),
       ])
 
       // Whatever the order, no active membership survives in a deleted workspace.

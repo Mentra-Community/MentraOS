@@ -2,7 +2,7 @@
  * @fileoverview Workspace lifecycle, membership and role-transition integration tests.
  *
  * These run the real services, models and transactions against a local replica
- * set; nothing is mocked except the Store package count, which is a callback.
+ * set; nothing is mocked.
  * The interesting cases are the concurrent ones: two owners demoting each other
  * (or leaving) at the same time must leave exactly one owner.
  *
@@ -613,65 +613,26 @@ describe("recoverOwnership", () => {
 })
 
 describe("deleteWorkspace", () => {
-  test("delete refuses when ownedPackageCount > 0 and when confirmName mismatches", async () => {
+  test("delete refuses a confirmName that does not match, and deletes on the exact name", async () => {
     const ws = await newWorkspace(user("mu_owner"), "Acme")
-    let calls = 0
-    const count = (n: number) => async () => {
-      calls++
-      return n
-    }
 
-    await expectError(
-      () => deleteWorkspace(user("mu_owner"), ws, {confirmName: "acme", ownedPackageCount: count(0)}),
-      "invalid_request",
-      400,
-    )
-    expect(calls).toBe(0)
-
-    await expectError(
-      () => deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme", ownedPackageCount: count(2)}),
-      "workspace_has_packages",
-      409,
-    )
-    expect(calls).toBe(1)
+    await expectError(() => deleteWorkspace(user("mu_owner"), ws, {confirmName: "acme"}), "invalid_request", 400)
     expect((await getWorkspace(ws))!.status).toBe("active")
     expect(await getActiveMembership(ws, "mu_owner")).not.toBeNull()
 
-    // The Store being unreachable is its own failure, and nothing is deleted.
-    await expectError(
-      () =>
-        deleteWorkspace(user("mu_owner"), ws, {
-          confirmName: "Acme",
-          ownedPackageCount: async () => {
-            throw new Error("store down")
-          },
-        }),
-      "store_unavailable",
-      503,
-    )
-    expect((await getWorkspace(ws))!.status).toBe("active")
-
-    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme", ownedPackageCount: count(0)})
+    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"})
     expect((await getWorkspace(ws))!.status).toBe("deleted")
   })
 
   test("only an owner or an organization admin may delete", async () => {
     const ws = await newWorkspace(user("mu_owner"), "Acme")
     await addMember(ws, "mu_admin", "admin")
-    let calls = 0
-    const opts = {
-      confirmName: "Acme",
-      ownedPackageCount: async () => {
-        calls++
-        return 0
-      },
-    }
+    const opts = {confirmName: "Acme"}
 
     await expectError(() => deleteWorkspace(user("mu_admin"), ws, opts), "forbidden", 403)
     await expectError(() => deleteWorkspace(user("mu_stranger"), ws, opts), "forbidden", 403)
     await expectError(() => deleteWorkspace(service, ws, opts), "forbidden", 403)
     await expectError(() => deleteWorkspace(user("mu_owner"), "ws_missing", opts), "not_found", 404)
-    expect(calls).toBe(0)
     expect((await getWorkspace(ws))!.status).toBe("active")
 
     await deleteWorkspace(orgAdmin, ws, opts)
@@ -707,7 +668,7 @@ describe("deleteWorkspace", () => {
     await invite("winv_accepted", "a@example.test", "accepted")
     const before = await revisionOf(ws)
 
-    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"})
 
     const deleted = await WorkspaceModel.findOne({workspaceId: ws}).lean()
     expect(deleted).toMatchObject({status: "deleted", authorizationRevision: before + 1})
@@ -742,7 +703,7 @@ describe("deleteWorkspace", () => {
   test("a deleted workspace refuses every further change (410 workspace_deleted)", async () => {
     const ws = await newWorkspace(user("mu_owner"), "Acme")
     const memberId = await addMember(ws, "mu_member", "member")
-    await deleteWorkspace(system, ws, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(system, ws, {confirmName: "Acme"})
     const r = await revisionOf(ws)
 
     await expectError(() => changeRole(orgAdmin, ws, memberId, "admin", r), "workspace_deleted", 410)
@@ -751,7 +712,7 @@ describe("deleteWorkspace", () => {
     await expectError(() => recoverOwnership(orgAdmin, ws, "mu_x"), "workspace_deleted", 410)
     await expectError(() => leaveWorkspace(user("mu_member"), ws), "workspace_deleted", 410)
     await expectError(
-      () => deleteWorkspace(orgAdmin, ws, {confirmName: "Acme", ownedPackageCount: async () => 0}),
+      () => deleteWorkspace(orgAdmin, ws, {confirmName: "Acme"}),
       "workspace_deleted",
       410,
     )
@@ -795,7 +756,7 @@ describe("queries", () => {
     await addMember(third, "mu_me", "member", {status: "ended", endedReason: "removed", endedAt: new Date()})
     await addMember(gone, "mu_me", "admin")
     await addMember(first, "mu_not_me", "owner", {mentraUserId: null, pendingWorkosUserId: "user_pending_me"})
-    await deleteWorkspace(user("mu_other"), gone, {confirmName: "Gone", ownedPackageCount: async () => 0})
+    await deleteWorkspace(user("mu_other"), gone, {confirmName: "Gone"})
 
     const listed = await listWorkspacesForUser("mu_me")
 
@@ -840,7 +801,7 @@ describe("queries", () => {
   test("listAllWorkspaces pages newest first by workspaceId cursor and includes deleted ones", async () => {
     const ids: string[] = []
     for (let i = 0; i < 5; i++) ids.push(await newWorkspace(user(`mu_o${i}`), `W${i}`))
-    await deleteWorkspace(system, ids[1]!, {confirmName: "W1", ownedPackageCount: async () => 0})
+    await deleteWorkspace(system, ids[1]!, {confirmName: "W1"})
 
     const page1 = await listAllWorkspaces({limit: 2})
     expect(page1.map(item => item.workspaceId)).toEqual([ids[4], ids[3]])

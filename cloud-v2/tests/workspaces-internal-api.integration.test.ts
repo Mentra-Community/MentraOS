@@ -755,7 +755,7 @@ describe("POST /authorize", () => {
     const credential = {type: "mentra_user", mentraUserId: owner.mentraUserId} as const
 
     const missing = await store().authorize({credential, workspaceId: "ws_missing"})
-    await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme"})
     const deleted = await store().authorize({credential, workspaceId})
 
     expect(missing).toMatchObject({allowed: false, reason: "workspace_not_found", workspace: null})
@@ -915,7 +915,7 @@ describe("POST /principal", () => {
     const {workspaceId, developer} = await newWorkspace()
     const other = await createWorkspace(actorOf(developer), {name: "Second"})
     const gone = await createWorkspace(actorOf(developer), {name: "Gone"})
-    await deleteWorkspace(actorOf(developer), gone.workspaceId, {confirmName: "Gone", ownedPackageCount: async () => 0})
+    await deleteWorkspace(actorOf(developer), gone.workspaceId, {confirmName: "Gone"})
 
     const resolved = await store().resolvePrincipal(developer.bearer)
 
@@ -996,7 +996,7 @@ describe("POST /memberships/check", () => {
     const {workspaceId, developer} = await newWorkspace()
     const second = await createWorkspace(actorOf(developer), {name: "Second"})
     const gone = await createWorkspace(actorOf(developer), {name: "Gone"})
-    await deleteWorkspace(actorOf(developer), gone.workspaceId, {confirmName: "Gone", ownedPackageCount: async () => 0})
+    await deleteWorkspace(actorOf(developer), gone.workspaceId, {confirmName: "Gone"})
     const strangersOnly = await createWorkspace(actorOf(await person("someone-else")), {name: "Theirs"})
 
     const memberships = await store().checkMemberships(developer.mentraUserId, [
@@ -1129,7 +1129,7 @@ describe("GET /workspaces/:workspaceId", () => {
 
   test("a deleted workspace is still described, with its status", async () => {
     const {workspaceId, owner} = await newWorkspace()
-    await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme"})
 
     expect(await store().getWorkspace(workspaceId)).toMatchObject({workspaceId, status: "deleted"})
   })
@@ -1538,7 +1538,7 @@ describe("POST /credentials", () => {
     const {workspaceId, owner} = await newWorkspace()
 
     const missing = await raw("POST", `${API}/credentials`, {body: input("ws_missing")})
-    await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(actorOf(owner), workspaceId, {confirmName: "Acme"})
     const deleted = await raw("POST", `${API}/credentials`, {body: input(workspaceId)})
 
     expect(missing.status).toBe(404)

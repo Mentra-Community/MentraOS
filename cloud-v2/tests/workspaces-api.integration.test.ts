@@ -3,13 +3,9 @@
  *
  * These drive the real Core app (`createApp`) over its routes, with the real
  * middleware, services, models and transactions against a local replica set.
- * Two boundaries are faked:
- *  - WorkOS identity: a bearer value maps to a fixed WorkOS identity (the same
- *    stub `principal-auth.integration.test.ts` uses). Memberships, identity
- *    links and credentials are real rows.
- *  - The Store: a loopback HTTP server answers the package-count call and
- *    verifies the request signature with the contract's `verifyServiceRequest`,
- *    so a wrongly signed request fails the test instead of passing silently.
+ * One boundary is faked: WorkOS identity. A bearer value maps to a fixed
+ * WorkOS identity (the same stub `principal-auth.integration.test.ts` uses).
+ * Memberships, identity links and credentials are real rows.
  *
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random
  * database name, ignores `MONGO_URL`) and asserts the live connection is on
@@ -33,7 +29,6 @@ import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {resolveWorkosUser} from "../packages/core/src/services/workspaces/identity-link.service"
 import * as developerAuth from "../packages/developer-auth/src/index"
 import {ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
-import {SERVICE_HEADERS, verifyServiceRequest} from "../packages/workspace-contract/src/server"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 
 const MODELS = [
@@ -48,17 +43,14 @@ const MODELS = [
 ]
 
 const ADMIN_EMAIL = "org-admin@example.test"
-const STORE_SECRET = "test-store-service-secret"
 const INVITE_PREFIX = "https://core.example.test/invite/"
 const ENV_KEYS = [
   "CLOUD_CORE_ADMIN_EMAILS",
   "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
   "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
   "CLOUD_CORE_ENVIRONMENT",
-  "CLOUD_CORE_STORE_SERVICE_SECRET",
   "CLOUD_CORE_WORKSPACE_CREATION",
   "CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE",
-  "MENTRA_STORE_INTERNAL_URL",
   "RESEND_API_KEY",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
@@ -102,43 +94,6 @@ function authResult(value: string | undefined): developerAuth.DeveloperAuthResul
     organizationId: null,
     accessToken: value!,
   }
-}
-
-// --- Store stub ------------------------------------------------------------
-
-interface StoreRequest {
-  path: string
-  service: string | null
-  signed: boolean
-}
-
-let storeBody: unknown = {count: 0}
-let storeStatus = 200
-const storeRequests: StoreRequest[] = []
-const store = Bun.serve({
-  hostname: "127.0.0.1",
-  port: 0,
-  fetch(req) {
-    const url = new URL(req.url)
-    const signed = verifyServiceRequest({
-      method: req.method,
-      pathWithQuery: url.pathname + url.search,
-      body: "",
-      timestampMs: Number(req.headers.get(SERVICE_HEADERS.timestamp)),
-      secrets: [STORE_SECRET],
-      signature: req.headers.get(SERVICE_HEADERS.signature) ?? "",
-      nowMs: Date.now(),
-    })
-    storeRequests.push({path: url.pathname, service: req.headers.get(SERVICE_HEADERS.service), signed})
-    if (!signed) return Response.json({error: "service_unauthorized"}, {status: 401})
-    if (storeStatus !== 200) return new Response("store down", {status: storeStatus})
-    return Response.json(storeBody)
-  },
-})
-
-function configureStore() {
-  process.env.MENTRA_STORE_INTERNAL_URL = store.url.origin
-  process.env.CLOUD_CORE_STORE_SERVICE_SECRET = STORE_SECRET
 }
 
 // --- Fixtures --------------------------------------------------------------
@@ -265,7 +220,6 @@ beforeAll(async () => {
 afterAll(async () => {
   requestAuth?.mockRestore()
   tokenAuth?.mockRestore()
-  store.stop(true)
   if (verified && WorkspaceModel.db.readyState === 1) {
     assertConnectedTo(databaseUrl, WorkspaceModel.db.name)
     await WorkspaceModel.db.dropDatabase()
@@ -277,16 +231,11 @@ beforeEach(async () => {
   assertConnectedTo(databaseUrl, WorkspaceModel.db.name)
   await Promise.all(MODELS.map(model => model.deleteMany({})))
   identities.clear()
-  storeBody = {count: 0}
-  storeStatus = 200
-  storeRequests.length = 0
   process.env.CLOUD_CORE_ADMIN_EMAILS = ADMIN_EMAIL
   delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS
   delete process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS
   delete process.env.CLOUD_CORE_ENVIRONMENT
-  delete process.env.CLOUD_CORE_STORE_SERVICE_SECRET
   delete process.env.CLOUD_CORE_WORKSPACE_CREATION
-  delete process.env.MENTRA_STORE_INTERNAL_URL
   delete process.env.RESEND_API_KEY
   process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE = `${INVITE_PREFIX}{token}`
   // No GoTrue: a first sign-in links to a `workos` tenant user.
@@ -663,115 +612,32 @@ describe("workspaces", () => {
   })
 
   describe("deleting", () => {
-    test("the Store reports packages: 409 workspace_has_packages, and the request was signed for the Store", async () => {
+    test("the owner deletes the workspace without Core calling any other service", async () => {
       const ws = await newWorkspace()
-      configureStore()
-      storeBody = {count: 2}
-
-      const reply = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {
-        as: ws.owner,
-        body: {confirmName: "Acme"},
-      })
-
-      expect(reply.status).toBe(409)
-      expect(reply.json.error).toBe("workspace_has_packages")
-      expect(storeRequests).toEqual([
-        {path: `/api/internal/workspaces/${ws.workspaceId}/package-count`, service: "core", signed: true},
-      ])
-      expect((await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(200)
-    })
-
-    test("with no packages the workspace is deleted and disappears", async () => {
-      const ws = await newWorkspace()
-      configureStore()
-      storeBody = {count: 0}
-
-      const reply = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {
-        as: ws.owner,
-        body: {confirmName: "Acme"},
-      })
-
-      expect(reply.status).toBe(204)
-      expect(reply.text).toBe("")
-      expect(storeRequests).toHaveLength(1)
-      expect((await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(404)
-      expect((await call("GET", "/api/workspaces", {as: ws.owner})).json.items).toEqual([])
-    })
-
-    test("with no Store configured the package count is zero", async () => {
-      const ws = await newWorkspace()
-
-      const reply = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {
-        as: ws.owner,
-        body: {confirmName: "Acme"},
-      })
-
-      expect(reply.status).toBe(204)
-      expect(storeRequests).toEqual([])
-    })
-
-    test("a Store URL without the shared secret fails closed: 503, nothing deleted, no request sent", async () => {
-      const ws = await newWorkspace()
-      process.env.MENTRA_STORE_INTERNAL_URL = store.url.origin
-
-      for (const secret of [undefined, "", "   "]) {
-        if (secret === undefined) delete process.env.CLOUD_CORE_STORE_SERVICE_SECRET
-        else process.env.CLOUD_CORE_STORE_SERVICE_SECRET = secret
+      const outbound = spyOn(globalThis, "fetch")
+      try {
         const reply = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {
           as: ws.owner,
           body: {confirmName: "Acme"},
         })
-        expect({secret, status: reply.status, error: reply.json.error}).toEqual({
-          secret,
-          status: 503,
-          error: "store_unavailable",
-        })
+
+        expect(reply.status).toBe(204)
+        expect(reply.text).toBe("")
+        expect(outbound).not.toHaveBeenCalled()
+      } finally {
+        outbound.mockRestore()
       }
-
-      expect(storeRequests).toEqual([])
-      expect((await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(200)
+      expect((await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(404)
+      expect((await call("GET", "/api/workspaces", {as: ws.owner})).json.items).toEqual([])
+      expect(await WorkspaceModel.findOne({workspaceId: ws.workspaceId}).lean()).toMatchObject({status: "deleted"})
+      expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ws.workspaceId, status: "active"})).toBe(0)
+      expect(await WorkspaceAuditEventModel.countDocuments({workspaceId: ws.workspaceId, action: "workspace.deleted"})).toBe(
+        1,
+      )
     })
 
-    test("a shared secret without a Store URL is still no Store: count 0, deleted", async () => {
+    test("the confirmation name must match", async () => {
       const ws = await newWorkspace()
-      process.env.CLOUD_CORE_STORE_SERVICE_SECRET = STORE_SECRET
-
-      const reply = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {
-        as: ws.owner,
-        body: {confirmName: "Acme"},
-      })
-
-      expect(reply.status).toBe(204)
-      expect(storeRequests).toEqual([])
-    })
-
-    test("a Store that fails, answers garbage or cannot be reached is 503 store_unavailable", async () => {
-      const ws = await newWorkspace()
-      configureStore()
-      const attempt = () =>
-        call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner, body: {confirmName: "Acme"}})
-
-      storeStatus = 500
-      expect(await attempt()).toMatchObject({status: 503, json: {error: "store_unavailable"}})
-
-      storeStatus = 200
-      for (const garbage of [{}, {count: "2"}, {count: -1}, {count: 1.5}, {count: null}, [], "2"]) {
-        storeBody = garbage
-        expect({garbage, status: (await attempt()).status}).toEqual({garbage, status: 503})
-      }
-
-      // A port nothing listens on: the connection is refused.
-      const closed = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: () => new Response("")})
-      process.env.MENTRA_STORE_INTERNAL_URL = closed.url.origin
-      closed.stop(true)
-      expect(await attempt()).toMatchObject({status: 503, json: {error: "store_unavailable"}})
-
-      expect((await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(200)
-    })
-
-    test("the confirmation name must match, and the Store is not asked before it does", async () => {
-      const ws = await newWorkspace()
-      configureStore()
 
       const wrong = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {
         as: ws.owner,
@@ -781,19 +647,17 @@ describe("workspaces", () => {
       expect(wrong.json.error).toBe("invalid_request")
       expect((await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner, body: {}})).status).toBe(400)
       expect((await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(400)
-      expect(storeRequests).toEqual([])
+      expect((await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: ws.owner})).status).toBe(200)
     })
 
     test("only an owner (or an organization admin) can delete", async () => {
       const ws = await newWorkspace()
-      configureStore()
 
       const asAdmin = await call("DELETE", `/api/workspaces/${ws.workspaceId}`, {
         as: ws.admin,
         body: {confirmName: "Acme"},
       })
       expect(asAdmin.status).toBe(403)
-      expect(storeRequests).toEqual([])
 
       const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
       expect(

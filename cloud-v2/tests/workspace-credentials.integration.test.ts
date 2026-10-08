@@ -345,7 +345,7 @@ describe("createWorkspaceCredential", () => {
     await expectError(() => createWorkspaceCredential(developer, "ws_missing", {name: "k"}), "not_found", 404)
     await expectError(() => createWorkspaceCredential(developer, "", {name: "k"}), "not_found", 404)
 
-    await deleteWorkspace(owner, workspaceId, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(owner, workspaceId, {confirmName: "Acme"})
     await expectError(() => createWorkspaceCredential(developer, workspaceId, {name: "k"}), "workspace_deleted", 410)
   })
 
@@ -835,7 +835,7 @@ describe("mintServiceCredential", () => {
     await expectError(() => mintServiceCredential("store", {...input, workspaceId: "ws_missing"}), "not_found", 404)
     expect(await AccessCredentialModel.countDocuments({})).toBe(0)
 
-    await deleteWorkspace(owner, workspaceId, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(owner, workspaceId, {confirmName: "Acme"})
     await expectError(() => mintServiceCredential("store", input), "workspace_deleted", 410)
   })
 })
@@ -1140,7 +1140,7 @@ describe("revokeCredential", () => {
   test("a deleted workspace's key can no longer be revoked: deletion already did", async () => {
     const {workspaceId, owner, developer} = await newWorkspace()
     const {credential, token} = await createWorkspaceCredential(developer, workspaceId, {name: "k"})
-    await deleteWorkspace(owner, workspaceId, {confirmName: "Acme", ownedPackageCount: async () => 0})
+    await deleteWorkspace(owner, workspaceId, {confirmName: "Acme"})
 
     expect(await validateCredentialToken(token)).toBeNull()
     await expectError(() => revokeCredential(owner, credential.credentialId), "workspace_deleted", 410)
