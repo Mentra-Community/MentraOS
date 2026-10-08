@@ -381,7 +381,7 @@ def configure_mirror(args, directory, config, state):
     check_source_image(updated)
     update_configuration(directory, config, state, sourceRegistryMirror=args.mirror)
     return ({'status': 'mirror_configured', 'image': config['sourceImage'],
-                'next': 'Run resume. The release digest and deployed resource settings are unchanged.'})
+                'next': 'Run setup again. The release digest and deployed resource settings are unchanged.'})
 
 
 def emit(args, value):
@@ -672,7 +672,7 @@ def preflight(config, require_identity=False):
     providers = {p: azure(config, 'provider', 'show', '--namespace', p)['registrationState'] for p in PROVIDERS}
     missing = [p for p, value in providers.items() if value != 'Registered']
     if missing:
-        raise SetupError('Register these providers, wait for Registered, then resume: ' + ', '.join(missing))
+        raise SetupError('Register these providers, wait for Registered, then run setup again: ' + ', '.join(missing))
     groups = azure(config, 'group', 'list')
     group = next((g for g in groups if g['name'].lower() == config['resourceGroup'].lower()), None)
     if group and group.get('tags', {}).get('mentraInstallerOwner') != config['resourceTags']['mentraInstallerOwner']:
@@ -732,7 +732,7 @@ def deploy(directory, config, state, hostname):
         except ValueError:
             pass
     if not candidates:
-        raise SetupError('Deployment completed without recognized public outputs. Inspect Azure Portal, then resume.')
+        raise SetupError('Deployment completed without recognized public outputs. Inspect Azure Portal, then run setup again.')
     outputs = {k: v['value'] for k, v in candidates[-1].items() if k in
                ('workspaceOrigin', 'coreOrigin', 'generatedRuntimeHostname', 'generatedCoreHostname', 'customDomainVerificationId',
                 'communicationResourceId', 'registryLoginServer', 'keyVaultName')}
@@ -752,7 +752,7 @@ def dns_records(config):
 def dns_handoff(directory, config, state):
     records = dns_records(config)
     write_json(directory / 'dns-records.json', {'records': records, 'instructions':
-               'Ask your DNS admin to add these records with DNS-only routing. Leave all mail/MX records unchanged. Run resume --dns-ready after propagation.'})
+               'Ask your DNS admin to add these records with DNS-only routing. Leave all mail/MX records unchanged. Run setup again once they resolve.'})
     checkpoint(directory, state, 'awaiting_dns', dns=records)
     return records
 
@@ -764,7 +764,7 @@ def check_dns(config, state):
     cname = run(['dig', '+short', 'CNAME', host]).strip().rstrip('.').lower()
     txt = run(['dig', '+short', 'TXT', 'asuid.' + host]).replace('"', '').strip()
     if cname != state['dns'][0]['value'].lower() or txt != state['dns'][1]['value']:
-        raise SetupError('DNS records do not match dns-records.json yet. Confirm DNS-only CNAME and asuid TXT, wait, then resume.')
+        raise SetupError('DNS records do not match dns-records.json yet. Confirm DNS-only CNAME and asuid TXT, wait, then run setup again.')
 
 
 def configure_azure_dns(args, directory, config, state):
@@ -814,7 +814,7 @@ def configure_azure_dns(args, directory, config, state):
         body = {'properties': dict(value, TTL=300, metadata={'mentraInstallerOwner': state['owner']})}
         run(['az', 'rest', '--method', 'put', '--url', 'https://management.azure.com' + zone['id'] + '/' + kind + '/' + name + '?api-version=2018-05-01',
              '--headers', 'If-None-Match=*', '--body', json.dumps(body), '--output', 'none'])
-    return {'status': 'dns_records_configured', 'next': 'Wait for propagation, then resume --dns-ready. Existing records and mail settings were preserved.'}
+    return {'status': 'dns_records_configured', 'next': 'Wait for propagation, then run setup again. Existing records and mail settings were preserved.'}
 
 
 def ensure_group(config, state, checks=None):
@@ -841,10 +841,10 @@ def install(args, directory, config, state):
         if not state.get('dns'):
             deploy(directory, config, state, '')
             records = dns_handoff(directory, config, state)
-            return {'status': 'awaiting_dns', 'records': records, 'next': 'Add DNS records, then resume --dns-ready.'}
+            return {'status': 'awaiting_dns', 'records': records, 'next': 'Add the DNS records, then run setup again.'}
         if not args.dns_ready and not domain_verified:
             checkpoint(directory, state, 'awaiting_dns')
-            return {'status': 'awaiting_dns', 'records': state['dns'], 'next': 'resume --dns-ready'}
+            return {'status': 'awaiting_dns', 'records': state['dns'], 'next': 'Run setup again once the DNS records resolve.'}
         check_dns(config, state)
     deploy(directory, config, state, config['workspaceHostname'])
     if config['workspaceHostname']:
@@ -854,12 +854,12 @@ def install(args, directory, config, state):
 
 def verify(args, directory, config, state):
     if state.get('upgrade') and state['phase'] not in ('deployed', 'infrastructure_verified'):
-        raise SetupError('Selected upgrade has not completed deployment. Run resume with the target package before verify.')
+        raise SetupError('Selected upgrade has not completed deployment. Run setup again with the new package before verify.')
     origin = state.get('outputs', {}).get('workspaceOrigin')
     if not origin:
-        raise SetupError('No deployment outputs saved. Run resume first.')
+        raise SetupError('No deployment outputs saved. Run setup again first.')
     if config['workspaceHostname'] and (not state.get('domainVerified') or origin != 'https://' + config['workspaceHostname']):
-        raise SetupError('Final customer domain is not deployed yet. Complete DNS and run resume --dns-ready.')
+        raise SetupError('Final customer domain is not deployed yet. Add the DNS records and run setup again.')
     run(['bash', str(ROOT / 'scripts/smoke-test.sh'), origin], env=environment(config), explain=True)
     # Azure resource administrators need not have Entra license-read rights.
     # Check when possible, but report an unknown result rather than blocking

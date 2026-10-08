@@ -151,7 +151,7 @@ class InstallerTests(unittest.TestCase):
             with patch.object(setup, 'run') as run:
                 for phase in ('upgrade_ready', 'deploying'):
                     state['phase'] = phase
-                    with self.assertRaisesRegex(setup.SetupError, 'Run resume'):
+                    with self.assertRaisesRegex(setup.SetupError, 'Run setup again'):
                         setup.verify(self.args, self.directory, self.config, state)
                 run.assert_not_called()
 
