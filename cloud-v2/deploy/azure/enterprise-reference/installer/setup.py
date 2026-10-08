@@ -382,14 +382,89 @@ def emit(args, value):
         print(value)
 
 
+# Azure region -> Azure Communication Services data location.
+DATA_LOCATIONS = {'canada': 'Canada', 'brazil': 'Brazil', 'uk': 'UK', 'australia': 'Australia', 'japan': 'Japan',
+                  'korea': 'Korea', 'india': 'India', 'uae': 'UAE', 'southafrica': 'Africa', 'eastasia': 'Asia Pacific',
+                  'southeastasia': 'Asia Pacific', 'europe': 'Europe', 'france': 'Europe', 'germany': 'Europe',
+                  'norway': 'Europe', 'switzerland': 'Europe', 'sweden': 'Europe', 'poland': 'Europe', 'italy': 'Europe',
+                  'spain': 'Europe'}
+# Settings recovered from Azure's record of the last deployment when the local folder was lost.
+RESTORED_KEYS = ('location', 'tenantId', 'coreApiClientId', 'mobileClientId', 'coreAdminEmails', 'workspaceHostname',
+                 'workspaceCertificateName', 'additionalWorkspaceDomains', 'displayName', 'communicationDataLocation',
+                 'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'approvedSystemMiniapps',
+                 'miniappConfiguration', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
+                 'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'mongoAccountName', 'reportStorageAccountName')
+
+
+def data_location(region):
+    return next((value for key, value in DATA_LOCATIONS.items() if key in region), 'United States')
+
+
+def clean_answer(key, value):
+    value = (value or '').strip()
+    if key in ('subscriptionId', 'tenantId'):
+        value = value.lower()
+        return value if GUID.fullmatch(value) else None
+    if key == 'displayName':
+        return value or None
+    if key == 'deploymentId':
+        return value if re.fullmatch(r'[a-z][a-z0-9-]{2,17}[a-z0-9]', value) else None
+    if key == 'location':
+        value = value.lower().replace(' ', '')
+        return value if re.fullmatch(r'[a-z0-9]+', value) else None
+    if key == 'workspaceHostname':
+        value = re.sub(r'^https?://', '', value.lower()).rstrip('/')
+        if value and (not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}', value) or len(value) > 253
+                      or value.count('.') < 2):
+            return None
+        return value
+    return value
+
+
+ANSWER_HELP = {'subscriptionId': 'an Azure subscription ID (a UUID)', 'tenantId': 'a Microsoft Entra tenant ID (a UUID)',
+               'displayName': 'a company name', 'deploymentId': '4-19 lowercase letters, digits or hyphens, starting with a letter',
+               'location': 'an Azure region such as westus2 or westeurope',
+               'workspaceHostname': 'a subdomain such as mentra.example.com, or nothing'}
+
+
+def subscription_visible(subscription):
+    return subprocess.run(['az', 'account', 'show', '--subscription', subscription, '--output', 'none'],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def existing_deployment(subscription, group, name):
+    """The owner and last deployment settings of this deployment, if an earlier setup made it."""
+    def az(*argv):
+        result = subprocess.run(['az', *argv, '--subscription', subscription, '--output', 'json'],
+                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            return json.loads(result.stdout or 'null') if result.returncode == 0 else None
+        except ValueError:
+            return None
+    tags = az('group', 'show', '--name', group, '--query', 'tags')
+    tags = tags if isinstance(tags, dict) else {}
+    owner = tags.get('mentraInstallerOwner', '')
+    if tags.get('mentraDeploymentId') != name or not GUID.fullmatch(owner):
+        return None
+    parameters = az('deployment', 'group', 'show', '--resource-group', group, '--name', 'mentra-private',
+                    '--query', 'properties.parameters')
+    parameters = parameters if isinstance(parameters, dict) else {}
+    return {'owner': owner, 'release': tags.get('mentraRelease', ''), 'group': group,
+            'settings': {k: v['value'] for k, v in parameters.items() if isinstance(v, dict) and 'value' in v}}
+
+
 def init(args, directory):
-    if (directory / 'state.json').exists() or (directory / 'deployment.config.json').exists():
+    # A config without state is what an interrupted init leaves; start it again.
+    if (directory / 'state.json').exists():
         raise SetupError('Setup directory already initialized. Use status, install, or resume.')
     release = check_release()
     inputs = read_json(args.config) if args.config else {}
     allowed = set(read_json(ROOT / 'deployment.config.example.json')) | {'subscriptionId'}
     if not isinstance(inputs, dict) or set(inputs) - allowed:
         raise SetupError('Initialization accepts only documented configuration fields; secrets are created in Key Vault.')
+    placeholders = [k for k, v in inputs.items() if isinstance(v, str) and re.search(r'<[^>]*>', v)]
+    if placeholders:
+        raise SetupError('Replace the example placeholders in --config: ' + ', '.join(sorted(placeholders)))
     interactive = sys.stdin.isatty()
     account = signed_in_account() if interactive else {}
     if account:
@@ -411,47 +486,86 @@ def init(args, directory):
                                      '--output', 'tsv'], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             default = chosen.stdout.strip() if chosen.returncode == 0 else ''
         if key in inputs:
+            value = clean_answer(key, inputs[key])
+            if value is None:
+                raise SetupError(f'{key} in --config must be {ANSWER_HELP[key]}.')
+            inputs[key] = value
             continue
         if not interactive:
             if key in ('location', 'workspaceHostname'):
                 inputs[key] = default
-            else:
-                raise SetupError(f'{key} is required in --config for unattended initialization')
-        else:
-            inputs[key] = input(label + (f' [{default}]' if default else '') + ': ').strip() or (default or '')
-    for key in ('subscriptionId', 'tenantId'):
-        if not GUID.fullmatch(inputs[key]):
-            raise SetupError(f'{key} must be a UUID')
+                continue
+            raise SetupError(f'{key} is required in --config for unattended initialization')
+        while True:
+            value = clean_answer(key, input(label + (f' [{default}]' if default else '') + ': ') or (default or ''))
+            if value is not None:
+                inputs[key] = value
+                break
+            print(f'  Please enter {ANSWER_HELP[key]}.')
+            if key == 'subscriptionId':
+                break
+    if inputs.get('subscriptionId') is None or not GUID.fullmatch(inputs.get('subscriptionId', '')):
+        raise SetupError('subscriptionId must be a UUID')
+    for key in ('coreApiClientId', 'mobileClientId'):
+        if inputs.get(key):
+            inputs[key] = inputs[key].strip().lower()
+    subscription = inputs['subscriptionId']
+    if not subscription_visible(subscription):
+        raise SetupError(f'Your Azure login cannot use subscription {subscription}. Check the ID, or run az login.')
     name = inputs['deploymentId']
-    if not re.fullmatch(r'[a-z][a-z0-9-]{2,17}[a-z0-9]', name):
-        raise SetupError('Deployment name must be 4–19 lowercase letters, digits, or hyphens, starting with a letter.')
-    hostname = inputs['workspaceHostname']
-    if hostname and (not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}', hostname) or len(hostname) > 253):
-        raise SetupError('Workspace hostname must be a DNS hostname, without https:// or a path.')
-    ownership = str(uuid.uuid4())
+    group = inputs.get('resourceGroup') or f'rg-{name}'
+    earlier = existing_deployment(subscription, group, name)
+    if earlier:
+        # The local setup folder was lost; Azure still knows this deployment.
+        print(f'Found deployment {name} in resource group {group}, made by an earlier setup whose files are not here.')
+        if not confirm('Continue managing that deployment?', True, interactive):
+            raise SetupError('Choose a different deployment name to create a separate deployment.')
+        if earlier['release'] and earlier['release'] != release['releaseTag']:
+            if release_version(release) < release_version({'releaseTag': earlier['release']}):
+                raise SetupError(f"That deployment runs {earlier['release']}, newer than this package "
+                                 f"({release['releaseTag']}). Run the install command again for the latest package.")
+            print(f"  It runs {earlier['release']}; continuing upgrades it to {release['releaseTag']}.")
+            if not (getattr(args, 'backup_confirmed', False) or confirm(
+                    'Have you backed up the database and report files, and are you ready to upgrade?', False, interactive)):
+                raise SetupError('Back up first, then run setup again (or pass --backup-confirmed).')
+    ownership = earlier['owner'] if earlier else str(uuid.uuid4())
     config = read_json(ROOT / 'deployment.config.example.json')
     config.update(inputs)
     config['deploymentName'] = 'mentra-private'
     config.update(sourceImage=release['sourceImage'], releaseTag=release['releaseTag'],
                   managedMiniapps=release['managedMiniapps'], clientMinVersion=release['clientMinVersion'],
                   clientRecommendedVersion=release['clientMinVersion'])
-    defaults = dict(resourceGroup=f'rg-{name}', registryName=name.replace('-', '') + ownership.replace('-', '')[:8],
+    defaults = dict(resourceGroup=group, registryName=name.replace('-', '') + ownership.replace('-', '')[:8],
                     environmentName=f'cae-{name}', runtimeName=f'ca-{name}', coreName=f'ca-{name}-core',
                     coreIdentityName=f'id-{name}-core', runtimeIdentityName=f'id-{name}-runtime',
                     communicationName=f'{name}-acs-{ownership[:8]}',
                     keyVaultName='kv' + name.replace('-', '')[:14] + ownership.replace('-', '')[:8],
+                    communicationDataLocation=data_location(config['location']),
                     coreApiClientId='', mobileClientId='', coreAdminEmails='',
                     privacyPolicyUrl='', termsOfServiceUrl='')
     for key, value in defaults.items():
         config[key] = inputs.get(key, value)
-    config['approvedSystemMiniapps'] = ['com.mentra.settings', 'com.mentra.feedback']
+    deployed = earlier['settings'] if earlier else {}
+    for key in RESTORED_KEYS:
+        if deployed.get(key) not in (None, ''):
+            config[key] = deployed[key]
+    config['approvedSystemMiniapps'] = config.get('approvedSystemMiniapps') or ['com.mentra.settings', 'com.mentra.feedback']
     validate_resource_names(config)
-    config['resourceTags'] = {'mentraDeploymentId': name, 'mentraInstallerOwner': ownership}
+    tags = inputs.get('resourceTags') or {}
+    if not isinstance(tags, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in tags.items()):
+        raise SetupError('resourceTags in --config must map tag names to text values.')
+    config['resourceTags'] = dict(tags, mentraDeploymentId=name, mentraInstallerOwner=ownership)
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_json(directory / 'deployment.config.json', config)
-    write_json(directory / 'state.json', dict(schemaVersion=1, deploymentId=name, releaseHash=digest(ROOT / 'release.json'),
-               binding={k: config.get(k) for k in BINDING_KEYS},
-               owner=ownership, phase='initialized', createdAt=now(), secretsCreated=False, checks={}, outputs={}))
+    state = dict(schemaVersion=1, deploymentId=name, releaseHash=digest(ROOT / 'release.json'),
+                 binding={k: config.get(k) for k in BINDING_KEYS},
+                 owner=ownership, phase='initialized', createdAt=now(), secretsCreated=False, checks={}, outputs={})
+    if earlier:
+        state['recoveredAt'] = now()
+        if deployed.get('workspaceHostname') and deployed['workspaceHostname'] == config['workspaceHostname']:
+            # The custom address is already live; keep it bound through the next rollout.
+            state.update(dns=dns_records(config), domainVerified=True)
+    write_json(directory / 'state.json', state)
     return {'status': 'initialized', 'directory': str(directory), 'next': 'Run setup.sh to continue.'}
 
 
@@ -614,13 +728,15 @@ def deploy(directory, config, state, hostname):
     return outputs
 
 
-def dns_handoff(directory, config, state):
+def dns_records(config):
     app = azure(config, 'containerapp', 'show', '--name', config['runtimeName'], '--resource-group', config['resourceGroup'])
-    target = app['properties']['configuration']['ingress']['fqdn']
-    verification = app['properties']['customDomainVerificationId']
     host = config['workspaceHostname']
-    records = [{'type': 'CNAME', 'name': host, 'value': target, 'proxy': False},
-               {'type': 'TXT', 'name': 'asuid.' + host, 'value': verification}]
+    return [{'type': 'CNAME', 'name': host, 'value': app['properties']['configuration']['ingress']['fqdn'], 'proxy': False},
+            {'type': 'TXT', 'name': 'asuid.' + host, 'value': app['properties']['customDomainVerificationId']}]
+
+
+def dns_handoff(directory, config, state):
+    records = dns_records(config)
     write_json(directory / 'dns-records.json', {'records': records, 'instructions':
                'Ask your DNS admin to add these records with DNS-only routing. Leave all mail/MX records unchanged. Run resume --dns-ready after propagation.'})
     checkpoint(directory, state, 'awaiting_dns', dns=records)
@@ -916,8 +1032,8 @@ def configure_entra(args, directory, config, state):
     preflight(config)
     if state.get('outputs') or state.get('configHash'):
         raise SetupError('Do not replace identity registrations after deployment. Reconcile existing IDs through the standalone helper.')
-    argv = ['bash', str(ROOT / 'scripts/configure-entra.sh'), '--core-name', config['displayName'] + ' Core',
-            '--mobile-name', config['displayName'] + ' Mobile', '--installer-owner', state['owner']]
+    argv = ['bash', str(ROOT / 'scripts/configure-entra.sh'), '--core-name', config['displayName'] + ' Mentra Core',
+            '--mobile-name', config['displayName'] + ' Mentra Mobile', '--installer-owner', state['owner']]
     for field, flag in (('coreApiClientId', '--core-client-id'), ('mobileClientId', '--mobile-client-id')):
         if config.get(field):
             argv += [flag, config[field]]
@@ -944,6 +1060,9 @@ PLANNED_APP_ID = '00000000-0000-0000-0000-000000000000'
 MEETINGS_PERMISSION = 'OnlineMeetings.ReadWrite.All'
 VAULT_RETRIES = 30
 RETRY_SECONDS = 10
+GRAPH_RETRY_SECONDS = 2
+ENTRA_ATTEMPTS = 12
+ENTRA_RETRY_SECONDS = 5
 
 
 class GraphError(SetupError):
@@ -1035,30 +1154,55 @@ def vault_set(config, name, value, **tags):
 
 
 _GRAPH_TOKENS = {}
+GRAPH_ATTEMPTS = 5
+
+
+def graph_token(tenant):
+    # Tokens last about an hour; a guided run can take longer, so refresh early.
+    import time
+    token, expires = _GRAPH_TOKENS.get(tenant, (None, 0))
+    if time.time() > expires - 300:
+        try:
+            value = json.loads(run(['az', 'account', 'get-access-token', '--tenant', tenant,
+                                    '--resource-type', 'ms-graph', '--output', 'json']))
+            token = value['accessToken']
+            expires = float(value.get('expires_on') or time.time() + 1800)
+        except (SetupError, ValueError, KeyError, TypeError):
+            raise GraphError('token') from None
+        _GRAPH_TOKENS[tenant] = (token, expires)
+    return token
 
 
 def graph(config, method, path, body=None, missing_ok=False):
-    tenant = config['tenantId']
-    if tenant not in _GRAPH_TOKENS:
-        try:
-            _GRAPH_TOKENS[tenant] = json.loads(run(['az', 'account', 'get-access-token', '--tenant', tenant,
-                                                    '--resource-type', 'ms-graph', '--output', 'json']))['accessToken']
-        except (SetupError, ValueError, KeyError):
-            raise GraphError('token') from None
+    import time
     url = path if path.startswith('https://') else 'https://graph.microsoft.com/v1.0/' + path
-    request = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(), method=method,
-                                     headers={'Authorization': 'Bearer ' + _GRAPH_TOKENS[tenant],
-                                              'Content-Type': 'application/json'})
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw = response.read()
-            return json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as error:
-        if missing_ok and error.code == 404:
-            return None
-        raise GraphError(error.code) from None
-    except (OSError, http.client.HTTPException, ValueError):
-        raise GraphError('network') from None
+    data = None if body is None else json.dumps(body).encode()
+    for attempt in range(GRAPH_ATTEMPTS):
+        request = urllib.request.Request(url, data=data, method=method,
+                                         headers={'Authorization': 'Bearer ' + graph_token(config['tenantId']),
+                                                  'Content-Type': 'application/json'})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                raw = response.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as error:
+            if missing_ok and error.code == 404:
+                return None
+            # Throttling and transient service errors were not applied; try again.
+            if error.code not in (429, 500, 502, 503, 504) or attempt + 1 == GRAPH_ATTEMPTS:
+                raise GraphError(error.code) from None
+            try:
+                wait = float(error.headers.get('Retry-After') or 0)
+            except (TypeError, ValueError):
+                wait = 0
+        except (OSError, http.client.HTTPException):
+            # A request that may have reached Graph is only repeated when that is harmless.
+            if method == 'POST' or attempt + 1 == GRAPH_ATTEMPTS:
+                raise GraphError('network') from None
+            wait = 0
+        except ValueError:
+            raise GraphError('response') from None
+        time.sleep(min(max(wait, GRAPH_RETRY_SECONDS * 2 ** attempt), 30))
 
 
 def odata(value):
@@ -1233,7 +1377,7 @@ def ensure_providers(config, interactive):
 
 def grant_admin_consent(config):
     run(['bash', str(ROOT / 'scripts/configure-entra.sh'), '--consent-only', '--mobile-client-id', config['mobileClientId']],
-        env=environment(config))
+        env=environment(config), explain=True)
 
 
 def mobile_access(config):
@@ -1252,46 +1396,67 @@ def resolve_principal(config, entry):
         user = graph(config, 'GET', 'users/' + urllib.parse.quote(entry) + '?$select=id,displayName', missing_ok=True)
         if not user:
             found = graph(config, 'GET', graph_filter('users', f"mail eq {odata(entry)}", 'id,displayName'))['value']
+            if len(found) > 1:
+                return {'ambiguous': True}
             user = found[0] if found else None
         return dict(user, collection='users') if user else None
     found = graph(config, 'GET', graph_filter('groups', f"displayName eq {odata(entry)}", 'id,displayName'))['value']
-    return dict(found[0], collection='groups') if len(found) == 1 else None
+    if len(found) > 1:
+        return {'ambiguous': True}
+    return dict(found[0], collection='groups') if found else None
 
 
 def assign_employees(config, sp_id, entries):
-    assigned, unknown, refused = [], [], []
+    """Returns names assigned, and the entries that need attention with the reason."""
+    assigned, problems = [], []
     for entry in filter(None, (e.strip() for e in entries)):
-        principal = resolve_principal(config, entry)
-        if not principal:
-            unknown.append(entry)
-            continue
-        name = principal.get('displayName') or entry
         try:
-            graph(config, 'POST', f'servicePrincipals/{sp_id}/appRoleAssignedTo',
-                  {'principalId': principal['id'], 'resourceId': sp_id, 'appRoleId': DEFAULT_ACCESS_ROLE})
-        except GraphError as error:
-            if error.code not in (400, 409):
-                raise
-            # Graph answers 400 both for an existing assignment, the desired end
-            # state, and for a principal it cannot assign, such as a mail-only group.
-            existing = graph(config, 'GET', graph_filter(f"{principal['collection']}/{principal['id']}/appRoleAssignments",
-                                                         f'resourceId eq {sp_id}', 'id'))['value']
-            if not existing:
-                refused.append(name)
+            principal = resolve_principal(config, entry)
+            if not principal:
+                problems.append((entry, 'not found in Entra'))
                 continue
-        assigned.append(name)
-    return assigned, unknown, refused
+            if principal.get('ambiguous'):
+                problems.append((entry, 'matches more than one user or group; use an email address or a unique group name'))
+                continue
+            name = principal.get('displayName') or entry
+            try:
+                graph(config, 'POST', f'servicePrincipals/{sp_id}/appRoleAssignedTo',
+                      {'principalId': principal['id'], 'resourceId': sp_id, 'appRoleId': DEFAULT_ACCESS_ROLE})
+            except GraphError as error:
+                if error.code not in (400, 409):
+                    raise
+                # Graph answers 400 both for an existing assignment, the desired end
+                # state, and for a principal it cannot assign, such as a mail-only group.
+                existing = graph(config, 'GET', graph_filter(f"{principal['collection']}/{principal['id']}/appRoleAssignments",
+                                                             f'resourceId eq {sp_id}', 'id'))['value']
+                if not existing:
+                    problems.append((name, 'cannot be assigned: use a user or a security group '
+                                           '(assigning groups needs Microsoft Entra ID P1 or P2)'))
+                    continue
+            assigned.append(name)
+            if principal['collection'] == 'groups' and graph(
+                    config, 'GET', f"groups/{principal['id']}/members/microsoft.graph.group?$top=1&$select=id")['value']:
+                problems.append((name, 'assigned, but members of groups inside it are not included; assign those groups too'))
+        except GraphError as error:
+            problems.append((entry, f'could not be assigned (Microsoft Graph HTTP {error.code}); check your Entra role'))
+    return assigned, problems
 
 
 def entra_handoffs(args, config, interactive):
     """Consent and employee access; returns any remaining administrator steps."""
     handoffs = []
+    import time
     try:
         access = mobile_access(config)
+        for attempt in range(ENTRA_ATTEMPTS):
+            # A service principal created moments ago can take a while to appear.
+            if access['servicePrincipalId']:
+                break
+            time.sleep(ENTRA_RETRY_SECONDS)
+            access = mobile_access(config)
     except GraphError:
         return [{'step': 'Employee sign-in', 'action': 'Setup could not read the Entra applications. An Entra administrator should grant admin consent and assign employees to the Mobile application.'}]
-    consent_url = (f"https://login.microsoftonline.com/{config['tenantId']}/adminconsent"
-                   f"?client_id={config['mobileClientId']}")
+    consent_url = permissions_page(config['mobileClientId'])
     if not access['consent']:
         if confirm('Grant tenant-wide consent for the Mentra sign-in app now? (needs an Entra admin role)', True, interactive):
             try:
@@ -1301,26 +1466,24 @@ def entra_handoffs(args, config, interactive):
             except SetupError:
                 pass
         if not access['consent']:
-            handoffs.append({'step': 'Admin consent', 'action': 'Send this link to an Entra administrator: ' + consent_url})
+            handoffs.append({'step': 'Admin consent', 'action': 'A Global Administrator, Privileged Role Administrator or '
+                             'Cloud Application Administrator opens this page and selects "Grant admin consent": ' + consent_url})
     sp_id = access['servicePrincipalId']
     portal = (f'https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ManagedAppMenuBlade/~/Users/objectId/{sp_id}'
-              f"/appId/{config['mobileClientId']}")
+              f"/appId/{config['mobileClientId']}" if sp_id else
+              'https://entra.microsoft.com/#view/Microsoft_AAD_IAM/StartboardApplicationsMenuBlade/~/AppAppsPreview '
+              f"(search for {config['mobileClientId']})")
     entries = [e for e in (getattr(args, 'employees', '') or '').split(',') if e.strip()]
     if not access['assigned'] and not entries and interactive:
         entries = ask('Who can sign in? Employee emails or group names, comma-separated (Enter to do this later)',
                       '', interactive).split(',')
     if sp_id and any(e.strip() for e in entries):
-        try:
-            assigned, unknown, refused = assign_employees(config, sp_id, entries)
-            if assigned:
-                print('  Allowed to sign in: ' + ', '.join(assigned))
-                access['assigned'] = True
-            if unknown:
-                print('  Not found in Entra: ' + ', '.join(unknown))
-            if refused:
-                print('  Cannot be assigned (use users or security groups): ' + ', '.join(refused))
-        except GraphError:
-            print('  Could not assign employees with your Entra role.')
+        assigned, problems = assign_employees(config, sp_id, entries)
+        if assigned:
+            print('  Allowed to sign in: ' + ', '.join(assigned))
+            access['assigned'] = True
+        for entry, reason in problems:
+            print(f'  {entry}: {reason}')
     if not access['assigned']:
         handoffs.append({'step': 'Employee access', 'action': 'Add employees or groups under Users and groups: ' + portal})
     return handoffs
@@ -1381,6 +1544,7 @@ def create_meetings_app(directory, config, state):
     name = f"{config['displayName']} Mentra Meetings"
     graph_sp = service_principal(config, GRAPH_APP_ID)
     role = next(r for r in graph_sp['appRoles'] if r.get('value') == MEETINGS_PERMISSION)
+    tag = 'mentraInstallerOwner:' + state['owner']
     if state.get('meetingsAppId'):
         found = graph(config, 'GET', graph_filter('applications', f"appId eq {odata(state['meetingsAppId'])}", 'id,appId'))['value']
         if not found:
@@ -1388,14 +1552,19 @@ def create_meetings_app(directory, config, state):
                              'Pass --teams-client-id to use another app.')
         app = found[0]
     else:
-        # Never adopt an app setup did not create: the meetings permission would
-        # extend to any credentials its owners already hold.
-        if graph(config, 'GET', graph_filter('applications', f"displayName eq {odata(name)}", 'id'))['value']:
+        # Only an app setup created (tagged when created) is reused. Adopting another
+        # app would extend the meetings permission to credentials its owners hold.
+        found = graph(config, 'GET', graph_filter('applications', f"displayName eq {odata(name)}", 'id,appId,tags'))['value']
+        mine = [a for a in found if tag in (a.get('tags') or [])]
+        if len(mine) == 1:
+            app = mine[0]
+        elif found:
             raise SetupError(f'Entra already has an app named "{name}" that setup did not create. '
                              'Pass --teams-client-id to use it, or rename it and run setup again.')
-        app = graph(config, 'POST', 'applications', {
-            'displayName': name, 'signInAudience': 'AzureADMyOrg',
-            'requiredResourceAccess': [{'resourceAppId': GRAPH_APP_ID, 'resourceAccess': [{'id': role['id'], 'type': 'Role'}]}]})
+        else:
+            app = graph(config, 'POST', 'applications', {
+                'displayName': name, 'signInAudience': 'AzureADMyOrg', 'tags': [tag],
+                'requiredResourceAccess': [{'resourceAppId': GRAPH_APP_ID, 'resourceAccess': [{'id': role['id'], 'type': 'Role'}]}]})
         checkpoint(directory, state, state['phase'], meetingsAppId=app['appId'])
     sp = None
     for attempt in range(12):
@@ -1410,13 +1579,19 @@ def create_meetings_app(directory, config, state):
             time.sleep(5)
     if not sp:
         raise SetupError('The meetings application was created but its service principal is not available yet. Run setup again.')
-    try:
-        graph(config, 'POST', f"servicePrincipals/{graph_sp['id']}/appRoleAssignedTo",
-              {'principalId': sp['id'], 'resourceId': graph_sp['id'], 'appRoleId': role['id']})
-        consent = True
-    except GraphError:
-        # An existing grant also fails; check rather than guess.
-        consent = meetings_consent(config, app['appId'])
+    consent = None
+    for attempt in range(ENTRA_ATTEMPTS):
+        try:
+            graph(config, 'POST', f"servicePrincipals/{graph_sp['id']}/appRoleAssignedTo",
+                  {'principalId': sp['id'], 'resourceId': graph_sp['id'], 'appRoleId': role['id']})
+            consent = True
+            break
+        except GraphError as error:
+            # An existing grant also fails, and a new service principal can lag; 403 means no permission.
+            consent = meetings_consent(config, app['appId'])
+            if consent or error.code == 403:
+                break
+            time.sleep(ENTRA_RETRY_SECONDS)
     expires = None
     if not vault_get(config, teams_secret(app['appId'])):
         expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -1475,18 +1650,28 @@ def meetings_consent(config, client_id):
         return None
 
 
-def teams_policy_commands(client_id, organizer_id):
+def teams_policy_commands(client_id, organizer_id, tenant_id, previous_client_id=''):
+    add = f"Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Add='{client_id}'}}"
     commands = ['Install-Module MicrosoftTeams -Scope CurrentUser -Force   # first time only',
-                'Connect-MicrosoftTeams -UseDeviceAuthentication',
-                # Creates the policy, or points an existing one at this app after a switch.
+                f'Connect-MicrosoftTeams -TenantId {tenant_id} -UseDeviceAuthentication',
+                '# Create the MentraMeetings policy, or add this app to it:',
                 f'if (Get-CsApplicationAccessPolicy -Identity MentraMeetings -ErrorAction SilentlyContinue) '
-                f'{{ Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id} }} '
-                f'else {{ New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id} }}',
-                '# Let every employee create meetings as themselves (or grant per user with -Identity EMAIL):',
-                'Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global']
+                f'{{ {add} }} else {{ New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id} }}']
+    if previous_client_id and previous_client_id != client_id:
+        commands.append(f"Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Remove='{previous_client_id}'}}"
+                        '   # the Graph app it replaces')
+    commands += ['# Let employees create meetings as themselves. This replaces any policy already granted to everyone;',
+                 '# if your tenant has one, add the app to that policy instead (Set-CsApplicationAccessPolicy with @{Add=...}).',
+                 'Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global']
     if organizer_id:
         commands.append(f'Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Identity {organizer_id}')
+    commands.append('# Policy changes can take up to 30 minutes to apply.')
     return commands
+
+
+def permissions_page(app_id):
+    # The app's API permissions page, where an administrator selects "Grant admin consent".
+    return f'https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{app_id}'
 
 
 def teams_secret(client_id):
@@ -1497,7 +1682,8 @@ def configure_teams(args, directory, config, state, interactive=None):
     interactive = sys.stdin.isatty() and not getattr(args, 'yes', False) if interactive is None else interactive
     if not state.get('outputs', {}).get('keyVaultName') and state['phase'] not in ('deployed', 'infrastructure_verified'):
         raise SetupError('Finish installation first; meeting creation is added afterwards.')
-    client_id = getattr(args, 'teams_client_id', None) or config.get('teamsGraphClientId') or ''
+    previous = config.get('teamsGraphClientId') or ''
+    client_id = (getattr(args, 'teams_client_id', None) or previous).strip().lower()
     secret, consent, expires, created = None, None, None, False
     if not client_id:
         if confirm('Create the Microsoft Graph app that schedules meetings now? (needs an Entra admin role)', True, interactive):
@@ -1527,8 +1713,8 @@ def configure_teams(args, directory, config, state, interactive=None):
         organizer = ask('Licensed account that hosts meetings for guests (email; Enter to skip)', '', interactive)
     if organizer and not GUID.fullmatch(organizer):
         user = resolve_principal(config, organizer)
-        if not user:
-            raise SetupError(f'{organizer} was not found in Entra.')
+        if not user or user.get('ambiguous') or user.get('collection') != 'users':
+            raise SetupError(f'{organizer} is not a single Entra user; give the organizer\'s email address.')
         organizer = user['id']
     # Until the rollout below completes, the deployment counts as unfinished, so
     # running setup again retries it rather than reporting a finished install.
@@ -1539,12 +1725,15 @@ def configure_teams(args, directory, config, state, interactive=None):
         update_configuration(directory, config, state, **changes)
     if consent is None:
         consent = meetings_consent(config, client_id)
+    policy = teams_policy_commands(client_id, organizer, config['tenantId'], previous)
+    # Kept with the setup files, for the Teams administrator who runs it.
+    (directory / 'teams-policy.ps1').write_text('\n'.join(policy) + '\n')
     rollout = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
     result = {'status': 'meeting_creation_configured' if rollout['status'] == 'infrastructure_verified' else rollout['status'],
               'graphClientId': client_id, 'adminConsent': {True: 'granted', False: 'needed'}.get(consent, 'unknown'),
-              'teamsPolicy': teams_policy_commands(client_id, organizer)}
+              'teamsPolicy': policy, 'teamsPolicyFile': str(directory / 'teams-policy.ps1')}
     if not consent:
-        result['consentLink'] = f"https://login.microsoftonline.com/{config['tenantId']}/adminconsent?client_id={client_id}"
+        result['consentLink'] = permissions_page(client_id)
     if expires:
         result['secretExpires'] = expires
     return result
@@ -1647,7 +1836,7 @@ def guided(args, directory):
         print_preview(preview(directory, planned, state), config)
         if entra_missing:
             print(f"Setup also creates two Microsoft Entra app registrations for employee sign-in: "
-                  f"\"{config['displayName']} Core\" and \"{config['displayName']} Mobile\".")
+                  f"\"{config['displayName']} Mentra Core\" and \"{config['displayName']} Mentra Mobile\".")
         print('These resources incur Azure charges; this profile uses authenticated public endpoints.')
         if not confirm('Create these resources now? This takes about 15 minutes.', True, interactive):
             if checks['resourceGroup'] == 'new':
@@ -1685,16 +1874,25 @@ def guided(args, directory):
         print('Employees can already join Teams meetings. Creating new meetings needs a Graph app and a Teams admin.')
         checkpoint(directory, state, state['phase'], teamsOffered=True)
         if confirm('Set up meeting creation now?', False, interactive):
-            result['teams'] = configure_teams(args, directory, config, state, interactive)
+            try:
+                result['teams'] = configure_teams(args, directory, config, state, interactive)
+            except SetupError as error:
+                # Optional: the installation itself is done and still gets its summary.
+                print(f'  Meeting creation was not set up: {error}')
+                print(f'  Set it up later with: {setup_command()} configure-teams')
             config, state, release = load(directory)
     return finish(directory, dict(result, admin=admin))
 
 
 def print_teams(teams):
     print(f"Meeting creation uses Graph app {teams['graphClientId']}; its secret is in Key Vault.")
+    if teams.get('secretExpires'):
+        print(f"Its client secret expires {teams['secretExpires'][:10]}; run configure-teams with a new one before then.")
     if teams.get('consentLink'):
-        print('An Entra administrator grants its permission here: ' + teams['consentLink'])
-    print('A Teams administrator runs these once in Cloud Shell (Switch to PowerShell):')
+        print('A Global Administrator or Privileged Role Administrator grants its Microsoft Graph permission here '
+              '(select "Grant admin consent"): ' + teams['consentLink'])
+    print('A Teams administrator runs these once in Cloud Shell (Switch to PowerShell); they are also saved in '
+          + teams.get('teamsPolicyFile', 'teams-policy.ps1') + ':')
     for line in teams['teamsPolicy']:
         print('  ' + line)
 
@@ -1713,6 +1911,13 @@ def finish(directory, result):
             print_teams(teams)
         elif not config.get('teamsGraphClientId'):
             print(f'Teams meeting creation is off. Turn it on later with: {setup_command()} configure-teams')
+        else:
+            # Follow-ups another administrator may still owe, until they are done.
+            if meetings_consent(config, config['teamsGraphClientId']) is False:
+                print('Still to do - Graph permission for meeting creation (Global Administrator or Privileged Role '
+                      'Administrator, select "Grant admin consent"): ' + permissions_page(config['teamsGraphClientId']))
+            if (directory / 'teams-policy.ps1').exists():
+                print(f"Teams policy commands for meeting creation are saved in {directory / 'teams-policy.ps1'}.")
     for handoff in state.get('handoffs') or []:
         print(f"Still to do - {handoff['step']}: {handoff['action']}")
     print(f'To check status, resume or upgrade later, run: {setup_command()}')

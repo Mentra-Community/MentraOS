@@ -175,7 +175,9 @@ class InstallerTests(unittest.TestCase):
         for name in ('one', 'two'):
             directory = self.directory / name
             with patch.object(setup, 'check_release', return_value=RELEASE), \
-                 patch.object(setup, 'digest', return_value='release-hash'), patch.object(setup, 'emit'):
+                 patch.object(setup, 'digest', return_value='release-hash'), patch.object(setup, 'emit'), \
+                 patch.object(setup, 'subscription_visible', return_value=True), \
+                 patch.object(setup, 'existing_deployment', return_value=None):
                 setup.init(args, directory)
             value = setup.read_json(directory / 'deployment.config.json')
             names.append((value['registryName'], value['communicationName'], value['keyVaultName']))
