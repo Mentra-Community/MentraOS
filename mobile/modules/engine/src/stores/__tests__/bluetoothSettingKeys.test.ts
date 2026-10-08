@@ -21,6 +21,10 @@ describe("MENTRA_LIVE_SETTING_KEYS", () => {
     expect(MENTRA_LIVE_SETTING_KEYS).toContain("auto_power_off_enabled")
   })
 
+  test("syncs owner loss so native reconnects survive a manager rebuild", () => {
+    expect(MENTRA_LIVE_SETTING_KEYS).toContain("mentra_live_owner_lost")
+  })
+
   test("syncs only the effective mic tuning, never the persisted one", () => {
     expect(MENTRA_LIVE_SETTING_KEYS).toContain("mic_tuning")
     expect(MENTRA_LIVE_SETTING_KEYS).not.toContain("mic_tuning_desired")
