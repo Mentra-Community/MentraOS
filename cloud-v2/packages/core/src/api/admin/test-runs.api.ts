@@ -29,6 +29,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   app.get("/suite-index/labels", async c => c.json(await suites.labels((c.req.query("requestIds") ?? "").split(",").filter(Boolean))));
   app.get("/suite-index/list", async c => c.json(await suites.list()));
   app.get("/history/list", async c => c.json(await history.list(c.req.query())));
+  app.get("/suites/:suiteId/summary", async c => c.json(await suites.summary(c.req.param("suiteId"))));
   app.get("/suites/:suiteId", async c => c.json(await suites.detail(c.req.param("suiteId"))));
   app.get("/", async c => c.json(await results.list(c.req.query())));
   app.get("/activity", async c => c.json({requests: await TestRequestModel.find({state: {$ne: "terminal"}})

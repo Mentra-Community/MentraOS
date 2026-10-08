@@ -148,6 +148,7 @@ const compactNightlyMember = {
   memberId: "$$member.memberId", requestId: "$$member.requestId", routineId: "$$member.routineId",
   platform: "$$member.platform", definitionRevision: "$$member.definitionRevision", routineRevision: "$$member.routineRevision",
   hostId: "$$member.hostId", binding: "$$member.binding", portable: {$ne: [{$ifNull: ["$$member.selection", null]}, null]}, laneId: {$ifNull: ["$$member.dispatchIntent.laneId", "$$member.input.laneId"]},
+  unavailableReason: "$$member.unavailableReason", rejectedAt: "$$member.rejectedAt",
   preparedLaneId: "$$member.input.laneId", status: "$$member.status", publicationComplete: "$$member.publicationComplete",
   runId: "$$member.runId", runStartedAt: "$$member.runStartedAt", runFinishedAt: "$$member.runFinishedAt",
   build: {$let: {vars: {build: {$ifNull: ["$$member.build", "$$member.input.build"]}},
@@ -165,7 +166,7 @@ export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId
 interface CompactNightlyMember {
   memberId: string; requestId: string; routineId: string; platform: string; definitionRevision: string; routineRevision?: string;
   hostId?: string; laneId?: string; portable?: boolean; binding?: NightlyPlan["members"][number]["binding"]; preparedLaneId?: string; build?: {repository?: string; channel?: string; headSha?: string; prNumber?: number};
-  status?: string; publicationComplete?: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string;
+  status?: string; publicationComplete?: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string; unavailableReason?: string; rejectedAt?: string;
 }
 interface CompactNightlyReceipt {suiteId: string; occurrenceId: string; startedAt: string; trigger: string;
   finishedAt?: string; expectedCount?: number; members: CompactNightlyMember[]}
@@ -211,7 +212,8 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
         || !Number.isFinite(Date.parse(receipt.runStartedAt)) || !Number.isFinite(Date.parse(receipt.runFinishedAt))
         || Date.parse(receipt.runFinishedAt) < Date.parse(receipt.runStartedAt))) invalid();
     return {...member, status: receipt!.status === "incomplete" ? "not-run" : receipt!.status!,
-      publicationComplete: receipt!.publicationComplete, ...((receipt!.hostId ?? expected!.hostId) ? {hostId: receipt!.hostId ?? expected!.hostId} : {}),
+      publicationComplete: receipt!.publicationComplete, ...(receipt!.unavailableReason ? {unavailableReason: receipt!.unavailableReason} : {}),
+      ...(receipt!.rejectedAt ? {rejectedAt: receipt!.rejectedAt} : {}), ...((receipt!.hostId ?? expected!.hostId) ? {hostId: receipt!.hostId ?? expected!.hostId} : {}),
       ...((receipt!.laneId ?? expected!.laneId) ? {laneId: receipt!.laneId ?? expected!.laneId} : {}),
       ...(receipt!.runId ? {runId: receipt!.runId, startedAt: receipt!.runStartedAt, finishedAt: receipt!.runFinishedAt} : {})};
   });
@@ -308,6 +310,13 @@ export class TestSuiteService {
       } catch (error) {summaries.set(row.suiteId, error instanceof Error ? error : new TestRunError(503, "Suite summary is unavailable"));}
     }
     return summaries;
+  }
+  /** Read-only presentation uses the same bounded summaries as test history. */
+  async summary(suiteId: string, deadline = Date.now() + 10_000): Promise<SuiteSummary> {
+    const summary = (await this.summaries([suiteId], deadline)).get(suiteId);
+    if (summary instanceof Error) throw summary;
+    if (!summary) throw new TestRunError(404, "Test suite was not found");
+    return summary;
   }
   async create(input: unknown) {
     const parsed = testSuiteSchema.safeParse(input);

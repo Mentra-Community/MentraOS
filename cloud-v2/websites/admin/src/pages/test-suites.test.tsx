@@ -15,7 +15,7 @@ test("suite link survives as a validated distinct URL", () => {
   expect(readSuiteId(`?testSuite=${"a".repeat(241)}`)).toBeNull();
 });
 test("suite shows missing routines and links to published recordings", () => {
-  const client = new QueryClient(); client.setQueryData(["test-suite", suite.suiteId], suite);
+  const client = new QueryClient(); client.setQueryData(["test-suite-summary", suite.suiteId], suite);
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
   expect(html).toContain("1/2 passed"); expect(html).toContain("Did not run");
   expect(html).toContain("/?testRun=run-one"); expect(html).toContain("Incomplete: ota");
@@ -27,7 +27,7 @@ test("recent suite link opens aggregate", () => {
 
 test("running suites explain automatic refresh and empty history stays hidden", () => {
   const client = new QueryClient();
-  client.setQueryData(["test-suite", suite.suiteId], {...suite, finishedAt: undefined, outcome: "running"});
+  client.setQueryData(["test-suite-summary", suite.suiteId], {...suite, finishedAt: undefined, outcome: "running"});
   client.setQueryData(["test-suites"], {suites: []});
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
   expect(html).toContain("In progress"); expect(html).toContain("Refreshes every 15 seconds");
@@ -36,7 +36,7 @@ test("running suites explain automatic refresh and empty history stays hidden", 
 
 test("a one-member job opens its individual run instead of claiming to be a suite", () => {
   const client = new QueryClient();
-  client.setQueryData(["test-suite", suite.suiteId], {...suite, members: [suite.members[0]!], passed: 1, failedRoutines: []});
+  client.setQueryData(["test-suite-summary", suite.suiteId], {...suite, members: [suite.members[0]!], passed: 1, failedRoutines: []});
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
   expect(html).toContain("Individual routine run");
   expect(html).toContain("is not a test suite");
@@ -47,7 +47,7 @@ test("a one-member job opens its individual run instead of claiming to be a suit
 
 test("a rejected suite member displays its admission reason and keeps neighboring run links", () => {
   const client = new QueryClient();
-  client.setQueryData(["test-suite", suite.suiteId], {...suite, members: [suite.members[0]!,
+  client.setQueryData(["test-suite-summary", suite.suiteId], {...suite, members: [suite.members[0]!,
     {...suite.members[1]!, unavailableReason: "missing-definition: Selected source is not installed."}]});
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
   expect(html).toContain("missing-definition: Selected source is not installed.");
@@ -57,7 +57,7 @@ test("a rejected suite member displays its admission reason and keeps neighborin
 
 function renderSuite(value: TestSuiteResult) {
   const client = new QueryClient();
-  client.setQueryData(["test-suite", value.suiteId], value);
+  client.setQueryData(["test-suite-summary", value.suiteId], value);
   return renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={value.suiteId}/></QueryClientProvider>);
 }
 
@@ -164,7 +164,7 @@ test("suite actions replace selection, keep status read-only and disable active 
     {...base, memberId: "retrying", routineId: "retrying", status: "failed"},
     {...base, memberId: "unknown", routineId: "unknown"},
   ]};
-  client.setQueryData(["test-suite", value.suiteId], value);
+  client.setQueryData(["test-suite-summary", value.suiteId], value);
   client.setQueryData(["rerun-progress", value.suiteId], {members: [
     {memberId: "finished", latest: null}, {memberId: "waiting", latest: null},
     {memberId: "retrying", latest: {attemptId: "active", memberId: "retrying", attemptNumber: 1, parent: {suiteId: value.suiteId}, status: "running", publicationComplete: false}},
@@ -190,3 +190,12 @@ test("unbound suite members use plain names and explain missing detail links", (
   expect(html).toContain("Not available yet")
   expect(html).not.toMatch(/<a[^>]*>unbound<\/a>/)
 })
+
+
+test("suite presentation requests the compact summary rather than full dispatch inputs", () => {
+  const client = new QueryClient();
+  renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId="pending-suite"/></QueryClientProvider>);
+  const query = client.getQueryCache().find({queryKey: ["test-suite-summary", "pending-suite"]});
+  expect(query?.options.queryFn?.toString()).toContain("/summary");
+  expect(client.getQueryCache().find({queryKey: ["test-suite", "pending-suite"]})).toBeUndefined();
+});

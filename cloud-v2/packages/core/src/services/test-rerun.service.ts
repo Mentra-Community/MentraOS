@@ -62,7 +62,7 @@ const verified = (row: RerunRecord): RerunRecord => {
 /** Reruns freeze source preparation once and reuse ordinary queue/result ownership. */
 export class TestRerunService {
   constructor(private readonly store: RerunRepository = testRerunRepository,
-    private readonly suites: Pick<TestSuiteService, "detail"> & Partial<Pick<TestSuiteService,"originalMember">> = new TestSuiteService(),
+    private readonly suites: Pick<TestSuiteService, "detail" | "summary"> & Partial<Pick<TestSuiteService,"originalMember">> = new TestSuiteService(),
     private readonly jobs: Pick<RoutineJobService, 'freezeSelection' | 'submitFrozen'> = new RoutineJobService(),
     private readonly requests: Pick<TestRequestService, 'get' | 'prepare'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, "summary"> = new FrameworkResultService(),
@@ -141,6 +141,11 @@ export class TestRerunService {
     const attempt = await this.requestAttempt(parent.requestId, {parent, memberId: parent.requestId, attemptNumber: 0, attemptId: parent.requestId});
     return [{...attempt, memberId: parent.requestId, routineId: input?.routineId ?? intent!.routineId, platform: input?.platform ?? intent!.platform,
       routineSource: input?.routineSource ?? intent?.routineSource, routineRevision: input?.definitionRevision ?? intent!.routineRevision}];
+  }
+  /** Displayed progress/history needs verdicts and identities, not frozen artifact inputs. */
+  private async observedMembers(parent: RerunPlan["parent"]): Promise<ParentMember[]> {
+    if ("suiteId" in parent) return (await this.suites.summary(parent.suiteId)).members;
+    return this.parentMembers(parent);
   }
   private async latest(rootKey: string) {
     const rows = await this.store.history(rootKey, Number.MAX_SAFE_INTEGER, 1);
@@ -293,7 +298,7 @@ export class TestRerunService {
   async history(parent: RerunPlan["parent"], memberId: string, before = Number.MAX_SAFE_INTEGER, limit = 20) {
     if (!Number.isSafeInteger(before) || before < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 25)
       throw new TestRunError(400, "Invalid history page");
-    const members = await this.parentMembers(parent), member = members.find(m => m.memberId === memberId);
+    const members = await this.observedMembers(parent), member = members.find(m => m.memberId === memberId);
     if (!member) throw new TestRunError(404, "Original member was not found");
     const rootKey = rerunRootKey(parent, memberId);
     const rows = (await this.store.history(rootKey, before, limit + 1)).map(verified);
@@ -305,7 +310,7 @@ export class TestRerunService {
       runId: member.runId ?? original.runId}, attempts, nextBefore: entries.length > limit ? page.at(-1)!.member.attemptNumber : null};
   }
   async progress(suiteId: string) {
-    const parent = {suiteId}, members = await this.parentMembers(parent);
+    const parent = {suiteId}, members = await this.observedMembers(parent);
     const latest = await Promise.all(members.map(async m => ({memberId: m.memberId, originalStatus: m.status,
       latest: (await this.latest(rerunRootKey(parent, m.memberId)))?.attempt ?? null})));
     const children = await this.store.children(suiteId, "", 21);

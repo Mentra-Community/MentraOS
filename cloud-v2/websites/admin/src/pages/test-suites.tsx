@@ -34,8 +34,8 @@ function suitePresentation(suite: TestSuiteResult) {
   return {label: "Incomplete", color: "bg-gray-100 text-[#68746d]"};
 }
 export function TestSuitePage({suiteId}: {suiteId: string}) {
-  const result = useQuery({queryKey: ["test-suite", suiteId],
-    queryFn: () => api<TestSuiteResult>(`/api/admin/test-runs/suites/${encodeURIComponent(suiteId)}`),
+  const result = useQuery({queryKey: ["test-suite-summary", suiteId],
+    queryFn: () => api<TestSuiteResult>(`/api/admin/test-runs/suites/${encodeURIComponent(suiteId)}/summary`),
     refetchInterval: query => query.state.data?.outcome === "running" ? 15000 : false});
   const [dispatchMembers,setDispatchMembers] = useState<string[] | null>(null);
   const progress = useQuery({queryKey:["rerun-progress",suiteId],
