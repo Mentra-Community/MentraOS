@@ -66,6 +66,10 @@ session gate. History uses an indexed host/time range and retains seven days;
 the latest host row is kept so a missing host does not vanish when history
 expires. Both reads are bounded and disclose truncation. Startup creates the
 unique/history/TTL indexes before ingestion is available.
+The history query projects only sample identity, actual timestamp, disk bytes,
+the complete memory reading and cleanup receipts. Per-minute service status is
+read from the latest-host endpoint rather than transferred with every chart
+point. No samples, null readings or gaps are removed by this projection.
 Memory stays in these same sample/latest payloads and history points; there is
 no separate memory store. Restore the independent monitor when minute samples
 stop arriving; a dashboard refresh cannot create missing history or backfill it.
