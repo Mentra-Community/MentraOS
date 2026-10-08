@@ -44,8 +44,9 @@ param environmentName string = 'cae-mentra-enterprise-reference'
 param runtimeName string = 'ca-mentra-enterprise-reference'
 param coreName string = 'ca-mentra-ent-ref-core'
 param mongoAccountName string = take('cosmos-${uniqueString(subscription().id, resourceGroup().id)}', 44)
-@description('Existing identity created by bootstrap.bicep; it can pull from the registry and read Key Vault secrets.')
-param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
+@description('Existing per-app identities created by bootstrap.bicep. Each pulls the image and reads only its own secrets.')
+param coreIdentityName string = 'id-mentra-enterprise-reference-core'
+param runtimeIdentityName string = 'id-mentra-enterprise-reference-runtime'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
 @description('ACS data location approved by the customer, for example United States or Europe.')
 param communicationDataLocation string = 'United States'
@@ -78,15 +79,19 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing =
   name: registryName
 }
 
-resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: pullIdentityName
+resource coreIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: coreIdentityName
+}
+
+resource runtimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: runtimeIdentityName
 }
 
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
 }
 
-// Container Apps read the latest version of each secret with the pull
+// Container Apps read the latest version of each secret with their own
 // identity; nothing secret passes through deployment parameters.
 var vaultUri = vault.properties.vaultUri
 
@@ -266,7 +271,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
   tags: resourceTags
   identity: {
     type: 'UserAssigned'
-    userAssignedIdentities: { '${pullIdentity.id}': {} }
+    userAssignedIdentities: { '${coreIdentity.id}': {} }
   }
   properties: {
     managedEnvironmentId: environment.id
@@ -281,16 +286,16 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: registry.properties.loginServer
-          identity: pullIdentity.id
+          identity: coreIdentity.id
         }
       ]
       secrets: [
         { name: 'mongo-url', value: mongoConnectionString }
-        { name: 'refresh-token-pepper', keyVaultUrl: '${vaultUri}secrets/refresh-token-pepper', identity: pullIdentity.id }
-        { name: 'mentra-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-private-key', identity: pullIdentity.id }
-        { name: 'mentra-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-public-key', identity: pullIdentity.id }
-        { name: 'miniapp-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-private-key', identity: pullIdentity.id }
-        { name: 'miniapp-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-public-key', identity: pullIdentity.id }
+        { name: 'refresh-token-pepper', keyVaultUrl: '${vaultUri}secrets/refresh-token-pepper', identity: coreIdentity.id }
+        { name: 'mentra-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-private-key', identity: coreIdentity.id }
+        { name: 'mentra-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-public-key', identity: coreIdentity.id }
+        { name: 'miniapp-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-private-key', identity: coreIdentity.id }
+        { name: 'miniapp-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-public-key', identity: coreIdentity.id }
       ]
     }
     template: {
@@ -346,7 +351,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
   tags: resourceTags
   identity: {
     type: 'UserAssigned'
-    userAssignedIdentities: { '${pullIdentity.id}': {} }
+    userAssignedIdentities: { '${runtimeIdentity.id}': {} }
   }
   properties: {
     managedEnvironmentId: environment.id
@@ -370,13 +375,13 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: registry.properties.loginServer
-          identity: pullIdentity.id
+          identity: runtimeIdentity.id
         }
       ]
       secrets: concat([
         { name: 'acs-connection-string', value: communication.listKeys().primaryConnectionString }
       ], empty(teamsGraphClientId) ? [] : [
-        { name: 'teams-graph-client-secret', keyVaultUrl: '${vaultUri}secrets/teams-graph-client-secret', identity: pullIdentity.id }
+        { name: 'teams-graph-client-secret', keyVaultUrl: '${vaultUri}secrets/teams-graph-client-secret', identity: runtimeIdentity.id }
       ])
     }
     template: {

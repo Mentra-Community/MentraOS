@@ -8,7 +8,7 @@ same immutable Mentra Cloud image as two Container Apps:
 - customer Core with Cosmos DB for MongoDB-compatible persistence and Azure Files for durable report attachments; and
 - meetings-only Runtime with the `acs-teams` provider.
 
-It also creates ACS, a Container Apps environment, pull identity, managed TLS
+It also creates ACS, a Container Apps environment, per-app identities, managed TLS
 for the workspace hostname, and the served deployment manifest. The Runtime
 profile does not start Redis, UDP, cloud audio, camera, Cloudflare, speech,
 maps, Store, or reporting dependencies.
@@ -77,8 +77,9 @@ releases anonymously; no registry credential is needed.
 
 Signing keys, the refresh pepper and the Graph client secret live in the
 stack's Key Vault (`kv-mentra-enterprise-ref`), which `bootstrap.bicep` created
-once with Owner rights. Container Apps read them with their managed identity, so
-the Contributor-only CI deployment passes just the vault name. Customer
+once with Owner rights, together with `access.bicep`'s per-secret grants. Each
+Container App reads only its own secrets with its own identity, so the
+Contributor-only CI deployment passes just the vault name. Customer
 deployments get their own vault the same way.
 
 ## Customer-shaped deployment
