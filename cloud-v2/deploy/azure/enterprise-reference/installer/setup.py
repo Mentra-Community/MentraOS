@@ -397,6 +397,11 @@ def init(args, directory):
     for key, label, default in prompts:
         if key == 'deploymentId' and default is None:
             default = suggested_deployment_id(inputs.get('displayName', ''))
+        if key == 'tenantId' and interactive and inputs.get('subscriptionId') not in ('', account.get('id')):
+            # Suggest the tenant of the subscription actually chosen.
+            chosen = subprocess.run(['az', 'account', 'show', '--subscription', inputs['subscriptionId'], '--query', 'tenantId',
+                                     '--output', 'tsv'], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            default = chosen.stdout.strip() if chosen.returncode == 0 else ''
         if key in inputs:
             continue
         if not interactive:
@@ -1628,7 +1633,9 @@ def main():
             raise SetupError('Keep setup state outside the installer package; from ~/mentra-install use --directory ./mentra-state.')
         with locked(directory):
             if args.command == 'guided':
-                guided(args, directory)
+                result = guided(args, directory)
+                if result.get('status') in ('stopped', 'awaiting_dns'):
+                    print(result['next'])
                 return
             if args.command == 'init':
                 emit(args, init(args, directory))

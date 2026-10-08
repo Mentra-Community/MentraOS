@@ -281,6 +281,24 @@ class GuidedTests(unittest.TestCase):
         preflight.assert_not_called()
         verify.assert_called_once()
 
+    def test_tenant_suggestion_follows_the_chosen_subscription(self):
+        answers = iter(['33333333-3333-3333-3333-333333333333', '', 'ACME', '', '', ''])
+        prompts = []
+        def ask(label):
+            prompts.append(label)
+            return next(answers)
+        chosen = setup.subprocess.CompletedProcess([], 0, '44444444-4444-4444-4444-444444444444\n', '')
+        args = argparse.Namespace(config=None, json=False)
+        with patch.object(setup.sys.stdin, 'isatty', return_value=True), patch('builtins.input', side_effect=ask), \
+             patch.object(setup, 'signed_in_account', return_value={'id': SUB, 'tenantId': TENANT, 'name': 'Default', 'user': {'name': 'it@acme'}}), \
+             patch.object(setup.subprocess, 'run', return_value=chosen), patch.object(setup, 'check_release', return_value=RELEASE), \
+             patch.object(setup, 'digest', return_value='this-release'):
+            setup.init(args, self.directory / 'fresh')
+        config = setup.read_json(self.directory / 'fresh/deployment.config.json')
+        self.assertIn('[44444444-4444-4444-4444-444444444444]', prompts[1])
+        self.assertEqual((config['subscriptionId'], config['tenantId']), ('33333333-3333-3333-3333-333333333333', '44444444-4444-4444-4444-444444444444'))
+        self.assertEqual(config['deploymentId'], 'acme-mentra')
+
     def test_suggested_deployment_names_are_valid(self):
         for name, expected in (('ACME Lumber & Supply', 'acme-lumber-mentra'), ('', 'company-mentra'),
                                ('42 Industries', 'industries-mentra')):
