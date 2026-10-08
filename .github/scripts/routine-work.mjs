@@ -287,9 +287,10 @@ export async function routineWorkApi({token, operation, request, workId = reques
     'Authoring receipt changed its bound custody')
   } else ensure(row.hostId === undefined && isDeepStrictEqual(row.work, selection), 'Authoring receipt changed its unbound selection')
   if (request) {
-    const {buildSource, ...input} = request
+    const {buildSource, deadline, ...input} = request
     ensure(
       isDeepStrictEqual(row.request, request) &&
+        (deadline === undefined || Date.parse(deadline) === Date.parse(row.fleetDeadline)) &&
         Object.keys(input).every((key) => key === 'source'
           ? selection.source?.repository === input.source.repository && (!input.source.revision || selection.source.revision === input.source.revision)
           : key === 'target'

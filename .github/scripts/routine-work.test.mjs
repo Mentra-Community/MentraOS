@@ -217,6 +217,29 @@ test('lost replies preserve optional target constraints after a worker binds the
   }
 })
 
+test('explicit deadlines reconcile their frozen instant before and after authoring binding', async () => {
+  const request = {...authoringDispatch({pr, brief: input}, {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 2}),
+    deadline: '2026-10-08T01:00:00-07:00'}
+  const {buildSource, deadline, ...fields} = request
+  const selection = {...fields, build: {kind: 'android-apk'}}
+  for (const bound of [false, true]) {
+    const row = fleetReceipt(request, selection, bound)
+    for (const operation of ['submit', 'inspect']) assert.equal((await routineWorkApi({token: 'secret', operation, request,
+      fetchImpl: async () => Response.json(row)})).workId, request.workId)
+    const methods = []
+    assert.equal((await submitRoutineWork({token: 'secret', request, fetchImpl: async (_url, options) => {
+      methods.push(options.method)
+      if (options.method === 'POST') throw new Error('lost reply')
+      return Response.json(row)
+    }})).workId, request.workId)
+    assert.deepEqual(methods, ['POST', 'GET'])
+    const fleetDeadline = '2026-10-08T08:01:00.000Z'
+    await assert.rejects(routineWorkApi({token: 'secret', operation: 'inspect', request,
+      fetchImpl: async () => Response.json({...row, fleetDeadline, fleetInputSha256: workDigest({selection, deadline: fleetDeadline})})}),
+    /original brief\/source\/target/)
+  }
+})
+
 test('intake failures retain bounded public Core reasons and preserve the original HTTP retry decision', async () => {
   const options = {token: 'private-token', operation: 'inspect', workId: 'routine-work-example'}
   await assert.rejects(routineWorkApi({...options, fetchImpl: async () => Response.json({
