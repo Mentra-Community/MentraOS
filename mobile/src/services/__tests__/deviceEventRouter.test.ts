@@ -132,6 +132,22 @@ describe("DeviceEventRouter", () => {
     expect(setSpy).toHaveBeenCalledWith("brightness", 42)
   })
 
+  it("marks the saved Mentra Live owner-lost when another phone takes ownership", () => {
+    const setSpy = jest.spyOn(useSettingsStore.getState(), "setSetting")
+    emitBluetoothSdkEvent("owner_replaced", {reason: "gatt_auth_status_5"})
+    expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", true, false)
+  })
+
+  it("clears owner-lost once the glasses connect again", () => {
+    const settings = useSettingsStore.getState()
+    jest.spyOn(settings, "getSetting").mockImplementation((key: string) => key === "mentra_live_owner_lost")
+    const setSpy = jest.spyOn(settings, "setSetting")
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected"} as never})
+
+    expect(setSpy).toHaveBeenCalledWith("mentra_live_owner_lost", false, false)
+  })
+
   it("routes an owned photo_response error to the photo coordinator and drops non-owned ones", () => {
     const errorSpy = jest.spyOn(phonePhotoCoordinator, "handlePhotoError").mockImplementation(() => {})
     jest.spyOn(phonePhotoCoordinator, "owns").mockImplementation((requestId: string) => requestId === "owned")

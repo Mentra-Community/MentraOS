@@ -1,7 +1,15 @@
 import {DeviceTypes, getModelCapabilities} from "@mentra/engine"
 import type {GlassesNotReadyEvent} from "@mentra/engine"
 import {useState, useEffect, useRef, type ReactNode} from "react"
-import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropType, type ViewStyle} from "react-native"
+import {
+  ActivityIndicator,
+  Image,
+  Platform,
+  TouchableOpacity,
+  View,
+  type ImageSourcePropType,
+  type ViewStyle,
+} from "react-native"
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -14,6 +22,7 @@ import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {cancelPendingPairing} from "@/utils/PairingUtils"
+import {unpairSavedGlasses} from "@/utils/pairing/unpairSavedGlasses"
 import {
   getAr99DisplayName,
   getAr99ImageSource,
@@ -63,7 +72,7 @@ export const DeviceStatus = ({onPress, image, children, className = "h-28"}: Dev
 
 export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
-  const {push} = useNavigationStore.getState()
+  const {push, clearHistoryAndGoHome} = useNavigationStore.getState()
   // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
   const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
   const pairedModel = identity.kind === "paired" ? identity.model : ""
@@ -86,6 +95,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const batteryLevel = glassesStatus.battery
   const charging = glassesStatus.charging
   const [projectName] = useSetting<string>(SETTINGS.project_name.key)
+  const [ownerLost] = useSetting<boolean>(SETTINGS.mentra_live_owner_lost.key)
   const wifiConnected = wifiStatus.state === "connected"
   const searching = useEngineSnapshot(engine.pairing.scanning, (onChange) => engine.pairing.onScanning(onChange))
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
@@ -289,6 +299,53 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   const features = getModelCapabilities(displayModel as DeviceTypes)
   const onPress = () => push("/miniapps/settings/main", {transition: "simple_push"})
+
+  // iOS cannot remove the Classic bond from code, so its copy also points to Bluetooth settings.
+  const confirmOwnerLostAction = (action: "pairAgain" | "unpair") => {
+    const iosHint = Platform.OS === "ios" ? `\n\n${translate("home:liveOwnerLostIosBluetooth")}` : ""
+    showAlert(translate("home:liveOwnerLostTitle"), `${translate("home:liveOwnerLostMessage")}${iosHint}`, [
+      {text: translate("common:cancel"), style: "cancel"},
+      {
+        text: translate(action === "pairAgain" ? "home:pairAgain" : "settings:forgetGlasses"),
+        onPress: () => {
+          unpairSavedGlasses()
+            .then(() =>
+              action === "pairAgain" ? push("/pairing/prep", {deviceModel: DeviceTypes.LIVE}) : clearHistoryAndGoHome(),
+            )
+            .catch((error) => console.warn("Failed to unpair glasses after owner loss:", error))
+        },
+      },
+    ])
+  }
+
+  if (ownerLost && displayModel === DeviceTypes.LIVE && !glassesConnected) {
+    return (
+      <View style={style}>
+        <DeviceStatus onPress={() => confirmOwnerLostAction("pairAgain")} image={getCurrentGlassesImage()}>
+          <View className="flex-row items-center gap-3">
+            <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
+            <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayName} />
+          </View>
+          <Text className="text-secondary-foreground text-sm text-end self-end" tx="home:liveOwnerLostStatus" />
+          <Button
+            flex
+            compact
+            className="max-h-10"
+            tx="home:pairAgain"
+            preset="primary"
+            onPress={() => confirmOwnerLostAction("pairAgain")}
+          />
+        </DeviceStatus>
+        <Button
+          className="mt-2"
+          compact
+          preset="secondary"
+          tx="settings:forgetGlasses"
+          onPress={() => confirmOwnerLostAction("unpair")}
+        />
+      </View>
+    )
+  }
 
   if (!glassesConnected || !glassesFullyBooted || isSearching) {
     return (

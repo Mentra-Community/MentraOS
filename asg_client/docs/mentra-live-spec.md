@@ -75,7 +75,13 @@ For some outbound commands, `B` is a JSON object serialized as a string inside t
 - `asg_client` exposes phone-facing commands and responses through the BLE command protocol.
 - The phone is the user's primary UI for setup, WiFi configuration, gallery sync, app routing, and settings.
 - Button/touch events are forwarded to the phone so apps can react even when the glasses also perform local actions.
-- Secure owner-exclusive pairing is release-gated on both the Mentra App and BES and defaults off for Mentra 3.1. When enabled, three power-button presses enter pairing mode. ASG speaks “Connect to your Mentra Live in the app. Your code is:” plus the four-character code as one WAV, repeated by BES every 30 seconds, and speaks “Pairing mode ended.” when BES reports the window closing.
+- Secure owner-exclusive pairing is enabled for Mentra 3.3 (OS-2055) by coordinated flags in the Mentra App (`EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING`) and BES (`MENTRA_SECURE_PAIRING`). The BES source of truth is `docs/pairing-spec.md` in `mentra-live-bes`.
+  - Three power-button presses enter pairing mode, but only after MTK readiness (the first valid MTK→BES UART frame). Earlier presses play "not ready". Short press (battery readout) and the ~2 s power-off are unchanged.
+  - Glasses with no bonded phone enter pairing mode automatically once per boot when MTK becomes ready. A bonded phone that is merely absent never triggers this.
+  - Entering pairing mode forgets the previous owner's BLE and Classic bonds immediately. The first phone to complete a BLE bond becomes the sole owner. Outside pairing mode only the owner connects. Media is never wiped by pairing or ownership change.
+  - ASG speaks “Connect to your Mentra Live in the app. Your code is:” plus the four-character code as one WAV, repeated by BES every 30 seconds, and speaks “Pairing mode ended.” when BES reports the window closing.
+  - Upgrading from flag-off firmware keeps the existing owner. An iPhone that only has a Classic bond attaches its BLE identity once while its Classic link is up, with no re-pair.
+  - The previous owner's phone keeps the glasses listed as not connected ("Paired to another phone") with Pair again and Unpair actions.
 
 ### Camera capture
 
