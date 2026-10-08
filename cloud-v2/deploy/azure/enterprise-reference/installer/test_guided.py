@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.parse import unquote as urllib_unquote
 
 SPEC = importlib.util.spec_from_file_location('mentra_setup_guided', Path(__file__).with_name('setup.py'))
 setup = importlib.util.module_from_spec(SPEC)
@@ -215,6 +216,20 @@ class GuidedTests(unittest.TestCase):
         self.assertNotIn('graph-secret', json.dumps(result))
         self.assertIn(f'New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {SUB}', result['teamsPolicy'])
         self.assertEqual(result['adminConsent'], 'granted')
+
+    def test_existing_meetings_app_consent_is_checked_not_assumed(self):
+        role = 'b8bb2037-6e08-44ac-a4ea-4674e010e2a4'
+        def graph(config, method, path, body=None, missing_ok=False):
+            if "appId eq '00000003" in urllib_unquote(path):
+                return {'value': [{'id': 'graph-sp', 'appRoles': [{'value': 'OnlineMeetings.ReadWrite.All', 'id': role}]}]}
+            if 'servicePrincipals?' in path:
+                return {'value': [{'id': 'app-sp'}]}
+            return {'value': [{'appRoleId': role, 'resourceId': 'graph-sp'}] if self.granted else []}
+        for self.granted in (True, False):
+            with patch.object(setup, 'graph', side_effect=graph):
+                self.assertIs(setup.meetings_consent(self.config, SUB), self.granted)
+        with patch.object(setup, 'graph', side_effect=setup.GraphError(403)):
+            self.assertIsNone(setup.meetings_consent(self.config, SUB))
 
     def test_teams_settings_are_the_only_new_post_install_changes(self):
         self.assertEqual(setup.UPDATABLE_KEYS, {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId',
