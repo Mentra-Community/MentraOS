@@ -29,6 +29,22 @@ Enterprise has a separate `mentra-enterprise/prd` project/config. Intentionally 
 
 ## Adding or changing a setting
 
+Use [manage-cloud-env](../../../../.agents/skills/manage-cloud-env/SKILL.md) when a
+feature requires a deployment setting. Check the actual Doppler connection first;
+repair a broken connection or create a Doppler project and native group if missing.
+New projects should have a dedicated inheritable `shared` config from the start,
+even with only one deployment environment. Put suitable provider credentials and
+common settings there; keep database destinations, bucket names, URLs, and values
+that require environment isolation in each child config. Attach Porter to the
+complete child config, not directly to the shared parent.
+
+For existing configurations, use verified working production values as the source
+for shared settings. Attach inheritance before removing child copies, verify all
+resolved values, and preserve a rollback path. Child copies override shared values.
+Inspect all inheritors before editing a shared parent; a parent change can affect
+multiple deployed environments. Follow the authorized rollout sequence and preserve
+production's resolved values during a storage-only migration.
+
 Change the correct Doppler config first. Verify the native group contains the updated value using an in-memory comparison that prints only key names and match status. Never dump `porter env pull`, Doppler JSON, or service tokens into logs. Confirm both SecretStore and ExternalSecret have Ready=True, and ExternalSecret has a recent advancing refresh timestamp. A green historical deploy or an old exported value alone does not prove a working sync.
 
 Then roll out the app through its owning repository's deployment workflow and validate readiness and affected functionality. Existing process environments are snapshots; a successful group refresh is not proof that a running process picked up the change. Cloud code releases use the coordinated release workflow. Configuration-only rollouts must preserve the validated image and deployment topology.
