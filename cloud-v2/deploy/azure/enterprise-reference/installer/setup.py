@@ -1235,8 +1235,10 @@ def graph(config, method, path, body=None, missing_ok=False):
         except urllib.error.HTTPError as error:
             if missing_ok and error.code == 404:
                 return None
-            # Throttling and transient service errors were not applied; try again.
-            if error.code not in (429, 500, 502, 503, 504) or attempt + 1 == GRAPH_ATTEMPTS:
+            # Throttling is never applied, so any request may repeat it. A POST that
+            # failed otherwise may have been applied; repeating it could duplicate it.
+            retryable = (429,) if method == 'POST' else (429, 500, 502, 503, 504)
+            if error.code not in retryable or attempt + 1 == GRAPH_ATTEMPTS:
                 raise GraphError(error.code) from None
             try:
                 wait = float(error.headers.get('Retry-After') or 0)
