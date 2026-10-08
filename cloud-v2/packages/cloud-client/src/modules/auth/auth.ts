@@ -53,7 +53,7 @@ export interface AuthModule {
   // a miniapp-scoped token, cached per packageName and re-minted before expiry
   getMiniappToken(
     packageName: string,
-    opts?: {minTtlMs?: number; devAttestation?: string},
+    opts?: {minTtlMs?: number},
   ): Promise<{token: string; expiresAt: number}>
   // Core-owned user/oem identity, read from the Core access token.
   // Runtime-only deployments do not expose this surface.
@@ -257,7 +257,7 @@ export class Auth implements AuthModule {
    */
   async getMiniappToken(
     packageName: string,
-    opts?: {minTtlMs?: number; devAttestation?: string},
+    opts?: {minTtlMs?: number},
   ): Promise<{token: string; expiresAt: number}> {
     this.assertSessionActive()
     const generation = this.sessionGeneration
@@ -277,14 +277,7 @@ export class Auth implements AuthModule {
 
       const accessToken = await this.getCoreToken()
       const http = this.requireCoreHttp()
-      const res = await http.post<MiniappTokenEntry>(
-        MINIAPP_TOKEN_PATH,
-        {
-          packageName,
-          ...(opts?.devAttestation ? {devAttestation: opts.devAttestation} : {}),
-        },
-        {bearer: accessToken},
-      )
+      const res = await http.post<MiniappTokenEntry>(MINIAPP_TOKEN_PATH, {packageName}, {bearer: accessToken})
 
       this.assertSessionActive(generation)
       const entry: MiniappTokenEntry = {token: res.token, expiresAt: res.expiresAt}

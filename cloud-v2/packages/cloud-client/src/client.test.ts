@@ -75,8 +75,9 @@ describe("CloudClient construction", () => {
     const originalFetch = globalThis.fetch
     const nowSeconds = Math.floor(Date.now() / 1000)
     let miniappMints = 0
+    const miniappBodies: unknown[] = []
 
-    globalThis.fetch = (async (input: Request | URL | string) => {
+    globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith("/api/client/auth/refresh")) {
         return jsonResponse({
@@ -88,6 +89,7 @@ describe("CloudClient construction", () => {
       }
       if (url.endsWith("/api/client/auth/miniapp-token")) {
         miniappMints += 1
+        miniappBodies.push(JSON.parse(String(init?.body)))
         return jsonResponse({
           token: `miniapp-${miniappMints}`,
           expiresAt: miniappMints === 1 ? nowSeconds + 180 : nowSeconds + 3600,
@@ -120,6 +122,8 @@ describe("CloudClient construction", () => {
         token: "miniapp-2",
       })
       expect(miniappMints).toBe(2)
+      // The request names the package and nothing else, dev builds included.
+      expect(miniappBodies).toEqual([{packageName: "com.example.app"}, {packageName: "com.example.app"}])
     } finally {
       globalThis.fetch = originalFetch
     }

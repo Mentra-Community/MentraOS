@@ -37,7 +37,6 @@ import {
 import { getConfig } from "./config";
 import { clearCredentials, loadCredentials, saveCredentials, type CliCredentials } from "./credentials";
 import { openBrowser } from "./open-browser";
-import { encodeDevAttestation, ensureSigningKey, signDevAttestation } from "./signing";
 import { verifyPackedBundle } from "./validate-bundle";
 import { registerStoreCommands } from "./store-commands";
 
@@ -505,40 +504,15 @@ admin
 
 program
   .command("dev")
-  .description("Start the local miniapp dev server with signed Cloud V2 identity when logged in")
+  .description("Start the local miniapp dev server; the phone runs it under the manifest package name")
   .option("--cwd <path>", "miniapp project directory", process.cwd())
-  .option("--auth", "require signed dev auto-auth setup before starting")
   .option("--usb", "reach the phone over USB via adb reverse instead of the LAN (Android only)")
   .option("--device <serial>", "target a specific adb device serial (use with --usb)")
-  .action(async (options: { cwd: string; auth?: boolean; usb?: boolean; device?: string }) => {
-    const cwd = resolve(options.cwd);
+  .action(async (options: { cwd: string; usb?: boolean; device?: string }) => {
     try {
-      const manifest = readManifest(cwd);
-      const packageName = stringField(manifest, "packageName");
-      const name = stringField(manifest, "name") || packageName;
-      const description = typeof manifest.description === "string" ? manifest.description : null;
-      const creds = await loadFreshCredentials(getConfig());
-      let signer: ((input: { packageName: string; devServerUrl: string }) => string) | undefined;
-
-      if (creds) {
-        await ensureMiniappRecord(creds, { packageName, displayName: name, description });
-        const signingKey = await ensureSigningKey(creds);
-        signer = ({ packageName: signedPackageName, devServerUrl }) =>
-          encodeDevAttestation(
-            signDevAttestation({
-              signingKey,
-              packageName: signedPackageName,
-              devServerUrl,
-            }),
-          );
-        console.log(`Dev auto-auth enabled for ${packageName}`);
-      } else if (options.auth) {
-        throw new Error("Not signed in. Run `mentra login` before `mentra dev --auth`.");
-      } else {
-        console.log("Dev auto-auth disabled. Run `mentra login` if this miniapp uses session.auth.");
-      }
-
-      await devMiniapp({ cwd, signDevAttestation: signer, usb: options.usb, device: options.device });
+      // Local only: the phone treats the build as its package, refuses it over
+      // an install signed by a publisher, and requests miniapp tokens itself.
+      await devMiniapp({ cwd: resolve(options.cwd), usb: options.usb, device: options.device });
     } catch (error) {
       fail(error);
     }

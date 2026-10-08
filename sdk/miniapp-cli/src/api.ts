@@ -1,5 +1,5 @@
 export { buildProduction } from './build.js';
-export { dev, type DevAttestationInput, type DevOptions } from './dev.js';
+export { dev, type DevOptions } from './dev.js';
 export { pack, type PackOptions } from './pack.js';
 export {
   MENTRA_BUNDLE_SIGNATURE_PATH,

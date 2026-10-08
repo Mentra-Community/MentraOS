@@ -4,13 +4,6 @@ import type { CliCredentials } from "./credentials";
 
 const DEVICE_AUTH_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 
-export type CliJwk = Record<string, unknown> & {
-  kty?: string;
-  crv?: string;
-  x?: string;
-  d?: string;
-};
-
 export interface DeviceAuthorizationResponse {
   device_code: string;
   user_code: string;
@@ -91,17 +84,6 @@ export interface PublishingProfile {
   workspaceId: string;
   packagePrefix: string;
   packagePrefixStatus: "unverified" | "verified" | "rejected";
-}
-
-export interface DeveloperSigningKey {
-  id: string;
-  orgId: string;
-  workosUserId: string;
-  publicKeyJwk: CliJwk;
-  status: "active" | "revoked";
-  lastUsedAt: string | null;
-  createdAt: string | null;
-  updatedAt: string | null;
 }
 
 export interface AdminUser {
@@ -354,20 +336,6 @@ export async function createRelease(
   return storeRequest(credentials, `/api/console/apps/${encodeURIComponent(input.packageName)}/releases`, {
     method: "POST",
     body: form,
-  });
-}
-
-export async function listSigningKeys(credentials: CliCredentials): Promise<{ keys: DeveloperSigningKey[] }> {
-  return storeRequest(credentials, "/api/console/signing-keys");
-}
-
-export async function registerSigningKey(
-  credentials: CliCredentials,
-  input: { publicKeyJwk: CliJwk },
-): Promise<{ key: DeveloperSigningKey }> {
-  return storeRequest(credentials, "/api/console/signing-keys", {
-    method: "POST",
-    body: JSON.stringify(input),
   });
 }
 
