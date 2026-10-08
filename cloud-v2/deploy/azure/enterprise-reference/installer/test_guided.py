@@ -125,6 +125,27 @@ class GuidedTests(unittest.TestCase):
         # The empty group made for the preview is removed again.
         self.assertEqual(calls[-1], 'run')
 
+    def test_without_entra_rights_setup_hands_off_and_then_records_the_apps(self):
+        self.config.update(coreApiClientId='', mobileClientId='')
+        self.write_state('initialized')
+        with self.steps() as calls, patch.object(setup, 'configure_entra', side_effect=setup.SetupError('Insufficient privileges')), \
+             patch.object(setup, 'finish', side_effect=lambda d, r: r):
+            result = setup.guided(self.args, self.directory)
+        self.assertEqual(result['status'], 'awaiting_entra')
+        handoff = setup.read_json(self.directory / 'state.json')['handoffs'][0]['action']
+        self.assertIn('--installer-owner owner', handoff)
+        self.assertIn('configure-entra --core-client-id CORE_ID --mobile-client-id MOBILE_ID', handoff)
+        # The administrator's apps are recorded after a read-only check.
+        state = setup.read_json(self.directory / 'state.json')
+        args = argparse.Namespace(core_client_id=SUB.upper(), mobile_client_id=TENANT)
+        with patch.object(setup, 'preflight'), \
+             patch.object(setup, 'graph', return_value={'value': [{'signInAudience': 'AzureADMyOrg'}]}) as graph, \
+             patch.object(setup, 'digest', return_value='config-hash'):
+            setup.configure_entra(args, self.directory, self.config, state)
+        self.assertTrue(all(call.args[1] == 'GET' for call in graph.call_args_list))
+        config = setup.read_json(self.directory / 'deployment.config.json')
+        self.assertEqual((config['coreApiClientId'], config['mobileClientId']), (SUB, TENANT))
+
     def test_sign_in_apps_are_created_only_after_confirmation(self):
         self.config.update(coreApiClientId='', mobileClientId='')
         self.write_state('initialized')
