@@ -465,9 +465,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     || type == null
                     || value == null
                     || type != AsgConstants.UNWORN_AUTO_POWER_OFF_SWITCH_TYPE) return false;
+            boolean[] claimed = {false};
             transportCoordinator.runForCurrentSerialSession(
-                    session, () -> mUnwornAutoPowerOffRequest.reply(session, code, type, value));
-            return true;
+                    session,
+                    () -> claimed[0] = mUnwornAutoPowerOffRequest.reply(session, code, type, value));
+            return claimed[0];
         } catch (JSONException e) {
             return false;
         }

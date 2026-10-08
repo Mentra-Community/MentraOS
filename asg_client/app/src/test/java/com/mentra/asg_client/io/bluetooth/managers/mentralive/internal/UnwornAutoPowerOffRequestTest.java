@@ -33,6 +33,19 @@ public class UnwornAutoPowerOffRequestTest {
     }
 
     @Test
+    public void unclaimedRepliesRemainAvailableForPhoneForwarding() {
+        assertThat(request.reply(session, 0, 11, 0)).isFalse();
+        var token = request.begin(session, results::add);
+        assertThat(request.reply(session, 0, 11, 0)).isFalse();
+        request.beginWrite(token);
+        assertThat(request.reply(session, 0, 11, 1)).isFalse();
+        assertThat(request.reply(session, 0, 11, 0)).isTrue();
+        assertThat(request.reply(session, 0, 11, 0)).isFalse();
+        request.writeComplete(token, true);
+        assertThat(request.reply(session, 0, 11, 0)).isFalse();
+    }
+
+    @Test
     public void requiresWriteAndCurrentExactAck_evenWhenReplyWinsTheWriteCallbackRace() {
         var token = request.begin(session, results::add);
         request.reply(session, 0, 11, 0); // Unsolicited before the write boundary.

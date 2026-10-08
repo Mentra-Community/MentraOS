@@ -105,18 +105,19 @@ public final class UnwornAutoPowerOffRequest {
         }
     }
 
-    /** A current-session ACK may arrive before the synchronous write returns. */
-    public synchronized void reply(Object session, int resultCode, int type, int value) {
+    /** Claim a current-session ACK, allowing normal phone forwarding when no request owns it. */
+    public synchronized boolean reply(Object session, int resultCode, int type, int value) {
         Token token = mPending;
         if (token == null
                 || token.session != session
                 || !token.attempted
                 || !live(token)
                 || type != AsgConstants.UNWORN_AUTO_POWER_OFF_SWITCH_TYPE
-                || value != 0) return;
-        if (token.replyCode != null) return;
+                || value != 0) return false;
+        if (token.replyCode != null) return false;
         token.replyCode = resultCode;
         completeReply(token);
+        return true;
     }
 
     /** Fail only this request; ambiguous attempts prevent reuse of that UART session. */

@@ -76,10 +76,16 @@ public class K900UnwornAutoPowerOffTest {
                     .isEqualTo(false);
         }
         String valid = "{\"C\":\"sr_swit\",\"S\":0,\"B\":{\"type\":11,\"switch\":0}}";
-        receipt.invoke(manager, valid.getBytes(StandardCharsets.UTF_8), retired);
+        assertThat(receipt.invoke(manager, valid.getBytes(StandardCharsets.UTF_8), retired))
+                .isEqualTo(false);
         org.mockito.Mockito.verifyNoInteractions(request);
-        receipt.invoke(manager, valid.getBytes(StandardCharsets.UTF_8), current);
+        // The setup parser must not swallow ordinary phone setting acknowledgments.
+        assertThat(receipt.invoke(manager, valid.getBytes(StandardCharsets.UTF_8), current))
+                .isEqualTo(false);
         verify(request).reply(current, 0, 11, 0);
+        when(request.reply(current, 0, 11, 0)).thenReturn(true);
+        assertThat(receipt.invoke(manager, valid.getBytes(StandardCharsets.UTF_8), current))
+                .isEqualTo(true);
     }
 
     private static void field(Object target, String name, Object value) throws Exception {
