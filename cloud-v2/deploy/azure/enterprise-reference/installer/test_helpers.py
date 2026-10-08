@@ -276,6 +276,38 @@ else:sys.exit(9)
         self.assertNotEqual((store / 'mentra-jwt-public-key').read_text(), 'from-an-interrupted-run')
         self.assertEqual(len(list(store.iterdir())), 5)
 
+    def test_image_import_waits_for_a_new_registry_to_resolve(self):
+        self.env.update(HELPER_TEST_DIRECTORY=str(self.path), MENTRA_ACR_DNS_RETRY_SECONDS='0', TMPDIR=str(self.path))
+        self.executable('az', '''import json,os,sys
+from pathlib import Path
+p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
+if a[:3]==['acr','repository','list']:
+ n=p/'lookups';count=int(n.read_text()) if n.exists() else 0;n.write_text(str(count+1))
+ if count<2:print("ERROR: Could not connect to the registry login server 'x.azurecr.io'.",file=sys.stderr);sys.exit(1)
+ print('[]')
+elif a[:2]==['acr','import']:(p/'imported').touch()
+elif a[:3]==['acr','repository','show']:print('sha256:'+'a'*64)
+else:sys.exit(9)
+''')
+        result = subprocess.run(['bash', str(ROOT / 'scripts/import-runtime-image.sh'), 'testregistry',
+                                 'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64, 'release-1'],
+                                env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.path / 'lookups').read_text(), '3')
+        self.assertTrue((self.path / 'imported').exists())
+        self.assertFalse(list(self.path.glob('mentra-acr-list.*')))
+
+    def test_image_import_stops_on_other_registry_errors(self):
+        self.env.update(HELPER_TEST_DIRECTORY=str(self.path), MENTRA_ACR_DNS_RETRY_SECONDS='0', TMPDIR=str(self.path))
+        self.executable('az', '''import sys
+print('ERROR: (AuthorizationFailed) no access', file=sys.stderr); sys.exit(1)
+''')
+        result = subprocess.run(['bash', str(ROOT / 'scripts/import-runtime-image.sh'), 'testregistry',
+                                 'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64, 'release-1'],
+                                env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('AuthorizationFailed', result.stderr)
+
     def test_what_if_previews_both_templates_with_the_callers_identity(self):
         import base64
         claims = base64.urlsafe_b64encode(json.dumps({'oid': 'abcdef12-1234-1234-1234-abcdef123456', 'idtyp': 'user'}).encode()).decode().rstrip('=')

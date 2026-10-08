@@ -24,8 +24,23 @@ fi
 EXPECTED_DIGEST="${SOURCE_IMAGE##*@}"
 SOURCE_REGISTRY="${SOURCE_IMAGE%%/*}"
 # Listing the repository also verifies target access. A failed lookup is not
-# evidence that the tag is absent, and must not trigger a blind import.
-TAGS="$(az acr repository list --name "$CUSTOMER_ACR" -o json)"
+# evidence that the tag is absent, and must not trigger a blind import. A
+# registry created moments ago may not resolve yet, and resolvers cache that for
+# up to five minutes (the azurecr.io negative TTL), so retry only that failure.
+LIST_ERRORS="$(mktemp "${TMPDIR:-/tmp}/mentra-acr-list.XXXXXX")"
+for attempt in $(seq 1 "${MENTRA_ACR_DNS_ATTEMPTS:-40}"); do
+  if TAGS="$(az acr repository list --name "$CUSTOMER_ACR" -o json 2>"$LIST_ERRORS")"; then
+    break
+  fi
+  grep -q 'Could not connect to the registry login server' "$LIST_ERRORS" && [[ "$attempt" != "${MENTRA_ACR_DNS_ATTEMPTS:-40}" ]] || {
+    cat "$LIST_ERRORS" >&2
+    rm -f "$LIST_ERRORS"
+    exit 1
+  }
+  [[ "$attempt" == 1 ]] && printf 'Waiting for the new registry to become reachable...\n' >&2
+  sleep "${MENTRA_ACR_DNS_RETRY_SECONDS:-10}"
+done
+rm -f "$LIST_ERRORS"
 if jq -e 'index("mentra-cloud-enterprise") != null' <<<"$TAGS" >/dev/null; then
   TAGS="$(az acr repository show-tags --name "$CUSTOMER_ACR" --repository mentra-cloud-enterprise -o json)"
   if jq -e --arg tag "$RELEASE_TAG" 'index($tag) != null' <<<"$TAGS" >/dev/null; then
