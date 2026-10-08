@@ -994,6 +994,33 @@ Adjusts the file packet size to fit the MTU just negotiated by the phone. Effect
 
 ### Power
 
+#### `disable_unworn_auto_power_off`
+
+Fixed device-setup command; disables BES's persisted type 11 switch over the existing
+UART path. Accepts a `request_id` of 8–64 letters, digits, `_` or `-`.
+
+```json
+{"type":"disable_unworn_auto_power_off","request_id":"setup-power-1234"}
+```
+
+The terminal result is logged once by `PowerCommandHandler` as
+`UNWORN_AUTO_POWER_OFF_RESULT <json>` and broadcast to registered local intent listeners:
+
+```json
+{"type":"unworn_auto_power_off_result","schema":1,"request_id":"setup-power-1234","process_sid":"1234abcd","elapsed_realtime_ms":123456,"success":true,"status":"disabled","result_code":0,"switch_type":11,"switch_value":0}
+```
+
+`disabled` requires the current UART session's actual `sr_swit` reply with `S:0`,
+`type:11`, `switch:0`, plus a completed successful write. Queue acceptance is insufficient.
+Other terminal statuses are `transport_unavailable`, `busy`, `session_changed`,
+`send_failed`, `rejected` (including BES `S:5` NV-update failure), or `timeout`.
+The total request window is five seconds. A timeout after writing began can still have
+changed the switch; it never becomes success. Because BES replies have no request ID,
+an ambiguous write blocks another attempt on that same UART session. There is no
+automatic retry, reset, or arbitrary BES-command passthrough. The acknowledged setting
+uses the firmware's normal NV update path; the response does not prove a completed
+flash flush or persistence across power loss.
+
 #### `shutdown`
 
 ```json

@@ -1,6 +1,8 @@
 package com.mentra.asg_client.io.bluetooth.managers;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -21,6 +23,7 @@ import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkState
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialSession;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.UnwornAutoPowerOffRequest;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
 import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import com.mentra.asg_client.logging.BleTraceLogger;
@@ -51,6 +54,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 /**
  * Implementation of IBluetoothManager for K900 devices. Uses the K900's serial port to communicate
@@ -67,6 +71,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private volatile boolean framedPathProven;
     private volatile long uartEvidenceInvalidatedAtElapsedMs = -1;
     private volatile BesOtaUartListener besOtaUartListener;
+    private final UnwornAutoPowerOffRequest mUnwornAutoPowerOffRequest =
+            new UnwornAutoPowerOffRequest(new Handler(Looper.getMainLooper()));
 
     public interface BesOtaAuthorizationCallback {
         /** Called when the optional phone guard cannot be written before authorization. */
@@ -394,6 +400,88 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     @Override
     protected boolean sendMessageInternal(byte[] data) {
         return transportCoordinator.runNormalWrite(() -> sendMessageInternalLocked(data));
+    }
+
+    /** Disable the fixed persisted unworn power-off switch and await the same-session BES ACK. */
+    public void disableUnwornAutoPowerOff(Consumer<UnwornAutoPowerOffRequest.Result> callback) {
+        SerialSession session = transportCoordinator.getSerialSession();
+        if (session == null || !transportCoordinator.isReadyForNormalUse()) {
+            callback.accept(UnwornAutoPowerOffRequest.unavailable());
+            return;
+        }
+        UnwornAutoPowerOffRequest.Token token = mUnwornAutoPowerOffRequest.begin(session, callback);
+        if (token == null) return;
+        boolean queued =
+                queueOutboundAction(
+                        () -> {
+                            boolean sent = false;
+                            try {
+                                sent =
+                                        transportCoordinator.runNormalWrite(
+                                                () -> {
+                                                    if (!transportCoordinator
+                                                                    .isCurrentSerialSession(session)
+                                                            || !transportCoordinator
+                                                                    .isReadyForNormalUse()) {
+                                                        mUnwornAutoPowerOffRequest.fail(
+                                                                token, "session_changed");
+                                                        return false;
+                                                    }
+                                                    if (!mUnwornAutoPowerOffRequest.beginWrite(
+                                                            token)) return false;
+                                                    return sendMessageInternalLocked(
+                                                            unwornAutoPowerOffCommand());
+                                                });
+                            } finally {
+                                if (!transportCoordinator.isCurrentSerialSession(session)) {
+                                    mUnwornAutoPowerOffRequest.fail(token, "session_changed");
+                                }
+                                mUnwornAutoPowerOffRequest.writeComplete(token, sent);
+                            }
+                        });
+        if (!queued) mUnwornAutoPowerOffRequest.writeComplete(token, false);
+    }
+
+    private static byte[] unwornAutoPowerOffCommand() {
+        // Legacy BES reads B.valuestring; an object body silently fails to apply the switch.
+        return "{\"C\":\"cs_swit\",\"V\":1,\"B\":\"{\\\"type\\\":11,\\\"switch\\\":0}\"}"
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    private boolean handleUnwornAutoPowerOffReply(byte[] payload, SerialSession session) {
+        try {
+            JSONObject message = new JSONObject(new String(payload, StandardCharsets.UTF_8));
+            if (!"sr_swit".equals(message.optString("C"))) return false;
+            Object rawBody = message.opt("B");
+            JSONObject body =
+                    rawBody instanceof JSONObject
+                            ? (JSONObject) rawBody
+                            : rawBody instanceof String ? new JSONObject((String) rawBody) : null;
+            if (body == null) return false;
+            Integer code = exactInteger(message.opt("S"));
+            Integer type = exactInteger(body.opt("type"));
+            Integer value = exactInteger(body.opt("switch"));
+            if (code == null
+                    || type == null
+                    || value == null
+                    || type != AsgConstants.UNWORN_AUTO_POWER_OFF_SWITCH_TYPE) return false;
+            transportCoordinator.runForCurrentSerialSession(
+                    session, () -> mUnwornAutoPowerOffRequest.reply(session, code, type, value));
+            return true;
+        } catch (JSONException e) {
+            return false;
+        }
+    }
+
+    private static Integer exactInteger(Object value) {
+        if (!(value instanceof Number)) return null;
+        double number = ((Number) value).doubleValue();
+        return Double.isFinite(number)
+                        && number == Math.rint(number)
+                        && number >= Integer.MIN_VALUE
+                        && number <= Integer.MAX_VALUE
+                ? (int) number
+                : null;
     }
 
     private boolean sendMessageInternalLocked(byte[] data) {
@@ -747,6 +835,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 BesWireFormat.getActiveProtocolVersion());
 
         if (!handleSrSyvrResponse(reassembled, receiveSession)
+                && !handleUnwornAutoPowerOffReply(reassembled, receiveSession)
                 && !handleSrPhbleResponse(reassembled, receiveSession)
                 && !handleFileTransportResponse(reassembled)) {
             notifyDataReceived(reassembled);
@@ -1155,6 +1244,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     @Override
     public void shutdown() {
         Log.d(TAG, "Shutting down K900BluetoothManager");
+        mUnwornAutoPowerOffRequest.close();
 
         // Publish terminal transport state before releasing an operation lease. Otherwise file
         // cleanup can resume a deferred baud transition while the serial port is going down.
@@ -2139,6 +2229,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             // Handle them directly here to avoid timing issues with
                             // CommandProcessor initialization
                             if (!handleSrSyvrResponse(payload, receiveSession)
+                                    && !handleUnwornAutoPowerOffReply(payload, receiveSession)
                                     && !handleSrBaudResponse(payload, receiveSession)
                                     && !handleI2sReadyResponse(payload, receiveSession)
                                     && !handleSrPhbleResponse(payload, receiveSession)

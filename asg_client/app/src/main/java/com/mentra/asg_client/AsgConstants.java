@@ -405,6 +405,19 @@ public class AsgConstants {
     /** BES command that resets the MCU without rebooting the running MTK Android system. */
     public static final String BES_REBOOT_COMMAND = "cs_rebt";
 
+    /** Fixed local/phone command used by device setup to keep unworn glasses powered on. */
+    public static final String COMMAND_DISABLE_UNWORN_AUTO_POWER_OFF =
+            "disable_unworn_auto_power_off";
+
+    /** Correlated terminal response; queue acceptance is not a BES acknowledgment. */
+    public static final String UNWORN_AUTO_POWER_OFF_RESULT = "unworn_auto_power_off_result";
+
+    /** Maximum queue, UART write and BES acknowledgment window for the fixed switch command. */
+    public static final long UNWORN_AUTO_POWER_OFF_TIMEOUT_MS = 5_000L;
+
+    /** BES persisted feature switch: type 11 is bit 10. */
+    public static final int UNWORN_AUTO_POWER_OFF_SWITCH_TYPE = 11;
+
     /**
      * Exclusive decompressed destination limit in the deployed ota_copy bootloader:
      * NEW_IMAGE_FLASH_OFFSET (0x200000) - OTA_CODE_OFFSET (0x20000). Images at or above this size
