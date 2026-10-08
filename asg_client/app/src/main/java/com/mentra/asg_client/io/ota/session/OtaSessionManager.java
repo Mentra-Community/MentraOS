@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.SystemClock;
 import android.util.Log;
+import com.mentra.asg_client.io.ota.utils.MtkOtaSelector;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -43,6 +44,7 @@ public class OtaSessionManager {
     private String mStatus;
     private String mErrorMessage;
     private String mVersionJsonUrl;
+    private JSONObject mMtkRestore;
     private long mLastActivityAtElapsed;
     private long mRestartingSinceElapsed;
 
@@ -89,11 +91,86 @@ public class OtaSessionManager {
         mStatus = "in_progress";
         mErrorMessage = null;
         mVersionJsonUrl = versionJsonUrl;
+        mMtkRestore = null;
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         mRestartingSinceElapsed = -1;
         mLastPersistedPercent = 0;
         persist();
         Log.i(TAG, "Created session " + mSessionId + " with " + mTotalSteps + " steps");
+        return true;
+    }
+
+    /** Commit the selected artifact under the existing session before any download or install. */
+    public synchronized boolean createMtkRestore(String artifactId, String manifestSha256,
+            JSONObject selected, String sourceVersion, String sourceBootId) throws JSONException {
+        if (mMtkRestore != null && (artifactId.equals(mMtkRestore.optString("artifact_id"))
+                || !"complete".equals(mStatus) && !"failed".equals(mStatus))) return false;
+        if (!createSession(new String[]{"mtk"}, null)) return false;
+        mMtkRestore = new JSONObject().put("artifact_id", artifactId)
+                .put("manifest_sha256", manifestSha256).put("source_version", sourceVersion)
+                .put("source_boot_id", sourceBootId).put("target_version", selected.getString("end_firmware"))
+                .put("url", selected.getString("url")).put("sha256", selected.getString("sha256"));
+        if (selected.has("size")) mMtkRestore.put("expected_size", selected.getLong("size"));
+        if (selected.has("start_firmware")) mMtkRestore.put("start_firmware", selected.getString("start_firmware"));
+        if (persistImmediately()) return true;
+        mStatus = "failed";
+        return false;
+    }
+
+    /** Retain verified download size before the shared SystemUI installer may read the ZIP. */
+    public synchronized boolean recordMtkRestoreDownload(long size) throws JSONException {
+        if (mMtkRestore == null) return true;
+        mMtkRestore.put("downloaded_size", size);
+        return persistImmediately();
+    }
+
+    /** A privileged observer reads the exact receipt without expiring or consuming it. */
+    public synchronized JSONObject getMtkRestoreReceipt() throws JSONException {
+        return mMtkRestore == null ? null : new JSONObject(mMtkRestore.toString());
+    }
+
+    /** A retained native operation blocks every other entrypoint before artifact mutation. */
+    public synchronized boolean hasActiveMtkRestore() {
+        return mMtkRestore != null && !"complete".equals(mStatus) && !"failed".equals(mStatus);
+    }
+
+    /** Verify the executing selection, not merely its source version or payload kind. */
+    public synchronized boolean ownsMtkArtifact(JSONObject selected) {
+        if (mMtkRestore == null) return true;
+        return hasActiveMtkRestore()
+                && mMtkRestore.optString("url").equals(selected.optString("url"))
+                && mMtkRestore.optString("sha256").equalsIgnoreCase(selected.optString("sha256"))
+                && mMtkRestore.optString("target_version").equals(selected.optString("end_firmware"))
+                && mMtkRestore.optString("start_firmware").equals(selected.optString("start_firmware"))
+                && mMtkRestore.has("expected_size") == selected.has("size")
+                && (!selected.has("size") || mMtkRestore.optLong("expected_size") == selected.optLong("size"));
+    }
+
+    /** Persist before calling SystemUI; a lost response retains native install custody. */
+    public synchronized boolean markMtkInstallDispatched() throws JSONException {
+        if (!hasActiveMtkRestore()) return false;
+        mMtkRestore.put("install_dispatched", true);
+        return persistImmediately();
+    }
+
+    /** Reconcile process loss without replaying a download or installer command. */
+    public synchronized void reconcileMtkRestore(String version, String boot) {
+        if (!hasActiveMtkRestore()) return;
+        if (!mMtkRestore.optBoolean("install_dispatched")) {
+            setFailed("MTK transfer interrupted before installer dispatch");
+        } else if (boot != null && !boot.equals(mMtkRestore.optString("source_boot_id"))) {
+            if (MtkOtaSelector.isSameVersion(mMtkRestore.optString("target_version"), version)) setComplete();
+            else setFailed("MTK reboot did not establish the selected target");
+        }
+        // Same-boot dispatched installs remain owned until the native terminal event.
+    }
+
+    /** Native success stages A/B bytes; it does not prove the selected firmware booted. */
+    public synchronized boolean stageMtkRestoreForReboot() {
+        if (!hasActiveMtkRestore()) return false;
+        mCurrentPhase = "awaiting_reboot";
+        mStepPercent = 100;
+        persistImmediately();
         return true;
     }
 
@@ -121,6 +198,7 @@ public class OtaSessionManager {
         }
         // elapsedRealtime resets on reboot — if now < last activity, device rebooted
         if (now < mLastActivityAtElapsed || (now - mLastActivityAtElapsed) > SESSION_EXPIRY_MS) {
+            if (mMtkRestore != null) return true; // Native terminal settlement, not age, releases this operation.
             Log.w(TAG, "Session expired, clearing");
             clear();
             return false;
@@ -169,8 +247,7 @@ public class OtaSessionManager {
                     && (now < mLastActivityAtElapsed
                         || (now - mLastActivityAtElapsed) > SESSION_EXPIRY_MS)) {
                 Log.w(TAG, "getSessionState: session expired, clearing");
-                clear();
-                return null;
+                if (mMtkRestore == null) {clear(); return null;}
             }
         }
         try {
@@ -400,6 +477,7 @@ public class OtaSessionManager {
         mStatus = null;
         mErrorMessage = null;
         mVersionJsonUrl = null;
+        mMtkRestore = null;
         mLastActivityAtElapsed = 0;
         mRestartingSinceElapsed = -1;
         mLastPersistedPercent = 0;
@@ -571,7 +649,7 @@ public class OtaSessionManager {
     }
 
     private void persist() {
-        persist(false);
+        persist(mMtkRestore != null);
     }
 
     /** Package replacement can kill this process immediately, so critical restart writes use commit. */
@@ -591,6 +669,7 @@ public class OtaSessionManager {
             json.put("status", mStatus != null ? mStatus : JSONObject.NULL);
             json.put("error_message", mErrorMessage != null ? mErrorMessage : JSONObject.NULL);
             json.put("version_json_url", mVersionJsonUrl != null ? mVersionJsonUrl : JSONObject.NULL);
+            if (mMtkRestore != null) json.put("mtk_restore", mMtkRestore);
             json.put("last_activity_at_elapsed", mLastActivityAtElapsed);
             json.put("restarting_since_elapsed", mRestartingSinceElapsed);
             SharedPreferences.Editor editor =
@@ -625,6 +704,7 @@ public class OtaSessionManager {
             mStatus = json.isNull("status") ? null : json.optString("status", null);
             mErrorMessage = json.isNull("error_message") ? null : json.optString("error_message", null);
             mVersionJsonUrl = json.isNull("version_json_url") ? null : json.optString("version_json_url", null);
+            mMtkRestore = json.optJSONObject("mtk_restore");
             mLastActivityAtElapsed = json.optLong("last_activity_at_elapsed", 0);
             mRestartingSinceElapsed = json.optLong("restarting_since_elapsed", -1);
             mLastPersistedPercent = mStepPercent;

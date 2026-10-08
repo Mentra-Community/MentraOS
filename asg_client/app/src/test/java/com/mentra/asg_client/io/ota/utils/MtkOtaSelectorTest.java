@@ -44,4 +44,18 @@ public class MtkOtaSelectorTest {
         assertNull(MtkOtaSelector.select(manifest, "20260709"));
         assertNull(MtkOtaSelector.select(new JSONObject(), "20260709"));
     }
+
+    @Test public void inlineTargetUsesOneExactDestinationPatchOtherwiseEligiblePinnedFull() throws Exception {
+        JSONObject image = full();
+        JSONObject intermediate = new JSONObject().put("start_firmware", "20260709").put("end_firmware", "20260801");
+        JSONObject exact = new JSONObject().put("start_firmware", "MentraLive_20260709").put("end_firmware", "20260908.10");
+        JSONObject manifest = new JSONObject().put("mtk_full_ota", image)
+                .put("mtk_patches", new JSONArray().put(intermediate).put(exact));
+        assertSame(exact, MtkOtaSelector.selectForTarget(manifest, "20260709"));
+        assertSame(image, MtkOtaSelector.selectForTarget(manifest, "20260908.9"));
+        assertNull(MtkOtaSelector.selectForTarget(manifest, "20260909"));
+        assertNull(MtkOtaSelector.selectForTarget(manifest, "20260908.10"));
+        assertNull(MtkOtaSelector.selectForTarget(manifest, "unknown"));
+        assertNull(MtkOtaSelector.select(manifest, "20260909"));
+    }
 }
