@@ -146,6 +146,16 @@ class GuidedTests(unittest.TestCase):
         config = setup.read_json(self.directory / 'deployment.config.json')
         self.assertEqual((config['coreApiClientId'], config['mobileClientId']), (SUB, TENANT))
 
+    def test_a_deleted_deployment_says_how_to_start_over(self):
+        self.write_state('infrastructure_verified', outputs={'workspaceOrigin': 'https://acme.example'})
+        with self.steps() as calls, patch.object(setup, 'preflight', return_value={'resourceGroup': 'new'}):
+            with self.assertRaisesRegex(setup.SetupError, 'no longer exists.*Start over'):
+                setup.guided(self.args, self.directory)
+        self.assertNotIn('install', calls)
+
+    def test_app_names_name_the_deployment(self):
+        self.assertEqual(setup.app_name(self.config, 'Mobile'), 'ACME Mentra Mobile (acme-mentra)')
+
     def test_sign_in_apps_are_created_only_after_confirmation(self):
         self.config.update(coreApiClientId='', mobileClientId='')
         self.write_state('initialized')
