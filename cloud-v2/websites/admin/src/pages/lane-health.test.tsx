@@ -114,3 +114,41 @@ test("repair and offline states remain explicit; unknown states do not become id
   for (const text of ["In repair", "Out of service", "Offline", "Unknown"]) expect(html).toContain(text);
   expect(html).not.toContain(">Idle<");
 });
+
+test('all five dynamically reported lanes show readable labels, exact IDs and current owner links', () => {
+  const client = new QueryClient({defaultOptions: {queries: {retry: false}}})
+  const hosts = ['computer-1', 'computer-2', 'computer-3'].map((hostId, index) => ({...host, hostId,
+    lanes: (index === 2 ? ['android'] : ['ios-on-mac', 'android']).map((platform, laneIndex) => ({
+      id: `new-lane-${index}-${laneIndex}`, platform: platform as 'android' | 'ios-on-mac',
+      state: laneIndex === 0 ? 'running' : 'reserved', dispatchMode: laneIndex === 0 ? 'automatic' : 'paused',
+      glassesModels: ['mentra-live'], activity: {generation: index + 1, owner: laneIndex === 0
+        ? {id: `request:${index}`, kind: 'run' as const, requestId: `request:${index}`}
+        : {id: `reservation:${index}`, kind: 'authoring' as const}},
+    }))}))
+  client.setQueryData(['lane-restoration'], {hosts, freshForMs: 120_000})
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHealthSection now={now} /></QueryClientProvider>)
+  expect((html.match(/Lane: /g) ?? []).length).toBe(5)
+  for (const row of hosts) for (const lane of row.lanes) {
+    expect(html).toContain(lane.id)
+    expect(html).toContain(`hostId=${row.hostId}&amp;laneId=${lane.id}`)
+  }
+  expect(html).toContain('Computer 1 · iOS on Mac · Mentra Live')
+  expect(html).toContain('Computer 3 · Android · Mentra Live')
+  expect(html).toContain('Routine run')
+  expect(html).toContain('Authoring reservation')
+  expect(html).toContain('/?testRun=request%3A0')
+  expect(html).not.toContain('/?testRun=reservation')
+  expect(html).toContain('Paused')
+  client.clear()
+})
+
+test('stale owner context is explicitly historical and cannot link to a current run', () => {
+  const reported = {...host, lanes: [{...host.lanes[0], state: 'running', glassesModels: [],
+    activity: {generation: 4, owner: {id: 'request:old', kind: 'run' as const, requestId: 'request:old'}}}]}
+  const html = renderToStaticMarkup(<LaneHealthHost host={reported} fresh={false} />)
+  expect(html).toContain('Last reported owner')
+  expect(html).toContain('request:old')
+  expect(html).toContain('Current lane status is unknown')
+  expect(html).not.toContain('/?testRun=')
+  expect(html).toContain('No glasses')
+})

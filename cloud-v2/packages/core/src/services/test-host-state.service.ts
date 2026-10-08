@@ -9,6 +9,7 @@ import {
   frameworkHistoryEntrySchema,
   frameworkProcessSchema,
   type FrameworkHistoryEntry,
+  laneActivitySchema,
 } from "../types/lane-restoration.types"
 import {frameworkBindingSchema} from "../types/framework-version.types"
 import {TestRunError} from "./test-result-error"
@@ -56,12 +57,15 @@ export const hostStateSchema = z
             platform: routinePlatformSchema,
             dispatchMode: z.enum(["automatic", "authoring", "paused"]),
             state: z.enum(["idle", "running", "reserved", "in-repair", "out-of-service", "offline"]),
+            activity: laneActivitySchema.optional(),
             resources: z.array(resource),
             glasses: z.array(glassesInventorySchema).max(1).optional(),
             routineAvailability: z.array(routineAvailability).max(1000).optional(),
           })
           .strict()
           .superRefine((lane, ctx) => {
+            if (lane.activity && ['idle', 'offline'].includes(lane.state))
+              ctx.addIssue({code: 'custom', message: 'Idle or offline lane cannot report active custody'})
             const keys = lane.routineAvailability?.map((row) => `${row.routineId}:${row.definitionRevision}`) ?? []
             if (new Set(keys).size !== keys.length)
               ctx.addIssue({code: "custom", message: "Duplicate lane routine availability identity"})

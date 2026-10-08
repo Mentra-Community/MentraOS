@@ -1,11 +1,12 @@
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {useQuery} from "@tanstack/react-query"
+import {Loader2} from 'lucide-react'
 import {
   restorationHostIsFresh,
   type LaneRestorationHost,
   type LaneRestorationList,
 } from "../../../../packages/core/src/types/lane-restoration.types"
-import {laneHistoryHref} from "../lib/lane-links"
+import {laneDisplayLabel, laneHistoryHref, readableLaneIdentity} from "../lib/lane-links"
 import {api} from "../lib/api"
 
 const states: Record<string, {label: string; style: string}> = {
@@ -122,7 +123,7 @@ export function LaneHealthHost({
   return (
     <div className="mt-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-[#14151b]">{host.hostId}</h3>
+        <h3 className="text-sm font-semibold text-[#14151b]">{readableLaneIdentity(host.hostId)} <span className="font-normal text-[#747780]">({host.hostId})</span></h3>
         <p className="text-xs text-[#747780]">
           {fresh ? "Controller reporting" : "No recent controller report"} · Last observed {time(host.observedAt)} ·
           Received {time(host.receivedAt)}
@@ -141,15 +142,15 @@ export function LaneHealthHost({
                   <h4 className="text-sm font-semibold text-[#14151b]">
                     {linkHistory ? (
                       <a href={laneHistoryHref(host.hostId, lane.id)} className="hover:underline">
-                        {lane.id}
+                        {laneDisplayLabel(host.hostId, lane)}
                       </a>
                     ) : (
-                      lane.id
+                      laneDisplayLabel(host.hostId, lane)
                     )}
                   </h4>
                   <span className={`rounded-md px-2 py-1 text-xs font-semibold ${state.style}`}>{state.label}</span>
                 </div>
-                <p className="mt-2 text-sm text-[#5d6068]">{lane.platform === "android" ? "Android" : "iOS on Mac"}</p>
+                <p className="mt-2 text-xs text-[#5d6068]">Lane: <span className="font-mono">{lane.id}</span></p>
                 <p className="mt-2 text-sm text-[#5d6068]">
                   {fresh ? "Scheduling" : "Last reported scheduling"}: {modes[lane.dispatchMode] ?? "Unknown"}
                 </p>
@@ -158,6 +159,16 @@ export function LaneHealthHost({
                     Last reported state: {states[lane.state]?.label ?? "Unknown"}. Current lane status is unknown.
                   </p>
                 )}
+                {lane.activity ? <div className="mt-2 text-sm text-[#5d6068]">
+                  <p>{fresh ? 'Current owner' : 'Last reported owner'}: {lane.activity.owner.kind === 'run' ? 'Routine run'
+                    : lane.activity.owner.kind === 'authoring' ? 'Authoring reservation'
+                    : lane.activity.owner.kind === 'fixer' ? 'State repair' : 'Boundary cleanup'}</p>
+                  {fresh && lane.activity.owner.requestId ? <a className={TESTING_LINK}
+                    href={`/?testRun=${encodeURIComponent(lane.activity.owner.requestId)}`}>{lane.activity.owner.id}</a>
+                    : <p className="break-all font-mono text-xs">{lane.activity.owner.id}</p>}
+                  <p className="text-xs">Generation {lane.activity.generation}</p>
+                </div> : ['running', 'reserved', 'in-repair'].includes(lane.state)
+                  ? <p className="mt-2 text-xs text-[#747780]">{fresh ? 'Owner not reported.' : 'Last reported owner unavailable.'}</p> : null}
                 {linkHistory && (
                   <a
                     className="mt-3 inline-block text-sm font-medium text-blue-700 hover:underline"
@@ -187,7 +198,8 @@ export function LaneHealthSection({now}: {now: number}) {
           <h2 className="text-xl font-semibold">Device lanes</h2>
           <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">About lane status</summary><p className="mt-2">Live controller reports of each lane's state and scheduling mode. Idle means no routine is executing; resource readiness is checked when a job is admitted.</p></details>
         </div>
-        <TestingButton className="text-sm" onClick={() => void query.refetch()}>
+        <TestingButton className="text-sm" disabled={query.isFetching} onClick={() => void query.refetch()}>
+          {query.isFetching && <Loader2 aria-label="Refreshing lanes" className="size-4 animate-spin" />}
           Refresh lanes
         </TestingButton>
       </div>
@@ -206,7 +218,7 @@ export function LaneHealthSection({now}: {now: number}) {
       {!query.data?.hosts.length && (
         <p className="mt-4 text-sm text-[#747780]">
           {query.isPending
-            ? "Loading lane reports…"
+            ? <span role="status" className="inline-flex items-center gap-2"><Loader2 aria-hidden="true" className="size-4 animate-spin" />Loading lane reports</span>
             : "No controller lane report is available. Current lane status is unknown."}
         </p>
       )}
