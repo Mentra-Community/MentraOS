@@ -103,6 +103,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         get() = DeviceStore.store.get("bluetooth", "pending_wearable") as? String ?: ""
         set(value) = DeviceStore.apply("bluetooth", "pending_wearable", value)
 
+    // Another phone owns the saved Mentra Live. Survives SGC replacement, unlike the
+    // stood-down manager, so automatic reconnects stay down until unpair or re-pair.
+    private val ownerLost: Boolean
+        get() = DeviceStore.store.get("bluetooth", "mentra_live_owner_lost") as? Boolean ?: false
+
     private var pendingDeviceName: String
         get() = DeviceStore.store.get("bluetooth", "pending_device_name") as? String ?: ""
         set(value) = DeviceStore.apply("bluetooth", "pending_device_name", value)
@@ -567,8 +572,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
 
                         BluetoothAdapter.STATE_ON -> {
                             Bridge.log("MAN: Bluetooth turned ON")
+                            if (ownerLost) {
+                                Bridge.log("MAN: Bluetooth restored, reconnect skipped — glasses owned by another phone")
+                            }
                             // Auto-reconnect to last known device if we have one
-                            if (defaultWearable.isNotEmpty() && deviceName.isNotEmpty()) {
+                            if (shouldReconnectAfterBluetoothOn()) {
                                 Bridge.log(
                                     "MAN: Bluetooth restored, attempting reconnect to: $deviceName"
                                 )
@@ -2330,6 +2338,9 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         Bridge.log("MAN: RGB LED control: action=$action, color=$color, requestId=$requestId")
         sgc?.sendRgbLedControl(requestId, packageName, action, color, onDurationMs, offDurationMs, count)
     }
+
+    internal fun shouldReconnectAfterBluetoothOn(): Boolean =
+        defaultWearable.isNotEmpty() && deviceName.isNotEmpty() && !ownerLost
 
     fun connectDefault() {
         if (defaultWearable.isEmpty()) {

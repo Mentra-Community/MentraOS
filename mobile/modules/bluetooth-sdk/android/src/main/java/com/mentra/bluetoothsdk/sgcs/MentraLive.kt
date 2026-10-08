@@ -2021,6 +2021,8 @@ class MentraLive : SGCManager() {
     private fun standDownAfterOwnerLoss(reason: String) {
         Bridge.log("LIVE: Owner loss ($reason) — stopping reconnect, keeping saved glasses")
         destroy()
+        DeviceStore.apply("bluetooth", "mentra_live_owner_lost", true)
+        Bridge.saveSetting("mentra_live_owner_lost", true)
         Bridge.sendTypedMessage("owner_replaced", mapOf("reason" to reason))
     }
 

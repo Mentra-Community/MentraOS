@@ -1801,6 +1801,10 @@ class MentraLive: NSObject, SGCManager {
         pairingYieldEndWorkItem?.cancel()
         pairingYieldEndWorkItem = nil
         destroy()
+        Task { @MainActor in
+            DeviceStore.shared.apply("bluetooth", "mentra_live_owner_lost", true)
+        }
+        Bridge.saveSetting("mentra_live_owner_lost", true)
         Bridge.sendTypedMessage("owner_replaced", body: ["reason": reason])
     }
 
