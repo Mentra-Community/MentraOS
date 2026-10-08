@@ -337,7 +337,7 @@ export class RoutineWorkService {
   private requirements(work: PortableAuthoringWork): PortableRequirements {
     return portableRequirementsSchema.parse({platform: work.requirements.platform === 'mac' ? 'ios-on-mac' : 'android',
       resources: work.requirements.resources,
-      ...(work.requirements.glasses.length ? {glasses: {models: work.requirements.glasses, capabilities: work.requirements.capabilities}} : {})})
+      ...(work.requirements.glasses.length ? {glasses: {models: work.requirements.glasses, capabilities: work.requirements.resources.find(resource => resource.kind === 'glasses')!.capabilities}} : {})})
   }
   async preparation(jobId: string) {
     const row = await this.inspect(jobId)

@@ -12,7 +12,7 @@ import {authoringWorkSchema} from '../types/routine-work.types';
 const revision = "a".repeat(40);
 function enrollment(): RoutineEnrollment {
   const definition: RoutineEnrollment["definition"] = {id: "no-glasses", minimumRoutineApiVersion: 1, title: "App navigation", purpose: "Check app navigation",
-    platforms: ["ios-on-mac"], entry: "home", account: "lane", requires: [], requirements: ["Dedicated test account"],
+    platforms: ["ios-on-mac"], entry: "home", account: "lane", resourceRequirements: [], requirements: ["Dedicated test account"],
     fixtures: [], steps: [{id: "settings", instruction: "Open Settings", expected: "Settings is visible"}],
     source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision, path: "routines/no-glasses/routine.ts"}};
   return {routineId: definition.id, platform: "ios-on-mac", definitionRevision: revision,
@@ -23,11 +23,11 @@ test("optional model requirements retain capability IDs without changing phone-o
   const repository: RoutineDefinitionRepository = {async enroll() {}, async current() {return [];}, async overview() {return this.current();}, async getCurrent() {return null;}, async getExact() {return null;}};
   const service = new RoutineDefinitionService(repository), original = enrollment();
   expect((await service.enroll(original)).definition).not.toHaveProperty("glasses");
-  const definition: RoutineEnrollment["definition"] = {...original.definition, glasses: {models: ["mentra-live"]}, requires: ["camera"], execution: {resourceKinds: ["app", "glasses", "recorder"]}};
+  const definition: RoutineEnrollment["definition"] = {...original.definition, glasses: {models: ["mentra-live"]}, resourceRequirements: [{kind: "app", capabilities: []}, {kind: "glasses", capabilities: ["connection"]}, {kind: "recorder", capabilities: []}], execution: {resourceKinds: ["app", "glasses", "recorder"]}};
   expect((await service.enroll({...original, definition, definitionSha256: requestInputDigest(definition)})).definition)
     .toEqual(definition);
   for (const glasses of [{models: []}, {models: ["mentra-live", "mentra-live"]}, {models: ["Mentra Live"]},
-    {models: ["mentra-live"], capabilities: ["camera"]}]) {
+    {models: ["mentra-live"], capabilities: ["connection"]}]) {
     const changed = {...definition, glasses};
     await expect(service.enroll({...original, definition: changed, definitionSha256: requestInputDigest(changed)})).rejects.toThrow("Invalid routine definition");
   }
@@ -110,7 +110,7 @@ test('omitting verification cannot make the same unmerged candidate SHA ordinary
   const work = authoringWorkSchema.parse({schemaVersion: 1, workId: binding.workId, kind: 'edit', routineId: row.routineId,
     brief: {goal: 'Edit navigation', stepsOrChanges: ['Open settings'], expected: ['Settings visible']},
     source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision}, target: {hostId: 'mini', laneId: 'ios'},
-    requirements: {platform: 'mac', glasses: [], capabilities: [], environment: []},
+    requirements: {platform: 'mac', glasses: [], resources: [{kind: "app", capabilities: []}, {kind: "recorder", capabilities: []}], environment: []},
     build: {kind: 'mac-ci-package', repository: 'Mentra-Community/MentraOS', headSha: 'b'.repeat(40), channel: 'pr', prNumber: 12,
       source: {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 1},
       archive: {name: 'app.zip', url: 'https://example.com/app.zip', size: 10, sha256: 'd'.repeat(64)},

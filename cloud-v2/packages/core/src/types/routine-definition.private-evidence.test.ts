@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test';
-import {publishedRoutineDefinitionSchema} from './routine-definition.types';
+import {publishedRoutineDefinitionSchema, routineEnrollmentSchema} from './routine-definition.types';
 const definition = {
   minimumRoutineApiVersion: 1,
   id: 'data-export',
@@ -8,7 +8,7 @@ const definition = {
   platforms: ['ios-on-mac'],
   entry: 'home',
   account: 'lane',
-  requires: [],
+  resourceRequirements: [],
   requirements: [],
   fixtures: [],
   setup: [{id: 'setup', instruction: 'Prepare', expected: 'Ready'}],
@@ -29,3 +29,18 @@ test('privacy metadata cannot claim missing, lifecycle, reordered or overlapping
     [{startStepId: 'share', endStepId: 'dismiss', reason: 'Private'}, {startStepId: 'dismiss', endStepId: 'home', reason: 'Private'}],
   ]) expect(publishedRoutineDefinitionSchema.safeParse({...definition, privateEvidenceIntervals: intervals}).success).toBe(false);
 });
+
+test('executable resource metadata has one canonical typed shape and cannot omit platform allocation', () => {
+  const full = {...definition, resourceRequirements: [{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]}],
+    execution: {resourceKinds:['app','recorder']}}
+  const enrollment = {routineId:full.id, platform:'ios-on-mac', definitionRevision:full.source.revision,
+    definitionSha256:'a'.repeat(64), definition:full, routineSource:{repository:'Mentra-Community/Mentra-Automated-Testing',
+      commit:full.source.revision,minimumRoutineApiVersion:1,bundle:{url:'https://example.invalid/source.tar.gz',sha256:'b'.repeat(64),size:100}}}
+  expect(routineEnrollmentSchema.safeParse(enrollment).success).toBe(true)
+  expect(publishedRoutineDefinitionSchema.safeParse({...full,requires:[]}).success).toBe(false)
+  const {resourceRequirements:_,...missing}=full
+  expect(publishedRoutineDefinitionSchema.safeParse(missing).success).toBe(false)
+  expect(publishedRoutineDefinitionSchema.safeParse({...full,resourceRequirements:[{kind:'app',capabilities:['camera']},{kind:'recorder',capabilities:[]}]}).success).toBe(false)
+  expect(routineEnrollmentSchema.safeParse({...enrollment,definition:{...full,resourceRequirements:[{kind:'app',capabilities:[]}],execution:{resourceKinds:['app']}}}).success).toBe(false)
+  expect(publishedRoutineDefinitionSchema.safeParse({...full,resourceRequirements:[...full.resourceRequirements,{kind:'fixture-data',capabilities:[]}]}).success).toBe(false)
+})

@@ -3,10 +3,6 @@ import {z} from "zod";
 import {glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
 
-/** Host audio, fixture data and external windows are validated by their lane providers, not physical glasses. */
-export const routineGlassesCapabilities = (requires: readonly string[]) =>
-  requires.filter(capability => capability !== "audio" && capability !== "fixture-data" && capability !== "external-window");
-
 const text = z.string().min(1).max(2000);
 export const routineIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/);
 const id = routineIdentitySchema;
@@ -17,9 +13,16 @@ export const routineGlassesRequirementSchema = z.object({models: z.array(glasses
 const action = z.object({id, instruction: text, expected: text}).strict();
 export const routinePlatformSchema = z.enum(["ios-on-mac", "android"]);
 export const routineResourceKindSchema = z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]);
+export const resourceCapabilityMap = {
+  app: ['relaunch'], phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
+  glasses: ['glasses-ble', 'connection', 'software'], recorder: [],
+  audio: ['speech', 'witness', 'synthesis', 'playback'], browser: ['external-window'],
+  network: ['independent-uplink'], 'fixture-data': [], workspace: [],
+} as const;
 export const routineResourceRequirementSchema = z.object({kind: routineResourceKindSchema,
   capabilities: z.array(routineIdentitySchema).max(30)}).strict().refine(value =>
-    new Set(value.capabilities).size === value.capabilities.length, "Resource capabilities must be unique");
+    new Set(value.capabilities).size === value.capabilities.length && value.capabilities.every(capability =>
+      (resourceCapabilityMap[value.kind] as readonly string[]).includes(capability)), 'Resource capabilities must be unique implemented public operations');
 /** Serialized source definition; executable functions remain in the harness repository. */
 export const publishedRoutineDefinitionSchema = z.object({
   id,
@@ -29,10 +32,9 @@ export const publishedRoutineDefinitionSchema = z.object({
   platforms: z.array(routinePlatformSchema).min(1).max(2),
   entry: z.enum(["home", "sign-in"]),
   account: z.enum(["lane", "none"]),
-  requires: z.array(id).max(30),
   glasses: routineGlassesRequirementSchema.optional(),
   requirements: z.array(text).max(30),
-  resourceRequirements: z.array(routineResourceRequirementSchema).max(9).optional(),
+  resourceRequirements: z.array(routineResourceRequirementSchema).max(9),
   fixtures: z.array(z.object({provider: id, description: text}).strict()).max(30),
   setup: z.array(action).max(500).optional(),
   steps: z.array(action).min(1).max(500),
@@ -43,9 +45,12 @@ export const publishedRoutineDefinitionSchema = z.object({
   source: z.object({repository: z.string().regex(/^[\w-]+\/[\w.-]+$/),
     revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().regex(/^routines\/[\w.-]+\/routine\.ts$/)}).strict(),
 }).strict().superRefine((definition, ctx) => {
-  const resourceKinds = definition.resourceRequirements?.map(value => value.kind) ?? [];
-  if (new Set(resourceKinds).size !== resourceKinds.length || resourceKinds.some(kind => !definition.execution?.resourceKinds.includes(kind)))
+  const resourceKinds = definition.resourceRequirements.map(value => value.kind);
+  if (new Set(resourceKinds).size !== resourceKinds.length || definition.execution && (resourceKinds.length !== definition.execution.resourceKinds.length ||
+    resourceKinds.some(kind => !definition.execution!.resourceKinds.includes(kind))))
     ctx.addIssue({code: "custom", message: "Resource requirements must uniquely name declared execution resources"});
+  if (Boolean(definition.glasses) !== resourceKinds.includes('glasses') || Boolean(definition.fixtures.length) !== resourceKinds.includes('fixture-data'))
+    ctx.addIssue({code: 'custom', message: 'Typed resources must match glasses models and fixture declarations'});
   const actions = [...(definition.setup ?? []), ...definition.steps, ...(definition.teardown ?? [])];
   if (new Set(actions.map(action => action.id)).size !== actions.length)
     ctx.addIssue({code: "custom", message: "Setup, test and teardown action identities must be unique"});
@@ -70,6 +75,9 @@ export const routineEnrollmentSchema = z.object({
   routineSource: routineSourceRefSchema,
   verification: candidateVerificationSchema.optional(),
 }).strict().superRefine((row, ctx) => {
+  const base = ['app', 'recorder', ...(row.platform === 'android' ? ['phone'] : [])]
+  if (row.definition.execution && !base.every(kind => row.definition.resourceRequirements.some(resource => resource.kind === kind)))
+    ctx.addIssue({code: 'custom', message: 'Executable enrollment omits its platform base resources'})
   if (row.routineId !== row.definition.id || row.definitionRevision !== row.definition.source.revision
     || !row.definition.platforms.includes(row.platform))
     ctx.addIssue({code: "custom", message: "Enrollment identity contradicts its definition"});

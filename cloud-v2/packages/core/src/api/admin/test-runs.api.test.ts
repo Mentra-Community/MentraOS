@@ -163,7 +163,7 @@ test("a cancelled request read reconciles late host custody and then its real re
       platforms: ["android"],
       entry: "home",
       account: "lane",
-      requires: [],
+      resourceRequirements: [{kind:"app",capabilities:[]}],
       requirements: [],
       fixtures: [],
       steps: [{id: "check", instruction: "Check", expected: "Checked"}],
