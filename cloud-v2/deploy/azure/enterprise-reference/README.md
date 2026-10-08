@@ -134,6 +134,12 @@ The reference CI deployment reads GitHub variables
 `ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID` and `ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID`;
 its client secret is `teams-graph-client-secret-<client ID>` in the stack's Key
 Vault. Only Runtime references it; neither Core nor the deployment manifest receives it.
+CI deploys with Contributor only, so it cannot grant or revoke Key Vault access.
+To switch the reference stack to another Graph app, an Owner stores the new
+app's secret, runs `scripts/deploy.sh` once with the new client ID (it grants
+Runtime the new secret and, once the switch is live, revokes the old one), and
+then updates `ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID`. Until then CI's deployment
+fails because Runtime cannot read the new app's secret.
 
 ### Custom hostname
 

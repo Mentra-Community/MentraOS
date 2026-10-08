@@ -131,8 +131,8 @@ resource mongo 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
       { name: 'DisableRateLimitingResponses' }
     ]
     consistencyPolicy: { defaultConsistencyLevel: 'Session' }
-    // Point-in-time restore for the last 7 days, at no extra cost; upgrades rely on it.
-    backupPolicy: { type: 'Continuous', continuousModeProperties: { tier: 'Continuous7Days' } }
+    // Azure's periodic backup. Continuous backup is not used: on API for MongoDB
+    // accounts it forbids adding unique indexes, which Core creates at startup.
     // Documented tradeoff: Core reaches Cosmos over the authenticated public
     // endpoint because this reference environment has no VNet. Disabling public
     // access requires a VNet-integrated Container Apps environment plus a Cosmos
