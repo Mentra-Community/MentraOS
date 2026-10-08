@@ -480,6 +480,10 @@ def init(args, directory):
     allowed = set(read_json(ROOT / 'deployment.config.example.json')) | {'subscriptionId'}
     if not isinstance(inputs, dict) or set(inputs) - allowed:
         raise SetupError('Initialization accepts only documented configuration fields; secrets are created in Key Vault.')
+    if any(inputs.get(k) for k in ('teamsGraphClientId', 'teamsGraphOrganizerId', 'teamsGraphTenantId')):
+        # Meeting creation needs its secret in the vault, which exists only after installation.
+        raise SetupError('Leave the teamsGraph settings out of --config; after installation, set up meeting creation '
+                         'with setup.sh configure-teams.')
     placeholders = [k for k, v in inputs.items() if isinstance(v, str) and re.search(r'<[^>]*>', v)]
     if placeholders:
         raise SetupError('Replace the example placeholders in --config: ' + ', '.join(sorted(placeholders)))
@@ -1792,9 +1796,18 @@ def configure_teams(args, directory, config, state, interactive=None):
         if client_id == previous:
             print('  The renewed secret reaches the running service within about 30 minutes, when Container Apps '
                   'refreshes its Key Vault references.')
-    elif not vault_get(config, teams_secret(client_id)):
-        raise SetupError(f'Provide the client secret for Graph app {client_id} (--teams-secret-stdin); '
-                         'Key Vault has no secret saved for that app.')
+    elif not created:
+        saved = vault_get(config, teams_secret(client_id))
+        if not saved:
+            raise SetupError(f'Provide the client secret for Graph app {client_id} (--teams-secret-stdin); '
+                             'Key Vault has no secret saved for that app.')
+        # A saved secret may have expired or been revoked since it was last used.
+        print('  Checking the saved client secret with Microsoft sign-in...')
+        try:
+            check_graph_secret(config, client_id, saved.get('value', ''))
+        except SetupError:
+            raise SetupError(f'The saved client secret for Graph app {client_id} no longer signs in. Add a new one in '
+                             'Entra and provide it with --teams-secret-stdin.') from None
     organizer = getattr(args, 'teams_organizer', None) or (config.get('teamsGraphOrganizerId') or '')
     if not organizer and interactive:
         organizer = ask('Licensed account that hosts meetings for guests (email; Enter to skip)', '', interactive)
