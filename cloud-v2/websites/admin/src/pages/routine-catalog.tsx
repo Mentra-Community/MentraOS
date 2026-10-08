@@ -200,8 +200,22 @@ function RequestCard({request, observing, refreshing, onRefresh}: {request: Fram
   </section>;
 }
 
+export function runFailureSummary(run: RecordedFrameworkRun, outcome: string, evidenceStatus: string) {
+  const phase = outcome === "setup-failed" ? "setup" : outcome === "failed" ? "test" : outcome === "teardown-failed" ? "teardown"
+    : evidenceStatus === "failed" ? "evidence" : null;
+  if (!phase) return null;
+  const failure = run.result.failures.find(item => item.phase === phase);
+  const label = {setup: "Setup", test: "Test", teardown: "Teardown", evidence: "Evidence"}[phase];
+  const message = failure?.message ?? (phase === "teardown" ? run.result.teardown.unavailableResources[0]?.cause : undefined)
+    ?? `${label} failed. No detailed reason was recorded.`;
+  const brief = message.trim().split(/\r?\n/)[0]!.replace(/\s+/g, " ");
+  return {phase, actionId: failure?.actionId, reason: `${label}: ${brief.length > 160 ? `${brief.slice(0, 157)}…` : brief}`,
+    target: failure ? `run-failure-${phase}-0` : `run-phase-${phase}`};
+}
+
 export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: string}) {
   const video = useRef<HTMLVideoElement>(null);
+  const [failureTarget, setFailureTarget] = useState<string | null>(null);
   const pendingOffset = useRef<number | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [selectedStep, setSelectedStep] = useState<string | undefined>(stepId);
@@ -228,6 +242,13 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     } else {pendingOffset.current = null; setSelectedAsset(null);}
   }, [runId, stepId, result.data?.run]);
   useEffect(() => {setStepSearch(""); setSelectedStep(stepId); if (!stepId) {pendingOffset.current = null; setSelectedAsset(null);}}, [runId, stepId]);
+  useEffect(() => {
+    if (!failureTarget) return;
+    const target = document.getElementById(failureTarget);
+    target?.scrollIntoView({block: "center", behavior: "smooth"});
+    target?.focus({preventScroll: true});
+    setFailureTarget(null);
+  }, [failureTarget]);
   if (result.isPending) return <LoadingIndicator label="Loading run" />;
   if (result.error && !result.data) return <p role="alert">Could not load run: {result.error.message}</p>;
   if (result.data.kind === "request") {
@@ -239,6 +260,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     </div>;
   }
   const {run, definition, outcome, uploadsComplete, evidenceStatus} = result.data;
+  const failureSummary = runFailureSummary(run, outcome, evidenceStatus);
   const actualRunId = result.data.kind === "run" ? run.result.runId : runId;
   const recordingAsset = selectedAsset ?? run.recordingAssetId;
   const seekStep = (id: string, location: NonNullable<FrameworkRun["result"]["steps"][number]["recordingLocation"]>) => {
@@ -260,7 +282,12 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     <a className={TESTING_LINK} href={routineHref(run.routineId, run.platform)}>Back to routine</a>
     {result.error && <p role="alert">Run could not refresh: {result.error.message}</p>}
     <section className={PANEL}>
-      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">{definition?.title ?? run.routineId}</h2><HistoryStatus outcome={runDisplayStatus(outcome, evidenceStatus, uploadsComplete)}/></div>
+      <div className="flex flex-wrap items-start justify-between gap-3"><h2 className="text-xl font-semibold">{definition?.title ?? run.routineId}</h2>
+        <div className="max-w-sm space-y-2 sm:text-right"><HistoryStatus outcome={runDisplayStatus(outcome, evidenceStatus, uploadsComplete)}/>
+          {failureSummary && <><p className="text-sm text-[#cf222e]">{failureSummary.reason}</p>
+            <TestingButton onClick={() => {setStepSearch(""); setSelectedStep(failureSummary.actionId); setFailureTarget(failureSummary.target);}}>Go to failure</TestingButton></>}
+        </div>
+      </div>
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-[#747780]">
         <span>{new Date(run.startedAt).toLocaleString()} · {runDuration(run.startedAt, run.finishedAt) ?? "Duration unknown"}</span>
         <span>{run.hostId} / {run.laneId} · {run.platform === "ios-on-mac" ? "iOS on Mac" : run.platform}</span>
@@ -290,7 +317,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         if (video.current && pendingOffset.current !== null) {video.current.currentTime = pendingOffset.current; pendingOffset.current = null;}
       }} /></div>
     </section>}
-    <section aria-label="Execution steps" className={`${PANEL} min-w-0 ${hasRecording ? "order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col" : ""}`}><h3 className="shrink-0 font-semibold">Execution</h3>
+    <section id="run-phase-test" tabIndex={-1} aria-label="Execution steps" className={`${PANEL} min-w-0 ${hasRecording ? "order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col" : ""}`}><h3 className="shrink-0 font-semibold">Execution</h3>
       <label className="mt-3 block shrink-0 text-sm">Search steps<input type="search" className={`mt-1 block ${TESTING_FIELD}`} value={stepSearch} onChange={event => setStepSearch(event.target.value)} placeholder="Instruction, expected result or step ID" /></label>
       <div role="region" aria-label="Execution details" tabIndex={0} className={`mt-2 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 ${hasRecording ? "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>
       {!visibleSteps.length && <p className="mt-3">No steps match your search.</p>}
@@ -306,15 +333,15 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
           </div>
         </li>;
       })}</ol>
-      {run.result.failures.filter(failure => failure.phase === "test").map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
+      {run.result.failures.filter(failure => failure.phase === "test").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
       </div>
     </section>
     </div>
     <LifecyclePanel phase="teardown" actions={run.result.teardown.actions} status={run.result.teardown.ready ? "passed" : "failed"}
       durationMs={run.result.timing.teardownMs} failures={run.result.failures.filter(failure => failure.phase === "teardown")}
       unavailable={run.result.teardown.unavailableResources} />
-    <section className={PANEL}><h3 className="font-semibold">Evidence</h3>
-      {run.result.failures.filter(failure => failure.phase === "evidence").map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
+    <section id="run-phase-evidence" tabIndex={-1} className={PANEL}><h3 className="font-semibold">Evidence</h3>
+      {run.result.failures.filter(failure => failure.phase === "evidence").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
       <ul className="mt-3 space-y-2">{run.assets.map(asset => <li key={asset.id}>{uploadsComplete ? <a className={TESTING_LINK} href={assetHref(asset.id)}>{asset.path}</a> : asset.path} · {asset.kind}</li>)}</ul>
       <p className="mt-4 text-xs">Source revision: <code>{run.definitionRevision}</code></p>
     </section>
@@ -360,7 +387,7 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
       {action.causedBy && <p className="mt-1 text-sm">Caused by: {action.causedBy}</p>}
     </div>
   </li>)}</ol>;
-  return <section aria-label={`${title} details`} className={PANEL}>
+  return <section id={`run-phase-${phase}`} tabIndex={-1} aria-label={`${title} details`} className={PANEL}>
     <h3 className="font-semibold">{title} <StepStatus status={status} /> · {elapsedDuration(durationMs)}</h3>
     {actionId && <p className="mt-2 text-sm">Stopped at: {actionId}</p>}
     {actions === undefined ? <p className="mt-2 text-sm text-[#68746d]">{title} action details were not recorded for this run.</p>
@@ -369,7 +396,7 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
         <summary className="cursor-pointer text-sm font-semibold">{group.stage ? stageLabels[group.stage] : "Stage not recorded"} · {group.actions.length} {group.actions.length === 1 ? "action" : "actions"}</summary>
         {actionList(group.actions, group.start)}
       </details>)}
-    {failures.map((failure, index) => <p role="alert" className="mt-2 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
+    {failures.map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
     {unavailable.map(resource => <p role="alert" className="mt-2 whitespace-pre-wrap" key={resource.resource}>{resource.resource}: {resource.cause}. Next action: {resource.nextAction}</p>)}
   </section>;
 }
