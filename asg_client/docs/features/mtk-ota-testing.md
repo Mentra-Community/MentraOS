@@ -28,6 +28,10 @@ The existing `ota_session.xml` record retains `mtk_restore` with the operation I
 manifest digest, source firmware/boot and selected artifact before download.
 An answered broadcast is not admission or completion proof. Observe that exact
 receipt and native engine/boot/slot state; never repeat an unconfirmed request.
+The foreground OTA service owns the transfer after the broadcast returns. On
+restart, an abandoned pre-install transfer is failed with its original receipt;
+a dispatched same-boot install remains owned until a native terminal result,
+and a changed boot is checked against the selected target before settlement.
 This optional entrypoint needs an ASG build containing it. It does not replace
 Harness installation until that build is published and qualified; installing
 an older ASG first must not silently select another MTK implementation.

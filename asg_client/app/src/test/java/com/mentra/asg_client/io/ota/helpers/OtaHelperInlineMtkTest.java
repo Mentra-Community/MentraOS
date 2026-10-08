@@ -5,8 +5,18 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 import android.content.Context;
+import android.content.Intent;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
+import com.mentra.asg_client.io.ota.services.OtaService;
+import com.mentra.asg_client.receiver.DebugMtkOtaReceiver;
+import com.mentra.asg_client.AsgConstants;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import org.robolectric.Robolectric;
+import static org.robolectric.Shadows.shadowOf;
+import android.app.Application;
+import org.robolectric.util.ReflectionHelpers;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -17,6 +27,27 @@ import org.robolectric.annotation.Config;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class OtaHelperInlineMtkTest {
+    private String manifest() throws Exception {
+        JSONObject full = new JSONObject().put("end_firmware", "20260908.10").put("url", "https://cdn/full.zip").put("sha256", "a".repeat(64)).put("size", 1024);
+        return new JSONObject().put("mtk_full_ota", full).toString();
+    }
+
+    @Test public void receiverOnlyDispatchesBoundedInputToItsForegroundService() throws Exception {
+        Application application = ApplicationProvider.getApplicationContext();
+        String frozen = manifest(), id = "firmware-" + "b".repeat(32);
+        new DebugMtkOtaReceiver().onReceive(application, new Intent(DebugMtkOtaReceiver.ACTION_DEBUG_MTK_OTA)
+                .putExtra(AsgConstants.DEBUG_MTK_OTA_MANIFEST_EXTRA, frozen)
+                .putExtra(AsgConstants.DEBUG_MTK_OTA_ARTIFACT_ID_EXTRA, id));
+        Intent worker = shadowOf(application).getNextStartedService();
+        assertThat(worker.getComponent().getClassName()).isEqualTo(OtaService.class.getName());
+        assertThat(worker.getStringExtra(AsgConstants.DEBUG_MTK_OTA_MANIFEST_EXTRA)).isEqualTo(frozen);
+        assertThat(worker.getStringExtra(AsgConstants.DEBUG_MTK_OTA_ARTIFACT_ID_EXTRA)).isEqualTo(id);
+        new DebugMtkOtaReceiver().onReceive(application, new Intent(DebugMtkOtaReceiver.ACTION_DEBUG_MTK_OTA)
+                .putExtra(AsgConstants.DEBUG_MTK_OTA_MANIFEST_EXTRA, "x".repeat(AsgConstants.DEBUG_MTK_OTA_MANIFEST_MAX_BYTES + 1))
+                .putExtra(AsgConstants.DEBUG_MTK_OTA_ARTIFACT_ID_EXTRA, id));
+        assertThat(shadowOf(application).getNextStartedService()).isNull();
+    }
+
     @Test public void inlineRequestUsesSharedDownloadAndRetainsItsOriginalSource() throws Exception {
         Context context = ApplicationProvider.getApplicationContext();
         context.getSharedPreferences("ota_session", Context.MODE_PRIVATE).edit().clear().commit();
@@ -38,5 +69,72 @@ public class OtaHelperInlineMtkTest {
             assertThat(helper.startValidatedDebugMtkFirmware(manifest, id)).isFalse();
             verify(helper, times(1)).downloadMtkFirmware(anyString(), any(), any());
         } finally {helper.cleanup(); original.cleanup(); OtaHelper.setMtkOtaInProgress(false); OtaHelper.clearMtkSessionFlag();}
+    }
+
+    @Test public void foregroundServiceReturnsWhileItsAdmittedDownloadIsBlocked() throws Exception {
+        Context context = ApplicationProvider.getApplicationContext();
+        context.getSharedPreferences("ota_session", Context.MODE_PRIVATE).edit().clear().commit();
+        OtaHelper original = new OtaHelper(context, mock(IBesOtaRegistry.class)), helper = spy(original);
+        CountDownLatch downloading = new CountDownLatch(1), release = new CountDownLatch(1), finished = new CountDownLatch(1);
+        try {
+            doReturn("20260709").when(helper).readMtkSourceVersion();
+            doReturn("11111111-1111-4111-8111-111111111111").when(helper).readMtkSourceBoot();
+            doAnswer(call -> {downloading.countDown(); release.await(5, TimeUnit.SECONDS); return false;})
+                    .when(helper).downloadMtkFirmware(anyString(), any(), any());
+            doAnswer(call -> {try {return call.callRealMethod();} finally {finished.countDown();}})
+                    .when(helper).startValidatedDebugMtkFirmware(anyString(), anyString());
+            OtaService service = Robolectric.buildService(OtaService.class).get();
+            ReflectionHelpers.setField(service, "otaHelper", helper);
+            service.onStartCommand(new Intent(context, OtaService.class).setAction(DebugMtkOtaReceiver.ACTION_DEBUG_MTK_OTA)
+                    .putExtra(AsgConstants.DEBUG_MTK_OTA_MANIFEST_EXTRA, manifest())
+                    .putExtra(AsgConstants.DEBUG_MTK_OTA_ARTIFACT_ID_EXTRA, "firmware-" + "b".repeat(32)), 0, 1);
+            assertThat(downloading.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(finished.getCount()).isEqualTo(1);
+            helper.reconcileInlineMtkAfterRestart(); // Same-process service recreation must not fail its live worker.
+            assertThat(helper.getSessionManager().getStatus()).isEqualTo("in_progress");
+        } finally {
+            release.countDown();
+            assertThat(finished.await(5, TimeUnit.SECONDS)).isTrue();
+            helper.cleanup(); original.cleanup(); OtaHelper.setMtkOtaInProgress(false); OtaHelper.clearMtkSessionFlag();
+        }
+    }
+
+    @Test public void recreatedHelperRefusesUrlWorkBeforeAnyArtifactDownload() throws Exception {
+        Context context = ApplicationProvider.getApplicationContext();
+        context.getSharedPreferences("ota_session", Context.MODE_PRIVATE).edit().clear().commit();
+        OtaHelper original = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        original.getSessionManager().createMtkRestore("firmware-" + "b".repeat(32), "a".repeat(64),
+                new JSONObject(manifest()).getJSONObject("mtk_full_ota"), "20260709", "original-boot");
+        OtaHelper replacement = spy(new OtaHelper(context, mock(IBesOtaRegistry.class)));
+        try {
+            assertThat(replacement.startVersionCheckWithUrl(context, "https://cdn/different.json")).isFalse();
+            verify(replacement, never()).downloadMtkFirmware(anyString(), any(), any());
+            assertThat(replacement.getSessionManager().getMtkRestoreReceipt().getString("url")).isEqualTo("https://cdn/full.zip");
+            java.lang.reflect.Method install = OtaHelper.class.getDeclaredMethod("checkAndUpdateMtkFirmware", JSONObject.class, Context.class);
+            install.setAccessible(true);
+            JSONObject different = new JSONObject(manifest()).getJSONObject("mtk_full_ota").put("url", "https://cdn/different.zip");
+            assertThat(install.invoke(replacement, different, context)).isEqualTo(false);
+            verify(replacement, never()).downloadMtkFirmware(anyString(), any(), any());
+        } finally {replacement.getSessionManager().clear(); replacement.cleanup(); original.cleanup();}
+    }
+
+    @Test public void recreatedServiceRetainsNativeInstallAndItsOriginalRebootPolicy() throws Exception {
+        Context context = ApplicationProvider.getApplicationContext();
+        context.getSharedPreferences("ota_session", Context.MODE_PRIVATE).edit().clear().commit();
+        OtaHelper original = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        original.getSessionManager().createMtkRestore("firmware-" + "b".repeat(32), "a".repeat(64),
+                new JSONObject(manifest()).getJSONObject("mtk_full_ota"), "20260709", "11111111-1111-4111-8111-111111111111");
+        original.getSessionManager().markMtkInstallDispatched();
+        OtaHelper replacement = spy(new OtaHelper(context, mock(IBesOtaRegistry.class)));
+        try {
+            doReturn("20260709").when(replacement).readMtkSourceVersion();
+            doReturn("11111111-1111-4111-8111-111111111111").when(replacement).readMtkSourceBoot();
+            replacement.reconcileInlineMtkAfterRestart();
+            assertThat(OtaHelper.isMtkOtaInProgress()).isTrue();
+            assertThat(replacement.startVersionCheckWithUrl(context, "https://cdn/different.json")).isFalse();
+            assertThat(replacement.consumeRebootAfterMtkInstall()).isTrue();
+            assertThat(replacement.consumeRebootAfterMtkInstall()).isFalse();
+            verify(replacement, never()).downloadMtkFirmware(anyString(), any(), any());
+        } finally {replacement.getSessionManager().clear(); replacement.cleanup(); original.cleanup(); OtaHelper.setMtkOtaInProgress(false);}
     }
 }

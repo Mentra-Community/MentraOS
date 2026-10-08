@@ -139,6 +139,7 @@ public class OtaHelper {
     // The manifest URL of the current/last phone-started OTA check. Always phone-supplied:
     // the glasses have no baked default manifest and never originate an OTA decision.
     private volatile String lastVersionJsonUrl = null;
+    private volatile boolean inlineMtkWorkerActive;
 
     /**
      * Set the phone-initiated OTA flag. Used by DebugApkOtaReceiver to force
@@ -609,7 +610,7 @@ public class OtaHelper {
 
         boolean handedToWorker = false;
         try {
-            if (isUpdating || isMtkOtaInProgress || isBesOtaInProgress()) {
+            if (isUpdating || isMtkOtaInProgress || isBesOtaInProgress() || sessionManager.hasActiveMtkRestore()) {
                 Log.i(TAG, "📱 OTA install already active - sending current status");
                 sendOtaStatus();
                 return;
@@ -677,7 +678,7 @@ public class OtaHelper {
             Log.w(TAG, "Version check admission is busy; refusing before worker dispatch");
             return false;
         }
-        if (isUpdating || isMtkOtaInProgress || isBesOtaInProgress()) {
+        if (isUpdating || isMtkOtaInProgress || isBesOtaInProgress() || sessionManager.hasActiveMtkRestore()) {
             Log.w(TAG, "Version check admission blocked by an active OTA install");
             otaAdmissionPermit.release();
             return false;
@@ -723,6 +724,7 @@ public class OtaHelper {
             for (byte value : hash) sha.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
             if (!sessionManager.createMtkRestore(artifactId, sha.toString(), selected, source, boot)) return false;
             admitted = true;
+            inlineMtkWorkerActive = true;
             isPhoneInitiatedOta = true;
             currentUpdateType = "mtk";
             if (!checkAndUpdateMtkFirmware(selected, context) && !"failed".equals(sessionManager.getStatus()))
@@ -732,6 +734,7 @@ public class OtaHelper {
             if (admitted) sessionManager.setFailed("MTK restoration failed: " + error.getClass().getSimpleName());
             throw error;
         } finally {
+            inlineMtkWorkerActive = false;
             isPhoneInitiatedOta = false;
             otaAdmissionPermit.release();
         }
@@ -746,6 +749,20 @@ public class OtaHelper {
                 new FileInputStream("/proc/sys/kernel/random/boot_id"), StandardCharsets.UTF_8))) {
             return reader.readLine();
         }
+    }
+
+    /** Service startup observes the existing receipt; it never repeats an uncertain install. */
+    public void reconcileInlineMtkAfterRestart() {
+        if (inlineMtkWorkerActive || isMtkOtaInProgress) return;
+        try {
+            sessionManager.reconcileMtkRestore(readMtkSourceVersion(), readMtkSourceBoot());
+            JSONObject receipt = sessionManager.getMtkRestoreReceipt();
+            if (sessionManager.hasActiveMtkRestore() && receipt.optBoolean("install_dispatched")) {
+                isMtkOtaInProgress = true;
+                rebootAfterMtkInstall = true;
+                currentUpdateType = "mtk";
+            }
+        } catch (IOException | JSONException error) {Log.w(TAG, "Cannot observe MTK boot for startup settlement", error);}
     }
 
     private void startVersionCheckWithReservedAdmission(
@@ -881,6 +898,7 @@ public class OtaHelper {
     }
 
     private void processAppsSequentially(JSONObject rootJson, Context context) throws Exception {
+        if (sessionManager.hasActiveMtkRestore()) return;
         // Get the apps object from root
         JSONObject apps = rootJson.getJSONObject("apps");
 
@@ -2667,6 +2685,7 @@ public class OtaHelper {
     }
 
     private boolean checkAndUpdateMtkFirmware(JSONObject firmwareInfo, Context context, boolean besUpdateFollows) {
+        if (!sessionManager.ownsMtkArtifact(firmwareInfo)) return false;
         try {
             // Check for mutual exclusion - don't start MTK update if other updates in progress
             if (isUpdating) {
@@ -2773,6 +2792,19 @@ public class OtaHelper {
             final android.os.Handler mtkHandler = new android.os.Handler(android.os.Looper.getMainLooper());
             mtkHandler.postDelayed(() -> {
                 Log.i(TAG, "Starting MTK firmware update from: " + OtaConstants.MTK_FIRMWARE_PATH);
+                try {
+                    if (sessionManager.getMtkRestoreReceipt() != null && !sessionManager.markMtkInstallDispatched()) {
+                        sessionManager.setFailed("MTK installer receipt was not committed");
+                        isMtkOtaInProgress = false;
+                        clearMtkSessionFlag();
+                        return;
+                    }
+                } catch (JSONException error) {
+                    sessionManager.setFailed("MTK installer receipt could not be recorded");
+                    isMtkOtaInProgress = false;
+                    clearMtkSessionFlag();
+                    return;
+                }
                 SystemControllerFactory.get(ctx).installSystemOta(OtaConstants.MTK_FIRMWARE_PATH);
                 Log.i(TAG, "MTK firmware update initiated - system will handle in background");
             }, 1000); // 1 second delay
@@ -3476,6 +3508,10 @@ public class OtaHelper {
             }
             if (isMtkOtaInProgress) {
                 Log.e(TAG, "DEBUG BES install blocked - MTK update in progress");
+                return false;
+            }
+            if (sessionManager.hasActiveMtkRestore()) {
+                deleteRefusedArtifact = false;
                 return false;
             }
             if (!isBatterySufficientForUpdates()) {

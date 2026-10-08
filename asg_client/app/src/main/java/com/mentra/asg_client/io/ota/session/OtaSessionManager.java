@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.SystemClock;
 import android.util.Log;
+import com.mentra.asg_client.io.ota.utils.MtkOtaSelector;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -126,6 +127,42 @@ public class OtaSessionManager {
     /** A privileged observer reads the exact receipt without expiring or consuming it. */
     public synchronized JSONObject getMtkRestoreReceipt() throws JSONException {
         return mMtkRestore == null ? null : new JSONObject(mMtkRestore.toString());
+    }
+
+    /** A retained native operation blocks every other entrypoint before artifact mutation. */
+    public synchronized boolean hasActiveMtkRestore() {
+        return mMtkRestore != null && !"complete".equals(mStatus) && !"failed".equals(mStatus);
+    }
+
+    /** Verify the executing selection, not merely its source version or payload kind. */
+    public synchronized boolean ownsMtkArtifact(JSONObject selected) {
+        if (mMtkRestore == null) return true;
+        return hasActiveMtkRestore()
+                && mMtkRestore.optString("url").equals(selected.optString("url"))
+                && mMtkRestore.optString("sha256").equalsIgnoreCase(selected.optString("sha256"))
+                && mMtkRestore.optString("target_version").equals(selected.optString("end_firmware"))
+                && mMtkRestore.optString("start_firmware").equals(selected.optString("start_firmware"))
+                && mMtkRestore.has("expected_size") == selected.has("size")
+                && (!selected.has("size") || mMtkRestore.optLong("expected_size") == selected.optLong("size"));
+    }
+
+    /** Persist before calling SystemUI; a lost response retains native install custody. */
+    public synchronized boolean markMtkInstallDispatched() throws JSONException {
+        if (!hasActiveMtkRestore()) return false;
+        mMtkRestore.put("install_dispatched", true);
+        return persistImmediately();
+    }
+
+    /** Reconcile process loss without replaying a download or installer command. */
+    public synchronized void reconcileMtkRestore(String version, String boot) {
+        if (!hasActiveMtkRestore()) return;
+        if (!mMtkRestore.optBoolean("install_dispatched")) {
+            setFailed("MTK transfer interrupted before installer dispatch");
+        } else if (boot != null && !boot.equals(mMtkRestore.optString("source_boot_id"))) {
+            if (MtkOtaSelector.isSameVersion(mMtkRestore.optString("target_version"), version)) setComplete();
+            else setFailed("MTK reboot did not establish the selected target");
+        }
+        // Same-boot dispatched installs remain owned until the native terminal event.
     }
 
     public synchronized boolean hasActiveSession() {

@@ -62,6 +62,12 @@ public final class MtkOtaSelector {
         return targetRevision > currentRevision;
     }
 
+    /** Firmware properties and release entries may use the same model prefix differently. */
+    public static boolean isSameVersion(String first, String second) {
+        String normalized = normalize(first);
+        return !normalized.isEmpty() && normalized.equals(normalize(second));
+    }
+
     private static String normalize(String version) {
         if (version == null) return "";
         String trimmed = version.trim();
