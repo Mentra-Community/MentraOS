@@ -1,3 +1,4 @@
+import {LoadingIndicator} from "../components/loading-indicator";
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {runDuration} from "../lib/run-duration";
 import {useQuery} from "@tanstack/react-query";
@@ -71,10 +72,10 @@ export function LaneRestorationPage() {
   return <div className="space-y-5"><div className="flex flex-wrap items-start justify-between gap-3"><div>
     <h2 className="text-xl font-semibold">Lane restoration</h2><details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">About state repair</summary><p className="mt-2">Controller-recorded agent attempts and scheduling decisions. A stopped agent or a request for help is not successful restoration.</p></details>
     <a href="/?systemHealth=1" className="mt-2 inline-block text-sm font-medium text-[#087d50] hover:underline">Back to System health</a></div>
-    <TestingButton className="text-sm" onClick={() => void query.refetch()}>Refresh</TestingButton></div>
+    <TestingButton className="text-sm" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh</TestingButton></div>
     {query.isError ? <p className="text-sm text-[#a64235]">Restoration records could not refresh. Current status is unknown; any displayed history is the last received observation.</p> : null}
     {query.data?.hosts.map(host => <RestorationHost key={host.hostId} host={host} fresh={!query.isError && restorationHostIsFresh(host, now, query.data!.freshForMs)} />)}
-    {!query.data?.hosts.length ? <p className="text-sm text-[#68746d]">{query.isPending ? "Loading restoration records…" : "No controller lane observation is available. Restoration status is unknown."}</p> : null}
+    {!query.data?.hosts.length ? query.isPending ? <LoadingIndicator label="Loading restoration records" /> : <p className="text-sm text-[#68746d]">No controller lane observation is available. Restoration status is unknown.</p> : null}
     {query.data?.truncated ? <p className="text-xs text-[#a64235]">Only the first 32 reporting controllers are shown.</p> : null}
     <details className="text-xs text-[#747780]"><summary className="cursor-pointer">Timing and receipt details</summary><p className="mt-2">Agent elapsed time starts at the recorded invocation. The lane handoff time and its ten-minute alert are separate. Missing start, end or receipt data stays unknown. This page does not start agents, answer questions or resume a lane.</p></details>
   </div>;

@@ -18,7 +18,7 @@ export function TestRunsTabs({children}: {children: ReactNode}) {
           if (next !== null) {event.preventDefault(); setSelected(next); buttons.current[next]?.focus();}
         }}>{label}</button>)}
     </div>
-    {[children, <NativeDispatchPanel key="dispatch"/>, <NativeActivityPanel key="delivery"/>].map((content, index) =>
+    {[children, <NativeDispatchPanel key="dispatch" active={selected === 1}/>, <NativeActivityPanel key="delivery" active={selected === 2}/>].map((content, index) =>
       <div key={index} id={`${id}-panel-${index}`} role="tabpanel" aria-labelledby={`${id}-tab-${index}`} hidden={selected !== index} className="space-y-5">{content}</div>)}
   </div>;
 }

@@ -1,3 +1,4 @@
+import {LoadingIndicator} from "../components/loading-indicator";
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
 import {useState} from "react";
 import {useQuery} from "@tanstack/react-query";
@@ -18,11 +19,11 @@ const deliveryStates: Record<string, {label: string; explanation: string}> = {
   running: {label: "Running", explanation: "The computer reports that this request is running. Its test result is still pending."},
 };
 const readableName = (value: string) => value.replace(/[-_]+/g, " ").replace(/^./, letter => letter.toUpperCase());
-export function NativeActivityPanel() {
-  const query = useQuery({queryKey: ["framework-activity"], queryFn: () => api<{requests: DeliveryRequest[]}>("/api/admin/test-runs/activity"), refetchInterval: 15000});
+export function NativeActivityPanel({active = true}: {active?: boolean} = {}) {
+  const query = useQuery({queryKey: ["framework-activity"], enabled: active, queryFn: () => api<{requests: DeliveryRequest[]}>("/api/admin/test-runs/activity"), refetchInterval: active ? 15000 : false});
   return <section className={TESTING_PANEL}><h2 className="font-semibold">Request delivery</h2>
     <p className="mt-2 text-sm text-[#68746d]">Track requests from the queue to the test computer. These delivery updates are not test results. Refreshes every 15 seconds.</p>
-    {query.isPending && <p role="status" className="mt-4">Loading request delivery…</p>}
+    {query.isPending && <LoadingIndicator label="Loading request delivery" className="mt-4" />}
     {query.error && <p role="alert" className="mt-4">Could not refresh request delivery: {query.error.message} <TestingButton onClick={() => query.refetch()}>Retry</TestingButton></p>}
     <div className="mt-4 space-y-3">{query.data?.requests.map(row => {
       const status = deliveryStates[row.state] ?? {label: "Delivery status unavailable", explanation: "This request has an unrecognized delivery state. Check its request details."};
@@ -73,12 +74,12 @@ export function pickerRequest({requestId, hostId, laneId, routineId, platform, r
 }
 
 /** Freeze the selected publication before Actions assigns a compatible test computer. */
-export function NativeDispatchPanel() {
+export function NativeDispatchPanel({active = true}: {active?: boolean} = {}) {
   const [routine, setRoutine] = useState("");
   const [platform, setPlatform] = useState<"android" | "ios-on-mac">("android");
   const [routineRevision, setRoutineRevision] = useState("");
-  const routines = useQuery({queryKey: ["dispatch-routines", routineRevision], enabled: !routineRevision || /^[a-f0-9]{40}$/.test(routineRevision),
-    queryFn: () => api<{routineRevision: string; routines: {routineId: string}[]}>(`/api/admin/test-routines${routineRevision ? `?revision=${routineRevision}` : ""}`), refetchInterval: 15000});
+  const routines = useQuery({queryKey: ["dispatch-routines", routineRevision], enabled: active && (!routineRevision || /^[a-f0-9]{40}$/.test(routineRevision)),
+    queryFn: () => api<{routineRevision: string; routines: {routineId: string}[]}>(`/api/admin/test-routines${routineRevision ? `?revision=${routineRevision}` : ""}`), refetchInterval: active ? 15000 : false});
   const [channel, setChannel] = useState("dev");
   const [pr, setPr] = useState("");
   const [host, setHost] = useState("");
@@ -89,7 +90,7 @@ export function NativeDispatchPanel() {
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [sending, setSending] = useState(false);
 
-  const builds = useQuery({queryKey: ["picker-builds", inventory], enabled: !!inventory, queryFn: () => api<{builds: TestBuild[]}>(inventory!)});
+  const builds = useQuery({queryKey: ["picker-builds", inventory], enabled: active && !!inventory, queryFn: () => api<{builds: TestBuild[]}>(inventory!)});
   const selected = builds.data?.builds.find(build => buildKey(build) === selection);
   function findBuilds() {
     if (!routineIdentitySchema.safeParse(routine).success) {setMessage("Select a routine."); return;}
@@ -117,18 +118,18 @@ export function NativeDispatchPanel() {
     <label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Platform <select className={TESTING_FIELD} aria-label="Platform" value={platform} disabled={locked} onChange={event => {setPlatform(event.target.value as "android" | "ios-on-mac"); changed();}}><option value="android">Android</option><option value="ios-on-mac">Mac</option></select></label>
     <label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Build channel <select className={TESTING_FIELD} aria-label="Build channel" value={channel} disabled={locked} onChange={event => {setChannel(event.target.value); changed();}}><option value="dev">Dev</option><option value="staging">Staging</option><option value="pr">PR</option></select></label>
     {channel === "pr" && <label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">PR number <input className={TESTING_FIELD} aria-label="PR number" value={pr} disabled={locked} onChange={event => {setPr(event.target.value); changed();}} /></label>}
-    <Button disabled={locked || !routine} onClick={findBuilds}>Find builds</Button></div>
+    <TestingButton busy={builds.isFetching} disabled={locked || !routine} onClick={findBuilds}>Find builds</TestingButton></div>
     <p className="text-sm text-[#68746d]">The request uses latest Harness main when submitted. An available compatible test computer is assigned after preparation.</p>
     <label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Routine revision (optional) <input className={TESTING_FIELD} aria-label="Routine revision" placeholder="Latest main" value={routineRevision} disabled={locked} onChange={event => setRoutineRevision(event.target.value.trim())} /></label>
     {routines.error && <p role="alert">Could not load routines: {routines.error.message}</p>}
-    {builds.isFetching && <p role="status">Finding published builds…</p>}
+    {builds.isFetching && <LoadingIndicator label="Finding published builds" />}
     {builds.error && <p role="alert">Could not find builds: {builds.error.message}</p>}
     {builds.data?.builds.map(build => <TestBuildOption key={buildKey(build)} build={build} checked={selection === buildKey(build)} disabled={locked} onSelect={() => setSelection(buildKey(build))} />)}
     {inventory && builds.data?.builds.length === 0 && <p>No builds found for this selection.</p>}
     <div className="grid gap-3 sm:grid-cols-2"><label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Computer (optional) <input className={TESTING_FIELD} aria-label="Host ID" value={host} disabled={locked} onChange={event => setHost(event.target.value)} /></label>
     <label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Lane (optional) <input className={TESTING_FIELD} aria-label="Lane ID" value={lane} disabled={locked} onChange={event => setLane(event.target.value)} /></label></div>
     <p className="text-sm text-[#68746d]">Leave Computer and Lane blank to use any compatible computer. Set Computer to restrict assignment; set Lane to choose one lane on that computer.</p>
-    <Button disabled={sending || (!submission && !selected)} onClick={submit}>{submission ? "Retry same request" : "Run routine"}</Button>
+    <TestingButton busy={sending} disabled={!submission && !selected} onClick={submit}>{submission ? "Retry same request" : "Run routine"}</TestingButton>
     {submission && <Button disabled={sending} onClick={() => {setSubmission(null); setMessage("");}}>New request</Button>}
     <p role="status">{message}</p>
   </section>;
