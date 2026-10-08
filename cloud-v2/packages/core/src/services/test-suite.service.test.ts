@@ -25,11 +25,12 @@ test("terminal list summaries preserve original verdicts and refuse contradictor
   const plan = {suiteId: suite.suiteId, occurrenceId: "compact-occurrence", startedAt: suite.startedAt, trigger: suite.trigger, members};
   const result = {...plan, expectedCount: 2, finishedAt: "2026-10-07T12:00:00Z", members: members.map((member, index) => ({...member,
     status: index === 0 ? "pass" : "incomplete", publicationComplete: index === 0,
+    ...(index === 1 ? {unavailableReason: "No compatible lane was available", rejectedAt: "2026-10-07T11:30:00Z"} : {}),
     ...(index === 0 ? {runId: member.requestId, preparedLaneId: member.laneId,
       runStartedAt: suite.startedAt, runFinishedAt: "2026-10-07T11:02:00Z"} : {})}))};
   const before = JSON.stringify(result);
   expect(terminalNightlySummary(suite, plan, result)).toMatchObject({outcome: "failed", passed: 1,
-    members: [{status: "pass", publicationComplete: true}, {status: "not-run", publicationComplete: false}]});
+    members: [{status: "pass", publicationComplete: true}, {status: "not-run", publicationComplete: false, unavailableReason: "No compatible lane was available", rejectedAt: "2026-10-07T11:30:00Z"}]});
   expect(JSON.stringify(result)).toBe(before);
   for (const mutate of [
     (r: typeof result) => {r.members[0]!.requestId = "foreign";},

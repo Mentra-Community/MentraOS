@@ -2,6 +2,7 @@ import {testRoutineSource, testFrameworkBinding} from "../../testing/framework-f
 import {expect, spyOn, test} from "bun:test";
 import {Hono} from "hono";
 import {createTestRunAdminApi} from "./test-runs.api";
+import {TestSuiteService} from "../../services/test-suite.service";
 import {TestHistoryService} from "../../services/test-history.service";
 import {LaneRestorationService} from "../../services/lane-restoration.service";
 import {TestHostHealthService} from "../../services/test-host-health.service";
@@ -298,3 +299,27 @@ test('unbound fleet request keeps a stable exact-input URL and shows awaiting ru
   expect(response.status).toBe(200);expect(await response.json()).toMatchObject({kind:'request',request:{requestId:'fleet-pending',state:'awaiting-runner',
     routineId:'new-routine',reason:'Awaiting a compatible testing runner.',build:{headSha:'b'.repeat(40)}}})
 })
+
+
+test("suite summary exposes bounded presentation without reading complete inputs", async () => {
+  const reads = spyOn(TestSuiteService.prototype, "summaries").mockResolvedValue(new Map([["nightly-summary", {suiteId: "nightly-summary", members: []} as never]]));
+  const full = spyOn(TestSuiteService.prototype, "detail").mockRejectedValue(new Error("Full inputs must not load"));
+  try {
+    const response = await createTestRunAdminApi().request("/suites/nightly-summary/summary");
+    expect(response.status).toBe(200); expect(await response.json()).toEqual({suiteId: "nightly-summary", members: []});
+    expect(reads).toHaveBeenCalledTimes(1); expect(reads.mock.calls[0]![0]).toEqual(["nightly-summary"]);
+    expect(reads.mock.calls[0]![1]).toBeGreaterThan(Date.now()); expect(full).not.toHaveBeenCalled();
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  } finally {reads.mockRestore();full.mockRestore();}
+});
+
+test("suite summary preserves missing and invalid-receipt errors", async () => {
+  const reads=spyOn(TestSuiteService.prototype,"summaries");
+  try {
+    reads.mockResolvedValue(new Map());
+    expect((await createTestRunAdminApi().request("/suites/missing/summary")).status).toBe(404);
+    reads.mockResolvedValue(new Map([["invalid",new TestRunError(503,"Receipt differs")]]));
+    const response=await createTestRunAdminApi().request("/suites/invalid/summary");
+    expect(response.status).toBe(503);expect(await response.json()).toEqual({error:"test_run_error",message:"Receipt differs"});
+  } finally {reads.mockRestore();}
+});
