@@ -10,20 +10,12 @@ param cloudImage string
 @description('Existing Azure Container Registry created by bootstrap.bicep.')
 param registryName string
 
+@description('Existing Key Vault created by bootstrap.bicep. It holds refresh-token-pepper, the mentra- and miniapp- JWT key pairs and, when Graph meeting creation is enabled, teams-graph-client-secret.')
+param keyVaultName string
+
 param tenantId string
 param coreApiClientId string
 param mobileClientId string
-
-@secure()
-param refreshTokenPepper string
-@secure()
-param mentraJwtPrivateKey string
-@secure()
-param mentraJwtPublicKey string
-@secure()
-param miniappJwtPrivateKey string
-@secure()
-param miniappJwtPublicKey string
 
 @description('Comma-separated administrator emails for existing Core admin authorization. For an org API key, allowlist api-key@<keyId>.local. This is not a bearer credential.')
 param coreAdminEmails string = ''
@@ -40,9 +32,6 @@ param workspaceCertificateName string = '${runtimeName}-workspace'
 @description('Existing hostname bindings to retain during a migration. Each entry has hostname and certificateName; the managed certificate must already exist in this Container Apps environment.')
 param additionalWorkspaceDomains array = []
 
-@description('Create the AcrPull assignment. Set false for CI after an administrator has bootstrapped it.')
-param manageAcrPullRoleAssignment bool = true
-
 @description('Oldest Mentra App version allowed to use this deployment (SemVer).')
 param clientMinVersion string = '0.0.0'
 
@@ -55,16 +44,15 @@ param environmentName string = 'cae-mentra-enterprise-reference'
 param runtimeName string = 'ca-mentra-enterprise-reference'
 param coreName string = 'ca-mentra-ent-ref-core'
 param mongoAccountName string = take('cosmos-${uniqueString(subscription().id, resourceGroup().id)}', 44)
+@description('Existing identity created by bootstrap.bicep; it can pull from the registry and read Key Vault secrets.')
 param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
 @description('ACS data location approved by the customer, for example United States or Europe.')
 param communicationDataLocation string = 'United States'
 @description('Microsoft Graph tenant for meeting creation. Employee organizers must belong to this tenant.')
 param teamsGraphTenantId string = tenantId
-@description('Graph application with OnlineMeetings.ReadWrite.All and a Teams application access policy.')
+@description('Graph application with OnlineMeetings.ReadWrite.All and a Teams application access policy. Its client secret is the teams-graph-client-secret Key Vault secret.')
 param teamsGraphClientId string = ''
-@secure()
-param teamsGraphClientSecret string = ''
 @description('Licensed organizer object ID used when the caller has no eligible Teams identity.')
 param teamsGraphOrganizerId string = ''
 param approvedSystemMiniapps array = ['com.mentra.settings']
@@ -86,30 +74,21 @@ param supportUrl string = ''
 
 var loginEndpoint = az.environment().authentication.loginEndpoint
 var effectiveClientRecommendedVersion = empty(clientRecommendedVersion) ? clientMinVersion : clientRecommendedVersion
-var acrPullRoleDefinitionId = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions',
-  '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-)
-
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: registryName
 }
 
-resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: pullIdentityName
-  location: location
-  tags: resourceTags
 }
 
-resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (manageAcrPullRoleAssignment) {
-  name: guid(registry.id, pullIdentity.id, acrPullRoleDefinitionId)
-  scope: registry
-  properties: {
-    principalId: pullIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: acrPullRoleDefinitionId
-  }
+resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
 }
+
+// Container Apps read the latest version of each secret with the pull
+// identity; nothing secret passes through deployment parameters.
+var vaultUri = vault.properties.vaultUri
 
 resource communication 'Microsoft.Communication/communicationServices@2023-04-01' = {
   name: communicationName
@@ -307,11 +286,11 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       secrets: [
         { name: 'mongo-url', value: mongoConnectionString }
-        { name: 'refresh-token-pepper', value: refreshTokenPepper }
-        { name: 'mentra-jwt-private-key', value: mentraJwtPrivateKey }
-        { name: 'mentra-jwt-public-key', value: mentraJwtPublicKey }
-        { name: 'miniapp-jwt-private-key', value: miniappJwtPrivateKey }
-        { name: 'miniapp-jwt-public-key', value: miniappJwtPublicKey }
+        { name: 'refresh-token-pepper', keyVaultUrl: '${vaultUri}secrets/refresh-token-pepper', identity: pullIdentity.id }
+        { name: 'mentra-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-private-key', identity: pullIdentity.id }
+        { name: 'mentra-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-public-key', identity: pullIdentity.id }
+        { name: 'miniapp-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-private-key', identity: pullIdentity.id }
+        { name: 'miniapp-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-public-key', identity: pullIdentity.id }
       ]
     }
     template: {
@@ -352,7 +331,6 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
       volumes: [{ name: 'core-attachments', storageType: 'AzureFile', storageName: reportMount.name }]
     }
   }
-  dependsOn: [registryPull]
 }
 
 var additionalWorkspaceBindings = [for domain in additionalWorkspaceDomains: {
@@ -397,7 +375,9 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       secrets: concat([
         { name: 'acs-connection-string', value: communication.listKeys().primaryConnectionString }
-      ], empty(teamsGraphClientSecret) ? [] : [{ name: 'teams-graph-client-secret', value: teamsGraphClientSecret }])
+      ], empty(teamsGraphClientId) ? [] : [
+        { name: 'teams-graph-client-secret', keyVaultUrl: '${vaultUri}secrets/teams-graph-client-secret', identity: pullIdentity.id }
+      ])
     }
     template: {
       containers: [
@@ -441,7 +421,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'TEAMS_GRAPH_TENANT_ID', value: teamsGraphTenantId }
             { name: 'TEAMS_GRAPH_CLIENT_ID', value: teamsGraphClientId }
             { name: 'TEAMS_GRAPH_ORGANIZER_ID', value: teamsGraphOrganizerId }
-            union({ name: 'TEAMS_GRAPH_CLIENT_SECRET' }, empty(teamsGraphClientSecret) ? { value: '' } : { secretRef: 'teams-graph-client-secret' })
+            union({ name: 'TEAMS_GRAPH_CLIENT_SECRET' }, empty(teamsGraphClientId) ? { value: '' } : { secretRef: 'teams-graph-client-secret' })
             { name: 'LOG_STDOUT_JSON', value: 'true' }
             { name: 'SERVICE_NAME', value: 'runtime-enterprise-reference' }
           ]
@@ -455,7 +435,6 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
       scale: { minReplicas: 1, maxReplicas: 1 }
     }
   }
-  dependsOn: [registryPull]
 }
 
 output workspaceOrigin string = workspaceOrigin
@@ -465,3 +444,4 @@ output generatedCoreHostname string = generatedCoreHostname
 output customDomainVerificationId string = environment.properties.customDomainConfiguration.customDomainVerificationId
 output communicationResourceId string = communication.id
 output registryLoginServer string = registry.properties.loginServer
+output keyVaultName string = vault.name

@@ -1,37 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VALIDATE_ONLY=false
-if [[ "${1:-}" == "--validate-only" ]]; then
-  VALIDATE_ONLY=true
-  shift
-fi
+# Deploys the stack, or previews it. Secrets never pass through this script:
+# signing keys are created in Key Vault and the apps read them from there.
+MODE=deploy
+case "${1:-}" in
+  --validate-only) MODE=validate; shift ;;
+  --what-if) MODE=what-if; shift ;;
+esac
 
-if [[ $# -ne 2 ]]; then
-  printf 'Usage: %s [--validate-only] deployment.config.json /secure/path/mentra-private-secrets.json\n' "$0" >&2
+if [[ $# -ne 1 ]]; then
+  printf 'Usage: %s [--validate-only | --what-if] deployment.config.json\n' "$0" >&2
   exit 2
 fi
 
 CONFIG="$1"
-SECRETS="$2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 command -v jq >/dev/null || { printf 'jq is required\n' >&2; exit 1; }
-if [[ "$VALIDATE_ONLY" != true ]]; then
+if [[ "$MODE" != validate ]]; then
   command -v az >/dev/null || { printf 'az is required\n' >&2; exit 1; }
 fi
 [[ -f "$CONFIG" ]] || { printf 'Configuration file not found: %s\n' "$CONFIG" >&2; exit 1; }
-[[ -f "$SECRETS" && ! -L "$SECRETS" ]] || {
-  printf 'Secrets must be a regular, non-symlink file: %s\n' "$SECRETS" >&2
-  exit 1
-}
-SECRET_MODE="$(stat -c '%a' "$SECRETS" 2>/dev/null || stat -f '%Lp' "$SECRETS")"
-[[ "$SECRET_MODE" =~ ^[0-7]{3,4}$ ]] || { printf 'Could not determine secret-file permissions\n' >&2; exit 1; }
-[[ "${SECRET_MODE: -2:1}" == "0" && "${SECRET_MODE: -1}" == "0" ]] || {
-  printf 'Secret file must not be accessible by group or other users: %s (mode %s)\n' "$SECRETS" "$SECRET_MODE" >&2
-  exit 1
-}
 
 # Container App names: lowercase alphanumeric/hyphen, 2-32 characters, start with
 # a letter and end alphanumeric. Miniapp configuration limits mirror the Mentra
@@ -63,6 +54,7 @@ jq -e '
   (.resourceGroup | nonempty) and
   (.location | nonempty) and
   (.registryName | test("^[a-zA-Z0-9]{5,50}$")) and
+  (.keyVaultName | type == "string" and test("^[a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9]$")) and
   (.sourceImage | test("^ghcr\\.io/mentra-community/mentra-cloud@sha256:[0-9a-f]{64}$")) and
   (.sourceRegistryMirror == null or (.sourceRegistryMirror | type == "string")) and
   ((.sourceRegistryMirror // "") | . == "" or test("^[a-z0-9]+\\.azurecr\\.io/[a-z0-9]+([._/-][a-z0-9]+)*$")) and
@@ -81,29 +73,20 @@ jq -e '
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
   ((.coreAdminEmails // "") | type == "string") and
-  (.manageAcrPullRoleAssignment == null or (.manageAcrPullRoleAssignment | type == "boolean")) and
   ((.miniappConfiguration // {}) | miniapp_configuration_map) and
   ($minVersion | semver) and
   ($recommendedVersion | semver) and
   (($recommendedVersion | semver_key) >= ($minVersion | semver_key))
 ' "$CONFIG" >/dev/null || { printf 'Deployment configuration is incomplete or invalid\n' >&2; exit 1; }
 
-jq -e '
-  [.refreshTokenPepper,.mentraJwtPrivateKey,.mentraJwtPublicKey,.miniappJwtPrivateKey,.miniappJwtPublicKey]
-  | all(type == "string" and length > 0)
-' "$SECRETS" >/dev/null || { printf 'Secret file is incomplete or invalid\n' >&2; exit 1; }
+# The fallback organizer only works through the Graph application.
+jq -e '(.teamsGraphOrganizerId // "") == "" or (.teamsGraphClientId // "") != ""' "$CONFIG" >/dev/null || {
+  printf 'teamsGraphOrganizerId requires teamsGraphClientId\n' >&2
+  exit 1
+}
 
-# Graph creation is optional, but partially configured credentials cannot work.
-jq -en --slurpfile config "$CONFIG" --slurpfile secrets "$SECRETS" '
-  ($config[0].teamsGraphClientId // "") as $client |
-  ($secrets[0].teamsGraphClientSecret // "") as $secret |
-  ($config[0].teamsGraphOrganizerId // "") as $organizer |
-  ($secret | type == "string") and
-  (if $client == "" then $secret == "" and $organizer == "" else ($secret | length > 0) end)
-' >/dev/null || { printf 'Graph creation requires both teamsGraphClientId and secret teamsGraphClientSecret; the fallback organizer also requires these credentials\n' >&2; exit 1; }
-
-if [[ "$VALIDATE_ONLY" == true ]]; then
-  printf 'Mentra Private Deployment configuration and secret file passed local validation.\n'
+if [[ "$MODE" == validate ]]; then
+  printf 'Mentra Private Deployment configuration passed local validation.\n'
   exit 0
 fi
 
@@ -117,43 +100,44 @@ if [[ -n "$SOURCE_MIRROR" ]]; then
   SOURCE_IMAGE="$SOURCE_MIRROR@${SOURCE_IMAGE##*@}"
 fi
 RELEASE_TAG="$(jq -r .releaseTag "$CONFIG")"
+KEY_VAULT="$(jq -r .keyVaultName "$CONFIG")"
+CORE_NAME="$(jq -r .coreName "$CONFIG")"
+PULL_IDENTITY="$(jq -r .pullIdentityName "$CONFIG")"
 
 # Wizard calls are bound to an explicit subscription without changing az defaults.
 if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
   az() { command az "$@" --subscription "$MENTRA_SUBSCRIPTION_ID"; }
 fi
 az account show --output none
-# The wizard creates and checks its owned resource group before invoking this
-# legacy wrapper. Keep the standalone deploy.sh interface for existing operators.
-if [[ "${MENTRA_GROUP_PREPARED:-false}" != true ]]; then
-  az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+# Whoever runs setup gets Key Vault Secrets Officer on this deployment's vault,
+# so a later administrator can resume or upgrade without extra steps. The oid
+# claim of a token for this subscription is the caller's object ID in the
+# deployment tenant, for users, guests and service principals alike.
+OPERATOR_ID="${MENTRA_OPERATOR_OBJECT_ID:-}"
+OPERATOR_TYPE="${MENTRA_OPERATOR_TYPE:-User}"
+if [[ -z "$OPERATOR_ID" ]]; then
+  CLAIMS="$(az account get-access-token --query accessToken --output tsv | jq -R '
+    split(".")[1] | gsub("-"; "+") | gsub("_"; "/") | . + ("=" * ((4 - length % 4) % 4)) | @base64d | fromjson')"
+  OPERATOR_ID="$(jq -r '.oid // ""' <<<"$CLAIMS")"
+  [[ "$(jq -r '.idtyp // ""' <<<"$CLAIMS")" == app ]] && OPERATOR_TYPE=ServicePrincipal
 fi
-az deployment group create \
-  --name "$DEPLOYMENT_NAME-bootstrap" \
-  --resource-group "$RESOURCE_GROUP" \
-  --template-file "$TEMPLATE_DIR/bootstrap.bicep" \
-  --parameters registryName="$REGISTRY_NAME" resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")" \
-  --query properties.provisioningState \
-  --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
-
-# The helper reports progress on stderr and prints only the digest-pinned
-# reference on stdout; tail keeps the last line in case az adds stdout noise.
-IMPORTED_IMAGE="$("$SCRIPT_DIR/import-runtime-image.sh" "$REGISTRY_NAME" "$SOURCE_IMAGE" "$RELEASE_TAG" | tail -n 1)"
-[[ "$IMPORTED_IMAGE" =~ ^[a-zA-Z0-9]+\.azurecr\.io/mentra-cloud-enterprise@sha256:[0-9a-f]{64}$ ]] || {
-  printf 'Import helper returned an unexpected image reference: %s\n' "$IMPORTED_IMAGE" >&2
+[[ "$OPERATOR_ID" =~ ^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$ ]] || {
+  printf 'Could not determine the signed-in Azure identity\n' >&2
   exit 1
 }
+
+BOOTSTRAP_PARAMETERS=(registryName="$REGISTRY_NAME" pullIdentityName="$PULL_IDENTITY" keyVaultName="$KEY_VAULT"
+  operatorPrincipalId="$OPERATOR_ID" operatorPrincipalType="$OPERATOR_TYPE" resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")")
 
 umask 077
 PARAMETERS="$(mktemp "${TMPDIR:-/tmp}/mentra-private-parameters.XXXXXX")"
 trap 'rm -f "$PARAMETERS"' EXIT
 
+write_parameters() {
 jq -n \
   --slurpfile config "$CONFIG" \
-  --slurpfile secrets "$SECRETS" \
-  --arg cloudImage "$IMPORTED_IMAGE" '
+  --arg cloudImage "$1" '
   ($config[0]) as $c |
-  ($secrets[0]) as $s |
   {
     "$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
     contentVersion:"1.0.0.0",
@@ -161,16 +145,11 @@ jq -n \
       location:{value:$c.location},
       cloudImage:{value:$cloudImage},
       registryName:{value:$c.registryName},
+      keyVaultName:{value:$c.keyVaultName},
       resourceTags:{value:($c.resourceTags // {})},
-      manageAcrPullRoleAssignment:{value:(if $c.manageAcrPullRoleAssignment == null then true else $c.manageAcrPullRoleAssignment end)},
       tenantId:{value:$c.tenantId},
       coreApiClientId:{value:$c.coreApiClientId},
       mobileClientId:{value:$c.mobileClientId},
-      refreshTokenPepper:{value:$s.refreshTokenPepper},
-      mentraJwtPrivateKey:{value:$s.mentraJwtPrivateKey},
-      mentraJwtPublicKey:{value:$s.mentraJwtPublicKey},
-      miniappJwtPrivateKey:{value:$s.miniappJwtPrivateKey},
-      miniappJwtPublicKey:{value:$s.miniappJwtPublicKey},
       coreAdminEmails:{value:($c.coreAdminEmails // "")},
       workspaceHostname:{value:($c.workspaceHostname // "")},
       workspaceCertificateName:{value:($c.workspaceCertificateName // (($c.runtimeName // "ca-mentra-enterprise-reference") + "-workspace"))},
@@ -187,7 +166,6 @@ jq -n \
       communicationDataLocation:{value:($c.communicationDataLocation // "United States")},
       teamsGraphTenantId:{value:(if ($c.teamsGraphTenantId // "") == "" then $c.tenantId else $c.teamsGraphTenantId end)},
       teamsGraphClientId:{value:($c.teamsGraphClientId // "")},
-      teamsGraphClientSecret:{value:($s.teamsGraphClientSecret // "")},
       teamsGraphOrganizerId:{value:($c.teamsGraphOrganizerId // "")},
       approvedSystemMiniapps:{value:($c.approvedSystemMiniapps // ["com.mentra.settings"])},
       managedMiniapps:{value:($c.managedMiniapps // [])},
@@ -203,6 +181,49 @@ jq -n \
   } | if ($c.mongoAccountName // "") != "" then .parameters.mongoAccountName={value:$c.mongoAccountName} else . end
     | if ($c.reportStorageAccountName // "") != "" then .parameters.reportStorageAccountName={value:$c.reportStorageAccountName} else . end
   ' > "$PARAMETERS"
+}
+
+if [[ "$MODE" == what-if ]]; then
+  # Azure's own preview of both templates. Nothing is created or changed; the
+  # image reference is the one the import will produce for this digest.
+  write_parameters "$REGISTRY_NAME.azurecr.io/mentra-cloud-enterprise@${SOURCE_IMAGE##*@}"
+  BOOTSTRAP_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME-bootstrap" --resource-group "$RESOURCE_GROUP" \
+    --template-file "$TEMPLATE_DIR/bootstrap.bicep" --parameters "${BOOTSTRAP_PARAMETERS[@]}" --no-pretty-print --output json)"
+  MAIN_PREVIEW="$(az deployment group what-if --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
+    --template-file "$TEMPLATE_DIR/main.bicep" --parameters "@$PARAMETERS" --no-pretty-print --output json)"
+  jq -n --argjson bootstrap "$BOOTSTRAP_PREVIEW" --argjson main "$MAIN_PREVIEW" '{bootstrap:$bootstrap,main:$main}'
+  exit 0
+fi
+
+# The wizard creates and checks its owned resource group before invoking this
+# script. Keep the standalone deploy.sh interface for existing operators.
+if [[ "${MENTRA_GROUP_PREPARED:-false}" != true ]]; then
+  az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+fi
+az deployment group create \
+  --name "$DEPLOYMENT_NAME-bootstrap" \
+  --resource-group "$RESOURCE_GROUP" \
+  --template-file "$TEMPLATE_DIR/bootstrap.bicep" \
+  --parameters "${BOOTSTRAP_PARAMETERS[@]}" \
+  --query properties.provisioningState \
+  --output tsv | grep --fixed-strings --line-regexp Succeeded >/dev/null
+
+"$SCRIPT_DIR/ensure-vault-secrets.sh" "$KEY_VAULT" "$RESOURCE_GROUP" "$CORE_NAME"
+if [[ -n "$(jq -r '.teamsGraphClientId // ""' "$CONFIG")" ]]; then
+  az keyvault secret show --vault-name "$KEY_VAULT" --name teams-graph-client-secret --query id --output none 2>/dev/null || {
+    printf 'Graph meeting creation is configured, but Key Vault %s has no teams-graph-client-secret. Run setup.sh configure-teams.\n' "$KEY_VAULT" >&2
+    exit 1
+  }
+fi
+
+# The helper reports progress on stderr and prints only the digest-pinned
+# reference on stdout; tail keeps the last line in case az adds stdout noise.
+IMPORTED_IMAGE="$("$SCRIPT_DIR/import-runtime-image.sh" "$REGISTRY_NAME" "$SOURCE_IMAGE" "$RELEASE_TAG" | tail -n 1)"
+[[ "$IMPORTED_IMAGE" =~ ^[a-zA-Z0-9]+\.azurecr\.io/mentra-cloud-enterprise@sha256:[0-9a-f]{64}$ ]] || {
+  printf 'Import helper returned an unexpected image reference: %s\n' "$IMPORTED_IMAGE" >&2
+  exit 1
+}
+write_parameters "$IMPORTED_IMAGE"
 
 # Azure requires an unbound hostname on the app before issuing its managed
 # certificate. A fresh custom-domain install first deploys on the generated
@@ -250,7 +271,6 @@ az deployment group create \
 
 # ARM completion precedes Container Apps readiness. Wait for the deployed Core
 # revision before probing its report token or claiming the storage upgrade works.
-CORE_NAME="$(jq -r .coreName "$CONFIG")"
 CORE_READY=false
 for attempt in $(seq 1 30); do
   if az containerapp show --name "$CORE_NAME" --resource-group "$RESOURCE_GROUP" --output json | jq -e '
