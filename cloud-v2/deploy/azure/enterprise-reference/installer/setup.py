@@ -263,6 +263,14 @@ def publish_backup(destination, contents):
             os.unlink(name)
 
 
+def check_upgradable(config):
+    # Pre-release installers kept the signing keys on disk and have no Key Vault
+    # or per-app identities. Their deployments are reinstalled, not upgraded.
+    if not all(config.get(k) for k in ('keyVaultName', 'coreIdentityName', 'runtimeIdentityName')):
+        raise SetupError('This deployment was made by a pre-release installer that kept its keys outside Key Vault, '
+                         'and it cannot be upgraded. Install a new deployment with this package instead.')
+
+
 def select_upgrade(args, directory):
     if not args.backup_confirmed:
         raise SetupError('Upgrade requires --backup-confirmed after backing up the database, attachments and original signing material')
@@ -278,6 +286,7 @@ def select_upgrade(args, directory):
     previous = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(previous)
     config, state, old_release = previous.load(directory)
+    check_upgradable(config)
     if state['phase'] != 'infrastructure_verified':
         raise SetupError('Verify the current deployment with its original package before upgrade')
     target = check_release()
@@ -1527,6 +1536,7 @@ def upgrade_command(args, directory, interactive=None):
             raise SetupError(f"The current deployment has not finished setup ({state['phase']}). "
                              f'Finish it with {previous / "setup.sh"} first, then upgrade.')
         config = read_json(directory / 'deployment.config.json')
+        check_upgradable(config)
         upcoming = dict(config, **{k: target[k] for k in ('sourceImage', 'releaseTag', 'managedMiniapps', 'clientMinVersion')},
                         clientRecommendedVersion=target['clientMinVersion'])
         try:

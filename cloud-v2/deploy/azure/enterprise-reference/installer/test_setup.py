@@ -33,6 +33,7 @@ class InstallerTests(unittest.TestCase):
         self.config = dict(subscriptionId=SUB, tenantId=TENANT, resourceGroup='rg-test',
                            runtimeName='ca-test', workspaceHostname='', coreApiClientId=SUB,
                            mobileClientId=TENANT, deploymentId='test', resourceTags={'mentraInstallerOwner': 'owner'},
+                           keyVaultName='kvtest1234', coreIdentityName='id-test-core', runtimeIdentityName='id-test-runtime',
                            **RELEASE)
         self.state = dict(schemaVersion=1, deploymentId='test', releaseHash='release-hash',
                           binding={k: self.config.get(k) for k in setup.BINDING_KEYS}, owner='owner',
