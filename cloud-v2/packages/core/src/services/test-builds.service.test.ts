@@ -272,3 +272,12 @@ test("retained finalizer rows pin their original attempt and CDN failures do not
  f.rows.set(f.planUrl, new Response("unavailable", {status: 503}));
  await expect(f.gateway.latestDev("ios-on-mac", before)).rejects.toThrow("Build metadata unavailable (HTTP 503)");
 });
+
+test('PR supersession requires authenticated changed head; unavailable metadata does not cancel', async () => {
+  const f = fixture();
+  expect(await f.gateway.isPrSuperseded(12, HEAD)).toBe(false);
+  f.rows.set(`${API}/pulls/12`, {...pr, head: {...pr.head, sha: 'f'.repeat(40)}});
+  expect(await f.gateway.isPrSuperseded(12, HEAD)).toBe(true);
+  f.rows.set(`${API}/pulls/12`, new Response('unavailable', {status: 503}));
+  await expect(f.gateway.isPrSuperseded(12, HEAD)).rejects.toThrow('metadata unavailable');
+});
