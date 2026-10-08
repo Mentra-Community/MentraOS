@@ -5,7 +5,7 @@ import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {RunRerunLinks} from "./test-reruns";
 import {useEffect, useId, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
-import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
+import type {CatalogExample, CatalogHistoryRun, RoutineCatalogCard as CatalogCard, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
 import type {FrameworkRun, RecordedFrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
 import {RoutineSearch, useRoutineSearch, matchesRoutineSearch, hasRoutineFilters, type RoutineSearchFilters, type SearchableRoutine} from "../components/routine-search";
@@ -13,11 +13,12 @@ import {RecordingVideo} from "../components/recording-video";
 import {Switch} from "../components/ui/switch";
 import {TestHistoryTable} from "../components/test-history-table";
 import {testRunLocation} from "../lib/test-run-links";
-import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
+import type {RoutineEnrollment, RoutineCardDefinition} from "../../../../packages/core/src/types/routine-definition.types";
 import type {FrameworkRequestDisplay} from "../../../../packages/core/src/types/framework-request.types";
 
 type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
 type Detail = CatalogRow & {history: CatalogHistoryRun[]; nextCursor: string | null};
+type CardRow = RoutineCardDefinition & Pick<CatalogRow, 'example' | 'latestAttempt' | 'nightlyEnabled'>;
 const PANEL = TESTING_PANEL;
 export function routineHref(id: string, platform: string) {
   return `/?routineCatalog=1&routine=${encodeURIComponent(id)}&platform=${encodeURIComponent(platform)}`;
@@ -31,16 +32,16 @@ export function RoutineCatalogPage() {
   return id && platform ? <RoutineDetailPage id={id} platform={platform} /> : <RoutineCatalogList />;
 }
 
-function searchableRoutine(routine: RoutineEnrollment): SearchableRoutine {
+function searchableRoutine(routine: RoutineCardDefinition): SearchableRoutine {
   return {title: routine.definition.title, purpose: routine.definition.purpose, platform: routine.platform, glassesModels: routine.definition.glasses?.models ?? []};
 }
-export function matchesCatalogSearch(routine: RoutineEnrollment, search: string, platform: string, glasses: string) {
+export function matchesCatalogSearch(routine: RoutineCardDefinition, search: string, platform: string, glasses: string) {
   return matchesRoutineSearch(searchableRoutine(routine), {search, platform, glasses});
 }
-function useSearchCatalog() {
-  return useQuery({queryKey: ["routine-catalog"], queryFn: () => api<{routines: CatalogRow[]}>("/api/admin/routine-catalog"), refetchInterval: 15000});
-}
-function runSearchMetadata(run: {routineId: string; platform: string}, routines: RoutineEnrollment[]): SearchableRoutine {
+export const routineCatalogOverviewQuery = {queryKey: ["routine-catalog"],
+  queryFn: () => api<{routines: CatalogCard[]}>("/api/admin/routine-catalog/overview"), refetchInterval: 15000};
+function useSearchCatalog() {return useQuery(routineCatalogOverviewQuery);}
+function runSearchMetadata(run: {routineId: string; platform: string}, routines: RoutineCardDefinition[]): SearchableRoutine {
   const routine = routines.find(row => row.routineId === run.routineId && row.platform === run.platform);
   return routine ? searchableRoutine(routine) : {title: run.routineId, platform: run.platform};
 }
@@ -52,7 +53,7 @@ export function matchesBuildSearch(build: {headSha: string; prNumber?: number; r
     || !!pr && build.prNumber !== undefined && Number(pr[1]) === build.prNumber
     || /^[a-f0-9]{4,40}$/.test(text) && build.headSha.toLowerCase().startsWith(text);
 }
-export function matchesHistorySearch(entry: TestHistoryEntry, routines: RoutineEnrollment[], filters: RoutineSearchFilters) {
+export function matchesHistorySearch(entry: TestHistoryEntry, routines: RoutineCardDefinition[], filters: RoutineSearchFilters) {
   if (!hasRoutineFilters(filters)) return true;
   if (entry.kind === "unavailable") return false;
   const buildMatch = matchesBuildSearch(entry.build, filters.search);
@@ -79,14 +80,14 @@ export function RoutineCatalogList() {
   </div>;
 }
 
-function EditableRoutineCatalogCard({routine}: {routine: CatalogRow}) {
+function EditableRoutineCatalogCard({routine}: {routine: CardRow}) {
   const client = useQueryClient();
   const [saving, setSaving] = useState(false), [error, setError] = useState<string | null>(null);
   const update = async (nightlyEnabled: boolean) => {
     setSaving(true); setError(null);
     try {
       await api(`/api/admin/routines/${encodeURIComponent(routine.routineId)}/platforms/${encodeURIComponent(routine.platform)}/preferences`, {method: "PATCH", body: {nightlyEnabled}});
-      client.setQueryData<{routines: CatalogRow[]}>(["routine-catalog"], current => current && ({routines: current.routines.map(row => row.routineId === routine.routineId && row.platform === routine.platform ? {...row, nightlyEnabled} : row)}));
+      client.setQueryData<{routines: CatalogCard[]}>(["routine-catalog"], current => current && ({routines: current.routines.map(row => row.routineId === routine.routineId && row.platform === routine.platform ? {...row, nightlyEnabled} : row)}));
       await client.invalidateQueries({queryKey: ["routine-catalog"]});
     } catch (cause) {setError(cause instanceof Error ? cause.message : "Could not save nightly preference.");}
     finally {setSaving(false);}
@@ -94,7 +95,7 @@ function EditableRoutineCatalogCard({routine}: {routine: CatalogRow}) {
   return <RoutineCatalogCard routine={routine} onNightlyChange={update} saving={saving} preferenceError={error} />;
 }
 
-export function RoutineCatalogCard({routine, onNightlyChange, saving = false, preferenceError}: {routine: CatalogRow; onNightlyChange?: (enabled: boolean) => void; saving?: boolean; preferenceError?: string | null}) {
+export function RoutineCatalogCard({routine, onNightlyChange, saving = false, preferenceError}: {routine: CardRow; onNightlyChange?: (enabled: boolean) => void; saving?: boolean; preferenceError?: string | null}) {
   return <article className={PANEL}>
     <p className="text-sm text-[#68746d]">{routine.platform === "android" ? "Android" : "iOS on Mac"}</p>
     <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1"><h3 className="text-lg font-semibold"><a className={TESTING_LINK} href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>

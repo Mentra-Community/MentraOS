@@ -1,5 +1,5 @@
 import {Ban, CheckCircle2, Clock3, FileText, Layers, Loader2, RotateCcw, XCircle} from "lucide-react";
-import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
+import type {RoutineCardDefinition} from "../../../../packages/core/src/types/routine-definition.types";
 import type {TestHistoryEntry} from "../../../../packages/core/src/types/test-history.types";
 import {laneHistoryHref} from "../lib/lane-links";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
@@ -69,7 +69,7 @@ function HistoryLanes({lanes}: {lanes: {hostId: string; laneId: string}[]}) {
     title={`${lane.hostId} / ${lane.laneId}`} className="rounded-md border border-[#d0d7de] bg-[#f6f8fa] px-2 py-0.5 text-xs text-[#57606a] hover:bg-[#eaeef2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#0969da]">{readable(lane.laneId)}</a>)}</div>;
 }
 
-function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: RoutineEnrollment[]; now: number}) {
+function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: RoutineCardDefinition[]; now: number}) {
   if (entry.kind === "unavailable") {
     const suite = entry.sourceKind === "suite";
     const KindIcon = suite ? Layers : FileText;
@@ -112,7 +112,7 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
   </TableRow>;
 }
 
-export function TestHistoryTable({entries, routines, now = Date.now()}: {entries: TestHistoryEntry[]; routines: RoutineEnrollment[]; now?: number}) {
+export function TestHistoryTable({entries, routines, now = Date.now()}: {entries: TestHistoryEntry[]; routines: RoutineCardDefinition[]; now?: number}) {
   return <div className="mt-4 overflow-hidden rounded-lg border border-[#d0d7de]">
     <Table aria-label="Test history" className="text-[#24292f]">
       <TableHeader className="bg-[#f6f8fa]"><TableRow>{["Started", "Name", "Duration", "Lane", "Tested build", "Status"].map(title => <TableHead key={title}>{title}</TableHead>)}</TableRow></TableHeader>

@@ -8,6 +8,7 @@ test("catalog detail routes routine identity and scoped pagination without run-r
   const calls: unknown[] = [];
   class Service extends RoutineCatalogService {
     override async list() {return [];}
+    override async overview() {return [];}
     override async detail(id: string, platform: string, cursor?: string, limit = 25): Promise<any> {
       calls.push({id, platform, cursor, limit});
       if (id === "missing") throw new RoutineCatalogError(404, "not enrolled");
@@ -16,6 +17,10 @@ test("catalog detail routes routine identity and scoped pagination without run-r
   }
   const app = createRoutineCatalogApi(new Service());
   expect(await (await app.request("/")).json()).toEqual({routines: []});
+  const overview = await app.request('/overview');
+  expect(overview.status).toBe(200);
+  expect(await overview.json()).toEqual({routines: []});
+  expect(overview.headers.get('cache-control')).toBe('no-store');
   const response = await app.request("/notes/ios-on-mac?limit=2&cursor=next");
   expect(response.status).toBe(200);
   expect(calls).toEqual([{id: "notes", platform: "ios-on-mac", cursor: "next", limit: 2}]);

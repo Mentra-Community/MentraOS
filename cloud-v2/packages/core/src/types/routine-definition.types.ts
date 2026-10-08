@@ -79,3 +79,13 @@ export const routineEnrollmentSchema = z.object({
     ctx.addIssue({code: 'custom', message: 'Candidate verification source differs from its definition'});
 });
 export type RoutineEnrollment = z.infer<typeof routineEnrollmentSchema>;
+
+/** Card metadata only. Full definitions and source verification belong to detail and dispatch. */
+export const routineCardDefinitionSchema = z.object({
+  routineId: id, platform: routinePlatformSchema, definitionRevision: z.string().regex(/^[a-f0-9]{40}$/),
+  definitionSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  definition: z.object({title: text, purpose: text,
+    glasses: z.object({models: z.array(glassesModelSchema).min(1).max(30)}).strict().optional(),
+  }).strict(),
+}).strict();
+export type RoutineCardDefinition = z.infer<typeof routineCardDefinitionSchema>;

@@ -12,6 +12,7 @@ import {
   routineHref,
   matchesCatalogSearch,
   matchesHistorySearch,
+  routineCatalogOverviewQuery,
   historyOrigin,
   matchesStepSearch,
   recordingOffset,
@@ -640,6 +641,22 @@ test("history always includes reruns and keeps source tabs available", () => {
   expect(html).toContain('role="tablist" aria-label="Dispatch source"');
   expect(html).not.toContain("Show reruns");
   client.clear();
+});
+
+test('card search and links use the compact overview without requiring step or bundle data', () => {
+  const compact = {routineId: routine.routineId, platform: routine.platform, definitionRevision: routine.definitionRevision,
+    definitionSha256: routine.definitionSha256, definition: {title: routine.definition.title, purpose: routine.definition.purpose},
+    example: {runId: 'saved-pass', recordingAssetId: 'recording', definitionRevision: routine.definitionRevision,
+      startedAt: '2026-10-08T14:00:00Z', finishedAt: '2026-10-08T14:01:00Z',
+      build: {repository: 'Mentra-Community/MentraOS', channel: 'dev' as const, headSha: 'a'.repeat(40)}}, latestAttempt: null, nightlyEnabled: false};
+  expect(matchesCatalogSearch(compact, 'find', 'ios-on-mac', 'no-glasses')).toBe(true);
+  const html = renderToStaticMarkup(<RoutineCatalogCard routine={compact}/>);
+  expect(html).toContain('Notes');
+  expect(html).toContain('testRun=saved-pass');
+  expect(html).toContain('routine=notes-phone');
+  expect(html).toContain('role="switch"');
+  expect(html).not.toContain('checked=""');
+  expect(routineCatalogOverviewQuery.queryFn.toString()).toContain('/api/admin/routine-catalog/overview');
 });
 test("history matches a single suite member against all filters and treats missing metadata as unknown", () => {
   const camera = {
