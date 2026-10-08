@@ -39,6 +39,14 @@ const context = {
   eventName: 'pull_request_target',
   ref: 'refs/heads/dev',
 }
+function fleetReceipt(request, selection, bound = true) {
+  const fleetDeadline = '2026-10-08T08:00:00.000Z'
+  const fleetBinding = {jobId: request.workId, requestId: request.workId, hostId: 'mini', laneId: 'android-lane',
+    descriptorRevision: 'f'.repeat(64), actionsRunId: '1', actionsJobId: '2', boundAt: '2026-10-08T05:00:00.000Z'}
+  const work = bound ? {...selection, target: {hostId: fleetBinding.hostId, laneId: fleetBinding.laneId}} : selection
+  return {workId: request.workId, request, work, inputSha256: workDigest(work), fleetSelection: selection, fleetDeadline,
+    fleetInputSha256: workDigest({selection, deadline: fleetDeadline}), ...(bound ? {hostId: fleetBinding.hostId, fleetBinding} : {})}
+}
 function github(comments, pull = pr, getCollaboratorPermissionLevel = async ({username}) => {
   if (username !== 'colleague') throw Object.assign(new Error('not a collaborator'), {status: 404})
   return {data: {permission: 'write', user: {login: username}}}
@@ -133,7 +141,7 @@ test('a lost admission response reconciles the same frozen request without a sec
   const {buildSource, ...fields} = request,
     work = {...fields, build: {kind: 'android-apk'}},
     calls = [],
-    row = {workId: request.workId, hostId: work.target.hostId, inputSha256: workDigest(work), request, work}
+    row = fleetReceipt(request, work)
   const result = await submitRoutineWork({
     token: 'secret',
     request,
@@ -177,6 +185,36 @@ test('a lost admission response reconciles the same frozen request without a sec
     }),
     /digest/,
   )
+})
+
+test('lost replies preserve optional target constraints after a worker binds the same authoring occurrence', async () => {
+  for (const target of [undefined, {hostId: 'mini'}, {hostId: 'mini', laneId: 'android-lane'}]) {
+    const {target: _, ...brief} = input
+    const request = authoringDispatch(
+      {pr, brief: {...brief, source: {repository: input.source.repository}, ...(target ? {target} : {})}},
+      {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 2},
+    )
+    const {buildSource, ...fields} = request
+    const selection = {...fields, source: {...fields.source, revision: 'a'.repeat(40)}, build: {kind: 'android-apk'}}
+    const row = fleetReceipt(request, selection), work = row.work
+    const unbound = fleetReceipt(request, selection, false)
+    assert.equal((await routineWorkApi({token: 'secret', operation: 'submit', request,
+      fetchImpl: async () => Response.json(unbound)})).workId, request.workId)
+    const methods = []
+    const result = await submitRoutineWork({token: 'secret', request, fetchImpl: async (_url, options) => {
+      methods.push(options.method)
+      if (options.method === 'POST') throw new Error('lost reply')
+      return Response.json(row)
+    }})
+    assert.equal(result.workId, request.workId)
+    assert.deepEqual(methods, ['POST', 'GET'])
+    const foreign = {...work, target: {...work.target, hostId: 'foreign'}}
+    await assert.rejects(routineWorkApi({token: 'secret', operation: 'submit', request,
+      fetchImpl: async () => Response.json({...row, hostId: foreign.target.hostId,
+        work: foreign, inputSha256: workDigest(foreign)})}), /bound custody/)
+    await assert.rejects(routineWorkApi({token: 'secret', operation: 'submit', request,
+      fetchImpl: async () => Response.json({...row, fleetInputSha256: '0'.repeat(64)})}), /fleet selection/)
+  }
 })
 
 test('intake failures retain bounded public Core reasons and preserve the original HTTP retry decision', async () => {

@@ -97,13 +97,26 @@ test('recorded outcome does not finish the observer before immutable cleanup dis
   await expect(f.service.complete(selection.requestId,'mini',{...completion,disposition:'clean'})).rejects.toThrow('original');
 });
 
+test('same Actions owner cannot execute again after clean or repair custody completion before a result arrives',async()=>{
+ for(const disposition of ['clean','repair'] as const) {
+  const f=fixture(),prepared=await f.prepare(),input={inputSha256:prepared.inputSha256,laneId:f.lane.id,
+   descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'};
+  const {TestRunError}=await import('./test-result-error');(f.service as any).results={async detail(){throw new TestRunError(404,'result still uploading')}};
+  const first=await f.service.bind(selection.requestId,'mini',input);expect(first.execute).toBe(true);
+  f.accepted('c'.repeat(64));await f.service.complete(selection.requestId,'mini',{inputSha256:'c'.repeat(64),disposition,completedAt:'2026-10-08T00:01:00Z'});
+  const retry=await f.service.bind(selection.requestId,'mini',input);
+  expect(retry.execute).toBe(false);expect(retry.binding).toEqual(first.binding);expect(retry.observation.state).toBe('accepted');
+  expect(retry.observation.terminal).toBe(false);expect(retry.observation.cleanupDisposition).toBe(disposition);
+ }
+});
+
 test('Core descriptor and portable labels preserve Harness contract canonical vectors',()=>{
   const lane={id:'android',platform:'android' as const,resources:[{id:'network',kind:'network' as const,capabilities:['uplink','local']},{id:'app',kind:'app' as const}],
     glasses:[{resourceId:'glasses',deviceId:'physical-id',model:'mentra-live',capabilities:['camera','glasses-ble']}]};
   const requirements={platform:'android' as const,resources:[{kind:'app' as const,capabilities:[]},{kind:'glasses' as const,capabilities:[]},{kind:'network' as const,capabilities:['uplink']}],
     glasses:{models:['mentra-live'],capabilities:['camera']}};
   expect(routineLaneDescriptorRevision({...lane,state:'idle',dispatchMode:'automatic'})).toBe('1125ed39610b4f5e0608a03c004034a81a391de8d918ad084770d853fe5e93ad');
-  expect(routineRequirementLabels(requirements,'mentra-live',{hostId:'mini',laneId:'android'})).toEqual(["mentra-cap-88fd66625b6607cf73ef6514", "mentra-glasses-cap-e1cd3be513538367f4a65804", "mentra-glasses-mentra-live", "mentra-host-0e35b86da19b45127d398a2d", "mentra-lane-79e50f81f24836c05823b540", "mentra-platform-android", "mentra-resource-app", "mentra-resource-glasses", "mentra-resource-network"]);
+  expect(routineRequirementLabels(requirements,'mentra-live',{hostId:'mini',laneId:'android'})).toEqual(["mentra-cap-88fd66625b6607cf73ef6514", "mentra-glasses-8b982bc38a1cd2c23060fc28", "mentra-glasses-cap-e1cd3be513538367f4a65804", "mentra-host-0e35b86da19b45127d398a2d", "mentra-lane-79e50f81f24836c05823b540", "mentra-platform-android", "mentra-resource-app", "mentra-resource-glasses", "mentra-resource-network"]);
 });
 
 test('associated Actions deliveries reconcile the same run without restarting or growing retries',async()=>{

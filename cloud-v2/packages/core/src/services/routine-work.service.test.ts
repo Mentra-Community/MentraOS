@@ -3,6 +3,7 @@ import {RoutineWorkModel} from '../models/routine-work.model'
 import {RoutineWorkService as ActualRoutineWorkService, type RoutineWorkDelivery, type RoutineWorkRepository} from './routine-work.service'
 import {requestInputDigest} from './test-request.service'
 import {routineWorkRequestSchema, routineWorkStatusSchema, authoringWorkSchema, type AuthoringWork} from '../types/routine-work.types'
+import {createRoutineWorkIntakeApi} from '../api/internal/routine-work.api'
 
 
 // Existing status/cursor regression cases operate after the single host binding.
@@ -30,6 +31,36 @@ const input = routineWorkRequestSchema.parse({
   requirements: {platform: 'android', glasses: [], capabilities: [], environment: [], resources:[{kind:"app",capabilities:[]},{kind:"phone",capabilities:[]},{kind:"recorder",capabilities:[]}]},
   origin: {repository: 'Mentra-Community/MentraOS', prNumber: 12, headSha: 'b'.repeat(40)},
   buildSource: {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 2},
+})
+test('invalid portable author fixtures fail intake before any persistence or Actions delivery', async () => {
+  const previous = process.env.TEST_RUN_INGEST_TOKEN, token = 'f'.repeat(40)
+  process.env.TEST_RUN_INGEST_TOKEN = token
+  let touched = 0
+  const unexpected = async (): Promise<never> => {touched++; throw new Error('Invalid intake reached a dependency')}
+  const rows: RoutineWorkRepository = {get: unexpected, insert: unexpected, queued: unexpected, accept: unexpected, updateStatus: unexpected}
+  const service = new ActualRoutineWorkService(rows, {resolve: unexpected}, {get: unexpected}, {publish: unexpected},
+    {resolve: unexpected}, Date.now, {dispatch: unexpected, cancel: unexpected})
+  const app = createRoutineWorkIntakeApi(service)
+  const resources = input.requirements.resources
+  try {
+    for (const requirements of [
+      {...input.requirements, resources: [...resources, resources[0]]},
+      {...input.requirements, glasses: ['mentra-live'], resources},
+      {...input.requirements, resources: [...resources, {kind: 'glasses', capabilities: []}]},
+      {...input.requirements, glasses: ['bad_model'], resources: [...resources, {kind: 'glasses', capabilities: []}]},
+      {...input.requirements, glasses: ['mentra-live', 'mentra-live'], resources: [...resources, {kind: 'glasses', capabilities: []}]},
+      {...input.requirements, resources: resources.filter(resource => resource.kind !== 'recorder')},
+      {...input.requirements, capabilities: ['camera']},
+    ]) {
+      const response = await app.request('/', {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'},
+        body: JSON.stringify({...input, requirements})})
+      expect(response.status).toBe(400)
+    }
+    expect(touched).toBe(0)
+  } finally {
+    if (previous === undefined) delete process.env.TEST_RUN_INGEST_TOKEN
+    else process.env.TEST_RUN_INGEST_TOKEN = previous
+  }
 })
 function fixture(options: {buildHead?: string; noHost?: boolean; notificationFailure?: boolean} = {}) {
   const rows = new Map<string, RoutineWorkDelivery>()

@@ -122,7 +122,7 @@ export function routineRequirementLabels(requirements: PortableRequirements, mod
   return [...new Set([`mentra-platform-${requirements.platform}`,
     ...requirements.resources.flatMap(resource => [`mentra-resource-${resource.kind}`,
       ...resource.capabilities.map(capability => `mentra-cap-${token(`${resource.kind}:${capability}`)}`)]),
-    ...(model ? [`mentra-glasses-${model}`, ...requirements.glasses!.capabilities.map(capability => `mentra-glasses-cap-${token(`${model}:${capability}`)}`)] : []),
+    ...(model ? [`mentra-glasses-${token(model)}`, ...requirements.glasses!.capabilities.map(capability => `mentra-glasses-cap-${token(`${model}:${capability}`)}`)] : []),
     ...(target?.hostId ? [`mentra-host-${token(target.hostId)}`] : []),
     ...(target?.laneId ? [`mentra-lane-${token(`${target.hostId}:${target.laneId}`)}`] : [])])].sort();
 }
@@ -318,7 +318,7 @@ export class RoutineJobService {
   }
   private async bindingProjection(row: StoredRoutineJob, hostId: string, input: z.infer<typeof routineJobBindInputSchema>) {
     const binding = row.fleetBinding!;
-    return {binding, execute: !row.fleetCancellation && this.now() < row.fleetDeadline.getTime() && row.state !== 'terminal' &&
+    return {binding, execute: !row.fleetCancellation && !row.dispatchCompletion && this.now() < row.fleetDeadline.getTime() && row.state !== 'terminal' &&
       binding.hostId === hostId && binding.laneId === input.laneId && binding.actionsJobId === input.actionsJobId && binding.actionsRunId === input.actionsRunId,
       observation: await this.observation(row.requestId)};
   }

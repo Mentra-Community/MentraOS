@@ -70,3 +70,33 @@ test("invalid configuration cannot contact GitHub and key errors never expose ke
     expect(calls).toBe(0);
   }
 });
+
+test("runner credentials request only the runner grant and share the existing refresh with exact expiry", async () => {
+  let now = start, issued = 0;
+  const bodies: unknown[] = [];
+  const app = new TestRunGithubApp({credentials, now: () => now, fetch: async (_url, init) => {
+    issued++; bodies.push(JSON.parse(String(init.body)));
+    return Response.json({token: `runner-${issued}`, expires_at: new Date(now + 3600_000).toISOString()}, {status: 201});
+  }});
+  const initial = {credential: "runner-1", expiresAt: new Date(start + 3600_000).toISOString()};
+  expect(await Promise.all(Array.from({length: 10}, () => app.runnerCredential()))).toEqual(Array(10).fill(initial));
+  expect(bodies).toEqual([{repositories: ["Mentra-Automated-Testing"], permissions: {self_hosted_runners: "write"}}]);
+  expect(await app.token("runner")).toBe("runner-1");
+  now += 58 * 60_000; expect(await app.runnerCredential()).toEqual(initial); expect(issued).toBe(1);
+  now += 60_000;
+  const refreshed = {credential: "runner-2", expiresAt: new Date(now + 3600_000).toISOString()};
+  expect(await Promise.all(Array.from({length: 10}, () => app.runnerCredential()))).toEqual(Array(10).fill(refreshed));
+  expect(issued).toBe(2);
+});
+
+test("runner refresh failure exposes neither the key nor provider credential and recovers on retry", async () => {
+  let calls = 0;
+  const app = new TestRunGithubApp({credentials, now: () => start, fetch: async () => {
+    calls++;
+    return calls === 1 ? Response.json({token: "private-provider-data"}, {status: 403})
+      : Response.json({token: "recovered-runner", expires_at: new Date(start + 3600_000).toISOString()}, {status: 201});
+  }});
+  await expect(app.runnerCredential()).rejects.toThrow("GitHub App installation authentication is unavailable");
+  expect(await app.runnerCredential()).toEqual({credential: "recovered-runner", expiresAt: new Date(start + 3600_000).toISOString()});
+  expect(calls).toBe(2);
+});

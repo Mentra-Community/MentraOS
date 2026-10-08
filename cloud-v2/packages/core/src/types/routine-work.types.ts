@@ -1,7 +1,7 @@
 import {z} from 'zod'
 import {frameworkIdentitySchema} from './framework-request.types'
 import {routineIdentitySchema, routineResourceRequirementSchema} from './routine-definition.types'
-import {routineJobTargetSchema} from './routine-job.types'
+import {routineJobTargetSchema, portableRequirementsSchema} from './routine-job.types'
 import {testBuildSourceSchema} from './test-build.types'
 import {firmwareManifestSchema} from './glasses-software.types'
 
@@ -25,6 +25,17 @@ export const routineWorkRequirementsSchema = z
       .max(20),
   })
   .strict()
+export const routineWorkPortableRequirementsSchema = routineWorkRequirementsSchema
+  .extend({resources: z.array(routineResourceRequirementSchema).min(1).max(9)})
+  .superRefine((value, ctx) => {
+    const requirements = portableRequirementsSchema.safeParse({platform: value.platform === 'mac' ? 'ios-on-mac' : 'android',
+      resources: value.resources,
+      ...(value.glasses.length ? {glasses: {models: value.glasses, capabilities: value.capabilities}} : {})})
+    const baseKinds = ['app', 'recorder', ...(value.platform === 'android' ? ['phone'] : [])]
+    if (!requirements.success || !baseKinds.every(kind => value.resources.some(resource => resource.kind === kind)) ||
+      !value.glasses.length && value.capabilities.length)
+      ctx.addIssue({code: 'custom', message: 'Authoring needs consistent portable fixture requirements'})
+  })
 const fields = {
   schemaVersion: z.literal(1),
   workId: frameworkIdentitySchema,
@@ -88,7 +99,7 @@ export const routineWorkBuildSchema = z
   })
 export const routineWorkRequestSchema = z.object({...fields,
   source: fields.source.partial({revision: true}), target: routineJobTargetSchema.optional(),
-  requirements: routineWorkRequirementsSchema.extend({resources: z.array(routineResourceRequirementSchema).min(1).max(9)}),
+  requirements: routineWorkPortableRequirementsSchema,
   buildSource: testBuildSourceSchema, deadline: z.string().datetime({offset: true}).optional(),
 }).strict()
 export const authoringWorkSchema = z
@@ -100,7 +111,7 @@ export const authoringWorkSchema = z
     'Build platform differs',
   )
 export const portableAuthoringWorkSchema = z.object({...fields, target: routineJobTargetSchema.optional(),
-  requirements: routineWorkRequirementsSchema.extend({resources: z.array(routineResourceRequirementSchema).min(1).max(9)}),
+  requirements: routineWorkPortableRequirementsSchema,
   build: routineWorkBuildSchema,
 }).strict()
 export type PortableAuthoringWork = z.infer<typeof portableAuthoringWorkSchema>

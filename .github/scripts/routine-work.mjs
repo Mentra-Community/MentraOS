@@ -59,8 +59,8 @@ export function parseRoutineWorkBrief(body, kind) {
     'Authoring requires an exact harness revision',
   )
   ensure(
-    value.target === undefined || (typeof value.target === 'object' && value.target && Object.keys(value.target).length > 0 && Object.keys(value.target).every(key => ['hostId', 'laneId'].includes(key)) && Object.values(value.target).every(identity)),
-    'Authoring target must name a host and lane',
+    value.target === undefined || (typeof value.target === 'object' && value.target && identity(value.target.hostId) && Object.keys(value.target).every(key => ['hostId', 'laneId'].includes(key)) && Object.values(value.target).every(identity)),
+    'Authoring target must name a host and optionally its lane',
   )
   ensure(
     (keys(value.requirements, ['platform', 'glasses', 'capabilities', 'environment']) || keys(value.requirements, ['platform', 'glasses', 'capabilities', 'environment', 'resources'])) &&
@@ -271,11 +271,30 @@ export async function routineWorkApi({token, operation, request, workId = reques
     row.inputSha256 === workDigest(row.work) && (row.hostId === undefined || row.hostId === row.work.target?.hostId),
     'Authoring receipt changed its frozen input digest or host',
   )
+  const selection = row.fleetSelection, binding = row.fleetBinding
+  ensure(selection?.workId === workId && /^[a-f0-9]{40}$/.test(selection.source?.revision ?? '') &&
+    typeof row.fleetDeadline === 'string' && Number.isFinite(Date.parse(row.fleetDeadline)) &&
+    row.fleetInputSha256 === workDigest({selection, deadline: row.fleetDeadline}),
+  'Authoring receipt changed its frozen fleet selection')
+  if (binding) {
+    ensure(keys(binding, ['jobId', 'requestId', 'hostId', 'laneId', 'descriptorRevision', 'actionsRunId', 'actionsJobId', 'boundAt']) &&
+      binding.jobId === workId && binding.requestId === workId && identity(binding.hostId) && identity(binding.laneId) &&
+      /^[a-f0-9]{64}$/.test(binding.descriptorRevision) && /^[1-9][0-9]{0,19}$/.test(binding.actionsRunId) &&
+      /^[1-9][0-9]{0,19}$/.test(binding.actionsJobId) && Number.isFinite(Date.parse(binding.boundAt)) &&
+      row.hostId === binding.hostId && isDeepStrictEqual(row.work, {...selection, target: {hostId: binding.hostId, laneId: binding.laneId}}) &&
+      (!selection.target?.hostId || selection.target.hostId === binding.hostId) &&
+      (!selection.target?.laneId || selection.target.laneId === binding.laneId),
+    'Authoring receipt changed its bound custody')
+  } else ensure(row.hostId === undefined && isDeepStrictEqual(row.work, selection), 'Authoring receipt changed its unbound selection')
   if (request) {
     const {buildSource, ...input} = request
     ensure(
       isDeepStrictEqual(row.request, request) &&
-        Object.keys(input).every((key) => key === 'source' ? row.work.source?.repository === input.source.repository && (!input.source.revision || row.work.source.revision === input.source.revision) : isDeepStrictEqual(row.work[key], input[key])),
+        Object.keys(input).every((key) => key === 'source'
+          ? selection.source?.repository === input.source.repository && (!input.source.revision || selection.source.revision === input.source.revision)
+          : key === 'target'
+            ? isDeepStrictEqual(selection.target, input.target)
+            : isDeepStrictEqual(selection[key], input[key])),
       'Authoring receipt changed its original brief/source/target',
     )
   }

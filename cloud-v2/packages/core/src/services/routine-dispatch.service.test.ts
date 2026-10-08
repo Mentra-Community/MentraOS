@@ -71,6 +71,7 @@ test('explicit source override and framework floor remain separate and immutable
 test('existing exact enrollment is optional warm cache and frozen historical app reuse is strict',async()=>{
   const f=fixture(),definition=f.definition();f.definitions.set(definition.definitionRevision,definition);
   const queued=await f.service.submit(selected);expect(queued.state).toBe('queued');
+  if(!('input' in queued))throw Error('Fixture expected executable targeted request');
   const input=queued.input as any;expect(recordedRoutineBuild(input.build,source,'android').headSha).toBe('c'.repeat(40));
   const sourceCalls=f.sourceResolves;
   await expect(f.service.prepareIntent({...selected,routineSource:definition.routineSource},{hostId:'mini',laneId:input.laneId,build:input.build})).resolves.toMatchObject({dispatchIntent:{routineRevision:definition.definitionRevision}});expect(f.resolves).toBe(1);expect(f.sourceResolves).toBe(sourceCalls);

@@ -40,7 +40,7 @@ class NightlyRoutineService extends ActualNightlyRoutineService {
       return requests!.cancelPreparationSubmission(id, 'mini', member && {...member.selection, laneId: member.platform},
         new Date((now ?? Date.now)()).toISOString(), value.reason);
     }};
-    super(catalog, builds, requests, repository, results, now, log, sources ?? {async resolve() {return mainRevision;}}, jobs as ConstructorParameters<typeof ActualNightlyRoutineService>[8]);
+    super(catalog, builds, requests, repository, results, now, log, sources ?? {async resolve() {return mainRevision;}}, jobs as unknown as ConstructorParameters<typeof ActualNightlyRoutineService>[8]);
   }
 }
 function preparedRequest(hostId: string, intent: any) {
