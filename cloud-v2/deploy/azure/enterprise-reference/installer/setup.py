@@ -820,10 +820,14 @@ def execute_admin_script(config, current, owner, script):
 # The identity installer/admin-key.ts mints the operator key as; keep both in sync.
 # An operator key works only while its creator's email is in CLOUD_CORE_ADMIN_EMAILS.
 OPERATOR_EMAIL = 'operator@private-cloud.local'
-OPERATOR_KEY = re.compile(r'mak_local_([0-9A-HJKMNP-TV-Z]{26})\.[A-Za-z0-9_-]{43}')
-# Earlier installers allowlisted one synthetic address per msk_ administrator key.
-LEGACY_KEY_EMAIL = re.compile(r'api-key@[0-9A-HJKMNP-TV-Z]{26}\.local')
+# The installer mints mak_ operator keys. An msk_ administrator key from an earlier
+# installer is an operator key too, created by its own address, api-key@<keyId>.local.
+OPERATOR_KEY = re.compile(r'(mak|msk)_local_([0-9A-HJKMNP-TV-Z]{26})\.[A-Za-z0-9_-]{43}')
 CORE_REVISION_TIMEOUT_SECONDS = 900
+
+
+def operator_key_creator(prefix, key_id):
+    return OPERATOR_EMAIL if prefix == 'mak' else 'api-key@' + key_id + '.local'
 
 
 def core_admin_emails(current):
@@ -833,7 +837,17 @@ def core_admin_emails(current):
 
 def admin_allowlist(*values):
     emails = {email.strip() for value in values for email in value.split(',')}
-    return ','.join(sorted(email for email in emails if email and not LEGACY_KEY_EMAIL.fullmatch(email)))
+    return ','.join(sorted(email for email in emails if email))
+
+
+def working_key(credential, allowlist):
+    """The saved key's creator when its creator is allowlisted, so Core accepts it; otherwise None."""
+    key = OPERATOR_KEY.fullmatch(credential.get('value', ''))
+    if not key or credential.get('id') != key.group(2):
+        return None
+    creator = operator_key_creator(key.group(1), key.group(2))
+    listed = {email.strip().lower() for email in allowlist.split(',')}
+    return creator if creator.lower() in listed else None
 
 
 def wait_for_core_allowlist(config, allowlist):
@@ -869,15 +883,17 @@ def bootstrap_admin(args, directory, config, state):
               '--set-env-vars', 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
         current = wait_for_core_allowlist(config, allowlist)
     saved = read_json(output) if output.exists() else {}
-    if not OPERATOR_KEY.fullmatch(saved.get('value', '')):
-        # No key yet, or an msk_ key from an earlier installer that Core no longer accepts.
+    creator = working_key(saved, allowlist)
+    if not creator:
+        # No key yet, or a saved key whose creator is not allowlisted, which Core does not accept.
+        # Core returns the journaled key while it still works, and mints a mak_ key otherwise.
         result = execute_admin_script(config, current, state['owner'], (ROOT / 'installer/admin-key.ts').read_bytes())
         match = re.search(r'MENTRA_ADMIN_BEGIN(.*?)MENTRA_ADMIN_END', result.stdout, re.S)
         if not match:
             raise SetupError('Core admin bootstrap did not return a credential. Check the selected Core revision; raw output withheld.')
         credential = json.loads(match.group(1))
-        key = OPERATOR_KEY.fullmatch(credential.get('value', ''))
-        if not key or credential.get('id') != key.group(1):
+        creator = working_key(credential, allowlist)
+        if not creator:
             raise SetupError('Core returned an invalid administrator credential')
         write_json(output, credential)
         if credential.get('cleanupRequired'):
@@ -891,7 +907,7 @@ def bootstrap_admin(args, directory, config, state):
             raise SetupError('Legacy admin credential cleanup did not complete; retry bootstrap-admin')
     emit(args, {'status': 'admin_key_created', 'file': str(output),
                 'next': 'Store this operator key in your secret manager and use it as MENTRA_ADMIN_TOKEN for report retrieval. '
-                        'It works while ' + OPERATOR_EMAIL + ' stays in coreAdminEmails; replace any earlier msk_ key.'})
+                        'It works while ' + creator + ' stays in coreAdminEmails.'})
 
 
 def configure_entra(args, directory, config, state):

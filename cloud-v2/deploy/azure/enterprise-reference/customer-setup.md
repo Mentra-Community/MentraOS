@@ -134,7 +134,9 @@ that the packaged installer mints after Core is deployed:
 It adds the installer identity `operator@private-cloud.local` to `coreAdminEmails`
 and saves the key as `admin-key.json` in the protected setup directory. Store it
 in the customer's secret manager and use it as `MENTRA_ADMIN_TOKEN`. The key works
-only while `operator@private-cloud.local` stays in `coreAdminEmails`. Browser admin
+only while `operator@private-cloud.local` stays in `coreAdminEmails`. A deployment
+that already has an `msk_local_...` administrator key keeps it while its
+`api-key@<keyId>.local` address stays in `coreAdminEmails`. Browser admin
 sign-in is not available for private deployments. See
 [reports and durable attachments](operations.md#reports-and-durable-attachments).
 

@@ -506,7 +506,8 @@ class InstallerTests(unittest.TestCase):
         with patch.object(setup, 'azure', side_effect=azure), \
              patch.object(setup, 'execute_admin_script', side_effect=execute), patch.object(setup, 'emit'):
             setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
-        allowlist = 'existing@example.com,' + setup.OPERATOR_EMAIL
+        # Every address stays, an earlier installer's api-key@<keyId>.local included.
+        allowlist = legacy + ',existing@example.com,' + setup.OPERATOR_EMAIL
         self.assertEqual(self.config['coreAdminEmails'], allowlist)
         self.assertEqual([c for c in calls if c[:2] == ('containerapp', 'update')][0][-1], 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
         # The key is minted only in the revision that allowlists its creator.
@@ -537,25 +538,57 @@ class InstallerTests(unittest.TestCase):
         self.assertIn(b'fs.unlinkSync', cleanup.call_args.args[3])
         self.assertFalse([c for c in calls if c[:2] == ('containerapp', 'update')])
 
-    def test_admin_bootstrap_replaces_an_earlier_msk_key(self):
+    def test_admin_bootstrap_keeps_an_earlier_msk_key_while_its_address_is_allowlisted(self):
+        legacy = 'api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local'
+        allowlist = legacy + ',' + setup.OPERATOR_EMAIL
+        calls, azure = self.admin_context(allowlist)
+        self.config['coreAdminEmails'] = allowlist
+        self.save()
+        self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
+        saved = dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR', value='msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43)
+        setup.write_json(self.directory / 'admin-key.json', saved)
+        with patch.object(setup, 'azure', side_effect=azure), \
+             patch.object(setup, 'execute_admin_script', return_value=argparse.Namespace(stdout='MENTRA_ADMIN_END')) as cleanup, \
+             patch.object(setup, 'emit') as emit:
+            setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        self.assertIn(b'fs.unlinkSync', cleanup.call_args.args[3])
+        self.assertFalse([c for c in calls if c[:2] == ('containerapp', 'update')])
+        self.assertEqual(setup.read_json(self.directory / 'admin-key.json'), saved)
+        self.assertIn(legacy, emit.call_args.args[1]['next'])
+
+    def test_admin_bootstrap_takes_back_the_journaled_msk_key_core_still_accepts(self):
+        legacy = 'api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local'
+        calls, azure = self.admin_context(legacy + ',' + setup.OPERATOR_EMAIL)
+        credential = dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR', value='msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43,
+                          adminEmail=legacy)
+        returned = argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(credential) + 'MENTRA_ADMIN_END')
+        with patch.object(setup, 'azure', side_effect=azure), \
+             patch.object(setup, 'execute_admin_script', return_value=returned), patch.object(setup, 'emit'):
+            setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        self.assertEqual(setup.read_json(self.directory / 'admin-key.json'), credential)
+
+    def test_admin_bootstrap_replaces_a_saved_key_whose_creator_is_not_allowlisted(self):
         calls, azure = self.admin_context(setup.OPERATOR_EMAIL)
         setup.write_json(self.directory / 'admin-key.json',
-                         dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR', value='msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.secret'))
+                         dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR', value='msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43))
         with patch.object(setup, 'azure', side_effect=azure), \
              patch.object(setup, 'execute_admin_script', return_value=self.minted('01M49R16X16A5RK24C3ZB7J283')), \
              patch.object(setup, 'emit'):
             setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
         self.assertEqual(setup.read_json(self.directory / 'admin-key.json')['id'], '01M49R16X16A5RK24C3ZB7J283')
 
-    def test_admin_bootstrap_rejects_a_credential_that_is_not_an_operator_key(self):
-        calls, azure = self.admin_context(setup.OPERATOR_EMAIL)
-        returned = argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(
-            dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR', value='msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43)) + 'MENTRA_ADMIN_END')
-        with patch.object(setup, 'azure', side_effect=azure), \
-             patch.object(setup, 'execute_admin_script', return_value=returned), patch.object(setup, 'emit'):
-            with self.assertRaises(setup.SetupError):
-                setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
-        self.assertFalse((self.directory / 'admin-key.json').exists())
+    def test_admin_bootstrap_rejects_a_credential_core_would_not_accept(self):
+        for value in ('msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43,  # its address is not allowlisted
+                      'mak_local_01M49R16X16A5RK24C3ZB7J283.' + 'a' * 43,  # another key's id
+                      'mak_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.secret'):
+            calls, azure = self.admin_context(setup.OPERATOR_EMAIL)
+            returned = argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(
+                dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR', value=value)) + 'MENTRA_ADMIN_END')
+            with patch.object(setup, 'azure', side_effect=azure), \
+                 patch.object(setup, 'execute_admin_script', return_value=returned), patch.object(setup, 'emit'):
+                with self.assertRaises(setup.SetupError):
+                    setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+            self.assertFalse((self.directory / 'admin-key.json').exists())
 
     def test_admin_allowlist_update_recovers_interrupted_checkpoint(self):
         self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')

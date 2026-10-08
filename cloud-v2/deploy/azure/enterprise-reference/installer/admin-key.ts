@@ -1,6 +1,7 @@
 // Executed inside the selected Core container by the Azure operator.
-// Mints this deployment's operator key (mak_local_...) through Core's own
-// credential service; no additional HTTP auth surface.
+// Returns this deployment's operator key, minting one (mak_local_...) through
+// Core's own credential service when there is none that works; no additional
+// HTTP auth surface.
 import mongoose from "mongoose";
 import {unlinkSync} from "node:fs";
 import {createHash, randomBytes, createCipheriv, createDecipheriv} from "node:crypto";
@@ -37,12 +38,16 @@ const actor = {
 };
 type Credential = {id: string; value: string; adminEmail?: string; cleanupRequired?: boolean};
 let credential: Credential;
-const TOKEN = /^mak_local_([0-9A-HJKMNP-TV-Z]{26})\.[A-Za-z0-9_-]{43}$/;
+// An msk_local_ key is the administrator key of an earlier installer. Core keeps it
+// as an operator key, created by api-key@<keyId>.local, while that address stays
+// in CLOUD_CORE_ADMIN_EMAILS.
+const TOKEN = /^(mak|msk)_local_([0-9A-HJKMNP-TV-Z]{26})\.[A-Za-z0-9_-]{43}$/;
 async function usable(value: Credential | null): Promise<boolean> {
-  if (!value || TOKEN.exec(value.value)?.[1] !== value.id) return false;
+  if (!value || TOKEN.exec(value.value)?.[2] !== value.id) return false;
   const principal = await validateCredentialToken(value.value);
   return principal?.credentialKind === "organization" && principal.credentialId === value.id;
 }
+const creatorOf = (value: Credential) => value.value.startsWith("msk_") ? `api-key@${value.id}.local` : OPERATOR_EMAIL;
 try {
   if (!actor.isOrganizationAdmin) {
     throw Error(`${OPERATOR_EMAIL} is not in CLOUD_CORE_ADMIN_EMAILS for this Core revision; rerun bootstrap-admin`);
@@ -50,8 +55,10 @@ try {
   await mongoose.connect(process.env.MONGO_URL!, {serverSelectionTimeoutMS: 15_000});
   // Only the encrypted journal persists the credential. It is keyed by the
   // stable owner ID and encrypted with the deployment signing key, so a retry
-  // returns the same key. A journal from an earlier installer holds an msk_
-  // key that this Core no longer accepts; it is replaced, never resurrected.
+  // returns the same key. A journal from an earlier installer holds its msk_
+  // key, which is returned while Core accepts it. A journaled key Core does not
+  // accept (revoked, or its creator no longer allowlisted) is replaced by a new
+  // operator key, never resurrected.
   const encryptionKey = createHash("sha256").update("mentra-installer-admin-v1:")
     .update(owner).update(process.env.MENTRA_JWT_PRIVATE_KEY!).digest();
   const journal = mongoose.connection.collection("installer_admin_credentials");
@@ -84,7 +91,7 @@ try {
     if (saved?.id !== candidate.id) await revokeCredential(actor, candidate.id);
   }
   if (!saved || !(await usable(saved))) throw Error("Saved administrator credential is revoked or inconsistent");
-  credential = {id: saved.id, value: saved.value, adminEmail: OPERATOR_EMAIL};
+  credential = {id: saved.id, value: saved.value, adminEmail: creatorOf(saved)};
   // Keys minted by an interrupted run never reached the journal and nobody holds
   // their secret. Revoke them so only the journaled key remains.
   const orphans = await AccessCredentialModel.find({

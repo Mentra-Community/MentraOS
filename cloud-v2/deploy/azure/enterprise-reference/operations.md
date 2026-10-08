@@ -37,17 +37,23 @@ setup directory (`admin-key.json`) and an encrypted copy in Core's database, so
 a retry returns the same key. Store it in the customer's secret manager. Keep
 `operator@private-cloud.local` in `coreAdminEmails`: removing it disables the
 key. The `.local` address cannot be a verified Entra domain, so no employee
-sign-in can claim it. Earlier installers created `msk_` keys and allowlisted
-`api-key@<keyId>.local` addresses; Core no longer accepts those keys, and
-rerunning `bootstrap-admin` replaces the key and drops those addresses. A
+sign-in can claim it.
+
+A deployment whose administrator key is an `msk_local_...` key keeps that key.
+Core treats it as an operator key with the same scopes, created by its address
+`api-key@<keyId>.local`: it works while that address stays in `coreAdminEmails`,
+and `bootstrap-admin` keeps both the address and the key. Only when the saved key
+no longer works does `bootstrap-admin` mint a `mak_local_...` key in its place. A
 deployment made with `scripts/deploy.sh` mints its key the same way: add
 `operator@private-cloud.local` to `coreAdminEmails`, deploy, and run
 `installer/admin-key.ts` with the deployment's owner ID inside the Core container.
 
 Enterprise Dev CI uses the `ENTERPRISE_DEV_CORE_ADMIN_EMAILS` repository variable
 and `ENTERPRISE_DEV_ADMIN_TOKEN` secret. The workflow always adds
-`operator@private-cloud.local` to that allowlist, and the secret must be an
-operator key minted by `bootstrap-admin` against that deployment. The secret is
+`operator@private-cloud.local` to that allowlist and keeps every address in the
+variable, so the secret, an operator key of that deployment (its `mak_local_...`
+key, or the `msk_local_...` key whose `api-key@<keyId>.local` address the variable
+lists), keeps working. The secret is
 used only to verify the authenticated admin report route; Core validates the key
 against its database. The deployment helper performs the same check when
 `MENTRA_ADMIN_TOKEN` is set. Preserve signing keys and the refresh-token pepper
