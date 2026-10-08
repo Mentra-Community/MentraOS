@@ -1367,6 +1367,20 @@ def create_meetings_app(config):
     return app['appId'], password['secretText'], consent, expires
 
 
+def meetings_consent(config, client_id):
+    # True when the app holds the Graph application permission; None if unknown.
+    try:
+        graph_sp = service_principal(config, GRAPH_APP_ID)
+        role = next(r for r in graph_sp['appRoles'] if r.get('value') == MEETINGS_PERMISSION)
+        app_sp = service_principal(config, client_id, 'id')
+        if not app_sp:
+            return False
+        granted = graph(config, 'GET', f"servicePrincipals/{app_sp['id']}/appRoleAssignments")['value']
+        return any(a.get('appRoleId') == role['id'] and a.get('resourceId') == graph_sp['id'] for a in granted)
+    except (GraphError, StopIteration, TypeError, KeyError):
+        return None
+
+
 def teams_policy_commands(client_id, organizer_id):
     commands = ['Install-Module MicrosoftTeams -Scope CurrentUser -Force   # first time only',
                 'Connect-MicrosoftTeams -UseDeviceAuthentication',
@@ -1413,11 +1427,13 @@ def configure_teams(args, directory, config, state, interactive=None):
                                  ('teamsGraphOrganizerId', organizer)) if config.get(k, '') != v}
     if changes:
         update_configuration(directory, config, state, **changes)
+    if consent is None:
+        consent = meetings_consent(config, client_id)
     rollout = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
     result = {'status': 'meeting_creation_configured' if rollout['status'] == 'infrastructure_verified' else rollout['status'],
-              'graphClientId': client_id, 'adminConsent': 'granted' if consent else 'needed',
+              'graphClientId': client_id, 'adminConsent': {True: 'granted', False: 'needed'}.get(consent, 'unknown'),
               'teamsPolicy': teams_policy_commands(client_id, organizer)}
-    if consent is False or consent is None:
+    if not consent:
         result['consentLink'] = f"https://login.microsoftonline.com/{config['tenantId']}/adminconsent?client_id={client_id}"
     if expires:
         result['secretExpires'] = expires
