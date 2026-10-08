@@ -297,6 +297,44 @@ public class LinkStateMachineTest {
     }
 
     @Test
+    public void srSyvrParsed_uartRxPosSurvivesLaterAdvertisementsAndCopies() {
+        machine.serialReady();
+        machine.srSyvrParsed(
+                new BesCaps(true, true, true, true, BesWireFormat.PROTOCOL_VERSION_V2, 509,
+                        false, false, true));
+        // A later advertisement without the flag (or a notify_cap invalidation) cannot turn
+        // pacing back on mid-session; only a link reset clears negotiated caps.
+        machine.srSyvrParsed(
+                new BesCaps(true, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 0));
+        machine.binaryRelayObserved();
+
+        assertThat(machine.getNegotiatedCaps().uartRxPos).isTrue();
+        assertThat(BesCaps.NONE.uartRxPos).isFalse();
+    }
+
+    @Test
+    public void besFirmwareChanged_dropsCapsUntilTheNewBuildAdvertises() {
+        machine.serialReady();
+        machine.srSyvrParsed(
+                new BesCaps(true, true, true, true, BesWireFormat.PROTOCOL_VERSION_V2, 509,
+                        true, true, true));
+        RecordingListener listener = new RecordingListener();
+        machine.addListener(listener);
+
+        machine.besFirmwareChanged();
+
+        assertThat(machine.getNegotiatedCaps()).isEqualTo(BesCaps.NONE);
+        assertThat(machine.getState()).isEqualTo(LinkState.LINK_PROVEN);
+        assertThat(listener.states).hasSize(2);
+
+        // An older build without the flag stays paced; the new build's own flags return.
+        machine.srSyvrParsed(
+                new BesCaps(true, true, true, true, BesWireFormat.PROTOCOL_VERSION_V2, 509));
+        assertThat(machine.getNegotiatedCaps().uartRxPos).isFalse();
+        assertThat(machine.getNegotiatedCaps().filePayloadV2).isTrue();
+    }
+
+    @Test
     public void srSyvrParsed_withoutBinaryFlag_doesNotTouchProto() {
         machine.serialReady();
         machine.binaryRelayObserved();

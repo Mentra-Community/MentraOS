@@ -434,6 +434,17 @@ public class AsgConstants {
     /** First BES firmware version that implements the {@code cs_baud}/{@code sr_baud} contract. */
     public static final String UART_FAST_BAUD_MIN_BES_VERSION = "17.26.7.5";
 
+    /**
+     * Average MTK→BES UART rate for BLE file frames when BES does not advertise {@code
+     * wire_caps.uart_rx_pos}. That firmware drains its ping-pong RX DMA by counting completion
+     * interrupts; a phone A2DP stream start stalls the interrupt for roughly 30-40 ms, and once a
+     * stall outlasts a 2 KB half the consumer stays out of phase and corrupts every later block.
+     * At this rate a half takes ~58 ms to fill. Bench (Mentra Live, BES 26.10.6.0, A2DP starting
+     * during a CoC photo): unpaced, 85 KB/s and 70 KB/s failed most transfers; 50 KB/s and 35 KB/s
+     * completed 8/8 with no NAKs.
+     */
+    public static final int BES_FILE_UART_PACED_BYTES_PER_SECOND = 35_000;
+
     /** Delay after BES acknowledges {@code cs_baud} before ASG reopens at the fast rate. */
     public static final long UART_BAUD_REOPEN_DELAY_MS = 250;
 
