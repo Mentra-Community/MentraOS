@@ -5,7 +5,7 @@ import {PendingQueueSection} from './pending-queue';
 import type {PendingQueuePage} from '../../../../packages/core/src/types/test-pending-queue.types';
 test('pending queue shows exact compatible lane states, unknown preparation and pagination', () => {
   const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
-  const data: PendingQueuePage = {total:71, observedAt:new Date().toISOString(), nextCursor:'request-50', cancellations:[], cancellationsTruncated:false, items:[
+  const data: PendingQueuePage = {total:71, observedAt:new Date().toISOString(), nextCursor:'request-50', items:[
     {requestId:'request',routineId:'check',state:'awaiting-runner',platform:'android',compatibilityKnown:true,
       build:{channel:'pr',prNumber:698,headSha:'a'.repeat(40)}, platformCandidates:[],compatibleLanes:[
         {hostId:'mini',laneId:'android',platform:'android',glassesModels:['mentra-live'],state:'running',dispatchMode:'automatic',fresh:true},
@@ -18,19 +18,13 @@ test('pending queue shows exact compatible lane states, unknown preparation and 
   expect(html).toContain('/?testRun=request'); expect(html).toContain('hostId=mini&amp;laneId=android');
   client.clear();
 });
-test('cancelled custody is separate from schedulable work and does not claim settlement or an agent', () => {
-  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
-  client.setQueryData(['test-pending-queue',undefined],{total:0,observedAt:new Date().toISOString(),items:[],cancellationsTruncated:false,
-    cancellations:[{requestId:'cancelled',routineId:'check',state:'accepted',compatibilityKnown:false,compatibleLanes:[],platformCandidates:[],
-      cancellation:{acknowledged:true,cleanupPending:true,custody:[{hostId:'mini',laneId:'android',ownerId:'repair',ownerKind:'fixer'}]}}]} satisfies PendingQueuePage);
-  const html=renderToStaticMarkup(<QueryClientProvider client={client}><PendingQueueSection /></QueryClientProvider>);
-  for(const text of ['No pending requests.','Cancellation and cleanup','Cleanup pending','Cancellation acknowledged','Current Fixer custody'])expect(html).toContain(text);
-  expect(html).not.toContain('agent running');expect(html).toContain('testRun=cancelled');
+test('empty queue only reports jobs waiting to start', () => {
+  const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
+  client.setQueryData(['test-pending-queue', undefined], {total: 0, observedAt: new Date().toISOString(), items: []} satisfies PendingQueuePage);
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><PendingQueueSection /></QueryClientProvider>);
+  expect(html).toContain('Waiting to start.');
+  expect(html).toContain('No pending requests.');
+  expect(html).not.toContain('Cancellation');
+  expect(html).not.toContain('active requests');
   client.clear();
-});
-test('an independently deployed queue can render while cancellation attention is not reported',()=>{
- const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
- client.setQueryData(['test-pending-queue',undefined],{total:0,observedAt:new Date().toISOString(),items:[]});
- const html=renderToStaticMarkup(<QueryClientProvider client={client}><PendingQueueSection /></QueryClientProvider>);
- expect(html).toContain('No pending requests.');expect(html).not.toContain('Cancellation and cleanup');client.clear();
 });

@@ -19,13 +19,10 @@ export interface PendingQueueItem {
   compatibilityKnown: boolean;
   compatibleLanes: PendingQueueLane[];
   platformCandidates: PendingQueueLane[];
-  cancellation?: {acknowledged: boolean; cleanupPending: boolean; custody: Array<{hostId: string; laneId: string; ownerId: string; ownerKind: string}>};
 }
 export interface PendingQueuePage {
   items: PendingQueueItem[];
   total: number;
   nextCursor?: string;
   observedAt: string;
-  cancellations: PendingQueueItem[];
-  cancellationsTruncated: boolean;
 }

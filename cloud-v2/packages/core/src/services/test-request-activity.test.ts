@@ -1,68 +1,101 @@
-import {expect,test} from 'bun:test';
-import {hostRequestDeliveryFilter,hostCancellationDeliveryFilter,pendingRequestFilter,requestActivity} from './test-request-activity';
-import {currentRequestCustody,cancellationQueueItem,TestPendingQueueService} from './test-pending-queue.service';
+import {expect, spyOn, test} from 'bun:test';
 import {TestRequestModel} from '../models/test-request.model';
-import type {ReceivedTestHostState} from './test-host-state.service';
-const now=Date.parse('2026-10-08T12:00:00Z');
-const host=(owner:any,state:ReceivedTestHostState['lanes'][number]['state']='running',receivedAt=new Date(now).toISOString()):ReceivedTestHostState => ({hostId:'host',receivedAt,observedAt:new Date(now).toISOString(),incarnation:'controller',incarnationGeneration:1,sequence:1,
- lanes:[{id:'lane',state,platform:'android',dispatchMode:'automatic',resources:[],activity:{generation:3,owner}}]});
+import {TestPendingQueueService} from './test-pending-queue.service';
+import {hostCancellationDeliveryFilter, hostRequestDeliveryFilter, pendingRequestFilter} from './test-request-activity';
 
-test.each(['awaiting-source','awaiting-runner','preparing','queued'])('uncancelled %s is waiting',state=>expect(requestActivity({state})).toBe('waiting'));
-test.each(['accepted','running'])('uncancelled %s is active',state=>expect(requestActivity({state})).toBe('active'));
-test('terminal and malformed states never imply waiting',()=>{expect(requestActivity({state:'terminal'})).toBe('terminal');expect(requestActivity({state:'broken'})).toBe('unknown');});
-test('every cancellation fence wins over a delivery or execution state',()=>{
- for(const receipt of [{hostCancellation:{}},{fleetCancellation:{}},{preparationCancellation:{}}])expect(requestActivity({state:'queued',...receipt})).toBe('cancellation');
- expect(requestActivity({state:'accepted',hostCancellation:{},cancellationAcknowledged:true})).toBe('cancellation');
- expect(hostRequestDeliveryFilter('host')).toEqual({hostId:'host',state:'queued'});
- expect(hostCancellationDeliveryFilter()).toEqual({hostCancellation:{$exists:true},cancellationAcknowledged:{$ne:true}});
- expect(pendingRequestFilter).toMatchObject({hostCancellation:{$exists:false},fleetCancellation:{$exists:false},preparationCancellation:{$exists:false}});
+const now = Date.parse('2026-10-08T12:00:00Z');
+type Document = Record<string, unknown> & {requestId: string; state: string};
+
+// Apply the operators used by this query so the service tests exercise both its
+// selection and count against the same persisted documents.
+function matches(row: Document, filter: Record<string, unknown>): boolean {
+  return Object.entries(filter).every(([key, condition]) => {
+    const value = row[key];
+    if (condition && typeof condition === 'object') {
+      return Object.entries(condition).every(([operator, operand]) => {
+        if (operator === '$exists') return Object.hasOwn(row, key) === operand;
+        if (operator === '$in') return (operand as unknown[]).includes(value);
+        if (operator === '$gt') return typeof value === 'string' && value > String(operand);
+        throw new Error(`Unexpected query operator: ${operator}`);
+      });
+    }
+    return value === condition;
+  });
+}
+
+async function pageFor(documents: Document[], cursor?: string) {
+  const filters: Record<string, unknown>[] = [];
+  const find = spyOn(TestRequestModel, 'find').mockImplementation(((filter: Record<string, unknown>) => {
+    filters.push(filter);
+    let limit = Infinity;
+    return {sort(value: unknown) {expect(value).toEqual({requestId: 1}); return this;},
+      limit(value: number) {limit = value; return this;}, read(value: string) {expect(value).toBe('primary'); return this;},
+      readConcern(value: string) {expect(value).toBe('majority'); return this;},
+      async lean() {return documents.filter(row => matches(row, filter)).sort((a, b) => a.requestId.localeCompare(b.requestId)).slice(0, limit);}};
+  }) as any);
+  const count = spyOn(TestRequestModel, 'countDocuments').mockImplementation(((filter: Record<string, unknown>) => {
+    expect(filter).toEqual(pendingRequestFilter);
+    return {read() {return this;}, readConcern() {return this;},
+      then(resolve: (value: number) => unknown) {return Promise.resolve(documents.filter(row => matches(row, filter)).length).then(resolve);}};
+  }) as any);
+  try {
+    const page = await new TestPendingQueueService({list: async () => []} as any, () => now).list(cursor);
+    expect(filters).toEqual([{...pendingRequestFilter, ...(cursor ? {requestId: {$gt: cursor}} : {})}]);
+    expect(Object.keys(page).sort()).toEqual(['items', 'observedAt', 'total', ...(page.nextCursor ? ['nextCursor'] : [])].sort());
+    return page;
+  } finally {find.mockRestore(); count.mockRestore();}
+}
+
+test.each(['awaiting-source', 'awaiting-runner', 'preparing', 'queued'])('%s appears in pending rows and count', async state => {
+  const page = await pageFor([{requestId: 'waiting', state}]);
+  expect(page.total).toBe(1);
+  expect(page.items.map(item => item.requestId)).toEqual(['waiting']);
 });
-test('acknowledgement with current exact run custody retains cleanup attention',()=>{
- const hosts=[host({id:'request',kind:'run',requestId:'request'})];
- const row={requestId:'request',state:'accepted',hostCancellation:{reason:'Stop'},cancellationAcknowledged:true} as any;
- expect(cancellationQueueItem(row,hosts,now)).toMatchObject({reason:'Stop',cancellation:{acknowledged:true,cleanupPending:true,custody:[{hostId:'host',laneId:'lane',ownerId:'request',ownerKind:'run'}]}});
+
+test.each(['accepted', 'running', 'terminal', 'malformed'])('%s is never pending', async state => {
+  const page = await pageFor([{requestId: 'other', state}, {requestId: 'waiting', state: 'queued'}]);
+  expect(page.total).toBe(1);
+  expect(page.items.map(item => item.requestId)).toEqual(['waiting']);
 });
-test('stale or mismatched observations cannot associate cleanup custody',()=>{
- expect(currentRequestCustody('request',[host({id:'other',kind:'run',requestId:'other'})],now)).toEqual([]);
- expect(currentRequestCustody('request',[host({id:'request',kind:'run',requestId:'request'},'running',new Date(now-120_001).toISOString())],now)).toEqual([]);
- expect(currentRequestCustody('request',[host({id:'request',kind:'run',requestId:'request'},'idle')],now)).toEqual([]);
- expect(currentRequestCustody('request',[host({id:'request',kind:'run',requestId:'request'},'running','invalid')],now)).toEqual([]);
+
+test.each(['hostCancellation', 'fleetCancellation', 'preparationCancellation', 'hostRejection', 'preparationRejection',
+  'terminalStatus', 'dispatchCompletion'])('%s excludes a persisted waiting-state row', async fence => {
+  const page = await pageFor([{requestId: 'fenced', state: 'queued', [fence]: {}}, {requestId: 'waiting', state: 'queued'}]);
+  expect(page.total).toBe(1);
+  expect(page.items.map(item => item.requestId)).toEqual(['waiting']);
 });
-test('repair custody survives cancellation only through its exact current restoration reference',()=>{
- const h=host({id:'fixer:1',kind:'fixer'},'out-of-service');
- h.restoration={schemaVersion:1,truncated:false,attempts:[{current:true,laneId:'lane',executionId:'fixer:1',requestId:'request',state:'halted'} as any]};
- expect(currentRequestCustody('request',[h],now)).toHaveLength(1);
- h.restoration.attempts[0]!.executionId='different';expect(currentRequestCustody('request',[h],now)).toEqual([]);
+
+test('cancelled requests stay out with or without acknowledgement and retained repair custody', async () => {
+  const page = await pageFor([
+    {requestId: 'stop-pending', state: 'queued', hostCancellation: {reason: 'Stop'}, cancellationAcknowledged: false},
+    {requestId: 'stop-acknowledged', state: 'accepted', hostCancellation: {reason: 'Stop'}, cancellationAcknowledged: true},
+    {requestId: 'repair-held', state: 'queued', fleetCancellation: {reason: 'Stop'}, fleetBinding: {hostId: 'host', laneId: 'lane'}},
+    {requestId: 'cancelled-terminal', state: 'terminal', terminalStatus: 'cancelled'},
+  ]);
+  expect(page.items).toEqual([]);
+  expect(page.total).toBe(0);
 });
-test('pending page uses the same cancellation fences for rows and count, with cancellation attention separate',async()=>{
- const {spyOn}=await import('bun:test');const filters:any[]=[];
- const find=spyOn(TestRequestModel,'find').mockImplementation(((filter:any)=>{
-   filters.push(filter);return{sort(){return this},limit(){return this},read(){return this},readConcern(){return this},async lean(){return[]}};
- }) as any);
- const count=spyOn(TestRequestModel,'countDocuments').mockImplementation(((filter:any)=>{expect(filter).toEqual(pendingRequestFilter);return{read(){return this},readConcern(){return this},then(resolve:any){return Promise.resolve(0).then(resolve)}};}) as any);
- try{
-  const result=await new TestPendingQueueService({list:async()=>[]} as any,()=>now).list();
-  expect(result).toMatchObject({total:0,items:[],cancellations:[],cancellationsTruncated:false});
-  expect(filters[0]).toEqual(pendingRequestFilter);
-  expect(filters[1].state).toEqual({$ne:'terminal'});
-  expect(filters[1].$or).toContainEqual(hostCancellationDeliveryFilter());
-  expect(filters[1].$or).toContainEqual({fleetCancellation:{$exists:true},fleetBinding:{$exists:true},dispatchCompletion:{$exists:false}});
- }finally{find.mockRestore();count.mockRestore();}
+
+test('malformed durable fences fail closed rather than appearing as pending', async () => {
+  const page = await pageFor([{requestId: 'null-cancellation', state: 'queued', hostCancellation: null},
+    {requestId: 'null-terminal', state: 'preparing', terminalStatus: null}]);
+  expect(page.total).toBe(0);
 });
-test('current acknowledged custody precedes old cancellations at the page bound',async()=>{
- const {spyOn}=await import('bun:test');const held={requestId:'z-held',state:'accepted',hostCancellation:{reason:'Stop'},cancellationAcknowledged:true};
- const old=Array.from({length:51},(_,i)=>({requestId:`a-${i}`,state:'accepted',hostCancellation:{reason:'Stop'}}));
- const filters:any[]=[];
- const find=spyOn(TestRequestModel,'find').mockImplementation(((filter:any)=>{
-  filters.push(filter);const rows=filter.requestId?.$in?[held]:filter.requestId?.$nin?old:[];
-  return{sort(){return this},limit(){return this},read(){return this},readConcern(){return this},async lean(){return rows}};
- }) as any);
- const count=spyOn(TestRequestModel,'countDocuments').mockImplementation((()=>({read(){return this},readConcern(){return this},then(resolve:any){return Promise.resolve(0).then(resolve)}})) as any);
- try{
-  const result=await new TestPendingQueueService({list:async()=>[host({id:'z-held',kind:'run',requestId:'z-held'})]} as any,()=>now).list();
-  expect(result.cancellations).toHaveLength(50);expect(result.cancellations[0]).toMatchObject({requestId:'z-held',cancellation:{acknowledged:true,cleanupPending:true}});
-  expect(result.cancellationsTruncated).toBe(true);
-  expect(filters[1]).toMatchObject({state:{$ne:'terminal'},requestId:{$in:['z-held']}});
-  expect(filters[2].requestId).toEqual({$nin:['z-held']});
- }finally{find.mockRestore();count.mockRestore();}
+
+test('pending pagination and total share the same waiting-only predicate', async () => {
+  const documents = Array.from({length: 52}, (_, index) => ({requestId: `request-${String(index).padStart(2, '0')}`, state: 'queued'}));
+  documents.push({requestId: 'accepted', state: 'accepted'}, {requestId: 'running', state: 'running'});
+  const first = await pageFor(documents);
+  expect(first.items).toHaveLength(50);
+  expect(first.total).toBe(52);
+  expect(first.nextCursor).toBe('request-49');
+  const second = await pageFor(documents, first.nextCursor);
+  expect(second.items.map(item => item.requestId)).toEqual(['request-50', 'request-51']);
+  expect(second.total).toBe(52);
+  expect(second.nextCursor).toBeUndefined();
+});
+
+test('host delivery and cancellation acknowledgement predicates remain literal', () => {
+  expect(hostRequestDeliveryFilter('host')).toEqual({hostId: 'host', state: 'queued'});
+  expect(hostCancellationDeliveryFilter()).toEqual({hostCancellation: {$exists: true}, cancellationAcknowledged: {$ne: true}});
 });

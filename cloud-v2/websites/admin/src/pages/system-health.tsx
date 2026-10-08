@@ -1,7 +1,7 @@
 import {LoadingIndicator} from "../components/loading-indicator";
 import {TESTING_PANEL, TestingButton} from "../components/testing-ui";
 import {elapsedDuration} from "../lib/run-duration";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { DISK_FLOOR_BYTES, HOST_COMPONENTS, hostIsFresh, type CleanupHealthEvent, type HostComponent, type HostDiskPoint,
   type HostReason, type TestHostHistory, type TestHostLatest, type TestHostList } from "../../../../packages/core/src/types/test-host-health.types";
@@ -11,6 +11,9 @@ import {LaneHistoryPage} from "./lane-history";
 import type {LaneSelection} from "../lib/lane-links";
 import {PendingQueueSection} from "./pending-queue";
 import {LaneHealthSection} from "./lane-health";
+import {FrameworkHealthSection} from "./framework-health";
+import {SystemHealthTabs} from "./system-health-tabs";
+import type {SystemHealthTab} from "../lib/system-health-links";
 
 const elapsed = (at: string, now: number) => elapsedDuration(Math.max(0, now - Date.parse(at))) ?? "unknown";
 const GiB = 1024 ** 3;
@@ -154,40 +157,83 @@ export function MemoryHealth({ host, now, unavailable = false }: { host: TestHos
   </section>;
 }
 
-export function SystemHealthPage({restoration = false, lane = null}: {restoration?: boolean; lane?: LaneSelection | null}) {
-  const now = useClock();
-  return lane ? <LaneHistoryPage key={`${lane.hostId}/${lane.laneId}`} selection={lane} now={now} /> : restoration ? <LaneRestorationPage /> : <SystemHealthDashboard />;
+export function SystemHealthPage({tab = 'lanes', lane = null, onTabChange = () => {}}: {
+  tab?: SystemHealthTab; lane?: LaneSelection | null; onTabChange?: (tab: SystemHealthTab) => void;
+}) {
+  const now = useClock(), selected = lane ? 'lanes' : tab;
+  return <SystemHealthTabs selected={selected} onSelect={onTabChange}>
+    {selected === 'lanes' ? lane ? <LaneHistoryPage key={`${lane.hostId}/${lane.laneId}`} selection={lane} now={now} /> : <LaneHealthSection now={now} />
+      : selected === 'pending' ? <PendingQueueSection />
+      : selected === 'framework' ? <FrameworkHealthSection now={now} />
+      : selected === 'repair' ? <LaneRestorationPage />
+      : <HostHealthSection key={selected} section={selected} now={now} />}
+  </SystemHealthTabs>;
 }
-function SystemHealthDashboard() {
-  const query = useHostHealth(), now = useClock(), [hostId, setHostId] = useState<string | null>(null), [days, setDays] = useState<1 | 7>(1), [metric, setMetric] = useState<HistoryMetric>("disk");
-  const hosts = query.data?.hosts ?? [], host = hosts.find(value => value.hostId === hostId) ?? hosts[0];
-  const history = useQuery({ queryKey: ["test-host-history", host?.hostId, days], enabled: Boolean(host), refetchInterval: 60_000,
-    queryFn: () => api<TestHostHistory>(`/api/admin/test-runs/health/${encodeURIComponent(host!.hostId)}?days=${days}`) });
-  const fresh = Boolean(host && !query.isError && hostIsFresh(host, now));
-  return <div className="space-y-5">
-    <LaneHealthSection now={now} />
-    <PendingQueueSection />
-    <section className={TESTING_PANEL}>
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Host health</h2></div>
-        <TestingButton className="text-sm" onClick={() => { void query.refetch(); if (host) void history.refetch(); }}>Refresh</TestingButton></div>
-      <a href="/?systemHealth=1&restoration=1" className="mt-3 inline-block text-sm font-medium text-[#087d50] hover:underline">State repair history</a>
-      {query.isError ? <p className="mt-4 text-sm text-[#a64235]">Health could not refresh. Current service status is unknown.</p> : null}
-      {!hosts.length ? query.isPending ? <LoadingIndicator label="Loading host reports" className="mt-4" /> : <p className="mt-4 text-sm text-[#68746d]">No independent host monitor has reported yet. Historical disk measurements will appear as they are collected.</p> : <>
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><select aria-label="Host" value={host?.hostId} onChange={event => setHostId(event.target.value)} className="rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">{hosts.map(value => <option key={value.hostId}>{value.hostId}</option>)}</select>
-          <p className="text-xs text-[#68746d]">{fresh ? "Host reporting" : "Stale · no recent report"} · Last observed {host ? elapsed(host.sampledAt, now) : "unknown"} ago{host ? ` (${time(host.sampledAt)})` : ""}</p></div>
-        {host ? <div className="mt-4 grid gap-3 lg:grid-cols-3">{HOST_COMPONENTS.map(role => { const component = host.components.find(value => value.component === role), state = componentHealth(host, component, now, query.isError);
-          return <article key={role} className="rounded-xl border border-[#e0e6de] p-4"><h3 className="font-semibold">{componentNames[role]}</h3>{role === "general-worker" ? <p className="mt-1 text-xs text-[#68746d]">Fixes and shared triage</p> : null}<span className={`mt-2 inline-block rounded-md px-2 py-1 text-xs font-semibold ${tones[state.tone]}`}>{state.label}</span>
-            <details className="mt-3 text-xs text-[#747780]"><summary className="cursor-pointer font-medium">Service details</summary><p className="mt-2">{state.summary}</p><p className="mt-2"><strong>Next:</strong> {state.next}</p>
-            {component?.state === "running" && fresh ? <p className="mt-2 text-xs text-[#68746d]">The service is alive; this does not say a model or routine is working.</p> : null}</details></article>; })}</div> : null}
-        {host ? <MemoryHealth host={host} now={now} unavailable={query.isError} /> : null}
-        <div className="mt-6 flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-base font-semibold">Available disk space</h3><p className={`mt-1 text-2xl font-semibold ${fresh && host?.freeBytes !== null && host!.freeBytes < DISK_FLOOR_BYTES ? "text-[#a64235]" : "text-[#202820]"}`}>{host ? size(host.freeBytes) : "Unavailable"}<span className="ml-2 text-xs font-normal text-[#68746d]">{fresh ? "latest measurement" : "stale · last reported, not current"}</span></p></div></div>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><label className="text-sm">History metric <select aria-label="History metric" value={metric} onChange={event => setMetric(event.target.value as HistoryMetric)} className="ml-2 rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">{Object.entries(historyMetrics).map(([id, value]) => <option key={id} value={id}>{value.label}</option>)}</select></label>
-          <div className="flex gap-1 rounded-lg bg-[#f0f3ee] p-1">{([1, 7] as const).map(value => <TestingButton variant="ghost" key={value} aria-pressed={days === value} onClick={() => setDays(value)} className={`rounded-md px-3 py-1 text-sm ${days === value ? "bg-white font-semibold shadow-sm" : "text-[#68746d]"}`}>{value === 1 ? "24 hours" : "7 days"}</TestingButton>)}</div></div>
-        {history.isError ? <p className="mt-3 text-sm text-[#a64235]">History could not refresh. {history.data ? "Showing the last fetched history, not current." : ""}</p> : null}
-        {history.data ? <div className="mt-4"><DiskHistoryChart history={history.data} metric={metric} />{metric === "disk" ? <CleanupEvents events={history.data.cleanupEvents} /> : null}</div> : history.isError ? <p className="mt-4 text-sm text-[#68746d]">Historical measurements unavailable.</p> : <LoadingIndicator label="Loading recorded measurements" className="mt-4" />}
-        {query.data?.truncated ? <p className="mt-3 text-xs text-[#a64235]">Only the first 32 reporting hosts are shown.</p> : null}
-      </>}
-    </section>
 
-  </div>;
+function HostServices({host, now, unavailable}: {host: TestHostLatest; now: number; unavailable: boolean}) {
+  const fresh = !unavailable && hostIsFresh(host, now);
+  return <div className="mt-4 grid gap-3 lg:grid-cols-3">{HOST_COMPONENTS.map(role => {
+    const component = host.components.find(value => value.component === role), state = componentHealth(host, component, now, unavailable);
+    return <article key={role} className="rounded-xl border border-[#e0e6de] p-4">
+      <h3 className="font-semibold">{componentNames[role]}</h3>
+      <span className={`mt-2 inline-block rounded-md px-2 py-1 text-xs font-semibold ${tones[state.tone]}`}>{state.label}</span>
+      <details className="mt-3 text-xs text-[#747780]"><summary className="cursor-pointer font-medium">Service details</summary>
+        <p className="mt-2">{state.summary}</p><p className="mt-2"><strong>Next:</strong> {state.next}</p>
+        {component?.state === 'running' && fresh ? <p className="mt-2">The service is alive; this does not say a model or routine is working.</p> : null}
+      </details>
+    </article>;
+  })}</div>;
+}
+
+function HostHealthSection({section, now}: {section: 'services' | 'memory' | 'disk'; now: number}) {
+  const query = useHostHealth(), client = useQueryClient(), [hostId, setHostId] = useState<string | null>(null);
+  const hosts = query.data?.hosts ?? [], host = hosts.find(value => value.hostId === hostId) ?? hosts[0];
+  const fresh = Boolean(host && !query.isError && hostIsFresh(host, now));
+  const title = section === 'services' ? 'Services' : section === 'memory' ? 'Memory' : 'Disk & cleanup';
+  return <section className={TESTING_PANEL}>
+    <div className="flex flex-wrap items-start justify-between gap-3"><h2 className="text-xl font-semibold">{title}</h2>
+      <TestingButton className="text-sm" busy={query.isFetching} onClick={() => {
+        void query.refetch();
+        if (host && section !== 'services') void client.refetchQueries({queryKey: ['test-host-history', host.hostId], type: 'active'});
+      }}>Refresh</TestingButton></div>
+    {query.isError ? <p className="mt-4 text-sm text-[#a64235]">Host reports could not refresh. Current status is unknown.</p> : null}
+    {!host ? query.isPending ? <LoadingIndicator label="Loading host reports" className="mt-4" />
+      : <p className="mt-4 text-sm text-[#68746d]">No independent host monitor has reported yet.</p> : <>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <select aria-label="Host" value={host.hostId} onChange={event => setHostId(event.target.value)} className="rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">
+          {hosts.map(value => <option key={value.hostId}>{value.hostId}</option>)}
+        </select>
+        <p className="text-xs text-[#68746d]">{fresh ? 'Host reporting' : 'Stale · no recent report'} · Last observed {elapsed(host.sampledAt, now)} ago ({time(host.sampledAt)})</p>
+      </div>
+      {section === 'services' ? <HostServices host={host} now={now} unavailable={query.isError} /> : <>
+        {section === 'memory' ? <MemoryHealth host={host} now={now} unavailable={query.isError} /> : <div className="mt-6">
+          <h3 className="text-base font-semibold">Available disk space</h3>
+          <p className={`mt-1 text-2xl font-semibold ${fresh && host.freeBytes !== null && host.freeBytes < DISK_FLOOR_BYTES ? 'text-[#a64235]' : 'text-[#202820]'}`}>
+            {size(host.freeBytes)}<span className="ml-2 text-xs font-normal text-[#68746d]">{fresh ? 'latest measurement' : 'stale · last reported, not current'}</span>
+          </p>
+        </div>}
+        <HostMeasurementHistory key={`${host.hostId}/${section}`} hostId={host.hostId} section={section} />
+      </>}
+      {query.data?.truncated ? <p className="mt-3 text-xs text-[#a64235]">Only the first 32 reporting hosts are shown.</p> : null}
+    </>}
+  </section>;
+}
+
+function HostMeasurementHistory({hostId, section}: {hostId: string; section: 'memory' | 'disk'}) {
+  const [days, setDays] = useState<1 | 7>(1), [metric, setMetric] = useState<HistoryMetric>(section === 'disk' ? 'disk' : 'used');
+  const history = useQuery({queryKey: ['test-host-history', hostId, days], refetchInterval: 60_000,
+    queryFn: () => api<TestHostHistory>(`/api/admin/test-runs/health/${encodeURIComponent(hostId)}?days=${days}`)});
+  return <>
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+      {section === 'memory' ? <label className="text-sm">History metric <select aria-label="History metric" value={metric} onChange={event => setMetric(event.target.value as HistoryMetric)} className="ml-2 rounded-lg border border-[#dfe5dd] bg-white px-3 py-2 text-sm">
+        {Object.entries(historyMetrics).filter(([id]) => id !== 'disk').map(([id, value]) => <option key={id} value={id}>{value.label}</option>)}
+      </select></label> : <h3 className="text-base font-semibold">Disk history</h3>}
+      <div className="flex gap-1 rounded-lg bg-[#f0f3ee] p-1">{([1, 7] as const).map(value => <TestingButton variant="ghost" key={value} aria-pressed={days === value} onClick={() => setDays(value)} className={`rounded-md px-3 py-1 text-sm ${days === value ? 'bg-white font-semibold shadow-sm' : 'text-[#68746d]'}`}>
+        {value === 1 ? '24 hours' : '7 days'}
+      </TestingButton>)}</div>
+    </div>
+    {history.isError ? <p className="mt-3 text-sm text-[#a64235]">History could not refresh. {history.data ? 'Showing the last fetched history.' : ''}</p> : null}
+    {history.data ? <div className="mt-4"><DiskHistoryChart history={history.data} metric={metric} />{section === 'disk' ? <CleanupEvents events={history.data.cleanupEvents} /> : null}</div>
+      : history.isError ? <p className="mt-4 text-sm text-[#68746d]">Historical measurements unavailable.</p> : <LoadingIndicator label="Loading recorded measurements" className="mt-4" />}
+  </>;
 }

@@ -1,3 +1,4 @@
+import {FrameworkHealth} from "./framework-health";
 import {TestHistoryTable} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {useInfiniteQuery, useQuery} from "@tanstack/react-query";
@@ -6,7 +7,7 @@ import {laneDisplayLabel, type LaneSelection} from "../lib/lane-links";
 import {restorationHostIsFresh, type LaneRestorationList} from "../../../../packages/core/src/types/lane-restoration.types";
 import type {FrameworkRunPage} from "../../../../packages/core/src/types/test-history.types";
 import {api} from "../lib/api";
-import {FrameworkHealth, LaneHealthHost, laneOverviewQuery} from "./lane-health";
+import {LaneHealthHost, laneOverviewQuery} from "./lane-health";
 import {RestorationHost} from "./lane-restoration";
 const loading = (label: string) => <LoadingIndicator label={label} inline />;
 

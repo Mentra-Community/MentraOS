@@ -1,7 +1,8 @@
 import {expect, test} from "bun:test";
 import {renderToStaticMarkup} from "react-dom/server";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
-import {FrameworkHealth, LaneHealthHost, LaneHealthSection, laneOverviewQuery} from "./lane-health"
+import {LaneHealthHost, LaneHealthSection, laneOverviewQuery} from "./lane-health"
+import {FrameworkHealth} from "./framework-health";
 import {SystemHealthPage} from "./system-health";
 import type {LaneRepairStatus, LaneRestorationHost} from "../../../../packages/core/src/types/lane-restoration.types";
 
@@ -26,7 +27,8 @@ test("main System Health shows controller lanes independently of host monitoring
   expect(html).toContain("Idle");
   expect(html).toContain("Reserved");
   expect(html).toContain("Paused");
-  expect(html).toContain("No independent host monitor");
+  expect(html).not.toContain("No independent host monitor");
+  expect(client.getQueryCache().find({queryKey: ["test-host-health"]})?.getObserversCount()).toBe(0);
   expect(html).toContain("Controller reporting");
   expect(html).toContain("hostId=mini-controller&amp;laneId=mini-mac");
   client.clear();
