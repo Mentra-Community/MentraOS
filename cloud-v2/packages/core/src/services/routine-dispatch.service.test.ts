@@ -92,3 +92,31 @@ test('known candidate-only source is a precise validation refusal without ordina
   await expect(f.service.submit({...selected,routineRevision:definition.definitionRevision})).rejects.toMatchObject({status:422,message:expect.stringContaining('accepted authoring job')});
   expect(enrolls).toBe(0);expect(await f.requests.get(selected.requestId)).toBeNull();
 });
+
+test('selected catalog uses exact ordinary definitions while unpublished main remains requestable', async () => {
+  const f = fixture(), revision = 'b'.repeat(40), ids = ['android-only', 'mac-only', 'both', 'unpublished'];
+  let resolutions = 0;
+  (f.service as any).sources = {async resolve(value?: string) {resolutions++; return value ?? revision;},
+    async inventory(commit: string) {return {commit, files: ids.map(id => ({path: `routines/${id}/routine.ts`}))};}};
+  const calls: unknown[] = [];
+  (f.service as any).definitions = {async getExact(id: string, platform: string, commit: string, ordinary: boolean) {
+    calls.push({id, platform, commit, ordinary});
+    const platforms = id === 'android-only' ? ['android'] : id === 'mac-only' ? ['ios-on-mac'] : id === 'both' ? ['android', 'ios-on-mac'] : [];
+    if (!platforms.includes(platform)) return null;
+    const definition = {...f.definition(commit).definition, id, platforms,
+      source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: commit, path: `routines/${id}/routine.ts`}};
+    return routineEnrollmentSchema.parse({routineId: id, platform, definitionRevision: commit, definitionSha256: requestInputDigest(definition),
+      routineSource: testRoutineSource(commit), definition});
+  }};
+  expect(await f.service.catalog(undefined, ids)).toEqual({routineRevision: revision, routines: [
+    {routineId: 'android-only', platforms: ['android']}, {routineId: 'mac-only', platforms: ['ios-on-mac']},
+    {routineId: 'both', platforms: ['android', 'ios-on-mac']}, {routineId: 'unpublished'},
+  ]});
+  expect(resolutions).toBe(1);
+  expect(calls).toHaveLength(8);
+  expect(calls.every((call: any) => call.commit === revision && call.ordinary)).toBe(true);
+  await expect(f.service.catalog(revision, ['missing'])).rejects.toMatchObject({status: 422});
+  await expect(f.service.catalog(revision, ['android-only', 'android-only'])).rejects.toMatchObject({status: 422});
+  (f.service as any).definitions = {async getExact() {const row = f.definition(revision); return {...row, definitionSha256: 'f'.repeat(64)};}};
+  await expect(f.service.catalog(revision, ['android-only'])).rejects.toMatchObject({status: 503});
+});

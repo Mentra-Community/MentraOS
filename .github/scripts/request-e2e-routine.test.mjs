@@ -22,16 +22,22 @@ test("manual requests need no enrollment and bind workflow occurrence plus optio
   await assert.rejects(createRoutineRequests({...options, routineRevision: "main"}), /exact commit/)
   await assert.rejects(createRoutineRequests({...options, source: undefined}), /exact published/)
 })
-test("labels await each app publication without contacting the enrolled catalog", async () => {
+test("labels distinguish unsupported platforms from pending compatible app publications", async () => {
   const f = routineFixture()
   const pr = {number: 12, state: "open", base: {ref: "dev"}, head: {sha: "a".repeat(40), ref: "example", repo: {full_name: "Mentra-Community/MentraOS"}},
     labels: [{name: `routine:${f.definition.id}`}, {name: "routine:new.unpublished"}]}
-  const github = {rest: {pulls: {get: async () => ({data: pr})}, actions: {listWorkflowRuns: () => {}}}, paginate: async () => []}
+  const comments = [], github = {rest: {pulls: {get: async () => ({data: pr})}, actions: {listWorkflowRuns: () => {}},
+    issues: {listComments: 'comments', createComment: async value => comments.push(value)}}, paginate: async () => []}
   const result = await createRoutineRequests({github, context: {...context, eventName: "pull_request_target"}, token: "fixture", number: 12,
-    fetchImpl: async () => assert.fail("No published app means no Core request")})
+    fetchImpl: async (url, init) => {
+      assert.equal(init.method, 'GET')
+      return Response.json({routineRevision: 'b'.repeat(40), routines: [{routineId: f.definition.id, platforms: ['ios-on-mac']},
+        {routineId: 'new.unpublished', platforms: ['android']}]})
+    }})
   assert.equal(result.requests.length, 0)
   assert.deepEqual(result.pending.map(row => [row.routineId, row.platform]), [
-    [f.definition.id, "android"], [f.definition.id, "ios-on-mac"], ["new.unpublished", "android"], ["new.unpublished", "ios-on-mac"]])
+    [f.definition.id, "ios-on-mac"], ["new.unpublished", "android"]])
+  assert.equal(comments.length, 1); assert.equal(result.outcomes.filter(row => row.status === 'skipped').length, 2)
 })
 test("retained successful producer jobs select their original publication attempt", () => {
   const base = {status: "completed", conclusion: "success", started_at: "a", completed_at: "b"}
@@ -49,17 +55,20 @@ test("later admission rejection preserves earlier selectors and attempts subsequ
     labels: fixtures.map(f => `routine:${f.definition.id}`)}
   const run = {id: 10, run_attempt: 2, status: "completed", event: "pull_request", head_sha: pr.head.sha, head_branch: pr.head.ref,
     path: ".github/workflows/mentra-app-ios-build.yml", repository: {full_name: "Mentra-Community/MentraOS"}, head_repository: {full_name: "Mentra-Community/MentraOS"}}
-  const github = {rest: {pulls: {get: async () => ({data: pr})}, actions: {listWorkflowRuns: "runs", listJobsForWorkflowRun: "jobs"}},
-    paginate: async (method, options) => method === "runs" ? options.workflow_id === run.path ? [run] : [] : ["build", "publish"].map((name, index) => ({id: index + 1, name, run_attempt: 2, status: "completed", conclusion: "success"}))}
+  const github = {rest: {pulls: {get: async () => ({data: pr})}, actions: {listWorkflowRuns: "runs", listJobsForWorkflowRun: "jobs"},
+    issues: {listComments: 'comments', createComment: async () => {throw new Error('comment unavailable')}}},
+    paginate: async (method, options) => method === 'comments' ? [] : method === "runs" ? options.workflow_id === run.path ? [run] : [] : ["build", "publish"].map((name, index) => ({id: index + 1, name, run_attempt: 2, status: "completed", conclusion: "success"}))}
   const result = await createRoutineRequests({github, context: {...context, eventName: "pull_request_target"}, token: "fixture", number: 12,
     fetchImpl: async (url, init) => {
-      if (url.endsWith("/routine-catalog")) return Response.json({routines: fixtures.map(f => f.enrollment)})
+      if (new URL(url).pathname.endsWith("/routine-catalog")) return Response.json({routineRevision: 'b'.repeat(40),
+        routines: fixtures.map(f => ({routineId: f.definition.id, platforms: ['ios-on-mac']}))})
       const plan = JSON.parse(init.body); attempts.push(plan.routineId)
       if (plan.routineId === "second.rejected") return Response.json({message: "Required recorder is unavailable"}, {status: 409})
       return fixtures.find(f => f.definition.id === plan.routineId).fetchImpl(url, init)
     }})
   assert.deepEqual(attempts, fixtures.map(f => f.definition.id))
-  assert.deepEqual(result.outcomes.map(outcome => outcome.status), ["pending", "accepted", "pending", "failed", "pending", "accepted"])
+  assert.match(result.notificationError, /retained admission outcomes are unchanged/)
+  assert.deepEqual(result.outcomes.map(outcome => outcome.status), ["skipped", "accepted", "skipped", "failed", "skipped", "accepted"])
   const retained = JSON.parse(JSON.stringify({requestIds: result.requestIds, outcomes: result.outcomes}))
   assert.equal(retained.requestIds.length, 2); assert.equal(retained.outcomes[3].retryable, false)
   assert.throws(() => assertRoutineRequestOutcomes(retained.outcomes), error => error instanceof AggregateError && /second.rejected.*Required recorder/.test(error.message))
@@ -105,6 +114,6 @@ test("stored admission outcomes bound API reasons and do not copy raw source-pro
   const failedSource = await createRoutineRequests({github: {rest: {pulls: {get: async () => ({data: pr})}, actions: {listWorkflowRuns: "runs"}},
     paginate: async () => {throw new Error("raw provider credential details")}}, context: {...context, eventName: "pull_request_target"},
     token: "fixture", number: 12, fetchImpl: f.fetchImpl})
-  assert.equal(failedSource.outcomes[0].reason, "Current PR app publication could not be authenticated")
+  assert.equal(failedSource.outcomes.find(row => row.status === 'failed').reason, "Current PR app publication could not be authenticated")
   assert.doesNotMatch(JSON.stringify(failedSource), /raw provider credential/)
 })

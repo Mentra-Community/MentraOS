@@ -21,7 +21,12 @@ export function createRoutineDispatchesApi(service = new RoutineDispatchService(
     c.var.logger?.error({errorName: error.name}, "native routine request operation failed");
     return c.json({error: "routine_dispatch_unavailable"}, 503);
   });
-  app.get("/routine-catalog", async c => c.json(await service.catalog(c.req.query('revision'))));
+  app.get("/routine-catalog", async c => {
+    const selected = c.req.query('routines');
+    const ids = selected === undefined ? undefined : z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/))
+      .min(1).max(30).parse(selected.split(','));
+    return c.json(await service.catalog(c.req.query('revision'), ids));
+  });
   app.post("/routine-dispatches", frameworkBodyLimit(4096), async c => c.json(await service.submit(await frameworkJson(c)), 202));
   app.get("/routine-dispatches/:requestId", async c => c.json(await service.detail(c.req.param("requestId"))));
   return app;

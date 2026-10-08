@@ -147,12 +147,17 @@ export function routineRequestSelection(request) {
   return bound ?? portable
 }
 
-export async function routineApi({token, operation, request, requestId = request?.requestId, fetchImpl = fetch}) {
+export async function routineApi({token, operation, request, requestId = request?.requestId, routineIds, revision, fetchImpl = fetch}) {
   ensure(token && ["catalog", "dispatch", "detail"].includes(operation), "Routine API capability is missing")
   if (operation !== "catalog") ensure(requestIdentity(requestId), "Invalid routine request identity")
   if (operation === "dispatch") ensure(routineId(request?.routineId) && platforms.includes(request.platform) && exactSource(request.source) &&
     (request.routineRevision === undefined || routineRevision(request.routineRevision)), "Invalid routine dispatch")
-  const path = operation === "catalog" ? "/routine-catalog" : `/routine-dispatches${operation === "detail" ? `/${encodeURIComponent(requestId)}` : ""}`
+  if (routineIds !== undefined) ensure(operation === "catalog" && Array.isArray(routineIds) && routineIds.length > 0 && routineIds.length <= 30 &&
+    routineIds.every(routineId) && new Set(routineIds).size === routineIds.length, "Invalid selected routine catalog")
+  ensure(revision === undefined || operation === 'catalog' && routineRevision(revision), 'Invalid exact catalog revision')
+  const query = new URLSearchParams({...routineIds ? {routines: routineIds.join(',')} : {}, ...revision ? {revision} : {}}).toString()
+  const path = operation === "catalog" ? `/routine-catalog${query ? `?${query}` : ""}`
+    : `/routine-dispatches${operation === "detail" ? `/${encodeURIComponent(requestId)}` : ""}`
   let response
   try {response = await fetchImpl(`${ENDPOINT}${path}`, {method: operation === "dispatch" ? "POST" : "GET", redirect: "error",
     signal: AbortSignal.timeout(30_000), headers: {Authorization: `Bearer ${token}`, "Content-Type": "application/json"},

@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/scripts/request-e2e-routine*"
       - ".github/scripts/routine-api*"
+      - ".github/scripts/routine-platforms*"
       - ".github/scripts/dispatch-device-routine*"
       - ".github/scripts/nightly-device-routines*"
       - ".github/scripts/coordinated-routine-*"
@@ -33,6 +34,7 @@ on:
     paths:
       - ".github/scripts/request-e2e-routine*"
       - ".github/scripts/routine-api*"
+      - ".github/scripts/routine-platforms*"
       - ".github/scripts/dispatch-device-routine*"
       - ".github/scripts/nightly-device-routines*"
       - ".github/scripts/coordinated-routine-*"
@@ -81,6 +83,7 @@ jobs:
           .github/scripts/nightly-device-routines.test.mjs
           .github/scripts/coordinated-routine-request.test.mjs
           .github/scripts/routine-api.test.mjs
+          .github/scripts/routine-platforms.test.mjs
           .github/scripts/notify-pr-builds.test.mjs
           .github/scripts/release-slack-message.test.mjs
           .github/scripts/release-routine-slack.test.mjs
