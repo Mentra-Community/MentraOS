@@ -98,6 +98,25 @@ test('authoring intake retains typed operations and rejects missing, duplicate o
   assert.deepEqual(parseRoutineWorkBrief(body(mac), 'edit'), mac)
 })
 
+test('authoring accepts declared audio recognition and refuses playback or recognition on another resource', () => {
+  for (const platform of ['mac', 'android']) {
+    const resources = ['app', 'recorder', ...(platform === 'android' ? ['phone'] : [])].map(kind => ({kind, capabilities: []}))
+    const requirements = {...input.requirements, platform, resources}
+    for (const capabilities of [['recognition'], ['speech', 'witness', 'synthesis', 'recognition']]) {
+      const audio = {kind: 'audio', capabilities}
+      assert.deepEqual(parseRoutineWorkBrief(body({...input, requirements: {...requirements, resources: [...resources, audio]}}), 'edit')
+        .requirements.resources.at(-1), audio)
+    }
+    for (const invalid of [
+      {kind: 'audio', capabilities: ['playback']},
+      {kind: 'audio', capabilities: ['recognition', 'playback']},
+      {kind: 'audio', capabilities: ['recognition', 'recognition']},
+    ]) assert.throws(() => parseRoutineWorkBrief(body({...input, requirements: {...requirements, resources: [...resources, invalid]}}), 'edit'), /resource requirements/)
+    assert.throws(() => parseRoutineWorkBrief(body({...input, requirements: {...requirements, resources: resources.map(resource =>
+      resource.kind === 'app' ? {...resource, capabilities: ['recognition']} : resource)}}), 'edit'), /resource requirements/)
+  }
+})
+
 test('only one collaborator request brief and one work label can be selected', async () => {
   const comment = {id: 44, body: body(input), author_association: 'MEMBER', user: {type: 'User', login: 'colleague'}}
   assert.deepEqual((await selectedRoutineWork({github: github([comment]), context, number: 12})).brief, input)
