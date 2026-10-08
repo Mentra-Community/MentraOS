@@ -975,3 +975,16 @@ test("run header qualifies a pass only after evidence is complete", () => {
   expect(render("manual")).not.toContain("Show reruns");
   client.clear();
 });
+
+test("history search matches PR identities and SHA prefixes while retaining member filters", () => {
+  const run = {...historyRun, build: {...historyRun.build, channel: "pr" as const, prNumber: 698, headSha: "abcdef12" + "a".repeat(32), release: "3.3.0-dev.715"}};
+  const matches = (search: string, platform = "", glasses = "") => matchesHistorySearch(run, [], {search, platform, glasses});
+  for (const text of ["698", "#698", "PR 698", "pr #698", "ABCDEF12", run.build.headSha, "3.3.0-dev.715", "DEV.715"]) expect(matches(text)).toBe(true);
+  for (const text of ["69", "#699", "abcdef13", "dev.714"]) expect(matches(text)).toBe(false);
+  expect(matches("#698", "android")).toBe(false);
+  expect(matches("#698", "ios-on-mac")).toBe(true);
+  expect(matches("#698", "", "no-glasses")).toBe(false);
+  const suite = {kind: "suite", suiteId: "s", channel: "pr", trigger: "pr", build: run.build, startedAt: run.startedAt, outcome: "running", expectedCount: 2, passed: 0, failedCount: 0, rerunCount: 0, lanes: []} as const;
+  expect(matchesHistorySearch(suite as any, [], {...EMPTY_ROUTINE_FILTERS, search: "#698"})).toBe(true);
+  expect(matchesHistorySearch(suite as any, [], {...EMPTY_ROUTINE_FILTERS, search: "#698", platform: "android"})).toBe(false);
+});
