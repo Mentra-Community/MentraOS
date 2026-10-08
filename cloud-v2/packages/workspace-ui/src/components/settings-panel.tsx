@@ -3,12 +3,13 @@
  *
  * Rename needs `workspace.settings.manage`, delete needs `workspace.delete` and the workspace's name
  * typed back, and leaving is offered to anyone who is a member (an organization admin acting from
- * outside the workspace has nothing to leave).
+ * outside the workspace has nothing to leave). A host adds what deleting means in its context with
+ * `deleteNotice`.
  */
 
 import { useQuery } from "@tanstack/react-query";
 import type { WorkspaceDetail } from "@mentra/workspace-contract";
-import { useId, useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent, type ReactNode } from "react";
 import type { WorkspaceApi } from "../api";
 import { useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { can } from "../roles";
@@ -27,6 +28,8 @@ interface SettingsPanelProps {
   onDeleted?(): void;
   /** Called after the viewer left the workspace. Their access is already gone: navigate away. */
   onLeft?(): void;
+  /** A warning shown above the delete confirmation, for consequences that depend on the host. */
+  deleteNotice?: ReactNode;
 }
 
 export function WorkspaceSettingsPanel(props: SettingsPanelProps) {
@@ -42,7 +45,14 @@ export function WorkspaceSettingsPanel(props: SettingsPanelProps) {
   );
 }
 
-function SettingsForms({ api, workspaceId, onDeleted, onLeft, detail }: SettingsPanelProps & { detail: WorkspaceDetail }) {
+function SettingsForms({
+  api,
+  workspaceId,
+  onDeleted,
+  onLeft,
+  deleteNotice,
+  detail,
+}: SettingsPanelProps & { detail: WorkspaceDetail }) {
   const [name, setName] = useState(detail.name);
   const [confirmName, setConfirmName] = useState("");
   const nameId = useId();
@@ -132,9 +142,14 @@ function SettingsForms({ api, workspaceId, onDeleted, onLeft, detail }: Settings
         <section className="border-destructive/40 space-y-3 rounded-md border p-4">
           <h3 className="text-destructive text-sm font-semibold">Danger zone</h3>
           <p className="text-muted-foreground text-sm">
-            Deleting a workspace ends every membership and invitation and revokes every credential. It cannot be undone,
-            and it is refused while the workspace still owns published miniapps.
+            Deleting a workspace ends every membership and invitation and revokes every credential. It cannot be
+            undone.
           </p>
+          {deleteNotice ? (
+            <div role="note" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              {deleteNotice}
+            </div>
+          ) : null}
           <form onSubmit={submitDelete} className="flex flex-wrap items-end gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor={confirmId}>

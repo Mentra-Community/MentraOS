@@ -6,7 +6,7 @@ import {
   type WorkspaceDetail,
   type WorkspaceSummary,
 } from "@mentra/workspace-contract";
-import { createWorkspaceApi, workspaceKeys } from "@mentra/workspace-ui";
+import { createWorkspaceApi, WorkspaceSettingsPanel, workspaceKeys } from "@mentra/workspace-ui";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
 import { ApiError } from "../lib/api";
@@ -15,6 +15,7 @@ import {
   parseMentraUserId,
   recoverWorkspaceOwnership,
   RecoverOwnershipForm,
+  STORE_DELETE_NOTICE,
   WorkspacesPage,
 } from "./workspaces";
 
@@ -162,6 +163,22 @@ describe("workspaces page", () => {
   test("an invitation that is still loading says so, and no invitation means no accept view", () => {
     expect(render(page({ inviteToken: INVITE_TOKEN }), { list: [] })).toContain("Invitation");
     expect(render(page(), { list: [] })).not.toContain("Accept invitation");
+  });
+});
+
+describe("deleting a workspace", () => {
+  test("warns that the Mentra Miniapp Store keeps the workspace's miniapps until an operator reassigns them", () => {
+    const owner: WorkspaceDetail = {
+      ...acme,
+      membership: { membershipId: "wm_self", role: "owner" },
+      capabilities: [...capabilitiesForRole("owner")],
+    };
+    const markup = render(<WorkspaceSettingsPanel api={api} workspaceId={ACME} deleteNotice={STORE_DELETE_NOTICE} />, {
+      list: [owner],
+    });
+    expect(markup).toContain("Delete workspace");
+    expect(markup).toContain("Miniapps this workspace publishes in the Mentra Miniapp Store stay published.");
+    expect(markup).toContain("until a Store operator assigns them to another workspace");
   });
 });
 

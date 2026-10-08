@@ -32,6 +32,13 @@ const workspaceApi = createWorkspaceApi({ basePath: "/api/workspaces" });
 export const ORGANIZATION_WORKSPACES_KEY = [...workspaceKeys.list(workspaceApi), "organization"] as const;
 const ALL_WORKSPACES_PAGE_SIZE = 50;
 
+/**
+ * Core deletes a workspace without asking the Mentra Miniapp Store, so the dashboard says what happens to the
+ * miniapps the workspace publishes there.
+ */
+export const STORE_DELETE_NOTICE =
+  "Miniapps this workspace publishes in the Mentra Miniapp Store stay published. The Store holds them until a Store operator assigns them to another workspace.";
+
 type TabKey = "members" | "invitations" | "keys" | "settings" | "audit";
 const TABS: ReadonlyArray<readonly [TabKey, string]> = [
   ["members", "Members"],
@@ -139,7 +146,13 @@ export function WorkspacesPage({
               {tab === "invitations" ? <WorkspaceInvitationsPanel api={workspaceApi} workspaceId={workspaceId} /> : null}
               {tab === "keys" ? <WorkspaceCredentialsPanel api={workspaceApi} workspaceId={workspaceId} /> : null}
               {tab === "settings" ? (
-                <WorkspaceSettingsPanel api={workspaceApi} workspaceId={workspaceId} onDeleted={forget} onLeft={forget} />
+                <WorkspaceSettingsPanel
+                  api={workspaceApi}
+                  workspaceId={workspaceId}
+                  onDeleted={forget}
+                  onLeft={forget}
+                  deleteNotice={STORE_DELETE_NOTICE}
+                />
               ) : null}
               {tab === "audit" ? <WorkspaceAuditPanel api={workspaceApi} workspaceId={workspaceId} /> : null}
             </div>

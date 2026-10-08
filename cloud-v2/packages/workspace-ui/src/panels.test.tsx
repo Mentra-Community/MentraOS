@@ -380,6 +380,21 @@ describe("settings panel", () => {
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Delete workspace<\/button>/);
   });
 
+  test("the delete warning is the host's: shown only when it passes one", () => {
+    const { api } = offlineApi();
+    const notice = "Miniapps stay published in the Mentra Miniapp Store.";
+    const withNotice = renderSeeded(
+      api,
+      { detail: detailFor("owner") },
+      <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} deleteNotice={notice} />,
+    );
+    expect(withNotice).toContain(notice);
+    expect(withNotice).toContain('role="note"');
+    const without = render(detailFor("owner"));
+    expect(without).not.toContain('role="note"');
+    expect(without).not.toContain("miniapps");
+  });
+
   test("an organization admin who is not a member can delete but has nothing to leave", () => {
     const markup = render(organizationAdminDetail());
     expect(markup).toContain("Delete workspace");

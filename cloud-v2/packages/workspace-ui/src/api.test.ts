@@ -236,6 +236,15 @@ describe("createWorkspaceApi: errors", () => {
     expect(errorMessage(lastOwner)).toBe("A workspace must keep at least one owner");
   });
 
+  test("a Store refusal to delete a workspace that publishes miniapps asks to move or delete them", async () => {
+    const rec = recordingFetch(Response.json({ error: "workspace_has_miniapps", count: 2 }, { status: 409 }));
+    const api = createWorkspaceApi({ basePath: "/api/console/workspaces", fetch: rec.fetch });
+    const refused = await api.deleteWorkspace("ws_1", "Acme").catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 409, code: "workspace_has_miniapps" });
+    expect(isWorkspaceChangedError(refused)).toBe(false);
+    expect(errorMessage(refused)).toBe("Move or delete this workspace's miniapps before deleting it.");
+  });
+
   test("a network failure becomes a status-0 error", async () => {
     const failing = (async () => {
       throw new TypeError("Failed to fetch");
