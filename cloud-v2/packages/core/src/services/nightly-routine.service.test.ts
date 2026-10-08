@@ -634,3 +634,25 @@ test('terminal fleet suite projects actual assignments and refuses changed bindi
   corrupt.members[0]!.binding!.hostId = 'another-host';
   expect(() => nightlySuiteProjection(plan.suite!, plan, corrupt)).toThrow('binding');
 });
+
+test('result outages preserve validated binding in live and frozen suite projections after restart', async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  const member = plan.members[0]!, request = state.requestRows.get(member.requestId);
+  state.resultRows.set(member.requestId, new TestRunError(503, 'Result store unavailable'));
+  state.resultRows.set(plan.members[1]!.requestId, publishedResult(plan.members[1]!, true));
+  const snapshot = await state.service.snapshot(plan);
+  expect(snapshot.members[0]).toMatchObject({status: 'waiting', hostId: request.hostId, binding: request.fleetBinding,
+    dispatchIntent: request.dispatchIntent, input: request.input, inputSha256: request.inputSha256});
+  const {nightlySuiteProjection} = await import('./test-suite.service');
+  expect(nightlySuiteProjection(plan.suite!, plan, snapshot)).toMatchObject({outcome: 'running',
+    members: [{hostId: 'mini', laneId: 'android', status: 'waiting'}, {hostId: 'mini', laneId: 'ios-on-mac', status: 'pass'}]});
+  state.clock = now + 3 * 3600_000;
+  const frozen = await state.service.complete(occurrence.occurrenceId);
+  expect(frozen.members[0]).toMatchObject({status: 'incomplete', hostId: request.hostId, binding: request.fleetBinding,
+    dispatchIntent: request.dispatchIntent, input: request.input, inputSha256: request.inputSha256});
+  const afterRestart = structuredClone(frozen);
+  expect(nightlySuiteProjection(structuredClone(plan.suite!), structuredClone(plan), afterRestart)).toMatchObject({outcome: 'failed',
+    members: [{hostId: 'mini', laneId: 'android', status: 'not-run'}, {hostId: 'mini', laneId: 'ios-on-mac', status: 'pass'}]});
+  expect(await state.service.detail(occurrence.occurrenceId)).toEqual(frozen);
+  expect(await state.service.complete(occurrence.occurrenceId)).toEqual(frozen);
+});

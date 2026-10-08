@@ -306,7 +306,7 @@ export class NightlyRoutineService {
         return {...prepared, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete",
           runId: run.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
-        if (!(error instanceof TestRunError) || error.status !== 404) return {...this.unavailableEvidence(member, error, "Result"), input, inputSha256: request.inputSha256};
+        if (!(error instanceof TestRunError) || error.status !== 404) return {...this.unavailableEvidence(boundMember, error, "Result"), input, inputSha256: request.inputSha256};
         if (request.hostRejection) {
           if (request.hostRejection.inputSha256 !== request.inputSha256 || request.hostRejection.hostId !== request.hostId)
             return {...prepared, status: "incomplete", publicationComplete: false, unavailableReason: "Host rejection identity differs from the frozen request."};
