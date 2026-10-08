@@ -80,6 +80,21 @@ host owners.
 
 ## Lane restoration
 
+Device lane cards list every lane in the latest controller snapshot, independent
+of the host monitor. Their readable labels use the reported host identity,
+platform and physical glasses model; the exact lane ID remains visible and is
+the same ID used by run badges and lane history links. Current state and owner
+require both observation and receipt within two minutes. Stale context is shown
+as last reported, with current status unknown.
+
+The controller may report sanitized `activity` from its exact lane owner and
+generation. Routine owners carry their original request ID, so a fresh card can
+open that existing run/request. Authoring reservations, state repair and boundary
+cleanup show their actual owner identity without fabricating a routine result.
+Missing owner metadata remains not reported; Core does not infer custody from
+accepted requests or create another observation store. Idle state and Automatic
+mode are distinct: a paused idle lane does not accept automatic jobs.
+
 Open **Lane restoration attempts & resume decisions** from System health. The
 page reads the controller's durable repair records, separately from passive
 worker monitoring. An accepted scheduling resume receipt establishes success;

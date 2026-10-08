@@ -33,6 +33,30 @@ test("strict restoration projection rejects invented success, foreign lane and r
   expect(laneRestorationProjectionSchema.safeParse({schemaVersion: 1, attempts: [attempt, attempt], truncated: false}).success).toBe(false);
 });
 
+test('lane health projects every enrolled lane, physical models and exact current custody without private device details', async () => {
+  const reported = {
+    ...snapshot,
+    lanes: [{...snapshot.lanes[0], id: 'lane:new-mac', state: 'running',
+      resources: [{id: 'glasses-resource', kind: 'glasses'}],
+      glasses: [{resourceId: 'glasses-resource', deviceId: 'private-device-serial', model: 'mentra-live', capabilities: ['camera']}],
+      activity: {generation: 7, owner: {id: 'request:actual', kind: 'run', requestId: 'request:actual'}}},
+      {...snapshot.lanes[0], id: 'lane:new-android', platform: 'android', state: 'reserved', glasses: [],
+        activity: {generation: 8, owner: {id: 'reservation:held', kind: 'authoring'}}}],
+  }
+  const result = await new LaneRestorationService({async list() {return [{snapshot: reported, receivedAt: new Date(at)}]}}).list()
+  expect(result.hosts[0].lanes.map(lane => lane.id)).toEqual(['lane:new-mac', 'lane:new-android'])
+  expect(result.hosts[0].lanes[0]).toMatchObject({glassesModels: ['mentra-live'],
+    activity: {generation: 7, owner: {id: 'request:actual', kind: 'run', requestId: 'request:actual'}}})
+  expect(result.hosts[0].lanes[1]).toMatchObject({glassesModels: [], activity: {owner: {kind: 'authoring'}}})
+  expect(JSON.stringify(result)).not.toContain('private-device-serial')
+  expect(JSON.stringify(result)).not.toContain('glasses-resource')
+  for (const changed of [
+    {...reported.lanes[0], activity: {generation: 7, owner: {id: 'request:actual', kind: 'run', requestId: 'foreign'}}},
+    {...reported.lanes[0], state: 'idle'},
+    {...reported.lanes[1], activity: {generation: 8, owner: {id: 'reservation:held', kind: 'authoring', requestId: 'request:actual'}}},
+  ]) expect(hostStateSchema.safeParse({...reported, lanes: [changed]}).success).toBe(false)
+})
+
 test("bounded restoration hosts disclose truncation and malformed stored evidence fails closed", async () => {
   const service = new LaneRestorationService({async list() {return Array.from({length: 33}, (_, index) =>
     ({snapshot: {...snapshot, hostId: `host-${index}`}, receivedAt: new Date(at)}));}}, () => Date.parse(at));

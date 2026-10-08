@@ -28,7 +28,7 @@ test("lane links retain exact host and lane identities and reject incomplete or 
 });
 test("lane history shows only the selected controller/lane, paginated runs and restoration receipts", () => {
   const {client, render} = fixture(); const html = render();
-  expect(html).toContain("mac history"); expect(html).toContain("testRun=first"); expect(html).toContain("testRun=second");
+  expect(html).toContain("Mini · iOS on Mac · Glasses not reported history"); expect(html).toContain("testRun=first"); expect(html).toContain("testRun=second");
   expect(html).toContain("More runs"); expect(html).toContain("Scheduling resumed"); expect(html).toContain("request%3Amac");
   expect(html).not.toContain("foreign-fixer"); expect(html).not.toContain("foreign-request"); expect(html).not.toContain("foreign-host");
   expect(html).toContain("bounded portion"); client.clear();
@@ -60,10 +60,12 @@ test("a fresh lane visit shows restoration loading until controller reports sett
   const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
   const render = () => renderToStaticMarkup(<QueryClientProvider client={client}><LaneHistoryPage selection={selection} now={now}/></QueryClientProvider>);
   const loading = render();
-  expect(loading).toContain("Loading restoration history…");
+  expect(loading).toContain("Loading restoration history");
+  expect(loading).toContain('animate-spin');
+  expect(loading).toContain('role="status"');
   expect(loading).not.toContain("Restoration history is unavailable for this lane.");
   client.setQueryData(["lane-restoration"], {hosts: [], freshForMs: 120000});
   expect(render()).toContain("Restoration history is unavailable for this lane.");
-  expect(render()).not.toContain("Loading restoration history…");
+  expect(render()).not.toContain("Loading restoration history");
   client.clear();
 });
