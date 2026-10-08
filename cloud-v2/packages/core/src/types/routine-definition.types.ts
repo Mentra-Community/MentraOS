@@ -46,8 +46,9 @@ export const publishedRoutineDefinitionSchema = z.object({
     revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().regex(/^routines\/[\w.-]+\/routine\.ts$/)}).strict(),
 }).strict().superRefine((definition, ctx) => {
   const resourceKinds = definition.resourceRequirements.map(value => value.kind);
-  if (new Set(resourceKinds).size !== resourceKinds.length || definition.execution && (resourceKinds.length !== definition.execution.resourceKinds.length ||
-    resourceKinds.some(kind => !definition.execution!.resourceKinds.includes(kind))))
+  const executionKinds = definition.execution?.resourceKinds ?? [];
+  if (new Set(resourceKinds).size !== resourceKinds.length || resourceKinds.length !== executionKinds.length ||
+    resourceKinds.some(kind => !executionKinds.includes(kind)))
     ctx.addIssue({code: "custom", message: "Resource requirements must uniquely name declared execution resources"});
   if (Boolean(definition.glasses) !== resourceKinds.includes('glasses') || Boolean(definition.fixtures.length) !== resourceKinds.includes('fixture-data'))
     ctx.addIssue({code: 'custom', message: 'Typed resources must match glasses models and fixture declarations'});

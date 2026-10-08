@@ -37,6 +37,9 @@ test('executable resource metadata has one canonical typed shape and cannot omit
     definitionSha256:'a'.repeat(64), definition:full, routineSource:{repository:'Mentra-Community/Mentra-Automated-Testing',
       commit:full.source.revision,minimumRoutineApiVersion:1,bundle:{url:'https://example.invalid/source.tar.gz',sha256:'b'.repeat(64),size:100}}}
   expect(routineEnrollmentSchema.safeParse(enrollment).success).toBe(true)
+  const {execution:__,...unexecutable}=full
+  expect(publishedRoutineDefinitionSchema.safeParse(unexecutable).success).toBe(false)
+  expect(routineEnrollmentSchema.safeParse({...enrollment,definition:unexecutable}).success).toBe(false)
   expect(publishedRoutineDefinitionSchema.safeParse({...full,requires:[]}).success).toBe(false)
   const {resourceRequirements:_,...missing}=full
   expect(publishedRoutineDefinitionSchema.safeParse(missing).success).toBe(false)
