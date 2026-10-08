@@ -430,6 +430,24 @@ class GuidedTests(unittest.TestCase):
                 setup.create_meetings_app(self.directory, self.config, state)
         self.assertIn(('removed', 'key-1'), calls)
 
+    def test_a_password_created_without_a_reply_is_removed(self):
+        state = self.write_state('infrastructure_verified')
+        graph, calls = self.meetings_graph()
+        labels = []
+        def flaky(config, method, path, body=None, missing_ok=False):
+            if method == 'POST' and path.endswith('/addPassword'):
+                labels.append(body['passwordCredential']['displayName'])
+                raise setup.GraphError('network')
+            if method == 'GET' and 'passwordCredentials' in path:
+                return {'passwordCredentials': [{'displayName': labels[0], 'keyId': 'lost-key'},
+                                                {'displayName': 'someone else', 'keyId': 'other'}]}
+            return graph(config, method, path, body, missing_ok)
+        with patch.object(setup, 'graph', side_effect=flaky), patch.object(setup, 'vault_get', return_value=None):
+            with self.assertRaises(setup.GraphError):
+                setup.create_meetings_app(self.directory, self.config, state)
+        self.assertIn(('removed', 'lost-key'), calls)
+        self.assertNotIn(('removed', 'other'), calls)
+
     def test_rerun_reuses_the_recorded_app_and_its_saved_secret(self):
         state = self.write_state('infrastructure_verified', meetingsAppId=SUB)
         graph, calls = self.meetings_graph(recorded_app=SUB)
@@ -672,6 +690,14 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual((config['displayName'], config['coreApiClientId'], config['teamsGraphClientId']), ('ACME Corp', SUB, SUB))
         # The live custom address stays bound through the next rollout.
         self.assertTrue(state['domainVerified'])
+
+    def test_a_lost_folder_keeps_the_deployments_tags_and_deliberate_empty_settings(self):
+        earlier = {'owner': '22222222-2222-2222-2222-222222222222', 'release': RELEASE['releaseTag'], 'group': 'rg-acme-mentra',
+                   'settings': {'resourceTags': {'costCenter': '42', 'mentraInstallerOwner': '22222222-2222-2222-2222-222222222222'},
+                                'managedMiniappDirectory': ''}}
+        config, _ = self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra'), earlier)
+        self.assertEqual(config['resourceTags']['costCenter'], '42')
+        self.assertEqual(config['managedMiniappDirectory'], '')
 
     def test_a_lost_folder_never_downgrades_its_deployment(self):
         earlier = {'owner': '22222222-2222-2222-2222-222222222222', 'release': '9.9.9', 'group': 'rg-acme-mentra', 'settings': {}}

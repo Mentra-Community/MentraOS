@@ -410,6 +410,8 @@ RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName
                  'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'approvedSystemMiniapps',
                  'miniappConfiguration', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
                  'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'mongoAccountName', 'reportStorageAccountName')
+# Restored even when empty: an empty value there is a deliberate choice.
+RESTORED_AS_IS = ('managedMiniappDirectory',)
 
 
 def data_location(region):
@@ -563,12 +565,17 @@ def init(args, directory):
     for key in RESTORED_KEYS:
         if deployed.get(key) not in (None, ''):
             config[key] = deployed[key]
+    for key in RESTORED_AS_IS:
+        if key in deployed:
+            config[key] = deployed[key]
     config['approvedSystemMiniapps'] = config.get('approvedSystemMiniapps') or ['com.mentra.settings', 'com.mentra.feedback']
     validate_resource_names(config)
     tags = inputs.get('resourceTags') or {}
     if not isinstance(tags, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in tags.items()):
         raise SetupError('resourceTags in --config must map tag names to text values.')
-    config['resourceTags'] = dict(tags, mentraDeploymentId=name, mentraInstallerOwner=ownership)
+    # The deployment's own tags (for example ones a policy requires) come back too.
+    restored = deployed.get('resourceTags') if isinstance(deployed.get('resourceTags'), dict) else {}
+    config['resourceTags'] = dict(restored, **tags, mentraDeploymentId=name, mentraInstallerOwner=ownership)
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_json(directory / 'deployment.config.json', config)
     state = dict(schemaVersion=1, deploymentId=name, releaseHash=digest(ROOT / 'release.json'),
@@ -1655,8 +1662,17 @@ def create_meetings_app(directory, config, state):
     expires = None
     if not vault_get(config, teams_secret(app['appId'])):
         expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-        password = graph(config, 'POST', f"applications/{app['id']}/addPassword",
-                         {'passwordCredential': {'displayName': 'Mentra Private Cloud', 'endDateTime': expires}})
+        label = f'Mentra Private Cloud {uuid.uuid4().hex[:8]}'
+        try:
+            password = graph(config, 'POST', f"applications/{app['id']}/addPassword",
+                             {'passwordCredential': {'displayName': label, 'endDateTime': expires}})
+        except GraphError:
+            # Graph may have created it without its reply reaching us; its secret is lost, so remove it.
+            with contextlib.suppress(GraphError, KeyError, TypeError):
+                for credential in graph(config, 'GET', f"applications/{app['id']}?$select=passwordCredentials")['passwordCredentials']:
+                    if credential.get('displayName') == label:
+                        graph(config, 'POST', f"applications/{app['id']}/removePassword", {'keyId': credential['keyId']})
+            raise
         try:
             vault_set(config, teams_secret(app['appId']), password['secretText'])
         except BaseException:
