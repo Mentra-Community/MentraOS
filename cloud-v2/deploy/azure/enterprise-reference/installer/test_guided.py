@@ -36,6 +36,7 @@ class GuidedTests(unittest.TestCase):
         self.config = dict(subscriptionId=SUB, tenantId=TENANT, resourceGroup='rg-test', location='westus2',
                            workspaceHostname='', coreApiClientId=SUB, mobileClientId=TENANT, deploymentId='acme-mentra',
                            displayName='ACME', keyVaultName='kvacmementra12345678', coreName='ca-acme-core',
+                           coreIdentityName='id-acme-core', runtimeIdentityName='id-acme-runtime',
                            resourceTags={'mentraInstallerOwner': 'owner'}, **RELEASE)
 
     def write_state(self, phase, release_hash='this-release', **extra):
@@ -163,6 +164,29 @@ class GuidedTests(unittest.TestCase):
         with patch.object(setup.subprocess, 'run', return_value=result) as run:
             self.assertIsNone(setup.vault_get(self.config, 'x'))
         self.assertEqual(run.call_count, 1)
+
+    def test_pre_key_vault_deployments_are_refused_before_anything_changes(self):
+        packages = self.home / 'packages'
+        old = packages / '3.3.0-dev.1/mentra-private-cloud'
+        new = packages / '3.3.0-dev.2/mentra-private-cloud'
+        for package, tag in ((old, '3.3.0-dev.1'), (new, '3.3.0-dev.2')):
+            package.mkdir(parents=True)
+            (package / 'release.json').write_text(json.dumps({'releaseTag': tag}))
+        (self.home / 'mentra-private-cloud').symlink_to('packages/3.3.0-dev.1/mentra-private-cloud')
+        legacy = {k: v for k, v in self.config.items() if k not in ('keyVaultName', 'coreIdentityName', 'runtimeIdentityName')}
+        self.config = dict(legacy, pullIdentityName='id-acme-pull')
+        self.write_state('infrastructure_verified', release_hash='old-release')
+        hashes = {str(old / 'release.json'): 'old-release', str(new / 'release.json'): 'new-release'}
+        before = (self.directory / 'state.json').read_bytes()
+        with patch.object(setup, 'ROOT', new), patch.object(setup, 'digest', side_effect=lambda p: hashes.get(str(p), 'config-hash')), \
+             patch.object(setup, 'check_release', return_value=RELEASE), patch.object(setup, 'preview') as preview, \
+             patch.object(setup, 'select_upgrade') as select:
+            with self.assertRaisesRegex(setup.SetupError, 'pre-release installer'):
+                setup.upgrade_command(self.args, self.directory, interactive=False)
+        preview.assert_not_called()
+        select.assert_not_called()
+        self.assertEqual((self.directory / 'state.json').read_bytes(), before)
+        self.assertFalse((self.directory / 'upgrade.pending.json').exists())
 
     def test_upgrade_finds_the_running_package_confirms_backups_and_relinks(self):
         packages = self.home / 'packages'
