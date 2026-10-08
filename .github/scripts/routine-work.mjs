@@ -23,7 +23,7 @@ const resourceCapabilities = {
   phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
   glasses: ['glasses-ble', 'connection', 'software'],
   recorder: [],
-  audio: ['speech', 'witness', 'synthesis', 'playback'],
+  audio: ['speech', 'witness', 'synthesis', 'recognition'],
   browser: ['external-window'],
   network: ['independent-uplink'],
   'fixture-data': [],
