@@ -87,6 +87,7 @@ const G2_CYRILLIC_RENDERED_PX: Record<string, number> = {
 
 export const G2_PROFILE: DisplayProfile = {
   ...G1_PROFILE,
+  normalizeText: undefined, // G2 sends Unicode without the G1 Latin fallback.
   id: "even-realities-g2",
   name: "Even Realities G2",
   // G2 fits more vertical text than G1 — allow up to 8 lines before the

@@ -156,7 +156,7 @@ export function renderRoutineWorkReport(row: RoutineWorkDelivery, kind: 'progres
   if (
     !origin ||
     row.work.workId !== row.workId ||
-    row.work.target.hostId !== row.hostId ||
+    row.hostId !== undefined && row.work.target?.hostId !== row.hostId ||
     row.inputSha256 !== requestInputDigest(row.work) ||
     row.work.build.headSha !== origin.headSha ||
     row.work.build.prNumber !== origin.prNumber
@@ -178,7 +178,7 @@ export function renderRoutineWorkReport(row: RoutineWorkDelivery, kind: 'progres
     '',
     `Updated: ${at}. Work: \`${row.workId}\`.`,
     `Coverage: ${plain(row.work.brief.goal)}. Routine: \`${row.work.routineId}\`.`,
-    `Assigned machine/lane: \`${row.hostId}/${row.work.target.laneId}\`.`,
+    `Assignment: ${row.hostId && row.work.target?.laneId ? `\`${row.hostId}/${row.work.target.laneId}\`` : "awaiting compatible runner"}.`,
     `Frozen app head: [\`${origin.headSha}\`](https://github.com/${origin.repository}/commit/${origin.headSha}).`,
     `[Exact app build ${row.work.build.source.buildRunId}/${row.work.build.source.publicationAttempt}](https://github.com/${origin.repository}/actions/runs/${row.work.build.source.buildRunId}/attempts/${row.work.build.source.publicationAttempt}).`,
     'This reports the accepted app head; later PR changes are not included.',

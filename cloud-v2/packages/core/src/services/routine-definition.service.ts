@@ -4,7 +4,7 @@ import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {RoutineCollectionModel} from '../models/routine-collection.model';
 import {RoutineWorkModel} from '../models/routine-work.model';
 import {authoringJobViewSchema} from '../types/routine-work.types';
-import {routineEnrollmentSchema, type RoutineEnrollment} from "../types/routine-definition.types";
+import {routineEnrollmentSchema, routineCardDefinitionSchema, type RoutineEnrollment, type RoutineCardDefinition} from "../types/routine-definition.types";
 import {requestInputDigest} from "./test-request.service";
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {GithubRoutineMergeGateway, RoutineMergeEligibilityService} from './routine-merge-eligibility.service';
@@ -13,6 +13,7 @@ export class RoutineDefinitionConflict extends Error {}
 export interface RoutineDefinitionRepository {
   enroll(row: RoutineEnrollment): Promise<void>;
   current(): Promise<RoutineEnrollment[]>;
+  overview(): Promise<RoutineCardDefinition[]>;
   getCurrent(routineId: string, platform: string): Promise<RoutineEnrollment | null>;
   getExact(routineId: string, platform: string, revision: string, ordinaryOnly?: boolean): Promise<RoutineEnrollment | null>;
 }
@@ -91,6 +92,24 @@ const mongoRepository: RoutineDefinitionRepository = {
   async getCurrent(routineId, platform) {
     return (await this.current()).find(row => row.routineId === routineId && row.platform === platform) ?? null;
   },
+  async overview() {
+    const latest = await RoutineCollectionModel.findOne().sort({version: -1})
+      .select({commit: 1, members: 1}).read('primary').readConcern('majority').lean();
+    if (!latest) return [];
+    const stored = await RoutineDefinitionModel.find({definitionRevision: latest.commit,
+      $or: latest.members.map(member => ({routineId: member.routineId, platform: member.platform}))})
+      .select({routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1,
+        'definition.title': 1, 'definition.purpose': 1, 'definition.glasses.models': 1, _id: 0})
+      .read('primary').readConcern('majority').lean();
+    // Displayed rows belong to the chosen publication. Only current() reads and
+    // verifies every definition byte against the complete manifest digest.
+    return latest.members.map(member => {
+      const row = stored.find(value => value.routineId === member.routineId && value.platform === member.platform);
+      if (!row || row.definitionSha256 !== member.definitionSha256)
+        throw new RoutineDefinitionConflict('Published collection member is unavailable');
+      return routineCardDefinitionSchema.parse(row);
+    });
+  },
   async getExact(routineId, platform, definitionRevision, ordinaryOnly = false) {
     const row = await RoutineDefinitionModel.findOne({routineId, platform, definitionRevision,
       ...(ordinaryOnly ? {ordinaryEnrolledAt: {$exists: true}} : {})})
@@ -162,6 +181,7 @@ export class RoutineDefinitionService {
     return {commit: collection.commit, version: collection.version, definitions: collection.definitions.length};
   }
   current() {return this.repository.current();}
+  overview() {return this.repository.overview();}
   getCurrent(routineId: string, platform: string) {return this.repository.getCurrent(routineId, platform);}
   getExact(routineId: string, platform: string, revision: string, ordinaryOnly = false) {
     return this.repository.getExact(routineId, platform, revision, ordinaryOnly);

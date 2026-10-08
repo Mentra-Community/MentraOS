@@ -1,9 +1,15 @@
 import {TestHostStateModel} from "../models/test-host-state.model"
+import {z} from 'zod'
 import {
   frameworkDeploymentSchema,
   frameworkHistoryEntrySchema,
   type LaneRestorationList,
+  type LaneOverviewList,
+  laneActivitySchema,
 } from "../types/lane-restoration.types"
+import {frameworkBindingSchema} from '../types/framework-version.types'
+import {frameworkIdentitySchema} from '../types/framework-request.types'
+import {glassesModelSchema, routinePlatformSchema} from '../types/routine-definition.types'
 import {hostStateSchema} from "./test-host-state.service"
 import {TestRunError} from "./test-result-error"
 
@@ -16,11 +22,23 @@ type StoredState = {
   deploymentReceivedAt?: Date
 }
 export interface LaneRestorationRepository {
-  list(limit: number): Promise<StoredState[]>
+  list(limit: number, hostId?: string): Promise<StoredState[]>
+  overview(limit: number): Promise<StoredState[]>
 }
-class MongoLaneRestorationRepository implements LaneRestorationRepository {
-  async list(limit: number) {
-    return (await TestHostStateModel.find({})
+export const laneOverviewFields = {
+  'snapshot.hostId': 1, 'snapshot.observedAt': 1,
+  'snapshot.lanes.id': 1, 'snapshot.lanes.platform': 1, 'snapshot.lanes.state': 1,
+  'snapshot.lanes.dispatchMode': 1, 'snapshot.lanes.glasses.model': 1, 'snapshot.lanes.activity': 1,
+  'snapshot.frameworkBinding': 1, 'snapshot.frameworkAcceptedAt': 1, 'snapshot.deployment': 1,
+  frameworkHistory: {$slice: -1}, receivedAt: 1, deploymentObservation: 1, deploymentReceivedAt: 1, _id: 0,
+} as const
+export class MongoLaneRestorationRepository implements LaneRestorationRepository {
+  async overview(limit: number) {
+    return await TestHostStateModel.find({}).select(laneOverviewFields).sort({hostId: 1}).limit(limit)
+      .maxTimeMS(5_000).read('primary').readConcern('majority').lean() as StoredState[]
+  }
+  async list(limit: number, hostId?: string) {
+    return (await TestHostStateModel.find(hostId ? {hostId} : {})
       .select({
         snapshot: 1,
         receivedAt: 1,
@@ -37,14 +55,54 @@ class MongoLaneRestorationRepository implements LaneRestorationRepository {
       .lean()) as StoredState[]
   }
 }
+const currentSnapshotSchema = z.object({
+  hostId: frameworkIdentitySchema, observedAt: z.string().datetime({offset: true}),
+  lanes: z.array(z.object({id: frameworkIdentitySchema, platform: routinePlatformSchema,
+    state: z.enum(['idle', 'running', 'reserved', 'in-repair', 'out-of-service', 'offline']),
+    dispatchMode: z.enum(['automatic', 'authoring', 'paused']), activity: laneActivitySchema.optional(),
+    glasses: z.array(z.object({model: glassesModelSchema})).max(1).optional(),
+  }).superRefine((lane, ctx) => {
+    if (lane.activity && ['idle', 'offline'].includes(lane.state))
+      ctx.addIssue({code: 'custom', message: 'Idle or offline lane cannot report active custody'})
+  })).max(100),
+  frameworkBinding: frameworkBindingSchema.optional(), frameworkAcceptedAt: z.string().datetime({offset: true}).optional(),
+  deployment: frameworkDeploymentSchema.optional(),
+}).superRefine((snapshot, ctx) => {
+  if (new Set(snapshot.lanes.map(lane => lane.id)).size !== snapshot.lanes.length)
+    ctx.addIssue({code: 'custom', message: 'Duplicate lane identity'})
+  if ((snapshot.frameworkBinding === undefined) !== (snapshot.frameworkAcceptedAt === undefined))
+    ctx.addIssue({code: 'custom', message: 'Accepted framework requires its recorded acceptance time'})
+})
 /** Controller snapshots are observations, never permission to resume or start a repair agent. */
 export class LaneRestorationService {
   constructor(
     private repository: LaneRestorationRepository = new MongoLaneRestorationRepository(),
     private now = Date.now,
   ) {}
-  async list(): Promise<LaneRestorationList> {
-    const rows = await this.repository.list(HOST_LIMIT + 1)
+  async overview(): Promise<LaneOverviewList> {
+    const rows = await this.repository.overview(HOST_LIMIT + 1)
+    const hosts = rows.slice(0, HOST_LIMIT).map(row => {
+      const parsed = currentSnapshotSchema.safeParse(row.snapshot)
+      if (!parsed.success || !Number.isFinite(row.receivedAt?.getTime()))
+        throw new TestRunError(503, 'Stored current lane observation is unavailable.')
+      const {hostId, observedAt, lanes, frameworkBinding, frameworkAcceptedAt, deployment} = parsed.data
+      const updater = row.deploymentObservation ? frameworkDeploymentSchema.parse(row.deploymentObservation) : undefined
+      const latestDeployment = updater ?? deployment
+      return {hostId, observedAt, receivedAt: row.receivedAt.toISOString(),
+        lanes: lanes.map(({glasses, ...lane}) => ({...lane,
+          ...(glasses ? {glassesModels: [...new Set(glasses.map(value => value.model))].sort()} : {})})),
+        ...(frameworkBinding ? {frameworkBinding, frameworkAcceptedAt} : {}),
+        ...(row.frameworkHistory?.length ? {frameworkCurrentInterval: frameworkHistoryEntrySchema.parse(row.frameworkHistory.at(-1))} : {}),
+        ...(latestDeployment ? {deployment: latestDeployment, deploymentReceivedAt:
+          latestDeployment === updater ? row.deploymentReceivedAt?.toISOString() : row.receivedAt.toISOString()} : {}),
+      }
+    })
+    return {generatedAt: new Date(this.now()).toISOString(), freshForMs: 120_000, hosts, truncated: rows.length > HOST_LIMIT}
+  }
+  async list(hostId?: string): Promise<LaneRestorationList> {
+    if (hostId !== undefined && !frameworkIdentitySchema.safeParse(hostId).success)
+      throw new TestRunError(400, 'Invalid controller identity')
+    const rows = await this.repository.list(hostId ? 1 : HOST_LIMIT + 1, hostId)
     const hosts = rows.slice(0, HOST_LIMIT).map((row) => {
       const parsed = hostStateSchema.safeParse(row.snapshot)
       if (!parsed.success || !Number.isFinite(row.receivedAt?.getTime()))
@@ -58,7 +116,9 @@ export class LaneRestorationService {
         hostId,
         observedAt,
         receivedAt: row.receivedAt.toISOString(),
-        lanes: lanes.map(({id, platform, state, dispatchMode}) => ({id, platform, state, dispatchMode})),
+        lanes: lanes.map(({id, platform, state, dispatchMode, glasses, activity}) => ({id, platform, state, dispatchMode,
+          ...(glasses ? {glassesModels: [...new Set(glasses.map(value => value.model))].sort()} : {}),
+          ...(activity ? {activity} : {})})),
         restoration: restoration ?? null,
         ...(frameworkBinding ? {frameworkBinding, frameworkAcceptedAt} : {}),
         frameworkHistory: (row.frameworkHistory ?? []).map((value) => frameworkHistoryEntrySchema.parse(value)),

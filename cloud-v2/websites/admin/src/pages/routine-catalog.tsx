@@ -1,10 +1,11 @@
+import {LoadingIndicator} from "../components/loading-indicator";
 import {HistoryStatus, runDisplayStatus} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {RunRerunLinks} from "./test-reruns";
 import {useEffect, useId, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
-import type {CatalogExample, CatalogHistoryRun, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
+import type {CatalogExample, CatalogHistoryRun, RoutineCatalogCard as CatalogCard, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
 import type {FrameworkRun, RecordedFrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
 import {RoutineSearch, useRoutineSearch, matchesRoutineSearch, hasRoutineFilters, type RoutineSearchFilters, type SearchableRoutine} from "../components/routine-search";
@@ -12,11 +13,12 @@ import {RecordingVideo} from "../components/recording-video";
 import {Switch} from "../components/ui/switch";
 import {TestHistoryTable} from "../components/test-history-table";
 import {testRunLocation} from "../lib/test-run-links";
-import type {RoutineEnrollment} from "../../../../packages/core/src/types/routine-definition.types";
+import type {RoutineEnrollment, RoutineCardDefinition} from "../../../../packages/core/src/types/routine-definition.types";
 import type {FrameworkRequestDisplay} from "../../../../packages/core/src/types/framework-request.types";
 
 type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
 type Detail = CatalogRow & {history: CatalogHistoryRun[]; nextCursor: string | null};
+type CardRow = RoutineCardDefinition & Pick<CatalogRow, 'example' | 'latestAttempt' | 'nightlyEnabled'>;
 const PANEL = TESTING_PANEL;
 export function routineHref(id: string, platform: string) {
   return `/?routineCatalog=1&routine=${encodeURIComponent(id)}&platform=${encodeURIComponent(platform)}`;
@@ -30,29 +32,40 @@ export function RoutineCatalogPage() {
   return id && platform ? <RoutineDetailPage id={id} platform={platform} /> : <RoutineCatalogList />;
 }
 
-function searchableRoutine(routine: RoutineEnrollment): SearchableRoutine {
+function searchableRoutine(routine: RoutineCardDefinition): SearchableRoutine {
   return {title: routine.definition.title, purpose: routine.definition.purpose, platform: routine.platform, glassesModels: routine.definition.glasses?.models ?? []};
 }
-export function matchesCatalogSearch(routine: RoutineEnrollment, search: string, platform: string, glasses: string) {
+export function matchesCatalogSearch(routine: RoutineCardDefinition, search: string, platform: string, glasses: string) {
   return matchesRoutineSearch(searchableRoutine(routine), {search, platform, glasses});
 }
-function useSearchCatalog() {
-  return useQuery({queryKey: ["routine-catalog"], queryFn: () => api<{routines: CatalogRow[]}>("/api/admin/routine-catalog"), refetchInterval: 15000});
-}
-function runSearchMetadata(run: {routineId: string; platform: string}, routines: RoutineEnrollment[]): SearchableRoutine {
+export const routineCatalogOverviewQuery = {queryKey: ["routine-catalog"],
+  queryFn: () => api<{routines: CatalogCard[]}>("/api/admin/routine-catalog/overview"), refetchInterval: 15000};
+function useSearchCatalog() {return useQuery(routineCatalogOverviewQuery);}
+function runSearchMetadata(run: {routineId: string; platform: string}, routines: RoutineCardDefinition[]): SearchableRoutine {
   const routine = routines.find(row => row.routineId === run.routineId && row.platform === run.platform);
   return routine ? searchableRoutine(routine) : {title: run.routineId, platform: run.platform};
 }
-export function matchesHistorySearch(entry: TestHistoryEntry, routines: RoutineEnrollment[], filters: RoutineSearchFilters) {
+export function matchesBuildSearch(build: {headSha: string; prNumber?: number; release?: string}, search: string) {
+  const text = search.trim().toLowerCase();
+  if (!text) return false;
+  const pr = text.match(/^(?:#|pr\s*#?\s*)?(\d+)$/);
+  return build.release?.toLowerCase().includes(text) === true
+    || !!pr && build.prNumber !== undefined && Number(pr[1]) === build.prNumber
+    || /^[a-f0-9]{4,40}$/.test(text) && build.headSha.toLowerCase().startsWith(text);
+}
+export function matchesHistorySearch(entry: TestHistoryEntry, routines: RoutineCardDefinition[], filters: RoutineSearchFilters) {
   if (!hasRoutineFilters(filters)) return true;
   if (entry.kind === "unavailable") return false;
+  const buildMatch = matchesBuildSearch(entry.build, filters.search);
+  const memberFilters = buildMatch ? {...filters, search: ""} : filters;
+  if (buildMatch && !filters.platform && !filters.glasses) return true;
   const members = entry.kind === "suite" ? entry.members ?? [] : [entry];
-  return members.some(member => matchesRoutineSearch(runSearchMetadata(member, routines), filters));
+  return members.some(member => matchesRoutineSearch(runSearchMetadata(member, routines), memberFilters));
 }
 export function RoutineCatalogList() {
   const [filters, setFilters] = useRoutineSearch();
   const catalog = useSearchCatalog();
-  if (catalog.isPending) return <p role="status">Loading routines…</p>;
+  if (catalog.isPending) return <LoadingIndicator label="Loading routines" />;
   if (catalog.error && !catalog.data) return <p role="alert">Could not load routines: {catalog.error.message}</p>;
   const routines = catalog.data.routines;
   const filtered = routines.filter(row => matchesRoutineSearch(searchableRoutine(row), filters));
@@ -67,14 +80,14 @@ export function RoutineCatalogList() {
   </div>;
 }
 
-function EditableRoutineCatalogCard({routine}: {routine: CatalogRow}) {
+function EditableRoutineCatalogCard({routine}: {routine: CardRow}) {
   const client = useQueryClient();
   const [saving, setSaving] = useState(false), [error, setError] = useState<string | null>(null);
   const update = async (nightlyEnabled: boolean) => {
     setSaving(true); setError(null);
     try {
       await api(`/api/admin/routines/${encodeURIComponent(routine.routineId)}/platforms/${encodeURIComponent(routine.platform)}/preferences`, {method: "PATCH", body: {nightlyEnabled}});
-      client.setQueryData<{routines: CatalogRow[]}>(["routine-catalog"], current => current && ({routines: current.routines.map(row => row.routineId === routine.routineId && row.platform === routine.platform ? {...row, nightlyEnabled} : row)}));
+      client.setQueryData<{routines: CatalogCard[]}>(["routine-catalog"], current => current && ({routines: current.routines.map(row => row.routineId === routine.routineId && row.platform === routine.platform ? {...row, nightlyEnabled} : row)}));
       await client.invalidateQueries({queryKey: ["routine-catalog"]});
     } catch (cause) {setError(cause instanceof Error ? cause.message : "Could not save nightly preference.");}
     finally {setSaving(false);}
@@ -82,7 +95,7 @@ function EditableRoutineCatalogCard({routine}: {routine: CatalogRow}) {
   return <RoutineCatalogCard routine={routine} onNightlyChange={update} saving={saving} preferenceError={error} />;
 }
 
-export function RoutineCatalogCard({routine, onNightlyChange, saving = false, preferenceError}: {routine: CatalogRow; onNightlyChange?: (enabled: boolean) => void; saving?: boolean; preferenceError?: string | null}) {
+export function RoutineCatalogCard({routine, onNightlyChange, saving = false, preferenceError}: {routine: CardRow; onNightlyChange?: (enabled: boolean) => void; saving?: boolean; preferenceError?: string | null}) {
   return <article className={PANEL}>
     <p className="text-sm text-[#68746d]">{routine.platform === "android" ? "Android" : "iOS on Mac"}</p>
     <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1"><h3 className="text-lg font-semibold"><a className={TESTING_LINK} href={routineHref(routine.routineId, routine.platform)}>{routine.definition.title}</a></h3>
@@ -119,7 +132,7 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
   const detail = useInfiniteQuery({queryKey: ["routine-detail", id, platform], initialPageParam: undefined as string | undefined,
     queryFn: ({pageParam}) => api<Detail>(`/api/admin/routine-catalog/${encodeURIComponent(id)}/${encodeURIComponent(platform)}${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ""}`),
     getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 15000});
-  if (detail.isPending) return <p role="status">Loading routine…</p>;
+  if (detail.isPending) return <LoadingIndicator label="Loading routine" />;
   if (detail.error && !detail.data) return <p role="alert">Could not load routine: {detail.error.message}</p>;
   const row = detail.data.pages[0]!, definition = row.definition;
   return <div className="space-y-5">
@@ -145,7 +158,7 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
       <ul className="mt-3 space-y-2">{detail.data.pages.flatMap(page => page.history).map(run => <li key={run.runId}>
         <a className={TESTING_LINK} href={frameworkRunHref(run.runId)}>{new Date(run.startedAt).toLocaleString()}</a>
         {" · "}{run.outcome}{run.evidenceStatus === "failed" && " · evidence failed"}{!run.uploadsComplete && " · evidence pending"}</li>)}</ul>
-      {detail.hasNextPage && <TestingButton className="mt-4" disabled={detail.isFetchingNextPage} onClick={() => detail.fetchNextPage()}>More runs</TestingButton>}
+      {detail.hasNextPage && <TestingButton className="mt-4" busy={detail.isFetchingNextPage} onClick={() => detail.fetchNextPage()}>More runs</TestingButton>}
     </section>
   </div>;
 }
@@ -215,7 +228,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     } else {pendingOffset.current = null; setSelectedAsset(null);}
   }, [runId, stepId, result.data?.run]);
   useEffect(() => {setStepSearch(""); setSelectedStep(stepId); if (!stepId) {pendingOffset.current = null; setSelectedAsset(null);}}, [runId, stepId]);
-  if (result.isPending) return <p role="status">Loading run…</p>;
+  if (result.isPending) return <LoadingIndicator label="Loading run" />;
   if (result.error && !result.data) return <p role="alert">Could not load run: {result.error.message}</p>;
   if (result.data.kind === "request") {
     const request = result.data.request;
@@ -399,16 +412,16 @@ function TestHistoryList({initialOrigin = "pr"}: {initialOrigin?: HistoryOrigin}
         }}>{label}</button>)}
     </div>
     <div role="tabpanel" id={`${tabId}-history`} aria-labelledby={`${tabId}-${origin}`} tabIndex={0}>
-    <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${originEntries.length} loaded entries`} />
+    <RoutineSearch placeholder="Routine, PR, commit or tested build" filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${originEntries.length} loaded entries`} />
     <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Tabs and filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p></details>
-    {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
+    {catalog.isPending && <LoadingIndicator label="Loading routine names and glasses requirements" className="mt-2 text-sm" />}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
-    {history.isPending && <p role="status" className="mt-3">Loading test history…</p>}
+    {history.isPending && <LoadingIndicator label="Loading test history" className="mt-3" />}
     {history.error && <p role="alert" className="mt-3">{history.data ? "History could not refresh" : "Could not load test history"}: {history.error.message} <TestingButton onClick={() => history.refetch()}>Retry</TestingButton></p>}
     {history.data && !entries.length && <p className="mt-3">No test suites or routine runs yet.</p>}
     {history.data && !!entries.length && !filtered.length && <p className="mt-3">No loaded test history matches this tab and your filters.</p>}
     {!!filtered.length && <TestHistoryTable entries={filtered} routines={routines}/>}
-    {history.hasNextPage && <TestingButton className="mt-4" disabled={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>{history.isFetchingNextPage ? "Loading…" : "More history"}</TestingButton>}
+    {history.hasNextPage && <TestingButton className="mt-4" busy={history.isFetchingNextPage} onClick={() => history.fetchNextPage()}>More history</TestingButton>}
     </div>
   </section>;
 }
@@ -424,22 +437,22 @@ function FilteredFrameworkRunsPage({scope}: {scope: Record<string, string>}) {
   const query = useInfiniteQuery({queryKey: ["framework-runs", params.toString()], initialPageParam: undefined as string | undefined,
     queryFn: ({pageParam, signal}) => api<ScopedRunPage>(`/api/admin/routine-catalog/results?${params}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, {signal, timeoutMs: 30000}),
     getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 15000});
-  if (query.isPending) return <p role="status">Loading runs…</p>;
+  if (query.isPending) return <LoadingIndicator label="Loading runs" />;
   if (query.error && !query.data) return <p role="alert">Could not load runs: {query.error.message}</p>;
   const routines = catalog.data?.routines ?? [];
   const runs = query.data.pages.flatMap(page => page.runs);
   const options = runs.map(run => runSearchMetadata(run, routines));
-  const filtered = runs.filter(run => matchesRoutineSearch(runSearchMetadata(run, routines), filters));
+  const filtered = runs.filter(run => matchesHistorySearch({kind: "run", ...run}, routines, filters));
   return <section className={PANEL}><h2 className="text-xl font-semibold">Filtered routine runs</h2>
-    <RoutineSearch filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${runs.length} loaded runs`} />
+    <RoutineSearch placeholder="Routine, PR, commit or tested build" filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${runs.length} loaded runs`} />
     <p className="mt-2 text-xs text-[#747780]">Searches loaded runs for this build.</p>
-    {catalog.isPending && <p role="status" className="mt-2 text-sm">Loading routine names and glasses requirements…</p>}
+    {catalog.isPending && <LoadingIndicator label="Loading routine names and glasses requirements" className="mt-2 text-sm" />}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
     {query.error && <p role="alert" className="mt-3">Runs could not refresh: {query.error.message}</p>}
     {!runs.length && <p className="mt-3">No routine runs match this build.</p>}
     {!!runs.length && !filtered.length && <p className="mt-3">No loaded routine runs match your filters for this build.</p>}
     {!!filtered.length && <TestHistoryTable entries={filtered.map(run => ({kind: "run" as const, ...run}))} routines={routines}/>}
-    {query.hasNextPage && <TestingButton className="mt-4" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>{query.isFetchingNextPage ? "Loading…" : "More runs"}</TestingButton>}
+    {query.hasNextPage && <TestingButton className="mt-4" busy={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>More runs</TestingButton>}
   </section>;
 }
 export function recordingOffset(ms: number) {

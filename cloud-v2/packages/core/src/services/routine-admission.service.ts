@@ -56,7 +56,11 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     if (matches.length !== 1) throw new TestRunError(409, `Configured lane must bind exactly one ${kind} resource.`);
     if (kind === "glasses" && matches[0]!.id !== glassesResourceId)
       throw new TestRunError(409, "Compatible glasses inventory differs from its declared allocation resource.");
-    return matches[0]!;
+    const requiredCapabilities = definition.definition.resourceRequirements?.find(value => value.kind === kind)?.capabilities ?? [];
+    if (!requiredCapabilities.every(capability => matches[0]!.capabilities?.includes(capability)))
+      throw new TestRunError(409, `Configured lane has no required ${kind} resource capabilities.`);
+    const {capabilities: _, ...resource} = matches[0]!;
+    return resource;
   });
   return frameworkRequestInputSchema.parse(JSON.parse(JSON.stringify({routineId: definition.routineId,
     definitionRevision: definition.definitionRevision, routineSource: definition.routineSource,

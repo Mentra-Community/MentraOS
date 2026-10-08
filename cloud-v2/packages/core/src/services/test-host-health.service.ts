@@ -12,12 +12,16 @@ export class TestHostHealthError extends Error {
 export interface StoredHostSample {
   hostId: string; sampleId: string; sampledAt: Date; receivedAt: Date; expiresAt: Date; digest: string; payload: TestHostSample;
 }
+export type HostHistorySample = Pick<TestHostSample, "sampleId" | "sampledAt" | "freeBytes" | "memory" | "cleanupEvents">;
+/** History needs every observed measurement and cleanup receipt, not per-tick service state. */
+export const hostHistoryProjection = { _id: 0, "payload.sampleId": 1, "payload.sampledAt": 1,
+  "payload.freeBytes": 1, "payload.memory": 1, "payload.cleanupEvents": 1 } as const;
 export interface TestHostHealthRepository {
   insert(sample: StoredHostSample): Promise<boolean>;
   get(hostId: string, sampleId: string): Promise<StoredHostSample | null>;
   updateLatest(sample: StoredHostSample): Promise<void>;
   hosts(limit: number): Promise<Array<Pick<StoredHostSample, "payload" | "receivedAt">>>;
-  history(hostId: string, from: Date, to: Date, limit: number): Promise<TestHostSample[]>;
+  history(hostId: string, from: Date, to: Date, limit: number): Promise<HostHistorySample[]>;
 }
 const duplicate = (error: unknown) => (error as { code?: number })?.code === 11000;
 export class MongoTestHostHealthRepository implements TestHostHealthRepository {
@@ -48,10 +52,10 @@ export class MongoTestHostHealthRepository implements TestHostHealthRepository {
       .sort({ hostId: 1 }).limit(limit).maxTimeMS(5_000).toArray();
   }
   async history(hostId: string, from: Date, to: Date, limit: number) {
-    const rows = await TestHostSampleModel.collection.find({ hostId, sampledAt: { $gte: from, $lte: to } },
-      { projection: { _id: 0, payload: 1 } }).sort({ sampledAt: -1, sampleId: -1 }).hint("host_sample_history")
+    const rows = await TestHostSampleModel.collection.find<{ payload: HostHistorySample }>({ hostId, sampledAt: { $gte: from, $lte: to } },
+      { projection: hostHistoryProjection }).sort({ sampledAt: -1, sampleId: -1 }).hint("host_sample_history")
       .limit(limit).maxTimeMS(5_000).toArray();
-    return rows.map(row => row.payload as TestHostSample);
+    return rows.map(row => row.payload);
   }
 }
 const canonical = (value: unknown): string => value === null || typeof value !== "object" ? JSON.stringify(value)

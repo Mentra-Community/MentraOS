@@ -1,8 +1,9 @@
+import {LoadingIndicator} from "./components/loading-indicator";
 import {TestRunsTabs} from "./pages/test-runs-tabs";
 import {TestRerunPage, readRerunId} from "./pages/test-reruns";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BookOpen, Bug, Check, ClipboardList, FileText, FlaskConical, History, Home, KeyRound, Loader2, MessageSquareWarning, RefreshCcw, ShieldCheck, Users, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bug, Check, ClipboardList, FileText, FlaskConical, History, Home, KeyRound, MessageSquareWarning, RefreshCcw, ShieldCheck, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -816,20 +817,14 @@ function Splash(props: { label: string }) {
   return (
     <main className="grid min-h-screen place-items-center bg-[#f5f7f4]">
       <div className="flex items-center gap-3 rounded-full bg-white px-5 py-3 shadow-sm ring-1 ring-black/10">
-        <Loader2 className="size-5 animate-spin text-[#038755]" />
-        <span>{props.label}</span>
+        <LoadingIndicator inline label={props.label} />
       </div>
     </main>
   );
 }
 
 function InlineLoading(props: { label: string }) {
-  return (
-    <div className="flex items-center gap-3 rounded-[18px] bg-[#f5f7f4] px-5 py-4 text-[#68746d]">
-      <Loader2 className="size-5 animate-spin" />
-      {props.label}
-    </div>
-  );
+  return <LoadingIndicator label={props.label} />;
 }
 
 function ErrorText({ error }: { error: unknown }) {

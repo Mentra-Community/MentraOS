@@ -3,8 +3,8 @@ Routine authoring uses one collaborator-authored PR comment and one label:
 request ordinary replay independently.
 
 The comment must start with the marker below and contain only one JSON block.
-Replace the source revision with the exact reviewed harness commit and choose an
-enrolled host/lane. Describe product actions and complete expected results.
+Core resolves current Harness main once by default. Add an exact source revision
+or an optional `target` with an enrolled host and lane for a focused investigation. Describe product actions and complete expected results.
 The current machine supervisor rejects nonempty `requirements.environment`;
 use an empty array when no generic environment provider is needed, and report
 unsupported prerequisites otherwise. Keep actual fixtures declared in the routine.
@@ -23,10 +23,8 @@ unsupported prerequisites otherwise. Keep actual fixtures declared in the routin
     "expected": ["The whole saved flow completes and normal cleanup restores readiness"]
   },
   "source": {
-    "repository": "Mentra-Community/Mentra-Automated-Testing",
-    "revision": "0000000000000000000000000000000000000000"
+    "repository": "Mentra-Community/Mentra-Automated-Testing"
   },
-  "target": {"hostId": "your-enrolled-host", "laneId": "your-android-lane"},
   "requirements": {"platform": "android", "glasses": [], "capabilities": [], "environment": []}
 }
 ```
@@ -34,7 +32,11 @@ unsupported prerequisites otherwise. Keep actual fixtures declared in the routin
 
 The trusted dev workflow selects the current same-repository PR's authenticated
 published app build. Core freezes the brief, exact harness source, package pins,
-originating PR head and target before host delivery. A retry reuses its work ID;
+originating PR head and portable resource requirements before Actions selects a
+compatible runner. The trusted issuer fills the basic app, recorder, phone and
+requested glasses resource kinds. Optional `requirements.resources` declares
+additional concrete fixture kinds and capabilities; environment descriptions do
+not become routing labels. Core binds one real host and lane before host delivery. A retry reuses its work ID;
 changing a brief, source, target or publication creates a new occurrence.
 
 Automatic intake requires `ROUTINE_WORK_PR_DISPATCH_ENABLED=true`. The manual
@@ -42,7 +44,9 @@ Automatic intake requires `ROUTINE_WORK_PR_DISPATCH_ENABLED=true`. The manual
 This gate is separate from ordinary replay's existing gate.
 
 The machine acknowledges through `/api/internal/routine-work-deliveries` and owns
-the job, lane reservation and held authoring lifecycle. Status updates trigger
+the job, lane reservation and held authoring lifecycle. Its first returned
+reservation or repair handoff ends the Actions observer; later source review
+continues without retaining an idle runner. Status updates trigger
 `Publish routine authoring status`, which updates one bot-owned comment for the
 same work. A queued receipt or completed held traversal does not imply an ordinary
 passing result. Source review, installation and final verification remain machine

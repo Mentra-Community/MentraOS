@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {routineApi, submitRoutineRequest, routineLabelIds, selectedCatalog, stableRequestId, boundRoutineResult, waitForRoutineResult, requestInputDigest} from "./routine-api.mjs"
-import {routineFixture, terminalRoutineFixture, preparingRoutineFixture} from "./routine-api-fixture.mjs"
+import {routineApi, submitRoutineRequest, routineLabelIds, selectedCatalog, stableRequestId, automaticRoutineRequest, boundRoutineResult, waitForRoutineResult, requestInputDigest} from "./routine-api.mjs"
+import {routineFixture, terminalRoutineFixture, preparingRoutineFixture, portableRoutineFixture} from "./routine-api-fixture.mjs"
 
 test("discovery returns main IDs without enrollment or guessed platform metadata", () => {
   const f = routineFixture(), catalog = {routineRevision: "b".repeat(40), routines: [{routineId: f.definition.id}]}
@@ -212,4 +212,85 @@ test("default revision remains stable on retry while explicit revisions produce 
   assert.equal(stableRequestId(selection), stableRequestId({...selection, routineRevision: undefined}))
   assert.notEqual(stableRequestId(selection), stableRequestId({...selection, routineRevision: "b".repeat(40)}))
   assert.notEqual(stableRequestId({...selection, routineRevision: "b".repeat(40)}), stableRequestId({...selection, routineRevision: "d".repeat(40)}))
+})
+
+test('automatic occurrence identity is independent of discovered revision while manual overrides remain distinct', () => {
+  const f = routineFixture(), selection = {routineId: f.definition.id, platform: 'ios-on-mac'}
+  const first = automaticRoutineRequest(selection, f.source, 'b'.repeat(40)), moved = automaticRoutineRequest(selection, f.source, 'd'.repeat(40))
+  assert.equal(first.requestId, moved.requestId)
+  assert.equal(first.requestId, stableRequestId({occurrenceId: 'source-pr-10-2', ...selection, source: f.source}))
+})
+
+test('concurrent automatic commit reconciles the cancelled winner and refuses an unavailable original lookup', async () => {
+  const f = portableRoutineFixture({status: 'cancelled'}), plan = automaticRoutineRequest({routineId: f.definition.id, platform: 'ios-on-mac'}, f.source, 'd'.repeat(40))
+  f.request.requestId = plan.requestId; f.request.fleetSelection.requestId = plan.requestId
+  f.request.fleetSelectionSha256 = requestInputDigest(f.request.fleetSelection)
+  const calls = []
+  const outcome = await submitRoutineRequest({token: 'fixture', request: plan, automatic: true, fetchImpl: async (url, init) => {
+    calls.push(init.method)
+    if (calls.length === 1) return new Response(null, {status: 404})
+    if (init.method === 'POST') return Response.json({message: 'Routine job retry changed its frozen source'}, {status: 409})
+    return Response.json(f.detail)
+  }})
+  assert.deepEqual(calls, ['GET', 'POST', 'GET']); assert.equal(outcome.status, 'accepted')
+  assert.equal(outcome.request.fleetSelection.routineRevision, 'b'.repeat(40)); assert.equal(outcome.request.state, 'terminal')
+  const outage = []
+  const uncertain = await submitRoutineRequest({token: 'fixture', request: plan, automatic: true, fetchImpl: async (url, init) => {
+    outage.push(init.method); return new Response(null, {status: 503})
+  }})
+  assert.equal(uncertain.status, 'uncertain'); assert.deepEqual(outage, ['GET'])
+})
+
+test("portable acknowledgement accepts exact source custody before assigning a host", async () => {
+  for (const state of ["awaiting-source", "awaiting-runner"]) {
+    const f = portableRoutineFixture({state}), selection = f.request.fleetSelection
+    const request = {requestId: selection.requestId, routineId: selection.routineId, platform: selection.platform, source: selection.source}
+    const receipt = await submitRoutineRequest({token: "fixture", request, fetchImpl: async () => Response.json(f.request)})
+    assert.equal(receipt.status, "accepted"); assert.equal(receipt.request.state, state); assert.equal(receipt.request.hostId, undefined)
+    assert.equal(boundRoutineResult(f.detail), null)
+    for (const mutate of [row => {row.fleetSelection.build.headSha = "e".repeat(40)}, row => {row.hostId = "invented"}]) {
+      const row = structuredClone(f.request); mutate(row)
+      await assert.rejects(routineApi({token: "fixture", operation: "dispatch", request, fetchImpl: async () => Response.json(row)}), /portable|assignment/)
+    }
+    const changed = structuredClone(f.request); changed.fleetSelection.source.publicationAttempt++
+    changed.fleetSelection.build.source = structuredClone(changed.fleetSelection.source)
+    changed.fleetSelectionSha256 = requestInputDigest(changed.fleetSelection)
+    await assert.rejects(routineApi({token: "fixture", operation: "dispatch", request, fetchImpl: async () => Response.json(changed)}), /changed the original/)
+  }
+})
+
+test("unassigned cancellation reports not-run without a fabricated host or lifecycle", async () => {
+  const f = portableRoutineFixture({status: "not-run"}), row = boundRoutineResult(f.detail)
+  assert.equal(row.status, "not-run"); assert.equal(row.resultRunId, undefined); assert.equal(row.reason, f.request.fleetCancellation.reason)
+  const detail = await waitForRoutineResult({token: "fixture", requestId: f.request.requestId, fetchImpl: async () => Response.json(f.detail),
+    sleep: async () => assert.fail("A terminal unassigned request has no future run")})
+  assert.equal(detail.result, null)
+  for (const mutate of [d => {d.request.fleetCancellation.reason = ""}, d => {d.request.fleetCancellation.requestedAt = "invalid"},
+    d => {d.request.terminalStatus = "cancelled"}, d => {d.request.hostReceipt = {requestId: d.request.requestId}}]) {
+    const changed = structuredClone(f.detail); mutate(changed); assert.throws(() => boundRoutineResult(changed), /immutable receipt/)
+  }
+})
+
+test("a lost portable acknowledgement reconciles source custody without another POST", async () => {
+  const f = portableRoutineFixture(), selection = f.request.fleetSelection, calls = []
+  const request = {requestId: selection.requestId, routineId: selection.routineId, platform: selection.platform, source: selection.source}
+  const accepted = await submitRoutineRequest({token: "fixture", request, fetchImpl: async (_url, init) => {
+    calls.push(init.method)
+    if (init.method === "POST") throw new Error("response lost")
+    return Response.json(f.detail)
+  }})
+  assert.equal(accepted.status, "accepted"); assert.equal(accepted.request.hostId, undefined); assert.deepEqual(calls, ["POST", "GET"])
+})
+
+test("actual bound execution must preserve the portable app and routine revision", () => {
+  const f = routineFixture(), portable = portableRoutineFixture()
+  f.request.fleetSelection = portable.request.fleetSelection; f.request.fleetSelectionSha256 = portable.request.fleetSelectionSha256
+  f.request.input.build = structuredClone(portable.request.fleetSelection.build)
+  f.request.inputSha256 = requestInputDigest(f.request.input)
+  f.detail.result.run.build = structuredClone(f.request.input.build)
+  assert.equal(boundRoutineResult(f.detail).status, "passed")
+  f.request.input.build.archive.sha256 = "e".repeat(64)
+  f.request.inputSha256 = requestInputDigest(f.request.input)
+  f.detail.result.run.build = structuredClone(f.request.input.build)
+  assert.throws(() => boundRoutineResult(f.detail), /changed its immutable portable selection/)
 })

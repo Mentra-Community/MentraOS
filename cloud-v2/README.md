@@ -74,3 +74,17 @@ Iteration: save a file, Bun restarts the affected package in well under a second
   - [003-audio](./docs/issues/003-audio/) — audio path architecture
 - Linear project: [Cloud V2](https://linear.app/mentralabs/project/cloud-v2-3bd87f2acfdc)
 - Tracking PR: [#2766](https://github.com/Mentra-Community/MentraOS/pull/2766)
+
+### Testing read projections
+
+Admin suite pages read `GET /api/admin/test-runs/suites/:suiteId/summary`. This uses
+the same bounded existing-store summary reader as Test runs history, preserving
+original membership, statuses, publication state, failure reasons, lane/run links
+and timings without transferring full frozen artifact inputs. Rerun progress and
+member history use that summary too.
+
+`GET /api/admin/test-runs/suites/:suiteId` and the internal detail endpoint retain
+the complete verified frozen provenance. Rerun preview/submission continues to
+read full detail before selecting artifacts or source; display summaries cannot
+admit a job. These are views of the same receipts, with no cache or parallel
+result collection.

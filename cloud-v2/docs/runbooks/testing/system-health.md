@@ -66,6 +66,10 @@ session gate. History uses an indexed host/time range and retains seven days;
 the latest host row is kept so a missing host does not vanish when history
 expires. Both reads are bounded and disclose truncation. Startup creates the
 unique/history/TTL indexes before ingestion is available.
+The history query projects only sample identity, actual timestamp, disk bytes,
+the complete memory reading and cleanup receipts. Per-minute service status is
+read from the latest-host endpoint rather than transferred with every chart
+point. No samples, null readings or gaps are removed by this projection.
 Memory stays in these same sample/latest payloads and history points; there is
 no separate memory store. Restore the independent monitor when minute samples
 stop arriving; a dashboard refresh cannot create missing history or backfill it.
@@ -79,6 +83,32 @@ host owners.
 
 
 ## Lane restoration
+
+Device lane cards list every lane in the latest controller snapshot, independent
+of the host monitor. Their readable labels use the reported host identity,
+platform and physical glasses model; the exact lane ID remains visible and is
+the same ID used by run badges and lane history links. Current state and owner
+require both observation and receipt within two minutes. Stale context is shown
+as last reported, with current status unknown.
+
+The controller may report sanitized `activity` from its exact lane owner and
+generation. Routine owners carry their original request ID, so a fresh card can
+open that existing run/request. Authoring reservations, state repair and boundary
+cleanup show their actual owner identity without fabricating a routine result.
+Missing owner metadata remains not reported; Core does not infer custody from
+accepted requests or create another observation store. Idle state and Automatic
+mode are distinct: a paused idle lane does not accept automatic jobs.
+
+The overview uses `GET /api/admin/test-runs/lanes/overview`, a compact read of
+current lane state, sanitized owner, glasses model and framework deployment.
+It reads the same `test_host_state` records, projecting out routine availability,
+resource inventories, retained repair attempts and all but the latest framework
+interval. The latest interval preserves observed-stop information. System health
+and lane pages share this query; current status does not wait for history.
+Lane detail retrieves retained repair and installation history separately with
+`GET /api/admin/test-runs/restoration/list?hostId=<controller>`, scoped to that
+controller. The dedicated repair overview keeps the full bounded list. No
+history or controller authority is removed by the compact projection.
 
 Open **Lane restoration attempts & resume decisions** from System health. The
 page reads the controller's durable repair records, separately from passive

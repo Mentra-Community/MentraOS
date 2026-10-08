@@ -176,3 +176,15 @@ test("projecting known host providers preserves missing real and unknown glasses
     expect(() => select(definition, build, observed)).toThrow("compatible glasses");
   }
 });
+
+test("host preparation independently rechecks generic resource capabilities before concrete allocation", () => {
+  const original = enrollment(false), definition: RoutineEnrollment = {...original, definition: {...original.definition,
+    execution: {resourceKinds: ["phone", "app", "recorder", "network"]},
+    resourceRequirements: [{kind: "network" as const, capabilities: ["independent-uplink"]}]}};
+  const lane = host(false).lanes[0]!, network = {id: "network-uplink", kind: "network" as const, capabilities: ["independent-uplink"]};
+  const offered = {...host(false), lanes: [{...lane, resources: [...lane.resources, network]}]};
+  const input = select(definition, build, offered);
+  expect(input.resources.find(resource => resource.kind === "network")).toEqual({id: "network-uplink", kind: "network"});
+  expect(() => select(definition, build, {...offered, lanes: [{...offered.lanes[0]!,
+    resources: [...lane.resources, {...network, capabilities: []}]}]})).toThrow("resource capabilities");
+});

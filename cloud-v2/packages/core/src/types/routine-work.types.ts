@@ -1,6 +1,7 @@
 import {z} from 'zod'
 import {frameworkIdentitySchema} from './framework-request.types'
-import {routineIdentitySchema} from './routine-definition.types'
+import {routineIdentitySchema, routineResourceRequirementSchema} from './routine-definition.types'
+import {routineJobTargetSchema, portableRequirementsSchema} from './routine-job.types'
 import {testBuildSourceSchema} from './test-build.types'
 import {firmwareManifestSchema} from './glasses-software.types'
 
@@ -18,11 +19,23 @@ export const routineWorkRequirementsSchema = z
     platform: z.enum(['mac', 'android']),
     glasses: identifiers,
     capabilities: identifiers,
+    resources: z.array(routineResourceRequirementSchema).min(1).max(9).optional(),
     environment: z
       .array(z.object({provider: routineIdentitySchema, input: boundedJson(32 * 1024), description}).strict())
       .max(20),
   })
   .strict()
+export const routineWorkPortableRequirementsSchema = routineWorkRequirementsSchema
+  .extend({resources: z.array(routineResourceRequirementSchema).min(1).max(9)})
+  .superRefine((value, ctx) => {
+    const requirements = portableRequirementsSchema.safeParse({platform: value.platform === 'mac' ? 'ios-on-mac' : 'android',
+      resources: value.resources,
+      ...(value.glasses.length ? {glasses: {models: value.glasses, capabilities: value.capabilities}} : {})})
+    const baseKinds = ['app', 'recorder', ...(value.platform === 'android' ? ['phone'] : [])]
+    if (!requirements.success || !baseKinds.every(kind => value.resources.some(resource => resource.kind === kind)) ||
+      !value.glasses.length && value.capabilities.length)
+      ctx.addIssue({code: 'custom', message: 'Authoring needs consistent portable fixture requirements'})
+  })
 const fields = {
   schemaVersion: z.literal(1),
   workId: frameworkIdentitySchema,
@@ -84,7 +97,11 @@ export const routineWorkBuildSchema = z
     if (!value.archive.name.endsWith(value.kind === 'android-apk' ? '.apk' : '.zip'))
       ctx.addIssue({code: 'custom', message: 'Build archive and platform differ'})
   })
-export const routineWorkRequestSchema = z.object({...fields, buildSource: testBuildSourceSchema}).strict()
+export const routineWorkRequestSchema = z.object({...fields,
+  source: fields.source.partial({revision: true}), target: routineJobTargetSchema.optional(),
+  requirements: routineWorkPortableRequirementsSchema,
+  buildSource: testBuildSourceSchema, deadline: z.string().datetime({offset: true}).optional(),
+}).strict()
 export const authoringWorkSchema = z
   .object({...fields, origin: fields.origin.optional(), build: routineWorkBuildSchema})
   .strict()
@@ -93,6 +110,11 @@ export const authoringWorkSchema = z
     (value) => value.build.kind === (value.requirements.platform === 'mac' ? 'mac-ci-package' : 'android-apk'),
     'Build platform differs',
   )
+export const portableAuthoringWorkSchema = z.object({...fields, target: routineJobTargetSchema.optional(),
+  requirements: routineWorkPortableRequirementsSchema,
+  build: routineWorkBuildSchema,
+}).strict()
+export type PortableAuthoringWork = z.infer<typeof portableAuthoringWorkSchema>
 export type RoutineWorkRequest = z.infer<typeof routineWorkRequestSchema>
 export type AuthoringWork = z.infer<typeof authoringWorkSchema>
 export const routineWorkStateSchema = z.enum([
@@ -117,6 +139,14 @@ export const routineWorkAcceptanceSchema = z
     acceptedAt: z.string().datetime({offset: true}),
   })
   .strict()
+/** The enrolled host registers an already accepted local job with its exact pins. */
+export const routineWorkLocalRegistrationSchema = z.object({
+  work: authoringWorkSchema,
+  receipt: routineWorkAcceptanceSchema,
+}).strict().superRefine((value, ctx) => {
+  if (value.work.origin || value.work.workId !== value.receipt.workId || value.work.target.hostId !== value.receipt.hostId)
+    ctx.addIssue({code: 'custom', message: 'Local registration requires its originless accepted host and work'})
+})
 const publicText = z.string().min(1).max(4000)
 const githubPr = z.string().regex(/^https:\/\/github\.com\/Mentra-Community\/Mentra-Automated-Testing\/pull\/[1-9]\d*$/)
 export const routineWorkProgressSchema = z

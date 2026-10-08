@@ -24,7 +24,7 @@ const input = {
   },
   source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40)},
   target: {hostId: 'mini', laneId: 'android-lane'},
-  requirements: {platform: 'android', glasses: [], capabilities: [], environment: []},
+  requirements: {platform: 'android', glasses: [], capabilities: [], environment: [], resources: ['app', 'recorder', 'phone'].map(kind => ({kind, capabilities: []}))},
 }
 const body = (value) => `${briefMarker}\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\``
 const pr = {
@@ -38,6 +38,14 @@ const context = {
   repo: {owner: 'Mentra-Community', repo: 'MentraOS'},
   eventName: 'pull_request_target',
   ref: 'refs/heads/dev',
+}
+function fleetReceipt(request, selection, bound = true) {
+  const fleetDeadline = '2026-10-08T08:00:00.000Z'
+  const fleetBinding = {jobId: request.workId, requestId: request.workId, hostId: 'mini', laneId: 'android-lane',
+    descriptorRevision: 'f'.repeat(64), actionsRunId: '1', actionsJobId: '2', boundAt: '2026-10-08T05:00:00.000Z'}
+  const work = bound ? {...selection, target: {hostId: fleetBinding.hostId, laneId: fleetBinding.laneId}} : selection
+  return {workId: request.workId, request, work, inputSha256: workDigest(work), fleetSelection: selection, fleetDeadline,
+    fleetInputSha256: workDigest({selection, deadline: fleetDeadline}), ...(bound ? {hostId: fleetBinding.hostId, fleetBinding} : {})}
 }
 function github(comments, pull = pr, getCollaboratorPermissionLevel = async ({username}) => {
   if (username !== 'colleague') throw Object.assign(new Error('not a collaborator'), {status: 404})
@@ -133,7 +141,7 @@ test('a lost admission response reconciles the same frozen request without a sec
   const {buildSource, ...fields} = request,
     work = {...fields, build: {kind: 'android-apk'}},
     calls = [],
-    row = {workId: request.workId, hostId: work.target.hostId, inputSha256: workDigest(work), request, work}
+    row = fleetReceipt(request, work)
   const result = await submitRoutineWork({
     token: 'secret',
     request,
@@ -177,6 +185,59 @@ test('a lost admission response reconciles the same frozen request without a sec
     }),
     /digest/,
   )
+})
+
+test('lost replies preserve optional target constraints after a worker binds the same authoring occurrence', async () => {
+  for (const target of [undefined, {hostId: 'mini'}, {hostId: 'mini', laneId: 'android-lane'}]) {
+    const {target: _, ...brief} = input
+    const request = authoringDispatch(
+      {pr, brief: {...brief, source: {repository: input.source.repository}, ...(target ? {target} : {})}},
+      {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 2},
+    )
+    const {buildSource, ...fields} = request
+    const selection = {...fields, source: {...fields.source, revision: 'a'.repeat(40)}, build: {kind: 'android-apk'}}
+    const row = fleetReceipt(request, selection), work = row.work
+    const unbound = fleetReceipt(request, selection, false)
+    assert.equal((await routineWorkApi({token: 'secret', operation: 'submit', request,
+      fetchImpl: async () => Response.json(unbound)})).workId, request.workId)
+    const methods = []
+    const result = await submitRoutineWork({token: 'secret', request, fetchImpl: async (_url, options) => {
+      methods.push(options.method)
+      if (options.method === 'POST') throw new Error('lost reply')
+      return Response.json(row)
+    }})
+    assert.equal(result.workId, request.workId)
+    assert.deepEqual(methods, ['POST', 'GET'])
+    const foreign = {...work, target: {...work.target, hostId: 'foreign'}}
+    await assert.rejects(routineWorkApi({token: 'secret', operation: 'submit', request,
+      fetchImpl: async () => Response.json({...row, hostId: foreign.target.hostId,
+        work: foreign, inputSha256: workDigest(foreign)})}), /bound custody/)
+    await assert.rejects(routineWorkApi({token: 'secret', operation: 'submit', request,
+      fetchImpl: async () => Response.json({...row, fleetInputSha256: '0'.repeat(64)})}), /fleet selection/)
+  }
+})
+
+test('explicit deadlines reconcile their frozen instant before and after authoring binding', async () => {
+  const request = {...authoringDispatch({pr, brief: input}, {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 2}),
+    deadline: '2026-10-08T01:00:00-07:00'}
+  const {buildSource, deadline, ...fields} = request
+  const selection = {...fields, build: {kind: 'android-apk'}}
+  for (const bound of [false, true]) {
+    const row = fleetReceipt(request, selection, bound)
+    for (const operation of ['submit', 'inspect']) assert.equal((await routineWorkApi({token: 'secret', operation, request,
+      fetchImpl: async () => Response.json(row)})).workId, request.workId)
+    const methods = []
+    assert.equal((await submitRoutineWork({token: 'secret', request, fetchImpl: async (_url, options) => {
+      methods.push(options.method)
+      if (options.method === 'POST') throw new Error('lost reply')
+      return Response.json(row)
+    }})).workId, request.workId)
+    assert.deepEqual(methods, ['POST', 'GET'])
+    const fleetDeadline = '2026-10-08T08:01:00.000Z'
+    await assert.rejects(routineWorkApi({token: 'secret', operation: 'inspect', request,
+      fetchImpl: async () => Response.json({...row, fleetDeadline, fleetInputSha256: workDigest({selection, deadline: fleetDeadline})})}),
+    /original brief\/source\/target/)
+  }
 })
 
 test('intake failures retain bounded public Core reasons and preserve the original HTTP retry decision', async () => {
@@ -287,4 +348,16 @@ test('authoring workflow retains its independent enable gate and never evaluates
   const example = /````markdown\n([\s\S]+?)\n````/.exec(instructions)?.[1]
   assert.ok(example)
   assert.equal(parseRoutineWorkBrief(example, 'edit').routineId, 'email-sign-in-out')
+})
+
+ test('ordinary authoring brief uses main and fleet defaults while explicit fixture capabilities remain exact', () => {
+  const {target: _, ...portable} = structuredClone(input)
+  portable.source = {repository: 'Mentra-Community/Mentra-Automated-Testing'}
+  delete portable.requirements.resources
+  const parsed = parseRoutineWorkBrief(body(portable), 'edit')
+  assert.equal(parsed.target, undefined)
+  assert.equal(parsed.source.revision, undefined)
+  assert.deepEqual(parsed.requirements.resources, ['app', 'recorder', 'phone'].map(kind => ({kind, capabilities: []})))
+  parsed.requirements.resources.push({kind: 'audio', capabilities: ['speaker']})
+  assert.deepEqual(parseRoutineWorkBrief(body(parsed), 'edit').requirements.resources.at(-1), {kind: 'audio', capabilities: ['speaker']})
 })

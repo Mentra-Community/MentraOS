@@ -72,3 +72,27 @@ test("independent updater endpoint retains same-host authentication and rejects 
     ).status,
   ).toBe(401)
 })
+
+test('authenticated current custody accepts only its exact run identity and owned lane state', async () => {
+  let observed: ReturnType<typeof hostStateSchema.parse> | undefined
+  class Service extends TestHostStateService {
+    override async report(input: unknown, hostId: string) {
+      const value = hostStateSchema.parse(input)
+      if (value.hostId !== hostId) throw new TestRunError(409, 'Wrong host')
+      observed = value
+      return {hostId, incarnation: value.incarnation, incarnationGeneration: value.incarnationGeneration, sequence: value.sequence}
+    }
+  }
+  const api = createTestHostStateApi(new Service(), () => JSON.stringify({mini: token}))
+  const lane = {...snapshot.lanes[0], state: 'running', activity: {generation: 4,
+    owner: {id: 'request:actual', kind: 'run' as const, requestId: 'request:actual'}}}
+  const post = (value: unknown) => api.request('/', {method: 'POST', headers, body: JSON.stringify(value)})
+  expect((await post({...snapshot, lanes: [lane]})).status).toBe(200)
+  expect(observed!.lanes[0].activity).toEqual(lane.activity)
+  for (const changed of [
+    {...lane, state: 'idle'},
+    {...lane, activity: {...lane.activity, owner: {...lane.activity.owner, requestId: 'request:foreign'}}},
+    {...lane, activity: {...lane.activity, owner: {...lane.activity.owner, kind: 'authoring'}}},
+    {...lane, activity: {...lane.activity, owner: {...lane.activity.owner, privateInput: 'must-not-leak'}}},
+  ]) expect((await post({...snapshot, lanes: [changed]})).status).toBe(400)
+})

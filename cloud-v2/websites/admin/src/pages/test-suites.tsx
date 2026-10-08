@@ -1,3 +1,4 @@
+import {LoadingIndicator} from "../components/loading-indicator";
 import {HistoryStatus} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {frameworkRunHref} from "./routine-catalog";
@@ -33,13 +34,13 @@ function suitePresentation(suite: TestSuiteResult) {
   return {label: "Incomplete", color: "bg-gray-100 text-[#68746d]"};
 }
 export function TestSuitePage({suiteId}: {suiteId: string}) {
-  const result = useQuery({queryKey: ["test-suite", suiteId],
-    queryFn: () => api<TestSuiteResult>(`/api/admin/test-runs/suites/${encodeURIComponent(suiteId)}`),
+  const result = useQuery({queryKey: ["test-suite-summary", suiteId],
+    queryFn: () => api<TestSuiteResult>(`/api/admin/test-runs/suites/${encodeURIComponent(suiteId)}/summary`),
     refetchInterval: query => query.state.data?.outcome === "running" ? 15000 : false});
   const [dispatchMembers,setDispatchMembers] = useState<string[] | null>(null);
   const progress = useQuery({queryKey:["rerun-progress",suiteId],
     queryFn:()=>api<{members:{memberId:string;latest:RerunAttempt|null}[];children:{rerunId:string;reason:string}[]}>(`/api/admin/test-runs/reruns/suite/${encodeURIComponent(suiteId)}/progress`),refetchInterval:15000});
-  if (result.isPending) return <p role="status">Loading test suite…</p>;
+  if (result.isPending) return <LoadingIndicator label="Loading test suite" />;
   if (result.error) return <div role="alert" className={panel}><p>Could not load the test suite: {result.error.message}</p><TestingButton onClick={() => result.refetch()}>Try again</TestingButton></div>;
   const suite = result.data!;
   const presentation = suitePresentation(suite);

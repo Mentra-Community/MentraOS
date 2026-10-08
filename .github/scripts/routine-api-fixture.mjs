@@ -19,7 +19,8 @@ export function routineFixture({routineId = "example.screen-check", platform = "
   const calls = []
   const fetchImpl = async (url, options) => {
     calls.push({url, options})
-    if (url.endsWith("/routine-catalog")) return Response.json({routineRevision: enrollment.definitionRevision, routines: [{routineId}]})
+    if (new URL(url).pathname.endsWith("/routine-catalog")) return Response.json({routineRevision: enrollment.definitionRevision,
+      routines: [{routineId, ...(new URL(url).searchParams.has('routines') ? {platforms: definition.platforms} : {})}]})
     if (options.method === "POST") {
       const submitted = JSON.parse(options.body)
       const intent = {...request.dispatchIntent, requestId: submitted.requestId, routineId: submitted.routineId,
@@ -28,7 +29,7 @@ export function routineFixture({routineId = "example.screen-check", platform = "
       return Response.json({requestId: submitted.requestId, hostId: request.hostId, state: "preparing", dispatchIntent: intent,
         dispatchIntentSha256: requestInputDigest(intent)})
     }
-    return Response.json(detail)
+    return new URL(url).pathname.endsWith(`/${request.requestId}`) ? Response.json(detail) : new Response(null, {status: 404})
   }
   return {definition, enrollment, source, build, request, run, detail, fetchImpl, calls}
 }
@@ -58,5 +59,21 @@ export function terminalRoutineFixture({status = "not-run", ...options} = {}) {
   if (status === "not-run") request.hostRejection = {...receipt, rejectedAt: "2026-10-03T12:01:00.000Z", code: "missing-definition"}
   else request.hostCancellation = {...receipt, requestedAt: "2026-10-03T12:01:00.000Z"}
   fixture.detail.result = null
+  return fixture
+}
+
+export function portableRoutineFixture({status, state = "awaiting-source", ...options} = {}) {
+  const fixture = routineFixture(options), {request, build} = fixture
+  const selection = {...request.dispatchIntent, build: {...build, kind: request.input.platform === "android" ? "android-apk" : "mac-ci-package"}}
+  delete selection.laneId
+  delete request.hostId; delete request.input; delete request.inputSha256
+  delete request.dispatchIntent; delete request.dispatchIntentSha256
+  request.fleetSelection = selection; request.fleetSelectionSha256 = requestInputDigest(selection)
+  request.state = status ? "terminal" : state
+  fixture.detail.result = null
+  if (status) {
+    request.terminalStatus = "not-run"
+    request.fleetCancellation = {requestedAt: "2026-10-03T12:01:00.000Z", reason: "Suite deadline expired while awaiting a compatible lane"}
+  }
   return fixture
 }

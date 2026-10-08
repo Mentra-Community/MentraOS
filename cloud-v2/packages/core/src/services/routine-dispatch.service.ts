@@ -12,6 +12,7 @@ import {FrameworkResultService} from './framework-result.service';
 import {configuredRoutineLanes, routineAdmissionInput, type RoutineLaneBindings} from './routine-admission.service';
 import {GithubRoutineSourceGateway} from './routine-source-selection.service';
 import {TestRunError} from './test-result-error';
+import {RoutineJobService} from './routine-job.service';
 
 export {routineDispatchSchema} from '../types/routine-dispatch.types';
 export const preparedRoutineRequestSchema = z.object({dispatchIntentSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -25,13 +26,30 @@ export class RoutineDispatchService {
     private readonly requests: Pick<TestRequestService, 'get' | 'submit' | 'prepare' | 'preparation' | 'completePreparation'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, 'detail'> = new FrameworkResultService(),
     private readonly bindings: () => RoutineLaneBindings = configuredRoutineLanes,
-    private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve' | 'inventory'> = new GithubRoutineSourceGateway()) {}
-  async catalog(revision?: string) {
+    private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve' | 'inventory'> = new GithubRoutineSourceGateway(),
+    private readonly fleet: Pick<RoutineJobService, 'submit'> | null = new RoutineJobService()) {}
+  async catalog(revision?: string, selectedIds?: string[]): Promise<{routineRevision: string; routines: Array<{
+    routineId: string; platforms?: z.infer<typeof routineEnrollmentSchema>['definition']['platforms']}>}> {
     const routineRevision = await this.sources.resolve(revision), inventory = await this.sources.inventory(routineRevision);
-    return {routineRevision, routines: inventory.files.flatMap(file => {
+    const routines = inventory.files.flatMap(file => {
       const match = /^routines\/([A-Za-z0-9][A-Za-z0-9_.-]{0,119})\/routine\.ts$/.exec(file.path);
       return match && match[1] !== 'shared' ? [{routineId: match[1]}] : [];
-    })};
+    });
+    if (!selectedIds) return {routineRevision, routines};
+    const ids = z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/)).min(1).max(30).parse(selectedIds);
+    if (new Set(ids).size !== ids.length || ids.some(id => !routines.some(row => row.routineId === id)))
+      throw new TestRunError(422, 'Selected routine is absent from the exact source inventory');
+    const selected = [];
+    for (const routineId of ids) {
+      const definitions = (await Promise.all(['android', 'ios-on-mac'].map(platform =>
+        this.definitions.getExact(routineId, platform, routineRevision, true)))).filter(row => row !== null);
+      if (!definitions.length) {selected.push({routineId}); continue;}
+      for (const row of definitions) if (!routineEnrollmentSchema.safeParse(row).success || row.routineId !== routineId ||
+        row.definitionRevision !== routineRevision || requestInputDigest(row.definition) !== row.definitionSha256)
+        throw new TestRunError(503, 'Selected routine exact platform description is unavailable');
+      selected.push({routineId, platforms: [...new Set(definitions.flatMap(row => row.definition.platforms))].sort()});
+    }
+    return {routineRevision, routines: selected};
   }
   private originalRequest(selected: z.infer<typeof routineDispatchSchema>, request: StoredRequest) {
     const intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
@@ -73,6 +91,7 @@ export class RoutineDispatchService {
     return {hostId: binding.hostId, dispatchIntent};
   }
   async submit(input: unknown) {
+    if (this.fleet) return this.fleet.submit(input);
     const parsed = routineDispatchSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, 'Invalid exact-source routine request');
     const selected = parsed.data, existing = await this.requests.get(selected.requestId);
@@ -91,6 +110,10 @@ export class RoutineDispatchService {
     const parsed = preparedRoutineRequestSchema.safeParse(input);
     if (!parsed.success) throw new TestRunError(400, 'Invalid routine preparation completion');
     const value = parsed.data, row = await this.requests.preparation(requestId, hostId, value.dispatchIntentSha256), intent = row.dispatchIntent!;
+    const fleet = row as StoredRequest & {fleetPreparation?: {definitionSha256: string; routineSource: unknown}};
+    if (fleet.fleetPreparation && (fleet.fleetPreparation.definitionSha256 !== value.definitionSha256 ||
+      requestInputDigest(fleet.fleetPreparation.routineSource) !== requestInputDigest(value.routineSource)))
+      throw new TestRunError(409, 'Host preparation differs from the frozen offline definition and source');
     if (row.state === 'terminal' && !isExecutableRequest(row)) return row;
     await this.validatePreparationSource(intent);
     const enrollment = routineEnrollmentSchema.parse({routineId: intent.routineId, platform: intent.platform, definitionRevision: intent.routineRevision,

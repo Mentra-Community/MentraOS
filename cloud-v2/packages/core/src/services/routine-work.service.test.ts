@@ -1,8 +1,20 @@
 import {expect, spyOn, test} from 'bun:test'
 import {RoutineWorkModel} from '../models/routine-work.model'
-import {RoutineWorkService, type RoutineWorkDelivery, type RoutineWorkRepository} from './routine-work.service'
+import {RoutineWorkService as ActualRoutineWorkService, type RoutineWorkDelivery, type RoutineWorkRepository} from './routine-work.service'
 import {requestInputDigest} from './test-request.service'
-import {routineWorkRequestSchema, routineWorkStatusSchema} from '../types/routine-work.types'
+import {routineWorkRequestSchema, routineWorkStatusSchema, authoringWorkSchema, type AuthoringWork} from '../types/routine-work.types'
+import {createRoutineWorkIntakeApi} from '../api/internal/routine-work.api'
+
+
+// Existing status/cursor regression cases operate after the single host binding.
+class RoutineWorkService extends ActualRoutineWorkService {
+  constructor(...args: ConstructorParameters<typeof ActualRoutineWorkService>) {
+    args[4] ??= {async resolve(revision) {return revision ?? 'a'.repeat(40)}};
+    args[6] = null;
+    super(...args);
+  }
+  override async submit(value:unknown):Promise<RoutineWorkDelivery & {hostId:string;work:AuthoringWork}> {return await super.submit(value) as RoutineWorkDelivery & {hostId:string;work:AuthoringWork};}
+}
 
 const input = routineWorkRequestSchema.parse({
   schemaVersion: 1,
@@ -16,9 +28,71 @@ const input = routineWorkRequestSchema.parse({
   },
   source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40)},
   target: {hostId: 'mini', laneId: 'phone'},
-  requirements: {platform: 'android', glasses: [], capabilities: [], environment: []},
+  requirements: {platform: 'android', glasses: [], capabilities: [], environment: [], resources:[{kind:"app",capabilities:[]},{kind:"phone",capabilities:[]},{kind:"recorder",capabilities:[]}]},
   origin: {repository: 'Mentra-Community/MentraOS', prNumber: 12, headSha: 'b'.repeat(40)},
   buildSource: {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 2},
+})
+test('invalid portable author fixtures fail intake before any persistence or Actions delivery', async () => {
+  const previous = process.env.TEST_RUN_INGEST_TOKEN, token = 'f'.repeat(40)
+  process.env.TEST_RUN_INGEST_TOKEN = token
+  let touched = 0
+  const unexpected = async (): Promise<never> => {touched++; throw new Error('Invalid intake reached a dependency')}
+  const rows: RoutineWorkRepository = {get: unexpected, insert: unexpected, queued: unexpected, accept: unexpected, updateStatus: unexpected}
+  const service = new ActualRoutineWorkService(rows, {resolve: unexpected}, {get: unexpected}, {publish: unexpected},
+    {resolve: unexpected}, Date.now, {dispatch: unexpected, cancel: unexpected})
+  const app = createRoutineWorkIntakeApi(service)
+  const resources = input.requirements.resources
+  try {
+    for (const requirements of [
+      {...input.requirements, resources: [...resources, resources[0]]},
+      {...input.requirements, glasses: ['mentra-live'], resources},
+      {...input.requirements, resources: [...resources, {kind: 'glasses', capabilities: []}]},
+      {...input.requirements, glasses: ['bad_model'], resources: [...resources, {kind: 'glasses', capabilities: []}]},
+      {...input.requirements, glasses: ['mentra-live', 'mentra-live'], resources: [...resources, {kind: 'glasses', capabilities: []}]},
+      {...input.requirements, resources: resources.filter(resource => resource.kind !== 'recorder')},
+      {...input.requirements, capabilities: ['camera']},
+    ]) {
+      const response = await app.request('/', {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'},
+        body: JSON.stringify({...input, requirements})})
+      expect(response.status).toBe(400)
+    }
+    expect(touched).toBe(0)
+  } finally {
+    if (previous === undefined) delete process.env.TEST_RUN_INGEST_TOKEN
+    else process.env.TEST_RUN_INGEST_TOKEN = previous
+  }
+})
+test('author routing uses an accepting alternate model and refreshes labels without changing its portable input', async () => {
+  const {routineRequirementLabels} = await import('./routine-job.service')
+  type Host = import('./test-host-state.service').ReceivedTestHostState
+  const time = Date.parse('2026-10-08T00:00:00Z'), rows = new Map<string, RoutineWorkDelivery>()
+  const unexpected = async (): Promise<never> => {throw new Error('Unexpected host operation')}
+  const repository: RoutineWorkRepository = {async get(id) {return structuredClone(rows.get(id) ?? null)}, async insert(row) {rows.set(row.workId, structuredClone(row))},
+    queued: unexpected, accept: unexpected, updateStatus: unexpected}
+  const resources = [...input.requirements.resources, {kind: 'glasses' as const, capabilities: []}]
+  const lane = (model: string, state: Host['lanes'][number]['state'], dispatchMode: Host['lanes'][number]['dispatchMode']) => ({id: model, platform: 'android' as const,
+    state, dispatchMode, resources: resources.map(resource => ({id: `${resource.kind}:${model}`, kind: resource.kind})),
+    glasses: [{resourceId: `glasses:${model}`, deviceId: model, model, capabilities: ['camera']}]})
+  const host: Host = {hostId: 'mini', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: new Date(time).toISOString(), receivedAt: new Date(time).toISOString(), lanes: [lane('g1', 'idle', 'paused'), lane('mentra-live', 'idle', 'automatic')]}
+  const service = new ActualRoutineWorkService(repository, {async resolve(source, platform) {return {source, platform, availability: 'available',
+    headSha: input.origin.headSha, title: 'Candidate', buildUrl: 'https://github.com/build', createdAt: new Date(time).toISOString(),
+    archive: {name: 'candidate.apk', url: 'https://artifactscdn.mentraglass.com/candidate.apk', size: 100, sha256: 'c'.repeat(64)},
+    receipt: {url: 'https://artifactscdn.mentraglass.com/receipt.json', size: 50, sha256: 'd'.repeat(64)}}}},
+    {get: unexpected, async list() {return [structuredClone(host)]}}, {async publish() {}}, {async resolve() {return 'a'.repeat(40)}}, () => time, null)
+  const {target: _target, ...portable} = input
+  const row = await service.submit({...portable, requirements: {...input.requirements, resources, glasses: ['g1', 'mentra-live'], capabilities: ['camera']}})
+  const first = await service.preparation(row.workId), frozen = structuredClone(row.fleetSelection)
+  expect(first.chosenModel).toBe('mentra-live'); expect(first.waitingReason).toBeUndefined()
+  expect(first.routingLabels).toEqual(routineRequirementLabels(first.prepared.requirements, 'mentra-live'))
+  host.lanes[0]!.dispatchMode = 'automatic'; host.lanes[0]!.state = 'in-repair'
+  expect((await service.preparation(row.workId)).chosenModel).toBe('mentra-live')
+  host.lanes[1]!.state = 'running'
+  expect(await service.preparation(row.workId)).toMatchObject({state: 'awaiting-runner', waitingReason: 'Awaiting an idle compatible enrolled runner', inputSha256: first.inputSha256})
+  host.lanes[0]!.state = 'idle'
+  expect((await service.preparation(row.workId)).chosenModel).toBe('g1')
+  expect((await service.inspect(row.workId)).fleetSelection).toEqual(frozen)
+  expect((await service.inspect(row.workId)).fleetInputSha256).toBe(first.inputSha256)
 })
 function fixture(options: {buildHead?: string; noHost?: boolean; notificationFailure?: boolean} = {}) {
   const rows = new Map<string, RoutineWorkDelivery>()
@@ -30,7 +104,8 @@ function fixture(options: {buildHead?: string; noHost?: boolean; notificationFai
     },
     async insert(row) {
       if (rows.has(row.workId)) throw new Error('duplicate')
-      rows.set(row.workId, {...structuredClone(row), createdAt: new Date('2026-10-05T10:00:00Z')})
+      const work=authoringWorkSchema.parse({...row.work,target:input.target});
+      rows.set(row.workId, {...structuredClone(row),work,inputSha256:requestInputDigest(work),hostId:'mini', createdAt: new Date('2026-10-05T10:00:00Z')})
     },
     async queued(hostId, after, limit) {
       return [...rows.values()]
@@ -235,15 +310,12 @@ test('same-time delivery pagination and concurrent admission preserve every occu
   expect(second.nextCursor).toBeNull()
 })
 
-test('stale app head, missing host, foreign lane and malformed provider input create no delivery', async () => {
-  for (const [f, request] of [
-    [fixture({buildHead: 'f'.repeat(40)}), input],
-    [fixture({noHost: true}), input],
-    [fixture(), {...input, target: {...input.target, laneId: 'foreign'}}],
-  ] as const) {
+test('stale app head and malformed provider input create no delivery while offline source work is retained', async () => {
+  for (const [f, request] of [[fixture({buildHead: 'f'.repeat(40)}), input]] as const) {
     await expect(f.service.submit(request)).rejects.toMatchObject({status: 409})
     expect(f.rows.size).toBe(0)
   }
+  const offline=fixture({noHost:true});expect((await offline.service.submit(input)).workId).toBe(input.workId);
   const f = fixture()
   await expect(
     f.service.submit({

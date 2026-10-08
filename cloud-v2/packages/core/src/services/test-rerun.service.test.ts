@@ -11,17 +11,17 @@ async function recordedFixture() {
  const f=fixture(), preview=await f.preview('recorded',{memberIds:['member-20']});
  const {routineSource: _source,...input}=structuredClone(nativeInput);
  const row=f.rows.get('recorded')!, member=preview.plan.members[0]!;
- const {dispatchIntent: _intent,...identity}=member;
- row.plan={...preview.plan,members:[{...identity,input}]};
+ const {selection: _intent,...identity}=member;
+ row.plan={...preview.plan,members:[{...identity,hostId:'mini',input}]};
  row.previewDigest=requestInputDigest(row.plan);row.state='accepted';row.acceptedAt='2026-10-06T12:00:00Z';
- f.requests.set(member.requestId,{requestId:member.requestId,hostId:member.hostId,input,inputSha256:requestInputDigest(input),state:'terminal'});
+ f.requests.set(member.requestId,{requestId:member.requestId,hostId:'mini',input,inputSha256:requestInputDigest(input),state:'terminal'});
  f.results.set(member.requestId,{...input,runId:'recorded-run',outcome:'pass',uploadsComplete:true,evidenceStatus:'complete'});
  const originalMembers=f.members.slice(20,22).map(({routineSource: _bundle,...m})=>({...m,platform:input.platform,definitionRevision:input.definitionRevision,definitionSha256:'d'.repeat(64),hostId:'mini',build:input.build,input}));
  for(const m of originalMembers)f.requests.set(m.requestId,{requestId:m.requestId,hostId:'mini',input,inputSha256:requestInputDigest(input),state:'terminal'});
  const suite={suiteId:'nightly',channel:'dev' as const,trigger:'nightly' as const,startedAt:'2026-10-06T11:00:00Z',build:{headSha:input.build.headSha},members:originalMembers};
  const plan={occurrenceId:'recorded-occurrence',suiteId:'nightly',startedAt:suite.startedAt,trigger:'nightly' as const,suite,members:originalMembers};
  const result={...plan,members:structuredClone(plan.members),expectedCount:2,passed:0,status:'failed',finishedAt:'2026-10-06T11:30:00Z'};
- (f.service as any).suites={async detail(){return nightlySuiteProjection(suite,plan,result)}};
+ (f.service as any).suites={async detail(){return nightlySuiteProjection(suite,plan,result)},async summary(){return nightlySuiteProjection(suite,plan,result)}};
  return {f,row,member,plan,result,suite,input};
 }
 
@@ -37,7 +37,7 @@ test('recorded nightly and input-based rerun history remain readable and the suc
  await expect(f.service.submit({rerunId:'recorded',previewDigest:row.previewDigest})).rejects.toThrow('read-only');
  expect(f.executions).toBe(executions);
  const successor=await f.service.preview({rerunId:'successor',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},routineRevision:'f'.repeat(40),reason:'Verify corrected source'},'admin');
- expect(successor.plan.members[0]).toMatchObject({predecessorAttemptId:member.requestId,attemptNumber:2,dispatchIntent:{routineRevision:'f'.repeat(40),build:nativeInput.build}});
+ expect(successor.plan.members[0]).toMatchObject({predecessorAttemptId:member.requestId,attemptNumber:2,selection:{routineRevision:'f'.repeat(40),build:nativeInput.build}});
  expect(successor.plan.members[0]).not.toHaveProperty('input');
  await f.service.submit({rerunId:'successor',previewDigest:successor.previewDigest});
  expect(f.requests.get(successor.plan.members[0]!.requestId).state).toBe('preparing');
@@ -66,9 +66,12 @@ function fixture(){
  const members=Array.from({length:28},(_,i)=>({memberId:`member-${i}`,requestId:`original-${i}`,routineId:'captions',platform:'android',status:i<20?'pass':i<22?'failed':'setup-failed',publicationComplete:true,routineSource:testRoutineSource()}));
  for(const member of members) requests.set(member.requestId,{requestId:member.requestId,hostId:'mini',state:'terminal',input:nativeInput,inputSha256:requestInputDigest(nativeInput)});
  const store:RerunRepository={async get(id){return structuredClone(rows.get(id)??null)},async insert(row){if(rows.has(row.rerunId))throw Object.assign(new Error(),{code:11000});rows.set(row.rerunId,structuredClone(row));},async accept(id,digest,keys,acceptedAt){const row=rows.get(id)!;if(row.state==='accepted')return null;if(keys.some(k=>claims.has(k)))throw Object.assign(new Error(),{code:11000});keys.forEach(k=>claims.add(k));row.state='accepted';row.acceptedAt=acceptedAt;return structuredClone(row);},async history(root,before,limit){return [...rows.values()].filter(r=>r.state==='accepted'&&r.plan.members.some(m=>m.rootKey===root&&m.attemptNumber<before)).sort((a,b)=>b.plan.members.find(m=>m.rootKey===root)!.attemptNumber-a.plan.members.find(m=>m.rootKey===root)!.attemptNumber).slice(0,limit).map(r=>structuredClone(r));},async children(id,before,limit){const cursor=before?JSON.parse(Buffer.from(before,"base64url").toString()):null;return [...rows.values()].filter(r=>r.state==='accepted'&&'suiteId' in r.plan.parent&&r.plan.parent.suiteId===id&&(!cursor||r.acceptedAt!<cursor.acceptedAt||(r.acceptedAt===cursor.acceptedAt&&r.rerunId<cursor.rerunId))).sort((a,b)=>b.acceptedAt!.localeCompare(a.acceptedAt!)||b.rerunId.localeCompare(a.rerunId)).slice(0,limit)},async byRequest(id){return [...rows.values()].find(r=>r.state==='accepted'&&r.plan.members.some(m=>m.requestId===id))??null}};
- const service=new TestRerunService(store,{async detail(){return {members} as any}},{async prepareIntent(selected:any){prepared++;return {hostId:'mini',dispatchIntent:{...selected,laneId:'android',build:{...structuredClone(nativeInput.build),source:selected.source}}}}},{async get(id){return requests.get(id)??null},async prepare(hostId,intent:any){const id=intent.requestId;if(id===failId)throw new Error('transport');if(!requests.has(id)){executions++;requests.set(id,{requestId:id,hostId,dispatchIntent:intent,dispatchIntentSha256:requestInputDigest(intent),state:'preparing'})}return requests.get(id)}},{async summary(id){if(!results.has(id))throw new TestRunError(404,'missing');return results.get(id)}},()=>time);
+ const jobs={async freezeSelection(selected:any,inherited?:any){prepared++;return {...selected,build:inherited??{...structuredClone(nativeInput.build),source:selected.source}}},
+  async submitFrozen(selection:any){const id=selection.requestId;if(id===failId)throw new Error('transport');if(!requests.has(id)){executions++;const intent={...selection,laneId:'android'};requests.set(id,{requestId:id,hostId:'mini',dispatchIntent:intent,dispatchIntentSha256:requestInputDigest(intent),state:'preparing',fleetSelection:selection,fleetSelectionSha256:requestInputDigest(selection),fleetBinding:{hostId:'mini',laneId:'android'}})}return requests.get(id)}};
+ const service=new TestRerunService(store,{async detail(){return {members} as any},async summary(){return {members} as any}},jobs,{async get(id){return requests.get(id)??null},async prepare(){throw Error('unused')}},{async summary(id){if(!results.has(id))throw new TestRunError(404,'missing');return results.get(id)}},()=>time);
+
  const preview=(rerunId='repair',selection:any={filter:{statuses:['failed','setup-failed','teardown-failed']}})=>service.preview({rerunId,parent:{suiteId:'nightly'},selection,source,reason:'Verify fix'},'admin:philippe');
- const complete=(id:string,status='pass',evidenceStatus='complete')=>{const row=requests.get(id),intent=row.dispatchIntent;row.input={...nativeInput,definitionRevision:intent.routineRevision,routineSource:intent.routineSource??testRoutineSource(intent.routineRevision),build:intent.build};row.inputSha256=requestInputDigest(row.input);row.state='terminal';results.set(id,{...row.input,runId:`run-${id}`,outcome:status,uploadsComplete:true,evidenceStatus})};
+ const complete=(id:string,status='pass',evidenceStatus='complete')=>{const row=requests.get(id),intent=row.dispatchIntent;row.input={...nativeInput,definitionRevision:intent.routineRevision,routineSource:intent.routineSource??testRoutineSource(intent.routineRevision),build:intent.build};row.inputSha256=requestInputDigest(row.input);row.state='terminal';results.set(id,{...row.input,hostId:'mini',laneId:row.input.laneId,runId:`run-${id}`,outcome:status,uploadsComplete:true,evidenceStatus})};
  return {service,preview,rows,requests,results,members,complete,get prepared(){return prepared},get executions(){return executions},set failId(id:string){failId=id},advance(){time+=600001}};
 }
 test('28-member suite selects only its eight failures; preview queues nothing and immutable retries resolve once',async()=>{
@@ -110,10 +113,10 @@ test('members that never admitted have a stable original identity and individual
 test('artifact override is optional; default reuses original while a new rerun may choose another build',async()=>{
  const f=fixture();f.members[20]={...f.members[20]!,build:structuredClone(nativeInput.build)} as any;
  const input={rerunId:'default',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},reason:'Framework fix only'};
- const p=await f.service.preview(input,'admin');expect(p.plan.source).toBeUndefined();expect(p.plan.members[0]!.dispatchIntent.build.source).toEqual(source);
+ const p=await f.service.preview(input,'admin');expect(p.plan.source).toBeUndefined();expect(p.plan.members[0]!.selection.build.source).toEqual(source);
  await f.service.submit({rerunId:p.rerunId,previewDigest:p.previewDigest});f.complete(p.plan.members[0]!.requestId);
  const replacement={...input,rerunId:'replacement',source:{...source,buildRunId:456}};
- const next=await f.service.preview(replacement,'admin');expect(next.plan.members[0]!.dispatchIntent.build.source).toEqual(replacement.source);expect(next.plan.members[0]!.attemptNumber).toBe(2);
+ const next=await f.service.preview(replacement,'admin');expect(next.plan.members[0]!.selection.build.source).toEqual(replacement.source);expect(next.plan.members[0]!.attemptNumber).toBe(2);
  delete (f.members[21] as any).build;f.requests.get('original-21').input={...nativeInput,build:{...nativeInput.build,source:undefined}};f.requests.get('original-21').inputSha256='bad';await expect(f.service.preview({...input,rerunId:'missing',selection:{memberIds:['member-21']}},'admin')).rejects.toThrow('provenance');
 });
 
@@ -131,14 +134,14 @@ const {routineEnrollmentSchema}=await import('../types/routine-definition.types'
  const definition=routineEnrollmentSchema.parse({routineId:'captions',platform:'android',routineSource:nativeInput.routineSource,definitionRevision:nativeInput.definitionRevision,definitionSha256:'a'.repeat(64),definition:{id:'captions',minimumRoutineApiVersion:1,title:'Camera',purpose:'Check',platforms:['android'],entry:'home',account:'lane',requires:['camera'],requirements:[],fixtures:[],glasses:{models:['mentra-live']},steps:[{id:'check',instruction:'Check',expected:'Seen'}],execution:{resourceKinds:['app','glasses']},source:{repository:'Mentra-Community/Mentra-Automated-Testing',revision:nativeInput.definitionRevision,path:'routines/captions/routine.ts'}}});
  const dispatch=new RoutineDispatchService({async current(){return [definition]},async getCurrent(){return definition},async getExact(){return definition},async enroll(value){return value as any}},{async resolve(){throw Error('must not resolve current PR')}},{async get(){return {hostId:'mini',receivedAt:new Date().toISOString(),lanes:[{id:'android',platform:'android',dispatchMode:'automatic',state:'idle',resources:input.resources,glasses:[{resourceId:'glasses',deviceId:'live',model:'mentra-live',capabilities:['camera']}]}]} as any}},undefined,undefined,()=>({android:{hostId:'mini',laneId:'android'}}),{async resolve(revision){return revision??'a'.repeat(40)},async inventory(commit){return {commit,files:[]}}});
  const wrapped={async prepareIntent(selected:any,original:any){recorded=original?.build;return dispatch.prepareIntent(selected,original)}};
- const service=new TestRerunService({async get(id:string){return f.rows.get(id)??null},async insert(row:RerunRecord){f.rows.set(row.rerunId,row)},async history(){return []},async byRequest(){return null}} as any,{async detail(){return {members:f.members} as any}},wrapped,{async get(id:string){return f.requests.get(id)??null},async prepare(){throw Error('unused')}} as any,undefined);
+ const service=new TestRerunService({async get(id:string){return f.rows.get(id)??null},async insert(row:RerunRecord){f.rows.set(row.rerunId,row)},async history(){return []},async byRequest(){return null}} as any,{async detail(){return {members:f.members} as any},async summary(){return {members:f.members} as any}},{async freezeSelection(value:any,inherited:any){recorded=inherited;return {...value,build:inherited}},async submitFrozen(){throw Error('preview must not admit')}},{async get(id:string){return f.requests.get(id)??null},async prepare(){throw Error('unused')}} as any,undefined);
  const {nightlySuiteProjection}=await import('./test-suite.service');
  const suite={suiteId:'nightly',channel:'dev',trigger:'nightly',startedAt:'2026-10-06T11:00:00Z',build:{headSha:build.headSha},members:f.members.map(m=>({memberId:m.memberId,requestId:m.requestId,routineId:m.routineId,platform:m.platform}))};
  const members=f.members.map(m=>({...m,routineRevision:nativeInput.definitionRevision,definitionRevision:nativeInput.definitionRevision,hostId:'mini',build:input.build,dispatchIntent:{requestId:m.requestId,routineId:m.routineId,platform:m.platform,routineRevision:nativeInput.definitionRevision,laneId:input.laneId,source,build:input.build}}));
  const plan={occurrenceId:'occurrence',suiteId:'nightly',startedAt:suite.startedAt,trigger:'nightly',suite,members};
  const result={...plan,members:members.map(m=>({...m,...(m.memberId==='member-20'?{input,inputSha256:requestInputDigest(input)}:{}),publicationComplete:false})),expectedCount:28,passed:0,status:'running'};
- const projected=nightlySuiteProjection(suite as any,plan as any,result as any);(service as any).suites={async detail(){return projected}};
- const p=await service.preview({rerunId:'glasses',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},reason:'Harness fix'},'admin');expect(recorded.manifest).toEqual(manifest);expect(p.plan.members[0]!.dispatchIntent.build.manifest).toEqual(manifest);
+ const projected=nightlySuiteProjection(suite as any,plan as any,result as any);(service as any).suites={async detail(){return projected},async summary(){return projected}};
+ const p=await service.preview({rerunId:'glasses',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},reason:'Harness fix'},'admin');expect(recorded.manifest).toEqual(manifest);expect(p.plan.members[0]!.selection.build.manifest).toEqual(manifest);
 });
 
 test('repository history uses MongoDB 4.2 array selection and sorts the matching member before limiting',async()=>{
@@ -154,9 +157,9 @@ test('repository history uses MongoDB 4.2 array selection and sorts the matching
 
 test('rerun exact routine override replaces inherited source without moving the original attempt',async()=>{
  const f=fixture();let selected:any;
- (f.service as any).dispatch={async prepareIntent(value:any){selected=value;return {hostId:'mini',dispatchIntent:{...value,laneId:'android',build:nativeInput.build}}}};
+ (f.service as any).jobs={async freezeSelection(value:any){selected=value;return {...value,build:nativeInput.build}}};
  const revision='f'.repeat(40),result=await f.service.preview({rerunId:'source-override',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},source,routineRevision:revision,reason:'Exact routine fix'},'admin');
- expect(selected.routineRevision).toBe(revision);expect(selected.routineSource).toBeUndefined();expect(result.plan.routineRevision).toBe(revision);expect(result.plan.members[0]!.dispatchIntent.routineRevision).toBe(revision);expect(f.requests.get('original-20').input.definitionRevision).toBe(nativeInput.definitionRevision);
+ expect(selected.routineRevision).toBe(revision);expect(selected.routineSource).toBeUndefined();expect(result.plan.routineRevision).toBe(revision);expect(result.plan.members[0]!.selection.routineRevision).toBe(revision);expect(f.requests.get('original-20').input.definitionRevision).toBe(nativeInput.definitionRevision);
 });
 
 
@@ -166,13 +169,34 @@ test('cancelled original preparation can rerun an unpublished exact revision wit
  f.requests.set(originalId,{requestId:originalId,hostId:'mini',state:'terminal',terminalStatus:'cancelled',dispatchIntent:intent,dispatchIntentSha256:requestInputDigest(intent)});
  f.members[20]!.status='cancelled';let exactCalls=0;
  const {RoutineDispatchService}=await import('./routine-dispatch.service');
- (f.service as any).dispatch=new RoutineDispatchService({async current(){throw Error('no collection')},async getCurrent(){throw Error('no collection')},async getExact(){return null},async enroll(){throw Error('preview cannot enroll')}},
-   {async resolve(){throw Error('original app must remain pinned')}},undefined,undefined,undefined,()=>({android:{hostId:'mini',laneId:'android'}}),
-   {async resolve(value){exactCalls++;expect(value).toBe(revision);return value!},async inventory(){throw Error('preview cannot need inventory')}});
+ const submitFrozen=(f.service as any).jobs.submitFrozen; (f.service as any).jobs={async freezeSelection(value:any,inherited:any){exactCalls++;expect(value.routineRevision).toBe(revision);return {...value,build:inherited}},submitFrozen};
  const input={rerunId:'unpublished-source',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},routineRevision:revision,reason:'Exact source fix'};
  const preview=await f.service.preview(input,'admin');expect(f.executions).toBe(0);expect(exactCalls).toBe(1);
- expect(preview.plan.members[0]!.dispatchIntent).toMatchObject({routineRevision:revision,build:nativeInput.build});
+ expect(preview.plan.members[0]!.selection).toMatchObject({routineRevision:revision,build:nativeInput.build});
  expect(preview.plan.members[0]).not.toHaveProperty('input');expect(await f.service.preview(input,'admin')).toEqual(preview);expect(exactCalls).toBe(1);
  await f.service.submit({rerunId:preview.rerunId,previewDigest:preview.previewDigest});const saved=f.requests.get(preview.plan.members[0]!.requestId);
  expect(saved.state).toBe('preparing');expect(saved).not.toHaveProperty('input');expect(f.requests.get(originalId).terminalStatus).toBe('cancelled');
+});
+
+test('rerun preview stays portable and submits each selected member with one retained deadline', async () => {
+ const f=fixture(), preview=await f.preview('portable',{memberIds:['member-20','member-21']});
+ expect(preview.plan.members.every(member=>member.selection && !('hostId' in member) && !('dispatchIntent' in member))).toBe(true);
+ const submitted:any[]=[];(f.service as any).jobs.submitFrozen=async(selection:any,deadline:string)=>{submitted.push({selection,deadline});return {requestId:selection.requestId}};
+ const receipt=await f.service.submit({rerunId:preview.rerunId,previewDigest:preview.previewDigest});
+ expect(receipt.admissions.every(member=>member.admitted)).toBe(true);
+ expect(submitted.map(member=>member.selection.requestId)).toEqual(preview.plan.members.map(member=>member.requestId));
+ expect(new Set(submitted.map(member=>member.deadline)).size).toBe(1);
+ expect(submitted[0].deadline).toBe('2026-10-06T15:00:00.000Z');
+});
+
+
+test('progress and history use compact members while preview keeps full frozen provenance', async () => {
+ const f=fixture(); let compactReads=0, fullReads=0;
+ (f.service as any).suites={async summary(){compactReads++;return {members:f.members}},async detail(){fullReads++;return {members:f.members}}};
+ const original=structuredClone(f.members);
+ await f.service.progress('nightly');
+ await f.service.history({suiteId:'nightly'},'member-20');
+ expect(compactReads).toBe(2);expect(fullReads).toBe(0);expect(f.prepared).toBe(0);expect(f.executions).toBe(0);
+ await f.preview('source-boundary',{memberIds:['member-20']});
+ expect(fullReads).toBe(1);expect(compactReads).toBe(2);expect(f.members).toEqual(original);
 });

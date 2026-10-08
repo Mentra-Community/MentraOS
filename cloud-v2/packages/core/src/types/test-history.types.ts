@@ -1,6 +1,7 @@
 import type {FrameworkBinding, RoutineSourceRef} from './framework-version.types';
 import type {FrameworkRun, frameworkRunOutcome} from "./framework-run.types";
 import type {TestSuite} from "./test-suite.types";
+import type {RoutineCardDefinition} from './routine-definition.types';
 
 /** Dependency-light DTOs shared by the Core run/catalog APIs and Admin client. */
 export interface CatalogExample {
@@ -19,6 +20,9 @@ export interface FrameworkRunSummary {
   startedAt: string; finishedAt: string; outcome: ReturnType<typeof frameworkRunOutcome>; uploadsComplete: boolean; evidenceStatus: "complete" | "failed";
   build: Pick<FrameworkRun["build"], "repository" | "channel" | "headSha" | "prNumber"> & {release?: string; producerUrl?: string};
 }
+export type RoutineCatalogCard = RoutineCardDefinition & {
+  example: CatalogExample | null; latestAttempt: CatalogHistoryRun | null; nightlyEnabled: boolean;
+};
 export interface FrameworkRunPage {runs: FrameworkRunSummary[]; nextCursor: string | null}
 export type TestHistoryEntry = ({kind: "run"; rerun?: {rerunId: string; parentSuiteId?: string}} & FrameworkRunSummary) | {
   kind: "suite"; suiteId: string; channel: TestSuite["channel"]; trigger: TestSuite["trigger"];

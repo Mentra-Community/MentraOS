@@ -1,4 +1,4 @@
-import {boundRoutineResult, requestIdentity, ensure, positive} from "./routine-api.mjs"
+import {boundRoutineResult, routineRequestSelection, requestIdentity, ensure, positive} from "./routine-api.mjs"
 const REPOSITORY = "Mentra-Community/MentraOS"
 const PUBLIC = `https://github.com/${REPOSITORY}`
 export const resultMarker = row => `<!-- mentra-routine-result:${row.requestId} -->`
@@ -8,7 +8,7 @@ const plain = value => String(value).replace(/[\\`*_|<>\r\n]/g, " ").trim()
 export function renderPrRoutineResult(detail) {
   const row = boundRoutineResult(detail)
   if (!row || row.source.channel !== "pr") return null
-  const {request, result} = detail, run = result?.run, selection = request.input ?? request.dispatchIntent, build = selection.build, report = run?.result
+  const {request, result} = detail, run = result?.run, selection = routineRequestSelection(request), build = selection.build, report = run?.result
   ensure(build.repository === REPOSITORY && build.prNumber === row.source.prNumber && /^[a-f0-9]{40}$/.test(build.headSha), "Invalid PR build binding")
   const body = [resultMarker(row), `### ${plain(row.title)} — ${plain(row.status)}`, "",
     `Candidate PR head: [\`${build.headSha}\`](${PUBLIC}/commit/${build.headSha}). Platform: \`${row.platform}\`.`, "",
@@ -16,7 +16,7 @@ export function renderPrRoutineResult(detail) {
     `| Teardown ready | ${report.teardown.ready ? "Verified" : "Not verified"} |`, `| Evidence | ${result.evidenceStatus} |`,
     `| Uploads | ${result.uploadsComplete ? "Complete" : "Incomplete"} |`, "",
     `[Recording and full result](https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(row.resultRunId)})`, ""] :
-      [`Request ${row.status === "skipped" ? "does not apply to this platform" : row.status === "not-run" ? "was rejected" : "was cancelled"}: ${plain(row.reason)}.`, "",
+      [`Request ${row.status === "skipped" ? "does not apply to this platform" : row.status === "not-run" ? "did not run" : "was cancelled"}: ${plain(row.reason)}.`, "",
         "No framework result has been published for this request.", "",
         ...(row.status === "skipped" ? ["This is not passing or failing test coverage.", ""] : []),
         `[Request receipt](https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(row.requestId)})`, ""]),

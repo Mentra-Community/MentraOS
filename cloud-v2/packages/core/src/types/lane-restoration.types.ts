@@ -2,6 +2,20 @@ import {z} from "zod"
 import {frameworkIdentitySchema} from "./framework-request.types"
 import {frameworkBindingSchema, type FrameworkBinding} from "./framework-version.types"
 
+/** Sanitized current custody from the same controller lane observation. */
+export const laneActivitySchema = z.object({
+  generation: z.number().int().nonnegative().safe(),
+  owner: z.object({
+    id: frameworkIdentitySchema,
+    kind: z.enum(['run', 'authoring', 'boundary-cleanup', 'fixer']),
+    requestId: frameworkIdentitySchema.optional(),
+  }).strict(),
+}).strict().superRefine((activity, ctx) => {
+  if (activity.owner.kind === 'run' ? activity.owner.requestId !== activity.owner.id : activity.owner.requestId !== undefined)
+    ctx.addIssue({code: 'custom', message: 'Lane run reference must identify its actual run owner'})
+})
+export type LaneActivity = z.infer<typeof laneActivitySchema>
+
 export const frameworkProcessSchema = z
   .object({pid: z.number().int().positive(), startedAt: z.string().min(1).max(240)})
   .strict()
@@ -129,7 +143,8 @@ export type LaneRestorationHost = {
   hostId: string
   receivedAt: string
   observedAt: string
-  lanes: Array<{id: string; platform: "android" | "ios-on-mac"; state: string; dispatchMode: string}>
+  lanes: Array<{id: string; platform: "android" | "ios-on-mac"; state: string; dispatchMode: string;
+    glassesModels?: string[]; activity?: LaneActivity}>
   restoration: LaneRestorationProjection | null
   frameworkBinding?: FrameworkBinding
   frameworkAcceptedAt?: string
@@ -143,6 +158,12 @@ export type LaneRestorationList = {
   hosts: LaneRestorationHost[]
   truncated: boolean
 }
+
+/** Current status does not carry retained repair attempts or installation history. */
+export type LaneOverviewHost = Omit<LaneRestorationHost, 'restoration' | 'frameworkHistory'> & {
+  frameworkCurrentInterval?: FrameworkHistoryEntry
+}
+export type LaneOverviewList = Omit<LaneRestorationList, 'hosts'> & {hosts: LaneOverviewHost[]}
 
 export function restorationHostIsFresh(
   host: Pick<LaneRestorationHost, "observedAt" | "receivedAt">,

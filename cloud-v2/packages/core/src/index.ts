@@ -23,6 +23,8 @@ import {runStartupMigrations} from "./migrations/startup.migrations"
 import {createCoreStop, serveCore} from "./http-server"
 import {startFrameworkRunSummaryBackfill} from "./services/framework-run-summary.service"
 import {startRoutineWorkReporting} from "./services/routine-work-notification"
+import {RoutineJobService} from './services/routine-job.service'
+import {RoutineWorkService} from './services/routine-work.service'
 import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
 import {warnIfWorkosIdentitiesStaySeparate} from "./services/workspaces/identity-link.service"
 
@@ -65,7 +67,11 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const boundPort = server.port!
   const stopSummaryBackfill = startFrameworkRunSummaryBackfill()
   const reportNotifications = new ReportSlackDeliveryService()
-  const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, undefined, () => reportNotifications.tick())
+  const routineJobs = new RoutineJobService()
+  const routineAuthors = new RoutineWorkService()
+  const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, undefined, async () => {
+    await Promise.allSettled([reportNotifications.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending()])
+  })
 
   logger.info({port: boundPort}, "cloud-v2 core listening")
 

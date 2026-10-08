@@ -6,7 +6,8 @@ import { createTestRunAdminApi } from "../api/admin/test-runs.api";
 import { principalAuth } from "../api/middleware/principal.middleware";
 import { HOST_FRESH_MS, HOST_SAMPLE_LIMIT, hostIsFresh, testHostSampleSchema, type TestHostSample } from "../types/test-host-health.types";
 import type { AppEnv } from "../types/hono.types";
-import { TestHostHealthService, type StoredHostSample, type TestHostHealthRepository } from "./test-host-health.service";
+import { hostHistoryProjection, MongoTestHostHealthRepository, TestHostHealthService, type StoredHostSample, type TestHostHealthRepository } from "./test-host-health.service";
+import { TestHostSampleModel } from "../models/test-host-health.model";
 
 const start = Date.parse("2026-09-29T00:00:00Z");
 const sample = (at = start, extra: Partial<TestHostSample> = {}): TestHostSample => ({ schemaVersion: 1, hostId: "mini-1", sampleId: randomUUID(),
@@ -27,6 +28,22 @@ class MemoryHealth implements TestHostHealthRepository {
     .sort((a, b) => +b.sampledAt - +a.sampledAt || b.sampleId.localeCompare(a.sampleId)).slice(0, limit).map(row => row.payload); }
 }
 describe("passive host health", () => {
+  test("Mongo history reads only chart measurements and cleanup receipts through the existing bounded index", async () => {
+    const row = {sampleId: randomUUID(), sampledAt: new Date(start).toISOString(), freeBytes: null, memory: null, cleanupEvents: []};
+    const calls: Record<string, unknown> = {};
+    const cursor = {sort(value: unknown) {calls.sort = value; return this;}, hint(value: unknown) {calls.hint = value; return this;},
+      limit(value: unknown) {calls.limit = value; return this;}, maxTimeMS(value: unknown) {calls.maxTimeMS = value; return this;},
+      async toArray() {return [{payload: row}];}};
+    const find = TestHostSampleModel.collection.find;
+    try {
+      TestHostSampleModel.collection.find = ((filter: unknown, options: unknown) => {calls.filter = filter; calls.options = options; return cursor;}) as any;
+      expect(await new MongoTestHostHealthRepository().history("mini-1", new Date(start - 60_000), new Date(start), 2)).toEqual([row]);
+      expect(calls).toEqual({filter: {hostId: "mini-1", sampledAt: {$gte: new Date(start - 60_000), $lte: new Date(start)}},
+        options: {projection: hostHistoryProjection}, sort: {sampledAt: -1, sampleId: -1}, hint: "host_sample_history", limit: 2, maxTimeMS: 5_000});
+      expect(hostHistoryProjection).not.toHaveProperty("payload");
+      expect(hostHistoryProjection).not.toHaveProperty("payload.components");
+    } finally {TestHostSampleModel.collection.find = find;}
+  });
   test("memory shares immutable samples, latest ordering and disk history without backfilling old observations", async () => {
     const repo = new MemoryHealth(); let now = start;
     const service = new TestHostHealthService(repo, () => new Date(now)), old = sample();

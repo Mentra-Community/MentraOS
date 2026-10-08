@@ -61,11 +61,11 @@ test("delivery cards explain queue states and keep diagnostic IDs in details", (
 test("delivery distinguishes loading from an empty queue", () => {
  const client = new QueryClient();
  const render = () => renderToStaticMarkup(<QueryClientProvider client={client}><NativeActivityPanel/></QueryClientProvider>);
- expect(render()).toContain("Loading request delivery…");
+ expect(render()).toContain("Loading request delivery");
  expect(render()).not.toContain("No pending requests.");
  client.setQueryData(["framework-activity"], {requests: []});
  expect(render()).toContain("No pending requests.");
- expect(render()).not.toContain("Loading request delivery…");
+ expect(render()).not.toContain("Loading request delivery");
 });
 
 test("preparing delivery has a routine name and exact waiting reason without executable input", () => {
@@ -75,4 +75,18 @@ test("preparing delivery has a routine name and exact waiting reason without exe
  expect(html).toContain("New main routine"); expect(html).toContain("Preparing routine source");
  expect(html).toContain("Installed routine API is too old; waiting for framework deployment.");
  expect(html).toContain("No test has started.");
+});
+
+
+test("picker accepts fleet and host targets and delivery shows unassigned jobs", () => {
+ const portable = {requestId: "portable", routineId: "new-main-routine", platform: "ios-on-mac" as const, build};
+ expect(pickerRequest(portable)).not.toHaveProperty("hostId");
+ expect(pickerRequest(portable)).not.toHaveProperty("laneId");
+ expect(pickerRequest({...portable, hostId: "mini"})).toHaveProperty("hostId", "mini");
+ expect(() => pickerRequest({...portable, laneId: "mac"})).toThrow("computer ID");
+ const client = new QueryClient();
+ client.setQueryData(["framework-activity"], {requests:[{requestId:"portable",state:"awaiting-runner",routineId:"new-main-routine",platform:"ios-on-mac"}]});
+ const html = renderToStaticMarkup(<QueryClientProvider client={client}><NativeActivityPanel/></QueryClientProvider>);
+ expect(html).toContain("Waiting for compatible computer");
+ expect(html).toContain("Awaiting assignment");
 });

@@ -2,7 +2,7 @@ import {RoutineCollectionModel} from '../models/routine-collection.model';
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {testRoutineSource} from "../testing/framework-fixtures";
 import type {RoutineEnrollment} from "../types/routine-definition.types";
-import {expect, spyOn, test} from "bun:test";
+import {expect, mock, spyOn, test} from "bun:test";
 import {RoutineDefinitionService, type RoutineDefinitionRepository} from "./routine-definition.service";
 import {requestInputDigest} from "./test-request.service";
 import {GithubRoutineMergeGateway} from './routine-merge-eligibility.service';
@@ -20,7 +20,7 @@ function enrollment(): RoutineEnrollment {
 }
 
 test("optional model requirements retain capability IDs without changing phone-only definitions", async () => {
-  const repository: RoutineDefinitionRepository = {async enroll() {}, async current() {return [];}, async getCurrent() {return null;}, async getExact() {return null;}};
+  const repository: RoutineDefinitionRepository = {async enroll() {}, async current() {return [];}, async overview() {return this.current();}, async getCurrent() {return null;}, async getExact() {return null;}};
   const service = new RoutineDefinitionService(repository), original = enrollment();
   expect((await service.enroll(original)).definition).not.toHaveProperty("glasses");
   const definition: RoutineEnrollment["definition"] = {...original.definition, glasses: {models: ["mentra-live"]}, requires: ["camera"], execution: {resourceKinds: ["app", "glasses", "recorder"]}};
@@ -38,7 +38,7 @@ test("optional model requirements retain capability IDs without changing phone-o
 
 test("definition enrollment refuses changed identity or digest before storage", async () => {
   let writes = 0;
-  const repository: RoutineDefinitionRepository = {async enroll() {writes++;}, async current() {return [];}, async getCurrent() {return null;}, async getExact() {return null;}};
+  const repository: RoutineDefinitionRepository = {async enroll() {writes++;}, async current() {return [];}, async overview() {return this.current();}, async getCurrent() {return null;}, async getExact() {return null;}};
   const service = new RoutineDefinitionService(repository);
   const row = enrollment();
   await expect(service.enroll({...row, routineId: "notes"})).rejects.toThrow("Invalid");
@@ -142,13 +142,39 @@ test('current default selection waits for a complete published collection', asyn
   try {
     const service = new RoutineDefinitionService(undefined, undefined, null);
     expect(await service.current()).toEqual([]);
+    expect(await service.overview()).toEqual([]);
     expect(await service.getCurrent('notes', 'android')).toBeNull();
     expect(find).toHaveBeenCalled();
   } finally {find.mockRestore();}
 });
 
+test('card overview projects display fields from the exact chosen collection without reading executable steps', async () => {
+  const row = enrollment(), other = {...row, routineId: 'notes', platform: 'android' as const};
+  const compact = {routineId: row.routineId, platform: row.platform, definitionRevision: row.definitionRevision,
+    definitionSha256: row.definitionSha256, definition: {title: row.definition.title, purpose: row.definition.purpose}};
+  let stored = [compact], publication = {commit: revision, members: [{routineId: row.routineId, platform: row.platform, definitionSha256: row.definitionSha256}]};
+  const chain = (get: () => unknown) => ({read() {return this;}, readConcern() {return this;}, sort() {return this;},
+    select: mock(function(this: unknown) {return this;}), lean: async () => get()});
+  const collection = chain(() => publication), definitions = chain(() => stored);
+  const findPublication = spyOn(RoutineCollectionModel, 'findOne').mockReturnValue(collection as never);
+  const findDefinitions = spyOn(RoutineDefinitionModel, 'find').mockImplementation((query?: any) => {
+    expect(query.definitionRevision).toBe(revision);
+    // Simulate a newer publication arriving after this reader selected its receipt.
+    publication = {commit: 'b'.repeat(40), members: [{routineId: other.routineId, platform: other.platform, definitionSha256: other.definitionSha256}]};
+    return definitions as never;
+  });
+  try {
+    expect(await new RoutineDefinitionService(undefined, undefined, null).overview()).toEqual([compact]);
+    expect(definitions.select).toHaveBeenCalledWith({routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1,
+      'definition.title': 1, 'definition.purpose': 1, 'definition.glasses.models': 1, _id: 0});
+    publication = {commit: revision, members: [{routineId: row.routineId, platform: row.platform, definitionSha256: row.definitionSha256}]};
+    stored = [{...compact, definitionSha256: 'f'.repeat(64)}];
+    await expect(new RoutineDefinitionService(undefined, undefined, null).overview()).rejects.toThrow('member is unavailable');
+  } finally {findPublication.mockRestore(); findDefinitions.mockRestore();}
+});
+
 test("lifecycle definitions retain optional hook metadata and unique action IDs across every phase", async () => {
-  const repository: RoutineDefinitionRepository = {async enroll() {}, async current() {return [];}, async getCurrent() {return null;}, async getExact() {return null;}};
+  const repository: RoutineDefinitionRepository = {async enroll() {}, async current() {return [];}, async overview() {return this.current();}, async getCurrent() {return null;}, async getExact() {return null;}};
   const service = new RoutineDefinitionService(repository);
   const old = enrollment();
   expect((await service.enroll(old)).definition).not.toHaveProperty("setup");

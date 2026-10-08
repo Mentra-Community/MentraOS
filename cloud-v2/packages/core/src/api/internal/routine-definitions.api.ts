@@ -5,12 +5,21 @@ import {Hono} from "hono";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
 import {RoutineDefinitionConflict, RoutineDefinitionService} from "../../services/routine-definition.service";
 import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth.middleware";
+import {createHash, timingSafeEqual} from "node:crypto";
 import {routineIdentitySchema, routinePlatformSchema} from '../../types/routine-definition.types';
 
 /** Trusted controller source enrollment, separate from device result ingestion. */
 export function createRoutineDefinitionsApi(service = new RoutineDefinitionService(), credentials?: () => string | undefined) {
   const app = new Hono<TestHostEnv>();
-  app.use("*", createTestHostAuth(credentials));
+  const hostAuth = createTestHostAuth(credentials);
+  app.use("*", async (c, next) => {
+    // Offline preparation may publish/download bounded source bundles. It cannot enroll definitions or report host state.
+    const expected = process.env.TEST_RUN_INGEST_TOKEN, supplied = /^Bearer (\S{1,4096})$/.exec(c.req.header('authorization') ?? '')?.[1];
+    const hash = (value: string) => createHash('sha256').update(value).digest();
+    if (/\/bundles\/[a-f0-9]{64}$/.test(c.req.path) && expected && expected.length >= 32 && supplied && timingSafeEqual(hash(supplied), hash(expected)))
+      return next();
+    return hostAuth(c, next);
+  });
   app.onError((error, c) => {
     if (error instanceof TestRunError) return c.json({error: "invalid_definition", message: error.message}, error.status);
     if (error instanceof RoutineDefinitionConflict) return c.json({error: "definition_conflict", message: error.message}, 409);

@@ -2,6 +2,7 @@ import {testRoutineSource, testFrameworkBinding} from "../../testing/framework-f
 import {expect, spyOn, test} from "bun:test";
 import {Hono} from "hono";
 import {createTestRunAdminApi} from "./test-runs.api";
+import {TestSuiteService} from "../../services/test-suite.service";
 import {TestHistoryService} from "../../services/test-history.service";
 import {LaneRestorationService} from "../../services/lane-restoration.service";
 import {TestHostHealthService} from "../../services/test-host-health.service";
@@ -226,6 +227,18 @@ test("restoration list has a bounded uncached route outside generic run identiti
   expect(await response.json()).toMatchObject({hosts: [], truncated: false});
 });
 
+test('current lane and host-filtered history routes remain distinct uncached reads', async () => {
+  class Restoration extends LaneRestorationService {
+    override async overview() {return {generatedAt: '2026-10-05T01:00:00Z', freshForMs: 120_000, hosts: [], truncated: false}}
+    override async list(hostId?: string) {expect(hostId).toBe('selected-host'); return this.overview() as any}
+  }
+  const app = createTestRunAdminApi(undefined, undefined, undefined, undefined, new Restoration());
+  for (const path of ['/lanes/overview', '/restoration/list?hostId=selected-host']) {
+    const response = await app.request(path);
+    expect(response.status).toBe(200); expect(response.headers.get('Cache-Control')).toBe('no-store');
+  }
+});
+
 test('historical request detail preserves an absent routine source and original digest without enabling new admission', async () => {
   const input = {routineId: 'old-product', definitionRevision: 'a'.repeat(40), platform: 'android', laneId: 'phone', resources: [],
     build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)}};
@@ -269,4 +282,44 @@ test('activity and detail show input-free exact source preparation with its obse
     expect(detail.request).not.toHaveProperty('input');expect(detail.request).not.toHaveProperty('inputSha256');
     expect(selected).toMatchObject({dispatchIntent:1,dispatchIntentSha256:1,preparation:1});
   } finally {find.mockRestore()}
+});
+
+test('unbound fleet request keeps a stable exact-input URL and shows awaiting runner before assignment', async () => {
+  const {portableRoutineSelectionSchema}=await import('../../types/routine-job.types')
+  const selected=portableRoutineSelectionSchema.parse({requestId:'fleet-pending',routineId:'new-routine',platform:'android',routineRevision:'a'.repeat(40),
+    source:{channel:'pr',prNumber:12,buildRunId:55,publicationAttempt:2},build:{repository:'Mentra-Community/MentraOS',headSha:'b'.repeat(40),channel:'pr',prNumber:12,
+      kind:'android-apk',source:{channel:'pr',prNumber:12,buildRunId:55,publicationAttempt:2},
+      archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},
+      receipt:{url:'https://artifactscdn.mentraglass.com/receipt.json',size:10,sha256:'d'.repeat(64)}}})
+  const rows={async get(){return {requestId:selected.requestId,state:'awaiting-runner',fleetSelection:selected,fleetSelectionSha256:requestInputDigest(selected),
+    fleetDeadline:new Date('2026-10-08T03:00:00Z')}}} as unknown as TestRequestService
+  const results={async detailByRun(){throw new TestRunError(404,'missing')},async detail(){throw new TestRunError(404,'missing')}} as unknown as FrameworkResultService
+  const app=createTestRunAdminApi(undefined,undefined,results,rows)
+  const response=await app.request('/fleet-pending')
+  expect(response.status).toBe(200);expect(await response.json()).toMatchObject({kind:'request',request:{requestId:'fleet-pending',state:'awaiting-runner',
+    routineId:'new-routine',reason:'Awaiting a compatible testing runner.',build:{headSha:'b'.repeat(40)}}})
+})
+
+
+test("suite summary exposes bounded presentation without reading complete inputs", async () => {
+  const reads = spyOn(TestSuiteService.prototype, "summaries").mockResolvedValue(new Map([["nightly-summary", {suiteId: "nightly-summary", members: []} as never]]));
+  const full = spyOn(TestSuiteService.prototype, "detail").mockRejectedValue(new Error("Full inputs must not load"));
+  try {
+    const response = await createTestRunAdminApi().request("/suites/nightly-summary/summary");
+    expect(response.status).toBe(200); expect(await response.json()).toEqual({suiteId: "nightly-summary", members: []});
+    expect(reads).toHaveBeenCalledTimes(1); expect(reads.mock.calls[0]![0]).toEqual(["nightly-summary"]);
+    expect(reads.mock.calls[0]![1]).toBeGreaterThan(Date.now()); expect(full).not.toHaveBeenCalled();
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  } finally {reads.mockRestore();full.mockRestore();}
+});
+
+test("suite summary preserves missing and invalid-receipt errors", async () => {
+  const reads=spyOn(TestSuiteService.prototype,"summaries");
+  try {
+    reads.mockResolvedValue(new Map());
+    expect((await createTestRunAdminApi().request("/suites/missing/summary")).status).toBe(404);
+    reads.mockResolvedValue(new Map([["invalid",new TestRunError(503,"Receipt differs")]]));
+    const response=await createTestRunAdminApi().request("/suites/invalid/summary");
+    expect(response.status).toBe(503);expect(await response.json()).toEqual({error:"test_run_error",message:"Receipt differs"});
+  } finally {reads.mockRestore();}
 });

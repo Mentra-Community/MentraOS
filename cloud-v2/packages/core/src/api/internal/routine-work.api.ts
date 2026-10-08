@@ -25,7 +25,7 @@ const projection = ({
   createdAt,
   acceptance,
   status,
-  reporting,
+  reporting, fleetSelection, fleetInputSha256, fleetDeadline, fleetBinding, fleetCancellation,
 }: RoutineWorkDelivery) => ({
   workId,
   requestSha256,
@@ -35,7 +35,7 @@ const projection = ({
   work,
   createdAt,
   acceptance,
-  status,
+  status, fleetSelection, fleetInputSha256, fleetDeadline, fleetBinding, fleetCancellation,
   ...(reporting
     ? {
         reporting: {
@@ -82,6 +82,9 @@ export function createRoutineWorkDeliveriesApi(
   app.onError(failure)
   app.get('/', async (c) =>
     c.json(await service.queued(c.var.testHostId, c.req.query('after'), Number(c.req.query('limit') ?? 10))),
+  )
+  app.post('/local', frameworkBodyLimit(256 * 1024 + 4096), async (c) =>
+    c.json({receipt: await service.registerLocal(await frameworkJson(c), c.var.testHostId)}),
   )
   app.post('/:workId/accept', frameworkBodyLimit(4096), async (c) => {
     const value = (await frameworkJson(c)) as {workId?: unknown}

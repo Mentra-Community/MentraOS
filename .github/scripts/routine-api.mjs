@@ -24,6 +24,17 @@ export function requestInputDigest(input) {
 /** A terminal request is a receipt, not evidence that a framework run existed. */
 function terminalRequestResult(request) {
   if (request.state !== "terminal" || !["not-run", "cancelled"].includes(request.terminalStatus)) return null
+  if (request.fleetSelection && !request.fleetBinding) {
+    const selection = portableSelection(request), receipt = request.fleetCancellation
+    ensure(request.terminalStatus === "not-run" && !request.hostId && !request.input && !request.inputSha256 &&
+      !request.hostReceipt && !request.hostCancellation && !request.hostRejection &&
+      receipt && Object.keys(receipt).length === 2 && Object.hasOwn(receipt, "requestedAt") && Object.hasOwn(receipt, "reason") &&
+      typeof receipt.reason === "string" && receipt.reason.length > 0 && receipt.reason.length <= 2000 &&
+      typeof receipt.requestedAt === "string" && /^\d{4}-\d{2}-\d{2}T/.test(receipt.requestedAt) && Number.isFinite(Date.parse(receipt.requestedAt)),
+      "Terminal portable request differs from its immutable receipt")
+    return {routineId: selection.routineId, title: selection.routineId, platform: selection.platform, requestId: request.requestId,
+      finishedAt: receipt.requestedAt, source: exactSource(selection.source), status: "not-run", reason: receipt.reason}
+  }
   if (!request.input) {
     const intent = boundDispatchIntent(request), cancelled = request.terminalStatus === "cancelled"
     const receipt = cancelled ? request.preparationCancellation : request.preparationRejection
@@ -86,6 +97,21 @@ export function stableRequestId({occurrenceId, routineId: id, platform, source, 
   return `routine-${sha256}`
 }
 
+/** Automatic publications share the original occurrence across label events and callbacks. */
+export function automaticRoutineRequest({routineId: id, platform}, source, revision) {
+  const selected = exactSource(source)
+  return {routineId: id, platform, source: selected,
+    requestId: stableRequestId({occurrenceId: `source-${selected.channel}-${selected.buildRunId}-${selected.publicationAttempt}`,
+      routineId: id, platform, source: selected}), ...(revision === undefined ? {} : {routineRevision: revision})}
+}
+
+export async function retainedAutomaticRequest({token, request, fetchImpl = fetch}) {
+  ensure(request.requestId === automaticRoutineRequest(request, request.source).requestId, 'Invalid automatic occurrence identity')
+  const {routineRevision: _, ...identity} = request
+  try {return (await routineApi({token, operation: 'detail', request: identity, fetchImpl})).request}
+  catch (error) {if (error.httpStatus === 404) return null; throw error}
+}
+
 /** Preparation has an immutable intent; executable input is committed only after description. */
 function boundDispatchIntent(request) {
   const intent = request.dispatchIntent
@@ -105,12 +131,48 @@ function executableSelection(request) {
   return input
 }
 
-export async function routineApi({token, operation, request, requestId = request?.requestId, fetchImpl = fetch}) {
+/** Source custody precedes assignment; a valid portable request has no invented host or lane. */
+function portableSelection(request) {
+  const selection = request.fleetSelection
+  ensure(requestIdentity(request.requestId) && selection?.requestId === request.requestId && routineId(selection.routineId) &&
+    platforms.includes(selection.platform) && routineRevision(selection.routineRevision) &&
+    /^[a-f0-9]{64}$/.test(request.fleetSelectionSha256 ?? "") && requestInputDigest(selection) === request.fleetSelectionSha256 &&
+    selection.build?.repository === "Mentra-Community/MentraOS" && routineRevision(selection.build.headSha) &&
+    selection.build.kind === (selection.platform === "android" ? "android-apk" : "mac-ci-package") &&
+    selection.build.channel === selection.source?.channel && isDeepStrictEqual(selection.build.source, exactSource(selection.source)) &&
+    (selection.routineSource === undefined || selection.routineSource.commit === selection.routineRevision) &&
+    (selection.minimumFrameworkVersion === undefined || positive(selection.minimumFrameworkVersion)),
+    "Request differs from its immutable portable selection")
+  return selection
+}
+
+/** The same exact source follows a request from portable intake to actual lane execution. */
+export function routineRequestSelection(request) {
+  const portable = request.fleetSelection ? portableSelection(request) : null
+  const bound = request.input ? executableSelection(request) : request.dispatchIntent ? boundDispatchIntent(request) : null
+  if (portable && !bound) ensure(!request.hostId && !request.fleetBinding && !request.inputSha256 &&
+    ["awaiting-source", "awaiting-runner", "terminal"].includes(request.state), "Portable request contains an unverified lane assignment")
+  if (portable && bound) ensure(portable.routineId === bound.routineId && portable.platform === bound.platform &&
+    portable.routineRevision === (request.input ? bound.definitionRevision : bound.routineRevision) &&
+    isDeepStrictEqual(portable.build, bound.build) &&
+    (portable.routineSource === undefined || isDeepStrictEqual(portable.routineSource, bound.routineSource)) &&
+    portable.minimumFrameworkVersion === bound.minimumFrameworkVersion,
+    "Bound execution changed its immutable portable selection")
+  ensure(bound || portable, "Request has no immutable source selection")
+  return bound ?? portable
+}
+
+export async function routineApi({token, operation, request, requestId = request?.requestId, routineIds, revision, fetchImpl = fetch}) {
   ensure(token && ["catalog", "dispatch", "detail"].includes(operation), "Routine API capability is missing")
   if (operation !== "catalog") ensure(requestIdentity(requestId), "Invalid routine request identity")
   if (operation === "dispatch") ensure(routineId(request?.routineId) && platforms.includes(request.platform) && exactSource(request.source) &&
     (request.routineRevision === undefined || routineRevision(request.routineRevision)), "Invalid routine dispatch")
-  const path = operation === "catalog" ? "/routine-catalog" : `/routine-dispatches${operation === "detail" ? `/${encodeURIComponent(requestId)}` : ""}`
+  if (routineIds !== undefined) ensure(operation === "catalog" && Array.isArray(routineIds) && routineIds.length > 0 && routineIds.length <= 30 &&
+    routineIds.every(routineId) && new Set(routineIds).size === routineIds.length, "Invalid selected routine catalog")
+  ensure(revision === undefined || operation === 'catalog' && routineRevision(revision), 'Invalid exact catalog revision')
+  const query = new URLSearchParams({...routineIds ? {routines: routineIds.join(',')} : {}, ...revision ? {revision} : {}}).toString()
+  const path = operation === "catalog" ? `/routine-catalog${query ? `?${query}` : ""}`
+    : `/routine-dispatches${operation === "detail" ? `/${encodeURIComponent(requestId)}` : ""}`
   let response
   try {response = await fetchImpl(`${ENDPOINT}${path}`, {method: operation === "dispatch" ? "POST" : "GET", redirect: "error",
     signal: AbortSignal.timeout(30_000), headers: {Authorization: `Bearer ${token}`, "Content-Type": "application/json"},
@@ -130,7 +192,7 @@ export async function routineApi({token, operation, request, requestId = request
   const acknowledged = operation === "dispatch" ? result : result.request
   ensure(acknowledged?.requestId === requestId,
     "Routine API acknowledgement differs from its request")
-  const selection = acknowledged.input ? executableSelection(acknowledged) : boundDispatchIntent(acknowledged)
+  const selection = routineRequestSelection(acknowledged)
   if (request) ensure(selection.routineId === request.routineId && selection.platform === request.platform &&
     isDeepStrictEqual(acknowledged.input ? selection.build.source : selection.source, exactSource(request.source)) &&
     (request.routineRevision === undefined || (acknowledged.input ? selection.definitionRevision : selection.routineRevision) === request.routineRevision) &&
@@ -143,20 +205,29 @@ export async function routineApi({token, operation, request, requestId = request
 const admissionReason = error => String(error?.message ?? "Routine API admission failed").replace(/[\r\n]/g, " ").slice(0, 600)
 
 /** One POST; a lost acknowledgement is reconciled by the same ID, never another admission identity. */
-export async function submitRoutineRequest({token, request, fetchImpl = fetch}) {
+export async function submitRoutineRequest({token, request, fetchImpl = fetch, automatic = false}) {
   const identity = {routineId: request.routineId, platform: request.platform, requestId: request.requestId}
+  const {routineRevision: _, ...originalOccurrence} = request
+  if (automatic) {
+    try {
+      const retained = await retainedAutomaticRequest({token, request, fetchImpl})
+      if (retained) return {...identity, status: 'accepted', request: retained}
+    } catch (error) {return {...identity, status: error.retryable ? 'uncertain' : 'failed', reason: admissionReason(error), retryable: error.retryable === true}}
+  }
   let dispatchError
   try {
     const acknowledged = await routineApi({token, operation: "dispatch", request, fetchImpl})
     return {...identity, status: "accepted", request: acknowledged}
   } catch (error) {
-    if (!error.retryable) return {...identity, status: "failed", reason: admissionReason(error), retryable: false}
+    if (!error.retryable && !(automatic && error.httpStatus === 409)) return {...identity, status: "failed", reason: admissionReason(error), retryable: false}
     dispatchError = error
   }
   try {
-    const detail = await routineApi({token, operation: "detail", request, fetchImpl})
+    const detail = await routineApi({token, operation: "detail", request: automatic ? originalOccurrence : request, fetchImpl})
     return {...identity, status: "accepted", request: detail.request}
   } catch (error) {
+    if (automatic && dispatchError.httpStatus === 409 && error.httpStatus === 404)
+      return {...identity, status: 'failed', reason: admissionReason(dispatchError), retryable: false}
     // HTTP failure/absence cannot settle a possibly committed POST. A contradictory acknowledgement is a hard refusal.
     if (!error.retryable && error.httpStatus === undefined)
       return {...identity, status: "failed", reason: admissionReason(error), retryable: false}
@@ -168,8 +239,7 @@ export async function submitRoutineRequest({token, request, fetchImpl = fetch}) 
 export function boundRoutineResult(detail) {
   const {request, result} = detail ?? {}, run = result?.run, input = request?.input
   ensure(requestIdentity(request?.requestId), "Missing accepted routine request")
-  if (input) executableSelection(request)
-  else boundDispatchIntent(request)
+  routineRequestSelection(request)
   if (!result) return terminalRequestResult(request)
   ensure(input, "Result has no executable input")
   ensure(run?.requestId === request.requestId && run.result?.runId === request.requestId && run.hostId === request.hostId &&

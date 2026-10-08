@@ -35,7 +35,10 @@ export function parseRoutineWorkBrief(body, kind) {
     throw new Error('Authoring request JSON is invalid')
   }
   ensure(
-    keys(value, ['schemaVersion', 'kind', 'routineId', 'brief', 'source', 'target', 'requirements']) &&
+    keys(value, ['schemaVersion', 'kind', 'routineId', 'brief', 'source', 'requirements']) || keys(value, ['schemaVersion', 'kind', 'routineId', 'brief', 'source', 'target', 'requirements']),
+    'Authoring request fields are invalid',
+  )
+  ensure(
       value.schemaVersion === 1 &&
       value.kind === kind &&
       ['edit', 'create'].includes(kind) &&
@@ -50,17 +53,17 @@ export function parseRoutineWorkBrief(body, kind) {
     'Authoring request needs a goal, concrete changes and expected results',
   )
   ensure(
-    keys(value.source, ['repository', 'revision']) &&
+    (keys(value.source, ['repository']) || keys(value.source, ['repository', 'revision'])) &&
       value.source.repository === HARNESS &&
-      /^[a-f0-9]{40}$/.test(value.source.revision),
+      (value.source.revision === undefined || /^[a-f0-9]{40}$/.test(value.source.revision)),
     'Authoring requires an exact harness revision',
   )
   ensure(
-    keys(value.target, ['hostId', 'laneId']) && identity(value.target.hostId) && identity(value.target.laneId),
-    'Authoring target must name a host and lane',
+    value.target === undefined || (typeof value.target === 'object' && value.target && identity(value.target.hostId) && Object.keys(value.target).every(key => ['hostId', 'laneId'].includes(key)) && Object.values(value.target).every(identity)),
+    'Authoring target must name a host and optionally its lane',
   )
   ensure(
-    keys(value.requirements, ['platform', 'glasses', 'capabilities', 'environment']) &&
+    (keys(value.requirements, ['platform', 'glasses', 'capabilities', 'environment']) || keys(value.requirements, ['platform', 'glasses', 'capabilities', 'environment', 'resources'])) &&
       ['mac', 'android'].includes(value.requirements.platform) &&
       identifiers(value.requirements.glasses) &&
       identifiers(value.requirements.capabilities) &&
@@ -85,6 +88,13 @@ export function parseRoutineWorkBrief(body, kind) {
     ...requirement,
     description: requirement.description.trim(),
   }))
+  const baseKinds = ['app', 'recorder', ...(value.requirements.platform === 'android' ? ['phone'] : []), ...(value.requirements.glasses.length ? ['glasses'] : [])]
+  const resources = value.requirements.resources ?? baseKinds.map(kind => ({kind, capabilities: []}))
+  ensure(Array.isArray(resources) && resources.length > 0 && resources.length <= 9 && resources.every(resource =>
+    keys(resource, ['kind', 'capabilities']) && ['app', 'phone', 'glasses', 'recorder', 'audio', 'browser', 'network', 'fixture-data', 'workspace'].includes(resource.kind) && identifiers(resource.capabilities)),
+    'Authoring resource requirements are invalid')
+  ensure(baseKinds.every(kind => resources.some(resource => resource.kind === kind)), 'Authoring resources omit a required base fixture')
+  value.requirements.resources = resources
   return value
 }
 
@@ -258,14 +268,34 @@ export async function routineWorkApi({token, operation, request, workId = reques
     'Authoring receipt changed its identity',
   )
   ensure(
-    row.inputSha256 === workDigest(row.work) && row.hostId === row.work.target?.hostId,
+    row.inputSha256 === workDigest(row.work) && (row.hostId === undefined || row.hostId === row.work.target?.hostId),
     'Authoring receipt changed its frozen input digest or host',
   )
+  const selection = row.fleetSelection, binding = row.fleetBinding
+  ensure(selection?.workId === workId && /^[a-f0-9]{40}$/.test(selection.source?.revision ?? '') &&
+    typeof row.fleetDeadline === 'string' && Number.isFinite(Date.parse(row.fleetDeadline)) &&
+    row.fleetInputSha256 === workDigest({selection, deadline: row.fleetDeadline}),
+  'Authoring receipt changed its frozen fleet selection')
+  if (binding) {
+    ensure(keys(binding, ['jobId', 'requestId', 'hostId', 'laneId', 'descriptorRevision', 'actionsRunId', 'actionsJobId', 'boundAt']) &&
+      binding.jobId === workId && binding.requestId === workId && identity(binding.hostId) && identity(binding.laneId) &&
+      /^[a-f0-9]{64}$/.test(binding.descriptorRevision) && /^[1-9][0-9]{0,19}$/.test(binding.actionsRunId) &&
+      /^[1-9][0-9]{0,19}$/.test(binding.actionsJobId) && Number.isFinite(Date.parse(binding.boundAt)) &&
+      row.hostId === binding.hostId && isDeepStrictEqual(row.work, {...selection, target: {hostId: binding.hostId, laneId: binding.laneId}}) &&
+      (!selection.target?.hostId || selection.target.hostId === binding.hostId) &&
+      (!selection.target?.laneId || selection.target.laneId === binding.laneId),
+    'Authoring receipt changed its bound custody')
+  } else ensure(row.hostId === undefined && isDeepStrictEqual(row.work, selection), 'Authoring receipt changed its unbound selection')
   if (request) {
-    const {buildSource, ...input} = request
+    const {buildSource, deadline, ...input} = request
     ensure(
       isDeepStrictEqual(row.request, request) &&
-        Object.keys(input).every((key) => isDeepStrictEqual(row.work[key], input[key])),
+        (deadline === undefined || Date.parse(deadline) === Date.parse(row.fleetDeadline)) &&
+        Object.keys(input).every((key) => key === 'source'
+          ? selection.source?.repository === input.source.repository && (!input.source.revision || selection.source.revision === input.source.revision)
+          : key === 'target'
+            ? isDeepStrictEqual(selection.target, input.target)
+            : isDeepStrictEqual(selection[key], input[key])),
       'Authoring receipt changed its original brief/source/target',
     )
   }
