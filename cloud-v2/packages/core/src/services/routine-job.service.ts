@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {TestRequestModel} from '../models/test-request.model';
 import {testWriteConcern} from '../models/test-write-concern';
@@ -24,6 +25,8 @@ export interface RoutineJobRepository {
   prepare(jobId: string, selectionSha256: string, prepared: RoutineJobPreparation, inputSha256: string, now: Date): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
+  supersessionCandidates?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
+  supersessionChecked?(jobId: string, now: Date): Promise<void>;
   dispatch?(jobId: string, previous: StoredRoutineJob['fleetDispatch'], value: NonNullable<StoredRoutineJob['fleetDispatch']>): Promise<StoredRoutineJob | null>;
   actions?(jobId: string, inputSha256: string, value: {actionsRunId: string; recordedAt: string}): Promise<StoredRoutineJob | null>;
   complete?(jobId: string, hostId: string, inputSha256: string, value: RoutineJobCompletion): Promise<StoredRoutineJob | null>;
@@ -55,6 +58,16 @@ export const routineJobRepository: RoutineJobRepository = {
           $or: [{fleetDispatch: {$exists: false}}, {'fleetDispatch.attempts': {$lt: 20}, 'fleetDispatch.lastAttemptAt': {$lte: new Date(now.getTime() - 30_000).toISOString()},
             $or:[{'fleetDispatch.checkedAt':{$exists:false}},{'fleetDispatch.checkedAt':{$lte:new Date(now.getTime()-30_000).toISOString()}}]}]}]}]})
       .sort({createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob[];
+  },
+  async supersessionCandidates(limit, now) {
+    return await TestRequestModel.find({state: {$ne: 'terminal'}, fleetCancellation: {$exists: false},
+      'fleetSelection.source.channel': 'pr', $or: [{fleetSupersessionCheckedAt: {$exists: false}},
+        {fleetSupersessionCheckedAt: {$lte: new Date(now.getTime() - 30_000)}}]})
+      .sort({fleetSupersessionCheckedAt: 1, createdAt: 1, requestId: 1}).limit(limit)
+      .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob[];
+  },
+  async supersessionChecked(requestId, now) {
+    await TestRequestModel.updateOne({requestId}, {$set: {fleetSupersessionCheckedAt: now}}, {writeConcern: testWriteConcern});
   },
   async dispatch(requestId, previous, fleetDispatch) {
     return await TestRequestModel.findOneAndUpdate({requestId, fleetDispatch: previous ?? {$exists: false},
@@ -140,9 +153,20 @@ export function routineJobRouting(requirements: PortableRequirements, hosts: Rec
 export const routineJobInputDigest = (row: Pick<StoredRoutineJob, 'fleetSelection' | 'fleetPreparation' | 'fleetDeadline' | 'fleetTarget'>) =>
   requestInputDigest({selection: row.fleetSelection, prepared: row.fleetPreparation, deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null});
 
+/** Match Actions' automatic occurrence identity; manual requests and reruns retain their exact build. */
+export function isAutomaticPrRoutineJob(row: StoredRoutineJob): boolean {
+  const {source, routineId, platform} = row.fleetSelection;
+  if (source.channel !== 'pr') return false;
+  const exact = {channel: source.channel, buildRunId: source.buildRunId,
+    publicationAttempt: source.publicationAttempt, prNumber: source.prNumber};
+  const digest = createHash('sha256').update(JSON.stringify([
+    `source-${source.channel}-${source.buildRunId}-${source.publicationAttempt}`, routineId, platform, exact, null])).digest('hex');
+  return row.requestId === `routine-${digest}`;
+}
+
 export class RoutineJobService {
   constructor(private readonly rows: RoutineJobRepository = routineJobRepository,
-    private readonly builds: Pick<TestBuildGateway, 'resolve'> = new GithubTestBuildGateway(),
+    private readonly builds: Pick<TestBuildGateway, 'resolve' | 'isPrSuperseded'> = new GithubTestBuildGateway(),
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve' | 'inventory' | 'blob'> = new GithubRoutineSourceGateway(),
     private readonly definitions: Pick<RoutineDefinitionService, 'getExact'> = new RoutineDefinitionService(),
     private readonly hosts: Pick<TestHostStateService, 'get'> & Partial<Pick<TestHostStateService, 'list'>> = new TestHostStateService(),
@@ -246,7 +270,17 @@ export class RoutineJobService {
     }
     return runs;
   }
+  private async supersession(row: StoredRoutineJob): Promise<StoredRoutineJob> {
+    if (row.state === 'terminal' || row.fleetCancellation || this.now() >= row.fleetDeadline.getTime() || !isAutomaticPrRoutineJob(row) || !this.builds.isPrSuperseded) return row;
+    const source = row.fleetSelection.source;
+    if (source.channel === 'pr' && await this.builds.isPrSuperseded(source.prNumber, row.fleetSelection.build.headSha)) {
+      await this.cancel(row.requestId, {reason: `Superseded by a newer commit on PR #${source.prNumber}`});
+      return this.job(row.requestId);
+    }
+    return row;
+  }
   private async deliver(row: StoredRoutineJob): Promise<StoredRoutineJob> {
+    row = await this.supersession(row);
     if (!this.actionsTransport || row.fleetBinding || row.fleetCancellation || row.state === 'terminal' || this.now() >= row.fleetDeadline.getTime()) return row;
     const previous = row.fleetDispatch;
     if(previous && this.now()-Date.parse(previous.checkedAt ?? previous.lastAttemptAt)<30_000)return row;
@@ -272,11 +306,16 @@ export class RoutineJobService {
     }
   }
   async reconcilePending() {
+    const candidates = await this.rows.supersessionCandidates?.(20, new Date(this.now())) ?? [];
+    await Promise.allSettled(candidates.map(async candidate => {
+      await this.rows.supersessionChecked?.(candidate.requestId, new Date(this.now()));
+      await this.supersession(await this.job(candidate.requestId));
+    }));
     const pending = await this.rows.pending?.(20, new Date(this.now())) ?? [];
     await Promise.allSettled(pending.map(row => row.fleetCancellation ? this.cancel(row.requestId,{reason:row.fleetCancellation.reason}) : this.observation(row.requestId)));
   }
   async preparation(jobId: string) {
-    const row = await this.job(jobId);
+    const row = await this.supersession(await this.job(jobId));
     const routing: Partial<ReturnType<typeof routineJobRouting>> = row.fleetPreparation ? await this.routing(row) : {};
     return {jobId, kind: 'run' as const, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256, deadline: row.fleetDeadline.toISOString(),
       state: row.state, ...routing, selection: row.fleetSelection, ...(row.fleetTarget ? {target: row.fleetTarget} : {}), ...(row.fleetPreparation ? {prepared: row.fleetPreparation} : {})};
@@ -315,7 +354,7 @@ export class RoutineJobService {
     return winner;
   }
   async bind(jobId: string, hostId: string, value: unknown) {
-    const input = routineJobBindInputSchema.parse(value), row = await this.job(jobId);
+    const input = routineJobBindInputSchema.parse(value), row = await this.supersession(await this.job(jobId));
     if (row.fleetInputSha256 !== input.inputSha256 || !row.fleetPreparation)
       throw new TestRequestConflict('Binding changed its prepared exact inputs');
     if (row.fleetBinding) return this.bindingProjection(row, hostId, input);
@@ -337,10 +376,12 @@ export class RoutineJobService {
     return this.bindingProjection(winner, hostId, input);
   }
   private async bindingProjection(row: StoredRoutineJob, hostId: string, input: z.infer<typeof routineJobBindInputSchema>) {
+    const observation = await this.observation(row.requestId);
+    row = await this.job(row.requestId);
     const binding = row.fleetBinding!;
     return {binding, execute: !row.fleetCancellation && !row.dispatchCompletion && this.now() < row.fleetDeadline.getTime() && row.state !== 'terminal' &&
       binding.hostId === hostId && binding.laneId === input.laneId && binding.actionsJobId === input.actionsJobId && binding.actionsRunId === input.actionsRunId,
-      observation: await this.observation(row.requestId)};
+      observation};
   }
   async cancel(jobId: string, value: unknown) {
     const input = z.object({reason: z.string().min(1).max(2000)}).strict().parse(value), row = await this.job(jobId);

@@ -86,6 +86,7 @@ function publication(run: GithubRun, jobs: Job[]) {
 export interface TestBuildGateway {
   inventory(query: TestBuildQuery): Promise<TestBuild[]>;
   resolve(source: TestBuildSource, platform: TestBuildPlatform): Promise<TestBuild>;
+  isPrSuperseded?(prNumber: number, headSha: string): Promise<boolean>;
 }
 
 export class GithubTestBuildGateway implements TestBuildGateway {
@@ -127,6 +128,11 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       requireThat(jobs.length < data.total_count && data.jobs.length === 100, "Incomplete build job history");
     }
     throw new TestDispatchError(502, "Build job history exceeds its limit");
+  }
+  async isPrSuperseded(number: number, headSha: string): Promise<boolean> {
+    const pr = prSchema.parse(await this.api(`${REPOSITORY}/pulls/${number}`));
+    requireThat(pr.number === number && pr.head.repo.full_name === REPOSITORY, "PR identity differs from the admitted build");
+    return pr.head.sha !== headSha;
   }
   private async pr(number: number) {
     const pr = prSchema.parse(await this.api(`${REPOSITORY}/pulls/${number}`));
