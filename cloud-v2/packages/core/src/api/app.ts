@@ -58,7 +58,6 @@ import { clientFleetApi } from "./fleet/fleet-forwarding";
 import { userAuth } from "./middleware/user-auth.middleware";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
-import internalIdentity from "./internal/identity.api";
 import internalWorkspaces from "./internal/workspaces.api";
 import portalEnterprise from "./portal/enterprise.api";
 import organizationApi from "./organization/organization.api";
@@ -131,7 +130,6 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/internal/test-host-observations", testHostObservations);
   app.route("/api/account", accountApi);
   app.route("/api/account/oauth", accountOauth);
-  app.route("/api/internal/identity", internalIdentity);
   // Service calls carry small JSON bodies; the limit applies before the signature check reads one.
   app.use(
     "/api/internal/workspaces/*",

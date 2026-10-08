@@ -1,6 +1,6 @@
 /** Signed client for Core's internal workspace service API (`/api/internal/workspaces/*`). */
 import {SERVICE_HEADERS, signServiceRequest} from "./service-signature"
-import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
+import {INVALID_TOKEN_ERROR, SERVICE_UNAUTHORIZED_ERROR, USER_NOT_FOUND_ERROR, WORKSPACE_NOT_FOUND_ERROR} from "./types"
 import type {
   AuthorizeRequest,
   AuthorizeResponse,
@@ -58,6 +58,11 @@ export interface CoreWorkspaceClient {
     packageNames: string[]
     issuedBy: {service: string; actorEmail: string}
   }): Promise<{credentialId: string; token: string}>
+  /**
+   * The Mentra user id of the account whose verified email this is (Core creates the Mentra user on
+   * first use). Null only when Core says no account has it verified (HTTP 404 `user_not_found`).
+   */
+  resolveEmail(email: string): Promise<string | null>
 }
 
 export interface CoreWorkspaceClientOptions {
@@ -247,6 +252,16 @@ export function createCoreWorkspaceClient(opts: CoreWorkspaceClientOptions): Cor
         throw badResponse(path, "missing credentialId or token")
       }
       return {credentialId: raw.credentialId, token: raw.token}
+    },
+
+    async resolveEmail(email) {
+      const path = `${API_PREFIX}/users/resolve-email`
+      const raw = await call("POST", path, {email}, (status, error) => status === 404 && error === USER_NOT_FOUND_ERROR)
+      if (raw === null) return null
+      if (!isRecord(raw) || typeof raw.mentraUserId !== "string" || !raw.mentraUserId) {
+        throw badResponse(path, "missing mentraUserId")
+      }
+      return raw.mentraUserId
     },
   }
 }

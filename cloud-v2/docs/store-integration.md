@@ -17,14 +17,10 @@ miniapp, Developer Console and staff moderation. Public builds do not clone it.
 - Core mints a miniapp token for any package the phone runs, including a
   development build of that package, from the user's access token and the
   package name alone. Core does not call the Store to mint it.
-- Store calls Core's `POST /api/internal/identity/resolve-email` with `{email}`.
-  Its service signature is HMAC-SHA256 over
-  `<timestamp>\n<trimmed lowercase email>`, sent in
-  `x-mentra-service-timestamp` (Unix milliseconds) and
-  `x-mentra-service-signature` (base64url), allowing 60 seconds of clock skew.
-  Success returns `{mentraUserId}`; an unknown email returns 404. Core verifies
-  it with `MENTRA_SERVICE_AUTH_SECRET` (falling back to `WORKOS_API_KEY`); the
-  Store signs it with the same value as `MENTRA_CORE_IDENTITY_SECRET`.
+- Private-miniapp and beta invitations name a person by email. The Store turns
+  the email into a Mentra user id with Core's signed service API
+  (`POST /users/resolve-email`, below), with the same secret as every other
+  Store call to Core.
 - Public SDK/CLI contracts remain in this repo. Store uploads accept unsigned releases. The CLI publishes without signing;
   signatures supplied explicitly in an archive are still verified. Once a publisher is
   pinned, the host enforces continuity. Automatic updates defer while a miniapp
@@ -81,6 +77,10 @@ the documented shape.
 - `GET /changes?after=&limit=`: the change feed, paged by `seq`.
 - `POST /credentials` (Store only): mints a workspace credential for a package on
   behalf of a staff member; the token is returned once.
+- `POST /users/resolve-email` (Store only): `{email}` to `{mentraUserId}`, the
+  Mentra user of the account that has that email verified (created on first
+  use), or `404 user_not_found` when no account has it verified. Core stays the
+  only service that maps account-provider identities to Mentra users.
 
 Core's public workspace API (`/api/workspaces`, `/api/organization`) is what
 people use through the dashboard, the CLI and the Store proxy. Core credentials
@@ -254,9 +254,8 @@ Run apply again immediately before the Store cutover so Core is current.
 For Store work, start the private backend separately on port 3003 and Console
 on 5173. Configure `MENTRA_CORE_INTERNAL_URL=http://127.0.0.1:3000` and
 `MENTRA_STORE_CORE_JWKS_URL=http://127.0.0.1:3000/.well-known/jwks.json` in Store,
-and Core's `MENTRA_SERVICE_AUTH_SECRET` as the Store's `MENTRA_CORE_IDENTITY_SECRET`
-for identity lookups. For workspaces, pair the secret as described above: a value
-in Core's `CLOUD_CORE_SERVICE_SECRETS` (`{"store":["dev-secret"]}`) as the Store's
+and pair the service secret as described above: a value in Core's
+`CLOUD_CORE_SERVICE_SECRETS` (`{"store":["dev-secret"]}`) as the Store's
 `MENTRA_CORE_WORKSPACE_SERVICE_SECRET`. Core needs no Store configuration.
 Core admin remains on 5174 and uses `CORE_URL`.
 
@@ -287,8 +286,9 @@ existing domain, login, report deep links and incident APIs.
 
 The Store may verify miniapp tokens from several explicitly trusted Core JWKS
 endpoints. Core environments with separate account databases retain distinct opaque
-user identities; private Store invitations resolve through the canonical production
-Core. Configure Store's `MENTRA_CORE_IDENTITY_SECRET` for that lookup.
+user identities; private Store invitations resolve through the Core the Store is
+configured with (`MENTRA_CORE_INTERNAL_URL`), the production Core for the Mentra
+Store.
 
 Core owns browser login, callback, organization selection and logout at
 `/api/console/auth/*` for both public websites. Configure Core

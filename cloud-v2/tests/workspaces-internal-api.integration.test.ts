@@ -74,7 +74,6 @@ const ENV_KEYS = [
   "CLOUD_CORE_CREDENTIAL_ENVIRONMENTS",
   "CLOUD_CORE_ENVIRONMENT",
   "CLOUD_CORE_SERVICE_SECRETS",
-  "MENTRA_SERVICE_AUTH_SECRET",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "WORKOS_API_KEY",
@@ -340,7 +339,6 @@ beforeEach(async () => {
   delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS
   delete process.env.CLOUD_CORE_CREDENTIAL_ENVIRONMENTS
   delete process.env.CLOUD_CORE_ENVIRONMENT
-  delete process.env.MENTRA_SERVICE_AUTH_SECRET
   process.env.CLOUD_CORE_SERVICE_SECRETS = JSON.stringify(SERVICE_SECRETS)
   // No GoTrue: a first sign-in links to a `workos` tenant user.
   delete process.env.SUPABASE_URL
@@ -552,17 +550,29 @@ describe("service authentication", () => {
     expect((await raw("GET", `${API}/changes`)).status).toBe(200)
   })
 
-  test("the identity bridge is unchanged: it keeps its own auth and ignores the service secrets", async () => {
-    process.env.CLOUD_CORE_SERVICE_SECRETS = "oops"
-    const reply = await send(
-      "POST",
-      "/api/internal/identity/resolve-email",
-      {},
-      JSON.stringify({email: "a@example.test"}),
-    )
+  test("the email lookup accepts only the service signature, never an HMAC keyed with the WorkOS API key", async () => {
+    const email = "a@example.test"
+    const timestampMs = Date.now()
+    const emailHmac = {
+      "x-mentra-service-timestamp": String(timestampMs),
+      "x-mentra-service-signature": createHmac("sha256", "test-workos-service-secret")
+        .update(`${timestampMs}\n${email}`)
+        .digest("base64url"),
+    }
+    const body = JSON.stringify({email})
 
-    expect(reply.status).toBe(401)
-    expect(reply.json).toEqual({error: "unauthorized"})
+    const identityPath = await send("POST", "/api/internal/identity/resolve-email", emailHmac, body)
+    const lookup = await send("POST", `${API}/users/resolve-email`, emailHmac, body)
+    const workosKeyAsSecret = await raw("POST", `${API}/users/resolve-email`, {
+      body: {email},
+      secret: "test-workos-service-secret",
+    })
+
+    expect(identityPath.status).toBe(404)
+    expect(lookup.status).toBe(401)
+    expect(lookup.json).toEqual({error: "service_unauthorized"})
+    expect(workosKeyAsSecret.status).toBe(401)
+    expect(workosKeyAsSecret.json).toEqual({error: "service_unauthorized"})
   })
 })
 
@@ -605,7 +615,7 @@ describe("request body limit", () => {
   })
 
   test("a larger body is fine on other routes", async () => {
-    const reply = await send("POST", "/api/internal/identity/resolve-email", {}, padded(BODY_LIMIT + 1))
+    const reply = await send("POST", "/api/internal/test-requests", {}, padded(BODY_LIMIT + 1))
 
     expect(reply.status).not.toBe(413)
   })
@@ -1545,5 +1555,69 @@ describe("POST /credentials", () => {
     expect(deleted.status).toBe(410)
     expect(deleted.json.error).toBe("workspace_deleted")
     expect(await AccessCredentialModel.countDocuments({})).toBe(0)
+  })
+})
+
+// --- POST /users/resolve-email ---------------------------------------------
+
+describe("POST /users/resolve-email", () => {
+  /** The account directory (GoTrue): one verified and one unverified account. */
+  const accounts = [
+    {id: "gt_verified", email: "Verified@Example.test", email_confirmed_at: "2026-01-01T00:00:00Z"},
+    {id: "gt_unverified", email: "unverified@example.test", email_confirmed_at: null},
+  ]
+  const directory = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url)
+      if (url.pathname !== "/auth/v1/admin/users") return new Response(null, {status: 404})
+      return Response.json({users: accounts})
+    },
+  })
+  afterAll(() => directory.stop(true))
+  beforeEach(() => {
+    process.env.SUPABASE_URL = directory.url.origin
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "local-directory-test-key"
+  })
+
+  test("the Store resolves a verified email to its Mentra user, created once and reused", async () => {
+    const first = await store().resolveEmail("  verified@example.TEST ")
+    const again = await store().resolveEmail("verified@example.test")
+
+    expect(first).toEqual(expect.any(String))
+    expect(again).toBe(first)
+    const users = await UserModel.find({tenantId: "mentra", tenantUserId: "gt_verified"}).lean()
+    expect(users.map(user => user.mentraUserId)).toEqual([first!])
+  })
+
+  test("an unverified or unknown email is nobody, and no Mentra user is created", async () => {
+    expect(await store().resolveEmail("unverified@example.test")).toBeNull()
+    expect(await store().resolveEmail("nobody@example.test")).toBeNull()
+    const reply = await raw("POST", `${API}/users/resolve-email`, {body: {email: "nobody@example.test"}})
+    expect(reply.status).toBe(404)
+    expect(reply.json).toEqual({error: "user_not_found"})
+    expect(await UserModel.countDocuments({})).toBe(0)
+  })
+
+  test("only the Store may ask, and only with a signed request", async () => {
+    await expectClientError(clientFor("fleet").resolveEmail("verified@example.test"), "forbidden", 403)
+    await expectClientError(
+      clientFor("store", {secret: "not-a-store-secret"}).resolveEmail("verified@example.test"),
+      "service_unauthorized",
+      401,
+    )
+    expect(await UserModel.countDocuments({})).toBe(0)
+  })
+
+  test("a body without an email address is 400 invalid_request", async () => {
+    for (const body of [{}, {email: ""}, {email: "not-an-email"}, {email: 7}]) {
+      const reply = await raw("POST", `${API}/users/resolve-email`, {body})
+      expect({body, status: reply.status, error: reply.json?.error}).toEqual({
+        body,
+        status: 400,
+        error: "invalid_request",
+      })
+    }
   })
 })

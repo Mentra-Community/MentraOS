@@ -15,6 +15,7 @@
  * | `GET /changes?after=&limit=`                        | any     | `{events, next}`                             |
  * | `GET /workspaces/:workspaceId/memberships/history`  | fleet   | `{items}`                                    |
  * | `POST /credentials`                                 | store   | `{credentialId, token}`                      |
+ * | `POST /users/resolve-email`                         | store   | `{mentraUserId}`, or 404 `user_not_found`    |
  *
  * A service knows which organization it is talking to from the Core URL it is
  * configured with, and the shared secret proves both sides, so no response
@@ -27,6 +28,12 @@
  * services behind a route (`WorkspaceError`) are rendered by the app's error
  * handler.
  *
+ * `POST /users/resolve-email` turns an account email into the opaque Mentra user
+ * id (the Store's private-miniapp and beta invitations). Core stays the only
+ * service that maps account-provider identities to Mentra users: only an email
+ * the account directory has verified resolves, and its Mentra user is created
+ * on first use.
+ *
  * A `mentra_user` credential is the service vouching for a person it already
  * authenticated (the Store's own sessions). Core trusts that assertion, so the
  * person is never an Organization Admin here: that standing comes only from a
@@ -35,16 +42,21 @@
 
 import {
   INVALID_TOKEN_ERROR,
+  USER_NOT_FOUND_ERROR,
   WORKSPACE_NOT_FOUND_ERROR,
   type AuthorizeCredential,
   type AuthorizeResponse,
   type CorePrincipal,
   type MembershipCheckResponse,
   type PrincipalResponse,
+  type ResolveEmailResponse,
   type ServiceCredentialResponse,
   type WorkspaceCapability,
 } from "@mentra/workspace-contract"
 import {Hono} from "hono"
+import {z} from "zod"
+import {findUserByEmail} from "../../services/account/gotrue.client"
+import {findOrCreateUser} from "../../services/user.service"
 import {authorize, principalFromToken} from "../../services/workspaces/authorization.service"
 import {listChanges} from "../../services/workspaces/audit.service"
 import {isCredentialToken, mintServiceCredential} from "../../services/workspaces/credential.service"
@@ -194,6 +206,21 @@ app.post("/credentials", requireService("store"), async c => {
   c.header("cache-control", "no-store")
   const minted: ServiceCredentialResponse = {credentialId: credential.credentialId, token}
   return c.json(minted, 201)
+})
+
+// --- People ----------------------------------------------------------------
+
+const emailSchema = z.string().trim().toLowerCase().email()
+
+app.post("/users/resolve-email", requireService("store"), async c => {
+  const parsed = emailSchema.safeParse(jsonBody(c).email)
+  if (!parsed.success) throw new InvalidRequest("email must be an email address")
+  const identity = await findUserByEmail(parsed.data)
+  // An address nobody has proven they own names nobody.
+  if (!identity?.emailVerified) return c.json({error: USER_NOT_FOUND_ERROR}, 404)
+  const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: identity.id})
+  const resolved: ResolveEmailResponse = {mentraUserId: user.mentraUserId}
+  return c.json(resolved)
 })
 
 // --- Helpers ---------------------------------------------------------------

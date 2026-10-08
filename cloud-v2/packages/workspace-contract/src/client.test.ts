@@ -282,6 +282,41 @@ describe("operations", () => {
     expect(calls[0].url).toBe(`${BASE}/api/internal/workspaces/credentials`)
     expect(JSON.parse(calls[0].body)).toEqual(input)
   })
+
+  test("resolveEmail posts the email, signed like every other call, and maps user_not_found to null", async () => {
+    const {client, calls} = clientFor((request) =>
+      JSON.parse(request.body).email === "a@example.com"
+        ? json({mentraUserId: "user_1"})
+        : json({error: "user_not_found"}, 404),
+    )
+    expect(await client.resolveEmail("a@example.com")).toBe("user_1")
+    expect(await client.resolveEmail("nobody@example.com")).toBeNull()
+    expect(calls[0].url).toBe(`${BASE}/api/internal/workspaces/users/resolve-email`)
+    expect(calls[0].method).toBe("POST")
+    expect(calls[0].headers.get(SERVICE_HEADERS.service)).toBe("store")
+    expect(
+      verifyServiceRequest({
+        secrets: [SECRET],
+        method: "POST",
+        pathWithQuery: "/api/internal/workspaces/users/resolve-email",
+        body: calls[0].body,
+        timestampMs: Number(calls[0].headers.get(SERVICE_HEADERS.timestamp)),
+        signature: calls[0].headers.get(SERVICE_HEADERS.signature)!,
+        nowMs: Date.now(),
+      }),
+    ).toBe(true)
+  })
+
+  test("resolveEmail reads only a user_not_found 404 as nobody, and refuses an answer without a user id", async () => {
+    for (const response of [() => json({error: "not_found"}, 404), () => new Response("Not Found", {status: 404})]) {
+      const {client} = clientFor(response)
+      expect((await expectClientError(client.resolveEmail("a@example.com"), "bad_request")).status).toBe(404)
+    }
+    for (const body of [{}, {mentraUserId: ""}, {mentraUserId: 7}, ["user_1"]]) {
+      const {client} = clientFor(() => json(body))
+      await expectClientError(client.resolveEmail("a@example.com"), "bad_response")
+    }
+  })
 })
 
 describe("response shape", () => {
@@ -420,6 +455,7 @@ describe("failures", () => {
     await expectClientError(client.getWorkspace("ws_1"), "service_unauthorized")
     await expectClientError(client.checkMemberships("user_1", []), "service_unauthorized")
     await expectClientError(client.authorize({credential: {type: "bearer", token: "t"}}), "service_unauthorized")
+    await expectClientError(client.resolveEmail("a@example.com"), "service_unauthorized")
   })
 
   test("resolvePrincipal throws instead of returning null for a service_unauthorized or unrecognised 401", async () => {

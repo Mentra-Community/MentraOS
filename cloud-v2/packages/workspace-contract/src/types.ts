@@ -96,6 +96,11 @@ export interface ServiceCredentialResponse {
   token: string
 }
 
+/** Response of `POST /users/resolve-email`: the Mentra user behind a verified account email. */
+export interface ResolveEmailResponse {
+  mentraUserId: string
+}
+
 /**
  * One entry of Core's change feed. `eventId` identifies the event; `seq` is its position in the
  * feed, assigned in commit order with no gaps, and is the only thing to page by: pass the
@@ -123,6 +128,12 @@ export const SERVICE_UNAUTHORIZED_ERROR = "service_unauthorized"
  * a Core without this API) says nothing about the workspace and is an error.
  */
 export const WORKSPACE_NOT_FOUND_ERROR = "workspace_not_found"
+
+/**
+ * `error` value of the 404 that `POST /users/resolve-email` answers when no Mentra account has that
+ * email verified. As with `workspace_not_found`, the client reads only this 404 as "no such person".
+ */
+export const USER_NOT_FOUND_ERROR = "user_not_found"
 
 // --- Public workspace API --------------------------------------------------
 // The response bodies of Core's `/api/workspaces` and `/api/organization` routes. Every date is an ISO
