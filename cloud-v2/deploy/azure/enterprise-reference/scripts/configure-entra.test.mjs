@@ -7,8 +7,10 @@ import test from "node:test"
 
 const source = readFileSync(new URL("configure-entra.sh", import.meta.url), "utf8")
 const helper = source.match(/^find_or_create_app\(\) \{[\s\S]*?^\}/m)[0]
-const exactApp = {id: "mobile-id", displayName: "Mentra Mobile"}
-const productionApp = {id: "production-id", displayName: "Mentra Mobile Production"}
+// Registrations this installer created carry its owner tag; only those are reused by name.
+const owner = "mentraInstallerOwner:11111111-1111-1111-1111-111111111111"
+const exactApp = {id: "mobile-id", displayName: "Mentra Mobile", tags: [owner]}
+const productionApp = {id: "production-id", displayName: "Mentra Mobile Production", tags: [owner]}
 
 // Model Azure CLI's prefix search and Graph's exact filter without contacting
 // Azure. Every command, including any attempted write, is recorded locally.
@@ -34,7 +36,8 @@ if (args.slice(0, 3).join(" ") === "ad app list") {
   if (args.includes("--query")) {
     console.log(option("--query") === "length(@)" ? apps.length : apps[0]?.id ?? "")
   } else console.log(JSON.stringify(apps))
-} else if (args.slice(0, 3).join(" ") === "ad app create") {
+} else if (args[0] === "rest" && option("--method") === "POST") {
+  fs.writeFileSync(process.env.ENTRA_TEST_CALLS + ".body", option("--body"))
   console.log("created-id")
 } else if (args.slice(0, 3).join(" ") === "ad app show") {
   console.log(option("--query") === "signInAudience" ? process.env.ENTRA_TEST_AUDIENCE : "explicit-id")
@@ -59,7 +62,7 @@ function lookup(
     "/bin/bash",
     [
       "-c",
-      `set -euo pipefail\n${helper}\nresult="$(find_or_create_app "$1" "$2")"\nprintf '%s' "$result"`,
+      `set -euo pipefail\nOWNER_TAG='${owner}'\nretry() { "$@"; }\n${helper}\nresult="$(find_or_create_app "$1" "$2")"\nprintf '%s' "$result"`,
       "lookup",
       clientId,
       name,
@@ -82,19 +85,21 @@ function lookup(
     ...result,
     calls,
     lists: calls.filter((call) => call[2] === "list"),
-    creates: calls.filter((call) => call[2] === "create"),
+    creates: calls.filter((call) => call[0] === "rest" && call.includes("POST")),
+    body: () => JSON.parse(readFileSync(callsFile + ".body", "utf8")),
   }
 }
 
-test("a prefix-only registration is never reused", (t) => {
+test("a prefix-only registration is never reused; a new one is created single-tenant and tagged", (t) => {
   const result = lookup(t, {apps: [productionApp]})
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stdout, "created-id")
   assert.equal(result.creates.length, 1)
   assert.ok(!result.calls.flat().includes(productionApp.id))
+  assert.deepEqual(result.body(), {displayName: "Mentra Mobile", signInAudience: "AzureADMyOrg", tags: [owner]})
 })
 
-test("one exact registration is reused from a single snapshot despite similar names", (t) => {
+test("this installer's exact registration is reused from a single snapshot despite similar names", (t) => {
   const result = lookup(t, {apps: [productionApp, exactApp, {id: "uppercase-id", displayName: "MENTRA MOBILE"}]})
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stdout, exactApp.id)
@@ -102,10 +107,18 @@ test("one exact registration is reused from a single snapshot despite similar na
   assert.equal(result.creates.length, 0)
 })
 
-test("duplicate exact names require an explicit client id", (t) => {
+test("a same-named registration this installer did not create is never adopted", (t) => {
+  const result = lookup(t, {apps: [{...exactApp, tags: []}]})
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /this setup did not create/)
+  assert.equal(result.creates.length, 0)
+  assert.equal(result.calls.length, 1)
+})
+
+test("duplicate registrations of this installer are reported", (t) => {
   const result = lookup(t, {apps: [exactApp, {...exactApp, id: "duplicate-id"}]})
   assert.equal(result.status, 1)
-  assert.match(result.stderr, /pass its client id explicitly/)
+  assert.match(result.stderr, /More than one app registration/)
   assert.equal(result.creates.length, 0)
   assert.equal(result.calls.length, 1)
 })

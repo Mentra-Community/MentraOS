@@ -153,6 +153,22 @@ class GuidedTests(unittest.TestCase):
                 setup.guided(self.args, self.directory)
         self.assertNotIn('install', calls)
 
+    def test_the_entra_handoff_quotes_company_names_for_the_shell(self):
+        handoff = setup.entra_handoff(dict(self.config, displayName='ACME "$(rm -rf ~)"'), {'owner': 'owner'})['action']
+        self.assertIn("--core-name 'ACME \"$(rm -rf ~)\" Mentra Core (acme-mentra)'", handoff)
+
+    def test_an_upgrade_without_a_preview_does_not_continue(self):
+        old, new, hashes = self.upgrade_packages('3.3.0-dev.1', '3.3.0-dev.2')
+        self.write_state('infrastructure_verified', release_hash='old-release')
+        self.args.backup_confirmed = True
+        with patch.object(setup, 'ROOT', new), patch.object(setup, 'digest', side_effect=lambda p: hashes.get(str(p), 'x')), \
+             patch.object(setup, 'check_release', return_value=RELEASE), \
+             patch.object(setup, 'preview', side_effect=setup.SetupError('deploy.sh failed (exit 1): AuthorizationFailed')), \
+             patch.object(setup, 'select_upgrade') as select:
+            with self.assertRaisesRegex(setup.SetupError, 'AuthorizationFailed'):
+                setup.upgrade_command(self.args, self.directory, interactive=False)
+        select.assert_not_called()
+
     def test_app_names_name_the_deployment(self):
         self.assertEqual(setup.app_name(self.config, 'Mobile'), 'ACME Mentra Mobile (acme-mentra)')
 

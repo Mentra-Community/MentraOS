@@ -412,12 +412,14 @@ STALE_GRANTS="$(az role assignment list --all --assignee-object-id "$RUNTIME_PRI
   select(($scope | startswith($prefix)) and $scope != $prefix + ($current | ascii_downcase)) | .id')"
 if [[ -n "$STALE_GRANTS" ]]; then
   # shellcheck disable=SC2086 # one argument per assignment ID
-  if az role assignment delete --ids $STALE_GRANTS --output none 2>"$ERRORS"; then
-    printf 'Removed Runtime access to the previous Graph app secret.\n' >&2
-  else
-    printf 'Warning: could not remove Runtime access to a previous Graph app secret; remove it in the Azure portal: %s\n' \
+  # Runtime must not keep reading a credential it no longer uses; stop until it is removed.
+  if ! az role assignment delete --ids $STALE_GRANTS --output none 2>"$ERRORS"; then
+    grep '^ERROR' "$ERRORS" | head -n 3 >&2 || true
+    printf 'The new Graph app is live, but Runtime still has access to the previous app secret. Remove these role assignments in the Azure portal (or fix the error above), then run setup again: %s\n' \
       "$(tr '\n' ' ' <<<"$STALE_GRANTS")" >&2
+    exit 1
   fi
+  printf 'Removed Runtime access to the previous Graph app secret.\n' >&2
 fi
 # End of Graph grant cleanup.
 

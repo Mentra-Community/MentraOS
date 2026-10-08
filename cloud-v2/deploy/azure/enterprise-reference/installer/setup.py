@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import socket
 import stat
@@ -1488,8 +1489,8 @@ def entra_handoff(config, state):
         f"An Application Administrator or Cloud Application Administrator, signed in to tenant {config['tenantId']}, "
         f'downloads the installer without starting setup (the guide\'s install command, ending in '
         f'"&& MENTRA_START=0 bash mentra-install.sh") and runs:\n'
-        f'    ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh --core-name "{app_name(config, "Core")}" '
-        f'--mobile-name "{app_name(config, "Mobile")}" --installer-owner {state["owner"]} --grant-admin-consent\n'
+        f'    ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh --core-name {shlex.quote(app_name(config, "Core"))} '
+        f'--mobile-name {shlex.quote(app_name(config, "Mobile"))} --installer-owner {state["owner"]} --grant-admin-consent\n'
         f'  It prints coreApiClientId and mobileClientId. Then run: {setup_command()} configure-entra '
         '--core-client-id CORE_ID --mobile-client-id MOBILE_ID')}
 
@@ -1860,10 +1861,8 @@ def upgrade_command(args, directory, interactive=None):
         check_upgradable(config)
         upcoming = dict(config, **{k: target[k] for k in ('sourceImage', 'releaseTag', 'managedMiniapps', 'clientMinVersion')},
                         clientRecommendedVersion=target['clientMinVersion'])
-        try:
-            print_preview(preview(directory, upcoming, state), upcoming)
-        except SetupError as error:
-            print(f'  Preview unavailable: {error}')
+        # An upgrade is only confirmed against Azure's own preview of it.
+        print_preview(preview(directory, upcoming, state), upcoming)
         print('Signing keys are safe in Key Vault. The database can be restored to any point in the last 7 days from the\n'
               'Azure portal (Cosmos DB > Point In Time Restore). Snapshot the report files first:\n'
               f"  az storage share-rm snapshot --resource-group {config['resourceGroup']} --name core-attachments "
