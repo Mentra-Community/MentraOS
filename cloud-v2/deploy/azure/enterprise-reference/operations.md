@@ -157,15 +157,12 @@ allowlist, version policy, and telemetry. The reference logo and same-origin
 legal files are image assets; replace them in a customer-derived image or place
 equivalent routes behind the customer workspace ingress.
 
-For a new deployment, generate the five persistent secret values once:
-
-```bash
-cloud-v2/deploy/azure/enterprise-reference/scripts/generate-private-secrets.sh \
-  /secure/path/mentra-private-secrets.json
-```
-
-Import the file into approved secret management. The helper refuses to
-overwrite an existing file and never writes the values to stdout.
+Signing keys, the refresh pepper, the administrator key and the optional Graph
+client secret live in the deployment's purge-protected Key Vault. Setup creates
+the keys there once; nothing secret is stored in the setup folder. Deleted
+secrets stay recoverable for 90 days and cannot be purged. To rotate a value,
+add a new Key Vault version and restart the Container App revision; replacing
+the signing keys signs every employee out.
 
 ## Customer-managed userland miniapps
 
@@ -216,25 +213,19 @@ files.
 
 ## Packaged installer upgrade
 
-Keep the original installer archive, an extracted copy of its package directory
-for `--previous-package`, and the protected setup directory. First
-run `verify` from the original package. Back up the Core database, report
-attachment share, deployment state and original signing/refresh secrets using
-your approved recovery process. Confirm the target release's provenance and
-matching Mentra App compatibility floor before executing it.
+Back up the Core database and report attachment share first; signing keys are
+already protected in Key Vault. Then rerun the install command. It downloads the
+channel's newer release next to the current one and starts its upgrade, which:
 
-Rerunning the install command downloads the channel's newer release next to the
-current one and prints these commands with the exact versions. It leaves an
-existing deployment on its current package until you run them:
+1. finds the package the deployment runs under `~/mentra-install/packages`;
+2. shows Azure's `what-if` preview of the change;
+3. asks you to confirm the backups (`--backup-confirmed` for automation);
+4. selects the new release pins, rolls out, verifies, and points
+   `~/mentra-install/mentra-private-cloud` at the new package.
 
-```bash
-cd ~/mentra-install
-./packages/NEW_VERSION/mentra-private-cloud/setup.sh upgrade --directory ./mentra-state \
-  --previous-package ./packages/CURRENT_VERSION/mentra-private-cloud --backup-confirmed
-ln -sfn packages/NEW_VERSION/mentra-private-cloud mentra-private-cloud
-./mentra-private-cloud/setup.sh resume --directory ./mentra-state
-./mentra-private-cloud/setup.sh verify --directory ./mentra-state
-```
+The same flow runs with `./packages/NEW_VERSION/mentra-private-cloud/setup.sh upgrade`.
+If it is interrupted, rerunning the install command picks the package the saved
+state requires and continues.
 
 Upgrade preserves the tenant/subscription, resource names, hostname, Entra
 registrations, administrator allowlist and secrets. It snapshots the exact

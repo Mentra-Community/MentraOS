@@ -72,54 +72,50 @@ The `dev` coordinated release:
 Mentra Cloud's existing deployment job is unchanged. The reference stack has no
 independent push trigger, so it cannot drift from the coordinated `dev` release.
 
-On the first successful publication only, a Mentra organization owner must set
-the `mentra-cloud` package visibility to **Public** in GitHub package settings.
-The reference deployment can consume the package using its workflow token
-before that change, but customer registries cannot import it anonymously until
-the one-time visibility setting is applied.
+The `ghcr.io/mentra-community/mentra-cloud` package is public, so customer registries import
+releases anonymously; no registry credential is needed.
 
-Persistent signing keys and the refresh pepper live as GitHub Actions secrets
-for this Mentra-owned reference environment and become Container App secrets.
-Customer deployments use their own approved secret manager.
+Signing keys, the refresh pepper and the Graph client secret live in the
+stack's Key Vault (`kv-mentra-enterprise-ref`), which `bootstrap.bicep` created
+once with Owner rights. Container Apps read them with their managed identity, so
+the Contributor-only CI deployment passes just the vault name. Customer
+deployments get their own vault the same way.
 
 ## Customer-shaped deployment
 
-The supported assisted path takes one public configuration file and one
-mode-0600 secret file. Copy and edit the example, then generate the durable
-signing material before deploying:
+Customers use the packaged guided installer (`setup.sh` with no command; see
+`customer-setup.md`). The underlying helper takes one public configuration file
+and no secrets:
 
 ```bash
 cp cloud-v2/deploy/azure/enterprise-reference/deployment.config.example.json \
   /secure/path/mentra-private.config.json
-cloud-v2/deploy/azure/enterprise-reference/scripts/generate-private-secrets.sh \
-  /secure/path/mentra-private-secrets.json
-cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --validate-only \
-  /secure/path/mentra-private.config.json \
-  /secure/path/mentra-private-secrets.json
-cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh \
-  /secure/path/mentra-private.config.json \
-  /secure/path/mentra-private-secrets.json
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --what-if /secure/path/mentra-private.config.json
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh /secure/path/mentra-private.config.json
 ```
 
-The helper creates the resource group, bootstraps ACR, imports and verifies the
-digest, deploys Core and Runtime through a protected temporary parameter file,
-removes that file, runs the smoke test, and prints the deployment outputs.
-Import the durable secret file into approved secret management; replacing its
-values is a deliberate session/key rotation, not an ordinary redeploy.
+It creates the resource group, runs `bootstrap.bicep` (registry, identity, Key
+Vault, role assignments), creates the signing keys in Key Vault once, imports and
+verifies the digest, deploys Core and Runtime, runs the smoke test, and prints
+the deployment outputs. Replacing Key Vault values is a deliberate session/key
+rotation, not an ordinary redeploy.
 
 ### Teams meeting creation
 
-After completing [Graph consent and Teams access policy](./entra-setup.md#meeting-creation),
-set `teamsGraphClientId` and `teamsGraphOrganizerId` in the public deployment
-configuration and add `teamsGraphClientSecret` to the protected secret file.
-`teamsGraphTenantId` defaults to `tenantId`. Leaving these inputs empty preserves
-join-only server behavior; creation returns a configuration error.
+Guided setup offers this after installation, and `setup.sh configure-teams` adds
+it later. It can create the Graph application itself, granting
+`OnlineMeetings.ReadWrite.All` when the operator is an Entra administrator. It
+writes the client secret straight to Key Vault as `teams-graph-client-secret`,
+records `teamsGraphClientId` and `teamsGraphOrganizerId`, rolls the change out,
+and prints the Teams PowerShell access-policy commands with the IDs filled in.
+See [Graph consent and Teams access policy](./entra-setup.md#meeting-creation).
+Leaving these inputs empty preserves join-only server behavior; creation returns
+a configuration error.
 
 The reference CI deployment reads GitHub variables
-`ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID` and `ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID`,
-and secret `ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_SECRET`. Its Graph tenant is the
-configured Entra tenant. Bicep stores the secret only on Runtime; neither Core
-nor the deployment manifest receives it.
+`ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID` and `ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID`;
+its client secret is `teams-graph-client-secret` in the stack's Key Vault. Only
+Runtime references it; neither Core nor the deployment manifest receives it.
 
 ### Custom hostname
 

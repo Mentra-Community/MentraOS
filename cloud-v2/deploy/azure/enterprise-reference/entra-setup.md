@@ -105,22 +105,26 @@ credential from this deployment's ACS resource.
 ## Meeting creation
 
 Joining does not require Graph meeting-creation permissions. To enable creation,
-configure a confidential Graph application in the same tenant with application
-permission `OnlineMeetings.ReadWrite.All` and grant tenant admin consent. Keep
-its secret on Runtime, separate from the public Mobile registration.
+run `setup.sh configure-teams` (guided setup offers it after installation). It
+creates a confidential Graph application in the same tenant with application
+permission `OnlineMeetings.ReadWrite.All` and grants tenant admin consent when
+you are an Entra administrator; otherwise it prints the consent link. Its client
+secret goes straight to Key Vault and only Runtime reads it. To use an existing
+application, pass `--teams-client-id` and `--teams-secret-stdin`.
 
-Using Microsoft Teams PowerShell, authorize each permitted employee organizer
-and the licensed fallback organizer:
+A Teams administrator then authorizes organizers in Microsoft Teams PowerShell,
+for example in Cloud Shell (Switch to PowerShell). `configure-teams` prints these
+with the IDs filled in:
 
 ```powershell
-Connect-MicrosoftTeams
+Install-Module MicrosoftTeams -Scope CurrentUser -Force   # first time only
+Connect-MicrosoftTeams -UseDeviceAuthentication
 New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds <graph-client-id>
-Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Identity <organizer-object-id>
+Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global   # or -Identity <organizer-object-id> per user
 ```
 
-Repeat the grant for each organizer. Allow time for policy propagation before
-testing. `configure-entra.sh` configures sign-in and ACS consent; these Graph
-permissions and Teams access-policy grants are separate administrator steps.
+Grant the licensed fallback organizer too if you granted per user. Allow time for
+policy propagation before testing.
 See the [Runtime API contract](../../private-deployment.md#teams-meeting-creation)
 for identity selection and the [deployment inputs](./README.md#teams-meeting-creation)
 for secret/configuration wiring.
