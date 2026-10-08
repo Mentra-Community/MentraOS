@@ -62,6 +62,7 @@ test("later admission rejection preserves earlier selectors and attempts subsequ
     fetchImpl: async (url, init) => {
       if (new URL(url).pathname.endsWith("/routine-catalog")) return Response.json({routineRevision: 'b'.repeat(40),
         routines: fixtures.map(f => ({routineId: f.definition.id, platforms: ['ios-on-mac']}))})
+      if (init.method === 'GET') return new Response(null, {status: 404})
       const plan = JSON.parse(init.body); attempts.push(plan.routineId)
       if (plan.routineId === "second.rejected") return Response.json({message: "Required recorder is unavailable"}, {status: 409})
       return fixtures.find(f => f.definition.id === plan.routineId).fetchImpl(url, init)

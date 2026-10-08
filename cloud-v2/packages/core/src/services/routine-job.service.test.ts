@@ -69,6 +69,19 @@ test('offline requirements and exact app/source freeze before host selection; re
   await expect(f.service.submit({...selection,source:{...source,buildRunId:56}})).rejects.toThrow('changed');
   await expect(f.service.prepared(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest({...definition,minimumRoutineApiVersion:2}),definition:{...definition,minimumRoutineApiVersion:2}})).rejects.toThrow();
 });
+test('concurrent automatic source choices have one insert winner and its cancellation fences default retries',async()=>{
+  const f=fixture(),choices=await Promise.allSettled([f.service.submit(selection),
+    f.service.submit({...selection,routineRevision:'b'.repeat(40)})]);
+  expect(choices.filter(row=>row.status==='fulfilled')).toHaveLength(1);
+  const loser=choices.find(row=>row.status==='rejected');
+  expect(loser && loser.status==='rejected' ? loser.reason.message : '').toContain('changed');
+  const frozen=structuredClone(f.row!.fleetSelection),sourceCalls=f.sources,buildCalls=f.resolves;
+  await f.service.cancel(selection.requestId,{reason:'Original automatic occurrence cancelled'});
+  const {routineRevision:_,...defaultRetry}=selection;
+  await f.service.submit(defaultRetry);
+  expect(f.row!.fleetSelection).toEqual(frozen);expect(f.row!.fleetCancellation!.reason).toBe('Original automatic occurrence cancelled');
+  expect(f.row!.fleetBinding).toBeUndefined();expect(f.sources).toBe(sourceCalls);expect(f.resolves).toBe(buildCalls);
+});
 test('single CAS binding retains winner across hosts and duplicate Actions deliveries',async()=>{
   const f=fixture(),prepared=await f.prepare(),input={inputSha256:prepared.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'};
   const {TestRunError}=await import('./test-result-error');(f.service as any).results={async detail(){throw new TestRunError(404,'missing')}};

@@ -1,4 +1,13 @@
-import {ensure, platforms, routineApi, selectedCatalog} from './routine-api.mjs'
+import {ensure, platforms, routineApi, selectedCatalog, automaticRoutineRequest, retainedAutomaticRequest, routineRequestSelection} from './routine-api.mjs'
+
+/** A retained occurrence owns its source even when main advances or it was cancelled. */
+export async function retainedAutomaticPlan({token, selection, source, fetchImpl = fetch}) {
+  const plan = automaticRoutineRequest(selection, source)
+  const request = await retainedAutomaticRequest({token, request: plan, fetchImpl})
+  if (!request) return null
+  const original = routineRequestSelection(request)
+  return {...plan, routineRevision: original.definitionRevision ?? original.routineRevision}
+}
 
 /** Known exact source describes applicability; routine names and label prefixes do not. */
 export async function selectedRoutinePlatforms({token, routineIds, revision, fetchImpl = fetch}) {

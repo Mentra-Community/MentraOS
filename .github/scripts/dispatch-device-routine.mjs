@@ -1,7 +1,7 @@
-import {submitRoutineRequest, routineLabelIds, routineId, ensure, positive} from "./routine-api.mjs"
-import {authenticatedPr, publicationForPlatform, platformProducer, planRoutineRequest} from "./request-e2e-routine.mjs"
+import {submitRoutineRequest, routineLabelIds, routineId, ensure, positive, automaticRoutineRequest} from "./routine-api.mjs"
+import {authenticatedPr, publicationForPlatform, platformProducer} from "./request-e2e-routine.mjs"
 import {COORDINATED_WORKFLOW} from "./coordinated-routine-request.mjs"
-import {selectedRoutinePlatforms, reportUnsupportedRoutinePlatforms} from './routine-platforms.mjs'
+import {selectedRoutinePlatforms, reportUnsupportedRoutinePlatforms, retainedAutomaticPlan} from './routine-platforms.mjs'
 
 /** Reauthenticate the completed public producer; application archives are resolved by Core. */
 export async function planDeviceDispatches({github, context, token, fetchImpl = fetch}) {
@@ -28,15 +28,23 @@ export async function planDeviceDispatches({github, context, token, fetchImpl = 
   const ids = routineLabelIds(pr)
   if (!ids.length) return []
   ensure(ids.every(routineId), "Invalid routine label")
-  const selections = await selectedRoutinePlatforms({token, routineIds: ids, fetchImpl})
-  const unsupported = selections.filter(row => row.platforms && !row.platforms.includes(platform)).map(row => ({...row, platform}))
+  const source = {channel: 'pr', prNumber: pr.number, buildRunId: run.id, publicationAttempt: publication.publicationAttempt}
+  const retainedPlans = await Promise.all(ids.map(routineId => retainedAutomaticPlan({token, selection: {routineId, platform}, source, fetchImpl})))
+  const newIds = ids.filter((_, index) => !retainedPlans[index])
+  const descriptions = newIds.length ? await selectedRoutinePlatforms({token, routineIds: newIds, fetchImpl}) : []
+  const plans = [], unsupported = []
+  for (const [index, routineId] of ids.entries()) {
+    const retained = retainedPlans[index]
+    if (retained) {plans.push(retained); continue}
+    const row = descriptions.find(row => row.routineId === routineId)
+    if (row.platforms && !row.platforms.includes(platform)) unsupported.push({...row, platform})
+    else plans.push(automaticRoutineRequest({routineId, platform}, source, row.routineRevision))
+  }
   try {await reportUnsupportedRoutinePlatforms({github, context, pr, rows: unsupported})}
   catch {console.warn('Unsupported routine/platform comment could not be published; compatible plans are unchanged')}
-  return selections.filter(row => !row.platforms || row.platforms.includes(platform)).map(row => planRoutineRequest({routineId: row.routineId, platform},
-    {channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: publication.publicationAttempt},
-    {routineRevision: row.routineRevision}))
+  return plans
 }
 
 export async function dispatchRoutinePlan({token, plan, fetchImpl = fetch}) {
-  return submitRoutineRequest({token, request: plan, fetchImpl})
+  return submitRoutineRequest({token, request: plan, fetchImpl, automatic: true})
 }

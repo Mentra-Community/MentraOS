@@ -29,7 +29,7 @@ export function routineFixture({routineId = "example.screen-check", platform = "
       return Response.json({requestId: submitted.requestId, hostId: request.hostId, state: "preparing", dispatchIntent: intent,
         dispatchIntentSha256: requestInputDigest(intent)})
     }
-    return Response.json(detail)
+    return new URL(url).pathname.endsWith(`/${request.requestId}`) ? Response.json(detail) : new Response(null, {status: 404})
   }
   return {definition, enrollment, source, build, request, run, detail, fetchImpl, calls}
 }

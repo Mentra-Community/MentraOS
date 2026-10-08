@@ -2,7 +2,8 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import {planDeviceDispatches, dispatchRoutinePlan} from "./dispatch-device-routine.mjs"
 import {requestInputDigest} from "./routine-api.mjs"
-import {routineFixture} from "./routine-api-fixture.mjs"
+import {routineFixture, portableRoutineFixture} from "./routine-api-fixture.mjs"
+import {createRoutineRequests} from './request-e2e-routine.mjs'
 import {ANDROID_PUBLICATION_STEP} from './pr-android-artifacts.mjs'
 const repository = "Mentra-Community/MentraOS"
 function fixture() {
@@ -30,12 +31,13 @@ test("callback dispatch uses bound stable-ID reconciliation and keeps uncertain 
     const f = fixture(), [plan] = await planDeviceDispatches({...f, token: "fixture", fetchImpl: f.fetchImpl}), calls = []
     const outcome = await dispatchRoutinePlan({token: "fixture", plan, fetchImpl: async (url, init) => {
       calls.push(init.method)
+      if (calls.length === 1) return new Response(null, {status: 404})
       if (init.method === "POST") throw new Error("lost after commit")
       return lookupStatus === 200 ? Response.json({...f.detail, request: {...f.request, requestId: plan.requestId, dispatchIntent: {...f.request.dispatchIntent, requestId: plan.requestId}, dispatchIntentSha256: requestInputDigest({...f.request.dispatchIntent, requestId: plan.requestId})}})
         : new Response(null, {status: lookupStatus})
     }})
     assert.equal(outcome.requestId, plan.requestId); assert.equal(outcome.status, lookupStatus === 200 ? "accepted" : "uncertain")
-    assert.equal(Boolean(outcome.request), lookupStatus === 200); assert.deepEqual(calls, ["POST", "GET"])
+    assert.equal(Boolean(outcome.request), lookupStatus === 200); assert.deepEqual(calls, ["GET", "POST", "GET"])
   }
 })
 
@@ -92,6 +94,7 @@ test('exact Android, Mac and shared definitions filter each callback and freeze 
         steps: [{name: ANDROID_PUBLICATION_STEP, status: 'completed', conclusion: 'success'}]}]
       : ['build', 'publish'].map((name, i) => ({id: i + 1, name, run_attempt: 2, status: 'completed', conclusion: 'success'}))
     const plans = await planDeviceDispatches({...f, token: 'fixture', fetchImpl: async (url, init) => {
+      if (!new URL(url).pathname.endsWith('/routine-catalog')) return new Response(null, {status: 404})
       catalogCalls.push({url, init}); return Response.json({routineRevision: revision, routines: definitions})
     }})
     assert.deepEqual(plans.map(plan => plan.routineId), [platform === 'android' ? 'android-only' : 'mac-only', 'shared'])
@@ -106,8 +109,8 @@ test('exact Android, Mac and shared definitions filter each callback and freeze 
 
 test('unpublished exact platform metadata remains requestable without an unsupported claim', async () => {
   const f = fixture(), revision = 'd'.repeat(40)
-  const plans = await planDeviceDispatches({...f, token: 'fixture', fetchImpl: async () =>
-    Response.json({routineRevision: revision, routines: [{routineId: f.definition.id}]})})
+  const plans = await planDeviceDispatches({...f, token: 'fixture', fetchImpl: async url =>
+    new URL(url).pathname.endsWith('/routine-catalog') ? Response.json({routineRevision: revision, routines: [{routineId: f.definition.id}]}) : new Response(null, {status: 404})})
   assert.equal(plans.length, 1); assert.equal(plans[0].routineRevision, revision); assert.deepEqual(f.comments, [])
 })
 
@@ -116,10 +119,51 @@ test('failed unsupported disposition leaves compatible callback plans intact', a
   f.pr.labels = ['routine:mobile-only', 'routine:compatible']
   f.github.rest.issues.createComment = async () => {throw new Error('comment unavailable')}
   t.mock.method(console, 'warn', value => warnings.push(value))
-  const plans = await planDeviceDispatches({...f, token: 'fixture', fetchImpl: async () =>
-    Response.json({routineRevision: 'd'.repeat(40), routines: [
+  const plans = await planDeviceDispatches({...f, token: 'fixture', fetchImpl: async url =>
+    new URL(url).pathname.endsWith('/routine-catalog') ? Response.json({routineRevision: 'd'.repeat(40), routines: [
       {routineId: 'mobile-only', platforms: ['android']}, {routineId: 'compatible', platforms: ['ios-on-mac']},
-    ]})})
+    ]}) : new Response(null, {status: 404})})
   assert.deepEqual(plans.map(plan => plan.routineId), ['compatible'])
   assert.equal(warnings.length, 1); assert.match(warnings[0], /compatible plans are unchanged/)
+})
+
+test('publication and label retries retain the same admitted revision and cancellation as main advances', async () => {
+  for (const firstPath of ['callback', 'labels']) {
+    const f = fixture(), rows = new Map(), posts = [], oldRevision = 'b'.repeat(40)
+    let main = oldRevision
+    f.github.rest.actions.listWorkflowRuns = 'runs'
+    f.github.paginate = async (method, options) => method === 'comments' ? [] : method === 'runs'
+      ? options.workflow_id === f.run.path ? [f.run] : []
+      : ['build', 'publish'].map((name, i) => ({id: i + 1, name, run_attempt: 2, status: 'completed', conclusion: 'success'}))
+    const fetchImpl = async (url, init) => {
+      if (new URL(url).pathname.endsWith('/routine-catalog')) return Response.json({routineRevision: main,
+        routines: [{routineId: f.definition.id, platforms: ['ios-on-mac']}]})
+      if (init.method === 'GET') {
+        const row = rows.get(new URL(url).pathname.split('/').at(-1))
+        return row ? Response.json({request: row, result: null}) : new Response(null, {status: 404})
+      }
+      const plan = JSON.parse(init.body); posts.push(plan)
+      const row = portableRoutineFixture().request
+      row.requestId = plan.requestId; row.fleetSelection = {...row.fleetSelection, ...plan}
+      row.fleetSelectionSha256 = requestInputDigest(row.fleetSelection); rows.set(plan.requestId, row)
+      return Response.json(row)
+    }
+    const callback = async () => {
+      const [plan] = await planDeviceDispatches({...f, token: 'fixture', fetchImpl})
+      return dispatchRoutinePlan({token: 'fixture', plan, fetchImpl})
+    }
+    const labels = async () => (await createRoutineRequests({github: f.github,
+      context: {...f.context, eventName: 'pull_request_target'}, token: 'fixture', number: f.pr.number, fetchImpl})).outcomes.find(row => row.status === 'accepted')
+    const first = await (firstPath === 'callback' ? callback() : labels())
+    main = 'd'.repeat(40)
+    const second = await (firstPath === 'callback' ? labels() : callback())
+    assert.equal(first.requestId, second.requestId); assert.equal(posts.length, 1)
+    const row = rows.get(first.requestId)
+    assert.equal(row.fleetSelection.routineRevision, oldRevision)
+    row.state = 'terminal'; row.terminalStatus = 'not-run'
+    row.fleetCancellation = {requestedAt: '2026-10-08T09:00:00Z', reason: 'Original occurrence cancelled'}
+    const retry = await callback()
+    assert.equal(retry.request.state, 'terminal'); assert.equal(retry.request.fleetCancellation.reason, 'Original occurrence cancelled')
+    await labels(); assert.equal(posts.length, 1); assert.equal(rows.size, 1)
+  }
 })
