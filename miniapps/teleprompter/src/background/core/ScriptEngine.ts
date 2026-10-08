@@ -3,17 +3,26 @@ import type {RenderTextLayout} from "@mentra/miniapp/background"
 
 /** Lowercase + strip everything but letters/digits. "" for punctuation-only. */
 export function normalizeWord(raw: string): string {
-  return raw.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "")
+  return raw
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "")
 }
 
-/** Split arbitrary spoken/script text into normalized, non-empty word tokens. */
-export function normalizeWords(text: string): string[] {
-  const out: string[] = []
-  for (const raw of text.split(/\s+/)) {
-    const n = normalizeWord(raw)
-    if (n) out.push(n)
+// Character anchors stay stable as a partial Japanese transcript grows. Keep
+// Latin words intact, and retain source offsets before Unicode normalization.
+function* speechTokens(text: string) {
+  const pattern =
+    /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}]\p{M}*|[^\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\s]+/gu
+  for (const match of text.matchAll(pattern)) {
+    const word = normalizeWord(match[0])
+    if (word) yield {word, end: match.index! + match[0].length}
   }
-  return out
+}
+
+/** Shared script/transcription anchors, including unspaced Japanese text. */
+export function normalizeWords(text: string): string[] {
+  return Array.from(speechTokens(text), (token) => token.word)
 }
 
 export class ScriptEngine {
@@ -21,6 +30,9 @@ export class ScriptEngine {
   private wordNorms: string[] = []
   private wordStarts: number[] = []
   private wordEnds: number[] = []
+  private speechNorms: string[] = []
+  private speechPositions: number[] = []
+  private splitWords: boolean[] = []
   private lineStarts = [0]
   private numberOfLines: number
 
@@ -33,12 +45,24 @@ export class ScriptEngine {
     this.wordNorms = []
     this.wordStarts = []
     this.wordEnds = []
+    this.speechNorms = []
+    this.speechPositions = []
+    this.splitWords = []
     for (const match of this.text.matchAll(/\S+/gu)) {
       const word = normalizeWord(match[0])
       if (!word) continue
       this.wordNorms.push(word)
       this.wordStarts.push(match.index!)
       this.wordEnds.push(match.index! + match[0].length)
+      const tokens = Array.from(speechTokens(match[0]))
+      const index = this.wordNorms.length - 1
+      this.splitWords.push(tokens.length > 1)
+      for (let i = 0; i < tokens.length; i++) {
+        this.speechNorms.push(tokens[i].word)
+        // Fractional word positions let speech move within an unspaced sentence
+        // without changing WPM timing, word counts, or English cursor semantics.
+        this.speechPositions.push(index + (i === tokens.length - 1 ? 1 : tokens[i].end / match[0].length))
+      }
     }
     this.invalidateLayout()
   }
@@ -80,7 +104,10 @@ export class ScriptEngine {
   }
 
   lineForWord(word: number): number {
-    const offset = this.wordStarts[Math.min(word, this.totalWords - 1)] ?? 0
+    const index = Math.min(Math.floor(word), this.totalWords - 1)
+    const start = this.wordStarts[index] ?? 0
+    const fraction = word >= this.totalWords ? 1 : word - Math.floor(word)
+    const offset = start + (this.splitWords[index] ? Math.round(fraction * (this.wordEnds[index] - start)) : 0)
     let line = 0
     while (line + 1 < this.lineStarts.length && this.lineStarts[line + 1] <= offset) line++
     return line
@@ -91,10 +118,17 @@ export class ScriptEngine {
   firstWordOfLine(line: number): number {
     const start = this.sourceStartForLine(line)
     const word = this.wordEnds.findIndex((end) => end > start)
-    return word < 0 ? this.totalWords : word
+    if (word < 0) return this.totalWords
+    return (
+      word +
+      (this.splitWords[word]
+        ? Math.max(0, start - this.wordStarts[word]) / (this.wordEnds[word] - this.wordStarts[word])
+        : 0)
+    )
   }
   wordForPercent(percent: number): number {
-    return Math.round((Math.max(0, Math.min(100, percent)) / 100) * this.totalWords)
+    const position = (Math.max(0, Math.min(100, percent)) / 100) * this.totalWords
+    return this.splitWords[Math.floor(position)] ? position : Math.round(position)
   }
   progressForWord(word: number): number {
     return this.totalWords ? Math.max(0, Math.min(100, Math.round((word / this.totalWords) * 100))) : 0
@@ -107,8 +141,17 @@ export class ScriptEngine {
     const BACK = 4 // tolerate a touch of backward drift from interim noise
     const MAX_RUN = 6 // cap the backward-match run we score
 
-    const start = Math.max(0, cursor - BACK)
-    const end = Math.min(this.totalWords, cursor + AHEAD)
+    // Find the next speech anchor in logarithmic time, including fractional
+    // positions inside Japanese source words.
+    let low = 0
+    let high = this.speechPositions.length
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2)
+      if (this.speechPositions[mid] <= cursor) low = mid + 1
+      else high = mid
+    }
+    const start = Math.max(0, low - BACK)
+    const end = Math.min(this.speechNorms.length, low + AHEAD)
 
     let bestPos = -1
     let bestScore = 0
@@ -116,7 +159,7 @@ export class ScriptEngine {
       let score = 0
       let pi = probe.length - 1
       let si = i
-      while (pi >= 0 && si >= 0 && probe[pi] === this.wordNorms[si]) {
+      while (pi >= 0 && si >= 0 && probe[pi] === this.speechNorms[si]) {
         score++
         pi--
         si--
@@ -128,18 +171,23 @@ export class ScriptEngine {
       } else if (score === bestScore && score > 0 && bestPos >= 0) {
         // Tie: prefer the match nearest the current cursor so a repeated phrase
         // later in the script doesn't yank us forward.
-        if (Math.abs(i - cursor) < Math.abs(bestPos - cursor)) bestPos = i
+        if (Math.abs(i - low) < Math.abs(bestPos - low)) bestPos = i
       }
     }
 
     if (bestPos < 0) return cursor
-    const needed = probe.length === 1 ? 1 : 2
+    // Two Japanese characters can be a common suffix rather than evidence that
+    // the reader reached another sentence. Require three when available.
+    const japaneseProbe = probe.some((word) =>
+      /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}]/u.test(word),
+    )
+    const needed = Math.min(probe.length, japaneseProbe ? 3 : 2)
     if (bestScore < needed) return cursor
 
-    const candidate = bestPos + 1
+    const candidate = this.speechPositions[bestPos]
     if (candidate <= cursor) return cursor
     // A lone single-word match is weak evidence — only honor it close to home.
-    if (bestScore === 1 && candidate > cursor + 8) return cursor
+    if (bestScore === 1 && bestPos + 1 > low + 8) return cursor
     return Math.min(candidate, this.totalWords)
   }
 }
