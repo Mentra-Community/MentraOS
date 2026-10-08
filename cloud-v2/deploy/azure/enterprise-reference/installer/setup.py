@@ -1373,15 +1373,29 @@ def handle_dns(args, directory, config, state, interactive):
 
 # --- Teams meeting creation -------------------------------------------------
 
-def create_meetings_app(config):
+def create_meetings_app(directory, config, state):
+    # Creates the Graph app that schedules meetings, or on a rerun reuses the one
+    # setup recorded. Its secret goes to Key Vault the moment it exists.
     import time
     name = f"{config['displayName']} Mentra Meetings"
     graph_sp = service_principal(config, GRAPH_APP_ID)
     role = next(r for r in graph_sp['appRoles'] if r.get('value') == MEETINGS_PERMISSION)
-    found = graph(config, 'GET', graph_filter('applications', f"displayName eq {odata(name)}", 'id,appId'))['value']
-    app = found[0] if found else graph(config, 'POST', 'applications', {
-        'displayName': name, 'signInAudience': 'AzureADMyOrg',
-        'requiredResourceAccess': [{'resourceAppId': GRAPH_APP_ID, 'resourceAccess': [{'id': role['id'], 'type': 'Role'}]}]})
+    if state.get('meetingsAppId'):
+        found = graph(config, 'GET', graph_filter('applications', f"appId eq {odata(state['meetingsAppId'])}", 'id,appId'))['value']
+        if not found:
+            raise SetupError(f"The meetings app {state['meetingsAppId']} that setup created is no longer in Entra. "
+                             'Pass --teams-client-id to use another app.')
+        app = found[0]
+    else:
+        # Never adopt an app setup did not create: the meetings permission would
+        # extend to any credentials its owners already hold.
+        if graph(config, 'GET', graph_filter('applications', f"displayName eq {odata(name)}", 'id'))['value']:
+            raise SetupError(f'Entra already has an app named "{name}" that setup did not create. '
+                             'Pass --teams-client-id to use it, or rename it and run setup again.')
+        app = graph(config, 'POST', 'applications', {
+            'displayName': name, 'signInAudience': 'AzureADMyOrg',
+            'requiredResourceAccess': [{'resourceAppId': GRAPH_APP_ID, 'resourceAccess': [{'id': role['id'], 'type': 'Role'}]}]})
+        checkpoint(directory, state, state['phase'], meetingsAppId=app['appId'])
     sp = None
     for attempt in range(12):
         # A new registration takes a moment to become visible.
@@ -1395,16 +1409,49 @@ def create_meetings_app(config):
             time.sleep(5)
     if not sp:
         raise SetupError('The meetings application was created but its service principal is not available yet. Run setup again.')
-    expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    password = graph(config, 'POST', f"applications/{app['id']}/addPassword",
-                     {'passwordCredential': {'displayName': 'Mentra Private Cloud', 'endDateTime': expires}})
     try:
         graph(config, 'POST', f"servicePrincipals/{graph_sp['id']}/appRoleAssignedTo",
               {'principalId': sp['id'], 'resourceId': graph_sp['id'], 'appRoleId': role['id']})
         consent = True
-    except GraphError as error:
-        consent = error.code in (400, 409)
-    return app['appId'], password['secretText'], consent, expires
+    except GraphError:
+        # An existing grant also fails; check rather than guess.
+        consent = meetings_consent(config, app['appId'])
+    expires = None
+    if not vault_get(config, teams_secret(app['appId'])):
+        expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        password = graph(config, 'POST', f"applications/{app['id']}/addPassword",
+                         {'passwordCredential': {'displayName': 'Mentra Private Cloud', 'endDateTime': expires}})
+        vault_set(config, teams_secret(app['appId']), password['secretText'])
+    return app['appId'], consent, expires
+
+
+def check_graph_secret(config, client_id, secret, attempts=6):
+    # Sign in as the app before its secret replaces anything. A secret made
+    # minutes ago can take a moment before Microsoft accepts it.
+    import time
+    body = urllib.parse.urlencode({'client_id': client_id, 'client_secret': secret, 'grant_type': 'client_credentials',
+                                   'scope': 'https://graph.microsoft.com/.default'}).encode()
+    url = f"https://login.microsoftonline.com/{config['tenantId']}/oauth2/v2.0/token"
+    for attempt in range(attempts):
+        request = urllib.request.Request(url, data=body, method='POST',
+                                         headers={'Content-Type': 'application/x-www-form-urlencoded'})
+        try:
+            with urllib.request.urlopen(request, timeout=30):
+                return
+        except urllib.error.HTTPError as error:
+            try:
+                codes = json.loads(error.read() or b'{}').get('error_codes') or []
+            except ValueError:
+                codes = []
+            # 7000215: wrong secret, 700016: unknown app; both also occur while new credentials propagate.
+            if not set(codes) & {7000215, 700016}:
+                break
+        except (OSError, http.client.HTTPException):
+            if attempt + 1 == attempts:
+                raise SetupError('Could not reach Microsoft sign-in to check the client secret. Run setup again.') from None
+        time.sleep(RETRY_SECONDS)
+    raise SetupError(f'Microsoft sign-in rejected the client secret for Graph app {client_id}. '
+                     'Check that it belongs to that app and has not expired.')
 
 
 def meetings_consent(config, client_id):
@@ -1441,16 +1488,17 @@ def configure_teams(args, directory, config, state, interactive=None):
     if not state.get('outputs', {}).get('keyVaultName') and state['phase'] not in ('deployed', 'infrastructure_verified'):
         raise SetupError('Finish installation first; meeting creation is added afterwards.')
     client_id = getattr(args, 'teams_client_id', None) or config.get('teamsGraphClientId') or ''
-    secret, consent, expires = None, None, None
+    secret, consent, expires, created = None, None, None, False
     if not client_id:
         if confirm('Create the Microsoft Graph app that schedules meetings now? (needs an Entra admin role)', True, interactive):
-            client_id, secret, consent, expires = create_meetings_app(config)
+            client_id, consent, expires = create_meetings_app(directory, config, state)
+            created = True
             print(f'  Created app {client_id}; its client secret went straight to Key Vault.')
         else:
             client_id = ask('Client ID of your existing Graph app with OnlineMeetings.ReadWrite.All', '', interactive)
     if not GUID.fullmatch(client_id or ''):
         raise SetupError('A Graph application client ID is required for meeting creation.')
-    if secret is None:
+    if not created:
         if getattr(args, 'teams_secret_stdin', False):
             secret = sys.stdin.readline().strip()
         elif interactive:
@@ -1458,6 +1506,8 @@ def configure_teams(args, directory, config, state, interactive=None):
     # Each Graph app has its own secret, so saving a new app's secret leaves the
     # running deployment untouched until the rollout switches ID and secret together.
     if secret:
+        print('  Checking the client secret with Microsoft sign-in...')
+        check_graph_secret(config, client_id, secret)
         vault_set(config, teams_secret(client_id), secret)
     elif not vault_get(config, teams_secret(client_id)):
         raise SetupError(f'Provide the client secret for Graph app {client_id} (--teams-secret-stdin); '
