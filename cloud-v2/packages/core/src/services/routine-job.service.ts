@@ -2,7 +2,7 @@ import {z} from 'zod';
 import {TestRequestModel} from '../models/test-request.model';
 import {testWriteConcern} from '../models/test-write-concern';
 import {frameworkIdentitySchema} from '../types/framework-request.types';
-import {routineEnrollmentSchema, routineGlassesCapabilities, type RoutineEnrollment} from '../types/routine-definition.types';
+import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
 import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
   routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
@@ -96,9 +96,8 @@ export function routinePortableRequirements(definition: RoutineEnrollment): Port
   const body = definition.definition, execution = body.execution;
   if (!execution) throw new TestRequestConflict('The routine has no execution resource metadata');
   return portableRequirementsSchema.parse({platform: definition.platform,
-    ...(body.glasses ? {glasses: {models: body.glasses.models, capabilities: routineGlassesCapabilities(body.requires)}} : {}),
-    resources: execution.resourceKinds.map(kind => ({kind,
-      capabilities: body.resourceRequirements?.find(requirement => requirement.kind === kind)?.capabilities ?? []}))});
+    ...(body.glasses ? {glasses: {models: body.glasses.models, capabilities: [...body.resourceRequirements.find(value => value.kind === "glasses")!.capabilities]}} : {}),
+    resources: body.resourceRequirements});
 }
 export function routineLaneDescriptorRevision(lane: ReceivedTestHostState['lanes'][number]): string {
   return requestInputDigest({id: lane.id, platform: lane.platform,

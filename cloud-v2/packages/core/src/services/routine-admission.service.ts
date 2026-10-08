@@ -1,6 +1,6 @@
 import {z} from "zod";
 import {frameworkIdentitySchema, frameworkRequestInputSchema} from "../types/framework-request.types";
-import {routineGlassesCapabilities, type RoutineEnrollment} from "../types/routine-definition.types";
+import {type RoutineEnrollment} from "../types/routine-definition.types";
 import {firmwareManifestSchema, selectedBuildInput, type GlassesSoftwareRef, type TestBuild} from "../types/test-build.types";
 import type {ReceivedTestHostState} from "./test-host-state.service";
 import {TestRunError} from "./test-result-error";
@@ -38,7 +38,7 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     if (execution.resourceKinds.filter(kind => kind === "glasses").length !== 1)
       throw new TestRunError(409, "Glasses routine must declare its single glasses execution resource.");
     const offered = lane.glasses?.filter(value => glassesRequirement.models.includes(value.model)
-      && routineGlassesCapabilities(definition.definition.requires).every(capability => value.capabilities.includes(capability))) ?? [];
+      && (definition.definition.resourceRequirements.find(value => value.kind === "glasses")?.capabilities ?? []).every(capability => value.capabilities.includes(capability))) ?? [];
     if (offered.length !== 1) throw new TestRunError(409, "Configured lane has no unique compatible glasses model and provider capabilities.");
     glassesResourceId = offered[0]!.resourceId;
     if (offered[0]!.model !== "mentra-live") throw new TestRunError(409, "Selected glasses model has no supported software selection contract.");
@@ -56,7 +56,7 @@ export function routineAdmissionInput(definition: RoutineEnrollment, build: Test
     if (matches.length !== 1) throw new TestRunError(409, `Configured lane must bind exactly one ${kind} resource.`);
     if (kind === "glasses" && matches[0]!.id !== glassesResourceId)
       throw new TestRunError(409, "Compatible glasses inventory differs from its declared allocation resource.");
-    const requiredCapabilities = definition.definition.resourceRequirements?.find(value => value.kind === kind)?.capabilities ?? [];
+    const requiredCapabilities = definition.definition.resourceRequirements.find(value => value.kind === kind)!.capabilities;
     if (!requiredCapabilities.every(capability => matches[0]!.capabilities?.includes(capability)))
       throw new TestRunError(409, `Configured lane has no required ${kind} resource capabilities.`);
     const {capabilities: _, ...resource} = matches[0]!;

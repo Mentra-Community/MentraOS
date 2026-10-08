@@ -83,7 +83,7 @@ test('author fleet intake dispatches, binds exact local work and finishes observ
   app.route('/routine-work-deliveries',createRoutineWorkDeliveriesApi(authors,()=>JSON.stringify({mini:hostToken})));
   const headers={authorization:`Bearer ${observerToken}`,'content-type':'application/json'};
   const input={schemaVersion:1,workId:'author-fleet',kind:'edit',routineId:'camera-check',brief:{goal:'Verify camera independently',stepsOrChanges:['Observe image'],expected:['Image visible']},source:{repository:'Mentra-Community/Mentra-Automated-Testing'},
-    requirements:{platform:'android',glasses:['mentra-live'],capabilities:['camera'],environment:[],resources:[{kind:'app',capabilities:[]},{kind:'phone',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'glasses',capabilities:[]}]},
+    requirements:{platform:'android',glasses:['mentra-live'],environment:[],resources:[{kind:'app',capabilities:[]},{kind:'phone',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'glasses',capabilities:[]}]},
     origin:{repository:'Mentra-Community/MentraOS',prNumber:12,headSha:'b'.repeat(40)},buildSource:{channel:'pr',prNumber:12,buildRunId:55,publicationAttempt:2}};
   expect((await app.request('/routine-work',{method:'POST',headers,body:JSON.stringify(input)})).status).toBe(202);expect(dispatched).toEqual(['author-fleet']);
   const prepared=await (await app.request('/routine-jobs/author-fleet/preparation',{headers})).json() as any;

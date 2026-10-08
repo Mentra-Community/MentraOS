@@ -437,7 +437,7 @@ test("result ingestion binds every routine lifecycle action to the complete orde
     platforms: ["ios-on-mac"],
     entry: "home",
     account: "lane",
-    requires: [],
+    resourceRequirements: [{kind:"app",capabilities:[]}],
     requirements: [],
     fixtures: [],
     setup,

@@ -8,7 +8,7 @@ import {requestInputDigest} from './test-request.service'
 const work = authoringWorkSchema.parse({schemaVersion: 1, workId: 'local-work', kind: 'edit', routineId: 'flow',
   brief: {goal: 'Diagnose the original failure', stepsOrChanges: ['Inspect saved diagnostics'], expected: ['Keep original outcome']},
   source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40)},
-  target: {hostId: 'host', laneId: 'phone'}, requirements: {platform: 'android', glasses: [], capabilities: [], environment: []},
+  target: {hostId: 'host', laneId: 'phone'}, requirements: {platform: 'android', glasses: [], resources: [{kind: "app", capabilities: []}, {kind: "recorder", capabilities: []}, {kind: "phone", capabilities: []}], environment: []},
   build: {kind: 'android-apk', repository: 'Mentra-Community/MentraOS', headSha: 'b'.repeat(40), channel: 'dev',
     releaseIdentity: '3.3.0-dev.719', source: {channel: 'dev', buildRunId: 42, publicationAttempt: 1},
     archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', sha256: 'c'.repeat(64), size: 100},

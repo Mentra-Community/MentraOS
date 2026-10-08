@@ -18,22 +18,25 @@ export const routineWorkRequirementsSchema = z
   .object({
     platform: z.enum(['mac', 'android']),
     glasses: identifiers,
-    capabilities: identifiers,
-    resources: z.array(routineResourceRequirementSchema).min(1).max(9).optional(),
+    resources: z.array(routineResourceRequirementSchema).min(1).max(9),
     environment: z
       .array(z.object({provider: routineIdentitySchema, input: boundedJson(32 * 1024), description}).strict())
       .max(20),
   })
   .strict()
+  .superRefine((value, ctx) => {
+    const kinds = value.resources.map(resource => resource.kind), kindSet = new Set<string>(kinds)
+    const base = ['app', 'recorder', ...(value.platform === 'android' ? ['phone'] : [])]
+    if (kindSet.size !== kinds.length || !base.every(kind => kindSet.has(kind)) ||
+      Boolean(value.glasses.length) !== kinds.includes('glasses') || new Set(value.glasses).size !== value.glasses.length)
+      ctx.addIssue({code: 'custom', message: 'Authoring requires unique typed resources, its platform base and consistent glasses models'})
+  })
 export const routineWorkPortableRequirementsSchema = routineWorkRequirementsSchema
-  .extend({resources: z.array(routineResourceRequirementSchema).min(1).max(9)})
   .superRefine((value, ctx) => {
     const requirements = portableRequirementsSchema.safeParse({platform: value.platform === 'mac' ? 'ios-on-mac' : 'android',
       resources: value.resources,
-      ...(value.glasses.length ? {glasses: {models: value.glasses, capabilities: value.capabilities}} : {})})
-    const baseKinds = ['app', 'recorder', ...(value.platform === 'android' ? ['phone'] : [])]
-    if (!requirements.success || !baseKinds.every(kind => value.resources.some(resource => resource.kind === kind)) ||
-      !value.glasses.length && value.capabilities.length)
+      ...(value.glasses.length ? {glasses: {models: value.glasses, capabilities: value.resources.find(resource => resource.kind === 'glasses')?.capabilities ?? []}} : {})})
+    if (!requirements.success)
       ctx.addIssue({code: 'custom', message: 'Authoring needs consistent portable fixture requirements'})
   })
 const fields = {

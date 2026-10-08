@@ -38,7 +38,7 @@ const routine = routineEnrollmentSchema.parse({
     platforms: ["ios-on-mac"],
     entry: "home",
     account: "lane",
-    requires: [],
+    resourceRequirements: [],
     requirements: [],
     fixtures: [],
     steps: [{id: "create", instruction: "Create a note", expected: "Note saved"}],
