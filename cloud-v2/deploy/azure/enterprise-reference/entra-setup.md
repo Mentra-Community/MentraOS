@@ -123,8 +123,11 @@ New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds <graph-client-id>
 Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global   # or -Identity <organizer-object-id> per user
 ```
 
-Grant the licensed fallback organizer too if you granted per user. Allow time for
-policy propagation before testing.
+Grant the licensed fallback organizer too if you granted per user. After
+switching to another Graph app, point the existing policy at it with
+`Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds <new-client-id>`;
+the printed commands handle both cases. Allow time for policy propagation before
+testing.
 See the [Runtime API contract](../../private-deployment.md#teams-meeting-creation)
 for identity selection and the [deployment inputs](./README.md#teams-meeting-creation)
 for secret/configuration wiring.

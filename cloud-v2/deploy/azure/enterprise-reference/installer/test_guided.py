@@ -253,7 +253,10 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(update.call_args.kwargs, {'teamsGraphTenantId': TENANT, 'teamsGraphClientId': SUB,
                                                    'teamsGraphOrganizerId': TENANT})
         install.assert_called_once()
-        self.assertIn(f'New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {SUB}', result['teamsPolicy'])
+        policy = next(line for line in result['teamsPolicy'] if 'CsApplicationAccessPolicy -Identity MentraMeetings -AppIds' in line)
+        # Works the first time and after switching apps, when the policy already exists.
+        self.assertIn(f'Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {SUB}', policy)
+        self.assertIn(f'New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {SUB}', policy)
         self.assertEqual(result['adminConsent'], 'granted')
 
     def meetings_graph(self, existing_names=(), recorded_app=None):
@@ -273,7 +276,9 @@ class GuidedTests(unittest.TestCase):
             if method == 'GET' and path.startswith('servicePrincipals?'):
                 return {'value': [{'id': 'app-sp'}]}
             if method == 'POST' and path.endswith('/addPassword'):
-                return {'secretText': GRAPH_REPLY_TEXT}
+                return {'secretText': GRAPH_REPLY_TEXT, 'keyId': 'key-1'}
+            if method == 'POST' and path.endswith('/removePassword'):
+                calls.append(('removed', body['keyId']))
             return {}
         return graph, calls
 
@@ -297,6 +302,15 @@ class GuidedTests(unittest.TestCase):
         posts = [path for method, path in calls if method == 'POST']
         self.assertLess(posts.index('servicePrincipals/graph-sp/appRoleAssignedTo'), posts.index('applications/app-object/addPassword'))
         vault_set.assert_called_once_with(self.config, 'teams-graph-client-secret-' + SUB, GRAPH_REPLY_TEXT)
+
+    def test_a_password_that_cannot_be_stored_is_removed(self):
+        state = self.write_state('infrastructure_verified')
+        graph, calls = self.meetings_graph()
+        with patch.object(setup, 'graph', side_effect=graph), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup, 'vault_set', side_effect=setup.SetupError('Key Vault refused')):
+            with self.assertRaisesRegex(setup.SetupError, 'Key Vault refused'):
+                setup.create_meetings_app(self.directory, self.config, state)
+        self.assertIn(('removed', 'key-1'), calls)
 
     def test_rerun_reuses_the_recorded_app_and_its_saved_secret(self):
         state = self.write_state('infrastructure_verified', meetingsAppId=SUB)

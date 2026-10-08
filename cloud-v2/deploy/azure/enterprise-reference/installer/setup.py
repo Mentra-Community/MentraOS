@@ -1421,7 +1421,13 @@ def create_meetings_app(directory, config, state):
         expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
         password = graph(config, 'POST', f"applications/{app['id']}/addPassword",
                          {'passwordCredential': {'displayName': 'Mentra Private Cloud', 'endDateTime': expires}})
-        vault_set(config, teams_secret(app['appId']), password['secretText'])
+        try:
+            vault_set(config, teams_secret(app['appId']), password['secretText'])
+        except BaseException:
+            # The one-time secret is gone; remove its credential instead of leaking it.
+            with contextlib.suppress(GraphError):
+                graph(config, 'POST', f"applications/{app['id']}/removePassword", {'keyId': password['keyId']})
+            raise
     return app['appId'], consent, expires
 
 
@@ -1471,7 +1477,10 @@ def meetings_consent(config, client_id):
 def teams_policy_commands(client_id, organizer_id):
     commands = ['Install-Module MicrosoftTeams -Scope CurrentUser -Force   # first time only',
                 'Connect-MicrosoftTeams -UseDeviceAuthentication',
-                f'New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id}',
+                # Creates the policy, or points an existing one at this app after a switch.
+                f'if (Get-CsApplicationAccessPolicy -Identity MentraMeetings -ErrorAction SilentlyContinue) '
+                f'{{ Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id} }} '
+                f'else {{ New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id} }}',
                 '# Let every employee create meetings as themselves (or grant per user with -Identity EMAIL):',
                 'Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global']
     if organizer_id:
