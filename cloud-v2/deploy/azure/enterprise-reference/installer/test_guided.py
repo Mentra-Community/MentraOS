@@ -256,6 +256,16 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(unknown, ['ghost@acme.example'])
         self.assertEqual(posted, ['alice-id', 'existing'])
 
+    def test_resume_after_a_finished_deployment_only_verifies(self):
+        state = self.write_state('deployed', domainVerified=True)
+        self.config['workspaceHostname'] = 'mentra.acme.example'
+        with patch.object(setup, 'deploy') as deploy, patch.object(setup, 'preflight') as preflight, \
+             patch.object(setup, 'verify', return_value={'status': 'infrastructure_verified'}) as verify:
+            self.assertEqual(setup.install(self.args, self.directory, self.config, state)['status'], 'infrastructure_verified')
+        deploy.assert_not_called()
+        preflight.assert_not_called()
+        verify.assert_called_once()
+
     def test_suggested_deployment_names_are_valid(self):
         for name, expected in (('ACME Lumber & Supply', 'acme-lumber-mentra'), ('', 'company-mentra'),
                                ('42 Industries', 'industries-mentra')):
