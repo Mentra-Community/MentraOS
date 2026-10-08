@@ -18,6 +18,7 @@ import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessag
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.CsFltsAckPayload;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.FileUartPacer;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900LengthCodec;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
@@ -201,6 +202,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         boolean waitingForPhoneConfirmation;
         int retryCount;
+
+        /** Paces file frames on the UART; null when BES advertises wire_caps.uart_rx_pos. */
+        FileUartPacer uartPacer;
+
+        /** A paced pump continuation is queued on the file transfer executor. */
+        boolean pacedPumpScheduled;
 
         // BES2700 firmware hardcodes FILE_PACK_SIZE=400 when calculating totalPack:
         //   totalPack = (fileSize + 400 - 1) / 400
@@ -1616,7 +1623,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             caps.optInt("proto", BesWireFormat.PROTOCOL_VERSION_V2),
                             caps.optInt("notify_cap", 0),
                             wireCapFlagOn(caps, "mic_tuning"),
-                            wireCapFlagOn(caps, "wear_tuning"));
+                            wireCapFlagOn(caps, "wear_tuning"),
+                            wireCapFlagOn(caps, "uart_rx_pos"));
         }
         if (advertised != null && advertised.k900Le) {
             if (uartToBesEndian != K900LengthCodec.Endian.LE) {
@@ -1629,6 +1637,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
         if (advertised != null && advertised.filePayloadV2) {
             Log.i(TAG, "📦 BES wire_caps advertised negotiated file payloads");
+        }
+        if (advertised != null && advertised.uartRxPos) {
+            Log.i(TAG, "📦 BES wire_caps advertised position-tracked UART RX; file frames unpaced");
         }
         if (advertised != null && advertised.notifyCap > 0) {
             // Diagnostic contract. ASG control frames use a stricter immutable 240-byte ceiling
@@ -2543,6 +2554,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         consecutiveFailures = 0; // Reset failure counter for new transfer
         pendingFailureRetryIndex = -1;
         failureRetryScheduled = false;
+        if (!linkState.getNegotiatedCaps().uartRxPos) {
+            // This BES loses RX DMA phase when an A2DP start stalls its interrupt past a 2 KB
+            // half; keep the line slow enough that a stall cannot fill one.
+            currentFileTransfer.uartPacer =
+                    new FileUartPacer(AsgConstants.BES_FILE_UART_PACED_BYTES_PER_SECOND);
+        }
 
         Log.d(
                 TAG,
@@ -2644,11 +2661,48 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 - Math.max(currentFileTransfer.highestAckedIndex,
                                         currentFileTransfer.recoveryWindowStart - 1)
                         <= effectivePushWindow()) {
+            FileUartPacer pacer = currentFileTransfer.uartPacer;
+            if (pacer != null) {
+                long waitNanos = pacer.delayNanos(fileClockNanos());
+                if (waitNanos > 0) {
+                    schedulePacedPump(currentFileTransfer, waitNanos);
+                    return;
+                }
+            }
             if (!sendFilePacketAt(currentFileTransfer.currentPacketIndex)) {
                 return;
             }
             currentFileTransfer.currentPacketIndex++;
         }
+    }
+
+    /**
+     * Resume the pump once the pacer allows the next frame. Scheduling instead of sleeping keeps
+     * the transfer monitor free, so ACKs arriving on the UART reader thread are never held behind a
+     * pacing delay.
+     */
+    private void schedulePacedPump(FileTransferSession session, long waitNanos) {
+        if (session.pacedPumpScheduled) {
+            return;
+        }
+        session.pacedPumpScheduled = true;
+        long waitMs = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(waitNanos + 999_999L));
+        fileTransferExecutor.schedule(
+                () -> {
+                    synchronized (K900BluetoothManager.this) {
+                        session.pacedPumpScheduled = false;
+                        if (currentFileTransfer == session && session.isActive) {
+                            sendNextFilePacket();
+                        }
+                    }
+                },
+                waitMs,
+                TimeUnit.MILLISECONDS);
+    }
+
+    /** Monotonic clock for UART pacing; a seam for deterministic tests. */
+    long fileClockNanos() {
+        return SystemClock.elapsedRealtimeNanos();
     }
 
     /** Send one file packet. Returns false if the transfer was aborted. */
@@ -2692,6 +2746,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         boolean sent =
                 transportCoordinator.runFileWrite(
                         currentFileTransfer.transportLease, () -> comManager.write(packet));
+        if (sent && currentFileTransfer.uartPacer != null) {
+            currentFileTransfer.uartPacer.onSent(packet.length, fileClockNanos());
+        }
         if (!sent) {
             Log.e(TAG, "Failed to write file packet " + packetIndex + " to UART");
             BluetoothReporting.reportFileTransferFailure(
