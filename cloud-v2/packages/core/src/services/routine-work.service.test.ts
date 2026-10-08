@@ -28,7 +28,7 @@ const input = routineWorkRequestSchema.parse({
   },
   source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40)},
   target: {hostId: 'mini', laneId: 'phone'},
-  requirements: {platform: 'android', glasses: [], capabilities: [], environment: [], resources:[{kind:"app",capabilities:[]},{kind:"phone",capabilities:[]},{kind:"recorder",capabilities:[]}]},
+  requirements: {platform: 'android', glasses: [], environment: [], resources:[{kind:"app",capabilities:[]},{kind:"phone",capabilities:[]},{kind:"recorder",capabilities:[]}]},
   origin: {repository: 'Mentra-Community/MentraOS', prNumber: 12, headSha: 'b'.repeat(40)},
   buildSource: {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 2},
 })
@@ -50,7 +50,7 @@ test('invalid portable author fixtures fail intake before any persistence or Act
       {...input.requirements, glasses: ['bad_model'], resources: [...resources, {kind: 'glasses', capabilities: []}]},
       {...input.requirements, glasses: ['mentra-live', 'mentra-live'], resources: [...resources, {kind: 'glasses', capabilities: []}]},
       {...input.requirements, resources: resources.filter(resource => resource.kind !== 'recorder')},
-      {...input.requirements, capabilities: ['camera']},
+      {...input.requirements, resources: resources.map(resource => resource.kind === 'phone' ? {...resource, capabilities: ['camera']} : resource)},
     ]) {
       const response = await app.request('/', {method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'},
         body: JSON.stringify({...input, requirements})})
@@ -81,7 +81,7 @@ test('author routing uses an accepting alternate model and refreshes labels with
     receipt: {url: 'https://artifactscdn.mentraglass.com/receipt.json', size: 50, sha256: 'd'.repeat(64)}}}},
     {get: unexpected, async list() {return [structuredClone(host)]}}, {async publish() {}}, {async resolve() {return 'a'.repeat(40)}}, () => time, null)
   const {target: _target, ...portable} = input
-  const row = await service.submit({...portable, requirements: {...input.requirements, resources, glasses: ['g1', 'mentra-live'], capabilities: ['camera']}})
+  const row = await service.submit({...portable, requirements: {...input.requirements, resources, glasses: ['g1', 'mentra-live']}})
   const first = await service.preparation(row.workId), frozen = structuredClone(row.fleetSelection)
   expect(first.chosenModel).toBe('mentra-live'); expect(first.waitingReason).toBeUndefined()
   expect(first.routingLabels).toEqual(routineRequirementLabels(first.prepared.requirements, 'mentra-live'))

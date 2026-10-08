@@ -17,16 +17,8 @@ on:
         default: false
         type: boolean
     secrets:
-      ENTERPRISE_DEV_REFRESH_TOKEN_PEPPER:
-        required: true
-      ENTERPRISE_DEV_MENTRA_JWT_PRIVATE_KEY:
-        required: true
-      ENTERPRISE_DEV_MENTRA_JWT_PUBLIC_KEY:
-        required: true
-      ENTERPRISE_DEV_MINIAPP_JWT_PRIVATE_KEY:
-        required: true
-      ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY:
-        required: true
+      # Signing keys and the Graph client secret live in the stack's Key Vault;
+      # Container Apps read them with their managed identity.
       ENTERPRISE_DEV_ADMIN_TOKEN:
         required: true
     outputs:
@@ -58,6 +50,8 @@ jobs:
       AZURE_COMMUNICATION_SERVICE: mentra-enterprise-reference
       AZURE_CONTAINER_APP: ca-mentra-enterprise-reference
       AZURE_CORE_CONTAINER_APP: ca-mentra-ent-ref-core
+      # Created once by bootstrap.bicep with Owner rights; this Contributor job never needs role assignments.
+      AZURE_KEY_VAULT: kv-mentra-enterprise-ref
       ENTRA_TENANT_ID: 2e7662c0-e826-4928-95b2-60bdd48d5d95
       ENTRA_CORE_CLIENT_ID: 20424d9e-4b99-44e8-82c9-0ad06f08a8db
       ENTRA_MOBILE_CLIENT_ID: 95ad08c2-7837-4ddf-933c-1fce3d6d2799
@@ -158,15 +152,9 @@ jobs:
       - name: Deploy Core and meetings-only Runtime
         if: inputs.dry_run != true
         env:
-          REFRESH_TOKEN_PEPPER: ${{ secrets.ENTERPRISE_DEV_REFRESH_TOKEN_PEPPER }}
-          MENTRA_JWT_PRIVATE_KEY: ${{ secrets.ENTERPRISE_DEV_MENTRA_JWT_PRIVATE_KEY }}
-          MENTRA_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MENTRA_JWT_PUBLIC_KEY }}
-          MINIAPP_JWT_PRIVATE_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PRIVATE_KEY }}
-          MINIAPP_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY }}
           CORE_ADMIN_EMAILS: ${{ vars.ENTERPRISE_DEV_CORE_ADMIN_EMAILS }}
           TEAMS_GRAPH_CLIENT_ID: ${{ vars.ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID }}
           TEAMS_GRAPH_ORGANIZER_ID: ${{ vars.ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID }}
-          TEAMS_GRAPH_CLIENT_SECRET: ${{ secrets.ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           parameters="$RUNNER_TEMP/private-deployment-dev.parameters.json"
@@ -182,6 +170,7 @@ jobs:
           jq -n \
             --arg cloudImage "${{ steps.source.outputs.image }}" \
             --arg registryName "$AZURE_REGISTRY" \
+            --arg keyVaultName "$AZURE_KEY_VAULT" \
             --arg communicationName "$AZURE_COMMUNICATION_SERVICE" \
             --arg tenantId "$ENTRA_TENANT_ID" \
             --arg coreApiClientId "$ENTRA_CORE_CLIENT_ID" \
@@ -194,15 +183,11 @@ jobs:
               parameters:{
                 cloudImage:{value:$cloudImage},
                 registryName:{value:$registryName},
+                keyVaultName:{value:$keyVaultName},
                 communicationName:{value:$communicationName},
                 tenantId:{value:$tenantId},
                 coreApiClientId:{value:$coreApiClientId},
                 mobileClientId:{value:$mobileClientId},
-                refreshTokenPepper:{value:env.REFRESH_TOKEN_PEPPER},
-                mentraJwtPrivateKey:{value:env.MENTRA_JWT_PRIVATE_KEY},
-                mentraJwtPublicKey:{value:env.MENTRA_JWT_PUBLIC_KEY},
-                miniappJwtPrivateKey:{value:env.MINIAPP_JWT_PRIVATE_KEY},
-                miniappJwtPublicKey:{value:env.MINIAPP_JWT_PUBLIC_KEY},
                 coreAdminEmails:{value:env.CORE_ADMIN_EMAILS},
                 workspaceHostname:{value:$workspaceHostname},
                 workspaceCertificateName:{value:"ca-mentra-enterprise-reference-acme-workspace"},
@@ -210,10 +195,8 @@ jobs:
                 displayName:{value:$reference[0].displayName},
                 approvedSystemMiniapps:{value:$reference[0].systemMiniapps.approvedPackageNamesOverride},
                 teamsGraphClientId:{value:env.TEAMS_GRAPH_CLIENT_ID},
-                teamsGraphClientSecret:{value:env.TEAMS_GRAPH_CLIENT_SECRET},
                 teamsGraphOrganizerId:{value:env.TEAMS_GRAPH_ORGANIZER_ID},
-                managedMiniapps:{value:$reference[0].miniapps.managed},
-                manageAcrPullRoleAssignment:{value:false}
+                managedMiniapps:{value:$reference[0].miniapps.managed}
               }
             }' > "$parameters"
           az deployment group create \

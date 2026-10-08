@@ -1,0 +1,9 @@
+{
+  "subscriptionId": "<azure-subscription-id>",
+  "tenantId": "<entra-tenant-id>",
+  "displayName": "Acme",
+  "deploymentId": "acme-mentra",
+  "location": "westus2",
+  "workspaceHostname": "mentra.acme.example",
+  "resourceTags": {}
+}

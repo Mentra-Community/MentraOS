@@ -24,7 +24,7 @@ const input = {
   },
   source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40)},
   target: {hostId: 'mini', laneId: 'android-lane'},
-  requirements: {platform: 'android', glasses: [], capabilities: [], environment: [], resources: ['app', 'recorder', 'phone'].map(kind => ({kind, capabilities: []}))},
+  requirements: {platform: 'android', glasses: [], environment: [], resources: ['app', 'recorder', 'phone'].map(kind => ({kind, capabilities: []}))},
 }
 const body = (value) => `${briefMarker}\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\``
 const pr = {
@@ -66,6 +66,55 @@ test('create/edit briefs retain arbitrary routine IDs and exact source, with no 
   ])
     assert.throws(() => parseRoutineWorkBrief(body(changed), 'edit'))
   assert.throws(() => parseRoutineWorkBrief(body(input) + '\nexecute this', 'edit'), /one JSON/)
+})
+
+test('authoring intake retains typed operations and rejects missing, duplicate or contradictory resources', () => {
+  const requirements = {
+    ...input.requirements,
+    glasses: ['mentra-live'],
+    resources: [
+      {kind: 'app', capabilities: ['relaunch']},
+      {kind: 'recorder', capabilities: []},
+      {kind: 'phone', capabilities: ['bluetooth-toggle', 'dialogs', 'trace']},
+      {kind: 'glasses', capabilities: ['glasses-ble', 'connection', 'software']},
+    ],
+  }
+  assert.deepEqual(parseRoutineWorkBrief(body({...input, requirements}), 'edit').requirements, requirements)
+  const {resources: _, ...missingResources} = requirements
+  for (const changed of [
+    missingResources,
+    {...requirements, capabilities: []},
+    {...requirements, resources: requirements.resources.filter(resource => resource.kind !== 'phone')},
+    {...requirements, resources: [...requirements.resources, requirements.resources[0]]},
+    {...requirements, resources: requirements.resources.map(resource => resource.kind === 'phone' ? {...resource, capabilities: ['camera']} : resource)},
+    {...requirements, resources: requirements.resources.map(resource => resource.kind === 'phone' ? {...resource, capabilities: ['trace', 'trace']} : resource)},
+    {...requirements, glasses: []},
+    {...requirements, glasses: ['mentra-live', 'mentra-live']},
+    {...requirements, resources: requirements.resources.filter(resource => resource.kind !== 'glasses')},
+  ]) assert.throws(() => parseRoutineWorkBrief(body({...input, requirements: changed}), 'edit'), /requirements|resources/)
+  const mac = {...input, requirements: {platform: 'mac', glasses: [], environment: [], resources: [
+    {kind: 'app', capabilities: []}, {kind: 'recorder', capabilities: []},
+  ]}}
+  assert.deepEqual(parseRoutineWorkBrief(body(mac), 'edit'), mac)
+})
+
+test('authoring accepts declared audio recognition and refuses playback or recognition on another resource', () => {
+  for (const platform of ['mac', 'android']) {
+    const resources = ['app', 'recorder', ...(platform === 'android' ? ['phone'] : [])].map(kind => ({kind, capabilities: []}))
+    const requirements = {...input.requirements, platform, resources}
+    for (const capabilities of [['recognition'], ['speech', 'witness', 'synthesis', 'recognition']]) {
+      const audio = {kind: 'audio', capabilities}
+      assert.deepEqual(parseRoutineWorkBrief(body({...input, requirements: {...requirements, resources: [...resources, audio]}}), 'edit')
+        .requirements.resources.at(-1), audio)
+    }
+    for (const invalid of [
+      {kind: 'audio', capabilities: ['playback']},
+      {kind: 'audio', capabilities: ['recognition', 'playback']},
+      {kind: 'audio', capabilities: ['recognition', 'recognition']},
+    ]) assert.throws(() => parseRoutineWorkBrief(body({...input, requirements: {...requirements, resources: [...resources, invalid]}}), 'edit'), /resource requirements/)
+    assert.throws(() => parseRoutineWorkBrief(body({...input, requirements: {...requirements, resources: resources.map(resource =>
+      resource.kind === 'app' ? {...resource, capabilities: ['recognition']} : resource)}}), 'edit'), /resource requirements/)
+  }
 })
 
 test('only one collaborator request brief and one work label can be selected', async () => {
@@ -350,14 +399,13 @@ test('authoring workflow retains its independent enable gate and never evaluates
   assert.equal(parseRoutineWorkBrief(example, 'edit').routineId, 'email-sign-in-out')
 })
 
- test('ordinary authoring brief uses main and fleet defaults while explicit fixture capabilities remain exact', () => {
+test('ordinary authoring brief uses main and fleet defaults while typed operations remain exact', () => {
   const {target: _, ...portable} = structuredClone(input)
   portable.source = {repository: 'Mentra-Community/Mentra-Automated-Testing'}
-  delete portable.requirements.resources
   const parsed = parseRoutineWorkBrief(body(portable), 'edit')
   assert.equal(parsed.target, undefined)
   assert.equal(parsed.source.revision, undefined)
   assert.deepEqual(parsed.requirements.resources, ['app', 'recorder', 'phone'].map(kind => ({kind, capabilities: []})))
-  parsed.requirements.resources.push({kind: 'audio', capabilities: ['speaker']})
-  assert.deepEqual(parseRoutineWorkBrief(body(parsed), 'edit').requirements.resources.at(-1), {kind: 'audio', capabilities: ['speaker']})
+  parsed.requirements.resources.push({kind: 'audio', capabilities: ['speech', 'witness']})
+  assert.deepEqual(parseRoutineWorkBrief(body(parsed), 'edit').requirements.resources.at(-1), {kind: 'audio', capabilities: ['speech', 'witness']})
 })

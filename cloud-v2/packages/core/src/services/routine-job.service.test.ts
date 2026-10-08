@@ -1,17 +1,19 @@
+import {TestRunError} from './test-result-error';
+import {createHash} from 'node:crypto';
 import {expect, test, mock} from 'bun:test';
 import {TestRequestModel} from '../models/test-request.model';
 import {testRoutineSource} from '../testing/framework-fixtures';
 import {requestInputDigest} from './test-request.service';
-import {RoutineJobService, routineJobRepository, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
+import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
 import type {StoredRoutineJob} from '../types/routine-job.types';
 import type {ReceivedTestHostState} from './test-host-state.service';
 const source = {channel:'pr' as const,prNumber:12,buildRunId:55,publicationAttempt:2};
 const selection = {requestId:'job-one',routineId:'new-routine',platform:'android' as const,source,routineRevision:'a'.repeat(40)};
 const definition = {id:'new-routine',minimumRoutineApiVersion:1,title:'A check',purpose:'Verify independently',platforms:['android'],entry:'home',account:'lane',
-  requires:[],requirements:[],fixtures:[],steps:[{id:'check',instruction:'Check',expected:'Checked'}],
-  execution:{resourceKinds:['app','network']},resourceRequirements:[{kind:'network',capabilities:['independent-uplink']}],
+  requirements:[],fixtures:[],steps:[{id:'check',instruction:'Check',expected:'Checked'}],
+  execution:{resourceKinds:['phone','app','recorder','network']},resourceRequirements:[{kind:'phone',capabilities:[]},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}],
   source:{repository:'Mentra-Community/Mentra-Automated-Testing',revision:selection.routineRevision,path:'routines/new-routine/routine.ts'}};
-function fixture(selectedDefinition: Omit<typeof definition, 'requires'> & {requires: string[]; glasses?: {models: string[]}} = definition) {
+function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequirements'> & {resourceRequirements: {kind: string; capabilities: string[]}[]; glasses?: {models: string[]}} = definition) {
   let time = Date.parse('2026-10-08T00:00:00Z'), row:StoredRoutineJob|null=null, resolves=0, sources=0;
   let offeredHosts: ReceivedTestHostState[] | undefined;
   const copy = <T>(value:T):T => structuredClone(value);
@@ -27,25 +29,25 @@ function fixture(selectedDefinition: Omit<typeof definition, 'requires'> & {requ
     async cancel(id,digest,value){if(!row||row.requestId!==id||row.fleetSelectionSha256!==digest||row.fleetCancellation)return null;row={...row,fleetCancellation:copy(value),...(row.dispatchCompletion && row.state!=='terminal'?{state:'terminal',terminalStatus:'cancelled'}:{})};return copy(row)},
   };
   const lane:ReceivedTestHostState['lanes'][number]={id:'android',platform:'android',state:'idle',dispatchMode:'automatic',resources:[
-    {id:'app:android',kind:'app'}, {id:'network:uplink',kind:'network',capabilities:['independent-uplink']}]};
+    {id:'phone:android',kind:'phone'}, {id:'app:android',kind:'app'}, {id:'recorder:android',kind:'recorder'}, {id:'network:uplink',kind:'network',capabilities:['independent-uplink']}]};
   lane.descriptorRevision=routineLaneDescriptorRevision(lane);
   const host=(hostId:string):ReceivedTestHostState=>({hostId,incarnation:'one',incarnationGeneration:1,sequence:1,observedAt:new Date(time).toISOString(),receivedAt:new Date(time).toISOString(),lanes:[copy(lane)]});
   const service=new RoutineJobService(rows,{async resolve(value,platform){resolves++;return {source:value,platform,availability:'available',title:'App',headSha:'c'.repeat(40),createdAt:new Date(time).toISOString(),buildUrl:'https://github.com/Mentra-Community/MentraOS/actions/runs/55',
     archive:{name:'app.apk',size:100,sha256:'d'.repeat(64),url:'https://artifactscdn.mentraglass.com/app.apk'},receipt:{size:10,sha256:'e'.repeat(64),url:'https://artifactscdn.mentraglass.com/receipt.json'}}}},
     {async resolve(revision){sources++;return revision??selection.routineRevision},async inventory(commit){return {commit,files:[]}},async blob(){return new Uint8Array()}},
     {async getExact(){return null}}, {async get(hostId){return offeredHosts?.find(host => host.hostId === hostId) ?? host(hostId)}, async list(){return offeredHosts ?? []}}, {async cancel(){if(row && row.state!=='terminal')row={...row,state:'terminal',terminalStatus:'cancelled'};return null}},
-    {async detail(){throw Object.assign(new Error('missing'),{status:404})}},()=>time);
+    {async detail(){throw new TestRunError(404,'missing')}},()=>time);
   // Result lookup intentionally uses the same 404 class as existing Core result APIs.
   const prepare=async()=>{const first=await service.submit(selection);await service.prepared(selection.requestId,{inputSha256:first.fleetSelectionSha256,
     routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(selection.requestId)};
   return {service,rows,lane,prepare,offer(hosts: ReceivedTestHostState[]){offeredHosts=copy(hosts)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256} as any},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
 }
 test('run routing chooses an accepting alternate model, refreshes availability and retains exact target and input', async () => {
-  const f = fixture({...definition, requires: ['camera'], glasses: {models: ['g1', 'mentra-live']}, execution: {resourceKinds: ['app', 'network', 'glasses']}});
+  const f = fixture({...definition, resourceRequirements: [...definition.resourceRequirements,{kind:'glasses',capabilities:['connection']}], glasses: {models: ['g1', 'mentra-live']}, execution: {resourceKinds: ['phone', 'app', 'recorder', 'network', 'glasses']}});
   const time = Date.parse('2026-10-08T00:00:00Z');
   const lane = (model: string, state: ReceivedTestHostState['lanes'][number]['state'], dispatchMode: ReceivedTestHostState['lanes'][number]['dispatchMode']) => ({...f.lane,
-    id: model, state, dispatchMode, resources: [...f.lane.resources, {id: `glasses:${model}`, kind: 'glasses' as const}],
-    glasses: [{resourceId: `glasses:${model}`, deviceId: model, model, capabilities: ['camera']}]});
+    id: model, state, dispatchMode, resources: [...f.lane.resources, {id: `glasses:${model}`, kind: 'glasses' as const, capabilities: ['connection']}],
+    glasses: [{resourceId: `glasses:${model}`, deviceId: model, model, capabilities: ['connection']}]});
   const host: ReceivedTestHostState = {hostId: 'healthy', incarnation: 'one', incarnationGeneration: 1, sequence: 1,
     observedAt: new Date(time).toISOString(), receivedAt: new Date(time).toISOString(), lanes: [lane('g1', 'idle', 'paused'), lane('mentra-live', 'idle', 'automatic')]};
   f.offer([host]);
@@ -64,7 +66,7 @@ test('run routing chooses an accepting alternate model, refreshes availability a
   expect(routineJobRouting(prepared.prepared!.requirements, [host], time, {hostId: host.hostId, laneId: 'mentra-live'})).toMatchObject({waitingReason: 'Awaiting an idle compatible enrolled runner'});
 });
 test('offline requirements and exact app/source freeze before host selection; retries preserve them',async()=>{
-  const f=fixture(),prepared=await f.prepare();expect(prepared).toMatchObject({state:'awaiting-runner',prepared:{requirements:{platform:'android',resources:[{kind:'app',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}]}}});
+  const f=fixture(),prepared=await f.prepare();expect(prepared).toMatchObject({state:'awaiting-runner',prepared:{requirements:{platform:'android',resources:[{kind:'phone',capabilities:[]},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}]}}});
   const calls=f.sources;await f.service.submit(selection);expect(f.sources).toBe(calls);expect(f.resolves).toBe(1);expect(f.row?.hostId).toBeUndefined();
   await expect(f.service.submit({...selection,source:{...source,buildRunId:56}})).rejects.toThrow('changed');
   await expect(f.service.prepared(selection.requestId,{inputSha256:f.row!.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest({...definition,minimumRoutineApiVersion:2}),definition:{...definition,minimumRoutineApiVersion:2}})).rejects.toThrow();
@@ -92,7 +94,7 @@ test('single CAS binding retains winner across hosts and duplicate Actions deliv
 test('descriptor/capability and target fences reject incompatible assignments before binding',async()=>{
   const f=fixture(),prepared=await f.prepare(),input={inputSha256:prepared.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'};
   await expect(f.service.bind(selection.requestId,'mini',{...input,descriptorRevision:'f'.repeat(64)})).rejects.toThrow('descriptor');
-  f.lane.resources[1]!.capabilities=[];f.lane.descriptorRevision=routineLaneDescriptorRevision(f.lane);
+  f.lane.resources.find(resource => resource.kind === 'network')!.capabilities=[];f.lane.descriptorRevision=routineLaneDescriptorRevision(f.lane);
   await expect(f.service.bind(selection.requestId,'mini',{...input,descriptorRevision:f.lane.descriptorRevision})).rejects.toThrow('compatible');expect(f.row?.fleetBinding).toBeUndefined();
 });
 test('cancel and deadline before bind never revive after preparation retry or observer restart',async()=>{
@@ -298,4 +300,65 @@ test('dispatch compatibility refuses capabilities unioned across physical pairs 
  expect(compatibleRoutineLane(requirements,f.lane)).toBe(true);
  expect(compatibleRoutineLane(requirements,{...f.lane,resources:[...f.lane.resources,{id:'other-uplink',kind:'network'}]})).toBe(false);
  expect(compatibleRoutineLane(requirements,{...f.lane,glasses:[{resourceId:'one',deviceId:'one',model:'mentra-live',capabilities:['camera']},{resourceId:'two',deviceId:'two',model:'mentra-live',capabilities:['glasses-ble']}]})).toBe(false);
+});
+
+function automaticId() {
+  return `routine-${createHash('sha256').update(JSON.stringify(['source-pr-55-2', selection.routineId, selection.platform,
+    {channel: 'pr', buildRunId: 55, publicationAttempt: 2, prNumber: 12}, null])).digest('hex')}`;
+}
+test('superseded automatic PR jobs are fenced before delivery and retries preserve cancellation', async () => {
+  const f = fixture(), automatic = {...selection, requestId: automaticId()};
+  let changed = false, dispatches = 0, checks = 0;
+  const builds = {async resolve() {throw Error('frozen only')}, async isPrSuperseded() {checks++; return changed;}};
+  const service = new RoutineJobService(f.rows, builds, undefined, undefined, undefined, undefined, undefined,
+    () => Date.parse('2026-10-08T00:00:00Z'), {async dispatch(){dispatches++}, async cancel(){}, async runs(){return []}});
+  const first = await f.service.submit({...selection, requestId: automatic.requestId});
+  expect(isAutomaticPrRoutineJob(first)).toBe(true);
+  changed = true;
+  await service.submit(automatic);
+  expect(dispatches).toBe(0); expect(f.row!.fleetCancellation!.reason).toContain('Superseded');
+  const receipt = structuredClone(f.row!.fleetCancellation);
+  await service.submit(automatic);
+  expect(f.row!.fleetCancellation).toEqual(receipt); expect(checks).toBe(1);
+});
+test('manual PR runs never consult current head for cancellation', async () => {
+  const f = fixture(); await f.service.submit(selection);
+  const service = new RoutineJobService(f.rows, {async resolve(){throw Error('frozen only')},
+    async isPrSuperseded(){throw Error('Manual request must retain exact source')}});
+  await service.preparation(selection.requestId);
+  expect(f.row!.fleetCancellation).toBeUndefined();
+});
+test('supersession refresh includes bound jobs and failed metadata checks do not fabricate cancellation', async () => {
+  const f = fixture(), id = automaticId(); await f.service.submit({...selection, requestId: id});
+  let checked = 0;
+  f.rows.supersessionCandidates = async () => [f.row!]; f.rows.supersessionChecked = async () => {checked++;};
+  const service = new RoutineJobService(f.rows, {async resolve(){throw Error('frozen only')},
+    async isPrSuperseded(){throw Error('GitHub unavailable')}});
+  await service.reconcilePending();
+  expect(checked).toBe(1); expect(f.row!.fleetCancellation).toBeUndefined();
+});
+
+test('automatic PR supersession blocks binding even when a lane is idle and compatible', async () => {
+  const f = fixture(), id = automaticId(), first = await f.service.submit({...selection,requestId:id});
+  await f.service.prepared(id,{inputSha256:first.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),
+    definitionSha256:requestInputDigest(definition),definition});
+  const service = new RoutineJobService(f.rows,{async resolve(){throw Error('frozen only')},async isPrSuperseded(){return true;}},
+    undefined,undefined,undefined,undefined,undefined,()=>Date.parse('2026-10-08T00:00:00Z'));
+  await expect(service.bind(id,'mini',{inputSha256:f.row!.fleetInputSha256,laneId:f.lane.id,
+    descriptorRevision:f.lane.descriptorRevision,actionsRunId:'123',actionsJobId:'124'})).rejects.toThrow('Cancelled');
+  expect(f.row!.fleetBinding).toBeUndefined(); expect(f.row!.fleetCancellation!.reason).toContain('Superseded');
+});
+
+test('head changing during binding observation cannot return execution permission after cancellation', async () => {
+  const f=fixture(), id=automaticId(), first=await f.service.submit({...selection,requestId:id});
+  await f.service.prepared(id,{inputSha256:first.fleetSelectionSha256,routineSource:testRoutineSource(selection.routineRevision),
+    definitionSha256:requestInputDigest(definition),definition});
+  const input={inputSha256:f.row!.fleetInputSha256!,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'123',actionsJobId:'124'};
+  await f.service.bind(id,'mini',input);
+  let checks=0;
+  const service=new RoutineJobService(f.rows,{async resolve(){throw Error('frozen only')},async isPrSuperseded(){return ++checks>1;}},
+    undefined,undefined,undefined,{async cancel(){return f.rows.cancel(id,f.row!.fleetSelectionSha256,{reason:'Superseded',requestedAt:'2026-10-08T00:00:00Z'}) as any}},
+    {async detail(){throw new TestRunError(404,'missing')}},()=>Date.parse('2026-10-08T00:00:00Z'));
+  const result=await service.bind(id,'mini',input);
+  expect(result.execute).toBe(false); expect(f.row!.fleetCancellation!.reason).toContain('Superseded');
 });

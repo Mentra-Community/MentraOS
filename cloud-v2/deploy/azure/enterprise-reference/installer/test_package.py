@@ -84,7 +84,6 @@ class PackageTests(unittest.TestCase):
         self.build()
         with tarfile.open(self.output) as archive:
             guide = archive.extractfile('mentra-private-cloud/INSTALL.txt').read().decode()
-        self.assertIn('bootstrap-admin', guide)
         self.assertIn('operator key (mak_)', guide)
         self.assertIn('operator@private-cloud.local', guide)
         self.assertNotIn('api-key@', guide)

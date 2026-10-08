@@ -3,7 +3,6 @@
 // Core's own credential service when there is none that works; no additional
 // HTTP auth surface.
 import mongoose from "mongoose";
-import {unlinkSync} from "node:fs";
 import {createHash, randomBytes, createCipheriv, createDecipheriv} from "node:crypto";
 import {OPERATOR_KEY_SCOPES} from "/app/cloud-v2/packages/workspace-contract/src/capabilities";
 import {AccessCredentialModel} from "/app/cloud-v2/packages/core/src/models/access-credential.model";
@@ -16,8 +15,6 @@ import {isOrganizationAdminEmail} from "/app/cloud-v2/packages/core/src/services
 
 const owner = process.argv[2];
 if (!/^[0-9a-f-]{36}$/.test(owner ?? "")) throw Error("Invalid deployment owner");
-const directory = "/mnt/core-attachments/operator";
-const output = `${directory}/admin-${owner}.json`;
 // Must match OPERATOR_EMAIL in installer/setup.py, which allowlists it in
 // CLOUD_CORE_ADMIN_EMAILS before running this script. An operator key works
 // only while its creator's email is on that allowlist.
@@ -36,7 +33,7 @@ const actor = {
   name: "Private Cloud installer",
   isOrganizationAdmin: isOrganizationAdminEmail(OPERATOR_EMAIL, true),
 };
-type Credential = {id: string; value: string; adminEmail?: string; cleanupRequired?: boolean};
+type Credential = {id: string; value: string; adminEmail?: string};
 let credential: Credential;
 // An msk_local_ key is the administrator key of an earlier installer. Core keeps it
 // as an operator key, created by api-key@<keyId>.local, while that address stays
@@ -99,13 +96,9 @@ try {
     revokedAt: null, credentialId: {$ne: credential.id},
   }).select({credentialId: 1}).lean<Array<{credentialId: string}>>();
   for (const orphan of orphans) await revokeCredential(actor, orphan.credentialId);
-  // Earlier installers cached a plaintext key on the report attachment share,
-  // whose SMB mount permissions do not provide owner-only access. Remove it.
-  try { unlinkSync(output); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") credential.cleanupRequired = true; }
 } finally {
   await mongoose.disconnect();
 }
-// Azure exec is captured directly into the operator's protected local file.
-// This does not write the token to the application's console log stream.
+// Setup reads this from the exec stream and stores it in Key Vault. It is not
+// written to the application's console log stream.
 console.log("MENTRA_ADMIN_BEGIN" + JSON.stringify(credential) + "MENTRA_ADMIN_END");

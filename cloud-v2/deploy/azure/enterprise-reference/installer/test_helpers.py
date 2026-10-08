@@ -22,15 +22,11 @@ class HelperTests(unittest.TestCase):
         path.write_text('#!/usr/bin/env python3\n' + body)
         path.chmod(0o755)
 
-    def test_admin_cleanup_distinguishes_absence_from_permission_failure(self):
+    def test_admin_key_lives_only_in_the_encrypted_journal(self):
+        # The credential is never written to the report share or any other file.
         code = (ROOT / 'installer/admin-key.ts').read_text()
-        block = code[code.index('  try { unlinkSync(output);'):code.index('} finally {', code.index('  try { unlinkSync(output);'))]
-        block = block.replace('(error as NodeJS.ErrnoException).code', 'error.code')
-        for error, required in (('EACCES', True), ('ENOENT', False)):
-            script = 'const credential={id:"saved"};const output="legacy";const unlinkSync=()=>{throw Object.assign(Error("test"),{code:"'+error+'"})};\n' + block + '\nconsole.log(JSON.stringify(credential));'
-            result = subprocess.run(['node', '-e', script], text=True, capture_output=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(bool(json.loads(result.stdout).get('cleanupRequired')), required)
+        self.assertNotIn('node:fs', code)
+        self.assertNotIn('/mnt/', code)
 
     def test_mirror_import_keeps_credentials_out_of_arguments_and_checks_digest(self):
         self.env.update(SOURCE_REGISTRY_USERNAME='reader', SOURCE_REGISTRY_PASSWORD='private-value',
@@ -39,8 +35,7 @@ class HelperTests(unittest.TestCase):
 from pathlib import Path
 p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
 assert 'private-value' not in a
-if a[:3]==['acr','repository','list']: print('[]')
-elif a[:2]==['acr','show']: print('/subscriptions/test/registries/test')
+if a[:2]==['acr','show']: print('/subscriptions/test/registries/test')
 elif a[:1]==['rest']:
  d=json.loads(Path(a[a.index('--body')+1][1:]).read_text())
  assert d['source']['registryUri']=='mirror.example.com'
@@ -125,6 +120,37 @@ elif url.endswith('.zip'):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_sign_in_apps_are_reused_by_name_only_when_this_installer_created_them(self):
+        source = (ROOT / 'scripts/configure-entra.sh').read_text()
+        block = source[source.index('if [[ -n "${INSTALLER_OWNER:-}"'):source.index('CORE_OBJECT_ID=')]
+        owner = 'abcdef12-1234-1234-1234-abcdef123456'
+        self.env['HELPER_TEST_DIRECTORY'] = str(self.path)
+        self.executable('az', '''import json,os,sys
+from pathlib import Path
+p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
+if a[:3]==['ad','app','list']:print((p/'apps.json').read_text())
+elif a[:2]==['rest'] or a[:1]==['rest']:
+ (p/'created.json').write_text(a[a.index('--body')+1]);print('new-object')
+elif a[:3]==['ad','app','show']:print('AzureADMyOrg')
+else:sys.exit(9)
+''')
+        tag = 'mentraInstallerOwner:' + owner
+        cases = (([], 'new-object'),
+                 ([dict(id='mine', displayName='ACME Core', tags=[tag])], 'mine'),
+                 ([dict(id='theirs', displayName='ACME Core', tags=[]), dict(id='mine', displayName='ACME Core', tags=[tag])], 'mine'),
+                 ([dict(id='theirs', displayName='ACME Core')], None))
+        for apps, expected in cases:
+            with self.subTest(apps=apps):
+                (self.path / 'apps.json').write_text(json.dumps(apps))
+                script = f'set -euo pipefail\nINSTALLER_OWNER={owner}\n' + block + '\nfind_or_create_app "" "ACME Core"'
+                result = subprocess.run(['bash', '-c', script], env=self.env, text=True, capture_output=True)
+                if expected is None:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('this setup did not create', result.stderr)
+                else:
+                    self.assertEqual((result.returncode, result.stdout), (0, expected), result.stderr)
+        self.assertEqual(json.loads((self.path / 'created.json').read_text())['tags'], [tag])
+
     def test_entra_profile_binds_directory_without_changing_callers_default(self):
         source = (ROOT / 'scripts/configure-entra.sh').read_text()
         binding = source[source.index('if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}"'):source.index('find_or_create_app()')]
@@ -173,45 +199,279 @@ elif a[:3] in (['deployment','group','validate'],['deployment','group','create']
 elif a[:3]==['deployment','group','show']:print('{}')
 else:sys.exit(9)
 """)
-        result = subprocess.run(['bash', '-c', 'set -euo pipefail\naz() { command az "$@"; }\n' + block],
+        result = subprocess.run(['bash', '-c', 'set -euo pipefail\naz() { command az "$@"; }\n'
+                                 'progress() { :; }\nwait_for_deployment() { :; }\n' + block],
                                 env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 3, result.stderr)
         self.assertIn('Configure DNS', result.stderr)
         calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()]
         self.assertFalse(any('hostname' in call for call in calls))
 
-    def test_acr_role_assignment_parameters_preserve_false_and_default_only_null(self):
+    def parameters(self, config):
         source = (ROOT / 'scripts/deploy.sh').read_text()
-        expression = source.split('--arg cloudImage "$IMPORTED_IMAGE" \'\n', 1)[1].split("\n  ' > \"$PARAMETERS\"", 1)[0]
-        for value, expected in ((False, False), (True, True), (None, True), ('missing', True)):
-            with self.subTest(value=value):
-                config = json.loads((ROOT / 'deployment.config.example.json').read_text())
-                if value == 'missing':
-                    config.pop('manageAcrPullRoleAssignment', None)
-                else:
-                    config['manageAcrPullRoleAssignment'] = value
-                (self.path / 'config.json').write_text(json.dumps(config))
-                (self.path / 'secrets.json').write_text('{}')
-                result = subprocess.run(['jq', '-n', '--slurpfile', 'config', str(self.path / 'config.json'),
-                                         '--slurpfile', 'secrets', str(self.path / 'secrets.json'),
-                                         '--arg', 'cloudImage', 'test.azurecr.io/cloud@sha256:' + 'a' * 64,
-                                         expression], capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIs(json.loads(result.stdout)['parameters']['manageAcrPullRoleAssignment']['value'], expected)
+        expression = source.split('--arg cloudImage "$1" \'\n', 1)[1].split("\n  ' > \"$PARAMETERS\"", 1)[0]
+        (self.path / 'config.json').write_text(json.dumps(config))
+        result = subprocess.run(['jq', '-n', '--slurpfile', 'config', str(self.path / 'config.json'),
+                                 '--arg', 'cloudImage', 'test.azurecr.io/cloud@sha256:' + 'a' * 64, expression],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)['parameters']
 
-    def test_acr_role_assignment_validation_rejects_nonboolean_values(self):
+    def test_parameters_reference_key_vault_and_carry_no_secrets(self):
+        config = json.loads((ROOT / 'deployment.config.example.json').read_text())
+        parameters = self.parameters(config)
+        self.assertEqual(parameters['keyVaultName']['value'], 'kvacmementra')
+        for name in ('refreshTokenPepper', 'mentraJwtPrivateKey', 'miniappJwtPrivateKey', 'teamsGraphClientSecret',
+                     'manageAcrPullRoleAssignment'):
+            self.assertNotIn(name, parameters)
+        template = (ROOT / 'main.bicep').read_text()
+        self.assertNotIn('@secure()', template)
+        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 6)
+        # Each app reads only its own secrets with its own identity; nothing reads the admin key.
+        core = template[template.index("resource core '"):template.index("resource runtime '")]
+        runtime = template[template.index("resource runtime '"):]
+        self.assertNotIn('runtimeIdentity.id', core)
+        self.assertNotIn('coreIdentity.id', runtime)
+        # Each Graph app has its own secret, so a new app ID and its secret switch together.
+        self.assertIn("secrets/teams-graph-client-secret-${teamsGraphClientId}'", runtime)
+        self.assertIn("'teams-graph-client-secret-${teamsGraphClientId}'", (ROOT / 'access.bicep').read_text())
+        self.assertNotIn('Microsoft.Authorization/roleAssignments', template)
+        bootstrap = (ROOT / 'bootstrap.bicep').read_text()
+        self.assertNotIn('4633458b-17de-408a-b874-0445c86b69e6', bootstrap)
+        access = (ROOT / 'access.bicep').read_text()
+        self.assertIn('scope: coreSecret[i]', access)
+        self.assertIn('scope: runtimeSecret[i]', access)
+        # The admin key appears only in the comment saying no app can read it.
+        self.assertEqual(access.count('mentra-admin-key'), 1)
+
+    def test_configuration_requires_a_valid_key_vault_name(self):
         source = (ROOT / 'scripts/deploy.sh').read_text()
         expression = source.split("jq -e '\n", 1)[1].split("\n' \"$CONFIG\"", 1)[0]
         config = json.loads((ROOT / 'deployment.config.example.json').read_text())
         config['sourceImage'] = 'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64
         for key in ('tenantId', 'coreApiClientId', 'mobileClientId'):
             config[key] = '11111111-1111-1111-1111-111111111111'
-        for value in (False, True, None, 'false', 0):
+        for value, expected in (('kvacme1234', True), (None, False), ('9starts-with-digit', False), ('k' * 25, False)):
             with self.subTest(value=value):
-                config['manageAcrPullRoleAssignment'] = value
-                result = subprocess.run(['jq', '-e', expression], input=json.dumps(config),
-                                         capture_output=True, text=True)
-                self.assertEqual(result.returncode == 0, value is None or type(value) is bool, result.stderr)
+                config['keyVaultName'] = value
+                result = subprocess.run(['jq', '-e', expression], input=json.dumps(config), capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, expected, result.stderr)
+
+    def test_configuration_requires_separate_app_identities(self):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        expression = source.split("jq -e '\n", 1)[1].split("\n' \"$CONFIG\"", 1)[0]
+        config = json.loads((ROOT / 'deployment.config.example.json').read_text())
+        config['sourceImage'] = 'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64
+        for key in ('tenantId', 'coreApiClientId', 'mobileClientId'):
+            config[key] = '11111111-1111-1111-1111-111111111111'
+        for runtime, expected in (('id-acme-mentra-runtime', True), (config['coreIdentityName'], False)):
+            with self.subTest(runtime=runtime):
+                config['runtimeIdentityName'] = runtime
+                result = subprocess.run(['jq', '-e', expression], input=json.dumps(config), capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, expected, result.stderr)
+
+    def fake_vault(self, core_exists=False, list_failures=0):
+        # A Key Vault and Container Apps stand-in that records every call.
+        store = self.path / 'vault'
+        store.mkdir(exist_ok=True)
+        self.env.update(HELPER_TEST_DIRECTORY=str(self.path), MENTRA_VAULT_RETRY_SECONDS='0',
+                        CORE_EXISTS={True: '1', False: '0'}.get(core_exists, core_exists), LIST_FAILURES=str(list_failures))
+        self.executable('az', '''import json,os,sys
+from pathlib import Path
+p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:];store=p/'vault'
+with (p/'calls').open('a') as f:f.write(json.dumps(a)+'\\n')
+if a[:3]==['keyvault','secret','list']:
+ failures=p/'list-failures';n=int(failures.read_text()) if failures.exists() else 0
+ if n<int(os.environ['LIST_FAILURES']):
+  failures.write_text(str(n+1));print('ERROR: (Forbidden) Caller is not authorized. Inner error: {"code":"ForbiddenByRbac"}',file=sys.stderr);sys.exit(1)
+ print(json.dumps(sorted(x.name for x in store.iterdir())))
+elif a[:3]==['keyvault','secret','set']:
+ (store/a[a.index('--name')+1]).write_bytes(Path(a[a.index('--file')+1]).read_bytes())
+elif a[:2]==['containerapp','list']:
+ if os.environ['CORE_EXISTS']=='error':print('ERROR: (AuthorizationFailed) transient',file=sys.stderr);sys.exit(1)
+ print(os.environ['CORE_EXISTS'])
+else:sys.exit(9)
+''')
+        return store
+
+    def ensure(self):
+        return subprocess.run(['bash', str(ROOT / 'scripts/ensure-vault-secrets.sh'), 'kvtest1234', 'rg-test', 'ca-test-core'],
+                              env=self.env, capture_output=True, text=True)
+
+    def test_vault_keys_are_created_once_from_private_files(self):
+        store = self.fake_vault(list_failures=2)
+        result = self.ensure()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        names = {'refresh-token-pepper', 'mentra-jwt-private-key', 'mentra-jwt-public-key',
+                 'miniapp-jwt-private-key', 'miniapp-jwt-public-key'}
+        self.assertEqual({x.name for x in store.iterdir()}, names)
+        original = {x.name: x.read_bytes() for x in store.iterdir()}
+        calls = (self.path / 'calls').read_text()
+        for value in original.values():
+            self.assertNotIn(value.decode(), calls)
+            self.assertNotIn(value.decode(), result.stdout + result.stderr)
+        # Each private key pairs with its stored public key.
+        for prefix in ('mentra', 'miniapp'):
+            pem = self.path / f'{prefix}.pem'
+            body = original[f'{prefix}-jwt-private-key'].decode()
+            pem.write_text('-----BEGIN PRIVATE KEY-----\n' + body + '\n-----END PRIVATE KEY-----\n')
+            public = subprocess.run(['openssl', 'pkey', '-in', str(pem), '-pubout'], capture_output=True, text=True, check=True).stdout
+            self.assertEqual(''.join(public.splitlines()[1:-1]), original[f'{prefix}-jwt-public-key'].decode())
+        self.assertEqual(self.ensure().returncode, 0)
+        self.assertEqual({x.name: x.read_bytes() for x in store.iterdir()}, original)
+
+    def test_running_core_never_gets_new_keys(self):
+        store = self.fake_vault(core_exists=True)
+        (store / 'mentra-jwt-public-key').write_text('original-public')
+        result = self.ensure()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('never replaces the keys of a running deployment', result.stderr)
+        self.assertEqual([x.name for x in store.iterdir()], ['mentra-jwt-public-key'])
+
+    def test_failed_core_lookup_never_reads_as_no_core(self):
+        store = self.fake_vault(core_exists='error')
+        (store / 'mentra-jwt-public-key').write_text('original-public')
+        result = self.ensure()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('AuthorizationFailed', result.stderr)
+        self.assertEqual((store / 'mentra-jwt-public-key').read_text(), 'original-public')
+        self.assertEqual(len(list(store.iterdir())), 1)
+
+    def test_other_key_vault_errors_are_shown_without_waiting(self):
+        self.fake_vault()
+        self.executable('az', '''import sys
+print('ERROR: (Forbidden) Client address is not authorized. Inner error: {"code":"ForbiddenByFirewall"}',file=sys.stderr);sys.exit(1)
+''')
+        result = self.ensure()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('ForbiddenByFirewall', result.stderr)
+        self.assertNotIn('can take a few minutes', result.stderr)
+
+    def test_interrupted_first_run_writes_one_matching_set(self):
+        store = self.fake_vault()
+        (store / 'mentra-jwt-public-key').write_text('from-an-interrupted-run')
+        self.assertEqual(self.ensure().returncode, 0)
+        self.assertNotEqual((store / 'mentra-jwt-public-key').read_text(), 'from-an-interrupted-run')
+        self.assertEqual(len(list(store.iterdir())), 5)
+
+    def import_with(self, fake):
+        self.env.update(HELPER_TEST_DIRECTORY=str(self.path), MENTRA_ACR_DNS_RETRY_SECONDS='0', TMPDIR=str(self.path))
+        self.executable('az', 'import json,os,sys\nfrom pathlib import Path\np=Path(os.environ["HELPER_TEST_DIRECTORY"]);a=sys.argv[1:]\n'
+                        'with (p/"calls").open("a") as f:f.write(json.dumps(a)+"\\n")\n' + fake)
+        result = subprocess.run(['bash', str(ROOT / 'scripts/import-runtime-image.sh'), 'testregistry',
+                                 'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64, 'release-1'],
+                                env=self.env, text=True, capture_output=True)
+        calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()]
+        return result, calls
+
+    def test_a_new_registry_is_imported_into_without_resolving_its_address(self):
+        result, calls = self.import_with('if a[:2]==["acr","import"]:pass\nelse:print("ERROR: Could not connect to the registry login server",file=sys.stderr);sys.exit(1)\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), 'testregistry.azurecr.io/mentra-cloud-enterprise@sha256:' + 'a' * 64)
+        self.assertEqual([c[:2] for c in calls], [['acr', 'import']])
+        self.assertFalse(list(self.path.glob('mentra-acr-errors.*')))
+
+    def test_a_rerun_checks_the_existing_tag_and_waits_for_the_address(self):
+        for digest, code in (('sha256:' + 'a' * 64, 0), ('sha256:' + 'b' * 64, 1)):
+            with self.subTest(digest=digest):
+                (self.path / 'calls').unlink(missing_ok=True)
+                (self.path / 'lookups').unlink(missing_ok=True)
+                fake = ('if a[:2]==["acr","import"]:print("ERROR: (Conflict) Tag mentra-cloud-enterprise:release-1 already exists in target registry.",file=sys.stderr);sys.exit(1)\n'
+                        'elif a[:3]==["acr","repository","show"]:\n'
+                        ' n=p/"lookups";k=int(n.read_text()) if n.exists() else 0;n.write_text(str(k+1))\n'
+                        ' if k<2:print("ERROR: Could not connect to the registry login server",file=sys.stderr);sys.exit(1)\n'
+                        f' print("{digest}")\nelse:sys.exit(9)\n')
+                result, calls = self.import_with(fake)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual((self.path / 'lookups').read_text(), '3')
+                if code:
+                    self.assertIn('already points to another digest', result.stderr)
+
+    def test_image_import_stops_on_other_registry_errors(self):
+        self.env.update(HELPER_TEST_DIRECTORY=str(self.path), MENTRA_ACR_DNS_RETRY_SECONDS='0', TMPDIR=str(self.path))
+        self.executable('az', '''import sys
+print('ERROR: (AuthorizationFailed) no access', file=sys.stderr); sys.exit(1)
+''')
+        result = subprocess.run(['bash', str(ROOT / 'scripts/import-runtime-image.sh'), 'testregistry',
+                                 'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64, 'release-1'],
+                                env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('AuthorizationFailed', result.stderr)
+
+    def fake_deploy(self, group_exists=True):
+        # deploy.sh against a recording az stand-in.
+        import base64
+        claims = base64.urlsafe_b64encode(json.dumps({'oid': 'abcdef12-1234-1234-1234-abcdef123456', 'idtyp': 'user'}).encode()).decode().rstrip('=')
+        config = json.loads((ROOT / 'deployment.config.example.json').read_text())
+        config.update(sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64,
+                      tenantId='11111111-1111-1111-1111-111111111111', coreApiClientId='11111111-1111-1111-1111-111111111112',
+                      mobileClientId='11111111-1111-1111-1111-111111111113')
+        (self.path / 'config.json').write_text(json.dumps(config))
+        self.env.update(HELPER_TEST_DIRECTORY=str(self.path), TOKEN='header.' + claims + '.signature',
+                        GROUP_EXISTS='true' if group_exists else 'false')
+        self.executable('az', '''import json,os,sys
+from pathlib import Path
+p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
+with (p/'calls').open('a') as f:f.write(json.dumps(a)+'\\n')
+if a[:2]==['account','show']:pass
+elif a[:2]==['group','exists']:print(os.environ['GROUP_EXISTS'])
+elif a[:2]==['group','create']:pass
+elif a[:3]==['deployment','group','create']:print('Succeeded')
+elif a[:2]==['account','get-access-token']:print(os.environ['TOKEN'])
+elif a[:3]==['deployment','group','what-if']:
+ if 'access.bicep' in a[a.index('--template-file')+1] and os.environ.get('ACCESS_ERROR'):
+  print('ERROR: '+os.environ['ACCESS_ERROR'],file=sys.stderr);sys.exit(1)
+ if '@' in ' '.join(a): (p/'main-parameters.json').write_text(Path(a[a.index('--parameters')+1][1:]).read_text())
+ print(json.dumps({'status':'Succeeded','changes':[{'changeType':'Create','resourceId':'/subscriptions/s/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv'}]}))
+else:sys.exit(9)
+''')
+
+    def deploy(self, *flags):
+        result = subprocess.run(['bash', str(ROOT / 'scripts/deploy.sh'), *flags, str(self.path / 'config.json')],
+                                env=self.env, capture_output=True, text=True)
+        calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()]
+        return result, calls
+
+    def test_what_if_needs_the_resource_group(self):
+        self.fake_deploy(group_exists=False)
+        result, calls = self.deploy('--what-if')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('az group create --name rg-acme-mentra', result.stderr)
+        self.assertFalse(any(c[:3] == ['deployment', 'group', 'what-if'] for c in calls))
+
+    def test_access_preview_is_empty_only_before_the_secrets_exist(self):
+        self.fake_deploy()
+        self.env['ACCESS_ERROR'] = '(ParentResourceNotFound) The parent vault was not found.'
+        result, _ = self.deploy('--what-if')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(json.loads(result.stdout)['access'])
+        self.env['ACCESS_ERROR'] = '(AuthorizationFailed) The client does not have authorization.'
+        result, _ = self.deploy('--what-if')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('AuthorizationFailed', result.stderr)
+
+    def test_bootstrap_only_runs_just_the_ownership_template(self):
+        self.fake_deploy()
+        result, calls = self.deploy('--bootstrap-only')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        created = [c for c in calls if c[:3] == ['deployment', 'group', 'create']]
+        self.assertEqual(len(created), 1)
+        self.assertTrue(created[0][created[0].index('--template-file') + 1].endswith('bootstrap.bicep'))
+        self.assertIn('operatorPrincipalId=abcdef12-1234-1234-1234-abcdef123456', created[0])
+        self.assertFalse(any(c[:2] in (['keyvault', 'secret'], ['acr', 'import']) for c in calls))
+
+    def test_what_if_previews_both_templates_with_the_callers_identity(self):
+        self.fake_deploy()
+        result, calls = self.deploy('--what-if')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        preview = json.loads(result.stdout)
+        self.assertEqual(set(preview), {'bootstrap', 'access', 'main'})
+        bootstrap = next(c for c in calls if c[:3] == ['deployment', 'group', 'what-if'] and 'bootstrap' in c[c.index('--template-file') + 1])
+        self.assertIn('operatorPrincipalId=abcdef12-1234-1234-1234-abcdef123456', bootstrap)
+        self.assertIn('keyVaultName=kvacmementra', bootstrap)
+        self.assertFalse(any(c[:3] in (['deployment', 'group', 'create'], ['acr', 'import']) for c in calls))
+        parameters = json.loads((self.path / 'main-parameters.json').read_text())['parameters']
+        self.assertEqual(parameters['cloudImage']['value'], 'acmementraregistry.azurecr.io/mentra-cloud-enterprise@sha256:' + 'a' * 64)
 
     def test_custom_hostname_added_before_certificate_without_resetting_existing_binding(self):
         source = (ROOT / 'scripts/deploy.sh').read_text()
@@ -238,6 +498,89 @@ else: sys.exit(9)
             self.assertEqual(r.returncode,0,r.stderr)
             self.assertEqual((self.path/'added').exists(),expected)
 
+    def test_switching_graph_apps_revokes_runtime_access_to_the_previous_secret(self):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        block = source[source.index('# Revoke earlier Graph apps'):source.index('# End of Graph grant cleanup.')]
+        self.assertGreater(source.index(block), source.index('did not become ready'))
+        vault = '/subscriptions/s/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv'
+        grants = [dict(id='old', principalId='runtime', scope=vault + '/secrets/teams-graph-client-secret-aaaa'),
+                  dict(id='current', principalId='runtime', scope=vault.lower() + '/secrets/teams-graph-client-secret-BBBB'),
+                  dict(id='core', principalId='core', scope=vault + '/secrets/teams-graph-client-secret-aaaa'),
+                  dict(id='pepper', principalId='runtime', scope=vault + '/secrets/refresh-token-pepper')]
+        (self.path / 'grants.json').write_text(json.dumps(grants))
+        self.env.update(HELPER_TEST_DIRECTORY=str(self.path), FAKE_VAULT_ID=vault)
+        self.executable('az', '''import json,os,sys
+from pathlib import Path
+p=Path(os.environ['HELPER_TEST_DIRECTORY']);a=sys.argv[1:]
+if a[:2]==['identity','show']:print('runtime')
+elif a[:2]==['keyvault','show']:print(os.environ['FAKE_VAULT_ID'])
+elif a[:3]==['role','assignment','list']:print((p/'grants.json').read_text())
+elif a[:3]==['role','assignment','delete']:
+ if os.environ.get('DELETE_FAILS'):print('ERROR: (AuthorizationFailed) no',file=sys.stderr);sys.exit(1)
+ (p/'deleted').write_text(json.dumps(a[a.index('--ids')+1:a.index('--output')]))
+else:sys.exit(9)
+''')
+        # A deletion that fails stops the rollout: Runtime must not keep the old access.
+        self.env['DELETE_FAILS'] = '1'
+        script = ('set -euo pipefail\nRUNTIME_IDENTITY=id-rt\nRESOURCE_GROUP=rg\nKEY_VAULT=kv\n'
+                  f'ERRORS={self.path / "errors"}\nTEAMS_CLIENT_ID=bbbb\n' + block)
+        result = subprocess.run(['bash', '-c', script], env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('still has access to the previous app secret', result.stderr)
+        del self.env['DELETE_FAILS']
+        for current, expected in (('bbbb', ['old']), ('', ['old', 'current'])):
+            (self.path / 'deleted').unlink(missing_ok=True)
+            script = ('set -euo pipefail\nRUNTIME_IDENTITY=id-rt\nRESOURCE_GROUP=rg\nKEY_VAULT=kv\n'
+                      f'ERRORS={self.path / "errors"}\nTEAMS_CLIENT_ID={current}\n' + block)
+            result = subprocess.run(['bash', '-c', script], env=self.env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads((self.path / 'deleted').read_text()), expected)
+
+    def deploy_block(self, start, end, fake, prelude=''):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        block = source[source.index(start):source.index(end)]
+        self.env['HELPER_TEST_DIRECTORY'] = str(self.path)
+        self.executable('az', 'import json,os,sys\nfrom pathlib import Path\np=Path(os.environ["HELPER_TEST_DIRECTORY"]);a=sys.argv[1:]\n'
+                        'with (p/"calls").open("a") as f:f.write(json.dumps(a)+"\\n")\n' + fake)
+        script = ('set -euo pipefail\nprogress() { :; }\nwait_for_deployment() { :; }\n'
+                  f'ERRORS={self.path / "errors"}\nRESOURCE_GROUP=rg-acme\nKEY_VAULT=kvacme\nDEPLOYMENT_NAME=mentra-private\n'
+                  f'TEMPLATE_DIR={ROOT}\nPARAMETERS={self.path / "p.json"}\nOPERATOR_ID=op\n'
+                  'MENTRA_KEYVAULT_RETRY_SECONDS=0\n' + prelude + block)
+        result = subprocess.run(['bash', '-c', script], env=self.env, text=True, capture_output=True)
+        calls = [json.loads(line) for line in (self.path / 'calls').read_text().splitlines()] if (self.path / 'calls').exists() else []
+        return result, calls
+
+    def test_a_vault_deleted_with_this_deployment_is_recovered(self):
+        for owner, recovered in (('/subscriptions/s/resourceGroups/RG-ACME/providers/Microsoft.KeyVault/vaults/kvacme', True),
+                                 ('/subscriptions/s/resourceGroups/rg-other/providers/Microsoft.KeyVault/vaults/kvacme', False)):
+            with self.subTest(owner=owner):
+                (self.path / 'calls').unlink(missing_ok=True)
+                fake = (f'if a[:2]==["keyvault","show"]:sys.exit(3)\n'
+                        f'elif a[:2]==["keyvault","show-deleted"]:print({owner!r})\n'
+                        'elif a[:2]==["keyvault","recover"]:pass\nelse:sys.exit(9)\n')
+                result, calls = self.deploy_block('# A vault deleted together', '# Someone may have granted', fake)
+                self.assertEqual(result.returncode == 0, recovered, result.stderr)
+                self.assertEqual(any(c[:2] == ['keyvault', 'recover'] for c in calls), recovered)
+                if not recovered:
+                    self.assertIn('stays reserved', result.stderr)
+
+    def test_main_deployment_retries_only_while_key_vault_access_applies(self):
+        fake = ('n=p/"tries";k=int(n.read_text()) if n.exists() else 0;n.write_text(str(k+1))\n'
+                'if a[:3]==["deployment","group","create"]:\n'
+                ' if k<int(os.environ["FAILURES"]):print("ERROR: "+os.environ["FAILURE"],file=sys.stderr);sys.exit(1)\n'
+                ' print("Succeeded")\nelse:sys.exit(9)\n')
+        cases = ((2, 'Unable to get value using Managed identity /x for secret refresh-token-pepper', 0, 3),
+                 (1, 'InvalidTemplate: something else', 1, 1))
+        for failures, failure, code, tries in cases:
+            with self.subTest(failure=failure):
+                for name in ('calls', 'tries'):
+                    (self.path / name).unlink(missing_ok=True)
+                self.env.update(FAILURES=str(failures), FAILURE=failure)
+                result, calls = self.deploy_block('# New Key Vault access can take up to 10 minutes',
+                                                  'progress "Waiting for both services', fake)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(len(calls), tries)
+
     def test_source_mirror_validation_rejects_boolean_and_nonregistry_values(self):
         source = (ROOT / 'scripts/deploy.sh').read_text()
         expression = source.split("jq -e '\n", 1)[1].split("\n' \"$CONFIG\"", 1)[0]
@@ -249,41 +592,6 @@ else: sys.exit(9)
             config['sourceRegistryMirror'] = value
             r = subprocess.run(['jq','-e',expression],input=json.dumps(config),capture_output=True,text=True)
             self.assertEqual(r.returncode==0,expected,r.stderr)
-
-    def test_secret_generation_publishes_complete_keys_without_shell_ln(self):
-        output = self.path / 'secrets.json'
-        self.executable('ln', 'raise AssertionError("Azure Files does not support hard links")\n')
-        command = ['bash', str(ROOT / 'scripts/generate-private-secrets.sh'), str(output)]
-        result = subprocess.run(command, env=self.env, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        original = output.read_bytes()
-        value = json.loads(original)
-        self.assertEqual(set(value), {'refreshTokenPepper', 'mentraJwtPrivateKey', 'mentraJwtPublicKey',
-                                     'miniappJwtPrivateKey', 'miniappJwtPublicKey'})
-        self.assertTrue(all(value.values()))
-        self.assertEqual(output.stat().st_mode & 0o777, 0o600)
-        retry = subprocess.run(command, env=self.env, capture_output=True, text=True)
-        self.assertNotEqual(retry.returncode, 0)
-        self.assertEqual(output.read_bytes(), original)
-        self.assertNotIn(value['mentraJwtPrivateKey'], result.stdout + result.stderr)
-
-    def test_concurrent_secret_generators_publish_one_unchanged_credential(self):
-        output = self.path / 'concurrent.json'
-        command = ['bash', str(ROOT / 'scripts/generate-private-secrets.sh'), str(output)]
-        processes = [subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(2)]
-        results = [p.communicate(timeout=30) for p in processes]
-        self.assertEqual(sorted(p.returncode for p in processes), [0, 1], results)
-        self.assertTrue(all(json.loads(output.read_text()).values()))
-        self.assertFalse(list(self.path.glob('.concurrent.json.tmp.*')))
-
-    def test_secret_generator_refuses_dangling_symlink(self):
-        output = self.path / 'secrets.json'
-        target = self.path / 'absent.json'
-        output.symlink_to(target)
-        result = subprocess.run(['bash', str(ROOT / 'scripts/generate-private-secrets.sh'), str(output)],
-                                env=self.env, capture_output=True, text=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(target.exists())
 
 
 if __name__ == '__main__':

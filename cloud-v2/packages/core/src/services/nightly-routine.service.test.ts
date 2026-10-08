@@ -72,11 +72,11 @@ function row(id: string, platform: "android" | "ios-on-mac", nightlyEnabled = tr
         platforms: [platform],
         entry: "home",
         account: "lane",
-        requires: [],
+        resourceRequirements: [...(platform === "android" ? [{kind:"phone",capabilities:[]}] : []), {kind:"app",capabilities:[]}, {kind:"recorder",capabilities:[]}],
         requirements: [],
         fixtures: [],
         steps: [{id: "check", instruction: "Check", expected: "Checked"}],
-        execution: {resourceKinds: ["app"]},
+        execution: {resourceKinds: [...(platform === "android" ? ["phone"] : []), "app", "recorder"]},
         source: {repository: "Mentra-Community/Mentra-Automated-Testing", revision: "a".repeat(40), path: `routines/${id}/routine.ts`},
       },
     }),
@@ -689,7 +689,7 @@ test('actual fleet service preserves every nightly member through preparation, b
   };
   const lanes = ['android', 'ios-on-mac'].map(platform => {
     const lane = {id: platform, platform: platform as 'android' | 'ios-on-mac', state: 'idle' as const, dispatchMode: 'automatic' as const,
-      resources: [{id: `app:${platform}`, kind: 'app' as const}, {id: `recorder:${platform}`, kind: 'recorder' as const}]};
+      resources: [...(platform === 'android' ? [{id:`phone:${platform}`,kind:'phone' as const}] : []), {id: `app:${platform}`, kind: 'app' as const}, {id: `recorder:${platform}`, kind: 'recorder' as const}]};
     return {...lane, descriptorRevision: routineLaneDescriptorRevision(lane)};
   });
   const requests = {async get(id: string) {reads++; return copy(requestRows.get(id) ?? null) as any;}, async cancel() {return null;}};

@@ -9,6 +9,7 @@ import {
 } from "../../../../packages/core/src/types/lane-restoration.types"
 import {laneDisplayLabel, laneHistoryHref, readableLaneIdentity} from "../lib/lane-links"
 import {api} from "../lib/api"
+import {repairActivityLabel} from "../lib/repair-status"
 
 const states: Record<string, {label: string; style: string}> = {
   "idle": {label: "Idle", style: "bg-[#e6f5ed] text-[#087d50]"},
@@ -163,7 +164,10 @@ export function LaneHealthHost({
                 {lane.activity ? <div className="mt-2 text-sm text-[#5d6068]">
                   <p>{fresh ? 'Current owner' : 'Last reported owner'}: {lane.activity.owner.kind === 'run' ? 'Routine run'
                     : lane.activity.owner.kind === 'authoring' ? 'Authoring reservation'
-                    : lane.activity.owner.kind === 'fixer' ? 'State repair' : 'Boundary cleanup'}</p>
+                    : lane.activity.owner.kind === 'fixer' ? 'Repair custody' : 'Boundary cleanup'}</p>
+                  {lane.activity.owner.kind === 'fixer' ? <p aria-label="Repair activity">
+                    {fresh ? repairActivityLabel(lane.repair, lane) : 'Repair execution unknown · controller report is stale'}
+                  </p> : null}
                   {fresh && lane.activity.owner.requestId ? <a className={TESTING_LINK}
                     href={`/?testRun=${encodeURIComponent(lane.activity.owner.requestId)}`}>{lane.activity.owner.id}</a>
                     : <p className="break-all font-mono text-xs">{lane.activity.owner.id}</p>}

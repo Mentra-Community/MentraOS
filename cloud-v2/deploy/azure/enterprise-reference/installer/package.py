@@ -13,9 +13,9 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parents[3]
-FILES = ('setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep',
-         'deployment.config.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
-         'scripts/generate-private-secrets.sh', 'scripts/import-runtime-image.sh', 'scripts/smoke-test.sh')
+FILES = ('setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep', 'access.bicep',
+         'deployment.config.example.json', 'answers.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
+         'scripts/ensure-vault-secrets.sh', 'scripts/import-runtime-image.sh', 'scripts/smoke-test.sh')
 
 
 def sha(data):
@@ -66,40 +66,30 @@ def build(publication_path, sbom_path, output):
                    clientMinVersion=client_version, files={name: sha(data) for name, data in contents.items()})
     contents['release.json'] = (json.dumps(release, indent=2) + '\n').encode()
     contents['INSTALL.txt'] = b'''Mentra Private Cloud Azure installer
-Use Azure Cloud Shell (Bash) from any browser, or any Bash terminal with Azure CLI and Python 3.
-The Mentra install command unpacks this package into ~/mentra-install/packages/VERSION and links it
-as ~/mentra-install/mentra-private-cloud. Run every command below from ~/mentra-install.
-Setup state contains private keys: keep it in ~/mentra-install/mentra-state, not Cloud Shell's clouddrive.
-Read release.json and verify the archive checksum and publisher attestations before executing.
-Run ./mentra-private-cloud/setup.sh init --directory ./mentra-state
-Run ./mentra-private-cloud/setup.sh preflight --directory ./mentra-state
-Run ./mentra-private-cloud/setup.sh plan --directory ./mentra-state
-Run ./mentra-private-cloud/setup.sh configure-entra --directory ./mentra-state
-Run ./mentra-private-cloud/setup.sh check-teams --directory ./mentra-state --teams-user EMPLOYEE_OBJECT_ID
-If Teams is missing, Microsoft 365 admin center > Marketplace: choose a plan with Teams.
-Assign it to intended Teams employees and a customer-owned guest meeting organizer; wait for provisioning.
-Guest joining does not require an employee Teams license. Guest creation needs a licensed organizer.
-Creating meetings also needs Graph OnlineMeetings.ReadWrite.All consent and a Teams application access policy.
-The IT guide covers these steps; never reuse Mentra's consumer organizer.
-Run ./mentra-private-cloud/setup.sh install --directory ./mentra-state
-Install/verify checks Teams licensing when the operator has permission; otherwise it gives an Entra-admin handoff.
-After Core is deployed: ./mentra-private-cloud/setup.sh bootstrap-admin --directory ./mentra-state
-It allowlists operator@private-cloud.local and mints a Core operator key (mak_).
-Store admin-key.json in your secret manager; use its value as MENTRA_ADMIN_TOKEN.
-Keep operator@private-cloud.local in coreAdminEmails or that key stops working.
-A custom hostname pauses for the CNAME and TXT in dns-records.json.
-After publishing those records: ./mentra-private-cloud/setup.sh resume --directory ./mentra-state --dns-ready
-The setup directory contains private keys: protect it and back it up to your secret manager.
-Server verification does not certify Teams licensing/policy or phone behavior.
-Keep every package under ~/mentra-install/packages and the protected state.
-Normal resume keeps release pins; target-package resume completes a pending upgrade.
-Before upgrade, back up the database, report attachment share, state and original secrets.
-Rerun the install command to download a newer release; it prints the exact upgrade commands:
-./packages/NEW/mentra-private-cloud/setup.sh upgrade --directory ./mentra-state --previous-package ./packages/CURRENT/mentra-private-cloud --backup-confirmed
-Then link mentra-private-cloud to the new package, resume, and verify employee Calls and reports.
-Upgrade retains resource/identity bindings and original keys; unsafe downgrades are refused.
-An image rollback is not database rollback. Follow the approved recovery procedure.
+Run it in Azure Cloud Shell (Bash) from any browser, or any Bash terminal with Azure CLI and Python 3.
+The Mentra install command unpacks this package into ~/mentra-install/packages/VERSION, links it as
+~/mentra-install/mentra-private-cloud, and starts guided setup.
 
+Guided setup is one command. Run it again at any time to continue an interrupted install, or to finish
+after a DNS or admin handoff:
+
+  ~/mentra-install/mentra-private-cloud/setup.sh
+
+To upgrade, run the install command from the documentation again: it downloads the new release and
+starts its guided setup, which previews the change and asks before upgrading.
+
+It creates the Microsoft sign-in apps, previews the Azure resources with Azure what-if, installs, adds
+DNS records when the zone is in Azure, verifies the deployment and creates the administrator key.
+Signing keys and the administrator key are created in your Azure Key Vault; nothing secret is stored here.
+The administrator key is a Core operator key (mak_) created by operator@private-cloud.local; keep that
+address in coreAdminEmails or the key stops working.
+Setup state (non-secret) is kept in ~/mentra-install/mentra-state. Keep Cloud Shell's storage mounted;
+if the folder is lost, run the install command with the same answers and setup continues the deployment.
+
+Teams meeting creation is optional:  setup.sh configure-teams
+Automation:  setup.sh --yes --config answers.json --employees EMAIL,GROUP   (start from answers.example.json)
+Advanced steps remain available:  setup.sh --help
+Read release.json and verify the archive checksum and publisher attestations before executing.
 '''
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)

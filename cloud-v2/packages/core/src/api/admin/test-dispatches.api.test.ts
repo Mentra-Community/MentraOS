@@ -39,6 +39,7 @@ function fixture(changed = false, offline = false, clockSkew = 0, receiptAge = 0
       routineSource: testRoutineSource(revision),
       definition: {
         minimumRoutineApiVersion: 1,
+        resourceRequirements: [{kind: "app", capabilities: []}, {kind: "recorder", capabilities: []}],
         execution: {resourceKinds: ["app", "recorder"], policy: {estimatedOutputBytes: 100}},
       },
     }),
@@ -135,7 +136,7 @@ function glassesFixture(
       routineSource: testRoutineSource(revision),
       definition: {
         minimumRoutineApiVersion: 1,
-        requires: ["glasses-ble"],
+        resourceRequirements: [{kind:"app",capabilities:[]},{kind:"recorder",capabilities:[]},{kind:"glasses",capabilities:["glasses-ble"]}],
         glasses: {models: ["mentra-live"], ...(startSoftware ? {startSoftware} : {})},
         execution: {resourceKinds: ["app", "recorder", "glasses"]},
       },
@@ -146,7 +147,7 @@ function glassesFixture(
   archive: {name: "app.zip", url: "https://artifactscdn.mentraglass.com/app.zip", size: 100, sha256: selected.archiveSha256}};
   const builds = {resolve: async () => build} as unknown as TestBuildGateway;
   const hosts = {get: async () => ({hostId: "mini", receivedAt: new Date().toISOString(), lanes: [{id: "mac", platform: "ios-on-mac", dispatchMode: "paused",
-  resources: [...resources, {id: "physical-live", kind: "glasses"}],
+  resources: [...resources, {id: "physical-live", kind: "glasses", capabilities}],
   glasses: [{resourceId: "physical-live", deviceId: "live-cid", model: "mentra-live", capabilities}]}]})} as unknown as TestHostStateService;
   return {app: createTestDispatchAdminApi(service, definitions, builds, hosts, new RoutineDispatchService(definitions, builds, hosts, service, undefined, undefined,
     {async resolve(override) {return override ?? revision;}, async inventory(commit) {return {commit, files: []};}}),

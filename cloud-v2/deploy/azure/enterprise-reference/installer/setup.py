@@ -4,6 +4,7 @@ import argparse
 import base64
 import contextlib
 import datetime
+import getpass
 import hashlib
 import http.client
 import fcntl
@@ -11,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import socket
 import stat
@@ -24,11 +26,16 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS = ('Microsoft.App', 'Microsoft.ContainerRegistry', 'Microsoft.ManagedIdentity',
-             'Microsoft.Communication', 'Microsoft.DocumentDB', 'Microsoft.Storage')
+             'Microsoft.Communication', 'Microsoft.DocumentDB', 'Microsoft.Storage', 'Microsoft.KeyVault')
 BINDING_KEYS = ('subscriptionId', 'tenantId', 'resourceGroup', 'registryName', 'location',
-                'workspaceHostname', 'environmentName', 'runtimeName', 'coreName', 'pullIdentityName',
+                'workspaceHostname', 'environmentName', 'runtimeName', 'coreName', 'coreIdentityName', 'runtimeIdentityName',
                 'communicationName', 'mongoAccountName', 'reportStorageAccountName', 'deploymentName',
-                'resourceTags', 'coreApiClientId', 'mobileClientId')
+                'resourceTags', 'coreApiClientId', 'mobileClientId', 'keyVaultName')
+# Key Vault holds every original secret; nothing secret is stored locally.
+ADMIN_KEY_SECRET = 'mentra-admin-key'
+# Teams settings may be added after installation; resume rolls them out.
+UPDATABLE_KEYS = {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId', 'teamsGraphClientId',
+                  'teamsGraphOrganizerId'}
 GUID = re.compile(r'^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$')
 
 
@@ -67,12 +74,20 @@ def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-def run(argv, env=None, capture=True):
-    # Azure deployment failures can contain parameter values. Never echo raw
-    # subprocess output, command lines, HTTP bodies, or exception text to logs.
+def run(argv, env=None, capture=True, explain=False):
+    # Provider output can contain credentials, so it is withheld by default.
+    # The deployment scripts take no secrets (keys live in Key Vault), so with
+    # explain=True their error tail is shown, with any registry password removed.
     result = subprocess.run(argv, env=env, text=True, stdout=subprocess.PIPE if capture else None,
                             stderr=subprocess.PIPE)
     if result.returncode:
+        name = f'{Path(argv[1] if argv[0] == "bash" and len(argv) > 1 else argv[0]).name}'
+        if explain:
+            lines = [line for line in (result.stderr or '').splitlines() if line.strip() and 'WARNING' not in line]
+            detail = '\n'.join(lines[-12:])
+            for secret in filter(None, (os.environ.get('SOURCE_REGISTRY_PASSWORD'), (env or {}).get('SOURCE_REGISTRY_PASSWORD'))):
+                detail = detail.replace(secret, '***')
+            raise SetupError(f'{name} failed (exit {result.returncode}):\n{detail or "(no error output)"}')
         raise SetupError(f'{Path(argv[0]).name} {argv[1] if len(argv) > 1 else ""} failed '
                          f'(exit {result.returncode}). Check Azure Portal deployment operations. '
                          'Raw provider output is withheld because it may contain secrets.')
@@ -88,9 +103,9 @@ def check_release():
     if release.get('schemaVersion') != 1 or not re.fullmatch(
             r'ghcr\.io/mentra-community/mentra-cloud@sha256:[0-9a-f]{64}', release.get('sourceImage', '')):
         raise SetupError('Invalid release metadata')
-    required = {'setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep',
+    required = {'setup.sh', 'installer/setup.py', 'installer/admin-key.ts', 'main.bicep', 'bootstrap.bicep', 'access.bicep',
                 'deployment.config.example.json', 'scripts/deploy.sh', 'scripts/configure-entra.sh',
-                'scripts/generate-private-secrets.sh', 'scripts/import-runtime-image.sh', 'scripts/smoke-test.sh'}
+                'scripts/ensure-vault-secrets.sh', 'scripts/import-runtime-image.sh', 'scripts/smoke-test.sh'}
     inventory = release.get('files')
     if not isinstance(inventory, dict) or not required.issubset(inventory):
         raise SetupError('Release inventory is incomplete')
@@ -177,7 +192,9 @@ def load(directory):
     release = check_release()
     recover_upgrade(directory, config, state)
     if state['releaseHash'] != digest(ROOT / 'release.json'):
-        raise SetupError('Installer release differs from saved state. Use the original package; upgrades require a new reviewed release.')
+        matching = find_previous_package(state)
+        raise SetupError((f'This deployment is managed by {matching / "setup.sh"}; run that instead. ' if matching else
+                          'This package is not the one the deployment runs. ') + 'To upgrade, run the install command again.')
     recover_identity(directory, config, state)
     recover_configuration(directory, config, state)
     for key in BINDING_KEYS:
@@ -188,14 +205,7 @@ def load(directory):
     if config.get('managedMiniapps') != release['managedMiniapps']:
         raise SetupError('Managed miniapp pin changed. Use a reviewed release package.')
     if state.get('configHash') and state['configHash'] != digest(directory / 'deployment.config.json'):
-        raise SetupError('Configuration changed after deployment started. Restore it before resuming.')
-    secrets = directory / 'secrets.json'
-    if state.get('secretsCreated') and not secrets.is_file():
-        raise SetupError('Original secrets file is missing. Restore it from your secret manager; do not regenerate signing keys.')
-    if secrets.exists() and (secrets.is_symlink() or not stat.S_ISREG(secrets.stat().st_mode)
-                             or secrets.stat().st_uid != os.getuid()
-                             or stat.S_IMODE(secrets.stat().st_mode) & 0o077):
-        raise SetupError('Secrets must be a regular file accessible only by its owner (chmod 600).')
+        raise SetupError('Configuration changed after deployment started. Restore it, then run setup again.')
     return config, state, release
 
 
@@ -256,7 +266,25 @@ def publish_backup(destination, contents):
             os.unlink(name)
 
 
-def upgrade(args, directory):
+def check_upgradable(config):
+    # Pre-release installers kept the signing keys on disk and have no Key Vault
+    # or per-app identities. Their deployments are reinstalled, not upgraded.
+    if not all(config.get(k) for k in ('keyVaultName', 'coreIdentityName', 'runtimeIdentityName')):
+        raise SetupError('This deployment was made by a pre-release installer that kept its keys outside Key Vault, '
+                         'and it cannot be upgraded. Install a new deployment with this package instead.')
+
+
+def upgradable_phase(config, state):
+    # Deployed and verified, or deployed but failing verification (a newer release may fix that).
+    return state['phase'] == 'infrastructure_verified' or (
+        state['phase'] == 'deployed' and (not config.get('workspaceHostname') or state.get('domainVerified')))
+
+
+def config_for_phase(directory):
+    return read_json(directory / 'deployment.config.json')
+
+
+def select_upgrade(args, directory):
     if not args.backup_confirmed:
         raise SetupError('Upgrade requires --backup-confirmed after backing up the database, attachments and original signing material')
     if not args.previous_package:
@@ -271,7 +299,8 @@ def upgrade(args, directory):
     previous = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(previous)
     config, state, old_release = previous.load(directory)
-    if state['phase'] != 'infrastructure_verified':
+    check_upgradable(config)
+    if not upgradable_phase(config, state):
         raise SetupError('Verify the current deployment with its original package before upgrade')
     target = check_release()
     if release_version(target) < release_version(old_release):
@@ -279,9 +308,7 @@ def upgrade(args, directory):
     if target['releaseTag'] == old_release['releaseTag'] and target['sourceImage'] != old_release['sourceImage']:
         raise SetupError('A coordinated release identity cannot change its image digest')
     if digest(ROOT / 'release.json') == state['releaseHash']:
-        raise SetupError('Target installer is already selected. Use resume or verify')
-    if not (directory / 'secrets.json').is_file() or not state.get('secretsCreated'):
-        raise SetupError('Restore the original signing secrets before upgrade')
+        raise SetupError('This package is already selected; run setup again to continue.')
     updated = dict(config, **{k: target[k] for k in ('sourceImage', 'releaseTag', 'managedMiniapps', 'clientMinVersion')},
                    clientRecommendedVersion=target['clientMinVersion'])
     preflight(updated, require_identity=True)
@@ -309,8 +336,8 @@ def upgrade(args, directory):
         'updatedConfigHash': digest(temporary), 'summary': summary})
     temporary.unlink()
     recover_upgrade(directory, config, state)
-    emit(args, {'status': 'upgrade_ready', **summary,
-                'next': 'Use this target package to run resume, then verify employee sign-in, Calls and report retrieval. Original keys and resource bindings are retained. Retain both packages and your database/files backup.'})
+    return ({'status': 'upgrade_ready', **summary,
+                'next': 'Run setup again with this package, then verify employee sign-in, Calls and report retrieval. Original keys and resource bindings are retained. Retain both packages and your database/files backup.'})
 
 
 def recover_configuration(directory, config, state):
@@ -320,11 +347,11 @@ def recover_configuration(directory, config, state):
     pending = read_json(journal)
     previous = pending['previousConfig']
     changes = pending['changes']
-    if not changes or set(changes) - {'sourceRegistryMirror', 'coreAdminEmails'}:
+    if not changes or set(changes) - UPDATABLE_KEYS:
         raise SetupError('Unsupported pending configuration update')
     updated = dict(previous, **changes)
-    # Only approved distribution-endpoint and administrator-allowlist updates
-    # can change. Never adopt resource bindings, release pins, or other edits.
+    # Only the distribution endpoint, administrator allowlist and Teams Graph
+    # settings can change. Never adopt resource bindings, release pins, or other edits.
     if (config not in (previous, updated)
             or state.get('configHash') not in (None, pending['previousConfigHash'], pending['updatedConfigHash'])
             or any(previous.get(k) != state['binding'].get(k) for k in BINDING_KEYS)):
@@ -354,8 +381,8 @@ def configure_mirror(args, directory, config, state):
     updated = dict(config, sourceRegistryMirror=args.mirror)
     check_source_image(updated)
     update_configuration(directory, config, state, sourceRegistryMirror=args.mirror)
-    emit(args, {'status': 'mirror_configured', 'image': config['sourceImage'],
-                'next': 'Run resume. The release digest and deployed resource settings are unchanged.'})
+    return ({'status': 'mirror_configured', 'image': config['sourceImage'],
+                'next': 'Run setup again. The release digest and deployed resource settings are unchanged.'})
 
 
 def emit(args, value):
@@ -368,60 +395,209 @@ def emit(args, value):
         print(value)
 
 
+# Azure region -> Azure Communication Services data location.
+DATA_LOCATIONS = {'canada': 'Canada', 'brazil': 'Brazil', 'uk': 'UK', 'australia': 'Australia', 'japan': 'Japan',
+                  'korea': 'Korea', 'india': 'India', 'uae': 'UAE', 'southafrica': 'Africa', 'eastasia': 'Asia Pacific',
+                  'southeastasia': 'Asia Pacific', 'europe': 'Europe', 'france': 'Europe', 'germany': 'Europe',
+                  'norway': 'Europe', 'switzerland': 'Europe', 'sweden': 'Europe', 'poland': 'Europe', 'italy': 'Europe',
+                  'spain': 'Europe', 'austria': 'Europe', 'belgium': 'Europe', 'denmark': 'Europe', 'finland': 'Europe',
+                  'israel': 'Europe', 'qatar': 'UAE', 'newzealand': 'Australia', 'malaysia': 'Asia Pacific',
+                  'indonesia': 'Asia Pacific', 'taiwan': 'Asia Pacific', 'chile': 'Brazil'}
+# Settings recovered from Azure's record of the last deployment when the local folder was lost.
+RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName', 'coreName', 'coreIdentityName',
+                 'runtimeIdentityName', 'communicationName', 'location', 'tenantId', 'coreApiClientId', 'mobileClientId', 'coreAdminEmails', 'workspaceHostname',
+                 'workspaceCertificateName', 'additionalWorkspaceDomains', 'displayName', 'communicationDataLocation',
+                 'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId',
+                 'miniappConfiguration', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
+                 'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'mongoAccountName', 'reportStorageAccountName')
+# Restored even when empty: an empty value there is a deliberate choice.
+RESTORED_AS_IS = ('managedMiniappDirectory',)
+
+
+def data_location(region):
+    return next((value for key, value in DATA_LOCATIONS.items() if key in region), 'United States')
+
+
+def clean_answer(key, value):
+    value = (value or '').strip()
+    if key in ('subscriptionId', 'tenantId'):
+        value = value.lower()
+        return value if GUID.fullmatch(value) else None
+    if key == 'displayName':
+        return value or None
+    if key == 'deploymentId':
+        return value if re.fullmatch(r'[a-z][a-z0-9-]{2,17}[a-z0-9]', value) and '--' not in value else None
+    if key == 'location':
+        value = value.lower().replace(' ', '')
+        return value if re.fullmatch(r'[a-z0-9]+', value) else None
+    if key == 'workspaceHostname':
+        value = re.sub(r'^https?://', '', value.lower()).rstrip('/')
+        if value and (not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}', value) or len(value) > 253
+                      or value.count('.') < 2):
+            return None
+        return value
+    return value
+
+
+ANSWER_HELP = {'subscriptionId': 'an Azure subscription ID (a UUID)', 'tenantId': 'a Microsoft Entra tenant ID (a UUID)',
+               'displayName': 'a company name', 'deploymentId': '4-19 lowercase letters, digits or single hyphens, starting with a letter',
+               'location': 'an Azure region such as westus2 or westeurope',
+               'workspaceHostname': 'a subdomain such as mentra.example.com, or nothing'}
+
+
+def subscription_visible(subscription):
+    return subprocess.run(['az', 'account', 'show', '--subscription', subscription, '--output', 'none'],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def existing_deployment(subscription, group, name):
+    """The owner and last deployment settings of this deployment, if an earlier setup made it."""
+    def az(*argv):
+        result = subprocess.run(['az', *argv, '--subscription', subscription, '--output', 'json'],
+                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            return json.loads(result.stdout or 'null') if result.returncode == 0 else None
+        except ValueError:
+            return None
+    tags = az('group', 'show', '--name', group, '--query', 'tags')
+    tags = tags if isinstance(tags, dict) else {}
+    owner = tags.get('mentraInstallerOwner', '')
+    if tags.get('mentraDeploymentId') != name or not GUID.fullmatch(owner):
+        return None
+    parameters = az('deployment', 'group', 'show', '--resource-group', group, '--name', 'mentra-private',
+                    '--query', 'properties.parameters')
+    parameters = parameters if isinstance(parameters, dict) else {}
+    return {'owner': owner, 'release': tags.get('mentraRelease', ''), 'group': group,
+            'settings': {k: v['value'] for k, v in parameters.items() if isinstance(v, dict) and 'value' in v}}
+
+
 def init(args, directory):
-    if (directory / 'state.json').exists() or (directory / 'deployment.config.json').exists():
+    # A config without state is what an interrupted init leaves; start it again.
+    if (directory / 'state.json').exists():
         raise SetupError('Setup directory already initialized. Use status, install, or resume.')
     release = check_release()
     inputs = read_json(args.config) if args.config else {}
     allowed = set(read_json(ROOT / 'deployment.config.example.json')) | {'subscriptionId'}
     if not isinstance(inputs, dict) or set(inputs) - allowed:
-        raise SetupError('Initialization accepts only documented configuration fields; keep secret values in secrets.json.')
-    prompts = [('subscriptionId', 'Azure subscription ID'), ('tenantId', 'Microsoft Entra tenant ID'),
-               ('deploymentId', 'Short deployment name (lowercase, e.g. lumber-mentra)'),
-               ('displayName', 'Company display name'), ('location', 'Azure region', 'westus2'),
-               ('workspaceHostname', 'Workspace hostname (blank uses Azure hostname)', '')]
-    for item in prompts:
-        key, label, *default = item
-        if key not in inputs:
-            if not sys.stdin.isatty():
-                if default:
-                    inputs[key] = default[0]
-                else:
-                    raise SetupError(f'{key} is required in --config for unattended initialization')
-            else:
-                inputs[key] = input(label + (f' [{default[0]}]' if default and default[0] else '') + ': ').strip() or (default[0] if default else '')
-    for key in ('subscriptionId', 'tenantId'):
-        if not GUID.fullmatch(inputs[key]):
-            raise SetupError(f'{key} must be a UUID')
+        raise SetupError('Initialization accepts only documented configuration fields; secrets are created in Key Vault.')
+    if any(inputs.get(k) for k in ('teamsGraphClientId', 'teamsGraphOrganizerId', 'teamsGraphTenantId')):
+        # Meeting creation needs its secret in the vault, which exists only after installation.
+        raise SetupError('Leave the teamsGraph settings out of --config; after installation, set up meeting creation '
+                         'with setup.sh configure-teams.')
+    placeholders = [k for k, v in inputs.items() if isinstance(v, str) and re.search(r'<[^>]*>', v)]
+    if placeholders:
+        raise SetupError('Replace the example placeholders in --config: ' + ', '.join(sorted(placeholders)))
+    interactive = sys.stdin.isatty() and not getattr(args, 'yes', False)
+    account = signed_in_account() if interactive else {}
+    if account:
+        print(f"Signed in to Azure as {account.get('user', {}).get('name', 'unknown')}, "
+              f"subscription {account.get('name')} ({account.get('id')}).")
+    # Defaults come from the current Azure login only when a person can review them.
+    prompts = [('subscriptionId', 'Azure subscription ID', account.get('id', '')),
+               ('tenantId', 'Microsoft Entra tenant ID', account.get('tenantId', '')),
+               ('displayName', 'Company name, as employees will see it', ''),
+               ('deploymentId', 'Short deployment name (lowercase letters, digits, hyphens)', None),
+               ('location', 'Azure region', 'westus2'),
+               ('workspaceHostname', 'Custom web address, e.g. mentra.example.com (Enter to use an Azure address)', '')]
+    for key, label, default in prompts:
+        if key == 'deploymentId' and default is None:
+            default = suggested_deployment_id(inputs.get('displayName', ''))
+        if key == 'tenantId' and interactive and inputs.get('subscriptionId') not in ('', account.get('id')):
+            # Suggest the tenant of the subscription actually chosen.
+            chosen = subprocess.run(['az', 'account', 'show', '--subscription', inputs['subscriptionId'], '--query', 'tenantId',
+                                     '--output', 'tsv'], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            default = chosen.stdout.strip() if chosen.returncode == 0 else ''
+        if key in inputs:
+            value = clean_answer(key, inputs[key])
+            if value is None:
+                raise SetupError(f'{key} in --config must be {ANSWER_HELP[key]}.')
+            inputs[key] = value
+            continue
+        if not interactive:
+            if key in ('location', 'workspaceHostname'):
+                inputs[key] = default
+                continue
+            raise SetupError(f'{key} is required in --config for unattended initialization')
+        while True:
+            value = clean_answer(key, input(label + (f' [{default}]' if default else '') + ': ') or (default or ''))
+            if value is not None:
+                inputs[key] = value
+                break
+            print(f'  Please enter {ANSWER_HELP[key]}.')
+    if inputs.get('subscriptionId') is None or not GUID.fullmatch(inputs.get('subscriptionId', '')):
+        raise SetupError('subscriptionId must be a UUID')
+    for key in ('coreApiClientId', 'mobileClientId'):
+        if inputs.get(key):
+            inputs[key] = inputs[key].strip().lower()
+    subscription = inputs['subscriptionId']
+    if not subscription_visible(subscription):
+        raise SetupError(f'Your Azure login cannot use subscription {subscription}. Check the ID, or run az login.')
     name = inputs['deploymentId']
-    if not re.fullmatch(r'[a-z][a-z0-9-]{2,17}[a-z0-9]', name):
-        raise SetupError('Deployment name must be 4–19 lowercase letters, digits, or hyphens, starting with a letter.')
-    hostname = inputs['workspaceHostname']
-    if hostname and (not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}', hostname) or len(hostname) > 253):
-        raise SetupError('Workspace hostname must be a DNS hostname, without https:// or a path.')
-    ownership = str(uuid.uuid4())
+    group = inputs.get('resourceGroup') or f'rg-{name}'
+    earlier = existing_deployment(subscription, group, name)
+    if earlier:
+        # The local setup folder was lost; Azure still knows this deployment.
+        print(f'Found deployment {name} in resource group {group}, made by an earlier setup whose files are not here.')
+        if not confirm('Continue managing that deployment?', True, interactive):
+            raise SetupError('Choose a different deployment name to create a separate deployment.')
+        if earlier['release'] and earlier['release'] != release['releaseTag']:
+            if release_version(release) < release_version({'releaseTag': earlier['release']}):
+                raise SetupError(f"That deployment runs {earlier['release']}, newer than this package "
+                                 f"({release['releaseTag']}). Run the install command again for the latest package.")
+            print(f"  It runs {earlier['release']}; continuing upgrades it to {release['releaseTag']}.")
+            if not (getattr(args, 'backup_confirmed', False) or confirm(
+                    'Have you backed up the database and report files, and are you ready to upgrade?', False, interactive)):
+                raise SetupError('Back up first, then run setup again (or pass --backup-confirmed).')
+    ownership = earlier['owner'] if earlier else str(uuid.uuid4())
     config = read_json(ROOT / 'deployment.config.example.json')
     config.update(inputs)
     config['deploymentName'] = 'mentra-private'
     config.update(sourceImage=release['sourceImage'], releaseTag=release['releaseTag'],
                   managedMiniapps=release['managedMiniapps'], clientMinVersion=release['clientMinVersion'],
                   clientRecommendedVersion=release['clientMinVersion'])
-    defaults = dict(resourceGroup=f'rg-{name}', registryName=name.replace('-', '') + ownership.replace('-', '')[:8],
+    defaults = dict(resourceGroup=group, registryName=name.replace('-', '') + ownership.replace('-', '')[:8],
                     environmentName=f'cae-{name}', runtimeName=f'ca-{name}', coreName=f'ca-{name}-core',
-                    pullIdentityName=f'id-{name}-pull', communicationName=f'{name}-acs-{ownership[:8]}',
+                    coreIdentityName=f'id-{name}-core', runtimeIdentityName=f'id-{name}-runtime',
+                    communicationName=f'{name}-acs-{ownership[:8]}',
+                    keyVaultName='kv' + name.replace('-', '')[:14] + ownership.replace('-', '')[:8],
+                    communicationDataLocation=data_location(config['location']),
                     coreApiClientId='', mobileClientId='', coreAdminEmails='',
                     privacyPolicyUrl='', termsOfServiceUrl='')
     for key, value in defaults.items():
         config[key] = inputs.get(key, value)
-    config['approvedSystemMiniapps'] = ['com.mentra.settings', 'com.mentra.feedback']
+    deployed = earlier['settings'] if earlier else {}
+    for key in RESTORED_KEYS:
+        if deployed.get(key) not in (None, ''):
+            config[key] = deployed[key]
+    for key in RESTORED_AS_IS:
+        if key in deployed:
+            config[key] = deployed[key]
+    # An explicit list wins, even an empty one: given now, else the deployment's own.
+    if 'approvedSystemMiniapps' in inputs:
+        config['approvedSystemMiniapps'] = inputs['approvedSystemMiniapps']
+    elif 'approvedSystemMiniapps' in deployed:
+        config['approvedSystemMiniapps'] = deployed['approvedSystemMiniapps']
+    else:
+        config['approvedSystemMiniapps'] = ['com.mentra.settings', 'com.mentra.feedback']
     validate_resource_names(config)
-    config['resourceTags'] = {'mentraDeploymentId': name, 'mentraInstallerOwner': ownership}
+    tags = inputs.get('resourceTags') or {}
+    if not isinstance(tags, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in tags.items()):
+        raise SetupError('resourceTags in --config must map tag names to text values.')
+    # The deployment's own tags (for example ones a policy requires) come back too.
+    restored = deployed.get('resourceTags') if isinstance(deployed.get('resourceTags'), dict) else {}
+    config['resourceTags'] = dict(restored, **tags, mentraDeploymentId=name, mentraInstallerOwner=ownership)
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_json(directory / 'deployment.config.json', config)
-    write_json(directory / 'state.json', dict(schemaVersion=1, deploymentId=name, releaseHash=digest(ROOT / 'release.json'),
-               binding={k: config.get(k) for k in BINDING_KEYS},
-               owner=ownership, phase='initialized', createdAt=now(), secretsCreated=False, checks={}, outputs={}))
-    emit(args, {'status': 'initialized', 'directory': str(directory), 'next': 'Run preflight and plan. Configure Entra before install.'})
+    state = dict(schemaVersion=1, deploymentId=name, releaseHash=digest(ROOT / 'release.json'),
+                 binding={k: config.get(k) for k in BINDING_KEYS},
+                 owner=ownership, phase='initialized', createdAt=now(), secretsCreated=False, checks={}, outputs={})
+    if earlier:
+        state['recoveredAt'] = now()
+        if deployed.get('workspaceHostname') and deployed['workspaceHostname'] == config['workspaceHostname']:
+            # The custom address is already live; keep it bound through the next rollout.
+            state.update(dns=dns_records(config), domainVerified=True)
+    write_json(directory / 'state.json', state)
+    return {'status': 'initialized', 'directory': str(directory), 'next': 'Run setup.sh to continue.'}
 
 
 def validate_resource_names(config):
@@ -430,8 +606,10 @@ def validate_resource_names(config):
         raise SetupError('Invalid Azure source registry mirror')
     patterns = {'registryName': r'[a-z0-9]{5,50}', 'resourceGroup': r'[a-zA-Z0-9_-]{1,90}',
                 'runtimeName': r'[a-z][a-z0-9-]{0,29}[a-z0-9]', 'coreName': r'[a-z][a-z0-9-]{0,29}[a-z0-9]',
-                'environmentName': r'[a-zA-Z0-9-]{2,60}', 'pullIdentityName': r'[a-zA-Z0-9_-]{2,128}',
-                'communicationName': r'[a-zA-Z0-9-]{2,63}', 'location': r'[a-z0-9]{2,40}'}
+                'environmentName': r'[a-zA-Z0-9-]{2,60}', 'coreIdentityName': r'[a-zA-Z0-9_-]{2,128}',
+                'runtimeIdentityName': r'[a-zA-Z0-9_-]{2,128}',
+                'communicationName': r'[a-zA-Z0-9-]{2,63}', 'location': r'[a-z0-9]{2,40}',
+                'keyVaultName': r'[a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9]'}
     for key, pattern in patterns.items():
         if not isinstance(config.get(key), str) or not re.fullmatch(pattern, config[key]):
             raise SetupError(f'Invalid Azure resource name: {key}')
@@ -493,7 +671,7 @@ def check_source_image(config):
         raise SetupError('Cannot read the pinned release image. '
                          'For a private release, obtain package read access or an approved ACR mirror from Mentra and set '
                          'SOURCE_REGISTRY_USERNAME and SOURCE_REGISTRY_PASSWORD in this shell. '
-                         'Run configure-mirror --mirror REGISTRY.azurecr.io/REPOSITORY to correct the distribution endpoint, then resume. '
+                         'Run configure-mirror --mirror REGISTRY.azurecr.io/REPOSITORY to correct the distribution endpoint, then run setup again. '
                          'No Azure resources are changed by this image-access check.') from None
     return 'authenticated' if username else 'public'
 
@@ -513,7 +691,7 @@ def preflight(config, require_identity=False):
     providers = {p: azure(config, 'provider', 'show', '--namespace', p)['registrationState'] for p in PROVIDERS}
     missing = [p for p, value in providers.items() if value != 'Registered']
     if missing:
-        raise SetupError('Register these providers, wait for Registered, then resume: ' + ', '.join(missing))
+        raise SetupError('Register these providers, wait for Registered, then run setup again: ' + ', '.join(missing))
     groups = azure(config, 'group', 'list')
     group = next((g for g in groups if g['name'].lower() == config['resourceGroup'].lower()), None)
     if group and group.get('tags', {}).get('mentraInstallerOwner') != config['resourceTags']['mentraInstallerOwner']:
@@ -559,8 +737,8 @@ def checkpoint(directory, state, phase, **values):
 def deploy(directory, config, state, hostname):
     effective = dict(config, workspaceHostname=hostname)
     write_json(directory / 'effective.config.json', effective)
-    output = run(['bash', str(ROOT / 'scripts/deploy.sh'), str(directory / 'effective.config.json'),
-                  str(directory / 'secrets.json')], env=environment(config))
+    output = run(['bash', str(ROOT / 'scripts/deploy.sh'), str(directory / 'effective.config.json')], env=environment(config),
+                 explain=True)
     # Helpers may print progress before the final output; parse only the final
     # ARM outputs object, and retain an allowlist of public outputs.
     decoder = json.JSONDecoder()
@@ -573,23 +751,27 @@ def deploy(directory, config, state, hostname):
         except ValueError:
             pass
     if not candidates:
-        raise SetupError('Deployment completed without recognized public outputs. Inspect Azure Portal, then resume.')
+        raise SetupError('Deployment completed without recognized public outputs. Inspect Azure Portal, then run setup again.')
     outputs = {k: v['value'] for k, v in candidates[-1].items() if k in
                ('workspaceOrigin', 'coreOrigin', 'generatedRuntimeHostname', 'generatedCoreHostname', 'customDomainVerificationId',
-                'communicationResourceId', 'registryLoginServer')}
+                'communicationResourceId', 'registryLoginServer', 'keyVaultName')}
     checkpoint(directory, state, 'deployed', outputs=outputs)
+    # Lets setup continue this deployment from another computer (see init).
+    azure(config, 'group', 'update', '--name', config['resourceGroup'], '--set', f"tags.mentraRelease={config['releaseTag']}")
     return outputs
 
 
-def dns_handoff(directory, config, state):
+def dns_records(config):
     app = azure(config, 'containerapp', 'show', '--name', config['runtimeName'], '--resource-group', config['resourceGroup'])
-    target = app['properties']['configuration']['ingress']['fqdn']
-    verification = app['properties']['customDomainVerificationId']
     host = config['workspaceHostname']
-    records = [{'type': 'CNAME', 'name': host, 'value': target, 'proxy': False},
-               {'type': 'TXT', 'name': 'asuid.' + host, 'value': verification}]
+    return [{'type': 'CNAME', 'name': host, 'value': app['properties']['configuration']['ingress']['fqdn'], 'proxy': False},
+            {'type': 'TXT', 'name': 'asuid.' + host, 'value': app['properties']['customDomainVerificationId']}]
+
+
+def dns_handoff(directory, config, state):
+    records = dns_records(config)
     write_json(directory / 'dns-records.json', {'records': records, 'instructions':
-               'Ask your DNS admin to add these records with DNS-only routing. Leave all mail/MX records unchanged. Run resume --dns-ready after propagation.'})
+               'Ask your DNS admin to add these records with DNS-only routing. Leave all mail/MX records unchanged. Run setup again once they resolve.'})
     checkpoint(directory, state, 'awaiting_dns', dns=records)
     return records
 
@@ -601,7 +783,7 @@ def check_dns(config, state):
     cname = run(['dig', '+short', 'CNAME', host]).strip().rstrip('.').lower()
     txt = run(['dig', '+short', 'TXT', 'asuid.' + host]).replace('"', '').strip()
     if cname != state['dns'][0]['value'].lower() or txt != state['dns'][1]['value']:
-        raise SetupError('DNS records do not match dns-records.json yet. Confirm DNS-only CNAME and asuid TXT, wait, then resume.')
+        raise SetupError('DNS records do not match dns-records.json yet. Confirm DNS-only CNAME and asuid TXT, wait, then run setup again.')
 
 
 def configure_azure_dns(args, directory, config, state):
@@ -651,50 +833,53 @@ def configure_azure_dns(args, directory, config, state):
         body = {'properties': dict(value, TTL=300, metadata={'mentraInstallerOwner': state['owner']})}
         run(['az', 'rest', '--method', 'put', '--url', 'https://management.azure.com' + zone['id'] + '/' + kind + '/' + name + '?api-version=2018-05-01',
              '--headers', 'If-None-Match=*', '--body', json.dumps(body), '--output', 'none'])
-    emit(args, {'status': 'dns_records_configured', 'next': 'Wait for propagation, then resume --dns-ready. Existing records and mail settings were preserved.'})
+    return {'status': 'dns_records_configured', 'next': 'Wait for propagation, then run setup again. Existing records and mail settings were preserved.'}
+
+
+def ensure_group(config, state, checks=None):
+    checks = checks or preflight(config)
+    if checks['resourceGroup'] == 'new':
+        azure(config, 'group', 'create', '--name', config['resourceGroup'], '--location', config['location'],
+              '--tags', *[f'{key}={value}' for key, value in config['resourceTags'].items()])
+    return checks
 
 
 def install(args, directory, config, state):
+    # Returns the resulting status; signing keys are created in Key Vault by deploy.sh.
+    if state['phase'] == 'deployed' and (not config['workspaceHostname'] or state.get('domainVerified')):
+        # The final deployment already finished; only its verification remained.
+        return verify(args, directory, config, state)
     checks = preflight(config, require_identity=True)
-    env = environment(config)
-    secrets = directory / 'secrets.json'
-    if not secrets.exists():
-        if state['secretsCreated']:
-            raise SetupError('Restore original secrets; regeneration is refused')
-        run(['bash', str(ROOT / 'scripts/generate-private-secrets.sh'), str(secrets)], env=env)
-    checkpoint(directory, state, state['phase'], secretsCreated=True, checks=checks)
-    run(['bash', str(ROOT / 'scripts/deploy.sh'), '--validate-only', str(directory / 'deployment.config.json'), str(secrets)], env=env)
-    if checks['resourceGroup'] == 'new':
-        azure(config, 'group', 'create', '--name', config['resourceGroup'], '--location', config['location'],
-              '--tags', 'mentraInstallerOwner=' + state['owner'], 'mentraDeploymentId=' + config['deploymentId'])
+    checkpoint(directory, state, state['phase'], checks=checks)
+    run(['bash', str(ROOT / 'scripts/deploy.sh'), '--validate-only', str(directory / 'deployment.config.json')],
+        env=environment(config), explain=True)
+    ensure_group(config, state, checks)
     domain_verified = state.get('domainVerified', False)
     checkpoint(directory, state, 'deploying', configHash=digest(directory / 'deployment.config.json'))
     if config['workspaceHostname']:
         if not state.get('dns'):
             deploy(directory, config, state, '')
             records = dns_handoff(directory, config, state)
-            emit(args, {'status': 'awaiting_dns', 'records': records, 'next': 'Add DNS records, then resume --dns-ready.'})
-            return
+            return {'status': 'awaiting_dns', 'records': records, 'next': 'Add the DNS records, then run setup again.'}
         if not args.dns_ready and not domain_verified:
             checkpoint(directory, state, 'awaiting_dns')
-            emit(args, {'status': 'awaiting_dns', 'records': state['dns'], 'next': 'resume --dns-ready'})
-            return
+            return {'status': 'awaiting_dns', 'records': state['dns'], 'next': 'Run setup again once the DNS records resolve.'}
         check_dns(config, state)
     deploy(directory, config, state, config['workspaceHostname'])
     if config['workspaceHostname']:
         checkpoint(directory, state, 'deployed', domainVerified=True)
-    verify(args, directory, config, state)
+    return verify(args, directory, config, state)
 
 
 def verify(args, directory, config, state):
     if state.get('upgrade') and state['phase'] not in ('deployed', 'infrastructure_verified'):
-        raise SetupError('Selected upgrade has not completed deployment. Run resume with the target package before verify.')
+        raise SetupError('Selected upgrade has not completed deployment. Run setup again with the new package before verify.')
     origin = state.get('outputs', {}).get('workspaceOrigin')
     if not origin:
-        raise SetupError('No deployment outputs saved. Run resume first.')
+        raise SetupError('No deployment outputs saved. Run setup again first.')
     if config['workspaceHostname'] and (not state.get('domainVerified') or origin != 'https://' + config['workspaceHostname']):
-        raise SetupError('Final customer domain is not deployed yet. Complete DNS and run resume --dns-ready.')
-    run(['bash', str(ROOT / 'scripts/smoke-test.sh'), origin], env=environment(config))
+        raise SetupError('Final customer domain is not deployed yet. Add the DNS records and run setup again.')
+    run(['bash', str(ROOT / 'scripts/smoke-test.sh'), origin], env=environment(config), explain=True)
     # Azure resource administrators need not have Entra license-read rights.
     # Check when possible, but report an unknown result rather than blocking
     # working Core/guest joining or interpreting permission errors as no license.
@@ -705,9 +890,9 @@ def verify(args, directory, config, state):
                  'next': str(exc)}
     checkpoint(directory, state, 'infrastructure_verified', verifiedAt=now())
     checkpoint(directory, state, state['phase'], teamsSetupChecks=teams)
-    emit(args, {'status': 'infrastructure_verified', 'workspace': origin,
-               'teamsSetup': teams,
-               'remaining': 'Assign employees in Entra, validate a licensed Teams account and guest fallback on the Mentra App, submit/retrieve feedback. Server smoke tests do not certify device or Teams policy behavior.'})
+    return {'status': 'infrastructure_verified', 'workspace': origin,
+            'teamsSetup': teams,
+            'remaining': 'Assign employees in Entra, validate a licensed Teams account and guest fallback on the Mentra App, submit/retrieve feedback. Server smoke tests do not certify device or Teams policy behavior.'}
 
 
 def inspect_teams(args, config):
@@ -759,7 +944,7 @@ def inspect_teams(args, config):
 def check_teams(args, directory, config, state):
     checks = inspect_teams(args, config)
     checkpoint(directory, state, state['phase'], teamsSetupChecks=checks)
-    emit(args, checks)
+    return checks
 
 
 def execute_admin_script(config, current, owner, script):
@@ -865,15 +1050,14 @@ def wait_for_core_allowlist(config, allowlist):
 
 
 def bootstrap_admin(args, directory, config, state):
+    # The administrator key lives in Key Vault. Core's own journal returns the
+    # same key if this is retried before the Key Vault write completes.
     if not state.get('outputs', {}).get('coreOrigin'):
         raise SetupError('Deploy Core before creating its administrator key')
-    output = directory / 'admin-key.json'
-    if output.exists() and (output.is_symlink() or output.stat().st_mode & 0o077):
-        raise SetupError('Administrator key file must be owner-only and not a symlink')
     current = azure(config, 'containerapp', 'show', '--name', config['coreName'], '--resource-group', config['resourceGroup'])
     deployed = core_admin_emails(current)
     allowlist = admin_allowlist(deployed, config.get('coreAdminEmails', ''), OPERATOR_EMAIL)
-    # Preserve the setting in installer configuration so later resume retains it.
+    # Preserve the setting in installer configuration so later setup runs retain it.
     if config.get('coreAdminEmails', '') != allowlist:
         update_configuration(directory, config, state, coreAdminEmails=allowlist)
     if deployed != allowlist:
@@ -882,8 +1066,9 @@ def bootstrap_admin(args, directory, config, state):
         azure(config, 'containerapp', 'update', '--name', config['coreName'], '--resource-group', config['resourceGroup'],
               '--set-env-vars', 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
         current = wait_for_core_allowlist(config, allowlist)
-    saved = read_json(output) if output.exists() else {}
-    creator = working_key(saved, allowlist)
+    saved = vault_get(config, ADMIN_KEY_SECRET)
+    credential = {'id': (saved.get('tags') or {}).get('keyId', ''), 'value': saved.get('value', '')} if saved else {}
+    creator = working_key(credential, allowlist)
     if not creator:
         # No key yet, or a saved key whose creator is not allowlisted, which Core does not accept.
         # Core returns the journaled key while it still works, and mints a mak_ key otherwise.
@@ -895,33 +1080,69 @@ def bootstrap_admin(args, directory, config, state):
         creator = working_key(credential, allowlist)
         if not creator:
             raise SetupError('Core returned an invalid administrator credential')
-        write_json(output, credential)
-        if credential.get('cleanupRequired'):
-            raise SetupError('Key saved locally, but legacy share cleanup failed. Resolve Azure Files access and retry bootstrap-admin before granting admin access.')
-    else:
-        # Previous installer versions left a plaintext share cache. Remove it
-        # even when the protected local key allows skipping key creation.
-        cleanup = b'const fs=require("node:fs");const p="/mnt/core-attachments/operator/admin-"+process.argv[2]+".json";try{fs.unlinkSync(p)}catch(e){if(e.code!=="ENOENT")throw e}console.log("MENTRA_ADMIN_END");'
-        result = execute_admin_script(config, current, state['owner'], cleanup)
-        if 'MENTRA_ADMIN_END' not in result.stdout:
-            raise SetupError('Legacy admin credential cleanup did not complete; retry bootstrap-admin')
-    emit(args, {'status': 'admin_key_created', 'file': str(output),
-                'next': 'Store this operator key in your secret manager and use it as MENTRA_ADMIN_TOKEN for report retrieval. '
-                        'It works while ' + creator + ' stays in coreAdminEmails.'})
+    if not saved or saved.get('value') != credential['value']:
+        vault_set(config, ADMIN_KEY_SECRET, credential['value'], keyId=credential['id'])
+    check_admin_access(state['outputs']['coreOrigin'], credential['value'])
+    checkpoint(directory, state, state['phase'], adminKey={'keyVault': config['keyVaultName'], 'secret': ADMIN_KEY_SECRET,
+                                                            'keyId': credential['id'], 'verifiedAt': now()})
+    return {'status': 'admin_key_ready', 'keyVault': config['keyVaultName'], 'secret': ADMIN_KEY_SECRET,
+            'read': admin_key_command(config),
+            'next': 'Use this key as MENTRA_ADMIN_TOKEN to retrieve feedback reports. '
+                    'It works while ' + creator + ' stays in coreAdminEmails.'}
+
+
+def admin_key_command(config):
+    return (f"az keyvault secret show --vault-name {config['keyVaultName']} --name {ADMIN_KEY_SECRET} "
+            f"--subscription {config['subscriptionId']} --query value --output tsv")
+
+
+def check_admin_access(core_origin, token, attempts=30, wait=10):
+    # Core restarts after an allowlist change; the key must retrieve reports.
+    import time
+    request = urllib.request.Request(core_origin.rstrip('/') + '/api/admin/reports?limit=1',
+                                     headers={'Authorization': 'Bearer ' + token})
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                if isinstance(json.load(response).get('reports'), list):
+                    return
+        except (OSError, http.client.HTTPException, ValueError, AttributeError):
+            pass
+        if attempt + 1 < attempts:
+            time.sleep(wait)
+    raise SetupError('The administrator key could not retrieve reports from Core yet. Wait for the Core revision, then run setup again.')
+
+
+def app_name(config, role):
+    # Includes the deployment, so a company's test and production deployments never share a name.
+    return f"{config['displayName']} Mentra {role} ({config['deploymentId']})"
 
 
 def configure_entra(args, directory, config, state):
     preflight(config)
     if state.get('outputs') or state.get('configHash'):
         raise SetupError('Do not replace identity registrations after deployment. Reconcile existing IDs through the standalone helper.')
-    argv = ['bash', str(ROOT / 'scripts/configure-entra.sh'), '--core-name', config['displayName'] + ' Core',
-            '--mobile-name', config['displayName'] + ' Mobile']
+    core, mobile = (getattr(args, 'core_client_id', None) or '').lower(), (getattr(args, 'mobile_client_id', None) or '').lower()
+    if core or mobile:
+        # Apps an Entra administrator created with the helper; only read them here.
+        if not (GUID.fullmatch(core) and GUID.fullmatch(mobile)):
+            raise SetupError('Give both --core-client-id and --mobile-client-id.')
+        for client_id in (core, mobile):
+            found = graph(config, 'GET', graph_filter('applications', f'appId eq {odata(client_id)}', 'signInAudience'))['value']
+            if not found or found[0].get('signInAudience') != 'AzureADMyOrg':
+                raise SetupError(f'{client_id} is not a single-tenant app registration in tenant {config["tenantId"]}.')
+        write_json(directory / 'identity.pending.json', dict(previousBinding=state['binding'],
+                   previousConfigHash=digest(directory / 'deployment.config.json'), coreApiClientId=core, mobileClientId=mobile))
+        recover_identity(directory, config, state)
+        return {'status': 'configured', 'next': 'Run setup again to continue.'}
+    argv = ['bash', str(ROOT / 'scripts/configure-entra.sh'), '--core-name', app_name(config, 'Core'),
+            '--mobile-name', app_name(config, 'Mobile'), '--installer-owner', state['owner']]
     for field, flag in (('coreApiClientId', '--core-client-id'), ('mobileClientId', '--mobile-client-id')):
         if config.get(field):
             argv += [flag, config[field]]
     if args.grant_admin_consent:
         argv.append('--grant-admin-consent')
-    result = json.loads(run(argv, env=environment(config)))
+    result = json.loads(run(argv, env=environment(config), explain=True))
     if result['tenantId'].lower() != config['tenantId'].lower():
         raise SetupError('Entra helper returned another tenant')
     write_json(directory / 'identity.pending.json', dict(previousBinding=state['binding'],
@@ -929,77 +1150,1056 @@ def configure_entra(args, directory, config, state):
                coreApiClientId=result['coreApiClientId'], mobileClientId=result['mobileClientId']))
     recover_identity(directory, config, state)
     write_json(directory / 'entra.json', result)
-    emit(args, {'status': 'configured', 'next': 'Assign employees to the Mobile enterprise application in Entra. Teams Graph creation needs customer app permissions and a Teams application access policy; see handoff documentation.'})
+    return {'status': 'configured', 'next': 'Assign employees to the Mobile enterprise application in Entra. Teams Graph creation needs customer app permissions and a Teams application access policy; see handoff documentation.'}
+
+
+# ---------------------------------------------------------------------------
+# Guided setup: one command that installs, resumes and upgrades.
+# ---------------------------------------------------------------------------
+
+GRAPH_APP_ID = '00000003-0000-0000-c000-000000000000'
+DEFAULT_ACCESS_ROLE = '00000000-0000-0000-0000-000000000000'
+PLANNED_APP_ID = '00000000-0000-0000-0000-000000000000'
+MEETINGS_PERMISSION = 'OnlineMeetings.ReadWrite.All'
+VAULT_RETRIES = 30
+RETRY_SECONDS = 10
+GRAPH_RETRY_SECONDS = 2
+ENTRA_ATTEMPTS = 12
+ENTRA_RETRY_SECONDS = 5
+
+
+class GraphError(SetupError):
+    def __init__(self, code):
+        super().__init__(f'Microsoft Graph request failed (HTTP {code}). Provider output withheld.')
+        self.code = code
+
+
+def signed_in_account():
+    result = subprocess.run(['az', 'account', 'show', '--output', 'json'], text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        return json.loads(result.stdout) if result.returncode == 0 else {}
+    except ValueError:
+        return {}
+
+
+def suggested_deployment_id(display_name):
+    slug = re.sub(r'^[^a-z]+', '', re.sub(r'[^a-z0-9]+', '-', display_name.lower()).strip('-'))
+    candidate = (slug[:12].rstrip('-') or 'company') + '-mentra'
+    return candidate if re.fullmatch(r'[a-z][a-z0-9-]{2,17}[a-z0-9]', candidate) else 'company-mentra'
+
+
+def install_home():
+    # Packages from the install command live in <home>/packages/<version>/.
+    return ROOT.parents[2] if ROOT.parents[1].name == 'packages' else None
+
+
+def default_directory():
+    home = install_home()
+    if not home:
+        return Path('mentra-state')
+    # Packages before 3.3.0-dev.712 defaulted to mentra-setup; never start a second deployment.
+    if not (home / 'mentra-state/state.json').exists() and (home / 'mentra-setup/state.json').exists():
+        return home / 'mentra-setup'
+    return home / 'mentra-state'
+
+
+def setup_command():
+    home = install_home()
+    return f'cd {home} && ./mentra-private-cloud/setup.sh' if home else f'{ROOT / "setup.sh"}'
+
+
+def vault_az(config, *args, missing_ok=False):
+    # New role assignments can take minutes to reach Key Vault; retry only then.
+    import time
+    argv = ['az', 'keyvault', 'secret', *args, '--vault-name', config['keyVaultName'],
+            '--subscription', config['subscriptionId'], '--output', 'json']
+    granted = False
+    for attempt in range(VAULT_RETRIES):
+        result = subprocess.run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode == 0:
+            return json.loads(result.stdout or 'null')
+        if missing_ok and 'SecretNotFound' in result.stderr:
+            return None
+        # Role propagation shows as ForbiddenByRbac (or a bare Forbidden on older CLIs);
+        # a firewall or policy block will not clear by waiting.
+        rbac = 'ForbiddenByRbac' in result.stderr or ('Forbidden' in result.stderr and 'ForbiddenBy' not in result.stderr)
+        if not rbac:
+            reason = next((line for line in result.stderr.splitlines() if line.startswith('ERROR')), 'no details')
+            raise SetupError(f"Key Vault {config['keyVaultName']} refused the request: {reason[:300]}")
+        if attempt + 1 == VAULT_RETRIES:
+            break
+        if not granted:
+            grant_vault_access(config)
+            granted = True
+        time.sleep(RETRY_SECONDS)
+    raise SetupError(f"Key Vault {config['keyVaultName']} refused the request. Setup gave you the Key Vault Secrets "
+                     'Officer role, which can take a few minutes to apply; run setup again shortly. Provider output withheld.')
+
+
+def grant_vault_access(config):
+    # Each deploy gives its runner Key Vault access. An administrator resuming a
+    # deployment someone else finished gets it here, from the same template.
+    with tempfile.TemporaryDirectory(prefix='mentra-config-') as temp:
+        path = Path(temp) / 'deployment.config.json'
+        write_json(path, config)
+        run(['bash', str(ROOT / 'scripts/deploy.sh'), '--bootstrap-only', str(path)], env=environment(config), explain=True)
+
+
+def vault_get(config, name):
+    return vault_az(config, 'show', '--name', name, missing_ok=True)
+
+
+def vault_set(config, name, value, **tags):
+    # Secret values travel through a private file, never a command-line argument.
+    with tempfile.TemporaryDirectory(prefix='mentra-secret-') as temp:
+        path = Path(temp) / 'value'
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(value)
+        extra = ['--tags', *[f'{k}={v}' for k, v in tags.items()]] if tags else []
+        vault_az(config, 'set', '--name', name, '--file', str(path), '--encoding', 'utf-8',
+                 '--content-type', 'text/plain', '--query', 'id', *extra)
+
+
+_GRAPH_TOKENS = {}
+GRAPH_ATTEMPTS = 5
+
+
+def graph_token(tenant):
+    # Tokens last about an hour; a guided run can take longer, so refresh early.
+    import time
+    token, expires = _GRAPH_TOKENS.get(tenant, (None, 0))
+    if time.time() > expires - 300:
+        try:
+            value = json.loads(run(['az', 'account', 'get-access-token', '--tenant', tenant,
+                                    '--resource-type', 'ms-graph', '--output', 'json']))
+            token = value['accessToken']
+            expires = float(value.get('expires_on') or time.time() + 1800)
+        except (SetupError, ValueError, KeyError, TypeError):
+            raise GraphError('token') from None
+        _GRAPH_TOKENS[tenant] = (token, expires)
+    return token
+
+
+def graph(config, method, path, body=None, missing_ok=False):
+    import time
+    url = path if path.startswith('https://') else 'https://graph.microsoft.com/v1.0/' + path
+    data = None if body is None else json.dumps(body).encode()
+    for attempt in range(GRAPH_ATTEMPTS):
+        request = urllib.request.Request(url, data=data, method=method,
+                                         headers={'Authorization': 'Bearer ' + graph_token(config['tenantId']),
+                                                  'Content-Type': 'application/json'})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                raw = response.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as error:
+            if missing_ok and error.code == 404:
+                return None
+            # Throttling is never applied, so any request may repeat it. A POST that
+            # failed otherwise may have been applied; repeating it could duplicate it.
+            retryable = (429,) if method == 'POST' else (429, 500, 502, 503, 504)
+            if error.code not in retryable or attempt + 1 == GRAPH_ATTEMPTS:
+                raise GraphError(error.code) from None
+            try:
+                wait = float(error.headers.get('Retry-After') or 0)
+            except (TypeError, ValueError):
+                wait = 0
+        except (OSError, http.client.HTTPException):
+            # A request that may have reached Graph is only repeated when that is harmless.
+            if method == 'POST' or attempt + 1 == GRAPH_ATTEMPTS:
+                raise GraphError('network') from None
+            wait = 0
+        except ValueError:
+            raise GraphError('response') from None
+        time.sleep(min(max(wait, GRAPH_RETRY_SECONDS * 2 ** attempt), 30))
+
+
+def odata(value):
+    # An OData string literal; a quote inside it is doubled, as in O'Reilly.
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def graph_filter(collection, expression, select=''):
+    query = '$filter=' + urllib.parse.quote(expression, safe="'=")
+    return f'{collection}?{query}' + (f'&$select={select}' if select else '')
+
+
+def service_principal(config, app_id, select='id,appRoles,appRoleAssignmentRequired'):
+    found = graph(config, 'GET', graph_filter('servicePrincipals', f"appId eq {odata(app_id)}", select))['value']
+    return found[0] if found else None
+
+
+# --- Plan: Azure's own what-if preview, summarized -------------------------
+
+FRIENDLY_TYPES = {
+    'Microsoft.App/containerApps': 'Container App', 'Microsoft.App/managedEnvironments': 'Container Apps environment',
+    'Microsoft.App/managedEnvironments/managedCertificates': 'TLS certificate',
+    'Microsoft.App/managedEnvironments/storages': 'Report storage mount',
+    'Microsoft.DocumentDB/databaseAccounts': 'Cosmos DB database', 'Microsoft.Storage/storageAccounts': 'Storage account',
+    'Microsoft.Storage/storageAccounts/fileServices': 'File service',
+    'Microsoft.Storage/storageAccounts/fileServices/shares': 'Report file share',
+    'Microsoft.Communication/communicationServices': 'Azure Communication Services',
+    'Microsoft.ContainerRegistry/registries': 'Container registry', 'Microsoft.KeyVault/vaults': 'Key Vault',
+    'Microsoft.ManagedIdentity/userAssignedIdentities': 'Managed identity',
+    'Microsoft.Authorization/roleAssignments': 'Role assignment'}
+
+
+ROLE_PURPOSES = {'7f951dda-4ed3-4680-a7ca-43fe172d538d': 'apps can pull the image',
+                 '4633458b-17de-408a-b874-0445c86b69e6': 'an app can read one of its own secrets',
+                 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7': 'you can manage Key Vault secrets'}
+
+
+def _resource(change):
+    tail = change['resourceId'].split('/providers/')[-1].split('/')
+    kind = '/'.join(tail[:2] + tail[3::2]) if len(tail) > 2 else '/'.join(tail[:2])
+    name = tail[-1]
+    if kind == 'Microsoft.Authorization/roleAssignments':
+        role = str(((change.get('after') or change.get('before') or {}).get('properties') or {}).get('roleDefinitionId', ''))
+        name = next((purpose for role_id, purpose in ROLE_PURPOSES.items() if role.endswith(role_id)), name)
+    return FRIENDLY_TYPES.get(kind, kind), name
+
+
+def _meaningful(deltas, prefix=''):
+    # what-if lists server-managed defaults as deletions and unresolved
+    # references as edits; only real configuration differences remain.
+    found = []
+    for delta in deltas or []:
+        path = prefix + delta.get('path', '')
+        if delta.get('children'):
+            found += _meaningful(delta['children'], path + '.')
+        elif delta.get('propertyChangeType') in ('Create', 'Modify', 'Array'):
+            after = delta.get('after')
+            if not (isinstance(after, str) and after.startswith('[')):
+                found.append(path)
+    return found
+
+
+def _describe(paths):
+    labels = []
+    for path, label in (('.image', 'new software image'), ('.env', 'settings'), ('secrets', 'secrets'),
+                        ('customDomains', 'custom web address'), ('probes', 'health checks'),
+                        ('registries', 'image registry'), ('scale', 'scaling')):
+        if any(label not in labels and (path in p) for p in paths):
+            labels.append(label)
+    return labels or ['settings']
+
+
+def summarize_preview(preview):
+    created, changed, unchanged = [], [], 0
+    for template in ('bootstrap', 'access', 'main'):
+        for change in (preview.get(template) or {}).get('changes', []):
+            kind, name = _resource(change)
+            if change['changeType'] == 'Create':
+                created.append(f'{kind} {name}')
+            elif change['changeType'] == 'Modify' and _meaningful(change.get('delta')):
+                changed.append(f'{kind} {name}: ' + ', '.join(_describe(_meaningful(change.get('delta')))))
+            elif change['changeType'] == 'Delete':
+                changed.append(f'{kind} {name}: removed')
+            else:
+                unchanged += 1
+    def counted(items):
+        return sorted(f'{item} (x{items.count(item)})' if items.count(item) > 1 else item for item in set(items))
+    return {'create': counted(created), 'change': counted(changed), 'unchanged': unchanged}
+
+
+def preview(directory, config, state):
+    # A first install with a custom address deploys on Azure's address first.
+    hostname = config['workspaceHostname'] if (state.get('dns') or state.get('domainVerified')) else ''
+    effective = dict(config, workspaceHostname=hostname)
+    write_json(directory / 'effective.config.json', effective)
+    output = run(['bash', str(ROOT / 'scripts/deploy.sh'), '--what-if', str(directory / 'effective.config.json')],
+                 env=environment(config), explain=True)
+    return summarize_preview(json.loads(output))
+
+
+def print_preview(summary, config):
+    print(f"Azure preview for resource group {config['resourceGroup']} ({config['location']}):")
+    if summary['create']:
+        print(f"  Create {len(summary['create'])}:")
+        for item in summary['create']:
+            print('    + ' + item)
+    if summary['change']:
+        print(f"  Change {len(summary['change'])}:")
+        for item in summary['change']:
+            print('    ~ ' + item)
+    print(f"  Unchanged: {summary['unchanged']}")
+    if not summary['create'] and not summary['change']:
+        print('  Nothing to change.')
+
+
+def plan(args, directory, config, state):
+    checks = ensure_group(config, state)
+    summary = preview(directory, config, state)
+    return {'deployment': config['deploymentId'], 'subscription': config['subscriptionId'], 'tenant': config['tenantId'],
+            'region': config['location'], 'group': config['resourceGroup'], 'image': config['sourceImage'],
+            'resourceGroup': 'created empty for the preview' if checks['resourceGroup'] == 'new' else 'existing',
+            'preview': summary,
+            'billing': 'These resources incur Azure charges. Review Azure Pricing Calculator and company budget before install.',
+            'network': 'Authenticated public HTTPS ingress, Cosmos and Key Vault endpoints; this profile does not provision private endpoints.'}
+
+
+# --- Prompts ---------------------------------------------------------------
+
+def section(title):
+    print(f'\n== {title}')
+
+
+def ask(prompt, default='', interactive=True, secret=False):
+    if not interactive:
+        return default
+    label = prompt + (f' [{default}]' if default and not secret else '') + ': '
+    value = getpass.getpass(label) if secret else input(label)
+    return value.strip() or default
+
+
+def confirm(prompt, default=True, interactive=True):
+    if not interactive:
+        return default
+    hint = 'Y/n' if default else 'y/N'
+    while True:
+        value = input(f'{prompt} [{hint}] ').strip().lower()
+        if not value:
+            return default
+        if value in ('y', 'yes'):
+            return True
+        if value in ('n', 'no'):
+            return False
+
+
+# --- Azure and Entra readiness ---------------------------------------------
+
+def missing_providers(config):
+    return [p for p in PROVIDERS
+            if azure(config, 'provider', 'show', '--namespace', p)['registrationState'] != 'Registered']
+
+
+def ensure_providers(config, interactive):
+    missing = missing_providers(config)
+    if not missing:
+        return
+    print('This subscription has not enabled: ' + ', '.join(missing) + '.')
+    if not confirm('Register them now? (needs permission to register resource providers)', True, interactive):
+        raise SetupError('Register these resource providers, then run setup again: ' + ', '.join(missing))
+    for namespace in missing:
+        print(f'  Registering {namespace} (this can take a few minutes)...')
+        run(['az', 'provider', 'register', '--namespace', namespace, '--wait', '--subscription', config['subscriptionId'],
+             '--output', 'none'])
+
+
+def grant_admin_consent(config):
+    run(['bash', str(ROOT / 'scripts/configure-entra.sh'), '--consent-only', '--mobile-client-id', config['mobileClientId']],
+        env=environment(config), explain=True)
+
+
+def mobile_access(config):
+    sp = service_principal(config, config['mobileClientId'], 'id,appRoleAssignmentRequired')
+    if not sp:
+        return {'servicePrincipalId': None, 'consent': False, 'assigned': False}
+    grants = graph(config, 'GET', f"servicePrincipals/{sp['id']}/oauth2PermissionGrants")['value']
+    scopes = ' '.join(g.get('scope', '') for g in grants if g.get('consentType') == 'AllPrincipals').split()
+    assigned = graph(config, 'GET', f"servicePrincipals/{sp['id']}/appRoleAssignedTo?$top=1")['value']
+    return {'servicePrincipalId': sp['id'], 'assigned': bool(assigned),
+            'consent': all(s in scopes for s in ('mentra.session', 'Teams.ManageCalls', 'Teams.ManageChats'))}
+
+
+def resolve_principal(config, entry):
+    if '@' in entry:
+        user = graph(config, 'GET', 'users/' + urllib.parse.quote(entry) + '?$select=id,displayName', missing_ok=True)
+        if not user:
+            found = graph(config, 'GET', graph_filter('users', f"mail eq {odata(entry)}", 'id,displayName'))['value']
+            if len(found) > 1:
+                return {'ambiguous': True}
+            user = found[0] if found else None
+        return dict(user, collection='users') if user else None
+    found = graph(config, 'GET', graph_filter('groups', f"displayName eq {odata(entry)}", 'id,displayName'))['value']
+    if len(found) > 1:
+        return {'ambiguous': True}
+    return dict(found[0], collection='groups') if found else None
+
+
+def assign_employees(config, sp_id, entries):
+    """Returns names assigned, and the entries that need attention with the reason."""
+    assigned, problems = [], []
+    for entry in filter(None, (e.strip() for e in entries)):
+        try:
+            principal = resolve_principal(config, entry)
+            if not principal:
+                problems.append((entry, 'not found in Entra'))
+                continue
+            if principal.get('ambiguous'):
+                problems.append((entry, 'matches more than one user or group; use an email address or a unique group name'))
+                continue
+            name = principal.get('displayName') or entry
+            try:
+                graph(config, 'POST', f'servicePrincipals/{sp_id}/appRoleAssignedTo',
+                      {'principalId': principal['id'], 'resourceId': sp_id, 'appRoleId': DEFAULT_ACCESS_ROLE})
+            except GraphError as error:
+                if error.code not in (400, 409):
+                    raise
+                # Graph answers 400 both for an existing assignment, the desired end
+                # state, and for a principal it cannot assign, such as a mail-only group.
+                existing = graph(config, 'GET', graph_filter(f"{principal['collection']}/{principal['id']}/appRoleAssignments",
+                                                             f'resourceId eq {sp_id}', 'id'))['value']
+                if not existing:
+                    problems.append((name, 'cannot be assigned: use a user or a security group '
+                                           '(assigning groups needs Microsoft Entra ID P1 or P2)'))
+                    continue
+            assigned.append(name)
+            if principal['collection'] == 'groups' and graph(
+                    config, 'GET', f"groups/{principal['id']}/members/microsoft.graph.group?$top=1&$select=id")['value']:
+                problems.append((name, 'assigned, but members of groups inside it are not included; assign those groups too'))
+        except GraphError as error:
+            problems.append((entry, f'could not be assigned (Microsoft Graph HTTP {error.code}); check your Entra role'))
+    return assigned, problems
+
+
+def entra_handoff(config, state):
+    # For an Entra administrator; setup itself only needs the two IDs it prints.
+    return {'step': 'Sign-in apps', 'action': (
+        f"An Application Administrator or Cloud Application Administrator, signed in to tenant {config['tenantId']}, "
+        f'downloads the installer without starting setup (the guide\'s install command, ending in '
+        f'"&& MENTRA_START=0 bash mentra-install.sh") and runs:\n'
+        f'    ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh --core-name {shlex.quote(app_name(config, "Core"))} '
+        f'--mobile-name {shlex.quote(app_name(config, "Mobile"))} --installer-owner {state["owner"]} --grant-admin-consent\n'
+        f'  It prints coreApiClientId and mobileClientId. Then run: {setup_command()} configure-entra '
+        '--core-client-id CORE_ID --mobile-client-id MOBILE_ID')}
+
+
+def entra_handoffs(args, config, interactive):
+    """Consent and employee access; returns any remaining administrator steps."""
+    handoffs = []
+    import time
+    try:
+        access = mobile_access(config)
+        for attempt in range(ENTRA_ATTEMPTS):
+            # A service principal created moments ago can take a while to appear.
+            if access['servicePrincipalId']:
+                break
+            time.sleep(ENTRA_RETRY_SECONDS)
+            access = mobile_access(config)
+    except GraphError:
+        return [{'step': 'Employee sign-in', 'action': 'Setup could not read the Entra applications. An Entra administrator should grant admin consent and assign employees to the Mobile application.'}]
+    consent_url = permissions_page(config['mobileClientId'])
+    if not access['consent']:
+        if confirm('Grant tenant-wide consent for the Mentra sign-in app now? (needs an Entra admin role)', True, interactive):
+            try:
+                # Success means consent was granted; Graph can take a while to list it.
+                grant_admin_consent(config)
+                access['consent'] = True
+            except SetupError:
+                pass
+        if not access['consent']:
+            handoffs.append({'step': 'Admin consent', 'action': 'A Global Administrator, Privileged Role Administrator or '
+                             'Cloud Application Administrator opens this page and selects "Grant admin consent": ' + consent_url})
+    sp_id = access['servicePrincipalId']
+    portal = (f'https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ManagedAppMenuBlade/~/Users/objectId/{sp_id}'
+              f"/appId/{config['mobileClientId']}" if sp_id else
+              'https://entra.microsoft.com/#view/Microsoft_AAD_IAM/StartboardApplicationsMenuBlade/~/AppAppsPreview '
+              f"(search for {config['mobileClientId']})")
+    entries = [e for e in (getattr(args, 'employees', '') or '').split(',') if e.strip()]
+    if not access['assigned'] and not entries and interactive:
+        entries = ask('Who can sign in? Employee emails or group names, comma-separated (Enter to do this later)',
+                      '', interactive).split(',')
+    if sp_id and any(e.strip() for e in entries):
+        assigned, problems = assign_employees(config, sp_id, entries)
+        if assigned:
+            print('  Allowed to sign in: ' + ', '.join(assigned))
+            access['assigned'] = True
+        for entry, reason in problems:
+            print(f'  {entry}: {reason}')
+    if not access['assigned']:
+        handoffs.append({'step': 'Employee access', 'action': 'Add employees or groups under Users and groups: ' + portal})
+    return handoffs
+
+
+# --- DNS --------------------------------------------------------------------
+
+def find_azure_dns_zone(config, host):
+    try:
+        zones = azure(config, 'network', 'dns', 'zone', 'list')
+    except SetupError:
+        return None
+    matches = [z for z in zones if host.endswith('.' + z['name'].lower().rstrip('.'))]
+    return max(matches, key=lambda z: len(z['name'])) if matches else None
+
+
+def wait_for_dns(config, state, attempts=40):
+    import time
+    for attempt in range(attempts):
+        try:
+            check_dns(config, state)
+            return True
+        except SetupError:
+            if attempt + 1 < attempts:
+                time.sleep(RETRY_SECONDS + 5)
+    return False
+
+
+def handle_dns(args, directory, config, state, interactive):
+    # Returns True once the records resolve; otherwise prints the handoff.
+    try:
+        check_dns(config, state)
+        return True
+    except SetupError:
+        pass
+    host = config['workspaceHostname']
+    zone = find_azure_dns_zone(config, host)
+    if zone and confirm(f"The DNS zone {zone['name']} is in this Azure subscription. Add the two records now?", True, interactive):
+        dns_args = argparse.Namespace(**dict(vars(args), dns_zone=zone['name'], dns_resource_group=zone['resourceGroup'],
+                                             dns_subscription=None))
+        try:
+            configure_azure_dns(dns_args, directory, config, state)
+        except SetupError as error:
+            print(f'  Setup could not add the records itself: {error}')
+        else:
+            print('  Records added. Waiting for them to resolve...')
+            if wait_for_dns(config, state):
+                return True
+            print(f"  They don't resolve yet. If {zone['name']} is not delegated to Azure DNS at your domain registrar "
+                  '(check its NS records), add the records where your DNS is actually hosted.')
+    print(f'Your DNS administrator needs to add these records for {host} (DNS only, no proxy; leave mail records alone):')
+    for record in state['dns']:
+        print(f"  {record['type']:5} {record['name']}  ->  {record['value']}")
+    print(f'They are also saved in {directory / "dns-records.json"}. When the records are in place, run setup again.')
+    return False
+
+
+# --- Teams meeting creation -------------------------------------------------
+
+def create_meetings_app(directory, config, state):
+    # Creates the Graph app that schedules meetings, or on a rerun reuses the one
+    # setup recorded. Its secret goes to Key Vault the moment it exists.
+    import time
+    name = app_name(config, 'Meetings')
+    graph_sp = service_principal(config, GRAPH_APP_ID)
+    role = next(r for r in graph_sp['appRoles'] if r.get('value') == MEETINGS_PERMISSION)
+    tag = 'mentraInstallerOwner:' + state['owner']
+    if state.get('meetingsAppId'):
+        found = graph(config, 'GET', graph_filter('applications', f"appId eq {odata(state['meetingsAppId'])}", 'id,appId'))['value']
+        if not found:
+            raise SetupError(f"The meetings app {state['meetingsAppId']} that setup created is no longer in Entra. "
+                             'Pass --teams-client-id to use another app.')
+        app = found[0]
+    else:
+        # Only an app setup created (tagged when created) is reused. Adopting another
+        # app would extend the meetings permission to credentials its owners hold.
+        found = graph(config, 'GET', graph_filter('applications', f"displayName eq {odata(name)}", 'id,appId,tags'))['value']
+        mine = [a for a in found if tag in (a.get('tags') or [])]
+        if len(mine) == 1:
+            app = mine[0]
+        elif found:
+            raise SetupError(f'Entra already has an app named "{name}" that setup did not create. '
+                             'Pass --teams-client-id to use it, or rename it and run setup again.')
+        else:
+            app = graph(config, 'POST', 'applications', {
+                'displayName': name, 'signInAudience': 'AzureADMyOrg', 'tags': [tag],
+                'requiredResourceAccess': [{'resourceAppId': GRAPH_APP_ID, 'resourceAccess': [{'id': role['id'], 'type': 'Role'}]}]})
+        checkpoint(directory, state, state['phase'], meetingsAppId=app['appId'])
+    sp = None
+    for attempt in range(12):
+        # A new registration takes a moment to become visible.
+        sp = service_principal(config, app['appId'], 'id')
+        if sp:
+            break
+        try:
+            sp = graph(config, 'POST', 'servicePrincipals', {'appId': app['appId']})
+            break
+        except GraphError:
+            time.sleep(5)
+    if not sp:
+        raise SetupError('The meetings application was created but its service principal is not available yet. Run setup again.')
+    consent = None
+    for attempt in range(ENTRA_ATTEMPTS):
+        try:
+            graph(config, 'POST', f"servicePrincipals/{graph_sp['id']}/appRoleAssignedTo",
+                  {'principalId': sp['id'], 'resourceId': graph_sp['id'], 'appRoleId': role['id']})
+            consent = True
+            break
+        except GraphError as error:
+            # An existing grant also fails, and a new service principal can lag; 403 means no permission.
+            consent = meetings_consent(config, app['appId'])
+            if consent or error.code == 403:
+                break
+            time.sleep(ENTRA_RETRY_SECONDS)
+    expires = None
+    if not vault_get(config, teams_secret(app['appId'])):
+        expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        label = f'Mentra Private Cloud {uuid.uuid4().hex[:8]}'
+        try:
+            password = graph(config, 'POST', f"applications/{app['id']}/addPassword",
+                             {'passwordCredential': {'displayName': label, 'endDateTime': expires}})
+        except GraphError:
+            # Graph may have created it without its reply reaching us; its secret is lost, so remove it.
+            with contextlib.suppress(GraphError, KeyError, TypeError):
+                for credential in graph(config, 'GET', f"applications/{app['id']}?$select=passwordCredentials")['passwordCredentials']:
+                    if credential.get('displayName') == label:
+                        graph(config, 'POST', f"applications/{app['id']}/removePassword", {'keyId': credential['keyId']})
+            raise
+        try:
+            vault_set(config, teams_secret(app['appId']), password['secretText'])
+        except BaseException:
+            # The one-time secret is gone; remove its credential instead of leaking it.
+            with contextlib.suppress(GraphError):
+                graph(config, 'POST', f"applications/{app['id']}/removePassword", {'keyId': password['keyId']})
+            raise
+    return app['appId'], consent, expires
+
+
+def check_graph_secret(config, client_id, secret, attempts=6):
+    # Sign in as the app before its secret replaces anything. A secret made
+    # minutes ago can take a moment before Microsoft accepts it.
+    import time
+    body = urllib.parse.urlencode({'client_id': client_id, 'client_secret': secret, 'grant_type': 'client_credentials',
+                                   'scope': 'https://graph.microsoft.com/.default'}).encode()
+    url = f"https://login.microsoftonline.com/{config['tenantId']}/oauth2/v2.0/token"
+    for attempt in range(attempts):
+        request = urllib.request.Request(url, data=body, method='POST',
+                                         headers={'Content-Type': 'application/x-www-form-urlencoded'})
+        try:
+            with urllib.request.urlopen(request, timeout=30):
+                return
+        except urllib.error.HTTPError as error:
+            try:
+                codes = json.loads(error.read() or b'{}').get('error_codes') or []
+            except ValueError:
+                codes = []
+            # 7000215: wrong secret, 700016: unknown app; both also occur while new credentials propagate.
+            if not set(codes) & {7000215, 700016}:
+                break
+        except (OSError, http.client.HTTPException):
+            if attempt + 1 == attempts:
+                raise SetupError('Could not reach Microsoft sign-in to check the client secret. Run setup again.') from None
+        time.sleep(RETRY_SECONDS)
+    raise SetupError(f'Microsoft sign-in rejected the client secret for Graph app {client_id}. '
+                     'Check that it belongs to that app and has not expired.')
+
+
+def meetings_consent(config, client_id):
+    # True when the app holds the Graph application permission; None if unknown.
+    try:
+        graph_sp = service_principal(config, GRAPH_APP_ID)
+        role = next(r for r in graph_sp['appRoles'] if r.get('value') == MEETINGS_PERMISSION)
+        app_sp = service_principal(config, client_id, 'id')
+        if not app_sp:
+            return False
+        granted = graph(config, 'GET', f"servicePrincipals/{app_sp['id']}/appRoleAssignments")['value']
+        return any(a.get('appRoleId') == role['id'] and a.get('resourceId') == graph_sp['id'] for a in granted)
+    except (GraphError, StopIteration, TypeError, KeyError):
+        return None
+
+
+def teams_policy_commands(client_id, organizer_id, tenant_id, previous_client_id=''):
+    add = f"Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Add='{client_id}'}}"
+    commands = ['Install-Module MicrosoftTeams -Scope CurrentUser -Force   # first time only',
+                f'Connect-MicrosoftTeams -TenantId {tenant_id} -UseDeviceAuthentication',
+                '# Create the MentraMeetings policy, or add this app to it:',
+                f'if (Get-CsApplicationAccessPolicy -Identity MentraMeetings -ErrorAction SilentlyContinue) '
+                f'{{ {add} }} else {{ New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id} }}']
+    if previous_client_id and previous_client_id != client_id:
+        commands.append(f"Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Remove='{previous_client_id}'}}"
+                        '   # the Graph app it replaces')
+    commands += ['# Let employees create meetings as themselves. This replaces any policy already granted to everyone;',
+                 '# if your tenant has one, add the app to that policy instead (Set-CsApplicationAccessPolicy with @{Add=...}).',
+                 'Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global']
+    if organizer_id:
+        commands.append(f'Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Identity {organizer_id}')
+    commands.append('# Policy changes can take up to 30 minutes to apply.')
+    return commands
+
+
+def permissions_page(app_id):
+    # The app's API permissions page, where an administrator selects "Grant admin consent".
+    return f'https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/{app_id}'
+
+
+def teams_secret(client_id):
+    return 'teams-graph-client-secret-' + client_id
+
+
+def configure_teams(args, directory, config, state, interactive=None):
+    interactive = sys.stdin.isatty() and not getattr(args, 'yes', False) if interactive is None else interactive
+    if not state.get('outputs', {}).get('keyVaultName') and state['phase'] not in ('deployed', 'infrastructure_verified'):
+        raise SetupError('Finish installation first; meeting creation is added afterwards.')
+    previous = config.get('teamsGraphClientId') or ''
+    client_id = (getattr(args, 'teams_client_id', None) or previous).strip().lower()
+    secret, consent, expires, created = None, None, None, False
+    if not client_id:
+        if confirm('Create the Microsoft Graph app that schedules meetings now? (needs an Entra admin role)', True, interactive):
+            client_id, consent, expires = create_meetings_app(directory, config, state)
+            created = True
+            print(f'  Created app {client_id}; its client secret went straight to Key Vault.')
+        else:
+            client_id = ask('Client ID of your existing Graph app with OnlineMeetings.ReadWrite.All', '', interactive)
+    if not GUID.fullmatch(client_id or ''):
+        raise SetupError('A Graph application client ID is required for meeting creation.')
+    if not created:
+        if getattr(args, 'teams_secret_stdin', False):
+            secret = sys.stdin.readline().strip()
+        elif interactive:
+            secret = ask('Client secret for that app (hidden; Enter keeps the saved one)', '', interactive, secret=True)
+    # Each Graph app has its own secret, so saving a new app's secret leaves the
+    # running deployment untouched until the rollout switches ID and secret together.
+    if secret:
+        print('  Checking the client secret with Microsoft sign-in...')
+        check_graph_secret(config, client_id, secret)
+        vault_set(config, teams_secret(client_id), secret)
+        if client_id == previous:
+            print('  The renewed secret reaches the running service within about 30 minutes, when Container Apps '
+                  'refreshes its Key Vault references.')
+    elif not created:
+        saved = vault_get(config, teams_secret(client_id))
+        if not saved:
+            raise SetupError(f'Provide the client secret for Graph app {client_id} (--teams-secret-stdin); '
+                             'Key Vault has no secret saved for that app.')
+        # A saved secret may have expired or been revoked since it was last used.
+        print('  Checking the saved client secret with Microsoft sign-in...')
+        try:
+            check_graph_secret(config, client_id, saved.get('value', ''))
+        except SetupError:
+            raise SetupError(f'The saved client secret for Graph app {client_id} no longer signs in. Add a new one in '
+                             'Entra and provide it with --teams-secret-stdin.') from None
+    organizer = getattr(args, 'teams_organizer', None) or (config.get('teamsGraphOrganizerId') or '')
+    if not organizer and interactive:
+        organizer = ask('Licensed account that hosts meetings for guests (email; Enter to skip)', '', interactive)
+    if organizer and not GUID.fullmatch(organizer):
+        user = resolve_principal(config, organizer)
+        if not user or user.get('ambiguous') or user.get('collection') != 'users':
+            raise SetupError(f'{organizer} is not a single Entra user; give the organizer\'s email address.')
+        organizer = user['id']
+    # Until the rollout below completes, the deployment counts as unfinished, so
+    # running setup again retries it rather than reporting a finished install.
+    checkpoint(directory, state, 'deploying')
+    changes = {k: v for k, v in (('teamsGraphTenantId', config['tenantId']), ('teamsGraphClientId', client_id),
+                                 ('teamsGraphOrganizerId', organizer)) if config.get(k, '') != v}
+    if changes:
+        update_configuration(directory, config, state, **changes)
+    if consent is None:
+        consent = meetings_consent(config, client_id)
+    policy = teams_policy_commands(client_id, organizer, config['tenantId'], previous)
+    # Kept with the setup files, for the Teams administrator who runs it.
+    (directory / 'teams-policy.ps1').write_text('\n'.join(policy) + '\n')
+    rollout = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
+    result = {'status': 'meeting_creation_configured' if rollout['status'] == 'infrastructure_verified' else rollout['status'],
+              'graphClientId': client_id, 'adminConsent': {True: 'granted', False: 'needed'}.get(consent, 'unknown'),
+              'teamsPolicy': policy, 'teamsPolicyFile': str(directory / 'teams-policy.ps1')}
+    if not consent:
+        result['consentLink'] = permissions_page(client_id)
+    if expires:
+        result['secretExpires'] = expires
+    return result
+
+
+# --- Upgrade -----------------------------------------------------------------
+
+def find_previous_package(state):
+    home = install_home()
+    candidates = []
+    if home:
+        candidates += sorted((home / 'packages').glob('*/mentra-private-cloud'))
+        candidates.append(home / 'mentra-private-cloud')
+    for candidate in candidates:
+        try:
+            if candidate.resolve() != ROOT and digest(candidate / 'release.json') == state['releaseHash']:
+                return candidate.resolve()
+        except OSError:
+            continue
+    return None
+
+
+def relink():
+    home = install_home()
+    link = home / 'mentra-private-cloud' if home else None
+    if link is None or not link.is_symlink():
+        return
+    target = f'packages/{ROOT.parent.name}/mentra-private-cloud'
+    if os.readlink(link) != target:
+        temporary = home / '.mentra-private-cloud.link'
+        temporary.unlink(missing_ok=True)
+        temporary.symlink_to(target)
+        temporary.replace(link)
+
+
+def report_storage_account(config):
+    # The account behind Core's report mount, even when the group holds others.
+    if not config.get('environmentName'):
+        return 'STORAGE_ACCOUNT'
+    try:
+        return azure(config, 'containerapp', 'env', 'storage', 'show', '--name', config['environmentName'],
+                     '--resource-group', config['resourceGroup'], '--storage-name', 'core-attachments',
+                     '--query', 'properties.azureFile.accountName') or 'STORAGE_ACCOUNT'
+    except SetupError:
+        return 'STORAGE_ACCOUNT'
+
+
+def upgrade_command(args, directory, interactive=None):
+    interactive = sys.stdin.isatty() and not getattr(args, 'yes', False) if interactive is None else interactive
+    state = read_json(directory / 'state.json')
+    pending = read_json(directory / 'upgrade.pending.json') if (directory / 'upgrade.pending.json').exists() else {}
+    target_hash = digest(ROOT / 'release.json')
+    if target_hash not in (state['releaseHash'], pending.get('targetReleaseHash')):
+        previous = Path(args.previous_package).resolve() if getattr(args, 'previous_package', None) else find_previous_package(state)
+        if not previous:
+            raise SetupError('Cannot find the package this deployment runs. Pass --previous-package PATH to it.')
+        old = read_json(previous / 'release.json')
+        target = check_release()
+        if release_version(target) < release_version(old):
+            raise SetupError(f"This package ({target['releaseTag']}) is older than the deployment's ({old['releaseTag']}). "
+                             f'Run {previous / "setup.sh"} instead.')
+        section(f"Upgrade from {old['releaseTag']} to {target['releaseTag']}")
+        if not upgradable_phase(config_for_phase(directory), state):
+            raise SetupError(f"The current deployment has not finished setup ({state['phase']}). "
+                             f'Finish it with {previous / "setup.sh"} first, then upgrade.')
+        config = read_json(directory / 'deployment.config.json')
+        check_upgradable(config)
+        upcoming = dict(config, **{k: target[k] for k in ('sourceImage', 'releaseTag', 'managedMiniapps', 'clientMinVersion')},
+                        clientRecommendedVersion=target['clientMinVersion'])
+        # An upgrade is only confirmed against Azure's own preview of it.
+        print_preview(preview(directory, upcoming, state), upcoming)
+        print('Signing keys are safe in Key Vault. Azure backs up the database every 4 hours (restored through an Azure\n'
+              'support request); for a restore point you control, export it with your database tools first.\n'
+              'Snapshot the report files:\n'
+              f"  az storage share-rm snapshot --resource-group {config['resourceGroup']} --name core-attachments "
+              f"--storage-account {report_storage_account(config)}\n"
+              'A software image can be rolled back, but database changes cannot.')
+        confirmed = getattr(args, 'backup_confirmed', False) or confirm(
+            'Have you backed up the database and report files, and are you ready to upgrade?', False, interactive)
+        if not confirmed:
+            raise SetupError('Upgrade not started. Run it again after backing up, or pass --backup-confirmed.')
+        select_upgrade(argparse.Namespace(**dict(vars(args), previous_package=str(previous), backup_confirmed=True)), directory)
+    config, state, release = load(directory)
+    result = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
+    if result['status'] == 'infrastructure_verified':
+        relink()
+        result = dict(result, status='upgraded', release=release['releaseTag'])
+    return result
+
+
+# --- The guided command -----------------------------------------------------
+
+def guided(args, directory):
+    interactive = sys.stdin.isatty() and not getattr(args, 'yes', False)
+    release = check_release()
+    print(f"Mentra Private Cloud {release['releaseTag']} setup. Run this same command again at any time to continue.")
+    if not (directory / 'state.json').exists():
+        section('Your company and Azure subscription')
+        init(args, directory)
+    state = read_json(directory / 'state.json')
+    pending = read_json(directory / 'upgrade.pending.json') if (directory / 'upgrade.pending.json').exists() else {}
+    if digest(ROOT / 'release.json') not in (state['releaseHash'], pending.get('targetReleaseHash')):
+        result = upgrade_command(args, directory, interactive)
+        return finish(directory, result)
+    config, state, release = load(directory)
+    relink()
+    section('Checking the Azure subscription')
+    ensure_providers(config, interactive)
+    checks = preflight(config)
+    if checks['resourceGroup'] == 'new' and state.get('outputs'):
+        raise SetupError(f"Resource group {config['resourceGroup']} no longer exists, so this deployment was deleted. "
+                         'To install again, follow "Start over" in the guide: remove the setup folder '
+                         '~/mentra-install/mentra-state and the Entra apps, then run the install command.')
+    entra_missing = not (config.get('coreApiClientId') and config.get('mobileClientId'))
+    if state['phase'] in ('initialized', 'identity_configured'):
+        section('Preview')
+        checks = ensure_group(config, state)
+        # Nothing in Entra changes before the confirmation; the preview uses
+        # stand-in IDs for sign-in apps that don't exist yet.
+        planned = dict(config, coreApiClientId=config.get('coreApiClientId') or PLANNED_APP_ID,
+                       mobileClientId=config.get('mobileClientId') or PLANNED_APP_ID)
+        print_preview(preview(directory, planned, state), config)
+        if entra_missing:
+            print(f"Setup also creates two Microsoft Entra app registrations for employee sign-in: "
+                  f"\"{app_name(config, 'Core')}\" and \"{app_name(config, 'Mobile')}\".")
+        print('These resources incur Azure charges; this profile uses authenticated public endpoints.')
+        if not confirm('Create these resources now? This takes about 15 minutes.', True, interactive):
+            if checks['resourceGroup'] == 'new':
+                # The group was created only for the preview and is still empty.
+                print('  Removing the empty resource group created for the preview...')
+                run(['az', 'group', 'delete', '--name', config['resourceGroup'], '--yes',
+                     '--subscription', config['subscriptionId']])
+            done = 'Nothing was created.' if entra_missing else 'No Azure resources were created.'
+            return finish(directory, {'status': 'stopped', 'next': done + ' Run setup again when you are ready.'})
+    if entra_missing:
+        section('Creating the Microsoft sign-in apps')
+        try:
+            configure_entra(argparse.Namespace(**dict(vars(args), grant_admin_consent=False, core_client_id=None,
+                                                      mobile_client_id=None)), directory, config, state)
+        except SetupError as error:
+            if 'did not create' in str(error):
+                # The names are taken by apps another team owns; recreating them elsewhere would fail the same way.
+                raise
+            print(f'  Setup could not create them with your account: {error}')
+            checkpoint(directory, state, state['phase'], handoffs=[entra_handoff(config, state)])
+            return finish(directory, {'status': 'awaiting_entra', 'next': (
+                f'After the Entra administrator has run the command above, record the two IDs with '
+                f'{setup_command()} configure-entra --core-client-id CORE_ID --mobile-client-id MOBILE_ID, '
+                'then run setup again.')})
+        config, state, release = load(directory)
+    section('Employee sign-in')
+    handoffs = entra_handoffs(args, config, interactive)
+    checkpoint(directory, state, state['phase'], handoffs=handoffs)
+    result = {'status': state['phase']}
+    if state['phase'] != 'infrastructure_verified':
+        section('Installing')
+        dns_ready = False
+        if state['phase'] == 'awaiting_dns':
+            dns_ready = handle_dns(args, directory, config, state, interactive)
+            if not dns_ready:
+                return finish(directory, {'status': 'awaiting_dns', 'next': 'Run setup again once the DNS records are in place.'})
+        result = install(argparse.Namespace(**dict(vars(args), dns_ready=dns_ready)), directory, config, state)
+        if result['status'] == 'awaiting_dns':
+            section('Your web address')
+            if not handle_dns(args, directory, config, state, interactive):
+                return finish(directory, {'status': 'awaiting_dns', 'next': 'Run setup again once the DNS records are in place.'})
+            result = install(argparse.Namespace(**dict(vars(args), dns_ready=True)), directory, config, state)
+        config, state, release = load(directory)
+    section('Administrator key')
+    admin = bootstrap_admin(args, directory, config, state)
+    config, state, release = load(directory)
+    if not config.get('teamsGraphClientId') and not state.get('teamsOffered') and interactive:
+        section('Teams meeting creation (optional)')
+        print('Employees can already join Teams meetings. Creating new meetings needs a Graph app and a Teams admin.')
+        checkpoint(directory, state, state['phase'], teamsOffered=True)
+        if confirm('Set up meeting creation now?', False, interactive):
+            try:
+                result['teams'] = configure_teams(args, directory, config, state, interactive)
+            except SetupError as error:
+                # Optional: the installation itself is done and still gets its summary.
+                print(f'  Meeting creation was not set up: {error}')
+                print(f'  Set it up later with: {setup_command()} configure-teams')
+            config, state, release = load(directory)
+    return finish(directory, dict(result, admin=admin))
+
+
+def print_teams(teams):
+    print(f"Meeting creation uses Graph app {teams['graphClientId']}; its secret is in Key Vault.")
+    if teams.get('secretExpires'):
+        print(f"Its client secret expires {teams['secretExpires'][:10]}; run configure-teams with a new one before then.")
+    if teams.get('consentLink'):
+        print('A Global Administrator or Privileged Role Administrator grants its Microsoft Graph permission here '
+              '(select "Grant admin consent"): ' + teams['consentLink'])
+    print('A Teams administrator runs these once in Cloud Shell (Switch to PowerShell); they are also saved in '
+          + teams.get('teamsPolicyFile', 'teams-policy.ps1') + ':')
+    for line in teams['teamsPolicy']:
+        print('  ' + line)
+
+
+def finish(directory, result):
+    state = read_json(directory / 'state.json')
+    config = read_json(directory / 'deployment.config.json')
+    origin = state.get('outputs', {}).get('workspaceOrigin', '')
+    section('Done' if state['phase'] == 'infrastructure_verified' else 'Status')
+    if state['phase'] == 'infrastructure_verified':
+        print(f'Mentra Private Cloud is running at {origin}')
+        print(f'Employees: install the Mentra App, choose Connect to organization, and enter {origin.removeprefix("https://")}.')
+        print(f'Administrator key: {admin_key_command(config)}')
+        core = state.get('outputs', {}).get('coreOrigin')
+        if core:
+            print(f'Feedback reports: curl -H "Authorization: Bearer $({admin_key_command(config)})" {core}/api/admin/reports')
+        teams = result.get('teams')
+        if teams:
+            print_teams(teams)
+        elif not config.get('teamsGraphClientId'):
+            print(f'Teams meeting creation is off. Turn it on later with: {setup_command()} configure-teams')
+        else:
+            # Follow-ups another administrator may still owe, until they are done.
+            if meetings_consent(config, config['teamsGraphClientId']) is False:
+                print('Still to do - Graph permission for meeting creation (Global Administrator or Privileged Role '
+                      'Administrator, select "Grant admin consent"): ' + permissions_page(config['teamsGraphClientId']))
+            if (directory / 'teams-policy.ps1').exists():
+                print(f"Teams policy commands for meeting creation are saved in {directory / 'teams-policy.ps1'}.")
+    for handoff in state.get('handoffs') or []:
+        print(f"Still to do - {handoff['step']}: {handoff['action']}")
+    print(f'To check status or continue later, run: {setup_command()}')
+    print('To upgrade later, run the install command from the documentation again.')
+    return dict(result, phase=state['phase'], workspace=origin)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'configure-azure-dns', 'check-teams', 'install', 'resume', 'status', 'verify', 'bootstrap-admin', 'upgrade', 'diagnostics'))
-    parser.add_argument('--directory', default='./mentra-state', help='Persistent state and secret directory outside the installer package')
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog='Run without a command for guided setup: it installs and continues an interrupted install. '
+               'To upgrade, run the install command again; it downloads the new release and starts its setup.')
+    parser.add_argument('command', nargs='?', default='guided',
+                        choices=('guided', 'init', 'preflight', 'plan', 'configure-entra', 'configure-mirror', 'configure-azure-dns',
+                                 'configure-teams', 'check-teams', 'install', 'resume', 'status', 'verify', 'bootstrap-admin',
+                                 'upgrade', 'diagnostics'))
+    parser.add_argument('--directory', help='Setup state folder (default: mentra-state next to the installed package)')
     parser.add_argument('--config', help='JSON answers for init; otherwise edit deployment.config.json')
+    parser.add_argument('--yes', action='store_true', help='Accept defaults without prompting (for automation)')
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--dns-ready', action='store_true')
     parser.add_argument('--grant-admin-consent', action='store_true')
+    parser.add_argument('--core-client-id', help='configure-entra: Core app an Entra administrator created')
+    parser.add_argument('--mobile-client-id', help='configure-entra: Mobile app an Entra administrator created')
+    parser.add_argument('--employees', help='Comma-separated employee emails or group names allowed to sign in')
     parser.add_argument('--mirror', help='Approved Azure registry/repository for configure-mirror; release digest stays pinned')
     parser.add_argument('--dns-zone', help='Existing Azure DNS zone for configure-azure-dns')
     parser.add_argument('--dns-resource-group', help='Resource group containing the Azure DNS zone')
     parser.add_argument('--dns-subscription', help='DNS subscription, if different; must belong to the same Entra tenant')
     parser.add_argument('--teams-user', help='Employee object ID or UPN for check-teams; no license assignment is performed')
-    parser.add_argument('--backup-confirmed', action='store_true', help='Confirm database, attachment and original-secret backups before upgrade')
-    parser.add_argument('--previous-package', help='Retained original package directory for explicit upgrade')
+    parser.add_argument('--teams-client-id', help='Existing Graph app for configure-teams (default: create one)')
+    parser.add_argument('--teams-organizer', help='Licensed account (email or object ID) that hosts meetings for guests')
+    parser.add_argument('--teams-secret-stdin', action='store_true', help='Read the Graph app client secret from standard input')
+    parser.add_argument('--backup-confirmed', action='store_true', help='Confirm the database and report files are backed up before upgrade')
+    parser.add_argument('--previous-package', help='Package the deployment currently runs (default: found automatically)')
     args = parser.parse_args()
-    directory = Path(args.directory).resolve()
+    directory = Path(args.directory).resolve() if args.directory else default_directory().resolve()
     try:
         if directory.is_relative_to(ROOT):
             raise SetupError('Keep setup state outside the installer package; from ~/mentra-install use --directory ./mentra-state.')
         with locked(directory):
+            if args.command == 'guided':
+                result = guided(args, directory)
+                if result.get('status') in ('stopped', 'awaiting_dns', 'awaiting_entra'):
+                    print(result['next'])
+                return
             if args.command == 'init':
-                init(args, directory)
+                emit(args, init(args, directory))
                 return
             if args.command == 'upgrade':
-                upgrade(args, directory)
+                result = upgrade_command(args, directory)
+                emit(args, result) if args.json else finish(directory, result)
                 return
             config, state, release = load(directory)
-            if args.command == 'preflight':
-                emit(args, preflight(config))
-            elif args.command == 'plan':
-                emit(args, {'deployment': config['deploymentId'], 'subscription': config['subscriptionId'], 'tenant': config['tenantId'],
-                            'region': config['location'], 'group': config['resourceGroup'], 'image': release['sourceImage'],
-                            'resources': ['Basic ACR', 'Container Apps environment, Core + Runtime', 'Managed identity + AcrPull',
-                                          'Azure Communication Services', 'Cosmos DB MongoDB serverless', 'Azure Files report attachments'],
-                            'billing': 'These resources incur Azure charges. Review Azure Pricing Calculator and company budget before install.',
-                            'network': 'Authenticated public HTTPS ingress and Cosmos endpoint; this profile does not provision private endpoints.',
-                            'handoffs': ['DNS admin (custom hostname)', 'Entra admin consent and employee assignment',
-                                         'Microsoft 365 admin: Teams license for employees using Teams identity and the guest meeting organizer; check-teams explains missing licenses',
-                                         'Teams admin: Graph application permission and application access policy for meeting creation'],
-                            'next': 'configure-entra, check-teams --teams-user EMPLOYEE_OBJECT_ID, then install. Plan performs no Azure writes.'})
-            elif args.command == 'configure-entra':
-                configure_entra(args, directory, config, state)
-            elif args.command == 'configure-mirror':
-                configure_mirror(args, directory, config, state)
-            elif args.command == 'configure-azure-dns':
-                configure_azure_dns(args, directory, config, state)
-            elif args.command == 'check-teams':
-                check_teams(args, directory, config, state)
-            elif args.command in ('install', 'resume'):
-                install(args, directory, config, state)
-            elif args.command == 'verify':
-                verify(args, directory, config, state)
-            elif args.command == 'bootstrap-admin':
-                bootstrap_admin(args, directory, config, state)
-            elif args.command == 'status':
-                emit(args, state)
+            relink()
+            commands = {
+                'preflight': lambda: preflight(config),
+                'plan': lambda: plan(args, directory, config, state),
+                'configure-entra': lambda: configure_entra(args, directory, config, state),
+                'configure-mirror': lambda: configure_mirror(args, directory, config, state),
+                'configure-azure-dns': lambda: configure_azure_dns(args, directory, config, state),
+                'configure-teams': lambda: configure_teams(args, directory, config, state),
+                'check-teams': lambda: check_teams(args, directory, config, state),
+                'install': lambda: install(args, directory, config, state),
+                'resume': lambda: install(args, directory, config, state),
+                'verify': lambda: verify(args, directory, config, state),
+                'bootstrap-admin': lambda: bootstrap_admin(args, directory, config, state),
+                'status': lambda: state,
+                'diagnostics': lambda: diagnostics(directory, state, release),
+            }
+            result = commands[args.command]()
+            if args.command == 'configure-teams' and not args.json:
+                print_teams(result)
             else:
-                # No Azure logs, environment dump, config secrets, reports,
-                # account tokens, or customer employee identifiers are exported.
-                value = {k: state.get(k) for k in ('schemaVersion', 'deploymentId', 'phase', 'updatedAt', 'verifiedAt')}
-                value['release'] = release['releaseTag']
-                value['checks'] = state.get('checks', {})
-                write_json(directory / 'diagnostics.json', value)
-                emit(args, {'file': str(directory / 'diagnostics.json'), 'next': 'Review before sharing. No automatic upload.'})
+                emit(args, result)
     except (SetupError, KeyError, TypeError, ValueError, OSError) as exc:
         print(f'Setup stopped: {exc}', file=sys.stderr)
         sys.exit(1)
+    except (KeyboardInterrupt, EOFError):
+        print('\nSetup paused. Run the same command again to continue.', file=sys.stderr)
+        sys.exit(130)
+
+
+def diagnostics(directory, state, release):
+    # No Azure logs, environment dump, config secrets, reports,
+    # account tokens, or customer employee identifiers are exported.
+    value = {k: state.get(k) for k in ('schemaVersion', 'deploymentId', 'phase', 'updatedAt', 'verifiedAt')}
+    value['release'] = release['releaseTag']
+    value['checks'] = state.get('checks', {})
+    write_json(directory / 'diagnostics.json', value)
+    return {'file': str(directory / 'diagnostics.json'), 'next': 'Review before sharing. No automatic upload.'}
 
 
 if __name__ == '__main__':

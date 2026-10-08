@@ -12,11 +12,14 @@ ACS, and ACR.
   It downloads before running so a failed download exits nonzero (`curl | bash` would report success).
   It reads that channel's `latest.json`, verifies the installer archive's SHA-256 and unpacks it into
   `~/mentra-install/packages/<version>/`, linked as `~/mentra-install/mentra-private-cloud`. Set
-  `MENTRA_VERSION` to install an exact release. CI advances the dev pointer only after the reference
-  Azure stack deploys and verifies that release; pointers never move backwards.
-- `bootstrap.bicep` and `main.bicep`.
+  `MENTRA_VERSION` to install an exact release, or `MENTRA_START=0` to download without starting
+  setup. CI advances the dev pointer only after the reference Azure stack deploys and verifies that
+  release; pointers never move backwards.
+- The guided installer (`setup.sh`) and `answers.example.json` for unattended runs.
+- `bootstrap.bicep`, `access.bicep` and `main.bicep`.
 - Idempotent `configure-entra.sh` helper and administrator review steps.
-- One-time signing-key/refresh-pepper generator for import into customer secret management.
+- Signing keys and the refresh pepper, created directly in the deployment's Key Vault
+  (`scripts/ensure-vault-secrets.sh`); they are never exported or written to the setup folder.
 - Deployment manifest/branding/legal configuration.
 - Smoke tests and digest-based upgrade/rollback instructions.
 
@@ -24,12 +27,16 @@ ACS, and ACR.
 
 Collect and approve:
 
-- Azure subscription, resource group, region, and ACS data location;
-- workspace DNS name;
+- Azure subscription, resource group, region, and ACS data location (the guided installer
+  derives it from the region: Europe for European regions; UK, Canada, Brazil, Australia, Japan,
+  Korea, India, UAE, Africa or Asia Pacific for regions there; United States otherwise);
+- workspace DNS name (a subdomain);
 - Entra tenant, Core API client id, and Mobile client id;
 - assigned employees/groups, admin consent, MFA, and Conditional Access;
 - official Android/iOS distribution channels and redirect URIs;
-- persistent database, signing-key, refresh-pepper, backup, and rotation policy;
+- persistent database, signing-key, refresh-pepper, backup, and rotation policy (Cosmos DB
+  uses Azure's periodic backup: every 4 hours, two copies kept, restored through an Azure
+  support request);
 - SYSTEM miniapp/glasses allowlists and managed userland miniapps;
 - branding, privacy, terms, support, wallpapers, and version policy;
 - telemetry policy; and
@@ -39,9 +46,86 @@ Tenant ids, client ids, scopes, certificate fingerprints, and URLs are public
 identifiers. Database credentials, private keys, peppers, connection strings,
 and bearer tokens are secrets.
 
+## Guided setup
+
+Customers run the published install command in Azure Cloud Shell (Bash) with
+its storage mounted. It verifies and unpacks the package, then starts
+`setup.sh` with no command. Running the same command again continues an
+interrupted install, finishes after a handoff, or upgrades. Guided setup:
+
+1. Asks six questions: subscription, tenant, company name, deployment name,
+   region and an optional custom web address. An invalid answer is explained
+   and asked again. A region such as `West US 2` and a pasted
+   `https://mentra.example.com/` are accepted; a custom address must be a
+   subdomain.
+2. Checks the subscription: that the login can use it, the resource providers
+   (offering to register missing ones), the tools, the tenant, and that
+   `rg-<deployment>` is not someone else's resource group.
+3. Creates the empty resource group and prints Azure's what-if preview,
+   naming the Entra apps `<Company> Mentra Core (<deployment name>)` and `<Company> Mentra Mobile (<deployment name>)`.
+   It asks one confirmation. Declining deletes the empty group, so nothing is
+   created.
+4. Only after that confirmation, creates the two Entra apps
+   (`configure-entra.sh --installer-owner`), offers tenant-wide consent, and
+   assigns the employees or groups the operator names (`--employees`).
+5. Installs with progress lines, handles DNS (adds the two records when the
+   zone is in Azure DNS in the subscription, otherwise prints them and saves
+   `dns-records.json`), verifies, creates the administrator key, and offers
+   Teams meeting creation.
+
+The final summary prints the workspace, the `az keyvault secret show` command
+for the administrator key, a `curl` command for `<core>/api/admin/reports`
+using that key, and every pending administrator step as a `Still to do` line:
+
+- **Sign-in apps.** When the operator cannot create Entra apps, setup prints
+  the exact command for an Application Administrator or Cloud Application
+  Administrator, who downloads the installer with `MENTRA_START=0` and runs:
+
+  ```bash
+  ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh \
+    --core-name "<Company> Mentra Core (<deployment name>)" --mobile-name "<Company> Mentra Mobile (<deployment name>)" \
+    --installer-owner <owner> --grant-admin-consent
+  ```
+
+  The operator records the two printed IDs, then runs setup again. This
+  command only checks that both are single-tenant apps in the tenant:
+
+  ```bash
+  ~/mentra-install/mentra-private-cloud/setup.sh configure-entra \
+    --core-client-id CORE_ID --mobile-client-id MOBILE_ID
+  ```
+- **Admin consent.** A Global Administrator, Privileged Role Administrator or
+  Cloud Application Administrator selects **Grant admin consent** on the Mobile
+  app's API permissions page. Setup rechecks consent on every run and keeps
+  the line until it is granted.
+- **Employee access**, **DNS records**, and the meetings app's **Graph
+  permission** (Global Administrator or Privileged Role Administrator).
+
+The setup folder `~/mentra-install/mentra-state` holds no secrets but is not
+disposable: it is the deployment's saved configuration and progress, so keep
+Cloud Shell's storage mounted rather than using an ephemeral session. If it is
+lost, the operator runs the install command again with the same subscription
+and deployment name. Setup finds the resource group by its
+`mentraDeploymentId`/`mentraInstallerOwner` tags, restores the owner ID and the
+settings of the last `mentra-private` deployment, asks to continue, and asks
+for backup confirmation first if that deployment runs another release.
+
+Cloud Shell disconnects after 20 minutes without interaction. That is expected:
+reopen it and run the same command. `deploy.sh` waits (up to 30 minutes) for a
+deployment of the same name that is still running, then continues.
+
+For automation, start from `answers.example.json` (the six answers plus
+`resourceTags`) and run `setup.sh --yes --config answers.json --employees
+EMAIL,GROUP`. Values in angle brackets are refused. `MENTRA_START=0` downloads
+without starting setup, which is also the default without a terminal.
+
+The numbered sections below describe the same steps with the standalone
+helpers.
+
 ## 1. Configure Entra
 
-Follow [entra-setup.md](./entra-setup.md). The helper provisions:
+Guided setup runs this step itself after the preview is confirmed. Otherwise
+follow [entra-setup.md](./entra-setup.md). The helper provisions:
 
 - a single-tenant Core API exposing `mentra.session`; and
 - an assignment-required public Mobile client with Core and ACS delegated
@@ -66,43 +150,46 @@ cp cloud-v2/deploy/azure/enterprise-reference/deployment.config.example.json \
   /secure/path/mentra-private.config.json
 ```
 
-Generate the customer-owned signing material before deployment. Keep this file
-outside the repository, import it into the customer's approved secret manager,
-and reuse the same values across ordinary upgrades:
+Nothing secret goes in this file or on disk. Validate it, preview the Azure
+changes with Azure's own `what-if`, then deploy:
 
 ```bash
-cloud-v2/deploy/azure/enterprise-reference/scripts/generate-private-secrets.sh \
-  /secure/path/mentra-private-secrets.json
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --validate-only /secure/path/mentra-private.config.json
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --what-if /secure/path/mentra-private.config.json
+cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh /secure/path/mentra-private.config.json
 ```
 
-Validate both files locally before making Azure changes:
+The deployment helper runs `bootstrap.bicep` (registry, one managed identity per
+app, purge-protected Key Vault; needs Owner or User Access Administrator). It
+grants whoever runs it Key Vault Secrets Officer on that vault and creates the
+signing keys and refresh pepper directly in Key Vault, once. `access.bicep` then
+lets each app read only its own secrets: Core its keys, Runtime the Graph secret.
+No app can read the administrator key. Finally the helper imports and verifies
+the release digest, deploys `main.bicep` (Contributor is enough) and runs the
+smoke test. A deployed Core is never given
+new keys: if Key Vault is missing one, the helper refuses and points to
+`az keyvault secret recover`.
 
-```bash
-cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh --validate-only \
-  /secure/path/mentra-private.config.json \
-  /secure/path/mentra-private-secrets.json
-```
-
-The deployment helper performs the proven sequence: create/update the resource
-group, bootstrap ACR, import and verify the release digest, construct a
-mode-0600 temporary Azure parameter file, deploy, remove that temporary file,
-and run the smoke test:
-
-```bash
-cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh \
-  /secure/path/mentra-private.config.json \
-  /secure/path/mentra-private-secrets.json
-```
+The helper is safe to rerun. It waits for a still-running deployment of the
+same name instead of failing, recovers a Key Vault that was deleted together
+with this resource group, and refuses a vault name held by a deleted vault in
+another resource group. It retries the main deployment, for up to about ten
+minutes, only while new Key Vault access is still reaching Container Apps.
 
 The templates create:
 
 - one Container Apps environment;
 - separate Core and meetings-only Runtime apps using the same digest;
-- Cosmos DB with MongoDB-compatible API for Core identity/session state;
+- Cosmos DB with MongoDB-compatible API for Core identity/session state, with Azure's
+  periodic backup (continuous backup is not used: on API for MongoDB it forbids the unique
+  indexes Core creates);
 - customer-owned ACS;
-- managed ACR pull identity;
+- a managed identity per app, each able to read only its own Key Vault secrets;
+- a purge-protected Key Vault holding the signing keys, refresh pepper,
+  administrator key and optional Graph client secret;
 - a generated deployment manifest; and
-- Container App secrets for ACS, Mongo, signing keys, and refresh pepper.
+- Container App secrets that reference Key Vault, plus ACS and Mongo
+  connection strings derived from their resources.
 
 For customer production, use the customer's normal database, backup, private
 networking, and secret-management requirements. The template's public network
@@ -130,18 +217,13 @@ configure (its managed certificate uses CNAME validation only).
 
 ## Administrator access
 
-Core's admin API (report retrieval and triage) uses an operator key (`mak_...`)
-that the packaged installer mints after Core is deployed, from `~/mentra-install`:
-
-```bash
-./mentra-private-cloud/setup.sh bootstrap-admin --directory ./mentra-state
-```
-
-It adds the installer identity `operator@private-cloud.local` to `coreAdminEmails`
-and saves the key as `admin-key.json` in the protected setup directory. Store it
-in the customer's secret manager and use it as `MENTRA_ADMIN_TOKEN`. The key works
-only while `operator@private-cloud.local` stays in `coreAdminEmails`. A deployment
-that already has an `msk_local_...` administrator key keeps it while its
+Core's admin API (report retrieval and triage) uses an operator key (`mak_...`).
+Setup creates it after Core is deployed: it adds the installer identity
+`operator@private-cloud.local` to `coreAdminEmails`, mints the key, and stores
+it in Key Vault as `mentra-admin-key`. Setup's summary prints the command that
+reads it; use the value as `MENTRA_ADMIN_TOKEN`. The key works only while
+`operator@private-cloud.local` stays in `coreAdminEmails`. A deployment that
+already has an `msk_local_...` administrator key keeps it while its
 `api-key@<keyId>.local` address stays in `coreAdminEmails`. Browser admin
 sign-in is not available for private deployments. See
 [reports and durable attachments](operations.md#reports-and-durable-attachments).

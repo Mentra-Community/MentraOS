@@ -8,7 +8,7 @@ const sourceRevision = 'c'.repeat(40)
 const work = authoringWorkSchema.parse({schemaVersion: 1, workId: 'work:edit', kind: 'edit', routineId: 'notes',
   brief: {goal: 'Edit notes', stepsOrChanges: ['Open notes'], expected: ['Notes visible']},
   source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40)},
-  target: {hostId: 'mini', laneId: 'android'}, requirements: {platform: 'android', glasses: [], capabilities: [], environment: []},
+  target: {hostId: 'mini', laneId: 'android'}, requirements: {platform: 'android', glasses: [], resources: [{kind: "app", capabilities: []}, {kind: "recorder", capabilities: []}, {kind: "phone", capabilities: []}], environment: []},
   build: {kind: 'android-apk', repository: 'Mentra-Community/MentraOS', headSha: 'b'.repeat(40), channel: 'pr', prNumber: 12,
     source: {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 1},
     archive: {name: 'app.apk', url: 'https://example.com/app.apk', size: 10, sha256: 'd'.repeat(64)},

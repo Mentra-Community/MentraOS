@@ -10,6 +10,32 @@ Choose an unambiguous ADB serial or already verified endpoint with
 `ANDROID_SERIAL`. Physical fixture identification and exclusive maintenance
 ownership belong to the caller; a USB port is not a glasses identity.
 
+The same DUMP-protected receiver also accepts a frozen inline MTK manifest:
+
+```sh
+adb -s "$GLASSES_SERIAL" shell am broadcast -a com.mentra.DEBUG_MTK_OTA \
+  --es artifact_id "firmware-$OPERATION_ID" --es manifest_json "$MTK_MANIFEST_JSON" \
+  -n com.mentra.asg_client/.receiver.DebugMtkOtaReceiver
+```
+
+`OPERATION_ID` is 32 lowercase hex characters; the JSON is at most 64 KiB and
+contains `mtk_full_ota` plus optional `mtk_patches`. ASG derives the destination
+from the full entry, chooses one exact installed-source → destination patch,
+otherwise uses the normal newer-only full fallback. It ignores APK/BES entries.
+Selected HTTPS bytes retain their SHA-256/size checks and bounded A/B metadata
+inspection; inline updates refuse userdata wipe and a mismatched payload kind.
+The existing `ota_session.xml` record retains `mtk_restore` with the operation ID,
+manifest digest, source firmware/boot and selected artifact before download.
+An answered broadcast is not admission or completion proof. Observe that exact
+receipt and native engine/boot/slot state; never repeat an unconfirmed request.
+The foreground OTA service owns the transfer after the broadcast returns. On
+restart, an abandoned pre-install transfer is failed with its original receipt;
+a dispatched same-boot install remains owned until a native terminal result,
+and a changed boot is checked against the selected target before settlement.
+This optional entrypoint needs an ASG build containing it. It does not replace
+Harness installation until that build is published and qualified; installing
+an older ASG first must not silently select another MTK implementation.
+
 Incremental mode keeps the existing filename contract:
 
 ```sh

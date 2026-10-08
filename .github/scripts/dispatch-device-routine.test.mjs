@@ -167,3 +167,13 @@ test('publication and label retries retain the same admitted revision and cancel
     await labels(); assert.equal(posts.length, 1); assert.equal(rows.size, 1)
   }
 })
+
+test('superseded CI without successful artifact publication never inspects Core or submits a test', async () => {
+  for (const workflow of ['.github/workflows/mentra-app-ios-build.yml', '.github/workflows/mentra-app-android-build.yml']) {
+    const f = fixture(); f.run.path = workflow; f.run.conclusion = 'cancelled';
+    f.github.paginate = async () => workflow.includes('android') ? [{id:1,name:'build',run_attempt:2,status:'completed',conclusion:'cancelled',
+      steps:[{name:ANDROID_PUBLICATION_STEP,status:'completed',conclusion:'skipped'}]}] :
+      [{id:1,name:'build',run_attempt:2,status:'completed',conclusion:'cancelled'}, {id:2,name:'publish',run_attempt:2,status:'completed',conclusion:'skipped'}];
+    assert.deepEqual(await planDeviceDispatches({...f,token:'fixture',fetchImpl:async()=>assert.fail('Unpublished CI must not contact Core')}),[]);
+  }
+});

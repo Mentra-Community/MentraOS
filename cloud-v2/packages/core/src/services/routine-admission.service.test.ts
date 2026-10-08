@@ -26,7 +26,7 @@ const enrollment = (glasses = true): RoutineEnrollment => ({
     platforms: ["android"],
     entry: "sign-in",
     account: "none",
-    requires: glasses ? ["camera"] : [],
+    resourceRequirements: (glasses ? ["phone", "app", "glasses", "recorder"] : ["phone", "app", "recorder"]).map(kind => ({kind: kind as "phone" | "app" | "glasses" | "recorder", capabilities: kind === "glasses" ? ["connection"] : []})),
     requirements: [],
     fixtures: [],
     ...(glasses ? {glasses: {models: ["mentra-live"]}} : {}),
@@ -37,8 +37,8 @@ const enrollment = (glasses = true): RoutineEnrollment => ({
 })
 const host = (glasses = true): ReceivedTestHostState => ({hostId: "mini", incarnation: "boot", incarnationGeneration: 1, sequence: 1,
   receivedAt: new Date(now).toISOString(), observedAt: new Date(now).toISOString(), lanes: [{id: "phone-lane", platform: "android", dispatchMode: "automatic", state: "idle",
-    resources: [{id: "phone", kind: "phone"}, {id: "app", kind: "app"}, {id: "recorder", kind: "recorder"}, ...(glasses ? [{id: "physical-live", kind: "glasses" as const}] : [])],
-    ...(glasses ? {glasses: [{resourceId: "physical-live", deviceId: "live-cid", model: "mentra-live", capabilities: ["camera"]}]} : {})}]});
+    resources: [{id: "phone", kind: "phone"}, {id: "app", kind: "app"}, {id: "recorder", kind: "recorder"}, ...(glasses ? [{id: "physical-live", kind: "glasses" as const, capabilities: ["connection"]}] : [])],
+    ...(glasses ? {glasses: [{resourceId: "physical-live", deviceId: "live-cid", model: "mentra-live", capabilities: ["connection"]}]} : {})}]});
 const select = (definition = enrollment(), selected = build, observed = host()) => routineAdmissionInput(definition, selected,
   {hostId: "mini", laneId: "phone-lane"}, observed, now);
 
@@ -51,8 +51,19 @@ test("glasses dispatch matches declared model/capability and freezes exact build
   expect(select(enrollment(), build, {...host(), lanes: [{...host().lanes[0]!, state: "offline"}]}).glassesStart).toEqual(input.glassesStart);
 });
 
+test('a recording witness without recognition cannot admit a speech recognition routine', () => {
+  const definition = enrollment(false);
+  definition.definition.resourceRequirements.push({kind: 'audio', capabilities: ['witness', 'recognition']});
+  definition.definition.execution!.resourceKinds.push('audio');
+  const observed = host(false), lane = observed.lanes[0]!;
+  lane.resources.push({id: 'audio', kind: 'audio', capabilities: ['speech', 'witness', 'synthesis']});
+  expect(() => select(definition, build, observed)).toThrow('required audio resource capabilities');
+  lane.resources.find(resource => resource.kind === 'audio')!.capabilities!.push('recognition');
+  expect(select(definition, build, observed).resources).toContainEqual({id: 'audio', kind: 'audio'});
+});
+
 test("model, capability, inventory and manifest contradictions fail before producing admission input", () => {
-  for (const glasses of [undefined, [], [{resourceId: "physical-live", deviceId: "live-cid", model: "g2", capabilities: ["camera"]}],
+  for (const glasses of [undefined, [], [{resourceId: "physical-live", deviceId: "live-cid", model: "g2", capabilities: ["connection"]}],
     [{resourceId: "physical-live", deviceId: "live-cid", model: "mentra-live", capabilities: []}]])
     expect(() => select(enrollment(), build, {...host(), lanes: [{...host().lanes[0]!, glasses}]})).toThrow("compatible glasses");
   for (const selected of [{...build, manifest: undefined}, {...build, manifestSha256: "c".repeat(64)},
@@ -131,7 +142,7 @@ test("host fixture requirements do not become physical glasses capabilities on e
     const definition = enrollment();
     definition.platform = platform;
     definition.definition.platforms = [platform];
-    definition.definition.requires = ["camera", "fixture-data"];
+    definition.definition.resourceRequirements.push({kind: "fixture-data", capabilities: []});
     definition.definition.fixtures = [{provider: "recorded-media", description: "Owned recorded media fixture"}];
     definition.definition.execution!.resourceKinds.push("fixture-data");
     const observed = host(), lane = observed.lanes[0]!;
@@ -142,8 +153,8 @@ test("host fixture requirements do not become physical glasses capabilities on e
     expect(input.resources).toContainEqual({id: "recorded-media", kind: "fixture-data"});
     expect(input.resources).toContainEqual({id: "physical-live", kind: "glasses"});
     expect(input.glassesReturn).toEqual({model: "mentra-live", manifest});
-    expect(lane.glasses![0]!.capabilities).toEqual(["camera"]);
-    expect(definition.definition.requires).toEqual(["camera", "fixture-data"]);
+    expect(lane.glasses![0]!.capabilities).toEqual(["connection"]);
+    expect(definition.definition.resourceRequirements.find(value => value.kind === "fixture-data")).toEqual({kind: "fixture-data", capabilities: []});
     lane.resources = lane.resources.filter(value => value.kind !== "fixture-data");
     expect(() => select(definition, {...build, platform}, observed)).toThrow("exactly one fixture-data resource");
     lane.resources.push({id: "recorded-media", kind: "fixture-data"});
@@ -154,7 +165,7 @@ test("host fixture requirements do not become physical glasses capabilities on e
 })
 
 test("mixed host audio and external-window requirements retain their exact resource bindings", () => {
-  const definition = enrollment(); definition.definition.requires = ["camera", "audio", "external-window"];
+  const definition = enrollment(); definition.definition.resourceRequirements.push({kind: "audio", capabilities: []}, {kind: "fixture-data", capabilities: []});
   definition.definition.execution!.resourceKinds.push("audio", "fixture-data");
   const observed = host(), lane = observed.lanes[0]!;
   lane.resources.push({id: "loopback", kind: "audio"}, {id: "external-player", kind: "fixture-data"});
@@ -167,8 +178,9 @@ test("mixed host audio and external-window requirements retain their exact resou
 });
 
 test("projecting known host providers preserves missing real and unknown glasses capability refusals", () => {
-  for (const capability of ["camera", "unimplemented-glasses-feature"]) {
-    const definition = enrollment(); definition.definition.requires = [capability, "fixture-data"];
+  for (const capability of ["connection", "unimplemented-glasses-feature"]) {
+    const definition = enrollment(); definition.definition.resourceRequirements.find(value => value.kind === "glasses")!.capabilities = [capability];
+    definition.definition.resourceRequirements.push({kind: "fixture-data", capabilities: []});
     definition.definition.execution!.resourceKinds.push("fixture-data");
     const observed = host(), lane = observed.lanes[0]!;
     lane.resources.push({id: "media", kind: "fixture-data"});
@@ -180,7 +192,7 @@ test("projecting known host providers preserves missing real and unknown glasses
 test("host preparation independently rechecks generic resource capabilities before concrete allocation", () => {
   const original = enrollment(false), definition: RoutineEnrollment = {...original, definition: {...original.definition,
     execution: {resourceKinds: ["phone", "app", "recorder", "network"]},
-    resourceRequirements: [{kind: "network" as const, capabilities: ["independent-uplink"]}]}};
+    resourceRequirements: [...original.definition.resourceRequirements, {kind: "network" as const, capabilities: ["independent-uplink"]}]}};
   const lane = host(false).lanes[0]!, network = {id: "network-uplink", kind: "network" as const, capabilities: ["independent-uplink"]};
   const offered = {...host(false), lanes: [{...lane, resources: [...lane.resources, network]}]};
   const input = select(definition, build, offered);
@@ -188,3 +200,13 @@ test("host preparation independently rechecks generic resource capabilities befo
   expect(() => select(definition, build, {...offered, lanes: [{...offered.lanes[0]!,
     resources: [...lane.resources, {...network, capabilities: []}]}]})).toThrow("resource capabilities");
 });
+
+test('typed phone capabilities are enforced before admission without becoming glasses requirements', () => {
+  const enrolled = enrollment(false), offered = host(false)
+  enrolled.definition.resourceRequirements.find(resource => resource.kind === 'phone')!.capabilities = ['bluetooth-toggle', 'dialogs']
+  expect(() => routineAdmissionInput(enrolled, build, {hostId:'mini',laneId:'phone-lane'}, offered, now)).toThrow('capabilities')
+  offered.lanes[0]!.resources.find(resource => resource.kind === 'phone')!.capabilities = ['bluetooth-toggle', 'dialogs']
+  const input = routineAdmissionInput(enrolled, build, {hostId:'mini',laneId:'phone-lane'}, offered, now)
+  expect(input.resources.map(resource => resource.kind)).toEqual(['phone','app','recorder'])
+  expect(input.glassesStart).toBeUndefined()
+})

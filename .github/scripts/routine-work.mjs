@@ -18,6 +18,17 @@ const text = (value, maximum = 2000) =>
 const texts = (value) =>
   Array.isArray(value) && value.length > 0 && value.length <= 100 && value.every((value) => text(value))
 const identifiers = (value) => Array.isArray(value) && value.length <= 30 && value.every(routineId)
+const resourceCapabilities = {
+  app: ['relaunch'],
+  phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
+  glasses: ['glasses-ble', 'connection', 'software'],
+  recorder: [],
+  audio: ['speech', 'witness', 'synthesis', 'recognition'],
+  browser: ['external-window'],
+  network: ['independent-uplink'],
+  'fixture-data': [],
+  workspace: [],
+}
 export const workDigest = requestInputDigest
 
 /** Only a complete, versioned JSON brief is executable intake; surrounding English is not parsed as instructions. */
@@ -63,10 +74,10 @@ export function parseRoutineWorkBrief(body, kind) {
     'Authoring target must name a host and optionally its lane',
   )
   ensure(
-    (keys(value.requirements, ['platform', 'glasses', 'capabilities', 'environment']) || keys(value.requirements, ['platform', 'glasses', 'capabilities', 'environment', 'resources'])) &&
+    keys(value.requirements, ['platform', 'glasses', 'environment', 'resources']) &&
       ['mac', 'android'].includes(value.requirements.platform) &&
       identifiers(value.requirements.glasses) &&
-      identifiers(value.requirements.capabilities) &&
+      new Set(value.requirements.glasses).size === value.requirements.glasses.length &&
       Array.isArray(value.requirements.environment) &&
       value.requirements.environment.length <= 20 &&
       value.requirements.environment.every(
@@ -88,13 +99,17 @@ export function parseRoutineWorkBrief(body, kind) {
     ...requirement,
     description: requirement.description.trim(),
   }))
-  const baseKinds = ['app', 'recorder', ...(value.requirements.platform === 'android' ? ['phone'] : []), ...(value.requirements.glasses.length ? ['glasses'] : [])]
-  const resources = value.requirements.resources ?? baseKinds.map(kind => ({kind, capabilities: []}))
+  const baseKinds = ['app', 'recorder', ...(value.requirements.platform === 'android' ? ['phone'] : [])]
+  const resources = value.requirements.resources
   ensure(Array.isArray(resources) && resources.length > 0 && resources.length <= 9 && resources.every(resource =>
-    keys(resource, ['kind', 'capabilities']) && ['app', 'phone', 'glasses', 'recorder', 'audio', 'browser', 'network', 'fixture-data', 'workspace'].includes(resource.kind) && identifiers(resource.capabilities)),
+    keys(resource, ['kind', 'capabilities']) && Object.hasOwn(resourceCapabilities, resource.kind) &&
+      identifiers(resource.capabilities) && new Set(resource.capabilities).size === resource.capabilities.length &&
+      resource.capabilities.every(capability => resourceCapabilities[resource.kind].includes(capability))),
     'Authoring resource requirements are invalid')
-  ensure(baseKinds.every(kind => resources.some(resource => resource.kind === kind)), 'Authoring resources omit a required base fixture')
-  value.requirements.resources = resources
+  const kinds = resources.map(resource => resource.kind)
+  ensure(new Set(kinds).size === kinds.length && baseKinds.every(kind => kinds.includes(kind)) &&
+    Boolean(value.requirements.glasses.length) === kinds.includes('glasses'),
+    'Authoring resources need unique kinds, the platform base and consistent glasses models')
   return value
 }
 

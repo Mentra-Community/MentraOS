@@ -25,7 +25,7 @@ unsupported prerequisites otherwise. Keep actual fixtures declared in the routin
   "source": {
     "repository": "Mentra-Community/Mentra-Automated-Testing"
   },
-  "requirements": {"platform": "android", "glasses": [], "capabilities": [], "environment": []}
+  "requirements": {"platform": "android", "glasses": [], "environment": [], "resources": [{"kind": "app", "capabilities": []}, {"kind": "recorder", "capabilities": []}, {"kind": "phone", "capabilities": []}]}
 }
 ```
 ````
@@ -33,10 +33,10 @@ unsupported prerequisites otherwise. Keep actual fixtures declared in the routin
 The trusted dev workflow selects the current same-repository PR's authenticated
 published app build. Core freezes the brief, exact harness source, package pins,
 originating PR head and portable resource requirements before Actions selects a
-compatible runner. The trusted issuer fills the basic app, recorder, phone and
-requested glasses resource kinds. Optional `requirements.resources` declares
-additional concrete fixture kinds and capabilities; environment descriptions do
-not become routing labels. Core binds one real host and lane before host delivery. A retry reuses its work ID;
+compatible runner. Required `requirements.resources` names app and recorder,
+phone on Android, and glasses when models are requested. Each resource declares
+only its typed operations; additional installed fixture kinds use the same list.
+Environment descriptions do not become routing labels. Core binds one real host and lane before host delivery. A retry reuses its work ID;
 changing a brief, source, target or publication creates a new occurrence.
 
 Automatic intake requires `ROUTINE_WORK_PR_DISPATCH_ENABLED=true`. The manual

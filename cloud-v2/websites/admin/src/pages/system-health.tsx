@@ -9,6 +9,7 @@ import { api } from "../lib/api";
 import {LaneRestorationPage} from "./lane-restoration";
 import {LaneHistoryPage} from "./lane-history";
 import type {LaneSelection} from "../lib/lane-links";
+import {PendingQueueSection} from "./pending-queue";
 import {LaneHealthSection} from "./lane-health";
 
 const elapsed = (at: string, now: number) => elapsedDuration(Math.max(0, now - Date.parse(at))) ?? "unknown";
@@ -165,6 +166,7 @@ function SystemHealthDashboard() {
   const fresh = Boolean(host && !query.isError && hostIsFresh(host, now));
   return <div className="space-y-5">
     <LaneHealthSection now={now} />
+    <PendingQueueSection />
     <section className={TESTING_PANEL}>
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Host health</h2></div>
         <TestingButton className="text-sm" onClick={() => { void query.refetch(); if (host) void history.refetch(); }}>Refresh</TestingButton></div>

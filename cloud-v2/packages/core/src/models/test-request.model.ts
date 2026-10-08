@@ -24,6 +24,7 @@ const schema = new Schema({
   fleetTarget: {type: Schema.Types.Mixed, immutable: true},
   fleetBinding: {type: Schema.Types.Mixed, immutable: true},
   fleetCancellation: {type: Schema.Types.Mixed},
+  fleetSupersessionCheckedAt: {type: Date},
   fleetDispatch: {type: Schema.Types.Mixed},
   dispatchCompletion: {type: Schema.Types.Mixed, immutable: true},
   fleetActionsCancellation: {type: Schema.Types.Mixed},
@@ -38,6 +39,7 @@ const schema = new Schema({
   catalogEligible: {type: Boolean},
 }, {collection: "test_requests", timestamps: true});
 schema.index({state: 1, createdAt: 1, requestId: 1});
+schema.index({"fleetSelection.source.channel": 1, fleetSupersessionCheckedAt: 1, createdAt: 1, requestId: 1});
 schema.index({hostId: 1, state: 1});
 schema.index({hostId: 1, state: 1, preparationCheckedAt: 1, createdAt: 1, requestId: 1});
 schema.index({hostId: 1, "hostCancellation.requestedAt": 1, requestId: 1},

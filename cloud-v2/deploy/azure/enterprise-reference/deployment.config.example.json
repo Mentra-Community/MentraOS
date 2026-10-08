@@ -3,6 +3,7 @@
   "location": "westus2",
   "deploymentName": "mentra-private",
   "registryName": "acmementraregistry",
+  "keyVaultName": "kvacmementra",
   "sourceImage": "ghcr.io/mentra-community/mentra-cloud@sha256:<digest>",
   "sourceRegistryMirror": "",
   "releaseTag": "3.2.0",
@@ -16,7 +17,8 @@
   "runtimeName": "ca-acme-mentra",
   "coreName": "ca-acme-mentra-core",
   "coreAdminEmails": "",
-  "pullIdentityName": "id-acme-mentra-pull",
+  "coreIdentityName": "id-acme-mentra-core",
+  "runtimeIdentityName": "id-acme-mentra-runtime",
   "communicationName": "acme-mentra-acs",
   "communicationDataLocation": "United States",
   "teamsGraphTenantId": "",
@@ -33,5 +35,6 @@
   "privacyPolicyUrl": "https://legal.acme.example/mentra/privacy",
   "termsOfServiceUrl": "https://legal.acme.example/mentra/terms",
   "documentationUrl": "",
-  "supportUrl": ""
+  "supportUrl": "",
+  "resourceTags": {}
 }

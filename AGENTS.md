@@ -182,6 +182,16 @@ Do not add `Co-Authored-By:` trailers that name AI assistants (Claude, Codex, Co
 
 ## Environment & Security Notes
 
+When a feature or deployment needs a new or changed backend environment variable,
+use [manage-cloud-env](.agents/skills/manage-cloud-env/SKILL.md), including for
+first-party miniapps and their external repositories. Doppler is the source of
+truth. Put environment-independent settings in a shared inheritable config;
+keep environment-specific values in child configs. Check or establish the native
+Doppler-to-Porter connection before writing settings. Porter application overrides
+are a last resort, never the default workaround for a missing key or broken sync.
+Create a Doppler project and a shared parent when onboarding a deployment that
+has neither, even if it initially has only one deployment environment.
+
 Cloud V2 services require local environment configuration; use `cloud-v2/scripts/setup.ts` and keep secrets out of the repository. Mobile secrets belong in `mobile/app.config.ts` or the secure config service—avoid committing device-specific tokens. Rebuild native projects after modifying BLE or camera modules to keep generated code in sync, and install Java 17, Android Studio, Xcode, Docker, and Bun/Node before the first build.
 
 ### Database Security
