@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 import type { TestHostSample } from "../types/test-host-health.types";
-import { TestHostHealthService } from "./test-host-health.service";
+import { MongoTestHostHealthRepository, TestHostHealthService } from "./test-host-health.service";
 
 const uri = process.env.TEST_HOST_HEALTH_MONGO_URI;
 describe.skipIf(!uri)("Mongo host sample ordering and bounded indexed history", () => {
@@ -55,5 +55,27 @@ describe.skipIf(!uri)("Mongo host sample ordering and bounded indexed history", 
     expect((await TestHostSampleModel.collection.indexes()).some(index => index.expireAfterSeconds === 0)).toBe(true);
     expect((await TestHostLatestModel.collection.indexes()).some(index => index.expireAfterSeconds !== undefined)).toBe(false);
     console.log(JSON.stringify({ proof: "host-history-index", documents: 120, examined: explain.executionStats.totalDocsExamined, index: "host_sample_history" }));
+  });
+  test("history projection preserves every real point, nullable memory and cleanup receipts without service payload", async () => {
+    const service = new TestHostHealthService(), memory = { totalBytes: 8 * 1024 ** 3, usedBytes: 5 * 1024 ** 3,
+      compressedBytes: 1024 ** 3, swapUsedBytes: 0, pressureFreePercent: 45, pressure: "normal" as const };
+    const event = { receiptId: "history-cleanup", receiptSha256: "a".repeat(64), origin: "scheduled" as const,
+      startedAt: new Date(base - 180_000).toISOString(), finishedAt: null, status: "refused" as const,
+      reason: "permission-denied" as const, removedCount: 0, freeBefore: null, freeAfter: null, freeAfterSampledAt: null };
+    const observations = [sample("projection", base - 180_000),
+      { ...sample("projection", base - 60_000), memory: null, freeBytes: null },
+      { ...sample("projection", base), memory, cleanupEvents: [event], components: [
+        { component: "general-worker" as const, enabled: true, state: "running" as const, reason: "none" as const }] }];
+    for (const observation of observations) await service.ingest(observation);
+    const history = await service.history("projection", "1");
+    expect(history.points).toEqual(observations.map(({sampleId, sampledAt, freeBytes, ...rest}) => ({sampleId, sampledAt, freeBytes,
+      ...(rest.memory === undefined ? {} : {memory: rest.memory})})));
+    expect(history.cleanupEvents).toEqual([event]);
+    const rows = await new MongoTestHostHealthRepository().history("projection", new Date(base - 86_400_000), new Date(), 10);
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row).not.toHaveProperty("components"); expect(row).not.toHaveProperty("hostId"); expect(row).not.toHaveProperty("schemaVersion");
+    }
+    expect((await service.list()).hosts.find(host => host.hostId === "projection")?.components).toEqual(observations[2].components);
   });
 });
