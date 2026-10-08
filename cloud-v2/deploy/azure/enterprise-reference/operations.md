@@ -242,9 +242,9 @@ running the current release until the operator confirms. Setup:
    (or `--previous-package PATH`), and refuses a package older than it and a
    deployment that has not finished setup;
 2. shows Azure's `what-if` preview of the change;
-3. prints how data is protected: signing keys stay in Key Vault; Cosmos DB has
-   continuous backup and can be restored to any point in the last 7 days from
-   the Azure portal (Cosmos DB > Point In Time Restore, into a new account); and
+3. prints how data is protected: signing keys stay in Key Vault; Azure backs up
+   Cosmos DB every 4 hours (restored through an Azure support request), so export
+   the database with your own tools for a restore point you control; and
    the report share is snapshotted with
    `az storage share-rm snapshot --resource-group <rg> --name core-attachments --storage-account <account>`;
 4. asks **Have you backed up the database and report files, and are you ready

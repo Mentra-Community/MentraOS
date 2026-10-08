@@ -404,7 +404,8 @@ DATA_LOCATIONS = {'canada': 'Canada', 'brazil': 'Brazil', 'uk': 'UK', 'australia
                   'israel': 'Europe', 'qatar': 'UAE', 'newzealand': 'Australia', 'malaysia': 'Asia Pacific',
                   'indonesia': 'Asia Pacific', 'taiwan': 'Asia Pacific', 'chile': 'Brazil'}
 # Settings recovered from Azure's record of the last deployment when the local folder was lost.
-RESTORED_KEYS = ('location', 'tenantId', 'coreApiClientId', 'mobileClientId', 'coreAdminEmails', 'workspaceHostname',
+RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName', 'coreName', 'coreIdentityName',
+                 'runtimeIdentityName', 'communicationName', 'location', 'tenantId', 'coreApiClientId', 'mobileClientId', 'coreAdminEmails', 'workspaceHostname',
                  'workspaceCertificateName', 'additionalWorkspaceDomains', 'displayName', 'communicationDataLocation',
                  'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'approvedSystemMiniapps',
                  'miniappConfiguration', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
@@ -1832,9 +1833,13 @@ def relink():
 
 
 def report_storage_account(config):
+    # The account behind Core's report mount, even when the group holds others.
+    if not config.get('environmentName'):
+        return 'STORAGE_ACCOUNT'
     try:
-        return azure(config, 'storage', 'account', 'list', '--resource-group', config['resourceGroup'],
-                     '--query', '[0].name') or 'STORAGE_ACCOUNT'
+        return azure(config, 'containerapp', 'env', 'storage', 'show', '--name', config['environmentName'],
+                     '--resource-group', config['resourceGroup'], '--storage-name', 'core-attachments',
+                     '--query', 'properties.azureFile.accountName') or 'STORAGE_ACCOUNT'
     except SetupError:
         return 'STORAGE_ACCOUNT'
 
@@ -1863,8 +1868,9 @@ def upgrade_command(args, directory, interactive=None):
                         clientRecommendedVersion=target['clientMinVersion'])
         # An upgrade is only confirmed against Azure's own preview of it.
         print_preview(preview(directory, upcoming, state), upcoming)
-        print('Signing keys are safe in Key Vault. The database can be restored to any point in the last 7 days from the\n'
-              'Azure portal (Cosmos DB > Point In Time Restore). Snapshot the report files first:\n'
+        print('Signing keys are safe in Key Vault. Azure backs up the database every 4 hours (restored through an Azure\n'
+              'support request); for a restore point you control, export it with your database tools first.\n'
+              'Snapshot the report files:\n'
               f"  az storage share-rm snapshot --resource-group {config['resourceGroup']} --name core-attachments "
               f"--storage-account {report_storage_account(config)}\n"
               'A software image can be rolled back, but database changes cannot.')

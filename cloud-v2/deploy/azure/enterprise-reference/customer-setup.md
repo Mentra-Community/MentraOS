@@ -35,7 +35,8 @@ Collect and approve:
 - assigned employees/groups, admin consent, MFA, and Conditional Access;
 - official Android/iOS distribution channels and redirect URIs;
 - persistent database, signing-key, refresh-pepper, backup, and rotation policy (Cosmos DB
-  uses continuous backup with 7-day point-in-time restore);
+  uses Azure's periodic backup: every 4 hours, two copies kept, restored through an Azure
+  support request);
 - SYSTEM miniapp/glasses allowlists and managed userland miniapps;
 - branding, privacy, terms, support, wallpapers, and version policy;
 - telemetry policy; and
@@ -179,8 +180,9 @@ The templates create:
 
 - one Container Apps environment;
 - separate Core and meetings-only Runtime apps using the same digest;
-- Cosmos DB with MongoDB-compatible API for Core identity/session state, with
-  continuous backup (7-day point-in-time restore);
+- Cosmos DB with MongoDB-compatible API for Core identity/session state, with Azure's
+  periodic backup (continuous backup is not used: on API for MongoDB it forbids the unique
+  indexes Core creates);
 - customer-owned ACS;
 - a managed identity per app, each able to read only its own Key Vault secrets;
 - a purge-protected Key Vault holding the signing keys, refresh pepper,
