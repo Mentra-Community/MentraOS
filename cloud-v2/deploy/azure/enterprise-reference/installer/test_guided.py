@@ -1,6 +1,7 @@
 """Guided setup, Key Vault, preview and one-command upgrade; no Azure resources are created."""
 import argparse
 import contextlib
+import io
 import importlib.util
 import json
 from pathlib import Path
@@ -13,6 +14,8 @@ SPEC = importlib.util.spec_from_file_location('mentra_setup_guided', Path(__file
 setup = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(setup)
 SUB = '11111111-1111-1111-1111-111111111111'
+# Stand-in for the text Graph returns from addPassword.
+GRAPH_REPLY_TEXT = 'returned-by-graph'
 TENANT = '22222222-2222-2222-2222-222222222222'
 RELEASE = dict(sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64, releaseTag='3.3.0-dev.2',
                clientMinVersion='3.3.0', managedMiniapps=[])
@@ -235,22 +238,90 @@ class GuidedTests(unittest.TestCase):
                 setup.upgrade_command(self.args, self.directory, interactive=False)
         select.assert_not_called()
 
-    def test_teams_setup_keeps_the_secret_in_key_vault_and_rolls_out(self):
+    def test_teams_setup_creates_the_app_and_rolls_out(self):
         state = self.write_state('infrastructure_verified', outputs={'keyVaultName': 'kvacmementra12345678'})
-        with patch.object(setup, 'create_meetings_app', return_value=(SUB, 'graph-secret', True, '2028-10-08T00:00:00Z')), \
+        with patch.object(setup, 'create_meetings_app', return_value=(SUB, True, '2028-10-08T00:00:00Z')), \
              patch.object(setup, 'confirm', return_value=True), patch.object(setup, 'vault_set') as vault_set, \
+             patch.object(setup, 'vault_get', return_value={'value': 'stored-by-create'}), \
              patch.object(setup, 'resolve_principal', return_value={'id': TENANT}), \
              patch.object(setup, 'update_configuration') as update, \
              patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}) as install:
             self.args.teams_organizer = 'organizer@acme.example'
             result = setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
-        vault_set.assert_called_once_with(self.config, 'teams-graph-client-secret-' + SUB, 'graph-secret')
+        # create_meetings_app stored the secret itself.
+        vault_set.assert_not_called()
         self.assertEqual(update.call_args.kwargs, {'teamsGraphTenantId': TENANT, 'teamsGraphClientId': SUB,
                                                    'teamsGraphOrganizerId': TENANT})
         install.assert_called_once()
-        self.assertNotIn('graph-secret', json.dumps(result))
         self.assertIn(f'New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {SUB}', result['teamsPolicy'])
         self.assertEqual(result['adminConsent'], 'granted')
+
+    def meetings_graph(self, existing_names=(), recorded_app=None):
+        calls = []
+        role = {'value': 'OnlineMeetings.ReadWrite.All', 'id': 'role-id'}
+        def graph(config, method, path, body=None, missing_ok=False):
+            path = urllib_unquote(path)
+            calls.append((method, path.split('?')[0]))
+            if method == 'GET' and "appId eq '00000003" in path:
+                return {'value': [{'id': 'graph-sp', 'appRoles': [role]}]}
+            if method == 'GET' and path.startswith('applications?') and 'displayName' in path:
+                return {'value': [{'id': 'someone-else'}] if existing_names else []}
+            if method == 'GET' and path.startswith('applications?'):
+                return {'value': [{'id': 'app-object', 'appId': recorded_app}] if recorded_app else []}
+            if method == 'POST' and path == 'applications':
+                return {'id': 'app-object', 'appId': SUB}
+            if method == 'GET' and path.startswith('servicePrincipals?'):
+                return {'value': [{'id': 'app-sp'}]}
+            if method == 'POST' and path.endswith('/addPassword'):
+                return {'secretText': GRAPH_REPLY_TEXT}
+            return {}
+        return graph, calls
+
+    def test_meetings_app_is_never_adopted_by_name(self):
+        state = self.write_state('infrastructure_verified')
+        graph, calls = self.meetings_graph(existing_names=True)
+        with patch.object(setup, 'graph', side_effect=graph):
+            with self.assertRaisesRegex(setup.SetupError, 'that setup did not create'):
+                setup.create_meetings_app(self.directory, self.config, state)
+        self.assertNotIn(('POST', 'applications'), calls)
+        self.assertFalse(any(path.endswith('/appRoleAssignedTo') for method, path in calls if method == 'POST'))
+
+    def test_new_meetings_app_is_recorded_granted_first_and_its_secret_stored_at_once(self):
+        state = self.write_state('infrastructure_verified')
+        graph, calls = self.meetings_graph()
+        with patch.object(setup, 'graph', side_effect=graph), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup, 'vault_set') as vault_set:
+            client_id, consent, expires = setup.create_meetings_app(self.directory, self.config, state)
+        self.assertEqual((client_id, consent), (SUB, True))
+        self.assertEqual(json.loads((self.directory / 'state.json').read_text())['meetingsAppId'], SUB)
+        posts = [path for method, path in calls if method == 'POST']
+        self.assertLess(posts.index('servicePrincipals/graph-sp/appRoleAssignedTo'), posts.index('applications/app-object/addPassword'))
+        vault_set.assert_called_once_with(self.config, 'teams-graph-client-secret-' + SUB, GRAPH_REPLY_TEXT)
+
+    def test_rerun_reuses_the_recorded_app_and_its_saved_secret(self):
+        state = self.write_state('infrastructure_verified', meetingsAppId=SUB)
+        graph, calls = self.meetings_graph(recorded_app=SUB)
+        with patch.object(setup, 'graph', side_effect=graph), patch.object(setup, 'vault_get', return_value={'value': 'saved'}), \
+             patch.object(setup, 'vault_set') as vault_set:
+            self.assertEqual(setup.create_meetings_app(self.directory, self.config, state)[0], SUB)
+        self.assertNotIn(('POST', 'applications'), calls)
+        self.assertFalse(any(path.endswith('/addPassword') for method, path in calls))
+        vault_set.assert_not_called()
+
+    def test_a_rejected_secret_changes_nothing(self):
+        state = self.write_state('infrastructure_verified', outputs={'keyVaultName': 'kvacmementra12345678'})
+        self.args.teams_client_id = SUB
+        self.args.teams_secret_stdin = True
+        error = setup.urllib.error.HTTPError('url', 401, 'Unauthorized', {}, None)
+        error.read = lambda: json.dumps({'error': 'invalid_client', 'error_codes': [7000215]}).encode()
+        with patch('sys.stdin', io.StringIO('mistyped\n')), patch.object(setup, 'RETRY_SECONDS', 0), \
+             patch.object(setup.urllib.request, 'urlopen', side_effect=error) as urlopen, \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'update_configuration') as update:
+            with self.assertRaisesRegex(setup.SetupError, 'rejected the client secret'):
+                setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
+        self.assertEqual(urlopen.call_count, 6)
+        vault_set.assert_not_called()
+        update.assert_not_called()
 
     def test_existing_meetings_app_consent_is_checked_not_assumed(self):
         role = 'b8bb2037-6e08-44ac-a4ea-4674e010e2a4'
