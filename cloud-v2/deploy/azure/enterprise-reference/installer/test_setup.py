@@ -214,7 +214,7 @@ class InstallerTests(unittest.TestCase):
     def test_release_cannot_change_during_resume(self):
         self.state['releaseHash'] = 'other-release'
         self.save()
-        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'release differs'):
+        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'not the one the deployment runs'):
             setup.load(self.directory)
 
     def test_shared_setup_directory_stops_before_writing_state_or_secrets(self):

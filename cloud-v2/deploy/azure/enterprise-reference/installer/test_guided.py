@@ -181,6 +181,20 @@ class GuidedTests(unittest.TestCase):
         self.assertTrue(argv[1].endswith('scripts/deploy.sh'))
         self.assertFalse(Path(argv[3]).exists())
 
+    def test_vault_errors_other_than_access_propagation_are_shown_at_once(self):
+        result = setup.subprocess.CompletedProcess([], 1, '', 'ERROR: (Forbidden) Client address is not authorized\nInner error: {"code":"ForbiddenByFirewall"}')
+        with patch.object(setup.subprocess, 'run', return_value=result) as run, patch.object(setup, 'grant_vault_access') as grant:
+            with self.assertRaisesRegex(setup.SetupError, 'Client address is not authorized'):
+                setup.vault_get(self.config, 'x')
+        self.assertEqual(run.call_count, 1)
+        grant.assert_not_called()
+
+    def test_preview_counts_repeated_changes(self):
+        grant = {'changeType': 'Create', 'resourceId': '/subscriptions/s/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv/secrets/a/providers/Microsoft.Authorization/roleAssignments/g',
+                 'after': {'properties': {'roleDefinitionId': '/x/4633458b-17de-408a-b874-0445c86b69e6'}}}
+        summary = setup.summarize_preview({'access': {'changes': [dict(grant, resourceId=grant['resourceId'] + str(i)) for i in range(5)]}})
+        self.assertEqual(summary['create'], ['Role assignment an app can read one of its own secrets (x5)'])
+
     def test_vault_reports_missing_secret_without_retrying(self):
         result = setup.subprocess.CompletedProcess([], 1, '', 'ERROR: (SecretNotFound) A secret with (name/id) x was not found')
         with patch.object(setup.subprocess, 'run', return_value=result) as run:
@@ -209,6 +223,44 @@ class GuidedTests(unittest.TestCase):
         select.assert_not_called()
         self.assertEqual((self.directory / 'state.json').read_bytes(), before)
         self.assertFalse((self.directory / 'upgrade.pending.json').exists())
+
+    def upgrade_packages(self, old_tag, new_tag):
+        packages = self.home / 'packages'
+        old = packages / f'{old_tag}/mentra-private-cloud'
+        new = packages / f'{new_tag}/mentra-private-cloud'
+        for package, tag in ((old, old_tag), (new, new_tag)):
+            package.mkdir(parents=True)
+            (package / 'release.json').write_text(json.dumps({'releaseTag': tag}))
+        (self.home / 'mentra-private-cloud').symlink_to(f'packages/{old_tag}/mentra-private-cloud')
+        hashes = {str(old / 'release.json'): 'old-release', str(new / 'release.json'): 'new-release'}
+        return old, new, hashes
+
+    def test_an_older_package_is_refused_before_the_preview(self):
+        old, new, hashes = self.upgrade_packages('3.3.0-dev.5', '3.3.0-dev.2')
+        self.write_state('infrastructure_verified', release_hash='old-release')
+        with patch.object(setup, 'ROOT', new), patch.object(setup, 'digest', side_effect=lambda p: hashes.get(str(p), 'x')), \
+             patch.object(setup, 'check_release', return_value=RELEASE), patch.object(setup, 'preview') as preview:
+            with self.assertRaisesRegex(setup.SetupError, f'older than the deployment.*{old}'):
+                setup.upgrade_command(self.args, self.directory, interactive=False)
+        preview.assert_not_called()
+
+    def test_a_deployment_failing_verification_can_still_be_upgraded(self):
+        self.assertTrue(setup.upgradable_phase(self.config, {'phase': 'deployed'}))
+        self.assertFalse(setup.upgradable_phase(dict(self.config, workspaceHostname='mentra.acme.example'), {'phase': 'deployed'}))
+        self.assertFalse(setup.upgradable_phase(self.config, {'phase': 'deploying'}))
+
+    def test_dns_that_setup_cannot_write_is_handed_off(self):
+        state = self.write_state('awaiting_dns', dns=[{'type': 'CNAME', 'name': 'mentra.acme.example', 'value': 'app'},
+                                                      {'type': 'TXT', 'name': 'asuid.mentra.acme.example', 'value': 'id'}])
+        self.config['workspaceHostname'] = 'mentra.acme.example'
+        with patch.object(setup, 'check_dns', side_effect=setup.SetupError('not yet')), \
+             patch.object(setup, 'find_azure_dns_zone', return_value={'name': 'acme.example', 'resourceGroup': 'rg-dns'}), \
+             patch.object(setup, 'configure_azure_dns', side_effect=setup.SetupError('AuthorizationFailed')), \
+             patch.object(setup, 'confirm', return_value=True), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertFalse(setup.handle_dns(self.args, self.directory, self.config, state, interactive=False))
+        self.assertIn('could not add the records itself', out.getvalue())
+        self.assertIn('CNAME mentra.acme.example', out.getvalue())
 
     def test_upgrade_finds_the_running_package_confirms_backups_and_relinks(self):
         packages = self.home / 'packages'
