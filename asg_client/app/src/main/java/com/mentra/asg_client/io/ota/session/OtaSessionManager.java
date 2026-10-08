@@ -165,6 +165,15 @@ public class OtaSessionManager {
         // Same-boot dispatched installs remain owned until the native terminal event.
     }
 
+    /** Native success stages A/B bytes; it does not prove the selected firmware booted. */
+    public synchronized boolean stageMtkRestoreForReboot() {
+        if (!hasActiveMtkRestore()) return false;
+        mCurrentPhase = "awaiting_reboot";
+        mStepPercent = 100;
+        persistImmediately();
+        return true;
+    }
+
     public synchronized boolean hasActiveSession() {
         if (mSessionId == null || mStatus == null) {
             return false;

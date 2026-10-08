@@ -9,6 +9,7 @@ import android.content.Intent;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import com.mentra.asg_client.io.ota.services.OtaService;
+import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
 import com.mentra.asg_client.receiver.DebugMtkOtaReceiver;
 import com.mentra.asg_client.AsgConstants;
 import java.util.concurrent.CountDownLatch;
@@ -136,5 +137,31 @@ public class OtaHelperInlineMtkTest {
             assertThat(replacement.consumeRebootAfterMtkInstall()).isFalse();
             verify(replacement, never()).downloadMtkFirmware(anyString(), any(), any());
         } finally {replacement.getSessionManager().clear(); replacement.cleanup(); original.cleanup(); OtaHelper.setMtkOtaInProgress(false);}
+    }
+
+    @Test public void nativeSuccessRetainsCustodyUntilTheSelectedFirmwareActuallyBoots() throws Exception {
+        Context context = ApplicationProvider.getApplicationContext();
+        context.getSharedPreferences("ota_session", Context.MODE_PRIVATE).edit().clear().commit();
+        OtaHelper helper = new OtaHelper(context, mock(IBesOtaRegistry.class));
+        try {
+            for (boolean targetBoot : new boolean[]{true, false}) {
+                helper.getSessionManager().clear();
+                helper.getSessionManager().createMtkRestore("firmware-" + (targetBoot ? "b" : "c").repeat(32), "a".repeat(64),
+                        new JSONObject(manifest()).getJSONObject("mtk_full_ota"), "20260709", "original-boot");
+                helper.getSessionManager().markMtkInstallDispatched();
+                ReflectionHelpers.setField(helper, "rebootAfterMtkInstall", true);
+                OtaService service = Robolectric.buildService(OtaService.class).get();
+                ReflectionHelpers.setField(service, "otaHelper", helper);
+                service.onMtkOtaProgress(MtkOtaProgressEvent.createSuccess("done"));
+                assertThat(helper.getSessionManager().getStatus()).isEqualTo("in_progress");
+                assertThat(helper.getSessionManager().getCurrentPhase()).isEqualTo("awaiting_reboot");
+                assertThat(helper.startVersionCheckWithUrl(context, "https://cdn/other.json")).isFalse();
+                com.mentra.asg_client.io.ota.session.OtaSessionManager restarted = new com.mentra.asg_client.io.ota.session.OtaSessionManager(context);
+                restarted.reconcileMtkRestore("20260709", "original-boot");
+                assertThat(restarted.hasActiveMtkRestore()).isTrue();
+                restarted.reconcileMtkRestore(targetBoot ? "MentraLive_20260908.10" : "20260709", "new-boot");
+                assertThat(restarted.getStatus()).isEqualTo(targetBoot ? "complete" : "failed");
+            }
+        } finally {helper.getSessionManager().clear(); helper.cleanup(); OtaHelper.setMtkOtaInProgress(false);}
     }
 }

@@ -257,6 +257,11 @@ public class OtaService extends Service {
                 boolean shouldRebootAfterMtk =
                         otaHelper != null && otaHelper.consumeRebootAfterMtkInstall();
 
+                if (otaHelper != null && otaHelper.getSessionManager().stageMtkRestoreForReboot()) {
+                    if (shouldRebootAfterMtk) scheduleMtkRebootToApplyUpdate();
+                    break;
+                }
+
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FINISHED", 100, null);
                     // Session-based path: auto-advance to the next step (e.g. BES) immediately
