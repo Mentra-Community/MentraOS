@@ -24,6 +24,13 @@ export interface ReconnectDecisionInput {
   hasDefaultDevice: boolean
   /** True when a scan is already in progress. */
   searching: boolean
+  /**
+   * True when another phone took over the saved Mentra Live (`owner_replaced`).
+   * The saved identity is intentionally kept so the home card can explain the
+   * loss, so a default device still exists — but we must NOT auto-reconnect to
+   * glasses this phone no longer owns. Cleared by unpair / re-pair / a reconnect.
+   */
+  ownerLost: boolean
 }
 
 /**
@@ -38,6 +45,10 @@ export function decideReconnect(input: ReconnectDecisionInput): ReconnectDecisio
   if (!input.reconnectOnForeground) return {kind: "skip", result: true}
   // No real wearable paired (or the simulated device): nothing to reconnect to.
   if (!input.defaultWearable || input.isSimulated) return {kind: "skip", result: false}
+  // Ownership was taken over by another phone: the saved identity is kept only so
+  // the home card can explain the loss. Auto-reconnecting here would fight native
+  // stand-down and loop forever, so stay down until the user unpairs / re-pairs.
+  if (input.ownerLost) return {kind: "skip", result: false}
   // Model chosen but never actually paired (or the native default was cleared):
   // connectDefault() would throw — skip quietly; pairing is a user-driven flow.
   // (Safe to trust at cold start now: hasDefaultDevice reads are gated on the

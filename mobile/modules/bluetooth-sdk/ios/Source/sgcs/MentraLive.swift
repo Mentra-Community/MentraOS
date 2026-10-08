@@ -1805,6 +1805,15 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func connectById(_ deviceName: String) {
+        // Owner loss (standDownAfterOwnerLoss) calls destroy() directly without
+        // going through DeviceManager.disconnect(), so DeviceManager keeps this
+        // killed instance as its sgc. A default-on foreground reconnect then
+        // reuses it and would rebuild centralManager + scan here — an endless
+        // reconnect to glasses this phone no longer owns. Stay inert once killed.
+        if isKilled {
+            Bridge.log("LIVE: connectById blocked — manager killed (owner loss / destroy)")
+            return
+        }
         if pairingYieldActive {
             Bridge.log("LIVE: connectById blocked — pairing yield active")
             return
