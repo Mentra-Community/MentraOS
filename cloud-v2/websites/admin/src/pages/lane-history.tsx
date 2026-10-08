@@ -20,6 +20,7 @@ export function LaneHistoryPage({selection, now}: {selection: LaneSelection; now
     getNextPageParam: page => page.nextCursor ?? undefined, refetchInterval: 30_000});
   const host = controllers.data?.hosts.find(host => host.hostId === hostId);
   const detailedHost = details.data?.hosts.find(host => host.hostId === hostId);
+  const historyLane = detailedHost?.lanes.find(lane => lane.id === laneId);
   const lane = host?.lanes.find(lane => lane.id === laneId);
   const fresh = Boolean(host && !controllers.isError && restorationHostIsFresh(host, now, controllers.data!.freshForMs));
   return <div className="space-y-5">
@@ -42,7 +43,7 @@ export function LaneHistoryPage({selection, now}: {selection: LaneSelection; now
     </section>
     <section className={TESTING_PANEL}><h3 className="mb-4 text-lg font-semibold">Restoration history &amp; resume decisions</h3>
       {details.isError && <p role="alert" className="text-sm text-red-700">Restoration history could not refresh.</p>}
-      {detailedHost && lane ? <RestorationHost host={detailedHost} fresh={!details.isError && restorationHostIsFresh(detailedHost, now, details.data!.freshForMs)} laneId={laneId} /> : <p className="text-sm text-[#747780]">{details.isPending ? loading('Loading restoration history') : "Restoration history is unavailable for this lane."}</p>}
+      {detailedHost && historyLane ? <RestorationHost host={detailedHost} fresh={!details.isError && restorationHostIsFresh(detailedHost, now, details.data!.freshForMs)} laneId={laneId} /> : <p className="text-sm text-[#747780]">{details.isPending ? loading('Loading restoration history') : "Restoration history is unavailable for this lane."}</p>}
     </section>
   </div>;
 }
