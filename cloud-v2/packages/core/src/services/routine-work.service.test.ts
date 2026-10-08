@@ -1,8 +1,19 @@
 import {expect, spyOn, test} from 'bun:test'
 import {RoutineWorkModel} from '../models/routine-work.model'
-import {RoutineWorkService, type RoutineWorkDelivery, type RoutineWorkRepository} from './routine-work.service'
+import {RoutineWorkService as ActualRoutineWorkService, type RoutineWorkDelivery, type RoutineWorkRepository} from './routine-work.service'
 import {requestInputDigest} from './test-request.service'
-import {routineWorkRequestSchema, routineWorkStatusSchema} from '../types/routine-work.types'
+import {routineWorkRequestSchema, routineWorkStatusSchema, authoringWorkSchema, type AuthoringWork} from '../types/routine-work.types'
+
+
+// Existing status/cursor regression cases operate after the single host binding.
+class RoutineWorkService extends ActualRoutineWorkService {
+  constructor(...args: ConstructorParameters<typeof ActualRoutineWorkService>) {
+    args[4] ??= {async resolve(revision) {return revision ?? 'a'.repeat(40)}};
+    args[6] = null;
+    super(...args);
+  }
+  override async submit(value:unknown):Promise<RoutineWorkDelivery & {hostId:string;work:AuthoringWork}> {return await super.submit(value) as RoutineWorkDelivery & {hostId:string;work:AuthoringWork};}
+}
 
 const input = routineWorkRequestSchema.parse({
   schemaVersion: 1,
@@ -16,7 +27,7 @@ const input = routineWorkRequestSchema.parse({
   },
   source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40)},
   target: {hostId: 'mini', laneId: 'phone'},
-  requirements: {platform: 'android', glasses: [], capabilities: [], environment: []},
+  requirements: {platform: 'android', glasses: [], capabilities: [], environment: [], resources:[{kind:"app",capabilities:[]},{kind:"phone",capabilities:[]},{kind:"recorder",capabilities:[]}]},
   origin: {repository: 'Mentra-Community/MentraOS', prNumber: 12, headSha: 'b'.repeat(40)},
   buildSource: {channel: 'pr', prNumber: 12, buildRunId: 55, publicationAttempt: 2},
 })
@@ -30,7 +41,8 @@ function fixture(options: {buildHead?: string; noHost?: boolean; notificationFai
     },
     async insert(row) {
       if (rows.has(row.workId)) throw new Error('duplicate')
-      rows.set(row.workId, {...structuredClone(row), createdAt: new Date('2026-10-05T10:00:00Z')})
+      const work=authoringWorkSchema.parse({...row.work,target:input.target});
+      rows.set(row.workId, {...structuredClone(row),work,inputSha256:requestInputDigest(work),hostId:'mini', createdAt: new Date('2026-10-05T10:00:00Z')})
     },
     async queued(hostId, after, limit) {
       return [...rows.values()]
@@ -235,15 +247,12 @@ test('same-time delivery pagination and concurrent admission preserve every occu
   expect(second.nextCursor).toBeNull()
 })
 
-test('stale app head, missing host, foreign lane and malformed provider input create no delivery', async () => {
-  for (const [f, request] of [
-    [fixture({buildHead: 'f'.repeat(40)}), input],
-    [fixture({noHost: true}), input],
-    [fixture(), {...input, target: {...input.target, laneId: 'foreign'}}],
-  ] as const) {
+test('stale app head and malformed provider input create no delivery while offline source work is retained', async () => {
+  for (const [f, request] of [[fixture({buildHead: 'f'.repeat(40)}), input]] as const) {
     await expect(f.service.submit(request)).rejects.toMatchObject({status: 409})
     expect(f.rows.size).toBe(0)
   }
+  const offline=fixture({noHost:true});expect((await offline.service.submit(input)).workId).toBe(input.workId);
   const f = fixture()
   await expect(
     f.service.submit({

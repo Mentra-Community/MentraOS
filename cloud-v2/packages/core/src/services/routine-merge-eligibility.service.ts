@@ -67,7 +67,7 @@ const repository: RoutineMergeRepository = {
       ])
       const view = authoringJobViewSchema.safeParse(job?.status?.details)
       const review = view.success ? view.data.details.review : undefined
-      if (view.success && job?.acceptance?.hostId === request.hostId && job.hostId === request.hostId &&
+      if (view.success && job && typeof request.hostId === 'string' && job.acceptance?.hostId === request.hostId && job.hostId === request.hostId &&
           job.acceptance.inputSha256 === job.inputSha256 && requestInputDigest(job.work) === job.inputSha256 &&
           view.data.workId === binding.workId && view.data.hostId === request.hostId &&
           view.data.inputSha256 === job.inputSha256 && view.data.state === 'passed' && view.data.attemptId === binding.attemptId &&

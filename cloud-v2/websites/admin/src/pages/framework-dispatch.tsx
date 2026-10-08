@@ -10,6 +10,8 @@ import {api} from "../lib/api";
 type DeliveryRequest = Pick<import('../../../../packages/core/src/types/framework-request.types').FrameworkRequestDisplay,
   'requestId' | 'hostId' | 'state' | 'createdAt' | 'routineId' | 'laneId' | 'platform' | 'reason' | 'definitionRevision'>;
 const deliveryStates: Record<string, {label: string; explanation: string}> = {
+  "awaiting-source": {label: "Preparing routine source", explanation: "The exact routine source and app build are saved. Preparation is pending."},
+  "awaiting-runner": {label: "Waiting for compatible computer", explanation: "The routine is ready and waiting for an available compatible test computer."},
   preparing: {label: "Preparing routine source", explanation: "The request is saved while the test computer verifies the selected source. No test has started."},
   queued: {label: "Waiting for computer", explanation: "The request is queued. The test computer has not confirmed receipt yet."},
   accepted: {label: "Received by computer", explanation: "The computer received the request. Execution has not been reported yet."},
@@ -31,8 +33,8 @@ export function NativeActivityPanel() {
         {row.reason && <p className="mt-2 text-sm">{row.reason}</p>}
         <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm">
           {row.platform && <div><dt className="text-[#68746d]">Platform</dt><dd>{row.platform === "ios-on-mac" ? "Mac" : row.platform === "android" ? "Android" : readableName(row.platform)}</dd></div>}
-          <div><dt className="text-[#68746d]">Computer</dt><dd>{readableName(row.hostId)}</dd></div>
-          <div><dt className="text-[#68746d]">Test lane</dt><dd>{readableName(row.laneId)}</dd></div>
+          <div><dt className="text-[#68746d]">Computer</dt><dd>{row.hostId ? readableName(row.hostId) : "Awaiting assignment"}</dd></div>
+          <div><dt className="text-[#68746d]">Test lane</dt><dd>{row.laneId ? readableName(row.laneId) : "Awaiting assignment"}</dd></div>
           {row.createdAt && <div><dt className="text-[#68746d]">Requested</dt><dd>{new Date(row.createdAt).toLocaleString()}</dd></div>}
         </dl>
         <details className="mt-3 text-xs text-[#68746d]"><summary className="cursor-pointer">Request details</summary>
@@ -56,20 +58,21 @@ export function TestBuildOption({build, checked, disabled, onSelect}: {build: Te
       <a className={`${TESTING_LINK} text-sm`} href={build.buildUrl} target="_blank" rel="noreferrer">View build in GitHub</a></span>
   </label>;
 }
-type Submission = {requestId: string; hostId: string; laneId: string; routineId: string; platform: "android" | "ios-on-mac"; routineRevision?: string; source: TestBuildSource; archiveSha256: string};
+type Submission = {requestId: string; hostId?: string; laneId?: string; routineId: string; platform: "android" | "ios-on-mac"; routineRevision?: string; source: TestBuildSource; archiveSha256: string};
 
 export function pickerRequest({requestId, hostId, laneId, routineId, platform, routineRevision, build}: {
-  requestId: string; hostId: string; laneId: string; routineId: string; platform: "android" | "ios-on-mac"; routineRevision?: string; build: TestBuild;
+  requestId: string; hostId?: string; laneId?: string; routineId: string; platform: "android" | "ios-on-mac"; routineRevision?: string; build: TestBuild;
 }): Submission {
-  if (!hostId || !laneId || !buildSelectable(build) || build.platform && build.platform !== platform)
-    throw new Error("Select a published build and target lane.");
+  if (laneId && !hostId) throw new Error("A targeted lane requires its computer ID.");
+  if (!buildSelectable(build) || build.platform && build.platform !== platform)
+    throw new Error("Select a published build for the selected platform.");
   if (routineRevision && !/^[a-f0-9]{40}$/.test(routineRevision)) throw new Error("Enter a full 40-character routine commit SHA or leave it blank for latest main.");
   const selection = routineDispatchSchema.parse({requestId, routineId, platform, source: build.source,
     ...(routineRevision ? {routineRevision} : {})});
-  return {...selection, hostId, laneId, archiveSha256: build.archive!.sha256};
+  return {...selection, ...(hostId ? {hostId} : {}), ...(laneId ? {laneId} : {}), archiveSha256: build.archive!.sha256};
 }
 
-/** The picker resolves a published artifact; the controller's request queue executes it. */
+/** Freeze the selected publication before Actions assigns a compatible test computer. */
 export function NativeDispatchPanel() {
   const [routine, setRoutine] = useState("");
   const [platform, setPlatform] = useState<"android" | "ios-on-mac">("android");
@@ -99,12 +102,12 @@ export function NativeDispatchPanel() {
   async function submit() {
     setSending(true);
     try {
-      if (!submission && (!routine || !selected || !buildSelectable(selected) || !host || !lane)) throw new Error("Select a published build and target lane.");
-      const body = submission ?? pickerRequest({requestId: crypto.randomUUID(), hostId: host, laneId: lane,
+      if (!submission && (!routine || !selected || !buildSelectable(selected))) throw new Error("Select a published build.");
+      const body = submission ?? pickerRequest({requestId: crypto.randomUUID(), hostId: host.trim(), laneId: lane.trim(),
         routineId: routine, platform, routineRevision, build: selected!});
       setSubmission(body);
       const result = await api<{requestId: string; state: string}>("/api/admin/test-dispatches/picker", {method: "POST", body});
-      setMessage(`${result.state === "preparing" ? "Request saved; preparing routine source" : result.state === "queued" ? "Queued for the controller" : result.state} · ${result.requestId}`);
+      setMessage(`${result.state === "preparing" || result.state === "awaiting-source" ? "Request saved; preparing routine source" : result.state === "awaiting-runner" ? "Waiting for a compatible computer" : result.state === "queued" ? "Queued for the controller" : result.state} · ${result.requestId}`);
     } catch (error) {setMessage(error instanceof Error ? error.message : "Request failed. Retry the same request to check its receipt.");}
     finally {setSending(false);}
   }
@@ -115,16 +118,17 @@ export function NativeDispatchPanel() {
     <label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Build channel <select className={TESTING_FIELD} aria-label="Build channel" value={channel} disabled={locked} onChange={event => {setChannel(event.target.value); changed();}}><option value="dev">Dev</option><option value="staging">Staging</option><option value="pr">PR</option></select></label>
     {channel === "pr" && <label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">PR number <input className={TESTING_FIELD} aria-label="PR number" value={pr} disabled={locked} onChange={event => {setPr(event.target.value); changed();}} /></label>}
     <Button disabled={locked || !routine} onClick={findBuilds}>Find builds</Button></div>
-    <p className="text-sm text-[#68746d]">The request uses latest Harness main when submitted. The test computer checks platform compatibility before starting.</p>
+    <p className="text-sm text-[#68746d]">The request uses latest Harness main when submitted. An available compatible test computer is assigned after preparation.</p>
     <label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Routine revision (optional) <input className={TESTING_FIELD} aria-label="Routine revision" placeholder="Latest main" value={routineRevision} disabled={locked} onChange={event => setRoutineRevision(event.target.value.trim())} /></label>
     {routines.error && <p role="alert">Could not load routines: {routines.error.message}</p>}
     {builds.isFetching && <p role="status">Finding published builds…</p>}
     {builds.error && <p role="alert">Could not find builds: {builds.error.message}</p>}
     {builds.data?.builds.map(build => <TestBuildOption key={buildKey(build)} build={build} checked={selection === buildKey(build)} disabled={locked} onSelect={() => setSelection(buildKey(build))} />)}
     {inventory && builds.data?.builds.length === 0 && <p>No builds found for this selection.</p>}
-    <div className="grid gap-3 sm:grid-cols-2"><label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Computer <input className={TESTING_FIELD} aria-label="Host ID" value={host} disabled={locked} onChange={event => setHost(event.target.value)} /></label>
-    <label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Lane <input className={TESTING_FIELD} aria-label="Lane ID" value={lane} disabled={locked} onChange={event => setLane(event.target.value)} /></label></div>
-    <Button disabled={sending || (!submission && (!selected || !host || !lane))} onClick={submit}>{submission ? "Retry same request" : "Run routine"}</Button>
+    <div className="grid gap-3 sm:grid-cols-2"><label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Computer (optional) <input className={TESTING_FIELD} aria-label="Host ID" value={host} disabled={locked} onChange={event => setHost(event.target.value)} /></label>
+    <label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Lane (optional) <input className={TESTING_FIELD} aria-label="Lane ID" value={lane} disabled={locked} onChange={event => setLane(event.target.value)} /></label></div>
+    <p className="text-sm text-[#68746d]">Leave Computer and Lane blank to use any compatible computer. Set Computer to restrict assignment; set Lane to choose one lane on that computer.</p>
+    <Button disabled={sending || (!submission && !selected)} onClick={submit}>{submission ? "Retry same request" : "Run routine"}</Button>
     {submission && <Button disabled={sending} onClick={() => {setSubmission(null); setMessage("");}}>New request</Button>}
     <p role="status">{message}</p>
   </section>;

@@ -60,3 +60,19 @@ export function terminalRoutineFixture({status = "not-run", ...options} = {}) {
   fixture.detail.result = null
   return fixture
 }
+
+export function portableRoutineFixture({status, state = "awaiting-source", ...options} = {}) {
+  const fixture = routineFixture(options), {request, build} = fixture
+  const selection = {...request.dispatchIntent, build: {...build, kind: request.input.platform === "android" ? "android-apk" : "mac-ci-package"}}
+  delete selection.laneId
+  delete request.hostId; delete request.input; delete request.inputSha256
+  delete request.dispatchIntent; delete request.dispatchIntentSha256
+  request.fleetSelection = selection; request.fleetSelectionSha256 = requestInputDigest(selection)
+  request.state = status ? "terminal" : state
+  fixture.detail.result = null
+  if (status) {
+    request.terminalStatus = "not-run"
+    request.fleetCancellation = {requestedAt: "2026-10-03T12:01:00.000Z", reason: "Suite deadline expired while awaiting a compatible lane"}
+  }
+  return fixture
+}

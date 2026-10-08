@@ -1,9 +1,10 @@
 import { createPrivateKey } from "node:crypto";
 import { SignJWT } from "jose";
 
-type Scope = "source" | "private" | "harness" | "reporter";
+type Scope = "source" | "private" | "harness" | "reporter" | "dispatch";
 interface Credentials { appId?: string; privateKey?: string; installationId?: string }
 const grants = {
+  dispatch: { repositories: ["Mentra-Automated-Testing"], permissions: { actions: "write" } },
   reporter: { repositories: ["MentraOS"], permissions: { pull_requests: "write" } },
   source: { repositories: ["MentraOS"], permissions: { actions: "write", contents: "read", pull_requests: "read" } },
   harness: { repositories: ["Mentra-Automated-Testing"], permissions: { contents: "read", pull_requests: "read" } },

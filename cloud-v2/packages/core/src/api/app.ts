@@ -35,6 +35,7 @@ import {createRoutineDefinitionsApi} from "./internal/routine-definitions.api";
 import {createNightlyRoutinesApi} from "./internal/nightly-routines.api";
 import {createStateRepairDiagnosticsApi} from "./internal/state-repair-diagnostics.api";
 import {createTestRerunsApi} from "./internal/test-reruns.api";
+import {createRoutineJobsApi, createRoutineJobBindingApi} from './internal/routine-jobs.api';
 import {createRoutineDispatchesApi} from "./internal/routine-dispatches.api";
 import {createRoutineWorkIntakeApi, createRoutineWorkDeliveriesApi} from "./internal/routine-work.api";
 import testRunIngest from "./internal/test-runs.api";
@@ -94,7 +95,9 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
   app.route("/api/agent/reports", reportAgent);
+  app.route("/api/internal/test-requests", createRoutineJobBindingApi());
   app.route("/api/internal/test-requests", createTestRequestsApi());
+  app.route("/api/internal/routine-jobs", createRoutineJobsApi());
   app.route("/api/internal/framework-results", createFrameworkResultsApi());
   app.route("/api/internal/test-host-state", createTestHostStateApi());
   app.route("/api/internal/routine-definitions", createRoutineDefinitionsApi());

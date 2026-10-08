@@ -9,6 +9,7 @@ import {TestRunError} from "./test-result-error";
 import {hostRejectionSchema, requestInputDigest, type StoredRequest} from "./test-request.service";
 import {frameworkBuildSchema, frameworkIdentitySchema, recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
 import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
+import {routineJobBindingSchema} from "../types/routine-job.types";
 import {NightlyRoutineService, nightlyPreparedInput, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 import {frameworkResultSummaryFields, readFrameworkResultSummary} from "./framework-result.service";
 import {nativeRunFilter} from "./framework-run-summary.service";
@@ -34,17 +35,29 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
     const receipt = result.members.find(receipt => receipt.memberId === member.memberId);
     if (!expected || !receipt || receipt.requestId !== expected.requestId || receipt.routineId !== expected.routineId
       || receipt.platform !== expected.platform || receipt.definitionRevision !== expected.definitionRevision
-      || receipt.hostId !== expected.hostId
+      || expected.hostId !== undefined && receipt.hostId !== expected.hostId
       || requestInputDigest(receipt.build ?? null) !== requestInputDigest(expected.build ?? null))
       throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
     let input: RecordedInput | undefined;
     if ("routineRevision" in expected) {
       if (!("routineRevision" in receipt) || receipt.routineRevision !== expected.routineRevision
-        || requestInputDigest(receipt.dispatchIntent ?? null) !== requestInputDigest(expected.dispatchIntent ?? null)
+        || requestInputDigest(receipt.selection ?? null) !== requestInputDigest(expected.selection ?? null)
+        || !expected.selection && requestInputDigest(receipt.dispatchIntent ?? null) !== requestInputDigest(expected.dispatchIntent ?? null)
         || (receipt.input === undefined) !== (receipt.inputSha256 === undefined)
         || receipt.publicationComplete && !receipt.input)
         throw new TestRunError(503, "Nightly member receipt differs from its frozen input");
-      input = receipt.input ? nightlyPreparedInput(expected, receipt.input, receipt.inputSha256) : undefined;
+      if (expected.selection && receipt.binding) {
+        const binding = routineJobBindingSchema.safeParse(receipt.binding), intent = routineDispatchIntentSchema.safeParse(receipt.dispatchIntent);
+        if (!binding.success || !intent.success || binding.data.jobId !== expected.requestId || binding.data.requestId !== expected.requestId
+          || binding.data.hostId !== receipt.hostId || binding.data.laneId !== intent.data.laneId)
+          throw new TestRunError(503, "Nightly member binding differs from its recorded owner");
+        const {laneId: _lane, routineSource: boundSource, ...boundSelection} = intent.data;
+        const {routineSource: frozenSource, ...frozenSelection} = expected.selection;
+        if (requestInputDigest(boundSelection) !== requestInputDigest(frozenSelection) || frozenSource && requestInputDigest(boundSource) !== requestInputDigest(frozenSource))
+          throw new TestRunError(503, "Nightly bound receipt differs from its frozen selection");
+      }
+      if (expected.selection && receipt.input && !receipt.binding) throw new TestRunError(503, "Nightly prepared receipt has no recorded binding");
+      input = receipt.input ? nightlyPreparedInput({...expected, binding: receipt.binding, dispatchIntent: receipt.dispatchIntent}, receipt.input, receipt.inputSha256) : undefined;
     } else {
       // Historical occurrences froze the complete input in both plan and receipt.
       // Validate those original bytes; never manufacture a new dispatch intent.
@@ -62,9 +75,9 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
     }
     const build = input?.build ?? expected.build;
     return {...member, routineRevision: "routineRevision" in expected ? expected.routineRevision : expected.definitionRevision,
-      hostId: expected.hostId,
+      hostId: receipt.hostId ?? expected.hostId,
       ...(input?.laneId ? {laneId: input.laneId} : "dispatchIntent" in expected && expected.dispatchIntent ? {laneId: expected.dispatchIntent.laneId} : {}),
-      ...("dispatchIntent" in expected && expected.dispatchIntent ? {dispatchIntent: expected.dispatchIntent} : {}),
+      ...("dispatchIntent" in receipt && receipt.dispatchIntent ? {dispatchIntent: receipt.dispatchIntent} : {}),
       ...(input?.routineSource ? {routineSource: input.routineSource} : {}), ...(build ? {build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
       ...(receipt.unavailableReason ? {unavailableReason: receipt.unavailableReason} : {}),
@@ -76,7 +89,7 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
     failedRoutines: [...new Set(members.filter(member => (result.finishedAt !== undefined || member.status !== "waiting")
       && (member.status !== "pass" || !member.publicationComplete)).map(member => member.routineId))]};
 }
-type BoundRequest = {requestId: string; hostId: string; input?: unknown; inputSha256?: string | null;
+type BoundRequest = {requestId: string; hostId?: string | null; input?: unknown; inputSha256?: string | null;
   dispatchIntent?: unknown; dispatchIntentSha256?: string | null; state?: string; terminalStatus?: string | null; hostRejection?: unknown};
 
 async function boundSuiteRequests(requestIds: string[]): Promise<BoundRequest[]> {
@@ -85,7 +98,7 @@ async function boundSuiteRequests(requestIds: string[]): Promise<BoundRequest[]>
     .select({requestId: 1, hostId: 1, inputSha256: 1, input: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
       state: 1, terminalStatus: 1, hostRejection: 1}).limit(101).read("primary").readConcern("majority").lean();
   if (requests.length > 100) throw new TestRunError(503, "suite request history exceeds the query bound; no verdict available");
-  return requests;
+  return requests as BoundRequest[];
 }
 
 /** Add known request location only; a frozen verdict never rereads later run evidence. */
@@ -93,7 +106,7 @@ function withRequestLanes(suite: ReturnType<typeof summarizeSuite>, requests: Bo
   return {...suite, members: suite.members.map(member => {
     if (!member.requestId || member.hostId && member.laneId) return member;
     const request = requests.find(request => request.requestId === member.requestId);
-    if (!request || !frameworkIdentitySchema.safeParse(request.hostId).success) return member;
+    if (!request || typeof request.hostId !== "string" || !frameworkIdentitySchema.safeParse(request.hostId).success) return member;
     let location: {routineId: string; platform: string; revision: string; laneId: string; channel: string; headSha: string} | undefined;
     if (request.input !== undefined) {
       const input = recordedFrameworkRequestInputSchema.safeParse(request.input);
@@ -133,7 +146,7 @@ export type SuiteSummaryRead = SuiteSummary | Error;
 const compactNightlyMember = {
   memberId: "$$member.memberId", requestId: "$$member.requestId", routineId: "$$member.routineId",
   platform: "$$member.platform", definitionRevision: "$$member.definitionRevision", routineRevision: "$$member.routineRevision",
-  hostId: "$$member.hostId", laneId: {$ifNull: ["$$member.dispatchIntent.laneId", "$$member.input.laneId"]},
+  hostId: "$$member.hostId", binding: "$$member.binding", portable: {$ne: [{$ifNull: ["$$member.selection", null]}, null]}, laneId: {$ifNull: ["$$member.dispatchIntent.laneId", "$$member.input.laneId"]},
   preparedLaneId: "$$member.input.laneId", status: "$$member.status", publicationComplete: "$$member.publicationComplete",
   runId: "$$member.runId", runStartedAt: "$$member.runStartedAt", runFinishedAt: "$$member.runFinishedAt",
   build: {$let: {vars: {build: {$ifNull: ["$$member.build", "$$member.input.build"]}},
@@ -142,7 +155,7 @@ const compactNightlyMember = {
 };
 const compactNightly = (field: string, open = false) => ({suiteId: `$${field}.suiteId`, occurrenceId: `$${field}.occurrenceId`,
   startedAt: `$${field}.startedAt`, trigger: `$${field}.trigger`, finishedAt: `$${field}.finishedAt`,
-  expectedCount: `$${field}.expectedCount`, members: {$map: {input: `$${field}.members`, as: "member", in: {...compactNightlyMember, ...(open ? {dispatchIntent: "$$member.dispatchIntent"} : {})}}}});
+  expectedCount: `$${field}.expectedCount`, members: {$map: {input: `$${field}.members`, as: "member", in: {...compactNightlyMember, ...(open ? {dispatchIntent: "$$member.dispatchIntent", selection: "$$member.selection"} : {})}}}});
 export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId: 1, payload: 1, finishedAt: 1, completedResult: 1,
   nightlyPlan: {$cond: [{$eq: [{$ifNull: ["$nightlyPlan", null]}, null]}, "$$REMOVE",
     {$cond: [{$ne: [{$ifNull: ["$nightlyResult", null]}, null]}, compactNightly("nightlyPlan"), compactNightly("nightlyPlan", true)]}]},
@@ -150,7 +163,7 @@ export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId
 }};
 interface CompactNightlyMember {
   memberId: string; requestId: string; routineId: string; platform: string; definitionRevision: string; routineRevision?: string;
-  hostId?: string; laneId?: string; preparedLaneId?: string; build?: {repository?: string; channel?: string; headSha?: string; prNumber?: number};
+  hostId?: string; laneId?: string; portable?: boolean; binding?: NightlyPlan["members"][number]["binding"]; preparedLaneId?: string; build?: {repository?: string; channel?: string; headSha?: string; prNumber?: number};
   status?: string; publicationComplete?: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string;
 }
 interface CompactNightlyReceipt {suiteId: string; occurrenceId: string; startedAt: string; trigger: string;
@@ -181,22 +194,24 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
       || expected.laneId !== undefined && !frameworkIdentitySchema.safeParse(expected.laneId).success
       || expected.build && !frameworkBuildSchema.safeParse(expected.build).success
       || expected.definitionRevision !== receipt.definitionRevision || member.definitionRevision && member.definitionRevision !== expected.definitionRevision
-      || expected.routineRevision !== receipt.routineRevision || expected.hostId !== receipt.hostId
+      || expected.routineRevision !== receipt.routineRevision || !expected.portable && expected.hostId !== receipt.hostId
       || requestInputDigest(JSON.parse(JSON.stringify(expected.build ?? null))) !== requestInputDigest(JSON.parse(JSON.stringify(receipt.build ?? null)))
       || expected.build?.headSha && expected.build.headSha !== (member.headSha ?? suite.build.headSha)
       || expected.build?.channel && expected.build.channel !== suite.channel
-      || expected.laneId !== receipt.laneId || receipt.preparedLaneId && receipt.preparedLaneId !== expected.laneId
+      || !expected.portable && expected.laneId !== receipt.laneId || receipt.preparedLaneId && receipt.preparedLaneId !== (expected.portable ? receipt.binding?.laneId : expected.laneId)
       || !["pass", "failed", "setup-failed", "teardown-failed", "cancelled", "incomplete", "not-run", ...(!result.finishedAt ? ["waiting"] : [])].includes(receipt.status ?? "")
       || typeof receipt.publicationComplete !== "boolean"
       || ["pass", "failed", "setup-failed", "teardown-failed", "cancelled"].includes(receipt.status ?? "") && !receipt.runId
-      || receipt.runId && (!expected.build || !expected.hostId || !expected.laneId)
+      || receipt.runId && (!expected.build || !(expected.portable ? receipt.binding?.hostId : expected.hostId) || !(expected.portable ? receipt.binding?.laneId : expected.laneId))
+      || expected.portable && receipt.binding && (!routineJobBindingSchema.safeParse(receipt.binding).success || receipt.binding.jobId !== expected.requestId || receipt.binding.requestId !== expected.requestId
+        || receipt.binding.hostId !== receipt.hostId || receipt.binding.laneId !== receipt.laneId)
       || receipt.publicationComplete && (!receipt.runId || !receipt.preparedLaneId)
       || receipt.runId && (receipt.runId !== receipt.requestId || !receipt.runStartedAt || !receipt.runFinishedAt
         || !Number.isFinite(Date.parse(receipt.runStartedAt)) || !Number.isFinite(Date.parse(receipt.runFinishedAt))
         || Date.parse(receipt.runFinishedAt) < Date.parse(receipt.runStartedAt))) invalid();
     return {...member, status: receipt!.status === "incomplete" ? "not-run" : receipt!.status!,
-      publicationComplete: receipt!.publicationComplete, ...(expected!.hostId ? {hostId: expected!.hostId} : {}),
-      ...(expected!.laneId ? {laneId: expected!.laneId} : {}),
+      publicationComplete: receipt!.publicationComplete, ...((receipt!.hostId ?? expected!.hostId) ? {hostId: receipt!.hostId ?? expected!.hostId} : {}),
+      ...((receipt!.laneId ?? expected!.laneId) ? {laneId: receipt!.laneId ?? expected!.laneId} : {}),
       ...(receipt!.runId ? {runId: receipt!.runId, startedAt: receipt!.runStartedAt, finishedAt: receipt!.runFinishedAt} : {})};
   });
   const passed = members.filter(member => member.status === "pass" && member.publicationComplete).length;
@@ -238,7 +253,8 @@ export class TestSuiteService {
     const [requests, results] = await Promise.all([
       requestIds.length ? TestRequestModel.find({requestId: {$in: requestIds}})
         .select({requestId: 1, hostId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
-          state: 1, terminalStatus: 1, hostRejection: 1, preparation: 1, preparationCancellation: 1, preparationRejection: 1})
+          state: 1, terminalStatus: 1, hostRejection: 1, preparation: 1, preparationCancellation: 1, preparationRejection: 1,
+          fleetSelection: 1, fleetSelectionSha256: 1, fleetBinding: 1, fleetCancellation: 1})
         .limit(requestIds.length + 1).read("primary").readConcern("majority").setOptions(remaining()).lean() : [],
       liveRequestIds.length ? TestRunModel.find({...nativeRunFilter, requestId: {$in: liveRequestIds}})
         .select(frameworkResultSummaryFields).limit(liveRequestIds.length + 1).read("primary").readConcern("majority")
@@ -270,12 +286,12 @@ export class TestSuiteService {
           else {
             const plan = row.nightlyPlan as NightlyPlan;
             const snapshot = await new NightlyRoutineService().snapshot(plan, readers);
-            const result = {...snapshot, members: snapshot.members.map(member => ({...member,
+            const result = {...snapshot, members: snapshot.members.map(member => ({...member, portable: !!member.selection,
               laneId: (member as unknown as CompactNightlyMember).laneId ?? member.dispatchIntent?.laneId ?? member.input?.laneId,
               preparedLaneId: member.input?.laneId,
               ...(member.build ? {build: {repository: member.build.repository, channel: member.build.channel,
                 headSha: member.build.headSha, ...(member.build.prNumber !== undefined ? {prNumber: member.build.prNumber} : {})}} : {})}))};
-            summaries.set(row.suiteId, nightlyHistorySummary(suite, plan as unknown as CompactNightlyReceipt, result));
+            summaries.set(row.suiteId, nightlyHistorySummary(suite, {...plan, members: plan.members.map(member => ({...member, portable: !!member.selection}))} as unknown as CompactNightlyReceipt, result));
           }
           continue;
         }

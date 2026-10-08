@@ -1,6 +1,7 @@
 import {z} from 'zod'
 import {frameworkIdentitySchema} from './framework-request.types'
-import {routineIdentitySchema} from './routine-definition.types'
+import {routineIdentitySchema, routineResourceRequirementSchema} from './routine-definition.types'
+import {routineJobTargetSchema} from './routine-job.types'
 import {testBuildSourceSchema} from './test-build.types'
 import {firmwareManifestSchema} from './glasses-software.types'
 
@@ -18,6 +19,7 @@ export const routineWorkRequirementsSchema = z
     platform: z.enum(['mac', 'android']),
     glasses: identifiers,
     capabilities: identifiers,
+    resources: z.array(routineResourceRequirementSchema).min(1).max(9).optional(),
     environment: z
       .array(z.object({provider: routineIdentitySchema, input: boundedJson(32 * 1024), description}).strict())
       .max(20),
@@ -84,7 +86,11 @@ export const routineWorkBuildSchema = z
     if (!value.archive.name.endsWith(value.kind === 'android-apk' ? '.apk' : '.zip'))
       ctx.addIssue({code: 'custom', message: 'Build archive and platform differ'})
   })
-export const routineWorkRequestSchema = z.object({...fields, buildSource: testBuildSourceSchema}).strict()
+export const routineWorkRequestSchema = z.object({...fields,
+  source: fields.source.partial({revision: true}), target: routineJobTargetSchema.optional(),
+  requirements: routineWorkRequirementsSchema.extend({resources: z.array(routineResourceRequirementSchema).min(1).max(9)}),
+  buildSource: testBuildSourceSchema, deadline: z.string().datetime({offset: true}).optional(),
+}).strict()
 export const authoringWorkSchema = z
   .object({...fields, origin: fields.origin.optional(), build: routineWorkBuildSchema})
   .strict()
@@ -93,6 +99,11 @@ export const authoringWorkSchema = z
     (value) => value.build.kind === (value.requirements.platform === 'mac' ? 'mac-ci-package' : 'android-apk'),
     'Build platform differs',
   )
+export const portableAuthoringWorkSchema = z.object({...fields, target: routineJobTargetSchema.optional(),
+  requirements: routineWorkRequirementsSchema.extend({resources: z.array(routineResourceRequirementSchema).min(1).max(9)}),
+  build: routineWorkBuildSchema,
+}).strict()
+export type PortableAuthoringWork = z.infer<typeof portableAuthoringWorkSchema>
 export type RoutineWorkRequest = z.infer<typeof routineWorkRequestSchema>
 export type AuthoringWork = z.infer<typeof authoringWorkSchema>
 export const routineWorkStateSchema = z.enum([

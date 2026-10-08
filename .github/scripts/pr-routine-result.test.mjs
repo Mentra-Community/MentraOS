@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {renderPrRoutineResult, resolvePrRoutineResults, publishPrRoutineResult} from "./pr-routine-result.mjs"
-import {routineFixture, terminalRoutineFixture, preparingRoutineFixture} from "./routine-api-fixture.mjs"
+import {routineFixture, terminalRoutineFixture, preparingRoutineFixture, portableRoutineFixture} from "./routine-api-fixture.mjs"
 const context = {repo: {owner: "Mentra-Community", repo: "MentraOS"}, eventName: "workflow_run", ref: "refs/heads/dev"}
 
 test("PR comment uses unknown-to-client frozen title/platform and actual lifecycle outcome", () => {
@@ -44,4 +44,12 @@ test("preparation dispositions post truthful PR receipts and unsupported platfor
     assert.match(plan.body, new RegExp(f.request.dispatchIntent.routineRevision))
     if (status === "skipped") assert.match(plan.body, /not passing or failing test coverage/)
   }
+})
+
+test("a never-assigned portable PR request explains not-run and preserves its exact candidate", () => {
+  const f = portableRoutineFixture({status: "not-run"}), plan = renderPrRoutineResult(f.detail)
+  assert.equal(plan.pr, f.source.prNumber); assert.match(plan.body, /did not run/)
+  assert.match(plan.body, /Suite deadline expired while awaiting a compatible lane/)
+  assert.match(plan.body, new RegExp(f.build.headSha)); assert.match(plan.body, new RegExp(f.request.fleetSelection.routineRevision))
+  assert.doesNotMatch(plan.body, /Recording and full result|\| Setup \||was rejected|undefined/)
 })

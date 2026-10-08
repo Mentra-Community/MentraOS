@@ -25,7 +25,7 @@ const projection = ({
   createdAt,
   acceptance,
   status,
-  reporting,
+  reporting, fleetInputSha256, fleetDeadline, fleetBinding, fleetCancellation,
 }: RoutineWorkDelivery) => ({
   workId,
   requestSha256,
@@ -35,7 +35,7 @@ const projection = ({
   work,
   createdAt,
   acceptance,
-  status,
+  status, fleetInputSha256, fleetDeadline, fleetBinding, fleetCancellation,
   ...(reporting
     ? {
         reporting: {

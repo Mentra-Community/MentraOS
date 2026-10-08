@@ -10,6 +10,7 @@ import {hostCancellationSchema, hostRejectionSchema, requestInputDigest, isExecu
 import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema, type FrameworkRequestDisplay} from "../../types/framework-request.types";
 import {createTestRerunRoutes} from "../internal/test-reruns.api";
 import {routineDispatchIntentSchema} from '../../types/routine-dispatch.types';
+import {portableRoutineSelectionSchema, type StoredRoutineJob} from '../../types/routine-job.types';
 import {LaneRestorationService} from "../../services/lane-restoration.service";
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
@@ -31,7 +32,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   app.get("/suites/:suiteId", async c => c.json(await suites.detail(c.req.param("suiteId"))));
   app.get("/", async c => c.json(await results.list(c.req.query())));
   app.get("/activity", async c => c.json({requests: await TestRequestModel.find({state: {$ne: "terminal"}})
-    .sort({createdAt: 1, requestId: 1}).limit(100).select({requestId: 1, hostId: 1, state: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1, preparation: 1, preparationRejection: 1, preparationCancellation: 1, hostReceipt: 1, hostRejection: 1, hostCancellation: 1, cancellationAcknowledged: 1, createdAt: 1})
+    .sort({createdAt: 1, requestId: 1}).limit(100).select({requestId: 1, hostId: 1, state: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1, preparation: 1, preparationRejection: 1, preparationCancellation: 1, hostReceipt: 1, hostRejection: 1, hostCancellation: 1, cancellationAcknowledged: 1, createdAt: 1, fleetSelection: 1, fleetSelectionSha256: 1, fleetInputSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1, fleetActions: 1})
     .read("primary").readConcern("majority").lean().then(rows => rows.map(row => displayRequest(row as StoredRequest)))}));
   app.get("/health", async c => c.json(await health.list()));
   app.get("/health/:hostId", async c => c.json(await health.history(c.req.param("hostId"), c.req.query("days"))));
@@ -51,6 +52,21 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   return app;
 }
 function displayRequest(row: StoredRequest): FrameworkRequestDisplay {
+    const fleet = row as unknown as StoredRoutineJob;
+    if (fleet.fleetSelection && !fleet.fleetBinding) {
+      const parsed = portableRoutineSelectionSchema.safeParse(fleet.fleetSelection);
+      if (!parsed.success || requestInputDigest(parsed.data) !== fleet.fleetSelectionSha256)
+        throw new TestRunError(503, 'Stored fleet request identity is unavailable');
+      const selected = parsed.data;
+      return {requestId: row.requestId, routineId: selected.routineId, platform: selected.platform,
+        definitionRevision: selected.routineRevision, ...(selected.routineSource ? {routineSource: selected.routineSource} : {}),
+        minimumFrameworkVersion: selected.minimumFrameworkVersion, build: selected.build, state: fleet.state,
+        terminalStatus: fleet.terminalStatus, createdAt: fleet.createdAt?.toISOString(),
+        reason: fleet.fleetCancellation?.reason ?? fleet.fleetDispatch?.error ?? (fleet.state === 'awaiting-source' ?
+          'Preparing the exact routine source.' : 'Awaiting a compatible testing runner.'),
+        ...(fleet.fleetCancellation ? {cancellationRequested: true, cancellationAcknowledged: true} : {}),
+        actionsRuns: fleet.fleetActions ?? []};
+    }
     if (!isExecutableRequest(row)) {
       const parsedIntent = routineDispatchIntentSchema.safeParse(row.dispatchIntent);
       if (!parsedIntent.success || requestInputDigest(parsedIntent.data) !== row.dispatchIntentSha256) throw new TestRunError(503, 'Stored preparation identity is unavailable');
@@ -62,6 +78,7 @@ function displayRequest(row: StoredRequest): FrameworkRequestDisplay {
         reasonAt: row.preparationRejection?.rejectedAt ?? row.preparation?.observedAt ?? row.preparationCancellation?.requestedAt,
         ...(row.preparationRejection ? {preparationDisposition: row.preparationRejection.disposition} : {}),
         ...(row.preparationCancellation ? {cancellationRequested: true, cancellationAcknowledged: true} : {})};
+      if (fleet.fleetBinding) {request.assignment = fleet.fleetBinding;request.actionsRuns = fleet.fleetActions ?? [];}
       return request;
     }
     const parsed = recordedFrameworkRequestInputSchema.safeParse(row.input);
@@ -82,6 +99,7 @@ function displayRequest(row: StoredRequest): FrameworkRequestDisplay {
       reason: rejection ? `${rejection.code}: ${rejection.reason}` : cancellation?.reason,
       reasonAt: rejection?.rejectedAt ?? cancellation?.requestedAt,
       ...(cancellation ? {cancellationRequested: true, cancellationAcknowledged: row.cancellationAcknowledged === true} : {})};
+    if (fleet.fleetBinding) {request.assignment = fleet.fleetBinding;request.actionsRuns = fleet.fleetActions ?? [];}
     return request;
 }
 export default createTestRunAdminApi();

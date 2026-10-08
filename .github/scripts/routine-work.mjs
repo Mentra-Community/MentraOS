@@ -35,7 +35,10 @@ export function parseRoutineWorkBrief(body, kind) {
     throw new Error('Authoring request JSON is invalid')
   }
   ensure(
-    keys(value, ['schemaVersion', 'kind', 'routineId', 'brief', 'source', 'target', 'requirements']) &&
+    keys(value, ['schemaVersion', 'kind', 'routineId', 'brief', 'source', 'requirements']) || keys(value, ['schemaVersion', 'kind', 'routineId', 'brief', 'source', 'target', 'requirements']),
+    'Authoring request fields are invalid',
+  )
+  ensure(
       value.schemaVersion === 1 &&
       value.kind === kind &&
       ['edit', 'create'].includes(kind) &&
@@ -50,17 +53,17 @@ export function parseRoutineWorkBrief(body, kind) {
     'Authoring request needs a goal, concrete changes and expected results',
   )
   ensure(
-    keys(value.source, ['repository', 'revision']) &&
+    (keys(value.source, ['repository']) || keys(value.source, ['repository', 'revision'])) &&
       value.source.repository === HARNESS &&
-      /^[a-f0-9]{40}$/.test(value.source.revision),
+      (value.source.revision === undefined || /^[a-f0-9]{40}$/.test(value.source.revision)),
     'Authoring requires an exact harness revision',
   )
   ensure(
-    keys(value.target, ['hostId', 'laneId']) && identity(value.target.hostId) && identity(value.target.laneId),
+    value.target === undefined || (typeof value.target === 'object' && value.target && Object.keys(value.target).length > 0 && Object.keys(value.target).every(key => ['hostId', 'laneId'].includes(key)) && Object.values(value.target).every(identity)),
     'Authoring target must name a host and lane',
   )
   ensure(
-    keys(value.requirements, ['platform', 'glasses', 'capabilities', 'environment']) &&
+    (keys(value.requirements, ['platform', 'glasses', 'capabilities', 'environment']) || keys(value.requirements, ['platform', 'glasses', 'capabilities', 'environment', 'resources'])) &&
       ['mac', 'android'].includes(value.requirements.platform) &&
       identifiers(value.requirements.glasses) &&
       identifiers(value.requirements.capabilities) &&
@@ -85,6 +88,13 @@ export function parseRoutineWorkBrief(body, kind) {
     ...requirement,
     description: requirement.description.trim(),
   }))
+  const baseKinds = ['app', 'recorder', ...(value.requirements.platform === 'android' ? ['phone'] : []), ...(value.requirements.glasses.length ? ['glasses'] : [])]
+  const resources = value.requirements.resources ?? baseKinds.map(kind => ({kind, capabilities: []}))
+  ensure(Array.isArray(resources) && resources.length > 0 && resources.length <= 9 && resources.every(resource =>
+    keys(resource, ['kind', 'capabilities']) && ['app', 'phone', 'glasses', 'recorder', 'audio', 'browser', 'network', 'fixture-data', 'workspace'].includes(resource.kind) && identifiers(resource.capabilities)),
+    'Authoring resource requirements are invalid')
+  ensure(baseKinds.every(kind => resources.some(resource => resource.kind === kind)), 'Authoring resources omit a required base fixture')
+  value.requirements.resources = resources
   return value
 }
 
@@ -258,14 +268,14 @@ export async function routineWorkApi({token, operation, request, workId = reques
     'Authoring receipt changed its identity',
   )
   ensure(
-    row.inputSha256 === workDigest(row.work) && row.hostId === row.work.target?.hostId,
+    row.inputSha256 === workDigest(row.work) && (row.hostId === undefined || row.hostId === row.work.target?.hostId),
     'Authoring receipt changed its frozen input digest or host',
   )
   if (request) {
     const {buildSource, ...input} = request
     ensure(
       isDeepStrictEqual(row.request, request) &&
-        Object.keys(input).every((key) => isDeepStrictEqual(row.work[key], input[key])),
+        Object.keys(input).every((key) => key === 'source' ? row.work.source?.repository === input.source.repository && (!input.source.revision || row.work.source.revision === input.source.revision) : isDeepStrictEqual(row.work[key], input[key])),
       'Authoring receipt changed its original brief/source/target',
     )
   }

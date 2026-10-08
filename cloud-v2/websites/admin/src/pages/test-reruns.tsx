@@ -47,6 +47,9 @@ export function AttemptHistory({suiteId, memberId, originalRequestId}: {suiteId?
     onOpen={setOpen} onBefore={setBefore} onRetry={()=>history.refetch()}/>;
 }
 type Preview={rerunId:string;previewDigest:string;plan:RerunPlan;state:string};
+export function RerunPreviewMembers({plan}:{plan:RerunPlan}) {
+  return <ul>{plan.members.map(member=><li key={member.memberId}>{member.selection.routineId} · {member.selection.platform} · App {member.selection.build.headSha.slice(0,10)} · Definition {member.selection.routineRevision.slice(0,10)} · Lane assigned when dispatched</li>)}</ul>;
+}
 export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {suiteId?:string;originalRequestId?:string;memberIds:string[];onClose:()=>void}) {
   const [override,setOverride]=useState(false), [routineRevision,setRoutineRevision]=useState("");
   const [channel,setChannel]=useState<TestBuildSource["channel"]>("dev"), [build,setBuild]=useState(""),[publication,setPublication]=useState("1"),[pr,setPr]=useState(""),[reason,setReason]=useState("");
@@ -81,7 +84,7 @@ export function RerunForm({suiteId, originalRequestId, memberIds, onClose}: {sui
       </div>}
     <div><label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Routine revision (optional) <input className={TESTING_FIELD} value={routineRevision} disabled={previewEntered||busy} placeholder="Reuse original exact source" onChange={e=>setRoutineRevision(e.target.value)}/></label></div>
     <div><label className="block min-w-0 flex-1 space-y-1 text-sm text-[#5d6068]">Reason <input className={TESTING_FIELD} value={reason} disabled={previewEntered||busy} onChange={e=>setReason(e.target.value)}/></label></div>
-    {preview&&<ul>{preview.plan.members.map(m=><li key={m.memberId}>{m.dispatchIntent.routineId} · {m.dispatchIntent.platform} · App {m.dispatchIntent.build.headSha.slice(0,10)} · Definition {m.dispatchIntent.routineRevision.slice(0,10)} · {m.hostId}/{m.dispatchIntent.laneId}</li>)}</ul>}
+    {preview&&<RerunPreviewMembers plan={preview.plan}/>}
     <div className="flex flex-wrap items-center gap-2">
     <TestingButton disabled={busy} onClick={preview?submit:prepare}>{busy?"Working…":preview?entered?"Reconcile same submission":"Submit this preview":"Preview rerun"}</TestingButton>
     <TestingButton className="ml-4" disabled={busy} onClick={onClose}>Close</TestingButton>

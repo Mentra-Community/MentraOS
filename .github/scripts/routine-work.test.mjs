@@ -24,7 +24,7 @@ const input = {
   },
   source: {repository: 'Mentra-Community/Mentra-Automated-Testing', revision: 'a'.repeat(40)},
   target: {hostId: 'mini', laneId: 'android-lane'},
-  requirements: {platform: 'android', glasses: [], capabilities: [], environment: []},
+  requirements: {platform: 'android', glasses: [], capabilities: [], environment: [], resources: ['app', 'recorder', 'phone'].map(kind => ({kind, capabilities: []}))},
 }
 const body = (value) => `${briefMarker}\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\``
 const pr = {
@@ -287,4 +287,16 @@ test('authoring workflow retains its independent enable gate and never evaluates
   const example = /````markdown\n([\s\S]+?)\n````/.exec(instructions)?.[1]
   assert.ok(example)
   assert.equal(parseRoutineWorkBrief(example, 'edit').routineId, 'email-sign-in-out')
+})
+
+ test('ordinary authoring brief uses main and fleet defaults while explicit fixture capabilities remain exact', () => {
+  const {target: _, ...portable} = structuredClone(input)
+  portable.source = {repository: 'Mentra-Community/Mentra-Automated-Testing'}
+  delete portable.requirements.resources
+  const parsed = parseRoutineWorkBrief(body(portable), 'edit')
+  assert.equal(parsed.target, undefined)
+  assert.equal(parsed.source.revision, undefined)
+  assert.deepEqual(parsed.requirements.resources, ['app', 'recorder', 'phone'].map(kind => ({kind, capabilities: []})))
+  parsed.requirements.resources.push({kind: 'audio', capabilities: ['speaker']})
+  assert.deepEqual(parseRoutineWorkBrief(body(parsed), 'edit').requirements.resources.at(-1), {kind: 'audio', capabilities: ['speaker']})
 })
