@@ -1,6 +1,10 @@
 import {describe, expect, test} from "bun:test"
 
-import {assertPublisherIdentityPolicy} from "../publisherIdentityPolicy"
+import {
+  assertPublisherIdentityPolicy,
+  assertUnsignedDevBuildAllowed,
+  SignedMiniappDevBuildError,
+} from "../publisherIdentityPolicy"
 
 describe("publisher identity policy", () => {
   test("accepts an unsigned bundle for a package that carries no publisher yet", () => {
@@ -54,7 +58,6 @@ describe("publisher identity policy", () => {
     expect(() =>
       assertPublisherIdentityPolicy({
         packageName: "com.customer.app",
-        source: "deployment_manifest",
         installedFingerprint: "sha256:one",
         system: false,
       }),
@@ -88,14 +91,23 @@ describe("publisher identity policy", () => {
     ).not.toThrow()
   })
 
-  test("keeps unsigned development snapshots outside production identity", () => {
+  test("holds development builds to the installed signer like any other bundle", () => {
+    // A dev build of a package is that package. Unsigned dev code may replace
+    // an unsigned install or none, never a signed one.
+    expect(() => assertUnsignedDevBuildAllowed({packageName: "com.example.app"})).not.toThrow()
     expect(() =>
-      assertPublisherIdentityPolicy({
-        packageName: "com.example.app",
-        source: "dev_snapshot",
-        installedFingerprint: "sha256:one",
-        system: false,
-      }),
+      assertUnsignedDevBuildAllowed({packageName: "com.example.app", installedFingerprint: null}),
     ).not.toThrow()
+    let refused: unknown
+    try {
+      assertUnsignedDevBuildAllowed({packageName: "com.example.app", installedFingerprint: "sha256:one"})
+    } catch (error) {
+      refused = error
+    }
+    expect(refused).toBeInstanceOf(SignedMiniappDevBuildError)
+    expect((refused as SignedMiniappDevBuildError).packageName).toBe("com.example.app")
+    expect((refused as Error).message).toBe(
+      "com.example.app is installed with a publisher signature. Uninstall it before running a development build.",
+    )
   })
 })

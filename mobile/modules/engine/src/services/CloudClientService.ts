@@ -624,7 +624,7 @@ export const cloudClientService = {
 
   async getMiniappAuthToken(
     packageName: string,
-    opts?: {minTtlMs?: number; devAttestation?: string},
+    opts?: {minTtlMs?: number},
   ): Promise<MiniappAuthToken> {
     if (!client) this.init()
     const c = client

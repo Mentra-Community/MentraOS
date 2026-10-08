@@ -95,7 +95,7 @@ import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
-import appRegistry, {getDevAppAttestation, getDevAppSourcePackage, getDevAppRecords} from "./AppRegistry"
+import appRegistry, {getDevAppSourcePackage, getDevAppRecords} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
@@ -1679,12 +1679,10 @@ class LocalMiniappRuntime {
     // Core owns miniapp-backend token minting. A Runtime-only deployment has
     // no such capability, so fail once instead of entering the retry loop.
     if (!cloudClientService.hasCore()) return null
+    // A dev build is the package it names: Core mints its token exactly as for
+    // an installed miniapp. The phone has already applied the signer rule.
     const authPackageName = getDevAppSourcePackage(packageName) ?? packageName
-    const devAttestation = getDevAppAttestation(packageName) ?? undefined
-    return cloudClientService.getMiniappAuthToken(authPackageName, {
-      ...opts,
-      ...(devAttestation ? {devAttestation} : {}),
-    })
+    return cloudClientService.getMiniappAuthToken(authPackageName, opts)
   }
 
   private async handleAuthRefresh(

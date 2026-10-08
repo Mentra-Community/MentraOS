@@ -17,11 +17,13 @@ let releaseStorePackageName: string | undefined
 let selectedSnapshot: string | null = null
 let superMode = false
 let storedDevUrl: string | null = null
+let publisherFingerprint: string | null = null
 let snapshotVersions: string[] = []
 
 mock.module("../AppRegistry", () => ({
   default: {
     getActiveVersion: async () => activeVersion,
+    getPublisherKeyFingerprint: () => publisherFingerprint,
     getReleaseIdentity: () => ({source: releaseSource, storePackageName: releaseStorePackageName}),
     getSelectedDevSnapshot: () => selectedSnapshot,
     getMiniappEntryPaths: (_packageName: string, version: string) => {
@@ -149,6 +151,7 @@ describe("MiniappLauncher", () => {
     selectedSnapshot = null
     superMode = false
     storedDevUrl = null
+    publisherFingerprint = null
     snapshotVersions = []
     waitForConnectCalls = []
     mockRouter = buildMockRouter()
@@ -353,6 +356,25 @@ describe("MiniappLauncher", () => {
       expect(resolved?.devUrl).toBe("http://localhost:8081")
       expect(resolved?.bgSource).toBe("DEV SOURCE")
       expect(resolved?.hostTrustedSystem).toBe(false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("runs the installed bundle instead of live dev code for a package with a publisher signature", async () => {
+    publisherFingerprint = "sha256:publisher"
+    releaseSource = "store"
+    const originalFetch = globalThis.fetch
+    const fetched: string[] = []
+    globalThis.fetch = (async (url: string) => {
+      fetched.push(url)
+      return new Response("DEV SOURCE")
+    }) as typeof fetch
+    try {
+      const resolved = await miniappLauncher.resolveBundle("com.example.signed", {devUrl: "http://localhost:8081"})
+      expect(fetched).toEqual([])
+      expect(resolved?.devUrl).toBeNull()
+      expect(resolved?.bgSource).toBe("BG SOURCE")
     } finally {
       globalThis.fetch = originalFetch
     }

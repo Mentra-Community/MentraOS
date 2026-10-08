@@ -17,7 +17,7 @@ import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {cloudClientService} from "../services/CloudClientService"
 import {getConfigValues} from "../runtime/bootstrap"
 import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
-import {registerDevApp, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "../services/AppRegistry"
+import {assertDevBuildAllowed, registerDevApp, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "../services/AppRegistry"
 import {useAppStatusStore} from "../stores/apps"
 import {scopeCloudUrlOverrides} from "../services/cloudEndpointPolicy"
 
@@ -163,6 +163,10 @@ export const dev = {
    * developer-URL screen — the registration itself is engine-internal, so a
    * host reaches it here rather than the internal registry. Rendering still
    * flows through the normal display path once the miniapp is started.
+   *
+   * A dev build is unsigned code under the manifest package name, so it is
+   * refused (`ok: false`) while that package is installed with a publisher
+   * signature; the user uninstalls it first.
    */
   loadDevMiniapp: async (
     url: string,
@@ -190,20 +194,26 @@ export const dev = {
     } catch {
       devPort = undefined
     }
-    const existing = useAppStatusStore.getState().apps.find((app) => app.packageName === packageName)
-    if (existing?.running) await useAppStatusStore.getState().stop(packageName)
-    await registerDevApp({
-      packageName,
-      name: appName,
-      iconUrl: manifest.icon ? new URL(manifest.icon, `${resolvedUrl}/`).toString() : `${resolvedUrl}/icon.png`,
-      // Persist the host that answered — not the stale input IP.
-      devUrl: resolvedUrl,
-      devPort,
-      type: manifest.type as DevAppRecord["type"],
-      permissions: manifest.permissions as DevAppRecord["permissions"],
-      hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
-      actions: manifest.actions as DevAppRecord["actions"],
-    })
+    try {
+      // Refuse before stopping a running signed install that the dev build may not replace.
+      assertDevBuildAllowed(packageName)
+      const existing = useAppStatusStore.getState().apps.find((app) => app.packageName === packageName)
+      if (existing?.running) await useAppStatusStore.getState().stop(packageName)
+      await registerDevApp({
+        packageName,
+        name: appName,
+        iconUrl: manifest.icon ? new URL(manifest.icon, `${resolvedUrl}/`).toString() : `${resolvedUrl}/icon.png`,
+        // Persist the host that answered — not the stale input IP.
+        devUrl: resolvedUrl,
+        devPort,
+        type: manifest.type as DevAppRecord["type"],
+        permissions: manifest.permissions as DevAppRecord["permissions"],
+        hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+        actions: manifest.actions as DevAppRecord["actions"],
+      })
+    } catch (error) {
+      return {ok: false, error: error instanceof Error ? error.message : String(error)}
+    }
     await useAppStatusStore.getState().refresh()
     return {ok: true, packageName, name: appName}
   },

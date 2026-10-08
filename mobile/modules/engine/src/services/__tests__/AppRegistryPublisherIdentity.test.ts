@@ -77,7 +77,6 @@ describe("AppRegistry publisher identity finalization", () => {
     expect(() =>
       assertPublisherIdentityPolicy({
         packageName,
-        source: "store",
         system: false,
         candidateFingerprint: "publisher-b",
         installedFingerprint: registry.getPublisherKeyFingerprint(packageName),
@@ -85,33 +84,32 @@ describe("AppRegistry publisher identity finalization", () => {
     ).toThrow("signature mismatch")
   })
 
-  for (const installedFingerprint of [undefined, "publisher-a"]) {
-    for (const candidateFingerprint of [undefined, "publisher-b"]) {
-      test(`dev snapshot ${candidateFingerprint ?? "unsigned"} preserves ${installedFingerprint ?? "no pin"}`, () => {
-        if (installedFingerprint) values.set(publisherKey, installedFingerprint)
-        const identity: MiniappReleaseIdentity = {source: "dev_snapshot", publisherKeyFingerprint: candidateFingerprint}
-        finalize("dev-123", identity).apply()
+  test("an unsigned dev snapshot leaves an unsigned package unpinned", () => {
+    const identity: MiniappReleaseIdentity = {source: "dev_snapshot"}
+    finalize("dev-123", identity).apply()
 
-        expect(registry.getPublisherKeyFingerprint(packageName)).toBe(installedFingerprint ?? null)
-        expect(registry.getReleaseIdentity(packageName, "dev-123")).toEqual(identity)
-        expect(values.get(activeKey)).toBe("dev-123")
+    expect(registry.getPublisherKeyFingerprint(packageName)).toBeNull()
+    expect(registry.getReleaseIdentity(packageName, "dev-123")).toEqual(identity)
+    expect(values.get(activeKey)).toBe("dev-123")
+  })
 
-        const validateRelease = (fingerprint: string) =>
-          assertPublisherIdentityPolicy({
-            packageName,
-            source: "store",
-            system: false,
-            candidateFingerprint: fingerprint,
-            installedFingerprint: registry.getPublisherKeyFingerprint(packageName),
-          })
-        expect(() => validateRelease("publisher-a")).not.toThrow()
-        if (installedFingerprint) expect(() => validateRelease("publisher-b")).toThrow("signature mismatch")
+  test("a signed dev snapshot pins its publisher like any other signed install", () => {
+    const identity: MiniappReleaseIdentity = {source: "dev_snapshot", publisherKeyFingerprint: "publisher-b"}
+    finalize("dev-123", identity).apply()
 
-        finalize("1.0.0", {source: "store", publisherKeyFingerprint: "publisher-a"}).apply()
-        expect(registry.getPublisherKeyFingerprint(packageName)).toBe("publisher-a")
+    expect(registry.getPublisherKeyFingerprint(packageName)).toBe("publisher-b")
+    expect(registry.getReleaseIdentity(packageName, "dev-123")).toEqual(identity)
+    const validateRelease = (fingerprint?: string) =>
+      assertPublisherIdentityPolicy({
+        packageName,
+        system: false,
+        candidateFingerprint: fingerprint,
+        installedFingerprint: registry.getPublisherKeyFingerprint(packageName),
       })
-    }
-  }
+    expect(() => validateRelease("publisher-b")).not.toThrow()
+    expect(() => validateRelease("publisher-a")).toThrow("signature mismatch")
+    expect(() => validateRelease()).toThrow("Unsigned bundle cannot replace signed miniapp")
+  })
 
   test("restores the production pin and release metadata if snapshot activation fails", () => {
     values.set(publisherKey, "publisher-a")

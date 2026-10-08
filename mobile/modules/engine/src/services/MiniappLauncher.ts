@@ -182,7 +182,10 @@ class MiniappLauncher {
       packageName,
       useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
     )
-    const devUrl = devAllowed ? (hints?.devUrl ?? this.storedDevUrl(packageName)) : undefined
+    // Live dev code is unsigned, so it never runs under a package installed with
+    // a publisher signature; that package runs its installed bundle instead.
+    const liveDevAllowed = devAllowed && !appRegistry.getPublisherKeyFingerprint(packageName)
+    const devUrl = liveDevAllowed ? (hints?.devUrl ?? this.storedDevUrl(packageName)) : undefined
 
     const selectedSnapshot = devAllowed ? appRegistry.getSelectedDevSnapshot(packageName) : null
     if (selectedSnapshot) return this.resolveInstalledBundle(packageName, selectedSnapshot)

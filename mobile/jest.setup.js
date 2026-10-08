@@ -828,6 +828,9 @@ const mockIslandEntries = () => {
   // --- "@mentra/engine-host-internal": raw stores + service singletons ---
   const internal = {
     getDevAppRecords: jest.fn(() => []),
+    assertDevBuildAllowed: jest.fn(),
+    SignedMiniappDevBuildError: jest.requireActual("./modules/engine/src/services/publisherIdentityPolicy")
+      .SignedMiniappDevBuildError,
     isHostTrustedSystemMiniapp: realSystemMiniappPolicy.isHostTrustedSystemMiniapp,
     shouldActivateBundledVersion: realSystemMiniappPolicy.shouldActivateBundledVersion,
     __esModule: true,

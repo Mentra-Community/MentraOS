@@ -923,6 +923,10 @@ const en = {
     miniappScanInvalidQrBody: "Expected a miniapp:// or http:// URL",
     miniappScanInvalidQrNoUrl: "No URL found in QR code",
     miniappScanLoading: "Loading miniapp…",
+    miniappDevSignedInstallTitle: "Uninstall required",
+    miniappDevSignedInstallBody:
+      "{{packageName}} is installed with a publisher signature. Uninstall it before running a development build.",
+    miniappDevLoadErrorTitle: "Could not load dev miniapp",
     miniappUrlTitle: "Load Miniapp from URL",
     miniappUrlGroupTitle: "Dev Server URL",
     miniappUrlLabel: "URL",

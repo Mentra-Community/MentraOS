@@ -58,7 +58,7 @@ import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
 import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
-import {assertPublisherIdentityPolicy} from "./publisherIdentityPolicy"
+import {assertPublisherIdentityPolicy, assertUnsignedDevBuildAllowed} from "./publisherIdentityPolicy"
 import {normalizeManifestPermissions} from "./manifestPermissions"
 import {
   assertMiniappUpdateVersion,
@@ -79,6 +79,7 @@ import {validateInstallBundleArchive} from "./validateInstallBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
 export {normalizeManifestPermissions} from "./manifestPermissions"
+export {SignedMiniappDevBuildError} from "./publisherIdentityPolicy"
 
 function normalizeManifestType(raw: unknown): AppletType {
   return raw === "background" || raw === "system_dashboard" || raw === "standard" ? raw : "standard"
@@ -405,16 +406,11 @@ function restoreInstallMetadata(journal: InstallMetadataRollbackJournal, metadat
   restoreInstallationMetadata(metadata, publisherIdentityKey(journal.packageName), journal.publisher)
 }
 
-function assertPublisherContinuity(
-  packageName: string,
-  publisherKeyFingerprint: string | undefined,
-  releaseIdentity: MiniappReleaseIdentity,
-): void {
+function assertPublisherContinuity(packageName: string, publisherKeyFingerprint: string | undefined): void {
   const buildPinned = getConfigValues().bundledSystemMiniappPublisherKeys?.[packageName]
   const installed = snapshotInstallationMetadata<string>(publisherIdentityKey(packageName))
   assertPublisherIdentityPolicy({
     packageName,
-    source: releaseIdentity.source,
     candidateFingerprint: publisherKeyFingerprint,
     installedFingerprint: installed.present ? installed.value : null,
     buildPinnedFingerprint: buildPinned,
@@ -802,7 +798,7 @@ async function downloadAndInstallMiniApp(
     }
     const validateTrust = () => {
       assertInstallAuthority(manifest.packageName, releaseIdentity, false)
-      assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
+      assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint)
     }
     validateTrust()
     console.log("ZIP: done downloading, starting unzip")
@@ -1201,7 +1197,7 @@ class AppRegistry {
       const candidate = {version: opts?.versionOverride ?? manifest.version, verifiedBundleSha256}
       const validateTrust = () => {
         assertInstallAuthority(manifest.packageName, releaseIdentity, true, candidate)
-        assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity)
+        assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint)
       }
       validateTrust()
       const {packageName, version} = await unpackMiniApp(
@@ -1312,10 +1308,10 @@ class AppRegistry {
         if (devRoutingBefore) {
           for (const field of DEV_ROUTING_FIELDS) restoreStorage(`${packageName}_dev_${field}`, {present: false})
         }
-        // Development snapshots bypass publisher continuity and must not bind
-        // future releases to a laptop's key. Keep their fingerprint only in
-        // the per-version identity below.
-        if (releaseIdentity.source !== "dev_snapshot" && releaseIdentity.publisherKeyFingerprint) {
+        // Every signed install records its publisher, development snapshots
+        // included: from here on only bundles signed with the same key replace
+        // this package, until an uninstall clears the record.
+        if (releaseIdentity.publisherKeyFingerprint) {
           this.releaseIdentities.set(publisherKey, JSON.stringify(releaseIdentity.publisherKeyFingerprint))
         }
         this.releaseIdentities.set(releaseKey, JSON.stringify(releaseIdentity))
@@ -2122,12 +2118,6 @@ export interface DevAppRecord {
   }>
   /** Legacy single-slot migration field. New records use the real packageName directly. */
   sourcePackageName?: string
-  /**
-   * Short-lived Core-verifiable proof emitted by `mentra dev`. This lets the
-   * dev runtime request auto-auth for the manifest package without letting
-   * arbitrary dev URLs claim any package name.
-   */
-  devAttestation?: string
 }
 
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
@@ -2284,8 +2274,23 @@ function readStoredMdnsHost(packageName: string): string | undefined {
 }
 
 /**
+ * Whether live development code may run under `packageName`. A dev build is the
+ * package itself, served unsigned, so it is refused while the installed package
+ * carries a publisher signature; uninstalling clears that signature. Throws
+ * {@link SignedMiniappDevBuildError} when refused.
+ */
+export function assertDevBuildAllowed(packageName: string): void {
+  assertUnsignedDevBuildAllowed({
+    packageName,
+    installedFingerprint: appRegistry.getPublisherKeyFingerprint(packageName),
+  })
+}
+
+/**
  * Register or update one dev miniapp under its real manifest package. Different
  * package names coexist; rescanning the same package updates that package only.
+ * The phone keeps the record, its `${packageName}_dev_*` routing keys, and the
+ * dev-build marking until a release install or uninstall replaces them.
  */
 export async function registerDevApp(record: DevAppRecord): Promise<void> {
   migrateLegacyDevSlot()
@@ -2294,6 +2299,7 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
   if (!canUseManualMiniappRelease(packageName)) {
     throw new Error(`Miniapp ${packageName} cannot use a developer override in this organization`)
   }
+  assertDevBuildAllowed(packageName)
 
   const iconUrl = await cacheDevAppIcon(packageName, record.iconUrl)
   // Relaunch paths (developer-URL screen, loadDevMiniapp) omit mdnsHost, so an
@@ -2353,11 +2359,6 @@ export function getDevAppSourcePackage(packageName = DEV_APP_PACKAGE_NAME): stri
   migrateLegacyDevSlot()
   const rec = readDevAppRecord(packageName)
   return rec?.sourcePackageName ?? rec?.packageName ?? null
-}
-
-export function getDevAppAttestation(packageName = DEV_APP_PACKAGE_NAME): string | null {
-  migrateLegacyDevSlot()
-  return readDevAppRecord(packageName)?.devAttestation ?? null
 }
 
 export function getDevAppRecords(): DevAppRecord[] {
