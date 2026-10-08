@@ -242,6 +242,17 @@ class GuidedTests(unittest.TestCase):
         summary = setup.summarize_preview({'access': {'changes': [dict(grant, resourceId=grant['resourceId'] + str(i)) for i in range(5)]}})
         self.assertEqual(summary['create'], ['Role assignment an app can read one of its own secrets (x5)'])
 
+    def test_graph_repeats_only_requests_that_are_safe_to_repeat(self):
+        def http_error(code):
+            return setup.urllib.error.HTTPError('url', code, 'x', {'Retry-After': '0'}, None)
+        for method, code, calls in (('GET', 503, setup.GRAPH_ATTEMPTS), ('POST', 503, 1), ('POST', 429, setup.GRAPH_ATTEMPTS)):
+            with self.subTest(method=method, code=code), patch.object(setup, 'graph_token', return_value='t'), \
+                 patch.object(setup, 'GRAPH_RETRY_SECONDS', 0), \
+                 patch.object(setup.urllib.request, 'urlopen', side_effect=http_error(code)) as urlopen:
+                with self.assertRaises(setup.GraphError):
+                    setup.graph(self.config, method, 'applications', {} if method == 'POST' else None)
+                self.assertEqual(urlopen.call_count, calls)
+
     def test_vault_reports_missing_secret_without_retrying(self):
         result = setup.subprocess.CompletedProcess([], 1, '', 'ERROR: (SecretNotFound) A secret with (name/id) x was not found')
         with patch.object(setup.subprocess, 'run', return_value=result) as run:
