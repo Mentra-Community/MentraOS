@@ -246,35 +246,53 @@ export async function addLogArtifact(input: {
  * copying recordings or reading unbounded device output into the report. */
 export async function referenceTestRunDiagnostics(owner: {reportId: string; mentraUserId: string}, run: RecordedFrameworkRun) {
   const declared = run.assets.filter(asset => asset.kind === "diagnostic" || asset.kind === "report");
-  if (!declared.length) return 0;
-  const stored = await TestAssetModel.find({runId: run.result.runId, assetId: {$in: declared.map(asset => asset.id)}})
-    .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
-  const byId = new Map(stored.map(asset => [asset.assetId, asset]));
-  const references = declared.map(asset => {
-    const blob = byId.get(asset.id);
-    if (!blob || blob.sha256 !== asset.sha256 || blob.sizeBytes !== asset.size)
-      throw new ReportArtifactError(503, "Routine diagnostic custody differs from its frozen manifest");
-    return {artifactId: stableReportId("art", `${owner.reportId}\nnative-diagnostic\n${asset.id}`), ...owner,
-      storageKey: blob.storageKey, sourceTestRunId: run.result.runId, sourceTestAssetId: asset.id, fileName: asset.path.split('/').at(-1),
-      contentType: asset.mimeType, sizeBytes: asset.size, sha256: asset.sha256};
-  });
-  await ReportAssetModel.bulkWrite(references.map(reference => ({updateOne: {filter: {artifactId: reference.artifactId},
-    update: {$setOnInsert: reference}, upsert: true}})), {writeConcern: attachmentWriteConcern, ordered: false, timeoutMS: 10_000});
-  const rows = await ReportAssetModel.find({reportId: owner.reportId, artifactId: {$in: references.map(reference => reference.artifactId)}})
-    .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
-  const metadata = references.map(reference => {
-    const row = rows.find(row => row.artifactId === reference.artifactId);
-    if (!row || row.mentraUserId !== owner.mentraUserId || row.storageKey !== reference.storageKey
-      || row.sha256 !== reference.sha256 || row.sizeBytes !== reference.sizeBytes || row.sourceTestRunId !== run.result.runId
-      || row.sourceTestAssetId !== reference.sourceTestAssetId)
-      throw new ReportArtifactError(409, "Routine diagnostic reference already binds different content");
-    return {artifactId: row.artifactId, type: "state_snapshot", source: "framework-diagnostic", filename: row.fileName,
-      contentType: row.contentType, sizeBytes: row.sizeBytes, createdAt: row.createdAt};
-  });
-  const result = await ReportModel.updateOne(owner, {$addToSet: {artifacts: {$each: metadata}}},
-    {writeConcern: attachmentWriteConcern, timeoutMS: 10_000});
-  if (result.matchedCount !== 1) throw new ReportArtifactError(503, "Routine incident is unavailable");
-  return metadata.length;
+  // A timed-out write may already have committed. Verify and reuse those rows
+  // on retry instead of issuing the entire frozen export's upserts again.
+  const batchSize = 100;
+  for (let offset = 0; offset < declared.length; offset += batchSize) {
+    const batch = declared.slice(offset, offset + batchSize);
+    const stored = await TestAssetModel.find({runId: run.result.runId, assetId: {$in: batch.map(asset => asset.id)}})
+      .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
+    const byId = new Map(stored.map(asset => [asset.assetId, asset]));
+    const references = batch.map(asset => {
+      const blob = byId.get(asset.id);
+      if (!blob || blob.sha256 !== asset.sha256 || blob.sizeBytes !== asset.size)
+        throw new ReportArtifactError(503, "Routine diagnostic custody differs from its frozen manifest");
+      return {artifactId: stableReportId("art", `${owner.reportId}\nnative-diagnostic\n${asset.id}`), ...owner,
+        storageKey: blob.storageKey, sourceTestRunId: run.result.runId, sourceTestAssetId: asset.id, fileName: asset.path.split('/').at(-1),
+        contentType: asset.mimeType, sizeBytes: asset.size, sha256: asset.sha256};
+    });
+    const readRows = () => ReportAssetModel.find({artifactId: {$in: references.map(reference => reference.artifactId)}})
+      .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
+    let rows = await readRows();
+    const matches = (row: typeof rows[number], reference: typeof references[number]) =>
+      row.reportId === reference.reportId && row.mentraUserId === reference.mentraUserId && row.storageKey === reference.storageKey
+      && row.sha256 === reference.sha256 && row.sizeBytes === reference.sizeBytes && row.sourceTestRunId === reference.sourceTestRunId
+      && row.sourceTestAssetId === reference.sourceTestAssetId && row.fileName === reference.fileName && row.contentType === reference.contentType;
+    const existing = new Map(rows.map(row => [row.artifactId, row]));
+    const missing = references.filter(reference => {
+      const row = existing.get(reference.artifactId);
+      if (row && !matches(row, reference)) throw new ReportArtifactError(409, "Routine diagnostic reference already binds different content");
+      return !row;
+    });
+    if (missing.length) {
+      await ReportAssetModel.bulkWrite(missing.map(reference => ({updateOne: {filter: {artifactId: reference.artifactId},
+        update: {$setOnInsert: reference}, upsert: true}})), {writeConcern: attachmentWriteConcern, ordered: false, timeoutMS: 10_000});
+      rows = await readRows();
+    }
+    const byArtifactId = new Map(rows.map(row => [row.artifactId, row]));
+    const metadata = references.map(reference => {
+      const row = byArtifactId.get(reference.artifactId);
+      if (!row) throw new ReportArtifactError(503, "Routine diagnostic reference is unavailable");
+      if (!matches(row, reference)) throw new ReportArtifactError(409, "Routine diagnostic reference already binds different content");
+      return {artifactId: row.artifactId, type: "state_snapshot", source: "framework-diagnostic", filename: row.fileName,
+        contentType: row.contentType, sizeBytes: row.sizeBytes, createdAt: row.createdAt};
+    });
+    const result = await ReportModel.updateOne(owner, {$addToSet: {artifacts: {$each: metadata}}},
+      {writeConcern: attachmentWriteConcern, timeoutMS: 10_000});
+    if (result.matchedCount !== 1) throw new ReportArtifactError(503, "Routine incident is unavailable");
+  }
+  return declared.length;
 }
 
 /** Worker retry path through the same report/asset models and blob provider. Reserve the

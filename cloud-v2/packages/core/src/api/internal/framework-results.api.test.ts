@@ -138,3 +138,30 @@ test("a 2437-asset frozen result publishes unchanged through the authenticated r
     assets: [...assets.slice(0, -1), {...assets.at(-1)!, sha256: "d".repeat(64)}]})})).status).toBe(409);
   expect((await api.request("/", {method: "POST", headers, body: body.slice(0, -1) + `,"notes":"${"x".repeat(FRAMEWORK_JSON_BYTES)}"}`})).status).toBe(413);
 })
+
+test("completion logs bounded Mongo failure details without exposing operation bodies or credentials", async () => {
+  const {Hono} = await import("hono");
+  const {mongo} = await import("mongoose");
+  const logs: unknown[] = [];
+  const error = new mongo.MongoBulkWriteError({message: "write concern timed out mongodb://user:secret@private.example/db Bearer private-token",
+    code: 64, writeErrors: Array.from({length: 12}, (_, index) => ({index, code: 11000, errmsg: "duplicate artifact", op: {secret: "must-not-log"}})) as any},
+    {getWriteConcernError() {return {code: 64, errmsg: "waiting for replication timed out"};}} as any);
+  class Service extends FrameworkResultService {
+    override async complete(): Promise<never> {throw error;}
+  }
+  const token = "synthetic-controller-credential-" + "x".repeat(32);
+  const outer = new Hono<import("../middleware/test-host-auth.middleware").TestHostEnv>();
+  outer.use("*", async (c, next) => {c.set("logger", {error(value: unknown) {logs.push(value);}} as any); await next();});
+  outer.route("/", createFrameworkResultsApi(new Service(), () => JSON.stringify({mini: token})));
+  const response = await outer.request("/original/complete", {method: "POST", headers: {authorization: `Bearer ${token}`}});
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({error: "result_publication_unavailable"});
+  expect(logs).toHaveLength(1);
+  expect(logs[0]).toMatchObject({errorName: "MongoBulkWriteError", errorCode: 64, writeErrorCount: 12,
+    errorMessage: "write concern timed out [redacted Mongo URI] Bearer [redacted]",
+    writeConcernError: {code: 64, message: "waiting for replication timed out"}});
+  expect((logs[0] as {writeErrors: unknown[]}).writeErrors).toHaveLength(10);
+  expect(JSON.stringify(logs)).not.toContain("must-not-log");
+  expect(JSON.stringify(logs)).not.toContain("private-token");
+  expect(JSON.stringify(logs)).not.toContain("user:secret");
+});
