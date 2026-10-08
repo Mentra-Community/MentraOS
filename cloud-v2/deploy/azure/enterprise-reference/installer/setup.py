@@ -407,7 +407,7 @@ DATA_LOCATIONS = {'canada': 'Canada', 'brazil': 'Brazil', 'uk': 'UK', 'australia
 RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName', 'coreName', 'coreIdentityName',
                  'runtimeIdentityName', 'communicationName', 'location', 'tenantId', 'coreApiClientId', 'mobileClientId', 'coreAdminEmails', 'workspaceHostname',
                  'workspaceCertificateName', 'additionalWorkspaceDomains', 'displayName', 'communicationDataLocation',
-                 'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'approvedSystemMiniapps',
+                 'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId',
                  'miniappConfiguration', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
                  'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'mongoAccountName', 'reportStorageAccountName')
 # Restored even when empty: an empty value there is a deliberate choice.
@@ -568,7 +568,13 @@ def init(args, directory):
     for key in RESTORED_AS_IS:
         if key in deployed:
             config[key] = deployed[key]
-    config['approvedSystemMiniapps'] = config.get('approvedSystemMiniapps') or ['com.mentra.settings', 'com.mentra.feedback']
+    # An explicit list wins, even an empty one: given now, else the deployment's own.
+    if 'approvedSystemMiniapps' in inputs:
+        config['approvedSystemMiniapps'] = inputs['approvedSystemMiniapps']
+    elif 'approvedSystemMiniapps' in deployed:
+        config['approvedSystemMiniapps'] = deployed['approvedSystemMiniapps']
+    else:
+        config['approvedSystemMiniapps'] = ['com.mentra.settings', 'com.mentra.feedback']
     validate_resource_names(config)
     tags = inputs.get('resourceTags') or {}
     if not isinstance(tags, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in tags.items()):

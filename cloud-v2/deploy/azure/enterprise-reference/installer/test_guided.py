@@ -710,6 +710,16 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(config['resourceTags']['costCenter'], '42')
         self.assertEqual(config['managedMiniappDirectory'], '')
 
+    def test_an_explicitly_empty_miniapp_allowlist_is_kept(self):
+        config, _ = self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra',
+                                        approvedSystemMiniapps=[]))
+        self.assertEqual(config['approvedSystemMiniapps'], [])
+        earlier = {'owner': '22222222-2222-2222-2222-222222222222', 'release': RELEASE['releaseTag'], 'group': 'rg-acme-mentra',
+                   'settings': {'approvedSystemMiniapps': []}}
+        config, _ = self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra'),
+                                   earlier, where='recovered')
+        self.assertEqual(config['approvedSystemMiniapps'], [])
+
     def test_a_lost_folder_never_downgrades_its_deployment(self):
         earlier = {'owner': '22222222-2222-2222-2222-222222222222', 'release': '9.9.9', 'group': 'rg-acme-mentra', 'settings': {}}
         with self.assertRaisesRegex(setup.SetupError, 'newer than this package'):
