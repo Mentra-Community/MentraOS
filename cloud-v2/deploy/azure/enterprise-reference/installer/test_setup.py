@@ -572,6 +572,17 @@ class InstallerTests(unittest.TestCase):
                 setup.inspect_teams(self.args, self.config)
         run.assert_not_called()
 
+    def test_deployment_script_errors_are_shown_without_registry_passwords(self):
+        from subprocess import CompletedProcess
+        failure = CompletedProcess(['bash'], 1, '', 'WARNING: noise\nERROR: (QuotaExceeded) region quota for mirror-secret-value')
+        with patch.dict(os.environ, {'SOURCE_REGISTRY_PASSWORD': 'mirror-secret-value'}), \
+             patch.object(setup.subprocess, 'run', return_value=failure):
+            with self.assertRaisesRegex(setup.SetupError, 'QuotaExceeded') as error:
+                setup.run(['bash', '/pkg/scripts/deploy.sh', 'config.json'], explain=True)
+        self.assertIn('deploy.sh failed', str(error.exception))
+        self.assertNotIn('mirror-secret-value', str(error.exception))
+        self.assertNotIn('WARNING', str(error.exception))
+
     def test_provider_errors_do_not_print_secret_output(self):
         from subprocess import CompletedProcess
         with patch.object(setup.subprocess, 'run', return_value=CompletedProcess(['az'], 1, '', 'secret-token')):

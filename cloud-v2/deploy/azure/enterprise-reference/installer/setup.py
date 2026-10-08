@@ -74,12 +74,20 @@ def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-def run(argv, env=None, capture=True):
-    # Azure deployment failures can contain parameter values. Never echo raw
-    # subprocess output, command lines, HTTP bodies, or exception text to logs.
+def run(argv, env=None, capture=True, explain=False):
+    # Provider output can contain credentials, so it is withheld by default.
+    # The deployment scripts take no secrets (keys live in Key Vault), so with
+    # explain=True their error tail is shown, with any registry password removed.
     result = subprocess.run(argv, env=env, text=True, stdout=subprocess.PIPE if capture else None,
                             stderr=subprocess.PIPE)
     if result.returncode:
+        name = f'{Path(argv[1] if argv[0] == "bash" and len(argv) > 1 else argv[0]).name}'
+        if explain:
+            lines = [line for line in (result.stderr or '').splitlines() if line.strip() and 'WARNING' not in line]
+            detail = '\n'.join(lines[-12:])
+            for secret in filter(None, (os.environ.get('SOURCE_REGISTRY_PASSWORD'), (env or {}).get('SOURCE_REGISTRY_PASSWORD'))):
+                detail = detail.replace(secret, '***')
+            raise SetupError(f'{name} failed (exit {result.returncode}):\n{detail or "(no error output)"}')
         raise SetupError(f'{Path(argv[0]).name} {argv[1] if len(argv) > 1 else ""} failed '
                          f'(exit {result.returncode}). Check Azure Portal deployment operations. '
                          'Raw provider output is withheld because it may contain secrets.')
@@ -569,7 +577,8 @@ def checkpoint(directory, state, phase, **values):
 def deploy(directory, config, state, hostname):
     effective = dict(config, workspaceHostname=hostname)
     write_json(directory / 'effective.config.json', effective)
-    output = run(['bash', str(ROOT / 'scripts/deploy.sh'), str(directory / 'effective.config.json')], env=environment(config))
+    output = run(['bash', str(ROOT / 'scripts/deploy.sh'), str(directory / 'effective.config.json')], env=environment(config),
+                 explain=True)
     # Helpers may print progress before the final output; parse only the final
     # ARM outputs object, and retain an allowlist of public outputs.
     decoder = json.JSONDecoder()
@@ -676,7 +685,7 @@ def install(args, directory, config, state):
     checks = preflight(config, require_identity=True)
     checkpoint(directory, state, state['phase'], checks=checks)
     run(['bash', str(ROOT / 'scripts/deploy.sh'), '--validate-only', str(directory / 'deployment.config.json')],
-        env=environment(config))
+        env=environment(config), explain=True)
     ensure_group(config, state, checks)
     domain_verified = state.get('domainVerified', False)
     checkpoint(directory, state, 'deploying', configHash=digest(directory / 'deployment.config.json'))
@@ -1047,10 +1056,19 @@ FRIENDLY_TYPES = {
     'Microsoft.Authorization/roleAssignments': 'Role assignment'}
 
 
+ROLE_PURPOSES = {'7f951dda-4ed3-4680-a7ca-43fe172d538d': 'apps can pull the image',
+                 '4633458b-17de-408a-b874-0445c86b69e6': 'apps can read Key Vault',
+                 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7': 'you can manage Key Vault secrets'}
+
+
 def _resource(change):
     tail = change['resourceId'].split('/providers/')[-1].split('/')
     kind = '/'.join(tail[:2] + tail[3::2]) if len(tail) > 2 else '/'.join(tail[:2])
-    return FRIENDLY_TYPES.get(kind, kind), tail[-1]
+    name = tail[-1]
+    if kind == 'Microsoft.Authorization/roleAssignments':
+        role = str(((change.get('after') or change.get('before') or {}).get('properties') or {}).get('roleDefinitionId', ''))
+        name = next((purpose for role_id, purpose in ROLE_PURPOSES.items() if role.endswith(role_id)), name)
+    return FRIENDLY_TYPES.get(kind, kind), name
 
 
 def _meaningful(deltas, prefix=''):
@@ -1100,7 +1118,7 @@ def preview(directory, config, state):
     effective = dict(config, workspaceHostname=hostname)
     write_json(directory / 'effective.config.json', effective)
     output = run(['bash', str(ROOT / 'scripts/deploy.sh'), '--what-if', str(directory / 'effective.config.json')],
-                 env=environment(config))
+                 env=environment(config), explain=True)
     return summarize_preview(json.loads(output))
 
 
@@ -1235,8 +1253,9 @@ def entra_handoffs(args, config, interactive):
     if not access['consent']:
         if confirm('Grant tenant-wide consent for the Mentra sign-in app now? (needs an Entra admin role)', True, interactive):
             try:
+                # Success means consent was granted; Graph can take a while to list it.
                 grant_admin_consent(config)
-                access['consent'] = mobile_access(config)['consent']
+                access['consent'] = True
             except SetupError:
                 pass
         if not access['consent']:

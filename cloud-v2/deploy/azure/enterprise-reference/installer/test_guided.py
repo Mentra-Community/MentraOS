@@ -123,8 +123,10 @@ class GuidedTests(unittest.TestCase):
                        change('Microsoft.Authorization/roleAssignments', 'guid', 'Modify', [
                            {'path': 'properties.principalId', 'propertyChangeType': 'Modify', 'after': "[reference('x')]"}]),
                        change('Microsoft.App/managedEnvironments/cae-acme/storages', 'core-attachments', 'NoChange')]}}
+        preview['bootstrap']['changes'].append(dict(change('Microsoft.Authorization/roleAssignments', 'a1de', 'Create'), after={
+            'properties': {'roleDefinitionId': '/subscriptions/s/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6'}}))
         summary = setup.summarize_preview(preview)
-        self.assertEqual(summary['create'], ['Key Vault kvacme'])
+        self.assertEqual(summary['create'], ['Key Vault kvacme', 'Role assignment apps can read Key Vault'])
         self.assertEqual(summary['change'], ['Container App ca-acme-core: new software image'])
         self.assertEqual(summary['unchanged'], 3)
 
@@ -226,6 +228,12 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual([h['step'] for h in handoffs], ['Admin consent', 'Employee access'])
         self.assertIn(f'https://login.microsoftonline.com/{TENANT}/adminconsent?client_id={TENANT}', handoffs[0]['action'])
         self.assertIn('ManagedAppMenuBlade/~/Users/objectId/sp-id', handoffs[1]['action'])
+
+    def test_granted_consent_is_trusted_before_graph_lists_it(self):
+        with patch.object(setup, 'mobile_access', return_value={'servicePrincipalId': 'sp-id', 'consent': False, 'assigned': True}), \
+             patch.object(setup, 'grant_admin_consent') as grant:
+            self.assertEqual(setup.entra_handoffs(self.args, self.config, interactive=False), [])
+        grant.assert_called_once()
 
     def test_employees_are_assigned_once_and_unknown_names_reported(self):
         posted = []
