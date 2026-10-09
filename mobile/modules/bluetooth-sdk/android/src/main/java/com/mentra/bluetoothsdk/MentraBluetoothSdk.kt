@@ -191,8 +191,15 @@ class MentraBluetoothSdk private constructor(
 
     private class PendingVersionInfoRequest(
         val pending: PendingResponse<VersionInfoResult>,
-        val accumulator: VersionInfoResponseAccumulator,
+        val requestId: String,
     ) {
+        var accumulator = VersionInfoResponseAccumulator(requestId)
+            private set
+
+        /** Chunks from a previous glasses session cannot combine with the re-sent request's reply. */
+        fun restartAccumulator() {
+            accumulator = VersionInfoResponseAccumulator(requestId)
+        }
     }
 
     private data class PendingWifiScan(
@@ -1317,11 +1324,7 @@ class MentraBluetoothSdk private constructor(
     suspend fun requestVersionInfo(): VersionInfoResult {
         val requestId = UUID.randomUUID().toString()
         val pending = PendingResponse<VersionInfoResult>("version info request")
-        val request =
-            PendingVersionInfoRequest(
-                pending = pending,
-                accumulator = VersionInfoResponseAccumulator(requestId),
-            )
+        val request = PendingVersionInfoRequest(pending = pending, requestId = requestId)
         synchronized(oneShotLock) {
             if (pendingVersionInfo != null) {
                 throw BluetoothSdkException(
@@ -1752,6 +1755,23 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    /**
+     * glasses_ready starts a new glasses session: an asg_client restarted under the live link
+     * (APK OTA) never received requests sent to its predecessor. A version read is idempotent,
+     * so re-send the pending request under its original id and deadline rather than letting it
+     * time out unanswered.
+     */
+    private fun resendPendingVersionInfoRequest() {
+        val requestId =
+            synchronized(oneShotLock) {
+                val request = pendingVersionInfo ?: return
+                request.restartAccumulator()
+                request.requestId
+            }
+        Bridge.log("SDK: Re-sending version info request $requestId to the new glasses session")
+        deviceManager.requestVersionInfo(requestId)
+    }
+
     private fun dispatchBridgeEvent(eventName: String, data: Map<String, Any>) {
         when (eventName) {
             "log" -> dispatchToListeners { it.onLog(data["message"] as? String ?: data.toString()) }
@@ -1821,6 +1841,7 @@ class MentraBluetoothSdk private constructor(
                     data["sid"] as? String ?: "",
                     "wifi_session_restarted",
                 )
+                resendPendingVersionInfoRequest()
             }
             "glasses_session_changed" -> {
                 resetWifiProtocolSession(

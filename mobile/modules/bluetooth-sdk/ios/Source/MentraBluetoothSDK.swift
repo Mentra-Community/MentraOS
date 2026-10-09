@@ -133,13 +133,18 @@ private final class PendingVideoRecordingRequest {
 @MainActor
 private final class PendingVersionInfoRequest {
     let pending: PendingResponse<VersionInfoResult>
-    let accumulator: VersionInfoResponseAccumulator
+    private(set) var accumulator: VersionInfoResponseAccumulator
     let requestId: String
     let startedAt = ProcessInfo.processInfo.systemUptime
 
     init(pending: PendingResponse<VersionInfoResult>, requestId: String) {
         self.pending = pending
         self.requestId = requestId
+        accumulator = VersionInfoResponseAccumulator(expectedRequestId: requestId)
+    }
+
+    /// Chunks from a previous glasses session cannot combine with the re-sent request's reply.
+    func restartAccumulator() {
         accumulator = VersionInfoResponseAccumulator(expectedRequestId: requestId)
     }
 }
@@ -2422,6 +2427,17 @@ public final class MentraBluetoothSDK {
         }
     }
 
+    /// glasses_ready starts a new glasses session: writes queued before it are dropped with the
+    /// old wire epoch, and an asg_client restarted under the live link (APK OTA) never received
+    /// requests sent to its predecessor. A version read is idempotent, so re-send the pending
+    /// request under its original id and deadline rather than letting it time out unanswered.
+    private func resendPendingVersionInfoRequest() {
+        guard let request = pendingVersionInfo else { return }
+        request.restartAccumulator()
+        logVersionInfoRequest(request, stage: "resent")
+        DeviceManager.shared.requestVersionInfo(requestId: request.requestId)
+    }
+
     private func logVersionInfoRequest(_ request: PendingVersionInfoRequest, stage: String, extra: [String: Any] = [:]) {
         var payload: [String: Any] = [
             "requestId": request.requestId,
@@ -2493,6 +2509,7 @@ public final class MentraBluetoothSDK {
                 sessionId: data["sid"] as? String ?? "",
                 code: "wifi_session_restarted"
             )
+            resendPendingVersionInfoRequest()
         case "glasses_session_changed":
             resetWifiProtocolSession(
                 sessionId: data["sid"] as? String ?? "",

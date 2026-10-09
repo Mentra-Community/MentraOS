@@ -36,8 +36,73 @@ private final class VersionInfoCommandTransport: MentraLive {
     }
 }
 
+/// Replies only when the test delivers glasses messages, so a request can outlive its asg_client.
+@MainActor
+private final class RestartingVersionInfoTransport: MentraLive {
+    var versionRequestIds: [String] = []
+
+    override func sendJson(_ jsonOriginal: [String: Any], wakeUp _: Bool, requireAck _: Bool) {
+        // glasses_ready also sends its readiness burst and an uncorrelated version refresh.
+        guard jsonOriginal["type"] as? String == "request_version",
+              let id = jsonOriginal["request_id"] as? String
+        else { return }
+        versionRequestIds.append(id)
+    }
+
+    func receive(_ message: [String: Any]) throws {
+        try processReceivedData(JSONSerialization.data(withJSONObject: message))
+    }
+
+    func reply(to requestId: String, sid: String, buildNumber: String, chunks: [Int]) throws {
+        let common: [String: Any] = ["request_id": requestId, "sid": sid, "chunkCount": 2]
+        let bodies: [Int: [String: Any]] = [
+            1: ["type": "version_info_1", "chunkIndex": 1, "final": false, "build_number": buildNumber],
+            2: ["type": "version_info_3", "chunkIndex": 2, "final": true, "bes_fw_version": "26.10.8.0"],
+        ]
+        for chunk in chunks {
+            try receive(common.merging(bodies[chunk]!) { _, value in value })
+        }
+    }
+}
+
 @MainActor
 final class VersionInfoCommandTests: XCTestCase {
+    func testRequestLostToAnAsgRestartIsResentWhenTheNewGlassesSessionIsReady() async throws {
+        let previous = DeviceManager.shared.sgc
+        let transport = RestartingVersionInfoTransport()
+        DeviceManager.shared.sgc = transport
+        let sdk = MentraBluetoothSDK()
+        var diagnostics: [[String: Any]] = []
+        let sink = Bridge.addEventSink { event, body in
+            if let diagnostic = self.diagnostic(event, body) { diagnostics.append(diagnostic) }
+        }
+        defer {
+            Bridge.removeEventSink(sink)
+            sdk.invalidate()
+            DeviceManager.shared.sgc = previous
+        }
+        let task = Task { try await sdk.requestVersionInfo() }
+        while transport.versionRequestIds.isEmpty {
+            await Task.yield()
+        }
+        let requestId = transport.versionRequestIds[0]
+
+        // An APK OTA restarts asg_client under the live link: the exiting process answers one
+        // chunk, and the new process announces its session without having seen the request.
+        try transport.reply(to: requestId, sid: "asg-old", buildNumber: "303000008", chunks: [1])
+        try transport.receive(["type": "glasses_ready", "sid": "asg-new"])
+        XCTAssertEqual(transport.versionRequestIds, [requestId, requestId])
+        try transport.reply(to: requestId, sid: "asg-new", buildNumber: "302010070", chunks: [1, 2])
+
+        let result = try await task.value
+        XCTAssertEqual(result.buildNumber, "302010070")
+        XCTAssertEqual(result.besFirmwareVersion, "26.10.8.0")
+        XCTAssertEqual(diagnostics.compactMap { $0["stage"] as? String }, [
+            "registered", "response-waiting", "resent", "response-waiting", "response-complete", "resolved",
+        ])
+        XCTAssertTrue(diagnostics.allSatisfy { $0["requestId"] as? String == requestId })
+    }
+
     func testPublicVersionRequestWakesGlassesAndCombinesBothResponseChunks() async throws {
         let previous = DeviceManager.shared.sgc
         let transport = VersionInfoCommandTransport()
