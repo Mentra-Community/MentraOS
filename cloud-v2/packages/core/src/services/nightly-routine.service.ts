@@ -99,6 +99,8 @@ export function nightlyPreparedInput(member: NightlyMember, value: unknown, dige
 
 /** One immutable occurrence selects the catalog once; host controllers own execution and resource allocation. */
 export class NightlyRoutineService {
+  private completionCursor?: {startedAt: Date; suiteId: string};
+
   constructor(private readonly catalog: Pick<RoutineCatalogService, "list"> = new RoutineCatalogService(),
     private readonly builds: {latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null>;
       resolve(source: TestBuild["source"], platform: TestBuildPlatform): Promise<TestBuild>} = new GithubTestBuildGateway(),
@@ -327,6 +329,29 @@ export class NightlyRoutineService {
         : members.some(member => member.status === "incomplete") ? "incomplete" : members.every(member => member.status === "cancelled") ? "cancelled" : "failed",
       ...(plan.suite ? {resultUrl: `https://admin.dev.mentraglass.com/?testSuite=${encodeURIComponent(plan.suiteId)}`}
         : singleResultId ? {resultUrl: `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(singleResultId)}`} : {})};
+  }
+
+  /** Cancelled or expired occurrences finish even if their initiating CI process stopped. */
+  async reconcilePending() {
+    const filter = {nightlyPlan: {$exists: true}, nightlyResult: {$exists: false},
+      // Input-based historical occurrences are finalized once from their original receipts.
+      "nightlyPlan.members.input": {$exists: false},
+      $or: [{nightlyCancellation: {$exists: true}}, {startedAt: {$lte: new Date(this.now() - 3 * 3600_000)}}]};
+    const readBatch = () => TestSuiteModel.find(this.completionCursor ? {...filter, $and: [{$or: [
+      {startedAt: {$gt: this.completionCursor.startedAt}},
+      {startedAt: this.completionCursor.startedAt, suiteId: {$gt: this.completionCursor.suiteId}},
+    ]}]} : filter)
+      .select({"nightlyPlan.occurrenceId": 1, suiteId: 1, startedAt: 1}).sort({startedAt: 1, suiteId: 1}).limit(20)
+      .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
+    let rows = await readBatch();
+    if (!rows.length && this.completionCursor) {this.completionCursor = undefined; rows = await readBatch();}
+    // Advance even when an occurrence fails; it is retried after the bounded scan wraps.
+    const last = rows.at(-1);
+    if (last) this.completionCursor = {startedAt: last.startedAt!, suiteId: last.suiteId};
+    await Promise.allSettled(rows.map(async row => {
+      try {await this.complete(row.nightlyPlan.occurrenceId);}
+      catch (error) {logger.error({err: error, suiteId: row.suiteId}, "Nightly completion will retry");}
+    }));
   }
 
   async complete(occurrenceId: string) {

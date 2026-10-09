@@ -738,3 +738,61 @@ test('actual fleet service preserves every nightly member through preparation, b
   expect(await create().detail(occurrence.occurrenceId)).toEqual(terminal); expect(reads).toBe(before);
   expect(await repository.get()).toEqual(frozenPlan); expect(dispatches).toBe(2);
 });
+
+
+test("stopped CI occurrences reconcile cancellation and deadlines independently without rewriting terminal receipts", async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  const second = {occurrenceId: "different-stopped-ci", suiteId: "nightly-different-stopped-ci"};
+  const rows = [{suiteId: plan.suiteId, startedAt: new Date(startedAt), nightlyPlan: {occurrenceId: plan.occurrenceId}},
+    {suiteId: second.suiteId, startedAt: new Date(startedAt), nightlyPlan: {occurrenceId: second.occurrenceId}}];
+  const query = spyOn(TestSuiteModel, "find").mockImplementation(((filter: any) => {
+    expect(filter.nightlyResult).toEqual({$exists: false});
+    expect(filter["nightlyPlan.members.input"]).toEqual({$exists: false});
+    expect(filter.$or).toEqual([{nightlyCancellation: {$exists: true}},
+      {startedAt: {$lte: new Date(now - 3 * 3600_000)}}]);
+    return {select(fields: unknown) {expect(fields).toEqual({"nightlyPlan.occurrenceId": 1, suiteId: 1, startedAt: 1}); return this;},
+      sort() {return this;}, limit(value: number) {expect(value).toBe(20); return this;}, read() {return this;},
+      setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 10_000}); return this;},
+      readConcern() {return this;}, async lean() {return rows;}};
+  }) as any);
+  const calls: string[] = [];
+  const complete = spyOn(state.service, "complete").mockImplementation(async (id: string) => {
+    calls.push(id);
+    if (id === plan.occurrenceId) throw new TestRunError(503, "Temporary cancellation custody failure");
+    return {finishedAt: startedAt} as NightlyResult;
+  });
+  try {
+    await state.service.reconcilePending();
+    expect(calls).toEqual([plan.occurrenceId, second.occurrenceId]);
+    await state.service.reconcilePending();
+    expect(calls).toEqual([plan.occurrenceId, second.occurrenceId, plan.occurrenceId, second.occurrenceId]);
+    expect(state.plan).toBe(plan);
+  } finally {query.mockRestore(); complete.mockRestore();}
+});
+
+test("completion scans advance past failing batches and wrap to retry them", async () => {
+  const state = fixture();
+  const rows = Array.from({length: 45}, (_, index) => ({suiteId: `nightly-${String(index).padStart(3, "0")}`,
+    startedAt: new Date(startedAt), nightlyPlan: {occurrenceId: `occurrence-${index}`}}));
+  const query = spyOn(TestSuiteModel, "find").mockImplementation(((filter: any) => {
+    const after = filter.$and?.[0].$or?.[1].suiteId.$gt;
+    const batch = rows.filter(row => !after || row.suiteId > after).slice(0, 20);
+    return {select() {return this;}, sort() {return this;}, limit(value: number) {expect(value).toBe(20); return this;},
+      read() {return this;}, readConcern() {return this;}, setOptions() {return this;}, async lean() {return batch;}};
+  }) as any);
+  const calls: string[] = [];
+  const complete = spyOn(state.service, "complete").mockImplementation(async (id: string) => {
+    calls.push(id);
+    if (Number(id.split("-")[1]) < 20) throw new TestRunError(503, "Persistent custody failure");
+    return {finishedAt: startedAt} as NightlyResult;
+  });
+  try {
+    await state.service.reconcilePending();
+    await state.service.reconcilePending();
+    await state.service.reconcilePending();
+    expect(calls).toEqual(rows.map(row => row.nightlyPlan.occurrenceId));
+    await state.service.reconcilePending();
+    expect(calls.slice(45)).toEqual(rows.slice(0, 20).map(row => row.nightlyPlan.occurrenceId));
+    expect(query).toHaveBeenCalledTimes(5);
+  } finally {query.mockRestore(); complete.mockRestore();}
+});
