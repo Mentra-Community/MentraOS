@@ -112,6 +112,70 @@ describe("glasses model selection", () => {
     })
   })
 
+  it("exposes native accessibility activation on the labeled model button", async () => {
+    const {getByRole} = render(<SelectGlassesModelScreen />)
+    const model = getByRole("button", {name: "Mentra Live"})
+
+    await act(async () => {
+      fireEvent(model, "accessibilityTap")
+    })
+
+    expect(preparePairingScan).toHaveBeenCalledTimes(1)
+    expect(preparePairingScan).toHaveBeenCalledWith("Mentra Live")
+    expect(push).toHaveBeenCalledTimes(1)
+    expect(push).toHaveBeenCalledWith("/pairing/scan", {deviceModel: "Mentra Live"})
+  })
+
+  it("keeps denied prerequisites on model selection for accessibility activation", async () => {
+    ;(preparePairingScan as jest.Mock).mockResolvedValue(false)
+    const {getByRole} = render(<SelectGlassesModelScreen />)
+
+    await act(async () => {
+      fireEvent(getByRole("button", {name: "Mentra Live"}), "accessibilityTap")
+    })
+
+    expect(preparePairingScan).toHaveBeenCalledTimes(1)
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it("preserves other models' preparation through accessibility activation", () => {
+    const {getByRole} = render(<SelectGlassesModelScreen />)
+
+    fireEvent(getByRole("button", {name: "Even Realities G1"}), "accessibilityTap")
+
+    expect(preparePairingScan).not.toHaveBeenCalled()
+    expect(push).toHaveBeenCalledTimes(1)
+    expect(push).toHaveBeenCalledWith("/pairing/prep", {
+      deviceModel: "Even Realities G1",
+      ar99ProjectName: undefined,
+    })
+  })
+
+  it("shares the pending guard between touch and accessibility activation", async () => {
+    let finishPreparation!: (ready: boolean) => void
+    ;(preparePairingScan as jest.Mock).mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishPreparation = resolve
+        }),
+    )
+    const {getByRole} = render(<SelectGlassesModelScreen />)
+    const model = getByRole("button", {name: "Mentra Live"})
+
+    await act(async () => {
+      fireEvent(model, "accessibilityTap")
+      fireEvent.press(model)
+    })
+    expect(preparePairingScan).toHaveBeenCalledTimes(1)
+    expect(push).not.toHaveBeenCalled()
+
+    await act(async () => {
+      finishPreparation(true)
+    })
+    expect(push).toHaveBeenCalledTimes(1)
+    expect(push).toHaveBeenCalledWith("/pairing/scan", {deviceModel: "Mentra Live"})
+  })
+
   it("stays on model selection when pairing prerequisites are denied", async () => {
     ;(preparePairingScan as jest.Mock).mockResolvedValue(false)
     const {getByTestId} = render(<SelectGlassesModelScreen />)

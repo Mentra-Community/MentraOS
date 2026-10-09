@@ -1,6 +1,6 @@
 import {DeviceTypes, SETTINGS, useSetting} from "@mentra/engine"
 import {useRef} from "react"
-import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
+import {View, Pressable, Platform, ScrollView, Image} from "react-native"
 
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
 import {MentraLogo} from "@/components/brands/MentraLogo"
@@ -128,9 +128,13 @@ export default function SelectGlassesModelScreen() {
           {glassesOptions
             .filter((glasses) => !SUPER_MODE_ONLY_MODELS.has(glasses.deviceModel) || superMode)
             .map((glasses) => (
-              <TouchableOpacity
+              <Pressable
                 key={glasses.key}
                 testID={`pairing-model-${glasses.key}`}
+                accessibilityRole="button"
+                accessibilityLabel={getDisplayName(glasses)}
+                onAccessibilityTap={() => triggerGlassesPairingGuide(glasses)}
+                style={({pressed}) => ({opacity: pressed ? 0.2 : 1})}
                 onPress={() => triggerGlassesPairingGuide(glasses)}>
                 <GlassView className="bg-primary-foreground flex-col items-center justify-center p-6 rounded-2xl overflow-hidden">
                   <View className="flex-row gap-4">
@@ -148,7 +152,7 @@ export default function SelectGlassesModelScreen() {
                     <Image source={getImageSource(glasses)} className="w-[90px] max-h-[80px] object-contain" />
                   </View>
                 </GlassView>
-              </TouchableOpacity>
+              </Pressable>
             ))}
           <Spacer height={theme.spacing.s4} />
         </View>
