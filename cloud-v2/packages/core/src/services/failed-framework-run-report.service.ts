@@ -47,8 +47,10 @@ export function failedRunDiagnostics(run: RecordedFrameworkRun) {
   const base = adminBase(),
     runId = run.result.runId
   const failedSteps = run.result.steps.filter((step) => step.status === "failed").map(({id}) => id)
+  const assetPriority = (asset: RecordedFrameworkRun["assets"][number]) =>
+    asset.kind === "screenshot" ? 0 : asset.kind === "recording" ? 2 : 1
   const selectedAssets = [...run.assets]
-    .sort((a, b) => (a.kind === "recording" ? 1 : 0) - (b.kind === "recording" ? 1 : 0))
+    .sort((a, b) => assetPriority(a) - assetPriority(b))
     .slice(0, MAX_ASSET_LINKS)
   const source = run.build.source as {channel?: unknown; buildRunId?: unknown; publicationAttempt?: unknown} | undefined
   const blobIdentity = (value: unknown) => {
@@ -127,9 +129,9 @@ export function failedRunDiagnostics(run: RecordedFrameworkRun) {
         : {}),
     })),
     omittedAssets: Math.max(0, run.assets.length - MAX_ASSET_LINKS),
-    diagnosticAttachments: run.assets.filter((asset) => asset.kind === "diagnostic" || asset.kind === "report").length,
+    diagnosticAttachments: run.assets.filter((asset) => asset.kind === "diagnostic" || asset.kind === "report" || asset.kind === "screenshot").length,
     assetAccess:
-      "Every native diagnostic/report blob is attached by reference with its original bytes. Other assets remain in the authenticated run manifest; this summary caps individual links.",
+      "Every native diagnostic/report and screenshot blob is attached by reference with its original bytes. Recordings remain in the authenticated run manifest; this summary caps individual links.",
   }
 }
 function boundedDiagnostics(run: RecordedFrameworkRun) {

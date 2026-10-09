@@ -242,15 +242,16 @@ export async function addLogArtifact(input: {
   });
 }
 
-/** Attach all already-acknowledged native diagnostic bytes by reference, never
+/** Attach all already-acknowledged native diagnostic and screenshot bytes by reference, never
  * copying recordings or reading unbounded device output into the report. */
 export async function referenceTestRunDiagnostics(owner: {reportId: string; mentraUserId: string}, run: RecordedFrameworkRun) {
-  const declared = run.assets.filter(asset => asset.kind === "diagnostic" || asset.kind === "report");
+  const declared = run.assets.filter(asset => asset.kind === "diagnostic" || asset.kind === "report" || asset.kind === "screenshot");
   // A timed-out write may already have committed. Verify and reuse those rows
   // on retry instead of issuing the entire frozen export's upserts again.
   const batchSize = 100;
   for (let offset = 0; offset < declared.length; offset += batchSize) {
     const batch = declared.slice(offset, offset + batchSize);
+    const screenshotIds = new Set(batch.filter(asset => asset.kind === "screenshot").map(asset => asset.id));
     const stored = await TestAssetModel.find({runId: run.result.runId, assetId: {$in: batch.map(asset => asset.id)}})
       .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
     const byId = new Map(stored.map(asset => [asset.assetId, asset]));
@@ -285,7 +286,9 @@ export async function referenceTestRunDiagnostics(owner: {reportId: string; ment
       const row = byArtifactId.get(reference.artifactId);
       if (!row) throw new ReportArtifactError(503, "Routine diagnostic reference is unavailable");
       if (!matches(row, reference)) throw new ReportArtifactError(409, "Routine diagnostic reference already binds different content");
-      return {artifactId: row.artifactId, type: "state_snapshot", source: "framework-diagnostic", filename: row.fileName,
+      const screenshot = screenshotIds.has(reference.sourceTestAssetId);
+      return {artifactId: row.artifactId, type: screenshot ? "screenshot" : "state_snapshot",
+        source: screenshot ? "framework-screenshot" : "framework-diagnostic", filename: row.fileName,
         contentType: row.contentType, sizeBytes: row.sizeBytes, createdAt: row.createdAt};
     });
     const result = await ReportModel.updateOne(owner, {$addToSet: {artifacts: {$each: metadata}}},
