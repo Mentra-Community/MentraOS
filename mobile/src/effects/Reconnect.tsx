@@ -9,11 +9,13 @@ import {DeviceTypes} from "@mentra/engine"
 export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
   const reconnectOnAppForeground = await engine.settings.get(SETTINGS.reconnect_on_app_foreground.key)
   const defaultWearable = await engine.settings.get<string>(SETTINGS.default_wearable.key)
+  const ownerLost = await engine.settings.get<boolean>(SETTINGS.mentra_live_owner_lost.key)
 
   const decision = decideReconnect({
     reconnectOnForeground: !!reconnectOnAppForeground,
     defaultWearable,
     isSimulated: !!defaultWearable && defaultWearable.includes(DeviceTypes.SIMULATED),
+    ownerLost: !!ownerLost,
     connected: engine.pairing.readiness().connected,
     nativeLinkBusy: engine.pairing.readiness().nativeLinkBusy,
     // Fail open on a bridge/hydration error: pass true so the flow proceeds to

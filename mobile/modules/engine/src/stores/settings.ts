@@ -344,6 +344,22 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
     nativeAuthoritative: true,
   },
+  // Set when another phone took over the saved Mentra Live (native
+  // `owner_replaced`). The saved identity is kept so the home card can explain
+  // the loss; cleared by a reconnect, unpair, or re-pair.
+  mentra_live_owner_lost: {
+    key: "mentra_live_owner_lost",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    // Native owns this flag: it promotes it on `owner_replaced`, clears it on a
+    // ready (re-pair) / forget, and echoes down via save_setting. On Mentra Live
+    // "connected" lands together with device-ready, so the on-connect replay must
+    // NOT carry a mid-relay JS `true` back over the native clear — that would
+    // re-block Bluetooth-on auto-reconnect after a successful re-pair.
+    nativeAuthoritative: true,
+  },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",
@@ -846,6 +862,8 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.device_name.key,
   SETTINGS.device_address.key,
   SETTINGS.project_name.key,
+  // Phone-local; native gates automatic reconnects on it after a manager rebuild.
+  SETTINGS.mentra_live_owner_lost.key,
   SETTINGS.default_controller.key,
   SETTINGS.pending_controller.key,
   SETTINGS.controller_device_name.key,

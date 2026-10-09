@@ -726,6 +726,8 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `switch_status` | `SwitchStatusEvent` | Glasses switch status changes. |
 | `rgb_led_control_response` | `RgbLedControlResponseEvent` | RGB LED command succeeds or fails. `rgbLedControl(...)` resolves with the success case and rejects on the error case. |
 | `pair_failure` | `PairFailureEvent` | Bluetooth pairing fails. |
+| `entering_pairing_mode` | `EnteringPairingModeEvent` | The connected Mentra Live owner's glasses opened a pairing window (three power-button presses). The SDK stops reconnecting for `window_ms` so another phone can pair, and keeps the saved device. |
+| `owner_replaced` | `OwnerReplacedEvent` | Another phone completed pairing with the saved Mentra Live after a pairing window, so this phone is no longer the owner. The SDK stops reconnecting but keeps the saved device, so your app can explain the loss and offer to pair again or unpair. `reason` is a diagnostic string. |
 | `audio_pairing_needed` | `AudioPairingNeededEvent` | The phone needs Bluetooth audio pairing for the device. |
 | `audio_connected` | `AudioConnectedEvent` | Bluetooth audio connects. |
 | `audio_disconnected` | `AudioDisconnectedEvent` | Bluetooth audio disconnects. |

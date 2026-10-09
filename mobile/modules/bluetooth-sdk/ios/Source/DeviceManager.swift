@@ -133,6 +133,13 @@ struct ViewState {
         set { DeviceStore.shared.apply("bluetooth", "default_wearable", newValue) }
     }
 
+    /// A forget or a ready (re-paired) glasses session ends owner loss for SDK-only hosts too.
+    private func clearOwnerLost() {
+        guard DeviceStore.shared.get("bluetooth", "mentra_live_owner_lost") as? Bool == true else { return }
+        DeviceStore.shared.apply("bluetooth", "mentra_live_owner_lost", false)
+        Bridge.saveSetting("mentra_live_owner_lost", false)
+    }
+
     private var pendingWearable: String {
         get { DeviceStore.shared.get("bluetooth", "pending_wearable") as? String ?? "" }
         set { DeviceStore.shared.apply("bluetooth", "pending_wearable", newValue) }
@@ -980,6 +987,7 @@ struct ViewState {
             return
         }
         Bridge.log("MAN: handleDeviceReady(): \(sgc.type)")
+        clearOwnerLost()
         resetMicHealth()
 
         // A new identity must never inherit the previous glasses' address when
@@ -2023,6 +2031,7 @@ struct ViewState {
 
     func forget() {
         Bridge.log("MAN: Forgetting smart glasses")
+        clearOwnerLost()
         // Call forget first to stop timers/handlers/reconnect logic
         sgc?.forget()
         disconnect()
