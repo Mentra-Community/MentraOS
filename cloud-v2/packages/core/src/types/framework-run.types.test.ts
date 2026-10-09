@@ -216,6 +216,37 @@ test("failed shared teardown actions require their own outcome diagnostics and c
   expect(frameworkRunOutcome(frameworkRunSchema.parse(active))).toBe("teardown-failed");
 });
 
+test("interrupted shared cleanup publishes its original failure without inventing a resource outcome", () => {
+  const old = run();
+  const action = {id: "cleanup:glasses", instruction: "Settle the requested glasses software",
+    expected: "The glasses are ready to release", scope: "shared" as const, status: "failed" as const,
+    startedAt: old.startedAt, durationMs: 1000};
+  const original = {phase: "test" as const, actionId: "settings", message: "The app reported Check Failed"};
+  const error = {phase: "teardown" as const, actionId: action.id, message: "Cleanup exceeded its deadline; inspect writer settlement"};
+  const report = {...old, result: {...old.result, test: "failed", steps: [{id: "settings", status: "failed", durationMs: 1000}],
+    failures: [original, error], teardown: {ready: false, actions: [action], outcomes: [], errors: [error],
+      unavailableResources: [{resource: "glasses", cause: "Cleanup has not returned", nextAction: "Inspect and settle retained custody"}]}}};
+  const parsed = frameworkRunSchema.parse(report);
+  expect(frameworkRunOutcome(parsed)).toBe("failed");
+  expect(parsed.result.failures).toEqual([original, error]);
+  expect(parsed.result.teardown.ready).toBe(false);
+  expect(parsed.result.teardown.outcomes).toEqual([]);
+  expect(frameworkEvidenceComplete(parsed)).toBe(true);
+  for (const invalid of [
+    {...report, result: {...report.result, failures: [original]}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown, errors: []}}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown, ready: true}}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown, unavailableResources: []}}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown,
+      unavailableResources: [{resource: "other", cause: "Unrelated cleanup", nextAction: "Inspect"}]}}},
+    {...report, result: {...report.result, failures: [original, {...error, actionId: "other"}],
+      teardown: {...report.result.teardown, errors: [{...error, actionId: "other"}]}}},
+    {...report, result: {...report.result, failures: [original, {...error, message: "Different failure"}]}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown,
+      outcomes: [{state: "cleaned", resourceId: "glasses", evidence: [], errors: []}]}}},
+  ]) expect(frameworkRunSchema.safeParse(invalid).success).toBe(false);
+});
+
 test("ready shared cleanup failures are allowed only for flattened evidence diagnostics on the matching cleaned resource", () => {
   const old = run();
   const action = {id: "cleanup:recorder", instruction: "Stop and finalize the original recording", expected: "The recorder is settled",

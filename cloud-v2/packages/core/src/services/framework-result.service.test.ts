@@ -226,6 +226,57 @@ test("a completed test can publish a teardown failure without becoming a catalog
   await expect(service.ingest({...run, result: {...run.result, failures: [{...failure, phase: "test"}]}}, "mini")).rejects.toThrow("Invalid frozen");
 })
 
+test("interrupted cleanup ingestion retries the same failed result while hardware custody remains unresolved", async () => {
+  const {frameworkRunSchema, frameworkRunOutcome} = await import("../types/framework-run.types");
+  const original = {phase: "test" as const, actionId: "required", message: "The app reported Check Failed"};
+  const cleanup = {phase: "teardown" as const, actionId: "cleanup:glasses", message: "Cleanup deadline exceeded; inspect retained writer"};
+  const frozen = frameworkRunSchema.parse({schemaVersion: 1, routineSource: testRoutineSource(), frameworkBinding: testFrameworkBinding(),
+    hostId: "mini", requestId: "interrupted-cleanup", routineId: "notes", definitionRevision: "a".repeat(40),
+    platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z", assets: [],
+    result: {runId: "interrupted-cleanup", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "passed"}, test: "failed",
+      steps: [{id: "required", status: "failed", durationMs: 10}], failures: [original, cleanup], evidence: [],
+      teardown: {ready: false, actions: [{id: cleanup.actionId, instruction: "Settle the glasses software", expected: "The glasses are ready",
+        scope: "shared", status: "failed", durationMs: 10}], outcomes: [], errors: [cleanup],
+        unavailableResources: [{resource: "glasses", cause: "Cleanup has not returned", nextAction: "Inspect retained custody"}]},
+      timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
+  let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
+  let writes = 0, projections = 0;
+  const service = new FrameworkResultService({
+    async insert(payload, payloadSha256) {
+      if (stored) throw Object.assign(new Error("duplicate"), {code: 11000});
+      writes++; stored = {payload, payloadSha256, uploadsComplete: true};
+    }, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset() {return null;},
+  }, async () => ({hostId: frozen.hostId, input: {routineId: frozen.routineId, definitionRevision: frozen.definitionRevision,
+    routineSource: frozen.routineSource, platform: frozen.platform, laneId: frozen.laneId, build: frozen.build}}),
+    async run => {projections++; expect(run.result.teardown.ready).toBe(false);},
+    async () => ({definition: {steps: [{id: "required"}]}}) as unknown as RoutineEnrollment,
+    undefined, {async list() {return [];}, async complete() {}}, {async complete() {return undefined;}});
+  const digest = requestInputDigest(frozen);
+  const first = await service.ingest(frozen, frozen.hostId);
+  expect(first).toMatchObject({created: true, payloadSha256: digest});
+  expect(await service.ingest(frozen, frozen.hostId)).toEqual({...first, created: false});
+  expect(writes).toBe(1);
+  expect(projections).toBe(2);
+  expect(stored!.payload).toEqual(frozen);
+  expect(frameworkRunOutcome(stored!.payload)).toBe("failed");
+  expect(stored!.payload.result.failures).toEqual([original, cleanup]);
+  expect(stored!.payload.result.teardown.outcomes).toEqual([]);
+  expect(requestInputDigest(frozen)).toBe(digest);
+  try {
+    await service.ingest({...frozen, result: {...frozen.result, failures: [original, {...cleanup, message: "private-cleanup-error"}],
+      teardown: {...frozen.result.teardown, errors: [{...cleanup, message: "private-cleanup-error"}], unavailableResources: []}}}, frozen.hostId);
+    throw new Error("Expected schema refusal");
+  } catch (error) {
+    expect((error as Error).message).toContain("custom at root: Failed shared cleanup must retain its classified diagnostics or unresolved resource custody");
+    expect((error as Error).message).not.toContain("private-cleanup-error");
+  }
+  await expect(service.ingest({...frozen, result: {...frozen.result,
+    failures: [original, {...cleanup, message: "Rewritten cleanup error"}],
+    teardown: {...frozen.result.teardown, errors: [{...cleanup, message: "Rewritten cleanup error"}]}}}, frozen.hostId))
+    .rejects.toThrow("different terminal result");
+});
+
 test("native result list scopes the archive digest and excludes retained old payloads", async () => {
   let filter: Record<string, unknown> | null = null;
   const find = spyOn(TestRunModel, "find").mockImplementation(((query: Record<string, unknown>) => {
