@@ -167,22 +167,61 @@ jobs:
           cd example-play
           bundle install
 
-      - name: Check Play setup and exact version
+      - name: Install pinned bundle identity verifier
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar \
+            --output "$RUNNER_TEMP/bundletool.jar"
+          echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  $RUNNER_TEMP/bundletool.jar" | sha256sum --check
+
+      - name: Check Play setup and reserve the exact example version
         id: play
         working-directory: example-play
         env:
           APP_PACKAGE_NAME: com.mentra.bluetoothsdkexample
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
           GOOGLE_PLAY_VERSION_CODES_OUTPUT: ${{ runner.temp }}/example-play-codes.json
+          GOOGLE_PLAY_USED_VERSION_CODES_OUTPUT: ${{ runner.temp }}/example-play-used-codes.json
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
+          tooling="$GITHUB_WORKSPACE/release-tooling/.github/scripts"
+          plan="$GITHUB_WORKSPACE/release-input/plan/release-plan.json"
+          code="${{ steps.coordinates.outputs.build_number }}"
+          if [[ "${{ steps.existing.outputs.exists }}" == true ]]; then
+            # Immutable bytes retain their code, even if a newer release passed them.
+            code=$(java -jar "$RUNNER_TEMP/bundletool.jar" dump manifest \
+              --bundle="$GITHUB_WORKSPACE/release-output/${{ steps.coordinates.outputs.aab_name }}" \
+              --module=base --xpath=/manifest/@android:versionCode)
+          fi
           if ! bundle exec fastlane track_version_codes; then
             # Still produce the signed AAB required for first-time Console setup.
             echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "code=$code" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "ready=true" >> "$GITHUB_OUTPUT"
-          if jq -e --argjson expected "${{ steps.coordinates.outputs.build_number }}" 'map(tonumber) | index($expected) != null' "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" >/dev/null; then
+          if [[ "${{ steps.existing.outputs.exists }}" != true ]]; then
+            bundle exec fastlane used_version_codes
+            registry_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/mentra-coordinated-asg" --jq .id)
+            node "$tooling/release-assets.mjs" list --repository "$GITHUB_REPOSITORY" --release-id "$registry_id" > registry-assets.json
+            node "$tooling/coordinated-example-google-play.mjs" allocate \
+              --plan "$plan" --track "$GOOGLE_PLAY_TRACK" \
+              --codes "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" --used "$GOOGLE_PLAY_USED_VERSION_CODES_OUTPUT" \
+              --assets registry-assets.json --output example-code.json
+            code=$(jq -er .versionCode example-code.json)
+            if [[ "$(jq -r .reused example-code.json)" != true ]]; then
+              marker=$(jq -er .markerName example-code.json)
+              node "$tooling/publish-immutable-release-asset.mjs" \
+                --release-id "$registry_id" --repository "$GITHUB_REPOSITORY" \
+                --file example-code.json --name "$marker"
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if jq -e --argjson expected "$code" 'map(tonumber) | index($expected) != null' "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" >/dev/null; then
             [[ "${{ steps.existing.outputs.exists }}" == true ]] || {
               echo "Play contains this version without its previously persisted release AAB; refusing to claim byte identity." >&2
               exit 1
@@ -225,7 +264,8 @@ jobs:
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "${{ steps.coordinates.outputs.starter_release_commit }}" ]]
           node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/coordinated-example-google-play.mjs" configure \
-            --plan "$GITHUB_WORKSPACE/release-input/plan/release-plan.json" --app app.json --package package.json
+            --plan "$GITHUB_WORKSPACE/release-input/plan/release-plan.json" --app app.json --package package.json \
+            --build-number "${{ steps.play.outputs.code }}"
           bun install --frozen-lockfile
           bunx expo prebuild --platform android
 
@@ -244,14 +284,6 @@ jobs:
             "$aab" "$ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_ALIAS"
           cp "$aab" "$GITHUB_WORKSPACE/release-output/${{ steps.coordinates.outputs.aab_name }}"
 
-      - name: Install pinned bundle identity verifier
-        run: |
-          set -euo pipefail
-          curl --fail --silent --show-error --location --retry 3 \
-            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar \
-            --output "$RUNNER_TEMP/bundletool.jar"
-          echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  $RUNNER_TEMP/bundletool.jar" | sha256sum --check
-
       - name: Verify and persist exact signed bytes before Play upload
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
@@ -261,7 +293,8 @@ jobs:
           set -euo pipefail
           aab="release-output/${{ steps.coordinates.outputs.aab_name }}"
           node release-tooling/.github/scripts/coordinated-example-google-play.mjs verify-aab \
-            --plan release-input/plan/release-plan.json --aab "$aab" --bundletool "$RUNNER_TEMP/bundletool.jar"
+            --plan release-input/plan/release-plan.json --aab "$aab" --bundletool "$RUNNER_TEMP/bundletool.jar" \
+            --build-number "${{ steps.play.outputs.code }}"
           jarsigner -verify "$aab"
           keytool -printcert -jarfile "$aab" > "$RUNNER_TEMP/example-certificate.txt"
           if grep -qi 'CN=Android Debug' "$RUNNER_TEMP/example-certificate.txt"; then
@@ -305,6 +338,7 @@ jobs:
             --plan ../release-input/plan/release-plan.json \
             --starter-kit "../${{ steps.coordinates.outputs.starter_result }}" \
             --track "$GOOGLE_PLAY_TRACK" --codes "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" \
+            --build-number "${{ steps.play.outputs.code }}" \
             --aab "../release-output/${{ steps.coordinates.outputs.aab_name }}" \
             --artifact-url "${{ steps.coordinates.outputs.aab_url }}" \
             --upload-status "${{ steps.play.outputs.exists == 'true' && 'reused' || 'published' }}" \
