@@ -57,7 +57,7 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
     {$limit: RAW_HISTORY_BATCH_SIZE},
     {$lookup: {from: TestSuiteModel.collection.name, localField: "payload.requestId", foreignField: "payload.members.requestId",
       let: {requestId: "$payload.requestId", routineId: "$payload.routineId", platform: "$payload.platform",
-        channel: "$payload.build.channel", headSha: "$payload.build.headSha", runId: "$runId"},
+        channel: "$payload.build.channel", headSha: "$payload.build.headSha"},
       pipeline: [{$match: {"payload.members.1": {$exists: true}, startedAt: {$type: "date"}, $expr: {$and: [
         {$eq: ["$payload.channel", "$$channel"]},
         {$anyElementTrue: [{$map: {input: "$payload.members", as: "member", in: {$and: [
@@ -65,15 +65,17 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
           {$eq: ["$$member.platform", "$$platform"]},
           {$eq: [{$ifNull: ["$$member.headSha", "$payload.build.headSha"]}, "$$headSha"]},
         ]}}}]},
-        {$or: [{$eq: [{$ifNull: ["$nightlyResult", {$ifNull: ["$completedResult", null]}]}, null]},
-          {$anyElementTrue: [{$map: {input: {$ifNull: ["$nightlyResult.members", {$ifNull: ["$completedResult.members", []]}]}, as: "member",
-            in: {$and: [{$eq: ["$$member.requestId", "$$requestId"]}, {$eq: ["$$member.runId", "$$runId"]}]}}}]}]},
       ]}}}, {$limit: 1}], as: "historySuites"}},
     {$lookup: {from: TestRerunModel.collection.name, localField: "payload.requestId", foreignField: "plan.members.requestId",
       pipeline: [{$match: {state: "accepted"}}, {$limit: 1}, {$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId"}}],
       as: "historyReruns"}},
     {$lookup: {from: TestSuiteModel.collection.name, localField: 'payload.requestId', foreignField: 'nightlyPlan.members.requestId',
-      pipeline: [{$match: {nightlyPlan: {$exists: true}}}, {$limit: 1}, {$project: {_id: 0, suiteId: 1}}], as: 'historyNightly'}},
+      let: {requestId: "$payload.requestId", routineId: "$payload.routineId", platform: "$payload.platform"},
+      pipeline: [{$match: {$expr: {$anyElementTrue: [{$map: {input: "$nightlyPlan.members", as: "member", in: {$and: [
+        {$eq: ["$$member.requestId", "$$requestId"]}, {$eq: ["$$member.routineId", "$$routineId"]},
+        {$eq: ["$$member.platform", "$$platform"]},
+      ]}}}]}}}, {$limit: 1}, {$project: {_id: 0, suiteId: 1,
+        listable: {$and: [{$gte: [{$size: {$ifNull: ["$payload.members", []]}}, 2]}, {$eq: [{$type: "$startedAt"}, "date"]}]}}}], as: 'historyNightly'}},
     {$project: {_id: 0, historyKind: {$literal: "run"}, historyId: "$runId",
       historyStartedAt: "$startedAt", runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1,
       rerun: {$arrayElemAt: ["$historyReruns", 0]},
@@ -81,6 +83,8 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
         {$anyElementTrue: [{$map: {input: '$historySuites', as: 'suite', in: {$eq: ['$$suite.payload.trigger', 'nightly']}}}]}]},
         'nightly', {$cond: [{$eq: ['$payload.build.channel', 'pr']}, 'pr', 'other']}]}]},
       historySuppressed: {$or: [{$gt: [{$size: "$historySuites"}, 0]},
+        // Declared membership groups late evidence without changing the frozen verdict.
+        {$anyElementTrue: [{$map: {input: "$historyNightly", as: "suite", in: "$$suite.listable"}}]},
         // Top-level tabs contain originals only; details retain every linked attempt.
         ...(origin || !includeReruns ? [{$gt: [{$size: "$historyReruns"}, 0]}] : [])]}}},
     {$facet: {entries: [{$match: {historySuppressed: false, ...(origin ? {origin} : {})}}, {$limit: limit + 1},

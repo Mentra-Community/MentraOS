@@ -13,6 +13,8 @@ import {TestSuiteService, type SuiteSummaryRead} from "./test-suite.service";
 import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 import {requestInputDigest} from "./test-request.service";
 import {TestRunError} from "./test-result-error";
+import {FrameworkResultService} from "./framework-result.service";
+import {TestRerunService} from "./test-rerun.service";
 
 const summaryReader = (detail: (id: string) => Promise<any>) => ({
   async summaries(ids: string[]) {
@@ -502,7 +504,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     expect(unstarted.kind === "suite" && unstarted.passed).toBe(1);
   });
 
-  test("a late bound result stays visible after a missing member was frozen as not-run", async () => {
+  test("late suite evidence stays grouped without changing a frozen not-run verdict", async () => {
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
     const suite = plan("suite:late", [member("on-time"), member("late")]);
     await saveSuite(suite); await saveRun(run("on-time"));
@@ -512,11 +514,77 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     await saveRun(run("late"));
     const history = await new TestHistoryService().list();
     expect(history.entries.map(entry => entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : entry.id))
-      .toEqual([suite.suiteId, "late"]);
+      .toEqual([suite.suiteId]);
     expect(await suites.detail(suite.suiteId)).toEqual(frozen);
   });
 
-  test("nightly terminal authority groups only its exact frozen runs and leaves late publication visible", async () => {
+  test("durable nightly membership groups visible multi-member parents before pagination but retains standalone nightlies", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    const suite = plan("suite:durable-nightly", [member("durable-a"), member("durable-b")]);
+    const payload = {...suite, members: suite.members.map(({requestId: _requestId, ...selected}) => selected)};
+    const nightlyPlan = {suiteId: suite.suiteId, occurrenceId: "durable-occurrence", startedAt: at, trigger: "nightly", suite: payload,
+      members: suite.members.map(selected => ({...selected, routineRevision: "b".repeat(40), definitionRevision: "b".repeat(40)}))};
+    const nightlyResult = {...nightlyPlan, expectedCount: 2, finishedAt: "2026-10-03T19:02:00Z",
+      members: nightlyPlan.members.map(selected => ({...selected, status: "incomplete", publicationComplete: false}))};
+    // The immutable plan owns the request IDs even when the public payload did not admit them yet.
+    await TestSuiteModel.collection.insertOne({suiteId: suite.suiteId, payload, startedAt: new Date(at),
+      nightlyPlan, nightlyResult});
+    await saveRun(run("durable-a")); await saveRun(run("durable-b"));
+    for (const [id, listableDate, members] of [
+      ["single-nightly", new Date(at), [member("single-nightly")]],
+      ["unlistable-nightly", null, [member("unlistable-nightly"), member("unstarted")]],
+    ] as const) {
+      await TestSuiteModel.collection.insertOne({suiteId: id, startedAt: listableDate, payload: plan(id, [...members]),
+        nightlyPlan: {members}});
+      await saveRun(run(id));
+    }
+    await TestSuiteModel.collection.insertOne({suiteId: "single-without-payload", startedAt: new Date(at),
+      nightlyPlan: {members: [member("single-without-payload")]}});
+    await saveRun(run("single-without-payload"));
+    const history = new TestHistoryService();
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await history.list({origin: "nightly", limit: "1", ...(cursor ? {cursor} : {})});
+      expect(page.entries).toHaveLength(1);
+      if (!cursor) expect(page.entries[0]).toMatchObject({kind: "suite", suiteId: suite.suiteId, expectedCount: 2, passed: 0, skipped: 2});
+      ids.push(...page.entries.map(entry => entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : entry.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    expect(ids).toEqual([suite.suiteId, "unlistable-nightly", "single-without-payload", "single-nightly"]);
+    const row = await TestSuiteModel.collection.findOne({suiteId: suite.suiteId});
+    expect(row!.payload).toEqual(payload);
+    expect(row!.nightlyPlan).toEqual(nightlyPlan);
+    expect(row!.nightlyResult).toEqual(nightlyResult);
+    const suites = new TestSuiteService();
+    for (const parent of [await suites.summary(suite.suiteId), await suites.detail(suite.suiteId)]) {
+      expect(parent).toMatchObject({outcome: "failed", passed: 0, members: [
+        {requestId: "durable-a", status: "not-run", publicationComplete: false},
+        {requestId: "durable-b", status: "not-run", publicationComplete: false},
+      ]});
+      for (const selected of parent.members) {
+        // The same request ID powers the existing parent link, including late original evidence.
+        expect(await new FrameworkResultService().detail(selected.requestId!)).toMatchObject({run: {requestId: selected.requestId}});
+        const attempts = await new TestRerunService().history({suiteId: suite.suiteId}, selected.memberId);
+        expect(attempts.original).toMatchObject({requestId: selected.requestId, status: "not-run", publicationComplete: false});
+      }
+    }
+
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
+    for (const [id, declaration] of [
+      ["wrong-routine", {...member("wrong-routine"), routineId: "ota"}],
+      ["wrong-platform", {...member("wrong-platform"), platform: "android"}],
+    ] as const) {
+      await saveRun(run(id));
+      await TestSuiteModel.collection.insertOne({suiteId: id, payload: plan(id, payload.members), startedAt: new Date(at),
+        nightlyPlan: {members: [declaration, member("unstarted")]}});
+    }
+    expect((await history.list({origin: "nightly"})).entries.every(entry => entry.kind !== "run")).toBe(true);
+    expect((await history.list({origin: "other"})).entries.map(entry => entry.kind === "run" ? entry.runId : "unexpected"))
+      .toEqual(["wrong-routine", "wrong-platform"]);
+  });
+
+  test("nightly members stay grouped independently of the frozen result run IDs", async () => {
     await TestRunModel.deleteMany({});
     await TestSuiteModel.deleteMany({});
     const suite = plan("suite:nightly-authority", [member("on-time"), member("late")]);
@@ -546,10 +614,11 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     const entries = (await new TestHistoryService().list()).entries;
     expect(
       entries.map((entry) => (entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : entry.id)),
-    ).toEqual([suite.suiteId, "late"])
+    ).toEqual([suite.suiteId])
     expect(entries[0]).toMatchObject({kind: "suite", passed: 1, outcome: "failed", finishedAt: nightlyResult.finishedAt});
     const row = await TestSuiteModel.collection.findOne({suiteId: suite.suiteId});
     expect(row!.completedResult).toBeUndefined();
+    expect(row!.nightlyResult).toEqual(nightlyResult);
     expect(await new TestSuiteService().detail(suite.suiteId)).toMatchObject({passed: 1, outcome: "failed"});
   })
 

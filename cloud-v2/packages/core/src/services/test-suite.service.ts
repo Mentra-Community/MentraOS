@@ -74,7 +74,7 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
       }
     }
     const build = input?.build ?? expected.build;
-    return {...member, routineRevision: "routineRevision" in expected ? expected.routineRevision : expected.definitionRevision,
+    return {...member, requestId: expected.requestId, routineRevision: "routineRevision" in expected ? expected.routineRevision : expected.definitionRevision,
       hostId: receipt.hostId ?? expected.hostId,
       ...(input?.laneId ? {laneId: input.laneId} : "dispatchIntent" in receipt && receipt.dispatchIntent ? {laneId: receipt.dispatchIntent.laneId}
         : "dispatchIntent" in expected && expected.dispatchIntent ? {laneId: expected.dispatchIntent.laneId} : {}),
@@ -211,7 +211,7 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
       || receipt.runId && (receipt.runId !== receipt.requestId || !receipt.runStartedAt || !receipt.runFinishedAt
         || !Number.isFinite(Date.parse(receipt.runStartedAt)) || !Number.isFinite(Date.parse(receipt.runFinishedAt))
         || Date.parse(receipt.runFinishedAt) < Date.parse(receipt.runStartedAt))) invalid();
-    return {...member, status: receipt!.status === "incomplete" ? "not-run" : receipt!.status!,
+    return {...member, requestId: expected!.requestId, status: receipt!.status === "incomplete" ? "not-run" : receipt!.status!,
       publicationComplete: receipt!.publicationComplete, ...(receipt!.unavailableReason ? {unavailableReason: receipt!.unavailableReason} : {}),
       ...(receipt!.rejectedAt ? {rejectedAt: receipt!.rejectedAt} : {}), ...((receipt!.hostId ?? expected!.hostId) ? {hostId: receipt!.hostId ?? expected!.hostId} : {}),
       ...((receipt!.laneId ?? expected!.laneId) ? {laneId: receipt!.laneId ?? expected!.laneId} : {}),
