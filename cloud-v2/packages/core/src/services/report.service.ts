@@ -22,6 +22,7 @@ import { UserModel } from "../models/user.model";
 import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
 import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
 import { createStorageService, type StorageService } from "./storage/storage.service";
+import type { ByteRange } from "./storage/byte-range";
 
 const logger = createLogger("core").child({ service: "report.service" });
 const attachmentWriteConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
@@ -631,18 +632,20 @@ export async function getReport(
 }
 
 /**
- * Payload bytes for one artifact, or null when no such asset row exists.
- * Throws when the row exists but the blob cannot be read (deleted or storage
- * outage) — the API layer decides how to present that.
+ * Frozen metadata and a lazy storage stream, or null when no asset row exists.
+ * Verify the current object's size before serving its original storage key.
  */
-export async function readReportArtifactPayload(
+export async function readReportArtifact(
   reportId: string,
   artifactId: string,
-): Promise<{ bytes: Uint8Array; contentType: string; fileName: string | null; sha256: string } | null> {
+): Promise<{ sizeBytes: number; contentType: string; fileName: string | null; sha256: string;
+  stream: (range?: ByteRange) => Promise<ReadableStream<Uint8Array> | Blob> } | null> {
   const asset = await ReportAssetModel.findOne({ reportId, artifactId }).lean();
   if (!asset) return null;
-  const bytes = await getStorage().getObject(asset.storageKey);
-  return { bytes, contentType: asset.contentType, fileName: asset.fileName ?? null, sha256: asset.sha256 };
+  const storage = getStorage();
+  if ((await storage.statObject(asset.storageKey)).sizeBytes !== asset.sizeBytes) throw new Error("stored report artifact size changed");
+  return { sizeBytes: asset.sizeBytes, contentType: asset.contentType, fileName: asset.fileName ?? null, sha256: asset.sha256,
+    stream: (range) => storage.streamObject(asset.storageKey, range) };
 }
 
 function serializeReportSummary(row: {

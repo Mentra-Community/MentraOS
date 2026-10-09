@@ -13,7 +13,7 @@ import {
   addLogArtifact,
   ensureTestRunReport,
   getReport,
-  readReportArtifactPayload,
+  readReportArtifact,
   referenceTestRunDiagnostics,
 } from "./report.service"
 import {FailedFrameworkRunReportService} from "./failed-framework-run-report.service"
@@ -128,7 +128,8 @@ const uri = process.env.FAILED_RUN_REPORT_MONGO_URI
       const raw = await ReportAssetModel.findOne({sourceTestRunId: "failed-run"}).lean()
       expect(raw?.sourceTestAssetId).toBe("setup-diagnostics")
       expect(raw?.storageKey).toBe(storageKey)
-      expect(Buffer.from((await readReportArtifactPayload(final!.reportId, raw!.artifactId))!.bytes)).toEqual(bytes)
+      const artifact = (await readReportArtifact(final!.reportId, raw!.artifactId))!
+      expect(Buffer.from(await new Response(await artifact.stream()).arrayBuffer())).toEqual(bytes)
       // Repeat/restart only references the same raw object; no test asset is removed or copied.
       expect(await TestAssetModel.countDocuments()).toBe(1)
       expect(await storage.getObject(storageKey)).toEqual(bytes)
