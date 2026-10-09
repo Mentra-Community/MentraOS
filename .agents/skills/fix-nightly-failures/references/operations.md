@@ -7,6 +7,11 @@ provisioned environment/configuration and private diagnostics outside Git.
 
 ## Discover access and read evidence
 
+For a single Admin run URL or run/request ID, use
+[investigate-routine-failure](../../investigate-routine-failure/SKILL.md). Its
+read-only helper reuses the incident-report admin token and verifies artifacts;
+no Admin browser login or new host credential is needed.
+
 Discover the current repository guidance, installed harness CLI/help, available
 connectors and provisioned Core/operator configuration before constructing calls.
 Use existing credentials privately; inspect only safe endpoint/path fields and
