@@ -200,6 +200,68 @@ test("apply cancels only existing unresolved requests and records original-field
   expect(await finishRecordedNightlySuite(f.suiteId, true, f.deps, now)).toMatchObject({alreadyFinished: true})
   expect(f.writes).toHaveLength(2)
 })
+test("a run completing during cancellation keeps its authoritative outcome and actual finish", async () => {
+  const f = fixture(),
+    member = f.members[2]!,
+    original = JSON.stringify(f.row.nightlyPlan)
+  const cancelRequest = f.deps.cancel
+  f.deps.cancel = async (id, at, reason) => {
+    await cancelRequest(id, at, reason)
+    const run = {
+      ...f.runs.get(f.members[0]!.requestId)!,
+      requestId: id,
+      runId: "raced-original-run",
+      routineId: member.routineId,
+      finishedAt: "2026-10-08T08:00:00.000Z",
+    }
+    f.runs.set(id, run)
+    Object.assign(f.requests.get(id)!, {state: "terminal", runId: run.runId, terminalStatus: run.outcome})
+    return structuredClone(f.requests.get(id)) as any
+  }
+  expect(await finishRecordedNightlySuite(f.suiteId, true, f.deps, now)).toMatchObject({
+    passed: 2,
+    failed: 1,
+    incomplete: 0,
+    status: "failed",
+    finishedAt: "2026-10-08T08:00:00.000Z",
+  })
+  expect((f.row.nightlyResult as any).members[2]).toMatchObject({
+    status: "pass",
+    runId: "raced-original-run",
+    runFinishedAt: "2026-10-08T08:00:00.000Z",
+    publicationComplete: true,
+  })
+  expect(JSON.stringify(f.row.nightlyPlan)).toBe(original)
+  expect(f.writes).toEqual([`cancel:${member.requestId}`, "finish"])
+})
+test("missing, foreign or unsettled raced results prevent archival completion", async () => {
+  for (const failure of ["missing", "foreign", "unsettled", "wrong-run"]) {
+    const f = fixture(),
+      member = f.members[2]!,
+      cancelRequest = f.deps.cancel
+    f.deps.cancel = async (id, at, reason) => {
+      await cancelRequest(id, at, reason)
+      const run = {
+        ...f.runs.get(f.members[0]!.requestId)!,
+        requestId: id,
+        runId: "raced-original-run",
+        routineId: member.routineId,
+      }
+      if (failure === "foreign") run.hostId = "different-host"
+      if (failure === "unsettled") run.uploadsComplete = false
+      if (failure !== "missing") f.runs.set(id, run)
+      Object.assign(f.requests.get(id)!, {
+        state: "terminal",
+        runId: failure === "wrong-run" ? "different-run" : run.runId,
+        terminalStatus: run.outcome,
+      })
+      return structuredClone(f.requests.get(id)) as any
+    }
+    await expect(finishRecordedNightlySuite(f.suiteId, true, f.deps, now)).rejects.toThrow()
+    expect(f.row.nightlyResult).toBeUndefined()
+    expect(f.writes).toEqual([`cancel:${member.requestId}`])
+  }
+})
 test("corrupt suite/request/result identities, current plans and unsettled evidence make no writes", async () => {
   const corruptions = [
     (f: ReturnType<typeof fixture>) => {

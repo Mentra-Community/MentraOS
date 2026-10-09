@@ -44,6 +44,16 @@ export async function finishRecordedNightlySuite(suiteId: string, apply = false,
   const boundary = cancellation?.requestedAt ?? new Date(Date.parse(plan.startedAt) + 3 * 3600_000).toISOString();
   if (Date.parse(boundary) > now) throw new Error("Recorded nightly has not been cancelled or expired");
   if (row.nightlyResult !== undefined) return {suiteId, apply, alreadyFinished: true};
+  const readResult = async (member: z.infer<typeof memberSchema>) => {
+    let result: Awaited<ReturnType<FrameworkResultService["summary"]>> | null = null;
+    try {result = await deps.summary(member.requestId);} catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
+    if (result && (result.requestId !== member.requestId || result.hostId !== member.hostId || result.routineId !== member.routineId
+      || result.platform !== member.platform || result.laneId !== member.input.laneId || result.definitionRevision !== member.definitionRevision
+      || requestInputDigest(result.build) !== requestInputDigest(member.input.build)
+      || Date.parse(result.startedAt) < Date.parse(plan.startedAt) || Date.parse(result.finishedAt) > now)) throw new Error("Recorded native result identity differs");
+    if (result && !result.uploadsComplete) throw new Error("Recorded native result uploads have not settled");
+    return result;
+  };
   const originals: Array<{member: z.infer<typeof memberSchema>; request: StoredRequest | null; result: Awaited<ReturnType<FrameworkResultService["summary"]>> | null}> = [];
   for (const member of plan.members) {
     if ("selection" in member || "dispatchIntent" in member || "routineRevision" in member) throw new Error("Current nightly plans are not archival inputs");
@@ -59,14 +69,22 @@ export async function finishRecordedNightlySuite(suiteId: string, apply = false,
     if (request && (!isExecutableRequest(request) || request.requestId !== member.requestId || request.hostId !== member.hostId
       || request.inputSha256 !== requestInputDigest(input) || requestInputDigest(request.input) !== request.inputSha256
       || request.dispatchIntent !== undefined)) throw new Error("Recorded request differs from its frozen input");
-    let result: Awaited<ReturnType<FrameworkResultService["summary"]>> | null = null;
-    try {result = await deps.summary(member.requestId);} catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
-    if (result && (result.requestId !== member.requestId || result.hostId !== member.hostId || result.routineId !== member.routineId
-      || result.platform !== member.platform || result.laneId !== input.laneId || result.definitionRevision !== member.definitionRevision
-      || requestInputDigest(result.build) !== requestInputDigest(input.build)
-      || Date.parse(result.startedAt) < Date.parse(plan.startedAt) || Date.parse(result.finishedAt) > now)) throw new Error("Recorded native result identity differs");
-    if (result && !result.uploadsComplete) throw new Error("Recorded native result uploads have not settled");
-    originals.push({member, request, result});
+    originals.push({member, request, result: await readResult(member)});
+  }
+  if (apply) {
+    for (const original of originals) if (original.request && !original.result && original.request.state !== "terminal") {
+      const {member} = original, saved = await deps.cancel(member.requestId, boundary, cancellation?.reason ?? "Nightly deadline expired.");
+      if (!saved || !isExecutableRequest(saved) || saved.requestId !== member.requestId || saved.hostId !== member.hostId
+        || saved.inputSha256 !== requestInputDigest(member.input) || requestInputDigest(saved.input) !== saved.inputSha256
+        || saved.state !== "terminal" && !saved.hostCancellation) throw new Error("Original request cancellation was not retained");
+      original.request = saved;
+    }
+    // Cooperative cancellation may return a run that completed after our initial snapshot.
+    for (const original of originals) if (!original.result) {
+      original.result = await readResult(original.member);
+      if (original.request?.runId && original.request.runId !== original.result?.runId)
+        throw new Error("Original completed request result was not retained");
+    }
   }
   const reason = cancellation ? `Cancelled: ${cancellation.reason}; no original run result was recorded.` : "Nightly deadline expired; no original run result was recorded.";
   const members = originals.map(({member, request, result}) => result ? {...member, status: result.outcome,
@@ -79,12 +97,6 @@ export async function finishRecordedNightlySuite(suiteId: string, apply = false,
     expectedCount: members.length, passed, status: members.some(m => m.status === "incomplete") ? "incomplete" : passed === members.length ? "pass" : "failed",
     finishedAt, resultUrl: `https://admin.dev.mentraglass.com/?testSuite=${encodeURIComponent(suiteId)}`, ...(cancellation ? {cancellation} : {})};
   if (apply) {
-    for (const {member, request, result: run} of originals) if (request && !run && request.state !== "terminal") {
-      const saved = await deps.cancel(member.requestId, boundary, cancellation?.reason ?? "Nightly deadline expired.");
-      if (!saved || !isExecutableRequest(saved) || saved.requestId !== member.requestId || saved.hostId !== member.hostId
-        || saved.inputSha256 !== requestInputDigest(member.input)
-        || saved.state !== "terminal" && !saved.hostCancellation) throw new Error("Original request cancellation was not retained");
-    }
     let failure: unknown;
     try {await deps.finish(row, result);} catch (error) {failure = error;}
     const saved = await deps.getSuite(suiteId);
