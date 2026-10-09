@@ -52,23 +52,25 @@ export function failureDiagnosticAsset(run: RecordedFrameworkRun): Asset | undef
 }
 
 /** Optional display evidence is bounded and digest checked; it never changes the verdict. */
-export async function readFailureScreens(run: RecordedFrameworkRun, read: (asset: Asset) => Promise<Response>): Promise<FrameworkFailureScreen[]> {
+export async function readFailureScreens(run: RecordedFrameworkRun, read: (asset: Asset, signal: AbortSignal) => Promise<Response>): Promise<FrameworkFailureScreen[]> {
   const asset = failureDiagnosticAsset(run);
   if (!asset) return [];
   let response: Response | undefined;
   let reader: ReturnType<NonNullable<Response['body']>['getReader']> | undefined;
   let expired = false;
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {timer = setTimeout(() => {
     expired = true;
+    controller.abort();
     void reader?.cancel().catch(() => {});
     reject(new Error('Failure image diagnostic read timed out'));
   }, 3000);});
-  const reading = read(asset).then(value => {
-    if (expired) {void value.body?.cancel().catch(() => {}); throw new Error('Failure image diagnostic read expired');}
-    return value;
-  });
   try {
+    const reading = read(asset, controller.signal).then(value => {
+      if (expired) {void value.body?.cancel().catch(() => {}); throw new Error('Failure image diagnostic read expired');}
+      return value;
+    });
     response = await Promise.race([reading, deadline]);
     if (response.status !== 200 || !response.body) return [];
     const bodyReader = response.body.getReader();

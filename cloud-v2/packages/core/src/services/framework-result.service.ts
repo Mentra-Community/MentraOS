@@ -266,8 +266,8 @@ export class FrameworkResultService {
     if (!stored) throw new TestRunError(404, "Framework run was not found");
     const run = recordedFrameworkRunSchema.parse(stored.payload), definition = await this.definition(run);
     const displayEvidence = includeFailureScreens ? {failureScreens: stored.uploadsComplete
-      ? await readFailureScreens(run, asset => this.mediaByRun(run.result.runId, asset.id,
-        new Request('http://localhost/frozen-failure-diagnostic'))) : []} : {};
+      ? await readFailureScreens(run, (asset, signal) => this.mediaByRun(run.result.runId, asset.id,
+        new Request('http://localhost/frozen-failure-diagnostic', {signal}))) : []} : {};
     return {run, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(run), uploadsComplete: stored.uploadsComplete,
       evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed", ...displayEvidence};
   }
@@ -281,9 +281,11 @@ export class FrameworkResultService {
   }
 
   private async storedMedia(stored: StoredFrameworkAsset | null, assetId: string, request: Request) {
+    request.signal.throwIfAborted();
     const asset = stored?.asset;
     if (!stored || !asset) throw new TestRunError(404, "Asset is not declared in this result");
     const uploaded = await TestAssetModel.findOne({runId: stored.runId, assetId}).read("primary").readConcern("majority").lean();
+    request.signal.throwIfAborted();
     if (!uploaded) throw new TestRunError(404, "Asset upload is not acknowledged");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
       : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";

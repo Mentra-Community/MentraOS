@@ -1,9 +1,14 @@
 import {createHash} from 'node:crypto';
+import {createServer, type AddressInfo, type Socket} from 'node:net';
 import {expect, test, spyOn} from 'bun:test';
 import {recordedFrameworkRunSchema} from '../types/framework-run.types';
 import {testRoutineSource} from '../testing/framework-fixtures';
 import {FrameworkResultService} from './framework-result.service';
 import {failureDiagnosticAsset, readFailureScreens, recordedFailureScreens} from './framework-failure-screen';
+import {TestAssetService} from './test-asset.service';
+import {StorageService} from './storage/storage.service';
+import {S3StorageProvider} from './storage/providers/s3-storage.provider';
+import {TestAssetModel} from '../models/test-run.model';
 
 const failure = {phase: 'test' as const, actionId: 'update', message: 'Update Failed'};
 const screenshot = {id: 'failure-screen', kind: 'screenshot' as const, path: 'screenshots/opaque.png',
@@ -67,11 +72,71 @@ test('diagnostic display read validates frozen size and digest and refuses missi
 
 test('a stalled diagnostic body is cancelled within the display deadline', async () => {
   let cancelled = false;
+  let signal: AbortSignal | undefined;
   const stream = new ReadableStream<Uint8Array>({pull() {return new Promise(() => {});}, cancel() {cancelled = true;}});
   const started = performance.now();
-  expect(await readFailureScreens(fixture(), async () => new Response(stream))).toEqual([]);
+  expect(await readFailureScreens(fixture(), async (_, supplied) => {signal = supplied; return new Response(stream);})).toEqual([]);
   expect(performance.now() - started).toBeLessThan(4000);
   expect(cancelled).toBe(true);
+  expect(signal?.aborted).toBe(true);
+});
+
+test('late diagnostic resolution and rejection are handled and a late body is cancelled', async () => {
+  const unhandled: unknown[] = [];
+  const listener = (reason: unknown) => {unhandled.push(reason);};
+  let cancelled = false;
+  process.on('unhandledRejection', listener);
+  try {
+    expect(await Promise.all([
+      readFailureScreens(fixture(), async () => {await Bun.sleep(3100); return new Response(new ReadableStream({cancel() {cancelled = true;}}));}),
+      readFailureScreens(fixture(), async () => {await Bun.sleep(3100); throw new Error('late diagnostic failure');}),
+    ])).toEqual([[], []]);
+    await Bun.sleep(200);
+    expect(cancelled).toBe(true);
+    expect(unhandled).toEqual([]);
+  } finally {process.off('unhandledRejection', listener);}
+});
+
+test('the real diagnostic media path aborts stalled S3 HEAD at the display deadline without starting GET', async () => {
+  const sockets = new Set<Socket>(), methods: string[] = [];
+  let closedAt: number | undefined;
+  const started = performance.now();
+  const server = createServer(socket => {
+    sockets.add(socket); socket.on('close', () => {sockets.delete(socket); closedAt = performance.now() - started;});
+    socket.on('data', chunk => {const method = chunk.toString().split(' ')[0]; if (method === 'HEAD' || method === 'GET') methods.push(method);});
+    // Deliberately never send metadata. The client must close this request at its own deadline.
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const run = fixture(), declared = run.assets[1]!;
+  const provider = new S3StorageProvider({endpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    bucket: 'private-test-bucket', accessKeyId: 'test-access-key', secretAccessKey: 'test-secret-key', region: 'us-east-1'});
+  const media = new TestAssetService(undefined, () => new StorageService(provider));
+  try {
+    expect(await readFailureScreens(run, async (_, signal) => media.mediaDeclaredAsset({assetId: declared.id, kind: 'metadata',
+      contentType: declared.mimeType, filename: 'diagnostic.json', sizeBytes: declared.size, sha256: declared.sha256},
+    {runId: run.result.runId, assetId: declared.id, storageKey: 'diagnostic', sizeBytes: declared.size, sha256: declared.sha256},
+    new Request('http://localhost/diagnostic', {signal})))).toEqual([]);
+    await Bun.sleep(100);
+    expect(methods).toEqual(['HEAD']);
+    expect(closedAt).toBeDefined();
+    expect(closedAt!).toBeLessThan(4000);
+  } finally {for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve()));}
+});
+
+test('a delayed frozen declaration cannot start an upload lookup or storage read after its deadline', async () => {
+  const run = fixture();
+  let finishDeclaration!: (value: {runId: string; asset: typeof run.assets[number]}) => void;
+  const service = new FrameworkResultService({async insert() {}, async getByRequest() {return null;}, async getByRun() {return null;},
+    getAsset() {return new Promise(resolve => {finishDeclaration = resolve;});}});
+  const upload = spyOn(TestAssetModel, 'findOne');
+  try {
+    const reading = readFailureScreens(run, (asset, signal) => service.mediaByRun(run.result.runId, asset.id,
+      new Request('http://localhost/diagnostic', {signal})));
+    expect(await reading).toEqual([]);
+    finishDeclaration({runId: run.result.runId, asset: run.assets[1]!});
+    await Bun.sleep(20);
+    expect(upload).not.toHaveBeenCalled();
+  } finally {upload.mockRestore();}
 });
 
 test('Admin projects optional failure images without changing frozen results or adding host completion work', async () => {
