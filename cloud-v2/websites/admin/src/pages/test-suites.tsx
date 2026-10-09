@@ -1,5 +1,5 @@
 import {LoadingIndicator} from "../components/loading-indicator";
-import {HistoryStatus} from "../components/test-history-table";
+import {HistoryStatus, TestLaneBadges} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {frameworkRunHref} from "./routine-catalog";
 import {useState} from "react";
@@ -15,7 +15,7 @@ export interface TestSuiteResult {
   suiteId: string; channel: string; trigger: string; startedAt: string; finishedAt?: string;
   build: {headSha: string; release?: string; producerUrl?: string};
   outcome: "running" | "passed" | "failed"; passed: number; failedRoutines: string[];
-  members: {memberId: string; requestId?: string; routineId: string; platform: string; status: string; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string; unavailableReason?: string; rejectedAt?: string}[];
+  members: {memberId: string; requestId?: string; routineId: string; platform: string; status: string; hostId?: string; laneId?: string; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string; unavailableReason?: string; rejectedAt?: string}[];
 }
 export function readSuiteId(search: string) {
   const query = new URLSearchParams(search);
@@ -98,7 +98,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
             </details>}
           </td>
           <td className="whitespace-nowrap tabular-nums">{runDuration(member.startedAt, member.finishedAt) ?? "—"}</td>
-          <td className="whitespace-nowrap text-xs text-[#747780]">{member.platform === "ios-on-mac" ? "Mac" : member.platform === "android" ? "Android" : "iOS"}</td>
+          <td><TestLaneBadges lanes={member.hostId && member.laneId ? [{hostId: member.hostId, laneId: member.laneId}] : []}/></td>
           <td className="whitespace-nowrap text-xs" title={suite.build.headSha}>{suite.build.release ?? suite.build.headSha.slice(0, 10)}</td>
           <td><HistoryStatus outcome={member.status === "pass" && member.publicationComplete !== true ? "evidence pending" : member.status}/>
             {member.status === "not-run" && <span className="sr-only">Did not run</span>}

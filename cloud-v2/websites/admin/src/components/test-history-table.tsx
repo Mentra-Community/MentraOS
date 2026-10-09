@@ -63,7 +63,7 @@ function HistoryBuild({build}: {build: {channel?: string; repository?: string; h
   </div>;
 }
 
-function HistoryLanes({lanes}: {lanes: {hostId: string; laneId: string}[]}) {
+export function TestLaneBadges({lanes}: {lanes: {hostId: string; laneId: string}[]}) {
   if (!lanes.length) return <span className="text-[#656d76]">—</span>;
   return <div className="flex flex-wrap gap-1.5">{lanes.map(lane => <a key={`${lane.hostId}/${lane.laneId}`} href={laneHistoryHref(lane.hostId, lane.laneId)}
     title={`${lane.hostId} / ${lane.laneId}`} className="rounded-md border border-[#d0d7de] bg-[#f6f8fa] px-2 py-0.5 text-xs text-[#57606a] hover:bg-[#eaeef2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#0969da]">{readable(lane.laneId)}</a>)}</div>;
@@ -102,7 +102,7 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
       </div>
     </TableCell>
     <TableCell className="whitespace-nowrap tabular-nums" title={entry.finishedAt ? `Finished ${new Date(entry.finishedAt).toLocaleString()}` : "Elapsed time"}>{duration ?? "—"}</TableCell>
-    <TableCell><HistoryLanes lanes={lanes}/></TableCell>
+    <TableCell><TestLaneBadges lanes={lanes}/></TableCell>
     <TableCell><HistoryBuild build={suite ? {...entry.build, channel: entry.channel} : entry.build}/></TableCell>
     <TableCell className="min-w-40">
       <HistoryStatus outcome={outcome}/>

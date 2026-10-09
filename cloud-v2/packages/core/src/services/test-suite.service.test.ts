@@ -8,8 +8,10 @@ import {requestInputDigest} from "./test-request.service";
 import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 import {testSuiteSchema} from "../types/test-suite.types";
 import {createRecordedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {LaneRestorationService} from "./lane-restoration.service";
 const mocks: {mockRestore(): void}[] = [];
 beforeEach(() => {
+  mocks.push(spyOn(LaneRestorationService.prototype, "overview").mockResolvedValue({generatedAt: new Date().toISOString(), freshForMs: 120_000, hosts: [], truncated: false}));
   mocks.push(spyOn(TestRequestModel, "find").mockReturnValue({select() {return this;}, limit() {return this;},
     read() {return this;}, readConcern() {return this;}, lean: async () => []} as any));
 });
@@ -427,6 +429,25 @@ test('history summaries read portable members through the real nightly snapshot 
  expect(executable).not.toBeInstanceOf(Error);
  expect(executable).toMatchObject({outcome:'running',passed:0,members:[{status:'waiting'},
   {status:'waiting',hostId:binding.hostId,laneId:binding.laneId}]});
+ const timestamp=new Date().toISOString(),owner={id:'two',kind:'run' as const,requestId:'two'};
+ const overview={generatedAt:timestamp,freshForMs:120_000,truncated:false,hosts:[{hostId:binding.hostId,observedAt:timestamp,receivedAt:timestamp,
+  lanes:[{id:binding.laneId,platform:'android' as const,state:'running',dispatchMode:'automatic',activity:{generation:3,owner}}]}]};
+ const laneRead=spyOn(LaneRestorationService.prototype,'overview').mockResolvedValue(overview);laneRead.mockClear();mocks.push(laneRead);
+ const running=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
+ expect(running).toMatchObject({outcome:'running',passed:0,failedRoutines:[],members:[{status:'waiting'},{status:'running',hostId:binding.hostId,laneId:binding.laneId}]});
+ expect(laneRead).toHaveBeenCalledTimes(1);
+ for(const mutate of [
+  (o:typeof overview)=>{o.hosts[0]!.observedAt='2026-10-01T00:00:00Z';},
+  (o:typeof overview)=>{o.hosts[0]!.receivedAt='2026-10-01T00:00:00Z';},
+  (o:typeof overview)=>{o.hosts[0]!.lanes[0]!.activity.owner={...owner,id:'neighbor',requestId:'neighbor'};},
+  (o:typeof overview)=>{o.hosts[0]!.lanes[0]!.state='in-repair';},
+  (o:typeof overview)=>{o.hosts[0]!.lanes[0]!.id='other-lane';},
+  (o:typeof overview)=>{o.hosts[0]!.hostId='other-host';},
+ ]){
+  const changed=structuredClone(overview);mutate(changed);laneRead.mockResolvedValue(changed);
+  expect((await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId)).toMatchObject({members:[{status:'waiting'},{status:'waiting'}]});
+ }
+ laneRead.mockResolvedValue(overview);
  const finishedAt='2026-10-08T00:02:00Z';
  const run={schemaVersion:1,requestId:'two',hostId:binding.hostId,routineId:intent.routineId,
   definitionRevision:intent.routineRevision,routineSource:intent.routineSource,frameworkBinding:testFrameworkBinding(),
@@ -443,8 +464,9 @@ test('history summaries read portable members through the real nightly snapshot 
  expect(published).toMatchObject({outcome:'running',passed:1,members:[{status:'not-run',publicationComplete:false},
   {status:'pass',publicationComplete:true,runId:'two',hostId:binding.hostId,laneId:binding.laneId}]});
  expect(queried.at(-1)).toEqual(['one','two']);
- terminal=true;const readsBefore=queried.length,runReadsBefore=runReads.mock.calls.length;
+ terminal=true;const readsBefore=queried.length,runReadsBefore=runReads.mock.calls.length,laneReadsBefore=laneRead.mock.calls.length;
  const final=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
  expect(final).toMatchObject({outcome:'failed',passed:0,members:[{status:'not-run'},{status:'not-run',hostId:binding.hostId,laneId:binding.laneId}]});
  expect(queried).toHaveLength(readsBefore);expect(runReads.mock.calls).toHaveLength(runReadsBefore);
+ expect(laneRead.mock.calls).toHaveLength(laneReadsBefore);
 });
