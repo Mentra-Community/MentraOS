@@ -193,6 +193,7 @@ export class TestRerunService {
       let originalBuild = member.build;
       let routineSource = member.routineSource;
       let routineRevision = member.routineRevision ?? routineSource?.commit;
+      let minimumFrameworkVersion: number | undefined;
       if (member.requestId) {
         const original = await this.requests.get(member.requestId);
         const originalJob = original as unknown as StoredRoutineJob | null;
@@ -203,18 +204,21 @@ export class TestRerunService {
           routineRevision = frozen.data.routineRevision;
           routineSource = frozen.data.routineSource ?? originalJob.fleetPreparation?.routineSource;
           originalBuild = frozen.data.build;
+          minimumFrameworkVersion = frozen.data.minimumFrameworkVersion;
         } else if (original && !isExecutableRequest(original)) {
           const intent = routineDispatchIntentSchema.safeParse(original.dispatchIntent);
           if (!intent.success || requestInputDigest(intent.data) !== original.dispatchIntentSha256)
             throw new TestRunError(503, 'Original preparation provenance is unavailable');
           routineRevision = original.dispatchIntent.routineRevision; routineSource = original.dispatchIntent.routineSource;
           originalBuild = original.dispatchIntent.build;
+          minimumFrameworkVersion = intent.data.minimumFrameworkVersion;
         } else if (original) {
           const parsedInput = (original.dispatchIntent ? frameworkRequestInputSchema : recordedFrameworkRequestInputSchema).safeParse(original.input);
           if (!parsedInput.success || requestInputDigest(parsedInput.data) !== original.inputSha256)
             throw new TestRunError(503, 'Original routine provenance is unavailable');
           routineSource = parsedInput.data.routineSource;
           routineRevision = parsedInput.data.definitionRevision;
+          minimumFrameworkVersion = parsedInput.data.minimumFrameworkVersion;
         }
       }
       if (!source) {
@@ -233,13 +237,16 @@ export class TestRerunService {
       }
       if (!routineRevision) throw new TestRunError(409, 'Original exact routine source is unavailable');
       if (selected.routineRevision) {routineRevision = selected.routineRevision; routineSource = undefined;}
+      if (selected.minimumFrameworkVersion !== undefined) minimumFrameworkVersion = Math.max(minimumFrameworkVersion ?? 0, selected.minimumFrameworkVersion);
       const frozen = await this.jobs.freezeSelection({requestId, routineId: member.routineId, platform: member.platform, source, routineRevision,
-        ...(routineSource ? {routineSource} : {})}, !selected.source && originalBuild ? routinePreparedBuildSchema.parse(originalBuild) : undefined);
+        ...(routineSource ? {routineSource} : {}), ...(minimumFrameworkVersion === undefined ? {} : {minimumFrameworkVersion})},
+      !selected.source && originalBuild ? routinePreparedBuildSchema.parse(originalBuild) : undefined);
       members.push({memberId: member.memberId, rootKey, ...(member.requestId ? {originalRequestId: member.requestId} : {}), predecessorAttemptId,
         attemptNumber: (latest?.member.attemptNumber ?? 0) + 1, requestId, selection: frozen});
     }
     const plan = rerunPlanSchema.parse({rerunId: selected.rerunId, parent: selected.parent, ...(selected.source ? {source: selected.source} : {}),
       ...(selected.routineRevision ? {routineRevision: selected.routineRevision} : {}),
+      ...(selected.minimumFrameworkVersion === undefined ? {} : {minimumFrameworkVersion: selected.minimumFrameworkVersion}),
       reason: selected.reason, actor, createdAt: new Date(this.now()).toISOString(), expiresAt: new Date(this.now() + 600_000).toISOString(), members});
     const row: RerunRecord = {rerunId: plan.rerunId, inputDigest, previewDigest: requestInputDigest(plan), plan, state: "preview"};
     try {await this.store.insert(row);} catch (error) {
@@ -283,6 +290,7 @@ export class TestRerunService {
     const memberId = "suiteId" in value.parent ? value.parent.memberId : value.parent.requestId;
     return this.preview({rerunId: value.requestId, parent, selection: {memberIds: [memberId]}, ...(value.source ? {source: value.source} : {}),
       ...(value.routineRevision ? {routineRevision: value.routineRevision} : {}),
+      ...(value.minimumFrameworkVersion === undefined ? {} : {minimumFrameworkVersion: value.minimumFrameworkVersion}),
       reason: value.reason, predecessorAttemptId: value.predecessorAttemptId}, actor);
   }
   async detail(id: string) {

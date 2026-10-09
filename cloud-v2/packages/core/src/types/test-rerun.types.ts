@@ -3,6 +3,7 @@ import {frameworkIdentitySchema, frameworkRequestInputSchema, recordedFrameworkR
 import {testBuildSourceSchema} from "./test-build.types";
 import {routineDispatchIntentSchema} from './routine-dispatch.types';
 import {portableRoutineSelectionSchema} from './routine-job.types';
+import {frameworkVersionSchema} from './framework-version.types';
 
 export const rerunTerminalStatuses = ["pass", "failed", "setup-failed", "teardown-failed", "not-run", "cancelled", "incomplete"] as const;
 export const rerunFailureStatuses = ["failed", "setup-failed", "teardown-failed"] as const;
@@ -19,6 +20,7 @@ export const rerunSelectionSchema = z.union([
 export const rerunPreviewSchema = z.object({rerunId: frameworkIdentitySchema, parent: parentSchema,
   selection: rerunSelectionSchema, source: testBuildSourceSchema.optional(), reason: z.string().trim().min(1).max(1000),
   routineRevision: z.string().regex(/^[a-f0-9]{40}$/).optional(),
+  minimumFrameworkVersion: frameworkVersionSchema.optional(),
   predecessorAttemptId: frameworkIdentitySchema.optional()}).strict();
 export const rerunSubmitSchema = z.object({rerunId: frameworkIdentitySchema, previewDigest: z.string().regex(/^[a-f0-9]{64}$/)}).strict();
 export const individualRerunSchema = z.object({requestId: frameworkIdentitySchema,
@@ -26,9 +28,11 @@ export const individualRerunSchema = z.object({requestId: frameworkIdentitySchem
     z.object({requestId: frameworkIdentitySchema}).strict()]),
   predecessorAttemptId: frameworkIdentitySchema, source: testBuildSourceSchema.optional(),
   routineRevision: z.string().regex(/^[a-f0-9]{40}$/).optional(),
+  minimumFrameworkVersion: frameworkVersionSchema.optional(),
   reason: z.string().trim().min(1).max(1000)}).strict();
 export const rerunPlanSchema = z.object({rerunId: frameworkIdentitySchema, parent: parentSchema,
-  source: testBuildSourceSchema.optional(), routineRevision: z.string().regex(/^[a-f0-9]{40}$/).optional(), reason: z.string(), actor: z.string().max(300), createdAt: z.string().datetime(),
+  source: testBuildSourceSchema.optional(), routineRevision: z.string().regex(/^[a-f0-9]{40}$/).optional(),
+  minimumFrameworkVersion: frameworkVersionSchema.optional(), reason: z.string(), actor: z.string().max(300), createdAt: z.string().datetime(),
   expiresAt: z.string().datetime(), members: z.array(z.object({memberId: frameworkIdentitySchema,
     rootKey: z.string(), originalRequestId: frameworkIdentitySchema.optional(), predecessorAttemptId: frameworkIdentitySchema,
     attemptNumber: z.number().int().min(1), requestId: frameworkIdentitySchema,
