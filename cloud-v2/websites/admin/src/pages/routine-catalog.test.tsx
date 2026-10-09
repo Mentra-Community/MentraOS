@@ -423,6 +423,17 @@ test("failed runs select the failure; explicit step links preserve their request
   const client = new QueryClient();
   client.setQueryData(["framework-run", run.requestId], {run, definition: null, outcome: "failed", uploadsComplete: true, evidenceStatus: "complete"});
   const render = (stepId?: string) => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId} stepId={stepId}/></QueryClientProvider>);
+  const incidentPending = {run, definition: null, outcome: "failed", uploadsComplete: true,
+    evidenceStatus: "complete" as const, incidentReportId: null, incidentReportPending: true};
+  const observedAt = Date.parse('2026-10-03T19:01:00Z');
+  expect(frameworkRunRefetchInterval(incidentPending, observedAt, observedAt + 599999)).toBe(5000);
+  expect(frameworkRunRefetchInterval(incidentPending, observedAt, observedAt + 600000)).toBe(false);
+  expect(frameworkRunRefetchInterval({...incidentPending, incidentReportPending: false, incidentReportId: 'rep_CREATED'}, observedAt, observedAt)).toBe(false);
+  client.setQueryData(["framework-run", run.requestId], incidentPending);
+  expect(render()).toContain('Refresh incident');
+  client.setQueryData(["framework-run", run.requestId], {...incidentPending, incidentReportPending: false, incidentReportId: 'rep_CREATED'});
+  expect(render()).toContain('href="/?report=rep_CREATED"');
+  expect(render()).not.toContain('Refresh incident');
   expect(render()).toContain('data-step-id="connect" data-selected="true"');
   expect(render()).not.toContain('data-step-id="open" data-selected="true"');
   expect(render("open")).toContain('data-step-id="open" data-selected="true"');
@@ -1132,4 +1143,28 @@ test("failure summary follows the execution verdict and stays brief", () => {
   expect(runFailureSummary(run, "failed", "complete")?.reason).toBe("Test: Test failed. No detailed reason was recorded.");
   run.result.failures = [{phase: "test", actionId: "connect", message: "x".repeat(300)}];
   expect(runFailureSummary(run, "failed", "complete")?.reason.length).toBe(164);
+});
+
+test('failed run links to its reported incident without changing failure selection', () => {
+  const run = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: 'incident-run', hostId: 'mini', routineId: 'notes-phone',
+    definitionRevision: 'c'.repeat(40), platform: 'android', laneId: 'android',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: '2026-10-09T19:00:00Z', finishedAt: '2026-10-09T19:01:00Z', assets: [],
+    result: {runId: 'incident-run', finishedAt: '2026-10-09T19:01:00Z', setup: {status: 'failed', actionId: 'pair'}, test: 'not-run',
+      steps: [{id: 'observe', status: 'not-run', durationMs: 0, causedBy: 'pair'}],
+      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: 'setup', actionId: 'pair', message: 'Glasses not found'}], evidence: [],
+      timing: {startedAt: '2026-10-09T19:00:00Z', setupMs: 1, testMs: 0, teardownMs: 0}}});
+  const client = new QueryClient();
+  const render = (incidentReportId?: string | null, outcome = 'setup-failed') => {
+    client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome, uploadsComplete: true,
+      evidenceStatus: 'complete', incidentReportId});
+    return renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+  };
+  expect(render('rep_EXACT')).toContain('href="/?report=rep_EXACT"');
+  expect(render('rep_EXACT')).toContain('>Incident report</a>');
+  expect(render('rep_EXACT')).toContain('Go to failure');
+  expect(render(null)).not.toContain('>Incident report</a>');
+  expect(render()).not.toContain('>Incident report</a>');
+  expect(render('rep_EXACT', 'pass')).not.toContain('>Incident report</a>');
 });

@@ -151,6 +151,15 @@ export async function ensureTestRunReport(testRunId: string, payloadSha256: stri
   return { reportId, mentraUserId, ...(details ? {context: context!, report: row.report as {actualBehavior: string; expectedBehavior: string}} : {}) };
 }
 
+/** Read an existing server-owned incident by its indexed identity; never creates a report. */
+export async function findTestRunReport(testRunId: string, payloadSha256: string): Promise<string | null> {
+  const reportId = stableReportId('rep', `test-run\n${testRunId}\n${payloadSha256}`);
+  const row = await ReportModel.findOne({reportId, mentraUserId: 'automation:test-run', kind: 'automatic',
+    'context.testRunId': testRunId, 'context.payloadSha256': payloadSha256}).select({reportId: 1, _id: 0})
+    .setOptions({timeoutMS: 3000}).lean();
+  return row?.reportId ?? null;
+}
+
 /**
  * Best-effort account email for a report's Slack post: V1 showed the
  * submitter's email, and an opaque mu_ id is useless to a human triaging the

@@ -149,7 +149,8 @@ test('Admin projects optional failure images without changing frozen results or 
   const service = new FrameworkResultService({async insert() {}, async getByRequest() {return stored;},
     async getByRun() {return stored;}, async getAsset() {return null;}},
     async () => ({hostId: run.hostId, input: {routineId: run.routineId, definitionRevision: run.definitionRevision,
-      routineSource: testRoutineSource(), platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {}, async () => null);
+      routineSource: testRoutineSource(), platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {}, async () => null,
+    undefined, undefined, undefined, async () => null);
   const media = spyOn(service, 'mediaByRun').mockImplementation(async () => new Response(bytes));
   try {
     const detail = await service.detailByRun(run.result.runId, true);
