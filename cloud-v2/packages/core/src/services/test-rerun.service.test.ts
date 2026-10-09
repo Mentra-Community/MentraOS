@@ -4,8 +4,9 @@ import {requestInputDigest} from './test-request.service';
 import {TestRunError} from './test-result-error';
 import {testRoutineSource} from '../testing/framework-fixtures';
 import {nightlySuiteProjection} from './test-suite.service';
+import {individualRerunSchema, rerunPreviewSchema} from '../types/test-rerun.types';
 const source={channel:'dev' as const,buildRunId:123,publicationAttempt:1};
-const nativeInput={routineId:'captions',routineSource:testRoutineSource(),platform:'android' as const,definitionRevision:'a'.repeat(40),laneId:'android',resources:[{id:'app',kind:'app' as const}],build:{repository:'Mentra-Community/MentraOS',headSha:'b'.repeat(40),channel:'dev' as const,kind:'android-apk' as const,source,archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:10,sha256:'d'.repeat(64)}}};
+const nativeInput={routineId:'captions',routineSource:testRoutineSource(),platform:'android' as const,definitionRevision:'a'.repeat(40),laneId:'android',resources:[{id:'app',kind:'app' as const}],build:{repository:'Mentra-Community/MentraOS' as const,headSha:'b'.repeat(40),channel:'dev' as const,kind:'android-apk' as const,source,archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:10,sha256:'d'.repeat(64)}}};
 
 async function recordedFixture() {
  const f=fixture(), preview=await f.preview('recorded',{memberIds:['member-20']});
@@ -79,6 +80,50 @@ test('28-member suite selects only its eight failures; preview queues nothing an
  expect(await f.preview()).toEqual(p);expect(f.prepared).toBe(8);
  const input={rerunId:p.rerunId,previewDigest:p.previewDigest};await f.service.submit(input);await f.service.submit(input);expect(f.executions).toBe(8);expect(f.members).toEqual(original);
  await expect(f.service.preview({rerunId:'repair',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},source,reason:'different'},'admin')).rejects.toThrow('different selection');
+});
+
+test('a linked minimum worker version is frozen into every selected request and immutable retries',async()=>{
+ const f=fixture(),input={rerunId:'minimum',parent:{suiteId:'nightly'},selection:{memberIds:['member-20','member-21']},
+  minimumFrameworkVersion:716,routineRevision:'f'.repeat(40),reason:'Qualify a merged worker fix'};
+ const original=JSON.stringify([...f.requests]),preview=await f.service.preview(input,'admin');
+ expect(preview.plan.minimumFrameworkVersion).toBe(716);
+ expect(preview.plan.members.map(member=>member.selection.minimumFrameworkVersion)).toEqual([716,716]);
+ expect(f.executions).toBe(0);expect(JSON.stringify([...f.requests])).toBe(original);
+ expect(await f.service.preview(input,'admin')).toEqual(preview);expect(f.prepared).toBe(2);
+ await expect(f.service.preview({...input,minimumFrameworkVersion:717},'admin')).rejects.toThrow('different selection');
+ await f.service.submit({rerunId:'minimum',previewDigest:preview.previewDigest});
+ expect(preview.plan.members.map(member=>f.requests.get(member.requestId).fleetSelection.minimumFrameworkVersion)).toEqual([716,716]);
+});
+
+test('individual reruns preserve the original minimum and explicit requests cannot lower it',async()=>{
+ for(const requested of [undefined,715,718]) {
+  const f=fixture(),input={...structuredClone(nativeInput),minimumFrameworkVersion:716};
+  f.requests.set('original-20',{requestId:'original-20',hostId:'mini',state:'terminal',input,inputSha256:requestInputDigest(input)});
+  const preview=await f.service.individual({requestId:'individual-minimum',parent:{suiteId:'nightly',memberId:'member-20'},
+   predecessorAttemptId:'original-20',...(requested===undefined?{}:{minimumFrameworkVersion:requested}),reason:'Retain original worker floor'},'admin');
+  expect(preview.plan.members[0]!.selection.minimumFrameworkVersion).toBe(Math.max(716,requested??0));
+  expect(f.requests.get('original-20').input.minimumFrameworkVersion).toBe(716);
+ }
+});
+
+test('unbound original fleet selections retain their worker floor without reconstructing executable input',async()=>{
+ const f=fixture(),selection={requestId:'original-20',routineId:'captions',platform:'android',routineRevision:'a'.repeat(40),source,
+  build:nativeInput.build,minimumFrameworkVersion:716};
+ f.requests.set('original-20',{requestId:'original-20',state:'terminal',fleetSelection:selection,fleetSelectionSha256:requestInputDigest(selection)});
+ const preview=await f.service.preview({rerunId:'unbound-minimum',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},reason:'Same frozen worker floor'},'admin');
+ expect(preview.plan.members[0]!.selection.minimumFrameworkVersion).toBe(716);
+ expect(preview.plan.members[0]!.selection.build).toEqual(nativeInput.build);
+});
+
+test('rerun minimum versions use the existing worker-version validation on both admission paths',()=>{
+ const preview={rerunId:'minimum-schema',parent:{suiteId:'nightly'},selection:{memberIds:['member-20']},reason:'Exact worker floor'};
+ const individual={requestId:'minimum-schema',parent:{suiteId:'nightly',memberId:'member-20'},predecessorAttemptId:'original-20',reason:'Exact worker floor'};
+ for(const minimumFrameworkVersion of [0,-1,1.5,'716',Number.NaN,Number.POSITIVE_INFINITY]) {
+  expect(rerunPreviewSchema.safeParse({...preview,minimumFrameworkVersion}).success).toBe(false);
+  expect(individualRerunSchema.safeParse({...individual,minimumFrameworkVersion}).success).toBe(false);
+ }
+ expect(rerunPreviewSchema.safeParse({...preview,minimumFrameworkVersion:716}).success).toBe(true);
+ expect(individualRerunSchema.safeParse({...individual,minimumFrameworkVersion:716}).success).toBe(true);
 });
 test('one member, exclusions, unknown duplicates empty and nonterminal selections',async()=>{
  const f=fixture();expect((await f.preview('one',{memberIds:['member-20']})).plan.members).toHaveLength(1);
