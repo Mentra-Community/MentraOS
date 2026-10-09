@@ -27,6 +27,7 @@ import {RoutineJobService} from './services/routine-job.service'
 import {RoutineWorkService} from './services/routine-work.service'
 import {NightlyRoutineService} from "./services/nightly-routine.service"
 import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
+import {ReportServerLogCollectionService} from './services/report-server-log-collection.service'
 
 const logger = createLogger("core")
 
@@ -65,11 +66,12 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const boundPort = server.port!
   const stopSummaryBackfill = startFrameworkRunSummaryBackfill()
   const reportNotifications = new ReportSlackDeliveryService()
+  const reportServerLogs = new ReportServerLogCollectionService()
   const routineJobs = new RoutineJobService()
   const routineAuthors = new RoutineWorkService()
   const nightlyRoutines = new NightlyRoutineService()
   const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, undefined, async () => {
-    await Promise.allSettled([reportNotifications.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending()])
+    await Promise.allSettled([reportNotifications.tick(), reportServerLogs.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending()])
   })
 
   logger.info({port: boundPort}, "cloud-v2 core listening")

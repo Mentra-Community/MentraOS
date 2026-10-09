@@ -8,6 +8,7 @@ jest.mock("../../../modules/engine/src/services/CloudClientService", () => ({
     core: {
       reports: {
         submit: jest.fn(async () => ({reportId: "combined-logs", status: "open"})),
+        updateLogCollection: jest.fn(async () => {}),
         addLogs: jest.fn(async () => ({stored: 1})),
         complete: jest.fn(async () => ({status: "complete"})),
       },
@@ -59,7 +60,7 @@ describe("combined JS and native incident logs", () => {
       }),
     ).resolves.toMatchObject({status: "submitted"})
 
-    expect(addLogs).toHaveBeenCalledTimes(1)
+    expect(addLogs).toHaveBeenCalledTimes(2)
     const [reportId, source, entries] = addLogs.mock.calls[0]
     expect(reportId).toBe("combined-logs")
     expect(source).toBe("phone")
@@ -69,5 +70,13 @@ describe("combined JS and native incident logs", () => {
       `[native:${platform}] [REDACTED]`,
     ])
     expect(JSON.stringify(entries)).not.toContain("private-value")
+    const [deliveryReportId, deliverySource, deliveryEntries] = addLogs.mock.calls[1]
+    expect(deliveryReportId).toBe("combined-logs")
+    expect(deliverySource).toBe("phone_delivery")
+    expect(deliveryEntries).toEqual([
+      expect.objectContaining({
+        message: "Report combined-logs: glasses log notification unavailable (glasses_disconnected)",
+      }),
+    ])
   })
 })

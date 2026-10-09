@@ -12,6 +12,11 @@ const REPORTS_PATH = "/api/client/reports";
 
 export type ReportKind = "bug" | "feedback" | "automatic";
 export type ReportStatus = "collecting" | "ready" | "closed";
+export type ReportLogSource = "phone" | "glasses" | "glasses_firmware" | "cloud" | "miniapp_server";
+export interface ReportLogCollectionUpdate {
+  state: "requested" | "unavailable" | "failed";
+  reason?: string;
+}
 export type ReportSystemPriority = "low" | "medium" | "high" | "critical";
 
 interface BaseReportTrigger {
@@ -97,6 +102,18 @@ export class Reports {
 
   submit(input: SubmitReportInput): Promise<SubmitReportResult> {
     return this.http.post<SubmitReportResult>(REPORTS_PATH, input);
+  }
+
+  /** Record a local collection attempt; only Core artifact storage confirms receipt. */
+  updateLogCollection(
+    reportId: string,
+    source: ReportLogSource,
+    update: ReportLogCollectionUpdate,
+  ): Promise<void> {
+    return this.http.post<void>(
+      `${REPORTS_PATH}/${encodeURIComponent(reportId)}/log-collection/${source}`,
+      update,
+    );
   }
 
   async addLogs(

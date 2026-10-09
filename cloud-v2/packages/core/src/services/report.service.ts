@@ -23,6 +23,7 @@ import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
 import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
 import { createStorageService, type StorageService } from "./storage/storage.service";
 import type { ByteRange } from "./storage/byte-range";
+import {initialReportLogCollection, isReportLogSource, visibleReportLogCollection, type ReportLogCollection, type ReportLogSource} from './report-log-collection';
 
 const logger = createLogger("core").child({ service: "report.service" });
 const attachmentWriteConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
@@ -196,6 +197,7 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     feedback,
     context: input.context,
     artifacts: [],
+    ...(input.kind !== 'feedback' ? {logCollection: initialReportLogCollection(new Date())} : {}),
     status,
   });
 
@@ -237,10 +239,26 @@ export async function addLogArtifact(input: {
         source: input.source,
         filename: null,
         contentType: "application/json",
+        logEntryCount: input.entries.length,
         bytes: Buffer.from(JSON.stringify({ entries: input.entries }), "utf8"),
       },
     ],
   });
+}
+
+/** Only actual storage acceptance marks a source received. A late device failure never erases it. */
+export async function updateReportLogCollection(input: {
+  mentraUserId: string; reportId: string; source: ReportLogSource;
+  state: 'requested' | 'unavailable' | 'failed'; reason?: string;
+}): Promise<boolean> {
+  const owner = {reportId: input.reportId, mentraUserId: input.mentraUserId};
+  if (!await ReportModel.exists(owner)) return false;
+  const source = `logCollection.${input.source}`;
+  const result = await ReportModel.updateOne({...owner, [`${source}.state`]: {$nin: ['received', 'failed', 'unavailable']}}, {
+    $set: {[`${source}.state`]: input.state, ...(input.reason ? {[`${source}.reason`]: input.reason} : {})},
+  });
+  if (result.modifiedCount) logger.info({...owner, source: input.source, state: input.state, reason: input.reason}, 'Report log collection outcome');
+  return true;
 }
 
 /** Attach all already-acknowledged native diagnostic and screenshot bytes by reference, never
@@ -404,6 +422,7 @@ interface ReportArtifactPayload {
   filename: string | null;
   contentType: string;
   bytes: Uint8Array;
+  logEntryCount?: number;
 }
 
 interface StoredReportAsset {
@@ -438,6 +457,7 @@ async function addArtifacts(input: {
     contentType: string;
     sizeBytes: number;
     createdAt: Date;
+    logEntryCount?: number;
   }> = [];
   try {
     for (const payload of input.payloads) {
@@ -469,14 +489,23 @@ async function addArtifacts(input: {
         contentType: payload.contentType,
         sizeBytes: object.sizeBytes,
         createdAt: now,
+        ...(payload.logEntryCount !== undefined ? {logEntryCount: payload.logEntryCount} : {}),
       });
     }
 
     const result = await ReportModel.updateOne(
       { reportId, mentraUserId },
       {
-        $push: { artifacts: { $each: artifacts } },
-        $set: { updatedAt: now },
+        $push: { artifacts: { $each: artifacts.map(({logEntryCount: _count, ...artifact}) => artifact) } },
+        $set: { updatedAt: now, ...Object.fromEntries(artifacts.filter(artifact => artifact.type === 'logs' && isReportLogSource(artifact.source)).flatMap(artifact => [
+          [`logCollection.${artifact.source}.state`, 'received'],
+          [`logCollection.${artifact.source}.receivedAt`, now.toISOString()],
+          [`logCollection.${artifact.source}.artifactId`, artifact.artifactId],
+          [`logCollection.${artifact.source}.entryCount`, artifact.logEntryCount],
+        ])) },
+        $unset: Object.fromEntries(artifacts.filter(artifact => artifact.type === 'logs' && isReportLogSource(artifact.source)).flatMap(artifact => [
+          [`logCollection.${artifact.source}.reason`, ''], [`logCollection.${artifact.source}.leaseUntil`, ''],
+        ])),
       },
     );
     if (result.matchedCount !== 1) {
@@ -484,6 +513,9 @@ async function addArtifacts(input: {
       // write; treat it as not-found and leave nothing orphaned.
       await discardReportAssets(reportId, stored);
       return null;
+    }
+    for (const artifact of artifacts.filter(artifact => artifact.type === 'logs')) {
+      logger.info({reportId, mentraUserId, source: artifact.source, artifactId: artifact.artifactId, sizeBytes: artifact.sizeBytes}, 'Report log artifact received');
     }
     return { stored: artifacts.length };
   } catch (error) {
@@ -536,6 +568,7 @@ export interface AdminReportSummary {
 export interface AdminReportDetail extends AdminReportSummary {
   context: Record<string, unknown>;
   slackDelivery?: ReportSlackDelivery;
+  logCollection?: Partial<Record<ReportLogSource, ReportLogCollection>>;
 }
 
 export interface AdminReportAsset {
@@ -618,6 +651,7 @@ export async function getReport(
       ...serializeReportSummary(row),
       context: (row.context ?? {}) as Record<string, unknown>,
       ...(row.slackDelivery ? {slackDelivery: row.slackDelivery as ReportSlackDelivery} : {}),
+      ...(row.logCollection ? {logCollection: visibleReportLogCollection(row.logCollection)} : {}),
     },
     assets: assets.map((asset) => ({
       artifactId: asset.artifactId,

@@ -16,6 +16,15 @@
 
 import { Schema, type InferSchemaType } from "mongoose";
 import { registerModel } from "./register-model";
+import {REPORT_LOG_SOURCES} from '../services/report-log-collection';
+
+const LogCollectionSourceSchema = new Schema({
+  state: {type: String, enum: ['requested', 'received', 'unavailable', 'failed', 'timed-out'], required: true},
+  requestedAt: {type: String, required: true}, deadlineAt: {type: String, required: true},
+  reason: String, receivedAt: String, artifactId: String, entryCount: Number,
+  leaseUntil: Date,
+}, {_id: false});
+const LogCollectionSchema = new Schema(Object.fromEntries(REPORT_LOG_SOURCES.map(source => [source, LogCollectionSourceSchema])), {_id: false});
 
 const ReportArtifactSchema = new Schema(
   {
@@ -50,6 +59,7 @@ const ReportSchema = new Schema(
     context: { type: Schema.Types.Mixed, required: true },
     // Native completion retries own notification delivery; no separate worker or queue.
     slackDelivery: { type: Schema.Types.Mixed },
+    logCollection: {type: LogCollectionSchema},
     artifacts: { type: [ReportArtifactSchema], default: [] },
     status: {
       type: String,
@@ -65,6 +75,8 @@ ReportSchema.index({ mentraUserId: 1, createdAt: -1 });
 // Admin triage lists reports newest-first across all users.
 ReportSchema.index({ createdAt: -1 });
 ReportSchema.index({ "slackDelivery.nextAttemptAt": 1 });
+ReportSchema.index({'logCollection.cloud.state': 1, createdAt: 1});
+ReportSchema.index({'logCollection.miniapp_server.state': 1, createdAt: 1});
 
 export type Report = InferSchemaType<typeof ReportSchema>;
 export const ReportModel = registerModel("Report", ReportSchema);
