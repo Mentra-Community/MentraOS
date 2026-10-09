@@ -138,11 +138,17 @@ function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof 
     }
     const resourceId = action.id.startsWith("cleanup:") ? action.id.slice("cleanup:".length) : undefined;
     const outcomes = run.result.teardown.outcomes.filter(outcome => outcome.resourceId === resourceId);
+    // An interrupted provider has not returned an outcome. Preserve its failure
+    // and unresolved custody without inventing a cleaned resource or live writer.
+    const unresolved = !run.result.teardown.ready && !!resourceId && outcomes.length === 0
+      && run.result.teardown.unavailableResources.some(item => item.resource === resourceId)
+      && run.result.teardown.errors.some(error => error.phase === "teardown"
+        && error.actionId === action.id && reportedCleanupFailure(error));
     const diagnosed = outcomes.some(outcome => outcome.state === "cleaned"
       ? !!outcome.errors?.length && outcome.errors.every(reportedCleanupFailure)
       : outcome.state === "failed" ? reportedCleanupFailure(outcome.failure)
         : !run.result.teardown.ready && run.result.teardown.unavailableResources.some(item => item.resource === outcome.resourceId));
-    if (!diagnosed) problem("Failed shared cleanup must retain its classified diagnostics or active resource outcome");
+    if (!diagnosed && !unresolved) problem("Failed shared cleanup must retain its classified diagnostics or unresolved resource custody");
     if (run.result.teardown.ready && (action.status !== "failed" || !outcomes.some(outcome => outcome.state === "cleaned"
       && !!outcome.errors?.length && outcome.errors.every(error => error.phase === "evidence" && reportedCleanupFailure(error)))))
       problem("Ready teardown may contain failed shared cleanup only for recorded evidence diagnostics on a cleaned resource");
