@@ -20,6 +20,10 @@ export class ReportServerLogCollectionService {
     try {
       const entries = await collectServerLogs({...owner, createdAt: report.createdAt})
       if (!entries.length) {
+        // Vector ingestion may lag the first lookup. The existing lease allows a
+        // later tick to retry the same incident window, up to its original deadline.
+        const deadlineAt = report.logCollection?.[source]?.deadlineAt
+        if (deadlineAt && Date.parse(deadlineAt) > Date.now()) return
         await updateReportLogCollection({...owner, state: 'unavailable', reason: source === 'miniapp_server'
           ? 'No user-correlated miniapp server logs found; backend logs must include mentraUserId or userId'
           : 'No user-correlated cloud logs found in the incident window'})

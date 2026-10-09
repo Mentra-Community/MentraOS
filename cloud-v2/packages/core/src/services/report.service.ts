@@ -533,6 +533,17 @@ async function addArtifacts(input: {
           "failed to sweep report artifact metadata during rollback",
         );
       });
+      for (const source of [...new Set(artifacts.filter(artifact => artifact.type === 'logs' && isReportLogSource(artifact.source))
+        .map(artifact => artifact.source))]) {
+        const receipt = `logCollection.${source}`;
+        // A later accepted upload may already own this source. Roll back only this call's receipt.
+        await ReportModel.updateOne({reportId, mentraUserId, [`${receipt}.artifactId`]: {
+          $in: artifacts.filter(artifact => artifact.source === source).map(artifact => artifact.artifactId),
+        }}, {
+          $set: {[`${receipt}.state`]: 'failed', [`${receipt}.reason`]: 'Artifact storage acceptance was rolled back'},
+          $unset: Object.fromEntries(['receivedAt', 'artifactId', 'entryCount', 'leaseUntil'].map(field => [`${receipt}.${field}`, ''])),
+        }).catch(cleanupError => logger.error({cleanupError, reportId, source}, 'failed to roll back report log receipt'));
+      }
       await discardReportAssets(reportId, stored);
     }
     throw error;

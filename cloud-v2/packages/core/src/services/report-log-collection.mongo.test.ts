@@ -1,7 +1,7 @@
 import {expect, spyOn, test} from 'bun:test'
 import mongoose from 'mongoose'
 import {randomUUID} from 'node:crypto'
-import {mkdtemp, rm} from 'node:fs/promises'
+import {mkdtemp, readdir, rm} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {Hono} from 'hono'
@@ -59,6 +59,66 @@ const uri = process.env.REPORT_COLLECTION_MONGO_URI
     expect((await call('phone', {state: 'received'})).status).toBe(400)
     expect((await call('glasses', {state: 'failed', reason: 'late device outcome'})).status).toBe(200)
     expect((await getReport(reportId))!.report.logCollection!.glasses!.state).toBe('received')
+    const upload = (source: string) => app.request(`/${reportId}/artifacts`, {method: 'POST',
+      headers: {Authorization: 'Bearer synthetic', 'Content-Type': 'application/json'},
+      body: JSON.stringify({type: 'logs', source, entries})})
+    for (const source of ['cloud', 'miniapp_server']) {
+      const beforeUpload = await ReportModel.findOne({reportId}).lean(), count = await ReportAssetModel.countDocuments({reportId}),
+        filesBefore = (await readdir(directory, {recursive: true})).sort()
+      expect((await upload(source)).status).toBe(400)
+      expect((await ReportModel.findOne({reportId}).lean())!.logCollection).toEqual(beforeUpload!.logCollection)
+      expect(await ReportAssetModel.countDocuments({reportId})).toBe(count)
+      expect((await readdir(directory, {recursive: true})).sort()).toEqual(filesBefore)
+      expect((await addLogArtifact({mentraUserId: userId, reportId, source, entries}))!.stored).toBe(1)
+      expect((await getReport(reportId))!.report.logCollection![source as 'cloud' | 'miniapp_server']).toMatchObject({state: 'received', entryCount: 1})
+    }
+    expect((await upload('phone')).status).toBe(200)
+
+    for (const concurrent of [false, true]) {
+      const originalCollection = initialReportLogCollection(new Date())
+      const targetId = `rep_rollback${randomUUID().replaceAll('-', '')}`
+      await ReportModel.create({reportId: targetId, mentraUserId: userId, kind: 'bug', status: 'collecting',
+        artifacts: [], logCollection: originalCollection, context: {}})
+      const foreignId = `rep_foreign${randomUUID().replaceAll('-', '')}`
+      await ReportModel.create({reportId: foreignId, mentraUserId: 'other-user', kind: 'bug', status: 'collecting',
+        artifacts: [], logCollection: originalCollection, context: {}})
+      const originalUpdate = ReportModel.updateOne.bind(ReportModel)
+      let intercepted = false, rolledBackId = '', newerReceipt: unknown
+      const update = spyOn(ReportModel, 'updateOne').mockImplementation((async (filter: any, change: any, options: any) => {
+        const result = await originalUpdate(filter, change, options)
+        if (!intercepted && filter.reportId === targetId && change.$push?.artifacts) {
+          intercepted = true; rolledBackId = change.$push.artifacts.$each[0].artifactId
+          // Exercise a real successful Mongo update whose client observes an ambiguous failure.
+          if (concurrent) {
+            await addLogArtifact({mentraUserId: userId, reportId: targetId, source: 'phone', entries: [{...entries[0]!, message: 'Newer accepted artifact'}]})
+            newerReceipt = (await ReportModel.findOne({reportId: targetId}).lean())!.logCollection!.phone
+          }
+          throw new Error('Synthetic response loss after applied Mongo update')
+        }
+        return result
+      }) as any)
+      try {
+        await expect(addLogArtifact({mentraUserId: userId, reportId: targetId, source: 'phone', entries}))
+          .rejects.toThrow('Synthetic response loss after applied Mongo update')
+      } finally {update.mockRestore()}
+      const row = (await ReportModel.findOne({reportId: targetId}).lean())!, receipt = row.logCollection!.phone!
+      expect(row.artifacts.some(artifact => artifact.artifactId === rolledBackId)).toBe(false)
+      expect(await ReportAssetModel.exists({artifactId: rolledBackId})).toBeNull()
+      expect(await Bun.file(join(directory, `reports/${targetId}/${rolledBackId}`)).exists()).toBe(false)
+      expect((await ReportModel.findOne({reportId: foreignId}).lean())!.logCollection).toEqual(originalCollection)
+      if (concurrent) {
+        expect(newerReceipt).toEqual(receipt)
+        expect(receipt.state).toBe('received'); expect(row.artifacts).toHaveLength(1)
+        const newerAsset = (await ReportAssetModel.findOne({artifactId: receipt.artifactId}).lean())!
+        expect(await Bun.file(join(directory, newerAsset.storageKey)).json()).toEqual({entries: [{...entries[0]!, message: 'Newer accepted artifact'}]})
+      } else {
+        expect(receipt).toMatchObject({state: 'failed', reason: 'Artifact storage acceptance was rolled back',
+          requestedAt: originalCollection.phone.requestedAt, deadlineAt: originalCollection.phone.deadlineAt})
+        expect(receipt.artifactId).toBeUndefined(); expect(receipt.receivedAt).toBeUndefined(); expect(receipt.entryCount).toBeUndefined()
+        await addLogArtifact({mentraUserId: userId, reportId: targetId, source: 'phone', entries})
+        expect((await getReport(targetId))!.report.logCollection!.phone!.state).toBe('received')
+      }
+    }
   } finally {
     verify.mockRestore()
     await mongoose.connection.dropDatabase()

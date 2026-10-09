@@ -173,6 +173,9 @@ async function postReportArtifacts(c: AppContext) {
   if (!parsed.success) {
     throw new InvalidRequest("invalid report artifact body");
   }
+  if (parsed.data.source === 'cloud' || parsed.data.source === 'miniapp_server') {
+    throw new InvalidRequest('server log sources cannot be uploaded by a device');
+  }
   const result = await addLogArtifact({
     mentraUserId: user.mentraUserId,
     reportId,

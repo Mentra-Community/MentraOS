@@ -83,7 +83,9 @@ authenticated user and its frozen ten-minute window ending ten seconds after
 creation, deduplicate hot/archive rows, and retain the latest 1,000 entries. Each
 query is capped at 15 seconds and 2 MiB; credentials are redacted before attachment.
 One source failure does not suppress another source or block report submission.
-No matching logs means `unavailable`, never an empty success claim.
+An empty first lookup remains `requested` so delayed Vector ingestion can be
+collected by a later tick within the original four-minute window. An empty lookup
+after that deadline means `unavailable`, never an empty success claim.
 
 Miniapp server logs must reach the existing environment's miniapp Better Stack
 source and carry `mentraUserId` or `userId` (or a complete user token in text logs).

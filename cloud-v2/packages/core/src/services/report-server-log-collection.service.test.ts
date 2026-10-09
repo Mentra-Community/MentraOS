@@ -3,12 +3,16 @@ import {ReportModel} from '../models/report.model'
 import * as reports from './report.service'
 import * as serverLogs from './report-cloud-logs'
 import {ReportServerLogCollectionService} from './report-server-log-collection.service'
+import {initialReportLogCollection} from './report-log-collection'
 
 const mocks: Array<{mockRestore(): void}> = []
 afterEach(() => mocks.splice(0).forEach(mock => mock.mockRestore()))
 const createdAt = new Date('2026-10-09T16:00:00Z')
 const row = {reportId: 'rep_SYNTHETIC', mentraUserId: 'mu_01M2JJVEVTR0DJJD5Z6AN3GTM2', createdAt}
-function setup() {
+function setup(deadlineAt = new Date(Date.now() - 1).toISOString()) {
+  const logCollection = initialReportLogCollection(createdAt)
+  logCollection.cloud.deadlineAt = deadlineAt
+  logCollection.miniapp_server.deadlineAt = deadlineAt
   const filters: Array<Record<string, unknown>> = []
   mocks.push(spyOn(ReportModel, 'findOneAndUpdate').mockImplementation(((filter: Record<string, unknown>, update: Record<string, unknown>, options: unknown) => {
     filters.push(filter)
@@ -17,7 +21,7 @@ function setup() {
     expect(filter[`${field}.state`]).toBe('requested')
     expect(filter.$or).toBeDefined()
     expect((update.$set as Record<string, unknown>)[`${field}.leaseUntil`]).toBeInstanceOf(Date)
-    return {lean: async () => row}
+    return {lean: async () => ({...row, logCollection})}
   }) as never))
   const collect = spyOn(serverLogs, 'collectServerLogs').mockResolvedValue([{timestamp: createdAt.getTime(), level: 'info', message: 'original bounded logs'}])
   const attach = spyOn(reports, 'addLogArtifact').mockResolvedValue({stored: 1})
@@ -49,6 +53,17 @@ test('no user-correlated logs is explicit unavailable and never a fabricated rec
   expect(fixture.attach).not.toHaveBeenCalled()
   expect(fixture.outcome).toHaveBeenCalledTimes(2)
   expect(fixture.outcome.mock.calls[1]![0]).toMatchObject({source: 'miniapp_server', state: 'unavailable'})
+})
+test('empty lookup before the deadline remains eligible and a later tick attaches ingested logs', async () => {
+  const fixture = setup(new Date(Date.now() + 60_000).toISOString())
+  fixture.collect.mockResolvedValueOnce([]).mockResolvedValueOnce([])
+  const collector = new ReportServerLogCollectionService()
+  await collector.tick()
+  expect(fixture.attach).not.toHaveBeenCalled()
+  expect(fixture.outcome).not.toHaveBeenCalled()
+  await collector.tick()
+  expect(fixture.attach).toHaveBeenCalledTimes(2)
+  expect(fixture.outcome).not.toHaveBeenCalled()
 })
 test('an unclaimed report does no query or storage work', async () => {
   const fixture = setup()
