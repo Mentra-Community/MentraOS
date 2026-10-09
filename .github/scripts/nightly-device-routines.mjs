@@ -80,7 +80,7 @@ export function nightlySummary(result) {
   // project to not-run, and only execution/setup/teardown failures count as failed.
   const skippedCount = result.members.filter(member => ["not-run", "incomplete"].includes(member.status)).length
   const failedCount = result.members.filter(member => ["failed", "setup-failed", "teardown-failed"].includes(member.status)).length
-  const status = result.status === "failed" && failedCount === 0 ? "incomplete" : result.status
+  const status = failedCount > 0 ? "failed" : result.status === "failed" ? "incomplete" : result.status
   const label = {pass: "Passed", failed: "Failed", incomplete: "Incomplete", cancelled: "Cancelled", skipped: "Skipped"}[status]
   return {passed, skipped: result.status === "skipped", displayStatus: status, url: result.resultUrl,
     text: `Dev nightly: ${label}`,

@@ -163,3 +163,18 @@ test('history-style summary keeps cancellations and evidence-only incompleteness
     assert.doesNotMatch(text, /\d+\/\d+ passed|\d+\/\d+ Ran/)
   }
 })
+
+test('mixed failed and incomplete receipts retain the red Failed history heading', async () => {
+  for (const neighbor of [
+    {...terminal().members[0], memberId: 'missing', status: 'incomplete', runId: undefined},
+    {...terminal().members[0], memberId: 'unpublished', publicationComplete: false},
+  ]) {
+    let text
+    const result = {...terminal(), status: 'incomplete', passed: 0, expectedCount: 2,
+      members: [{...terminal().members[0], status: 'setup-failed'}, neighbor]}
+    await publishNightlyWebhook({result, webhook: 'https://hooks.slack.com/services/fixture', attempt: 1,
+      fetchImpl: async (_, options) => {text = JSON.parse(options.body).text; return new Response('ok')}})
+    assert.ok(text.startsWith('🔴 Dev nightly: Failed\n'))
+    assert.ok(text.includes(neighbor.status === 'incomplete' ? '\n1/1 failed, 1 skipped\n' : '\n1/2 failed\n'))
+  }
+})
