@@ -264,3 +264,25 @@ test('bundled Mac lifecycle journals retain their exact bytes and associations, 
     expect(await readFailureScreens({...run, assets: [...run.assets, bad.asset]}, async () => new Response(bad.body))).toEqual([]);
   }
 });
+
+
+test('uncaptured sibling failures do not conflict with the displayed original, while real source ambiguity still refuses', () => {
+  const {run, rows, original, app, desktop} = lifecycleFixture();
+  const other = {...original, message: 'Another failure of this same action'};
+  const expected = [{phase: original.phase, actionId: original.actionId, assetId: app.id, desktopAssetId: desktop.id}];
+  const siblings = {...run, result: {...run.result, failures: [original, other]}};
+  expect(recordedFailureScreens(siblings, {records: rows})).toEqual(expected);
+  expect(recordedFailureScreens({...run, result: {...run.result, failures: [other, original]}}, {records: rows})).toEqual([]);
+  expect(recordedFailureScreens({...run, result: {...run.result, failures: [original, {...original}]}}, {records: rows})).toEqual(expected);
+  const otherApp = {...app, id: 'sibling-app', path: 'setup-evidence/screenshots/sibling-app.png'};
+  const siblingAppRow = {...rows[0], message: other.message, screenshotPath: otherApp.path};
+  const withOtherApp = {...siblings, assets: [...siblings.assets, otherApp]};
+  expect(recordedFailureScreens(withOtherApp, {records: [...rows, siblingAppRow]}))
+    .toEqual([{phase: original.phase, actionId: original.actionId, desktopAssetId: desktop.id}]);
+  expect(recordedFailureScreens(siblings, {records: [...rows, {...rows[0], message: other.message}]})).toEqual(expected);
+  // A sibling with two conflicting paths is a recorded ambiguity, not an absent association.
+  expect(recordedFailureScreens(withOtherApp, {records: [...rows, siblingAppRow, {...rows[0], message: other.message}]}))
+    .toEqual([{phase: original.phase, actionId: original.actionId, desktopAssetId: desktop.id}]);
+  expect(recordedFailureScreens(siblings, {records: [...rows, {...rows[0], message: other.message, screenshotPath: 'missing.png'}]}))
+    .toEqual([{phase: original.phase, actionId: original.actionId, desktopAssetId: desktop.id}]);
+});

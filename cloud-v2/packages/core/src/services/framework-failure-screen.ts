@@ -58,13 +58,15 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
     screens.push({phase: failure.phase, actionId: failure.actionId,
       ...(assetId ? {assetId} : {}), ...(desktopAssetId ? {desktopAssetId} : {})});
   }
-  // Different recorded failures with the same displayed phase/action cannot silently select an image for either source.
+  // The viewer selects the first frozen failure for each phase/action. An absent sibling association
+  // cannot conflict, but every recorded source association must agree with that displayed failure.
   return screens.filter((screen, index) => screens.findIndex(other => other.phase === screen.phase && other.actionId === screen.actionId) === index)
     .map(screen => {
-      const same = screens.filter(other => other.phase === screen.phase && other.actionId === screen.actionId);
-      const app = new Set(same.map(other => other.assetId)), desktop = new Set(same.map(other => other.desktopAssetId));
-      return {phase: screen.phase, actionId: screen.actionId, ...(app.size === 1 && screen.assetId ? {assetId: screen.assetId} : {}),
-        ...(desktop.size === 1 && screen.desktopAssetId ? {desktopAssetId: screen.desktopAssetId} : {})};
+      const same = run.result.failures.filter(failure => failure.phase === screen.phase && failure.actionId === screen.actionId)
+        .map(failure => associations.get(key(failure.phase, failure.actionId, failure.message)));
+      const app = new Set(same.flatMap(ids => [...ids?.app ?? []])), desktop = new Set(same.flatMap(ids => [...ids?.desktop ?? []]));
+      return {phase: screen.phase, actionId: screen.actionId, ...(screen.assetId && resolve(app) === screen.assetId ? {assetId: screen.assetId} : {}),
+        ...(screen.desktopAssetId && resolve(desktop) === screen.desktopAssetId ? {desktopAssetId: screen.desktopAssetId} : {})};
     }).filter(screen => screen.assetId || screen.desktopAssetId);
 }
 
