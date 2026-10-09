@@ -194,6 +194,23 @@ public class AeStateMachineTest {
     }
 
     @Test
+    public void aeStateForWait_flashRequiredOnRunningCamera_countsAsConverged() {
+        assertThat(AeStateMachine.aeStateForWait(
+                CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED, true))
+                .isEqualTo(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+    }
+
+    @Test
+    public void aeStateForWait_coldOpenOrOtherStates_unchanged() {
+        assertThat(AeStateMachine.aeStateForWait(
+                CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED, false))
+                .isEqualTo(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        assertThat(AeStateMachine.aeStateForWait(CaptureResult.CONTROL_AE_STATE_SEARCHING, true))
+                .isEqualTo(CaptureResult.CONTROL_AE_STATE_SEARCHING);
+        assertThat(AeStateMachine.aeStateForWait(null, true)).isNull();
+    }
+
+    @Test
     public void shotStateEnum_valuesUnchanged() {
         assertThat(AeStateMachine.ShotState.values())
                 .containsExactly(

@@ -87,14 +87,17 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                     + precaptureTrigger + ", AE state: " + AeStateMachine.getAeStateName(aeState));
         }
 
-        aeStateMachine.noteRepeatingFrame(aeState, exposureEarly, sensEarly);
+        // No cold-start settle floor means the camera was already running (reuse or warm-up).
+        Integer waitAeState = AeStateMachine.aeStateForWait(
+                aeState, hooks.minimumExposureStabilizationDelayMs() == 0L);
+        aeStateMachine.noteRepeatingFrame(waitAeState, exposureEarly, sensEarly);
 
         long elapsedNs = aeStateMachine.elapsedNsSinceAeStart();
         AeStateMachine.AeRepeatCaptureDecision decision =
                 AeStateMachine.evaluateRepeatingRequestAeStep(
                         aeStateMachine.waitingForAeConvergence(),
                         aeStateMachine.aeLockRequested(),
-                        aeState,
+                        waitAeState,
                         elapsedNs,
                         aeStateMachine.stableConvergedFrames(),
                         aeStateMachine.nsSinceFirstConverged());

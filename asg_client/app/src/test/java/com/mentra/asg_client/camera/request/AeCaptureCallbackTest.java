@@ -50,6 +50,63 @@ public class AeCaptureCallbackTest {
     }
 
     @Test
+    public void onCaptureCompleted_flashRequiredOnRunningCamera_capturesAfterStableFrames() {
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult result = mock(TotalCaptureResult.class);
+        stateMachine.beginWaitingForAe();
+        when(result.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        when(result.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
+        when(result.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
+
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED - 1; i++) {
+            callback.onCaptureCompleted(session, request, result);
+            assertThat(hooks.captureCount).isZero();
+        }
+        callback.onCaptureCompleted(session, request, result);
+
+        assertThat(stateMachine.waitingForAeConvergence()).isFalse();
+        assertThat(hooks.captureCount).isEqualTo(1);
+    }
+
+    @Test
+    public void onCaptureCompleted_flashRequiredOnColdOpen_keepsWaitingUntilTimeout()
+            throws Exception {
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        hooks.minimumExposureStabilizationDelayMs =
+                AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS;
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult result = mock(TotalCaptureResult.class);
+        stateMachine.beginWaitingForAe();
+        when(result.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        when(result.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
+        when(result.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
+
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED + 2; i++) {
+            callback.onCaptureCompleted(session, request, result);
+        }
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        assertThat(hooks.captureCount).isZero();
+
+        setLongField(
+                stateMachine,
+                "aeStartTimeNs",
+                System.nanoTime() - AeStateMachine.AE_WAIT_MAX_NS - 1_000_000L);
+        callback.onCaptureCompleted(session, request, result);
+
+        assertThat(hooks.lastDelayMs).isZero();
+        assertThat(hooks.captureCount).isEqualTo(1);
+    }
+
+    @Test
     public void onCaptureCompleted_coldStart_waitsUntilHistoricalExposureSettleFloor() {
         AeStateMachine stateMachine = new AeStateMachine();
         FakeHooks hooks = new FakeHooks();
