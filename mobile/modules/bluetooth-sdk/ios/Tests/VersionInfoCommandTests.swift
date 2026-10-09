@@ -6,6 +6,7 @@ private final class VersionInfoCommandTransport: MentraLive {
     var requestId: String?
     var reply = true
     var includeResponseId = true
+    var metadataOverrides: [String: Any] = [:]
 
     override func sendJson(_ jsonOriginal: [String: Any], wakeUp: Bool, requireAck: Bool) {
         XCTAssertEqual(jsonOriginal["type"] as? String, "request_version")
@@ -26,6 +27,7 @@ private final class VersionInfoCommandTransport: MentraLive {
                  "bes_fw_version": "26.9.23.0", "mtk_fw_version": "MentraLive_20260921.0"],
             ] {
                 let response = common.merging(chunk) { _, value in value }
+                    .merging(metadataOverrides) { _, value in value }
                 try processReceivedData(JSONSerialization.data(withJSONObject: response))
             }
         } catch {
@@ -64,8 +66,9 @@ final class VersionInfoCommandTests: XCTestCase {
         XCTAssertTrue(diagnostics.allSatisfy { $0["requestId"] as? String == transport.requestId })
         XCTAssertEqual(diagnostics[1]["responseRequestId"] as? String, transport.requestId)
         XCTAssertEqual(diagnostics[2]["responseChunk"] as? String, "version_info_3")
-        XCTAssertEqual(diagnostics[1]["_responseChunkIndex"] as? String, "1")
-        XCTAssertEqual(diagnostics[2]["_responseChunkIndex"] as? String, "2")
+        XCTAssertEqual(diagnostics[1]["_responseChunkIndex"] as? String, "number:1")
+        XCTAssertEqual(diagnostics[2]["_responseChunkIndex"] as? String, "number:2")
+        XCTAssertEqual(diagnostics[1]["_responseFinal"] as? String, "boolean:false")
         XCTAssertFalse(diagnostics.contains { $0["besFirmwareVersion"] != nil || $0["serialNumber"] != nil })
     }
 
@@ -139,6 +142,45 @@ final class VersionInfoCommandTests: XCTestCase {
         }
         XCTAssertEqual(diagnostics.compactMap { $0["stage"] as? String }, ["registered", "rejected"])
         XCTAssertTrue(diagnostics.allSatisfy { $0["requestId"] as? String == transport.requestId })
+    }
+
+    func testMalformedMetadataRetainsItsTypeThroughTheActualBridgeLog() async throws {
+        let previous = DeviceManager.shared.sgc
+        let transport = VersionInfoCommandTransport()
+        DeviceManager.shared.sgc = transport
+        let sdk = MentraBluetoothSDK()
+        var diagnostics: [[String: Any]] = []
+        let sink = Bridge.addEventSink { event, body in
+            if let diagnostic = self.diagnostic(event, body) { diagnostics.append(diagnostic) }
+        }
+        defer {
+            Bridge.removeEventSink(sink)
+            sdk.invalidate()
+            DeviceManager.shared.sgc = previous
+        }
+        for (wireKey, logKey, value, expected) in [
+            ("chunkIndex", "_responseChunkIndex", true as Any, "boolean:true"),
+            ("chunkCount", "_responseChunkCount", true as Any, "boolean:true"),
+            ("final", "_responseFinal", 1 as Any, "number:1"),
+        ] {
+            diagnostics.removeAll()
+            transport.requestId = nil
+            transport.metadataOverrides = [wireKey: value]
+            let task = Task { try await sdk.requestVersionInfo() }
+            while transport.requestId == nil {
+                await Task.yield()
+            }
+            task.cancel()
+            do {
+                _ = try await task.value
+                XCTFail("Malformed metadata must not resolve")
+            } catch let error as BluetoothSdkError {
+                XCTAssertEqual(error.code, "request_cancelled")
+            }
+            let ignored = diagnostics.filter { $0["stage"] as? String == "response-ignored" }
+            XCTAssertEqual(ignored.count, 2)
+            XCTAssertTrue(ignored.allSatisfy { $0[logKey] as? String == expected })
+        }
     }
 
     private func diagnostic(_ event: String, _ body: [String: Any]) -> [String: Any]? {

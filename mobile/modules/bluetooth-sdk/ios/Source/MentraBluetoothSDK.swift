@@ -2396,13 +2396,19 @@ public final class MentraBluetoothSDK {
             "responseChunk": String((data[VersionInfoResponseAccumulator.responseChunkKey] as? String ?? "").prefix(64)),
         ]
         for key in [VersionInfoResponseAccumulator.responseIndexKey,
-                    VersionInfoResponseAccumulator.responseCountKey]
+                    VersionInfoResponseAccumulator.responseCountKey,
+                    VersionInfoResponseAccumulator.responseFinalKey]
         {
-            // Decimal strings keep index 1 distinct from true in diagnostic JSON.
-            if let value = data[key] as? NSNumber { response[key] = value.stringValue }
-        }
-        if let value = data[VersionInfoResponseAccumulator.responseFinalKey] as? NSNumber {
-            response[VersionInfoResponseAccumulator.responseFinalKey] = value.boolValue
+            // Typed strings survive the logger's Bool/NSNumber sanitization and
+            // preserve malformed metadata rather than making it look valid.
+            if let value = data[key] as? NSNumber {
+                response[key] = CFGetTypeID(value) == CFBooleanGetTypeID()
+                    ? "boolean:\(value.boolValue)" : "number:\(value.stringValue)"
+            } else if let value = data[key] as? String {
+                response[key] = "string:\(value.prefix(64))"
+            } else if let value = data[key] {
+                response[key] = "unsupported:\(type(of: value))"
+            }
         }
         switch outcome {
         case .ignored:
