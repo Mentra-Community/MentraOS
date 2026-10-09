@@ -37,12 +37,13 @@ export interface ReportSummary {
   trigger: Record<string, unknown> | null;
   report: Record<string, unknown> | null;
   feedback: unknown;
-  artifacts: ReportArtifactMeta[];
+  artifactCount: number;
   createdAt: string | null;
   updatedAt: string | null;
 }
 
-export interface ReportDetail extends ReportSummary {
+export interface ReportDetail extends Omit<ReportSummary, "artifactCount"> {
+  artifacts: ReportArtifactMeta[];
   context: Record<string, unknown>;
 }
 
