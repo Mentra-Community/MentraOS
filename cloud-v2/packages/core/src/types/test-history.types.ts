@@ -3,6 +3,8 @@ import type {FrameworkRun, frameworkRunOutcome} from "./framework-run.types";
 import type {TestSuite} from "./test-suite.types";
 import type {RoutineCardDefinition} from './routine-definition.types';
 
+export type TestHistoryOrigin = 'pr' | 'nightly' | 'other';
+
 /** Dependency-light DTOs shared by the Core run/catalog APIs and Admin client. */
 export interface CatalogExample {
   runId: string; startedAt: string; finishedAt: string; recordingAssetId: string;

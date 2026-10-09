@@ -5,7 +5,7 @@ import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {RunRerunLinks} from "./test-reruns";
 import {useEffect, useId, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
-import type {CatalogExample, CatalogHistoryRun, RoutineCatalogCard as CatalogCard, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage} from "../../../../packages/core/src/types/test-history.types";
+import type {CatalogExample, CatalogHistoryRun, RoutineCatalogCard as CatalogCard, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage, TestHistoryOrigin} from "../../../../packages/core/src/types/test-history.types";
 import type {FrameworkRun, RecordedFrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
 import {RoutineSearch, useRoutineSearch, matchesRoutineSearch, hasRoutineFilters, type RoutineSearchFilters, type SearchableRoutine} from "../components/routine-search";
@@ -404,28 +404,21 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
 export function FrameworkRunsPage({scope, historySource}: {scope?: Record<string, string>; historySource?: HistoryOrigin}) {
   return scope ? <FilteredFrameworkRunsPage scope={scope}/> : <TestHistoryList initialOrigin={historySource}/>;
 }
-export const HISTORY_ORIGINS = [["pr", "Pull Requests"], ["branch", "Nightly"], ["manual", "Other"]] as const;
-export type HistoryOrigin = typeof HISTORY_ORIGINS[number][0];
-export function historyOrigin(entry: TestHistoryEntry): HistoryOrigin {
-  if (entry.kind === "unavailable") return "manual";
-  if (entry.kind === "run" && entry.rerun || entry.kind === "suite" && entry.trigger === "manual") return "manual";
-  const channel = entry.kind === "suite" ? entry.channel : entry.build.channel;
-  return channel === "pr" ? "pr" : channel === "dev" || channel === "staging" ? "branch" : "manual";
-}
+export const HISTORY_ORIGINS = [["pr", "Pull Requests"], ["nightly", "Nightly"], ["other", "Other"]] as const;
+export type HistoryOrigin = TestHistoryOrigin;
 function TestHistoryList({initialOrigin = "pr"}: {initialOrigin?: HistoryOrigin}) {
   const [filters, setFilters] = useRoutineSearch();
   const [origin, setOrigin] = useState<HistoryOrigin>(initialOrigin);
   const tabId = useId();
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const catalog = useSearchCatalog();
-  const history = useInfiniteQuery({queryKey: ["test-history", true], initialPageParam: undefined as string | undefined,
-    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(testHistoryListPath(true, pageParam), {signal, timeoutMs: 30000}),
+  const history = useInfiniteQuery({queryKey: ["test-history", origin, true], initialPageParam: undefined as string | undefined,
+    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(testHistoryListPath(origin, true, pageParam), {signal, timeoutMs: 30000}),
     getNextPageParam: page => page.nextCursor ?? undefined, retry: false, retryOnMount: false,
     refetchInterval: query => query.state.error ? false : 15000});
   const entries = history.data?.pages.flatMap(page => page.entries) ?? [];
   const routines = catalog.data?.routines ?? [];
-  const originEntries = entries.filter(entry => entry.kind === "unavailable" || historyOrigin(entry) === origin);
-  const filtered = originEntries.filter(entry => matchesHistorySearch(entry, routines, filters));
+  const filtered = entries.filter(entry => matchesHistorySearch(entry, routines, filters));
   const members = entries.flatMap<{routineId: string; platform: string}>(entry => entry.kind === "suite" ? entry.members ?? [] : entry.kind === "run" ? [entry] : []);
   const options = [...routines.map(searchableRoutine), ...members.map(member => runSearchMetadata(member, routines))];
   return <section className={PANEL}>
@@ -439,8 +432,8 @@ function TestHistoryList({initialOrigin = "pr"}: {initialOrigin?: HistoryOrigin}
         }}>{label}</button>)}
     </div>
     <div role="tabpanel" id={`${tabId}-history`} aria-labelledby={`${tabId}-${origin}`} tabIndex={0}>
-    <RoutineSearch placeholder="Routine, PR, commit or tested build" filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${originEntries.length} loaded entries`} />
-    <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Tabs and filters apply to loaded history. Load more history to search older entries. Suites match when one member meets all filters.</p></details>
+    <RoutineSearch placeholder="Routine, PR, commit or tested build" filters={filters} onChange={setFilters} routines={options} countLabel={`Showing ${filtered.length} of ${entries.length} loaded entries`} />
+    <details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Search scope</summary><p className="mt-2">Each tab loads its own history. Search filters apply to loaded entries. Load more history to search older entries. Suites match when one member meets all filters.</p></details>
     {catalog.isPending && <LoadingIndicator label="Loading routine names and glasses requirements" className="mt-2 text-sm" />}
     {catalog.error && <p role="alert" className="mt-2 text-sm">Routine search metadata could not load: {catalog.error.message} <TestingButton onClick={() => catalog.refetch()}>Retry routine metadata</TestingButton></p>}
     {history.isPending && <LoadingIndicator label="Loading test history" className="mt-3" />}
@@ -452,8 +445,8 @@ function TestHistoryList({initialOrigin = "pr"}: {initialOrigin?: HistoryOrigin}
     </div>
   </section>;
 }
-export function testHistoryListPath(includeReruns: boolean, cursor?: string) {
-  const query = new URLSearchParams({limit: "25", includeReruns: String(includeReruns)});
+export function testHistoryListPath(origin: HistoryOrigin, includeReruns: boolean, cursor?: string) {
+  const query = new URLSearchParams({origin, limit: "25", includeReruns: String(includeReruns)});
   if (cursor) query.set("cursor", cursor);
   return `/api/admin/test-runs/history/list?${query}`;
 }
