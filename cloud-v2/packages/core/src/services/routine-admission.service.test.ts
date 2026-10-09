@@ -203,6 +203,18 @@ test('fixture presence cannot admit reviewed appearance without every requested 
   }
 });
 
+test('a clipboard fixture cannot admit stream receiver preparation', () => {
+  const definition = enrollment(false);
+  definition.definition.resourceRequirements.push({kind: 'fixture-data', capabilities: ['clipboard', 'stream-receivers']});
+  definition.definition.execution!.resourceKinds.push('fixture-data');
+  definition.definition.fixtures = [{provider: 'stream-receivers', description: 'Owned configured receivers and clipboard'}];
+  const observed = host(false), fixture = {id: 'host-fixture', kind: 'fixture-data' as const, capabilities: ['clipboard']};
+  observed.lanes[0]!.resources.push(fixture);
+  expect(() => select(definition, build, observed)).toThrow('required fixture-data resource capabilities');
+  fixture.capabilities.push('stream-receivers');
+  expect(select(definition, build, observed).resources).toContainEqual({id: 'host-fixture', kind: 'fixture-data'});
+});
+
 test("projecting known host providers preserves missing real and unknown glasses capability refusals", () => {
   for (const capability of ["connection", "unimplemented-glasses-feature"]) {
     const definition = enrollment(); definition.definition.resourceRequirements.find(value => value.kind === "glasses")!.capabilities = [capability];

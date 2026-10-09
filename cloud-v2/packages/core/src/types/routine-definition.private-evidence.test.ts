@@ -21,7 +21,7 @@ test('audio recognition is an explicit requested capability; undeclared and unsu
   expect(routineResourceRequirementSchema.safeParse({kind: 'phone', capabilities: ['recognition']}).success).toBe(false);
 });
 test('fixture operations are explicit capabilities and cannot become physical device requirements', () => {
-  const capabilities = ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode'];
+  const capabilities = ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers'];
   expect(routineResourceRequirementSchema.parse({kind: 'fixture-data', capabilities})).toEqual({kind: 'fixture-data', capabilities});
   for (const capability of capabilities) for (const kind of ['phone', 'glasses', 'audio', 'browser'])
     expect(routineResourceRequirementSchema.safeParse({kind, capabilities: [capability]}).success).toBe(false);

@@ -18,7 +18,7 @@ export const resourceCapabilityMap = {
   glasses: ['glasses-ble', 'connection', 'software'], recorder: [],
   audio: ['speech', 'witness', 'synthesis', 'recognition'], browser: ['external-window'],
   network: ['independent-uplink'],
-  'fixture-data': ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode'],
+  'fixture-data': ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers'],
   workspace: [],
 } as const;
 export const routineResourceRequirementSchema = z.object({kind: routineResourceKindSchema,
