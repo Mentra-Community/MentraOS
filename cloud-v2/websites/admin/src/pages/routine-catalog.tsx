@@ -213,8 +213,22 @@ export function runFailureSummary(run: RecordedFrameworkRun, outcome: string, ev
     target: failure ? `run-failure-${phase}-0` : `run-phase-${phase}`};
 }
 
+/** Explicit step links win; otherwise open the actual failed step or the first executed step. */
+export function initialFrameworkStep(run: RecordedFrameworkRun | undefined, stepId?: string) {
+  if (!run) return undefined;
+  return run.result.steps.find(step => step.id === stepId)
+    ?? run.result.steps.find(step => step.status === "failed")
+    ?? run.result.steps.find(step => step.status !== "not-run");
+}
+export function stepPlaybackOffset(step: RecordedFrameworkRun["result"]["steps"][number], atFailure = false) {
+  const location = step.recordingLocation;
+  if (!location) return null;
+  return (atFailure ? location.endOffsetMs ?? location.startOffsetMs : location.startOffsetMs) / 1000;
+}
+
 export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: string}) {
   const video = useRef<HTMLVideoElement>(null);
+  const executionDetails = useRef<HTMLDivElement>(null);
   const [failureTarget, setFailureTarget] = useState<string | null>(null);
   const pendingOffset = useRef<number | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
@@ -230,18 +244,32 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       setObservation(current => current.runId === runId && current.startedAt !== null ? current : {runId, startedAt: Date.now()});
   }, [runId, result.data?.kind, result.data?.kind === "request" ? result.data.request.terminalStatus : undefined]);
   useEffect(() => {
-    if (!stepId) return;
-    setSelectedStep(stepId);
-    const step = result.data?.run?.result.steps.find(item => item.id === stepId);
-    if (step?.recordingLocation) {
-      pendingOffset.current = step.recordingLocation.startOffsetMs / 1000;
+    setStepSearch(""); setSelectedStep(stepId);
+    pendingOffset.current = null; setSelectedAsset(null);
+  }, [runId, stepId]);
+  const loadedRun = result.data?.kind === "request" ? undefined : result.data?.run;
+  const activeStep = selectedStep ?? initialFrameworkStep(loadedRun, stepId)?.id;
+  useEffect(() => {
+    if (!loadedRun) return;
+    const step = initialFrameworkStep(loadedRun, stepId);
+    setSelectedStep(step?.id);
+    const offset = step && stepPlaybackOffset(step, !stepId && step.status === "failed");
+    if (step?.recordingLocation && offset != null) {
+      pendingOffset.current = offset;
       setSelectedAsset(step.recordingLocation.assetId);
       if (video.current?.readyState && video.current.dataset.assetId === step.recordingLocation.assetId) {
-        video.current.currentTime = pendingOffset.current; pendingOffset.current = null;
+        video.current.currentTime = offset; pendingOffset.current = null;
       }
     } else {pendingOffset.current = null; setSelectedAsset(null);}
-  }, [runId, stepId, result.data?.run]);
-  useEffect(() => {setStepSearch(""); setSelectedStep(stepId); if (!stepId) {pendingOffset.current = null; setSelectedAsset(null);}}, [runId, stepId]);
+  }, [runId, stepId, loadedRun?.result.runId]);
+  useEffect(() => {
+    const container = executionDetails.current;
+    const selected = container?.querySelector<HTMLElement>('[data-selected="true"]');
+    if (!container || !selected || container.scrollHeight <= container.clientHeight) return;
+    const bounds = container.getBoundingClientRect(), row = selected.getBoundingClientRect();
+    if (row.top < bounds.top) container.scrollTop += row.top - bounds.top;
+    else if (row.bottom > bounds.bottom) container.scrollTop += row.bottom - bounds.bottom;
+  }, [activeStep, stepSearch, result.data]);
   useEffect(() => {
     if (!failureTarget) return;
     const target = document.getElementById(failureTarget);
@@ -263,15 +291,23 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const failureSummary = runFailureSummary(run, outcome, evidenceStatus);
   const actualRunId = result.data.kind === "run" ? run.result.runId : runId;
   const recordingAsset = selectedAsset ?? run.recordingAssetId;
-  const seekStep = (id: string, location: NonNullable<FrameworkRun["result"]["steps"][number]["recordingLocation"]>) => {
+  const seekStep = (id: string, location: NonNullable<FrameworkRun["result"]["steps"][number]["recordingLocation"]>, atFailure = false) => {
     setSelectedStep(id);
-    pendingOffset.current = location.startOffsetMs / 1000;
+    pendingOffset.current = (atFailure ? location.endOffsetMs ?? location.startOffsetMs : location.startOffsetMs) / 1000;
     setSelectedAsset(location.assetId);
     if (recordingAsset === location.assetId && video.current?.readyState) {
       video.current.currentTime = pendingOffset.current;
       pendingOffset.current = null;
     }
     video.current?.scrollIntoView({block: "nearest", behavior: "smooth"});
+  };
+  const goToFailure = () => {
+    if (!failureSummary) return;
+    setStepSearch("");
+    const step = run.result.steps.find(item => item.id === failureSummary.actionId);
+    if (step?.recordingLocation) seekStep(step.id, step.recordingLocation, true);
+    else setSelectedStep(failureSummary.actionId);
+    setFailureTarget(failureSummary.target);
   };
   const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-run/${encodeURIComponent(actualRunId)}/assets/${encodeURIComponent(id)}`;
   const hasRecording = Boolean(recordingAsset && uploadsComplete);
@@ -285,7 +321,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       <div className="flex flex-wrap items-start justify-between gap-3"><h2 className="text-xl font-semibold">{definition?.title ?? run.routineId}</h2>
         <div className="max-w-sm space-y-2 sm:text-right"><HistoryStatus outcome={runDisplayStatus(outcome, evidenceStatus, uploadsComplete)}/>
           {failureSummary && <><p className="text-sm text-[#cf222e]">{failureSummary.reason}</p>
-            <TestingButton onClick={() => {setStepSearch(""); setSelectedStep(failureSummary.actionId); setFailureTarget(failureSummary.target);}}>Go to failure</TestingButton></>}
+            <TestingButton onClick={goToFailure}>Go to failure</TestingButton></>}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-[#747780]">
@@ -319,14 +355,14 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     </section>}
     <section id="run-phase-test" tabIndex={-1} aria-label="Execution steps" className={`${PANEL} min-w-0 ${hasRecording ? "order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col" : ""}`}><h3 className="shrink-0 font-semibold">Execution</h3>
       <label className="mt-3 block shrink-0 text-sm">Search steps<input type="search" className={`mt-1 block ${TESTING_FIELD}`} value={stepSearch} onChange={event => setStepSearch(event.target.value)} placeholder="Instruction, expected result or step ID" /></label>
-      <div role="region" aria-label="Execution details" tabIndex={0} className={`mt-2 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 ${hasRecording ? "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>
+      <div ref={executionDetails} role="region" aria-label="Execution details" tabIndex={0} className={`mt-2 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 ${hasRecording ? "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>
       {!visibleSteps.length && <p className="mt-3">No steps match your search.</p>}
       <ol role="list" className="mt-3 list-none space-y-2">{visibleSteps.map(({step, index, source}) => {
         const title = source?.instruction ?? step.id;
-        return <li key={step.id} className={`flex gap-3 rounded-lg border p-3 ${selectedStep === step.id ? "border-[#3b7650] bg-[#edf6ef]" : "border-[#e0e4de]"}`}>
+        return <li key={step.id} data-step-id={step.id} data-selected={activeStep === step.id} className={`flex gap-3 rounded-lg border p-3 ${activeStep === step.id ? "border-[#3b7650] bg-[#edf6ef]" : "border-[#e0e4de]"}`}>
           <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
           <div className="min-w-0 flex-1">
-          {step.recordingLocation && uploadsComplete ? <button type="button" className="block w-full rounded-sm text-left text-sm hover:text-[#0969da] focus-visible:outline-2 focus-visible:outline-[#0969da]" aria-current={selectedStep === step.id ? "step" : undefined} onClick={() => seekStep(step.id, step.recordingLocation!)}><span className="font-medium">{title}</span> <StepStatus status={step.status} /> · {elapsedDuration(step.durationMs)}<span className="block text-sm">Watch this step · {recordingOffset(step.recordingLocation.startOffsetMs)}</span></button>
+          {step.recordingLocation && uploadsComplete ? <button type="button" className="block w-full rounded-sm text-left text-sm hover:text-[#0969da] focus-visible:outline-2 focus-visible:outline-[#0969da]" aria-current={activeStep === step.id ? "step" : undefined} onClick={() => seekStep(step.id, step.recordingLocation!)}><span className="font-medium">{title}</span> <StepStatus status={step.status} /> · {elapsedDuration(step.durationMs)}<span className="block text-sm">Watch this step · {recordingOffset(step.recordingLocation.startOffsetMs)}</span></button>
             : <p>{title} <StepStatus status={step.status} />{step.status !== "not-run" && ` · ${elapsedDuration(step.durationMs)}`}<span className="block text-sm text-[#68746d]">{step.status === "not-run" ? "Not executed" : "Recording location unavailable"}</span></p>}
           {source && <p className="mt-1 text-sm">Expected: {source.expected}</p>}
           {step.causedBy && <p className="mt-1 text-sm">Caused by: {step.causedBy}</p>}

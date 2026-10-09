@@ -4,6 +4,8 @@ import {renderToStaticMarkup} from "react-dom/server"
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query"
 import {
   FrameworkRunPage,
+  initialFrameworkStep,
+  stepPlaybackOffset,
   runFailureSummary,
   FrameworkRunsPage,
   RoutineCatalogCard,
@@ -395,6 +397,45 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
     expect(legacy).toContain(status === "cancelled" ? "Cancelled" : "Failed")
   }
 })
+
+test("failed runs select the failure; explicit step links preserve their requested start", () => {
+  const run = recordedFrameworkRunSchema.parse({
+    schemaVersion: 1, requestId: "failed-run", hostId: "mini", routineId: "notes-phone",
+    definitionRevision: "c".repeat(40), platform: "android", laneId: "phone",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z",
+    recordingAssetId: "recording", assets: [
+      {id: "recording", kind: "recording", path: "video.mp4", sha256: "a".repeat(64), size: 100, mimeType: "video/mp4"},
+    ],
+    result: {runId: "failed-run", finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed"}, test: "failed",
+      steps: [
+        {id: "open", status: "passed", durationMs: 5000, recordingLocation: {assetId: "recording", startOffsetMs: 0, endOffsetMs: 5000}},
+        {id: "connect", status: "failed", durationMs: 10000, recordingLocation: {assetId: "recording", startOffsetMs: 5000, endOffsetMs: 15000}},
+        {id: "verify", status: "not-run", durationMs: 0, causedBy: "connect"},
+      ], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: "test", actionId: "connect", message: "Bluetooth sheet remained open"}], evidence: ["recording"],
+      timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 0, testMs: 15000, teardownMs: 0}},
+  });
+  const client = new QueryClient();
+  client.setQueryData(["framework-run", run.requestId], {run, definition: null, outcome: "failed", uploadsComplete: true, evidenceStatus: "complete"});
+  const render = (stepId?: string) => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId} stepId={stepId}/></QueryClientProvider>);
+  expect(render()).toContain('data-step-id="connect" data-selected="true"');
+  expect(render()).not.toContain('data-step-id="open" data-selected="true"');
+  expect(render("open")).toContain('data-step-id="open" data-selected="true"');
+  expect(render("verify")).toContain('data-step-id="verify" data-selected="true"');
+  expect(initialFrameworkStep(run)?.id).toBe("connect");
+  expect(initialFrameworkStep(run, "open")?.id).toBe("open");
+  expect(initialFrameworkStep(run, "missing")?.id).toBe("connect");
+  const failed = run.result.steps[1]!;
+  expect(stepPlaybackOffset(failed, true)).toBe(15);
+  expect(stepPlaybackOffset(failed)).toBe(5);
+  expect(stepPlaybackOffset({...failed, recordingLocation: {assetId: "recording", startOffsetMs: 5000}}, true)).toBe(5);
+  expect(stepPlaybackOffset(run.result.steps[2]!, true)).toBeNull();
+  expect(initialFrameworkStep({...run, result: {...run.result, steps: []}})).toBeUndefined();
+  expect(initialFrameworkStep(undefined)).toBeUndefined();
+  const passed = {...run, result: {...run.result, steps: run.result.steps.slice(0, 1)}};
+  expect(initialFrameworkStep(passed)?.id).toBe("open");
+});
 
 test("routine lifecycle rows report real actions without video and keep failures in their phase", () => {
   const run = frameworkRunSchema.parse({
