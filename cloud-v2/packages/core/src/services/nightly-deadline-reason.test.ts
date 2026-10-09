@@ -3,6 +3,8 @@ import {NIGHTLY_COMPLETION_BOUNDARY_REASON, nightlyUnassignedReason} from "./nig
 import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 import {nightlySuiteProjection, terminalNightlySummary} from "./test-suite.service";
 import {requestInputDigest} from "./test-request.service";
+import {RoutineJobService, type RoutineJobRepository} from "./routine-job.service";
+import type {StoredRoutineJob} from "../types/routine-job.types";
 import {testSuiteSchema} from "../types/test-suite.types";
 
 const startedAt = "2026-10-09T11:00:00Z", finishedAt = "2026-10-09T14:00:09Z";
@@ -29,22 +31,40 @@ function frozenOccurrence() {
 test("expired unassigned nightly detail and compact history explain the frozen boundary without new evidence", () => {
   const {suite, plan, result} = frozenOccurrence(), original = requestInputDigest({plan, result});
   const compact = (value: typeof plan | typeof result) => ({...value, members: value.members.map(member => ({...member, portable: true}))});
-  for (const projection of [nightlySuiteProjection(suite, plan, result), terminalNightlySummary(suite, compact(plan), compact(result))]) {
+  for (const reason of [NIGHTLY_COMPLETION_BOUNDARY_REASON, "Routine job reached its three-hour deadline"]) {
+    const recorded = structuredClone(result);
+    recorded.members.forEach(member => {member.unavailableReason = reason;});
+    const before = requestInputDigest(recorded);
+    for (const projection of [nightlySuiteProjection(suite, plan, recorded), terminalNightlySummary(suite, compact(plan), compact(recorded))]) {
     expect(projection).toMatchObject({outcome: "failed", passed: 0, members: [
       {status: "not-run", publicationComplete: false, unavailableReason: explained},
       {status: "not-run", publicationComplete: false, unavailableReason: explained}]});
     expect(projection.members.every(member => !member.runId && !member.hostId && !member.laneId)).toBe(true);
+    }
+    expect(requestInputDigest(recorded)).toBe(before);
   }
   expect(requestInputDigest({plan, result})).toBe(original);
 });
 
-test("deadline snapshot retains only the saved waiting reason and keeps it across frozen restart", async () => {
+test("routine-job-first expiry retains its cancellation and saved waiting reason through nightly snapshot and restart", async () => {
   const {suite, plan, result} = frozenOccurrence();
-  const requests = plan.members.map((member, index) => ({requestId: member.requestId, state: "terminal" as const,
+  const requests: StoredRoutineJob[] = plan.members.map((member, index) => ({requestId: member.requestId, state: "awaiting-runner",
     fleetSelection: member.selection!, fleetSelectionSha256: requestInputDigest(member.selection),
-    fleetDeadline: new Date(finishedAt), fleetCancellation: {requestedAt: finishedAt, reason: NIGHTLY_COMPLETION_BOUNDARY_REASON},
+    fleetDeadline: new Date(Date.parse(startedAt) + 3 * 3600_000),
     ...(index === 0 ? {preparation: {code: "unavailable-provider", reason: "Recorded fixture service was unavailable", observedAt: startedAt},
-      fleetDispatch: {error: "Less specific dispatch failure"}} : {})}));
+      fleetDispatch: {attempts: 1, lastAttemptAt: startedAt, error: "Less specific dispatch failure"}} : {})}));
+  const rows = {async get(id: string) {return structuredClone(requests.find(row => row.requestId === id) ?? null);},
+    async cancel(id: string, _digest: string, cancellation: NonNullable<StoredRoutineJob['fleetCancellation']>) {
+      const row = requests.find(row => row.requestId === id)!;
+      if (!row.fleetCancellation) Object.assign(row, {state: "terminal", terminalStatus: "not-run", fleetCancellation: structuredClone(cancellation)});
+      return structuredClone(row);
+    }} as RoutineJobRepository;
+  const jobs = new RoutineJobService(rows, undefined, undefined, undefined, undefined, undefined, undefined, () => Date.parse(finishedAt));
+  for (const member of plan.members) {
+    await jobs.observation(member.requestId);
+    expect(requests.find(row => row.requestId === member.requestId)!.fleetCancellation!.reason).toBe("Routine job reached its three-hour deadline");
+    await jobs.cancel(member.requestId, {reason: NIGHTLY_COMPLETION_BOUNDARY_REASON});
+  }
   const original = JSON.stringify(requests);
   const service = new NightlyRoutineService(undefined, undefined, {async get(id) {return requests.find(row => row.requestId === id) as any;}});
   const snapshot = await service.snapshot(plan);
@@ -52,6 +72,8 @@ test("deadline snapshot retains only the saved waiting reason and keeps it acros
   expect(snapshot.members[1]!.unavailableReason).toBe(explained);
   const frozen = {...snapshot, finishedAt: result.finishedAt};
   expect(nightlySuiteProjection(suite, plan, structuredClone(frozen)).members[0]!.unavailableReason).toBe(snapshot.members[0]!.unavailableReason);
+  const compact = (value: typeof plan | typeof frozen) => ({...value, members: value.members.map(member => ({...member, portable: true}))});
+  expect(terminalNightlySummary(suite, compact(plan), compact(frozen)).members[0]!.unavailableReason).toBe(snapshot.members[0]!.unavailableReason);
   expect(JSON.stringify(requests)).toBe(original);
 });
 
