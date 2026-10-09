@@ -48,7 +48,8 @@ test("terminal list summaries preserve original verdicts and refuse contradictor
   }
   // Selection failure legitimately has no admitted request or prepared lane.
   const unadmitted = structuredClone(suite); delete unadmitted.members[1]!.requestId;
-  expect(terminalNightlySummary(unadmitted, plan, result)).toMatchObject({passed: 1, members: [{status: "pass"}, {status: "not-run"}]});
+  expect(terminalNightlySummary(unadmitted, plan, result)).toMatchObject({passed: 1,
+    members: [{requestId: "one", status: "pass"}, {requestId: "two", status: "not-run"}]});
 });
 test('historical suite member results remain readable without routine or framework provenance', async () => {
   const startedAt = '2026-10-01T11:00:00Z', finishedAt = '2026-10-01T11:01:00Z';

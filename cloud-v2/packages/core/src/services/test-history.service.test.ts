@@ -13,6 +13,8 @@ import {TestSuiteService, type SuiteSummaryRead} from "./test-suite.service";
 import {createFrameworkRunSummaryProjection} from "./framework-run-summary.service";
 import {requestInputDigest} from "./test-request.service";
 import {TestRunError} from "./test-result-error";
+import {FrameworkResultService} from "./framework-result.service";
+import {TestRerunService} from "./test-rerun.service";
 
 const summaryReader = (detail: (id: string) => Promise<any>) => ({
   async summaries(ids: string[]) {
@@ -554,6 +556,19 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     expect(row!.payload).toEqual(payload);
     expect(row!.nightlyPlan).toEqual(nightlyPlan);
     expect(row!.nightlyResult).toEqual(nightlyResult);
+    const suites = new TestSuiteService();
+    for (const parent of [await suites.summary(suite.suiteId), await suites.detail(suite.suiteId)]) {
+      expect(parent).toMatchObject({outcome: "failed", passed: 0, members: [
+        {requestId: "durable-a", status: "not-run", publicationComplete: false},
+        {requestId: "durable-b", status: "not-run", publicationComplete: false},
+      ]});
+      for (const selected of parent.members) {
+        // The same request ID powers the existing parent link, including late original evidence.
+        expect(await new FrameworkResultService().detail(selected.requestId!)).toMatchObject({run: {requestId: selected.requestId}});
+        const attempts = await new TestRerunService().history({suiteId: suite.suiteId}, selected.memberId);
+        expect(attempts.original).toMatchObject({requestId: selected.requestId, status: "not-run", publicationComplete: false});
+      }
+    }
 
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({});
     for (const [id, declaration] of [
