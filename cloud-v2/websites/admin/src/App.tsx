@@ -104,7 +104,9 @@ interface ReportSummary {
 }
 
 interface ReportDetailResponse {
-  report: ReportSummary & { context: Record<string, unknown> };
+  report: ReportSummary & { context: Record<string, unknown>; logCollection?: Record<string, {
+    state: 'requested' | 'received' | 'failed' | 'unavailable' | 'timed-out'; reason?: string; entryCount?: number;
+  }> };
   assets: Array<{
     artifactId: string;
     fileName: string | null;
@@ -1098,6 +1100,22 @@ function ReportDetailDrawer(props: { reportId: string; onClose: () => void }) {
           {detail.isError ? <ErrorText error={detail.error} /> : null}
           {report ? (
             <>
+              {report.logCollection ? (
+                <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
+                  <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Log collection</div>
+                  <table className="mt-3 w-full text-left text-sm">
+                    <thead><tr className="text-[#68746d]"><th className="py-2 font-medium">Source</th><th className="py-2 font-medium">Status</th><th className="py-2 font-medium">Details</th></tr></thead>
+                    <tbody>{Object.entries(report.logCollection).map(([source, result]) => (
+                      <tr key={source} className="border-t border-[#e0e4de]">
+                        <td className="py-2">{source.replaceAll('_', ' ')}</td>
+                        <td className={`py-2 ${result.state === 'received' ? 'text-green-700' : result.state === 'requested' ? 'text-[#68746d]' : 'text-amber-700'}`}>{result.state}</td>
+                        <td className="py-2 text-[#68746d]">{result.state === 'received' ? `${result.entryCount ?? 0} entries` : result.reason ?? 'Waiting for upload'}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              ) : null}
+
               <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
                 <div className="flex flex-wrap items-center gap-2">
                   <ReportKindTag kind={report.kind} />

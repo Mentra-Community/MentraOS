@@ -18,6 +18,7 @@ jest.mock("../../../modules/engine/src/services/CloudClientService", () => ({
     core: {
       reports: {
         submit: jest.fn(),
+        updateLogCollection: jest.fn(async () => {}),
         addLogs: jest.fn(),
         addScreenshots: jest.fn(),
         complete: jest.fn(),

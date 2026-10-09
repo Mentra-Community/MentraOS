@@ -801,6 +801,9 @@ export const cloudClientService = {
       submit(...args: Parameters<CloudCore["reports"]["submit"]>) {
         return getCoreClient().reports.submit(...args)
       },
+      updateLogCollection(...args: Parameters<CloudCore["reports"]["updateLogCollection"]>) {
+        return getCoreClient().reports.updateLogCollection(...args)
+      },
       addLogs(...args: Parameters<CloudCore["reports"]["addLogs"]>) {
         return getCoreClient().reports.addLogs(...args)
       },

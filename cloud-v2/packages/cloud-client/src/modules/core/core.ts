@@ -22,6 +22,8 @@ import {
   type AddReportArtifactsResult,
   type ReportAttachmentInput,
   type ReportLogEntry,
+  type ReportLogCollectionUpdate,
+  type ReportLogSource,
   type ReportStatus,
   type SubmitReportInput,
   type SubmitReportResult,
@@ -39,6 +41,8 @@ export type {
   ReportDetails,
   ReportKind,
   ReportLogEntry,
+  ReportLogCollectionUpdate,
+  ReportLogSource,
   ReportStatus,
   ReportSystemPriority,
   ReportTrigger,
@@ -144,6 +148,11 @@ export class Core {
   };
   readonly reports: {
     submit(input: SubmitReportInput): Promise<SubmitReportResult>;
+    updateLogCollection(
+      reportId: string,
+      source: ReportLogSource,
+      update: ReportLogCollectionUpdate,
+    ): Promise<void>;
     addLogs(
       reportId: string,
       source: string,
@@ -213,6 +222,7 @@ export class Core {
     };
     this.reports = {
       submit: reports.submit.bind(reports),
+      updateLogCollection: reports.updateLogCollection.bind(reports),
       addLogs: reports.addLogs.bind(reports),
       addScreenshots: reports.addScreenshots.bind(reports),
       addVideos: reports.addVideos.bind(reports),

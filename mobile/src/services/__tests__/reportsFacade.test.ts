@@ -7,6 +7,7 @@ jest.mock("../../../modules/engine/src/services/CloudClientService", () => ({
     core: {
       reports: {
         submit: jest.fn(),
+        updateLogCollection: jest.fn(async () => {}),
         addLogs: jest.fn(),
         addScreenshots: jest.fn(),
         complete: jest.fn(),
@@ -25,6 +26,7 @@ jest.mock("../../../modules/engine/src/utils/diagnosticContext", () => ({
 jest.mock("../../../modules/engine/src/utils/devLogging", () => ({
   logBuffer: {
     getRecentLogs: jest.fn(() => []),
+    append: jest.fn(),
   },
 }))
 
@@ -122,6 +124,6 @@ describe("reports facade automatic throttling", () => {
     })
 
     expect(submitMock).toHaveBeenCalledTimes(2)
-    expect(addLogsMock).toHaveBeenCalledTimes(2)
+    expect(addLogsMock.mock.calls.filter(([, source]) => source === "phone")).toHaveLength(2)
   })
 })

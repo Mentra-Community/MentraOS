@@ -103,6 +103,24 @@ describe("Core reports client", () => {
     ]);
   });
 
+  test("records a source collection attempt without claiming artifact receipt", async () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const reports = new Reports({ http: fakeHttp(calls) });
+
+    await reports.updateLogCollection("rep_/123", "glasses_firmware", {
+      state: "unavailable",
+      reason: "glasses_disconnected",
+    });
+
+    expect(calls).toEqual([
+      {
+        method: "POST",
+        path: "/api/client/reports/rep_%2F123/log-collection/glasses_firmware",
+        body: { state: "unavailable", reason: "glasses_disconnected" },
+      },
+    ]);
+  });
+
   test("adds screenshots as multipart artifacts", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const reports = new Reports({ http: fakeHttp(calls) });

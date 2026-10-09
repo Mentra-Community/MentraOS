@@ -45,11 +45,63 @@ Primary mobile/engine API:
 POST /api/client/reports
 POST /api/client/reports/:reportId/artifacts
 POST /api/client/reports/:reportId/complete
+POST /api/client/reports/:reportId/log-collection/:source
 ```
 
 There is deliberately no `/api/incidents` compatibility mount in Cloud V2.
 Glasses logs are report artifacts and use the same artifact endpoint as phone
 logs and screenshots.
+
+## Log collection and missing sources
+
+Bug and automatic reports declare `phone`, `glasses`, `glasses_firmware`,
+`cloud` and `miniapp_server` collection rows. A row starts `requested`; only a
+successfully stored log artifact marks it `received` and records the artifact
+ID, receipt time and entry count. A late dispatch failure cannot erase an
+existing receipt. A late artifact can replace an earlier failure or timeout.
+The Admin report panel and detail API expose these rows.
+
+The Mentra App uploads its original phone log snapshot, awaits at most 10 seconds
+for token synchronization and the local glasses notification call, and uploads a
+separate `phone_delivery` delta (at most 500 entries, with an omission notice).
+This delta captures the notification outcome that used to occur after the phone
+snapshot. Local SDK completion means `requested`, not device receipt. A disconnected
+pair is `unavailable`; a failed or timed-out local dispatch is `failed`. Native
+dispatch cannot be cancelled after it starts; late uploads remain valid.
+The device endpoint accepts only phone/glasses/firmware outcomes and cannot
+assert `received` or change server collection outcomes.
+
+ASG owns its Java and BES log transports. BLE sends firmware and Java bundles
+independently: a settled refusal to start the firmware transfer does not suppress
+Java logs. An in-flight writer still retains exclusive transfer ownership.
+
+The existing Core reconciliation tick independently collects Cloud V2 and miniapp
+backend logs from their existing Better Stack sources. It claims each source on
+the report row for 60 seconds, so a crashed collector can be resumed without a new
+queue. Reports remain eligible for collection for 24 hours. Queries use the report's
+authenticated user and its frozen ten-minute window ending ten seconds after
+creation, deduplicate hot/archive rows, and retain the latest 1,000 entries. Each
+query is capped at 15 seconds and 2 MiB; credentials are redacted before attachment.
+One source failure does not suppress another source or block report submission.
+An empty first lookup remains `requested` so delayed Vector ingestion can be
+collected by a later tick within the original four-minute window. An empty lookup
+after that deadline means `unavailable`, never an empty success claim.
+
+Miniapp server logs must reach the existing environment's miniapp Better Stack
+source and carry `mentraUserId` or `userId` (or a complete user token in text logs).
+Untagged server-wide logs are not attached to a user's report. Local miniapp console
+logs are already part of phone logs. Backends outside this collection path remain
+explicitly unavailable; there is no external-backend discovery or Cloud V1 socket
+telemetry compatibility layer.
+
+Requested rows with no artifact after four minutes display `timed-out`; the stored
+request is retained for late receipt. `/complete` still completes phone-side report
+submission and Slack delivery, and does not claim all sources arrived.
+
+Runtime configuration: `BETTERSTACK_V2_HOST`, `BETTERSTACK_V2_USERNAME`, and
+`BETTERSTACK_V2_PASSWORD` come from the existing shared Doppler configuration.
+`CLOUD_CORE_ENVIRONMENT` selects the version-controlled source mapping. The query
+client uses the V2 eu-central-1a credentials, not retired Cloud V1 credentials.
 
 The report owner can also attach MP4 recordings to an existing report, whatever
 its status, with multipart `type=video`, a declared capture `source` label (for
