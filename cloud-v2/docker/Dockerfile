@@ -19,6 +19,7 @@ WORKDIR /app/cloud-v2
 # Copy lockfile + workspace manifests first to maximize layer reuse on
 # dependency-only changes (Docker layer cache).
 COPY cloud-v2/bun.lock cloud-v2/package.json ./
+COPY cloud-v2/patches/ ./patches/
 COPY cloud-v2/packages/shared/package.json ./packages/shared/
 COPY cloud-v2/packages/auth/package.json ./packages/auth/
 COPY cloud-v2/packages/cli/package.json ./packages/cli/

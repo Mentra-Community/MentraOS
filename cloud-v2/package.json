@@ -39,5 +39,8 @@
     "@types/bun": "latest",
     "jose": "^5.9.6",
     "typescript": "^5.7.0"
+  },
+  "patchedDependencies": {
+    "@soniox/node@2.3.0": "patches/@soniox%2Fnode@2.3.0.patch"
   }
 }

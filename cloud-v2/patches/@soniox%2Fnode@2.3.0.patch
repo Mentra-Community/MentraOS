@@ -1,0 +1,66 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 7d09819913c73e38b92a1923da3e5c710e692b26..0709e6eda968034d2ac08603a594160688afb021 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -641,9 +641,8 @@ function toUint8Array(data) {
+ /**
+ * Build the configuration message to send after WebSocket connection
+ */
+-function buildConfigMessage(config, apiKey) {
++function buildConfigMessage(config) {
+ 	return {
+-		api_key: apiKey,
+ 		model: config.model,
+ 		audio_format: config.audio_format ?? "auto",
+ 		sample_rate: config.sample_rate,
+@@ -950,7 +949,7 @@ var RealtimeSttSession = class {
+ 	async createWebSocket() {
+ 		return new Promise((resolve, reject) => {
+ 			try {
+-				const ws = new WebSocket(this.wsBaseUrl);
++				const ws = new WebSocket(this.wsBaseUrl, ["soniox-api-key", this.apiKey]);
+ 				this.ws = ws;
+ 				ws.binaryType = "arraybuffer";
+ 				const cleanup = () => {
+@@ -959,7 +958,7 @@ var RealtimeSttSession = class {
+ 				};
+ 				const onOpen = () => {
+ 					cleanup();
+-					const configMessage = buildConfigMessage(this.config, this.apiKey);
++					const configMessage = buildConfigMessage(this.config);
+ 					ws.send(JSON.stringify(configMessage));
+ 					ws.addEventListener("message", this.handleMessage.bind(this));
+ 					ws.addEventListener("close", this.handleClose.bind(this));
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 2dda2f3e7320ab056c90a17b73b2532abca7d26d..e9155182151090059184278b346d99d11f30d835 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -641,9 +641,8 @@ function toUint8Array(data) {
+ /**
+ * Build the configuration message to send after WebSocket connection
+ */
+-function buildConfigMessage(config, apiKey) {
++function buildConfigMessage(config) {
+ 	return {
+-		api_key: apiKey,
+ 		model: config.model,
+ 		audio_format: config.audio_format ?? "auto",
+ 		sample_rate: config.sample_rate,
+@@ -950,7 +949,7 @@ var RealtimeSttSession = class {
+ 	async createWebSocket() {
+ 		return new Promise((resolve, reject) => {
+ 			try {
+-				const ws = new WebSocket(this.wsBaseUrl);
++				const ws = new WebSocket(this.wsBaseUrl, ["soniox-api-key", this.apiKey]);
+ 				this.ws = ws;
+ 				ws.binaryType = "arraybuffer";
+ 				const cleanup = () => {
+@@ -959,7 +958,7 @@ var RealtimeSttSession = class {
+ 				};
+ 				const onOpen = () => {
+ 					cleanup();
+-					const configMessage = buildConfigMessage(this.config, this.apiKey);
++					const configMessage = buildConfigMessage(this.config);
+ 					ws.send(JSON.stringify(configMessage));
+ 					ws.addEventListener("message", this.handleMessage.bind(this));
+ 					ws.addEventListener("close", this.handleClose.bind(this));
