@@ -165,6 +165,12 @@ export const recordedFrameworkRunSchema = frozenFrameworkRunSchema.extend({
 }).superRefine(validateFrozenFrameworkRun);
 export type FrameworkRun = z.infer<typeof frameworkRunSchema>;
 export type RecordedFrameworkRun = z.infer<typeof recordedFrameworkRunSchema>;
+/** Display-only association read from an original, digest-checked diagnostic; never part of the frozen verdict. */
+export interface FrameworkFailureScreen {
+  phase: RecordedFrameworkRun['result']['failures'][number]['phase'];
+  actionId: string;
+  assetId: string;
+}
 
 export function frameworkRunOutcome(run: RecordedFrameworkRun) {
   if (run.result.setup.status === "failed") return "setup-failed";

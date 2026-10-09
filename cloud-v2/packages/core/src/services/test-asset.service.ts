@@ -107,9 +107,11 @@ export class TestAssetService {
   }
 
   async mediaDeclaredAsset(meta: TestAsset, stored: StoredTestAsset, request: Request): Promise<Response> {
+    request.signal.throwIfAborted();
     if (stored.sizeBytes !== meta.sizeBytes || stored.sha256 !== meta.sha256) throw new TestRunError(409, "stored asset metadata differs");
     const storage = this.storageFactory();
-    const stat = await storage.statObject(stored.storageKey);
+    const stat = await storage.statObject(stored.storageKey, request.signal);
+    request.signal.throwIfAborted();
     if (stat.sizeBytes !== meta.sizeBytes) throw new TestRunError(409, "stored asset size changed");
     const headers = new Headers({ "Content-Type": meta.contentType, "Accept-Ranges": "bytes",
       "Content-Disposition": `inline; filename="${meta.filename.replace(/[^A-Za-z0-9._-]/g, "_")}"`,
@@ -127,6 +129,10 @@ export class TestAssetService {
     headers.set("Content-Length", String(range ? range.end - range.start + 1 : meta.sizeBytes));
     if (range) headers.set("Content-Range", `bytes ${range.start}-${range.end}/${meta.sizeBytes}`);
     let body = request.method === "HEAD" ? null : await storage.streamObject(stored.storageKey, range);
+    if (request.signal.aborted) {
+      if (body && !(body instanceof Blob)) void body.cancel().catch(() => {});
+      request.signal.throwIfAborted();
+    }
     if (!range && request.headers.has("range") && body instanceof Blob) {
       // Bun otherwise applies the original Range again to a full-file Blob,
       // overriding the 200 required when If-Range did not match. Keep it lazy.

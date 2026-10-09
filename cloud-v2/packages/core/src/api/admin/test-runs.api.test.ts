@@ -61,7 +61,7 @@ test("the valid run ID history still opens its individual result", async () => {
     const response = await createTestRunAdminApi().request("/history");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({kind: "run", runId: "history"});
-    expect(detail).toHaveBeenCalledWith("history");
+    expect(detail).toHaveBeenCalledWith("history", true);
   } finally {detail.mockRestore();}
 });
 

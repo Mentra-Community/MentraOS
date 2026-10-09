@@ -14,6 +14,7 @@ import {TestRunError} from "./test-result-error";
 import {TestAssetService, type TestAsset} from "./test-asset.service";
 import type {CandidateVerification} from '../types/candidate-verification.types';
 import type {RoutineSourceRef} from '../types/framework-version.types';
+import {readFailureScreens} from './framework-failure-screen';
 
 export class FrameworkResultConflict extends Error {}
 const resultCursorSchema = z.object({startedAt: z.string().datetime({offset: true}), runId: z.string().min(1).max(240)}).strict();
@@ -230,8 +231,8 @@ export class FrameworkResultService {
     return {runs: await Promise.all(page.map(row => readFrameworkRunSummary(row))), nextCursor};
   }
 
-  async detail(requestId: string) {
-    return this.describe(await this.repository.getByRequest(requestId));
+  async detail(requestId: string, includeFailureScreens = false) {
+    return this.describe(await this.repository.getByRequest(requestId), includeFailureScreens);
   }
 
   /** Occurrence polling reads the existing verified verdict without transferring its manifest or execution evidence. */
@@ -257,14 +258,18 @@ export class FrameworkResultService {
     return this.media(requestId, assetId, request);
   }
 
-  async detailByRun(runId: string) {
-    return this.describe(await this.repository.getByRun(runId));
+  async detailByRun(runId: string, includeFailureScreens = false) {
+    return this.describe(await this.repository.getByRun(runId), includeFailureScreens);
   }
 
-  private async describe(stored: StoredFrameworkRun | null) {
+  private async describe(stored: StoredFrameworkRun | null, includeFailureScreens: boolean) {
     if (!stored) throw new TestRunError(404, "Framework run was not found");
     const run = recordedFrameworkRunSchema.parse(stored.payload), definition = await this.definition(run);
-    return {run, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(run), uploadsComplete: stored.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed"};
+    const displayEvidence = includeFailureScreens ? {failureScreens: stored.uploadsComplete
+      ? await readFailureScreens(run, (asset, signal) => this.mediaByRun(run.result.runId, asset.id,
+        new Request('http://localhost/frozen-failure-diagnostic', {signal}))) : []} : {};
+    return {run, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(run), uploadsComplete: stored.uploadsComplete,
+      evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed", ...displayEvidence};
   }
 
   async media(requestId: string, assetId: string, request: Request) {
@@ -276,9 +281,11 @@ export class FrameworkResultService {
   }
 
   private async storedMedia(stored: StoredFrameworkAsset | null, assetId: string, request: Request) {
+    request.signal.throwIfAborted();
     const asset = stored?.asset;
     if (!stored || !asset) throw new TestRunError(404, "Asset is not declared in this result");
     const uploaded = await TestAssetModel.findOne({runId: stored.runId, assetId}).read("primary").readConcern("majority").lean();
+    request.signal.throwIfAborted();
     if (!uploaded) throw new TestRunError(404, "Asset upload is not acknowledged");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"
       : asset.mimeType.startsWith("image/") ? "screenshot" : asset.mimeType === "application/json" ? "metadata" : "log";

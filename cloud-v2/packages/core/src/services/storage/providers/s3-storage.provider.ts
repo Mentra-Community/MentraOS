@@ -48,7 +48,7 @@ export class S3StorageProvider implements StorageProvider {
     await this.client.file(input.key).write(Bun.file(input.path), { type: input.contentType });
   }
 
-  async statObject(key: string): Promise<{ sizeBytes: number }> {
+  async statObject(key: string, signal?: AbortSignal): Promise<{ sizeBytes: number }> {
     // R2 can compress text HEAD responses and omit Content-Length. Bun's
     // native S3 stat advertises compression and reports that missing size as 0.
     // Request the object's original representation without downloading it.
@@ -58,7 +58,7 @@ export class S3StorageProvider implements StorageProvider {
         method: "HEAD",
         headers: { "Accept-Encoding": "identity" },
         redirect: "error",
-        signal: AbortSignal.timeout(10_000),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
       });
     } catch {
       // Fetch errors can include the signed URL. Keep credentials out of logs.

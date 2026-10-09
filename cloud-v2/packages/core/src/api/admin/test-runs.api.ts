@@ -44,9 +44,9 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   app.get("/:runId", async c => {
     const id = c.req.param("runId");
     if (!frameworkIdentitySchema.safeParse(id).success) throw new TestRunError(400, "Invalid run or request identity");
-    try {return c.json({kind: "run", ...await results.detailByRun(id)});}
+    try {return c.json({kind: "run", ...await results.detailByRun(id, true)});}
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
-    try {return c.json({kind: "run", ...await results.detail(id)});}
+    try {return c.json({kind: "run", ...await results.detail(id, true)});}
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
     const row = await requests.get(id);
     if (!row) throw new TestRunError(404, "Routine run or request was not found");

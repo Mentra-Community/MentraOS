@@ -7,7 +7,7 @@ import {RunRerunLinks} from "./test-reruns";
 import {useEffect, useId, useRef, useState} from "react";
 import {useInfiniteQuery, useQuery, useQueryClient} from "@tanstack/react-query";
 import type {CatalogExample, CatalogHistoryRun, RoutineCatalogCard as CatalogCard, FrameworkRunSummary, FrameworkRunPage as ScopedRunPage, TestHistoryEntry, TestHistoryPage, TestHistoryOrigin} from "../../../../packages/core/src/types/test-history.types";
-import type {FrameworkRun, RecordedFrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
+import type {FrameworkFailureScreen, FrameworkRun, RecordedFrameworkRun} from "../../../../packages/core/src/types/framework-run.types";
 import {api} from "../lib/api";
 import {RoutineSearch, useRoutineSearch, matchesRoutineSearch, hasRoutineFilters, type RoutineSearchFilters, type SearchableRoutine} from "../components/routine-search";
 import {RecordingVideo} from "../components/recording-video";
@@ -169,7 +169,7 @@ export function frameworkRunHref(runId: string) {
 }
 
 type RunDisplay = {kind?: "run"; run: RecordedFrameworkRun; definition: RoutineEnrollment["definition"] | null;
-  outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"};
+  outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"; failureScreens?: FrameworkFailureScreen[]};
 type RequestDisplay = {kind: "request"; request: FrameworkRequestDisplay; run?: never; uploadsComplete?: never};
 const CANCELLED_REQUEST_OBSERVATION_MS = 10 * 60 * 1000;
 
@@ -202,7 +202,7 @@ function RequestCard({request, observing, refreshing, onRefresh}: {request: Fram
 }
 
 export function runFailureSummary(run: RecordedFrameworkRun, outcome: string, evidenceStatus: string) {
-  const phase = outcome === "setup-failed" ? "setup" : outcome === "failed" ? "test" : outcome === "teardown-failed" ? "teardown"
+  const phase: FrameworkFailureScreen['phase'] | null = outcome === "setup-failed" ? "setup" : outcome === "failed" ? "test" : outcome === "teardown-failed" ? "teardown"
     : evidenceStatus === "failed" ? "evidence" : null;
   if (!phase) return null;
   const failure = run.result.failures.find(item => item.phase === phase);
@@ -229,6 +229,14 @@ export function stepRecordingPlayback(run: RecordedFrameworkRun, step: RecordedF
     pause: atFailure};
 }
 
+export function selectedFailureScreen(run: RecordedFrameworkRun, screens: FrameworkFailureScreen[] | undefined, actionId: string | undefined,
+  phase: FrameworkFailureScreen['phase']) {
+  const failure = run.result.failures.find(failure => failure.actionId === actionId && failure.phase === phase);
+  const screen = failure && screens?.find(screen => screen.phase === failure.phase && screen.actionId === failure.actionId);
+  return screen && run.assets.find(asset => asset.id === screen.assetId && asset.kind === 'screenshot' &&
+    ['image/png', 'image/jpeg'].includes(asset.mimeType));
+}
+
 export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: string}) {
   const video = useRef<HTMLVideoElement>(null);
   const executionDetails = useRef<HTMLDivElement>(null);
@@ -236,6 +244,9 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const pendingPlayback = useRef<ReturnType<typeof stepRecordingPlayback>>(null);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [selectedStep, setSelectedStep] = useState<string | undefined>(stepId);
+  const [mediaView, setMediaView] = useState<'failure' | 'recording'>(stepId ? 'recording' : 'failure');
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [imageError, setImageError] = useState(false);
   const [stepSearch, setStepSearch] = useState("");
   const [observation, setObservation] = useState<{runId: string; startedAt: number | null}>(() => ({runId, startedAt: null}));
   const observedAt = observation.runId === runId ? observation.startedAt ?? Date.now() : Date.now();
@@ -248,6 +259,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   }, [runId, result.data?.kind, result.data?.kind === "request" ? result.data.request.terminalStatus : undefined]);
   useEffect(() => {
     setStepSearch(""); setSelectedStep(stepId);
+    setMediaView(stepId ? 'recording' : 'failure'); setMediaError(null); setImageError(false);
     pendingPlayback.current = null; setSelectedAsset(null);
   }, [runId, stepId]);
   const loadedRun = result.data?.kind === "request" ? undefined : result.data?.run;
@@ -294,12 +306,13 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         refreshing={result.isFetching} onRefresh={() => {setObservation({runId, startedAt: request.terminalStatus === "cancelled" ? Date.now() : null}); void result.refetch();}} />
     </div>;
   }
-  const {run, definition, outcome, uploadsComplete, evidenceStatus} = result.data;
+  const {run, definition, outcome, uploadsComplete, evidenceStatus, failureScreens} = result.data;
   const failureSummary = runFailureSummary(run, outcome, evidenceStatus);
   const actualRunId = result.data.kind === "run" ? run.result.runId : runId;
   const recordingAsset = selectedAsset ?? run.recordingAssetId;
   const seekStep = (step: RecordedFrameworkRun["result"]["steps"][number], atFailure = false) => {
     setSelectedStep(step.id);
+    setMediaView(atFailure ? 'failure' : 'recording'); setMediaError(null); setImageError(false);
     const playback = stepRecordingPlayback(run, step, atFailure);
     if (playback) seekRecording(playback);
     video.current?.scrollIntoView({block: "nearest", behavior: "smooth"});
@@ -309,11 +322,17 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     setStepSearch("");
     const step = run.result.steps.find(item => item.id === failureSummary.actionId);
     if (step) seekStep(step, true);
-    else setSelectedStep(failureSummary.actionId);
+    else {setSelectedStep(failureSummary.actionId); setMediaView('failure'); setImageError(false);}
     setFailureTarget(failureSummary.target);
   };
   const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-run/${encodeURIComponent(actualRunId)}/assets/${encodeURIComponent(id)}`;
   const hasRecording = uploadsComplete && run.assets.some(asset => asset.id === recordingAsset && asset.kind === "recording");
+  const selectedScreen = uploadsComplete ? selectedFailureScreen(run, failureScreens, activeStep, 'test') : undefined;
+  const failureScreen = selectedScreen ?? (uploadsComplete && failureSummary
+    ? selectedFailureScreen(run, failureScreens, failureSummary.actionId, failureSummary.phase) : undefined);
+  const failureScreenAction = selectedScreen ? activeStep : failureSummary?.actionId;
+  const showFailureScreen = !!failureScreen && mediaView === 'failure';
+  const hasMedia = hasRecording || !!failureScreen;
   const definitionSteps = new Map(definition?.steps.map(step => [step.id, step]) ?? []);
   const visibleSteps = run.result.steps.map((step, index) => ({step, index, source: definitionSteps.get(step.id)}))
     .filter(({step, source}) => matchesStepSearch(step, source, stepSearch));
@@ -349,20 +368,44 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     </section>
     <LifecyclePanel phase="setup" actions={run.result.setup.actions} status={run.result.setup.status}
       actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} sources={run.result.stepSources?.setup} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
-    <div className={hasRecording ? "grid gap-5 lg:h-[calc(var(--recording-height)+5rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
-    {hasRecording && <section aria-label="Run recording" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
-      <h3 className="shrink-0 font-semibold">Recording</h3>
-      <div className="mt-3 lg:min-h-0 lg:flex-1"><RecordingVideo ref={video} data-asset-id={recordingAsset!} className="scroll-mt-[calc(var(--admin-header-height,6rem)+1rem)]" src={assetHref(recordingAsset!)} onLoadedMetadata={() => {
+    <div className={hasMedia ? "grid gap-5 lg:h-[calc(var(--recording-height)+8rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
+    {hasMedia && <section aria-label="Run evidence viewer" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <h3 className="font-semibold">{showFailureScreen ? 'Failure screenshot' : 'Recording'}</h3>
+        {failureScreen && <div className="flex gap-2">
+          <TestingButton disabled={showFailureScreen} onClick={() => {video.current?.pause(); setMediaView('failure');}}>Failure screenshot</TestingButton>
+          {hasRecording && <TestingButton disabled={!showFailureScreen} onClick={() => {
+            const step = run.result.steps.find(step => step.id === activeStep);
+            if (step) seekStep(step, true);
+            setMediaView('recording'); setMediaError(null);
+          }}>Watch recording</TestingButton>}
+        </div>}
+      </div>
+      <div className="mt-3 lg:min-h-0 lg:flex-1">
+      {showFailureScreen ? <>
+        {imageError ? <p role="alert">Failure screenshot could not load.</p> : <img src={assetHref(failureScreen.id)}
+          alt={`Failure screenshot: ${failureScreenAction}`} onError={() => setImageError(true)}
+          className="mx-auto block h-[var(--recording-height)] w-full max-w-[60rem] rounded-lg bg-black object-contain" />}
+        <a className={`${TESTING_LINK} mt-2 inline-block text-sm`} href={assetHref(failureScreen.id)}>Open failure screenshot</a>
+      </> : hasRecording ? <><RecordingVideo ref={video} data-asset-id={recordingAsset!} className="scroll-mt-[calc(var(--admin-header-height,6rem)+1rem)]" src={assetHref(recordingAsset!)} onLoadedMetadata={() => {
         const playback = pendingPlayback.current;
         if (video.current && playback && video.current.dataset.assetId === playback.assetId) {
           if (playback.pause) video.current.pause();
           video.current.currentTime = playback.offset; pendingPlayback.current = null;
         }
-      }} /></div>
+      }} onError={() => setMediaError('Recording could not play. Reload it to try again.')} />
+      {mediaError && <div className="mt-2 flex flex-wrap items-center gap-2"><p role="alert" className="text-sm">{mediaError}</p>
+        <TestingButton onClick={() => {
+          const current = video.current;
+          if (current && pendingPlayback.current?.assetId !== recordingAsset && Number.isFinite(current.currentTime))
+            pendingPlayback.current = {assetId: recordingAsset!, offset: current.currentTime, pause: true};
+          setMediaError(null); current?.load();
+        }}>Reload recording</TestingButton></div>}
+      </> : null}</div>
     </section>}
-    <section id="run-phase-test" tabIndex={-1} aria-label="Execution steps" className={`${PANEL} min-w-0 ${hasRecording ? "order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col" : ""}`}><h3 className="shrink-0 font-semibold">Execution</h3>
+    <section id="run-phase-test" tabIndex={-1} aria-label="Execution steps" className={`${PANEL} min-w-0 ${hasMedia ? "order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col" : ""}`}><h3 className="shrink-0 font-semibold">Execution</h3>
       <label className="mt-3 block shrink-0 text-sm">Search steps<input type="search" className={`mt-1 block ${TESTING_FIELD}`} value={stepSearch} onChange={event => setStepSearch(event.target.value)} placeholder="Instruction, expected result or step ID" /></label>
-      <div ref={executionDetails} role="region" aria-label="Execution details" tabIndex={0} className={`mt-2 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 ${hasRecording ? "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>
+      <div ref={executionDetails} role="region" aria-label="Execution details" tabIndex={0} className={`mt-2 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 ${hasMedia ? "lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-2" : ""}`}>
       {!visibleSteps.length && <p className="mt-3">No steps match your search.</p>}
       <ol role="list" className="mt-3 list-none space-y-2">{visibleSteps.map(({step, index, source}) => {
         const title = source?.instruction ?? step.id;
