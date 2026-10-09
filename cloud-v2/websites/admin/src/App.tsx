@@ -98,13 +98,13 @@ interface ReportSummary {
   } | null;
   report: ({ actualBehavior?: string; expectedBehavior?: string; userSeverity?: number; contactEmail?: string } & Record<string, unknown>) | null;
   feedback: Record<string, unknown> | null;
-  artifacts: ReportArtifact[];
+  artifactCount: number;
   createdAt: string | null;
   updatedAt: string | null;
 }
 
 interface ReportDetailResponse {
-  report: ReportSummary & { context: Record<string, unknown>; logCollection?: Record<string, {
+  report: Omit<ReportSummary, "artifactCount"> & { artifacts: ReportArtifact[]; context: Record<string, unknown>; logCollection?: Record<string, {
     state: 'requested' | 'received' | 'failed' | 'unavailable' | 'timed-out'; reason?: string; entryCount?: number;
   }> };
   assets: Array<{
@@ -1023,9 +1023,9 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
                   <div className="flex flex-wrap items-center gap-2">
                     <ReportKindTag kind={report.kind} />
                     <ReportStatusTag status={report.status} />
-                    {report.artifacts.length > 0 ? (
+                    {report.artifactCount > 0 ? (
                       <span className="rounded-full bg-[#f0f2ef] px-2.5 py-0.5 text-xs font-semibold text-[#4f5d54]">
-                        {report.artifacts.length} artifact{report.artifacts.length === 1 ? "" : "s"}
+                        {report.artifactCount} artifact{report.artifactCount === 1 ? "" : "s"}
                       </span>
                     ) : null}
                   </div>
@@ -1300,7 +1300,7 @@ function ReportStatusTag({ status }: { status: ReportStatus }) {
   return <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-[0.08em] ${tone[status]}`}>{status}</span>;
 }
 
-function reportSummaryText(report: ReportSummary): string {
+function reportSummaryText(report: Pick<ReportSummary, "report" | "feedback" | "trigger">): string {
   if (report.report?.actualBehavior) return String(report.report.actualBehavior);
   if (report.feedback) {
     if (typeof report.feedback.message === "string" && report.feedback.message) return report.feedback.message;

@@ -4,8 +4,8 @@
  * Artifact payloads (screenshot/video bytes, serialized log bundles) never live in
  * the report document: each one is written to blob storage and described by a
  * `report_assets` row (same pattern as miniapp assets), while the report
- * embeds only artifact metadata. A report therefore stays a few KB no matter
- * how many attachments it collects.
+ * embeds only artifact metadata. List reads project an artifact count so reports
+ * with many attachments do not transfer their full inventory during triage.
  */
 
 import { ulid } from "ulid";
@@ -571,12 +571,13 @@ export interface AdminReportSummary {
   trigger: ReportTrigger | null;
   report: (ReportDetails & Record<string, unknown>) | null;
   feedback: Record<string, unknown> | null;
-  artifacts: AdminReportArtifact[];
+  artifactCount: number;
   createdAt: string | null;
   updatedAt: string | null;
 }
 
-export interface AdminReportDetail extends AdminReportSummary {
+export interface AdminReportDetail extends Omit<AdminReportSummary, "artifactCount"> {
+  artifacts: AdminReportArtifact[];
   context: Record<string, unknown>;
   slackDelivery?: ReportSlackDelivery;
   logCollection?: Partial<Record<ReportLogSource, ReportLogCollection>>;
@@ -624,13 +625,17 @@ export async function listReports(filter: ListReportsFilter = {}): Promise<Admin
   if (filter.status) query.status = filter.status;
   if (filter.before) query.createdAt = { $lt: filter.before };
   const limit = Math.min(Math.max(Math.trunc(filter.limit ?? 50), 1), 200);
-  // Context is the one potentially chunky field and the list view never shows
-  // it; everything else on a report is metadata-sized.
-  const rows = await ReportModel.find(query, { context: 0 })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .lean();
-  return rows.map(serializeReportSummary);
+  // Count in Mongo: the list needs no artifact metadata, context, or collection
+  // receipts. Apply membership and the page bound before projecting each row.
+  const rows = await ReportModel.aggregate<Parameters<typeof serializeReportSummary>[0] & {artifactCount: number}>([
+    {$match: query},
+    {$sort: {createdAt: -1}},
+    {$limit: limit},
+    {$project: {_id: 0, reportId: 1, kind: 1, status: 1, mentraUserId: 1,
+      trigger: 1, report: 1, feedback: 1, createdAt: 1, updatedAt: 1,
+      artifactCount: {$size: {$ifNull: ["$artifacts", []]}}}},
+  ]);
+  return rows.map(row => ({...serializeReportSummary(row), artifactCount: row.artifactCount}));
 }
 
 /** Resolve current admin accounts, including reporters of historical incidents.
@@ -660,6 +665,15 @@ export async function getReport(
   return {
     report: {
       ...serializeReportSummary(row),
+      artifacts: (row.artifacts ?? []).map(artifact => ({
+        artifactId: artifact.artifactId,
+        type: artifact.type as AdminReportArtifact["type"],
+        source: artifact.source,
+        filename: artifact.filename ?? null,
+        contentType: artifact.contentType ?? null,
+        sizeBytes: artifact.sizeBytes ?? null,
+        createdAt: toIso(artifact.createdAt),
+      })),
       context: (row.context ?? {}) as Record<string, unknown>,
       ...(row.slackDelivery ? {slackDelivery: row.slackDelivery as ReportSlackDelivery} : {}),
       ...(row.logCollection ? {logCollection: visibleReportLogCollection(row.logCollection)} : {}),
@@ -701,18 +715,9 @@ function serializeReportSummary(row: {
   trigger?: unknown;
   report?: unknown;
   feedback?: unknown;
-  artifacts?: Array<{
-    artifactId: string;
-    type: string;
-    source: string;
-    filename?: string | null;
-    contentType?: string | null;
-    sizeBytes?: number | null;
-    createdAt?: Date | null;
-  }> | null;
   createdAt?: Date | null;
   updatedAt?: Date | null;
-}): AdminReportSummary {
+}): Omit<AdminReportSummary, "artifactCount"> {
   return {
     reportId: row.reportId,
     kind: row.kind as ReportKind,
@@ -721,15 +726,6 @@ function serializeReportSummary(row: {
     trigger: (row.trigger ?? null) as AdminReportSummary["trigger"],
     report: (row.report ?? null) as AdminReportSummary["report"],
     feedback: (row.feedback ?? null) as AdminReportSummary["feedback"],
-    artifacts: (row.artifacts ?? []).map((artifact) => ({
-      artifactId: artifact.artifactId,
-      type: artifact.type as AdminReportArtifact["type"],
-      source: artifact.source,
-      filename: artifact.filename ?? null,
-      contentType: artifact.contentType ?? null,
-      sizeBytes: artifact.sizeBytes ?? null,
-      createdAt: toIso(artifact.createdAt),
-    })),
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };

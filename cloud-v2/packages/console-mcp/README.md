@@ -80,7 +80,7 @@ bun run start
 
 ## Tools
 
-- `report_list` — recent reports, newest first; filters: `kind` (bug/feedback/automatic), `status` (collecting/ready/closed), `limit`, `before` (ISO timestamp, for paging), `userId` (client-side); `full: true` for raw documents
+- `report_list` — recent reports with artifact counts, newest first; filters: `kind` (bug/feedback/automatic), `status` (collecting/ready/closed), `limit`, `before` (ISO timestamp, for paging), `userId` (client-side); `full: true` for complete list summaries. Use `report_get` for context and artifact metadata.
 - `report_get` — one report by full `rep_...` id or short prefix: report document, diagnostic context (`includeContext: false` to omit), and artifact/asset metadata
 - `report_get_logs` — merged log bundles across the report's `logs` artifacts (bounded output, default 200 lines; `source`, `level`, `grep`, `limit`, `json` filters)
 - `report_get_artifact` — one artifact payload by `art_...` id: screenshots inline as images, JSON/text inline as text, binaries/oversized payloads as a ready-to-run `curl` command

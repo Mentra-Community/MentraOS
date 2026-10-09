@@ -304,7 +304,7 @@ describe("admin reports read surface", () => {
     expect((await adminGet(`${ADMIN_REPORTS_PATH}?category=internal`)).status).toBe(502);
   });
 
-  test("lists reports newest-first with artifact metadata and no context", async () => {
+  test("lists reports newest-first with artifact counts and no inventory or context", async () => {
     const first = await seedReport("first crash");
     const second = await seedReport("second crash");
 
@@ -318,9 +318,8 @@ describe("admin reports read surface", () => {
     expect(row.kind).toBe("bug");
     expect(row.mentraUserId).toMatch(/^mu_/);
     expect("context" in row).toBe(false);
-    const artifacts = row.artifacts as Array<Record<string, unknown>>;
-    expect(artifacts).toHaveLength(2);
-    expect(artifacts.map(a => a.type).sort()).toEqual(["logs", "screenshot"]);
+    expect(row.artifactCount).toBe(2);
+    expect("artifacts" in row).toBe(false);
 
     const filtered = await adminGet(`${ADMIN_REPORTS_PATH}?kind=feedback`);
     expect(((await filtered.json()) as { reports: unknown[] }).reports).toHaveLength(0);
@@ -342,6 +341,9 @@ describe("admin reports read surface", () => {
     };
     expect(body.report.reportId).toBe(reportId);
     expect(body.report.context).toEqual({ app: { appVersion: "test" } });
+    const artifacts = body.report.artifacts as Array<Record<string, unknown>>;
+    expect(artifacts).toHaveLength(2);
+    expect(artifacts.map(a => a.type).sort()).toEqual(["logs", "screenshot"]);
     expect(body.assets).toHaveLength(2);
     for (const asset of body.assets) {
       expect(typeof asset.storageKey).toBe("string");
@@ -350,6 +352,43 @@ describe("admin reports read surface", () => {
 
     const missing = await adminGet(`${ADMIN_REPORTS_PATH}/rep_nope`);
     expect(missing.status).toBe(404);
+  });
+
+  test("projects large artifact inventories to counts without changing detail or stored reports", async () => {
+    const createdAt = new Date("2026-10-09T17:00:00Z");
+    const artifacts = Array.from({length: 355}, (_, index) => ({artifactId: `art_inventory_${index}`,
+      type: "logs", source: "phone", filename: `logs-${index}-${"x".repeat(1024)}.json`,
+      contentType: "application/json", sizeBytes: 1024, createdAt}));
+    await ReportModel.create({reportId: "rep_inventory", kind: "automatic", status: "ready", mentraUserId: "mu_fixture",
+      trigger: {type: "automatic", source: "mentra_automated_testing", reason: "inventory test"},
+      report: {actualBehavior: "inventory test"}, context: {large: "x".repeat(1024 * 1024)}, artifacts,
+      createdAt, updatedAt: createdAt});
+    // Historical records need not have an artifact array.
+    await ReportModel.collection.insertOne({reportId: "rep_legacy_inventory", kind: "automatic", status: "ready",
+      mentraUserId: "mu_fixture", trigger: {type: "automatic", source: "mentra_automated_testing", reason: "old report"},
+      context: {}, createdAt: new Date(createdAt.getTime() - 1000), updatedAt: createdAt} as never);
+    const before = await ReportModel.findOne({reportId: "rep_inventory"}).lean();
+    const response = await adminGet(`${ADMIN_REPORTS_PATH}?category=testing&status=ready&limit=2`);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(Buffer.byteLength(text)).toBeLessThan(2048);
+    const rows = JSON.parse(text).reports as Array<Record<string, unknown>>;
+    expect(rows.map(row => row.reportId)).toEqual(["rep_inventory", "rep_legacy_inventory"]);
+    expect(rows.map(row => row.artifactCount)).toEqual([355, 0]);
+    for (const row of rows) {
+      expect(row).not.toHaveProperty("artifacts");
+      expect(row).not.toHaveProperty("context");
+      expect(row).not.toHaveProperty("logCollection");
+      expect(row).not.toHaveProperty("slackDelivery");
+    }
+    expect(rows[0]!.report).toEqual({actualBehavior: "inventory test"});
+    const detail = await (await adminGet(`${ADMIN_REPORTS_PATH}/rep_inventory`)).json() as {
+      report: {artifacts: Array<{filename: string}>; context: Record<string, unknown>};
+    };
+    expect(detail.report.artifacts).toHaveLength(355);
+    expect(detail.report.artifacts[354]!.filename).toBe(artifacts[354]!.filename);
+    expect(detail.report.context).toEqual(before!.context);
+    expect(await ReportModel.findOne({reportId: "rep_inventory"}).lean()).toEqual(before);
   });
 
   test("serves artifact payload bytes with the stored content type", async () => {
@@ -412,9 +451,9 @@ describe("admin reports read surface", () => {
     expect(upload.status).toBe(200);
 
     const list = await adminGet(ADMIN_REPORTS_PATH);
-    const listed = ((await list.json()) as { reports: Array<{ reportId: string; artifacts: Array<{ type: string }> }> })
+    const listed = ((await list.json()) as { reports: Array<{ reportId: string; artifactCount: number }> })
       .reports.find(r => r.reportId === reportId)!;
-    expect(listed.artifacts.map(a => a.type).sort()).toEqual(["logs", "screenshot", "video"]);
+    expect(listed.artifactCount).toBe(3);
 
     const detail = await adminGet(`${ADMIN_REPORTS_PATH}/${reportId}`);
     const { report, assets } = (await detail.json()) as {
