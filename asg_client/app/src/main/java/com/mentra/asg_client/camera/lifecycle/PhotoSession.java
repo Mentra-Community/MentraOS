@@ -224,7 +224,7 @@ public final class PhotoSession {
 
                             @Override
                             public boolean reusesRunningCamera() {
-                                return mCaptureDispatchedAsWarmReuse;
+                                return PhotoSession.this.reusesRunningCamera();
                             }
 
                             @Override
@@ -277,6 +277,14 @@ public final class PhotoSession {
         return warmUpRequest != null || mCaptureDispatchedAsWarmReuse
                 ? 0L
                 : AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS;
+    }
+
+    /**
+     * Whether the active capture reuses a camera that is already streaming. A warm-up's own AE
+     * wait never counts, even when the reuse flag is left over from an earlier photo.
+     */
+    boolean reusesRunningCamera() {
+        return warmUpRequest == null && mCaptureDispatchedAsWarmReuse;
     }
 
     void scheduleCapturePhoto(long delayMs) {
