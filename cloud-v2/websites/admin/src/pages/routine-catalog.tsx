@@ -412,8 +412,8 @@ function TestHistoryList({initialOrigin = "pr"}: {initialOrigin?: HistoryOrigin}
   const tabId = useId();
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const catalog = useSearchCatalog();
-  const history = useInfiniteQuery({queryKey: ["test-history", origin, true], initialPageParam: undefined as string | undefined,
-    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(testHistoryListPath(origin, true, pageParam), {signal, timeoutMs: 30000}),
+  const history = useInfiniteQuery({queryKey: ["test-history", origin], initialPageParam: undefined as string | undefined,
+    queryFn: ({pageParam, signal}) => api<TestHistoryPage>(testHistoryListPath(origin, pageParam), {signal, timeoutMs: 30000}),
     getNextPageParam: page => page.nextCursor ?? undefined, retry: false, retryOnMount: false,
     refetchInterval: query => query.state.error ? false : 15000});
   const entries = history.data?.pages.flatMap(page => page.entries) ?? [];
@@ -445,8 +445,8 @@ function TestHistoryList({initialOrigin = "pr"}: {initialOrigin?: HistoryOrigin}
     </div>
   </section>;
 }
-export function testHistoryListPath(origin: HistoryOrigin, includeReruns: boolean, cursor?: string) {
-  const query = new URLSearchParams({origin, limit: "25", includeReruns: String(includeReruns)});
+export function testHistoryListPath(origin: HistoryOrigin, cursor?: string) {
+  const query = new URLSearchParams({origin, limit: "25"});
   if (cursor) query.set("cursor", cursor);
   return `/api/admin/test-runs/history/list?${query}`;
 }

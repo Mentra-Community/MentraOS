@@ -26,10 +26,10 @@ export type RoutineCatalogCard = RoutineCardDefinition & {
   example: CatalogExample | null; latestAttempt: CatalogHistoryRun | null; nightlyEnabled: boolean;
 };
 export interface FrameworkRunPage {runs: FrameworkRunSummary[]; nextCursor: string | null}
-export type TestHistoryEntry = ({kind: "run"; rerun?: {rerunId: string; parentSuiteId?: string}} & FrameworkRunSummary) | {
+export type TestHistoryEntry = ({kind: "run"; rerunCount?: number; rerun?: {rerunId: string; parentSuiteId?: string}} & FrameworkRunSummary) | {
   kind: "suite"; suiteId: string; channel: TestSuite["channel"]; trigger: TestSuite["trigger"];
   startedAt: string; finishedAt?: string; outcome: string; expectedCount: number; passed: number; skipped?: number; build: TestSuite["build"] & {repository?: string; prNumber?: number};
-  /** Accepted child rerun jobs, independent of the current history page and member count. */
+  /** Unique submitted routine attempts across accepted reruns, independent of pagination and batch count. */
   rerunCount: number; failedCount: number; lanes: {hostId: string; laneId: string}[];
   members?: (Pick<TestSuite["members"][number], "routineId" | "platform"> & {laneId?: string; hostId?: string})[];
 } | {kind: "unavailable"; sourceKind: "run" | "suite"; id: string; startedAt: string; message: "Details unavailable."};

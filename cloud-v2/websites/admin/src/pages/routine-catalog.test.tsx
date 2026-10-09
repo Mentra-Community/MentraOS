@@ -635,11 +635,11 @@ const historyRun: Extract<TestHistoryEntry, {kind: "run"}> = {
   uploadsComplete: true,
   build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40), release: "dev.577"},
 }
-test("history always includes reruns and keeps source tabs available", () => {
-  expect(testHistoryListPath("pr", false)).toBe("/api/admin/test-runs/history/list?origin=pr&limit=25&includeReruns=false");
-  expect(testHistoryListPath("nightly", true, "cursor/+next")).toBe("/api/admin/test-runs/history/list?origin=nightly&limit=25&includeReruns=true&cursor=cursor%2F%2Bnext");
+test("history requests original runs and keeps source tabs available", () => {
+  expect(testHistoryListPath("pr")).toBe("/api/admin/test-runs/history/list?origin=pr&limit=25");
+  expect(testHistoryListPath("nightly", "cursor/+next")).toBe("/api/admin/test-runs/history/list?origin=nightly&limit=25&cursor=cursor%2F%2Bnext");
   const client = new QueryClient();
-  client.setQueryData(["test-history", "other", true], {pages: [{entries: [historyRun], nextCursor: null}], pageParams: [undefined]});
+  client.setQueryData(["test-history", "other"], {pages: [{entries: [historyRun], nextCursor: null}], pageParams: [undefined]});
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage historySource="other"/></QueryClientProvider>);
   expect(html).toContain('role="tablist" aria-label="Dispatch source"');
   expect(html).not.toContain("Show reruns");
@@ -729,7 +729,7 @@ test("shared filters preserve selected options through refresh and expose cleari
 
 test("combined history renders chronological suites and standalone runs across loaded pages", () => {
   const client = new QueryClient()
-  client.setQueryData(["test-history", "other", true], {
+  client.setQueryData(["test-history", "other"], {
     pages: [
       {
         entries: [
@@ -773,7 +773,7 @@ test("combined history renders chronological suites and standalone runs across l
 test("history reserves failure totals for suites and omits single-run step totals", () => {
   const client = new QueryClient()
   const counted = {...historyRun, stepCounts: {passed: 2, total: 5, skipped: 1}}
-  client.setQueryData(["test-history", "other", true], {
+  client.setQueryData(["test-history", "other"], {
     pages: [
       {
         entries: [
@@ -823,12 +823,12 @@ test("history distinguishes empty data and cached refresh failures while keeping
         <FrameworkRunsPage scope={scope} historySource="other" />
       </QueryClientProvider>,
     )
-  client.setQueryData(["test-history", "other", true], {pages: [{entries: [], nextCursor: null}], pageParams: [undefined]})
+  client.setQueryData(["test-history", "other"], {pages: [{entries: [], nextCursor: null}], pageParams: [undefined]})
   expect(render()).toContain("No test suites or routine runs yet")
-  client.setQueryData(["test-history", "other", true], {pages: [{entries: [historyRun], nextCursor: null}], pageParams: [undefined]})
+  client.setQueryData(["test-history", "other"], {pages: [{entries: [historyRun], nextCursor: null}], pageParams: [undefined]})
   client
     .getQueryCache()
-    .find({queryKey: ["test-history", "other", true]})!
+    .find({queryKey: ["test-history", "other"]})!
     .setState({error: new Error("refresh refused"), status: "error"})
   expect(render()).toContain("History could not refresh: refresh refused")
   expect(render()).toContain("standalone-run")
@@ -863,7 +863,7 @@ test("initial history failure offers retry instead of claiming empty history", (
   const client = new QueryClient()
   client
     .getQueryCache()
-    .build(client, {queryKey: ["test-history", "other", true]})
+    .build(client, {queryKey: ["test-history", "other"]})
     .setState({error: new Error("Request timed out. Please try again."), status: "error", fetchStatus: "idle"})
   const html = renderToStaticMarkup(
     <QueryClientProvider client={client}>
@@ -890,7 +890,7 @@ test("history visibility control stays available while the selected query is loa
 
 test("unavailable history details retain their links without hiding neighboring results", () => {
   const client = new QueryClient()
-  client.setQueryData(["test-history", "other", true], {
+  client.setQueryData(["test-history", "other"], {
     pages: [
       {
         entries: [
@@ -976,25 +976,26 @@ test("run header qualifies a pass only after evidence is complete", () => {
   }
 })
 
-test("dispatch tabs request independent API pages and retain standalone reruns in Other", () => {
+test("dispatch tabs request independent original-only API pages", () => {
   const client = new QueryClient();
   const pr = {...historyRun, runId: 'pr-ci', build: {...historyRun.build, channel: 'pr', prNumber: 698}};
-  const rerun = {...pr, runId: 'standalone-rerun', rerun: {rerunId: 'r'}};
+
   const nightly = {kind: 'suite', suiteId: 'nightly-suite', channel: 'dev', trigger: 'nightly', build: historyRun.build,
     startedAt: historyRun.startedAt, outcome: 'passed', expectedCount: 2, passed: 2, rerunCount: 1, failedCount: 0, lanes: []};
-  for (const [origin, entries] of [['pr', [pr]], ['nightly', [nightly]], ['other', [historyRun, rerun]]] as const) {
-    client.setQueryData(['test-history', origin, true], {pages: [{entries, nextCursor: 'older'}], pageParams: [undefined]});
+  for (const [origin, entries] of [['pr', [pr]], ['nightly', [nightly]], ['other', [{...historyRun, rerunCount: 2}]]] as const) {
+    client.setQueryData(['test-history', origin], {pages: [{entries, nextCursor: 'older'}], pageParams: [undefined]});
   }
   const render = (historySource: 'pr' | 'nightly' | 'other') => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage historySource={historySource}/></QueryClientProvider>);
   expect(render('pr')).toContain('testRun=pr-ci');
   expect(render('pr')).not.toContain('testRun=standalone-rerun');
   expect(render('nightly')).toContain('testSuite=nightly-suite');
   expect(render('nightly')).not.toContain('testRun=standalone-rerun');
-  expect(render('other')).toContain('testRun=standalone-rerun');
+  expect(render('other')).not.toContain('testRun=standalone-rerun');
+  expect(render('other')).toContain('2 reruns');
   expect(render('other')).toContain('testRun=standalone-run');
   expect(render('other')).toContain('More history');
   expect(render('other')).not.toContain('Show reruns');
-  for (const origin of ['pr', 'nightly', 'other'] as const) expect(testHistoryListPath(origin, true)).toContain(`origin=${origin}`);
+  for (const origin of ['pr', 'nightly', 'other'] as const) expect(testHistoryListPath(origin)).toContain(`origin=${origin}`);
   client.clear();
 });
 
