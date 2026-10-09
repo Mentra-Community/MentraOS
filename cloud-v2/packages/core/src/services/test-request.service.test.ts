@@ -139,6 +139,51 @@ test("local acceptance publishes atomically without creating queued delivery", a
   await expect(service.registerLocal(inputFor(), receipt, "mini")).rejects.toThrow("immutable input");
 });
 
+test("local acceptance retains exact enrolled resource capabilities and one original digest", async () => {
+  const authorized: unknown[] = [];
+  const service = new TestRequestService(store(), {async authorize(verification, hostId, input) {
+    authorized.push({verification, hostId, input});
+  }});
+  const manifest = {url: "https://artifactscdn.mentraglass.com/exact/manifest.json", sha256: "e".repeat(64), size: 100};
+  const software = {model: "mentra-live", manifest};
+  const input = {...inputFor("mentra-call"), platform: "ios-on-mac", laneId: "mini-mac",
+    build: {...build, manifest, manifestSha256: manifest.sha256}, glassesStart: software, glassesReturn: software,
+    verification: {workId: "work:call", attemptId: 4, sourceRevision: "a".repeat(40)}, resources: [
+    {id: "mini-mac-app", kind: "app", laneId: "mini-mac", capabilities: ["relaunch"]},
+    {id: "mini-mac-recorder", kind: "recorder", laneId: "mini-mac", capabilities: []},
+    {id: "mini-mac-glasses", kind: "glasses", laneId: "mini-mac", capabilities: ["glasses-ble", "connection", "software"]},
+  ]};
+  const receipt = {requestId: "local:1791599853822:candidate", hostId: "mini", inputSha256: requestInputDigest(input),
+    acceptedAt: "2026-10-09T08:06:44.443Z"};
+  const first = await service.registerLocal(input, receipt, "mini");
+  expect(first).toMatchObject({state: "accepted", input, inputSha256: receipt.inputSha256, hostReceipt: receipt});
+  expect(first.catalogEligible).toBe(false);
+  expect(authorized).toEqual([{verification: input.verification, hostId: "mini", input}]);
+  expect((await service.queued("mini", undefined, 10)).requests).toEqual([]);
+  expect(await service.registerLocal(structuredClone(input), receipt, "mini")).toEqual(first);
+  expect(authorized).toHaveLength(1);
+  const changed = {...input, resources: input.resources.map(resource => ({...resource, capabilities: []}))};
+  await expect(service.registerLocal(changed, receipt, "mini")).rejects.toThrow("immutable input");
+  expect((await service.get(receipt.requestId))!.input).toEqual(input);
+});
+
+test("resource capability typos, wrong kinds, duplicates and extra identity fields refuse local admission", async () => {
+  const service = new TestRequestService(store());
+  for (const resource of [
+    {id: "app", kind: "app", capabilities: ["bluetooth-toggle"]},
+    {id: "phone", kind: "phone", capabilities: ["bluetooth-toggl"]},
+    {id: "audio", kind: "audio", capabilities: ["playback"]},
+    {id: "recorder", kind: "recorder", capabilities: ["recognition"]},
+    {id: "app", kind: "app", capabilities: ["relaunch", "relaunch"]},
+    {id: "app", kind: "app", capabilities: ["relaunch"], unexpected: true},
+  ]) {
+    const input = {...inputFor(), resources: [resource]};
+    const receipt = {requestId: "local-invalid", hostId: "mini", inputSha256: requestInputDigest(input), acceptedAt: "2026-10-09T08:06:44Z"};
+    await expect(service.registerLocal(input, receipt, "mini")).rejects.toMatchObject({status: 400});
+    expect(await service.get(receipt.requestId)).toBeNull();
+  }
+});
+
 test("malformed admission is rejected before persistence", async () => {
   const service = new TestRequestService(store());
   for (const input of [null, {}, {...inputFor(), build: null}, {...inputFor(), build: {...build, channel: "pr"}}])

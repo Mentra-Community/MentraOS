@@ -1,6 +1,6 @@
 import {frameworkVersionSchema, routineSourceRefSchema} from './framework-version.types';
 import {z} from "zod";
-import {routineIdentitySchema, routinePlatformSchema} from "./routine-definition.types";
+import {routineIdentitySchema, routinePlatformSchema, routineResourceKindSchema, routineResourceRequirementSchema} from "./routine-definition.types";
 import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
 
@@ -23,7 +23,14 @@ const frozenFrameworkRequestInputSchema = z.object({
   platform: routinePlatformSchema,
   laneId: frameworkIdentitySchema,
   build: frameworkBuildSchema,
-  resources: z.array(z.object({id: frameworkIdentitySchema, kind: z.enum(["app", "phone", "glasses", "recorder", "audio", "browser", "network", "fixture-data", "workspace"]), laneId: frameworkIdentitySchema.optional()}).strict()),
+  resources: z.array(z.object({
+    id: frameworkIdentitySchema,
+    kind: routineResourceKindSchema,
+    laneId: frameworkIdentitySchema.optional(),
+    capabilities: z.array(routineIdentitySchema).max(30).optional(),
+  }).strict().refine(resource => resource.capabilities === undefined || routineResourceRequirementSchema.safeParse({
+    kind: resource.kind, capabilities: resource.capabilities,
+  }).success, "Resource capabilities must match their declared kind")),
   policy: z.record(z.unknown()).optional(),
   glassesStart: glassesSoftwareRefSchema.optional(),
   glassesReturn: glassesSoftwareRefSchema.optional(),
