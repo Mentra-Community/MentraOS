@@ -301,6 +301,49 @@ public class UploadIncidentLogsCommandHandlerTest {
         assertThat(real.waitUntilFileTransferIdle(bluetooth, 0)).isTrue();
     }
 
+    @Test
+    public void interruptedFirmwareStartupReturningFalseDoesNotSubmitJava() {
+        doAnswer(
+                        invocation -> {
+                            sentFiles.add(new File(invocation.getArgument(0, String.class)));
+                            Thread.currentThread().interrupt();
+                            return false;
+                        })
+                .when(bluetooth)
+                .sendFile(anyString());
+
+        try {
+            handler.relayLogsViaBle("rep_interrupted_start");
+
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(active.get()).isFalse();
+            verify(bluetooth, times(1)).sendFile(anyString());
+            assertThat(sentFiles).hasSize(1);
+            assertFilesRemoved();
+            assertThat(messages())
+                    .anyMatch(
+                            message ->
+                                    message.contains("source=glasses_firmware")
+                                            && message.contains("stage=interrupted"));
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    public void alreadyInterruptedRelayNeverSubmitsAFile() {
+        try {
+            Thread.currentThread().interrupt();
+            handler.relayLogsViaBle("rep_already_interrupted");
+
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            verify(bluetooth, org.mockito.Mockito.never()).sendFile(anyString());
+            assertThat(sentFiles).isEmpty();
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
     private void assertFilesRemoved() {
         assertThat(sentFiles).allMatch(file -> !file.exists());
     }

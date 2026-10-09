@@ -315,6 +315,10 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                         IncidentLogBleRelayNaming.bleFileBaseName(incidentId, prefix));
         String diagnostic = "Incident BLE relay incidentId=" + incidentId + " source=" + source;
         try {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException(
+                        "Incident BLE relay was interrupted before transfer");
+            }
             writeUtf8File(file, json);
             boolean connected = bt.isConnected();
             boolean transferActive = bt.isFileTransferInProgress();
@@ -328,7 +332,11 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                                 + transferActive);
                 return;
             }
-            if (!bt.sendFile(file.getAbsolutePath())) {
+            boolean started = bt.sendFile(file.getAbsolutePath());
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Incident BLE transfer startup was interrupted");
+            }
+            if (!started) {
                 Log.w(TAG, diagnostic + " stage=start_refused");
                 return;
             }
@@ -341,6 +349,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                 Log.w(TAG, diagnostic + " stage=wait_expired");
             }
         } catch (InterruptedException e) {
+            Log.w(TAG, diagnostic + " stage=interrupted");
             throw e;
         } catch (Exception e) {
             Log.e(TAG, diagnostic + " stage=failed", e);
