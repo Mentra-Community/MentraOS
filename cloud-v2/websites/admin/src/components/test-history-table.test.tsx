@@ -22,7 +22,7 @@ test("history is a semantic table with named links, exact lane pairs and accepte
   expect(html).toContain('href="/?testSuite=private-suite-id"');
   expect(html).toContain("Dev nightly suite");
   expect(html).toContain("4 reruns");
-  expect(html).toContain('title="4 accepted rerun jobs"');
+  expect(html).toContain('title="4 routine reruns"');
   expect(html).toContain("hostId=private-host-id&amp;laneId=android-primary");
   expect(html).toContain("3m 00s");
   expect(html).toContain("3.3.0-dev.698");
@@ -110,7 +110,7 @@ test("unavailable records retain suite and run distinctions without guessed fail
 });
 
 test("suite without reruns omits the badge and an included rerun links to its authoritative batch", () => {
-  expect(renderToStaticMarkup(<TestHistoryTable entries={[{...suite, rerunCount: 0}]} routines={[]}/>)).not.toContain("accepted rerun jobs");
+  expect(renderToStaticMarkup(<TestHistoryTable entries={[{...suite, rerunCount: 0}]} routines={[]}/>)).not.toContain("routine reruns");
   const run: Extract<TestHistoryEntry, {kind: "run"}> = {kind: "run", runId: "private-run-id", requestId: "request", routineId: "notes-phone",
     hostId: "mini", laneId: "mac", platform: "ios-on-mac", startedAt: suite.startedAt, finishedAt: suite.finishedAt!,
     outcome: "failed", uploadsComplete: true, evidenceStatus: "complete", build: {...suite.build, repository: "Mentra-Community/MentraOS", channel: "dev"},

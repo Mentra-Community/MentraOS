@@ -27,10 +27,33 @@ test("history validates cursor and page limits before querying", async () => {
   let reads = 0;
   const service = new TestHistoryService(summaryReader(async () => {throw new Error("not used");}), async () => {reads++; return [];});
   const invalid: Record<string, string>[] = [{cursor: "invalid"}, {limit: "0"}, {limit: "101"}, {limit: "2.5"},
-    {includeReruns: "1"}, {includeReruns: "TRUE"}, {includeReruns: ""}, {scope: "unexpected"}];
+    {includeReruns: "1"}, {includeReruns: "TRUE"}, {includeReruns: ""}, {origin: "branch"}, {origin: ""}, {scope: "unexpected"}];
   for (const query of invalid)
     await expect(service.list(query)).rejects.toMatchObject({status: 400});
   expect(reads).toBe(0);
+});
+
+test("history forwards each dispatch origin and filters candidates before page selection", async () => {
+  const observed: (string | undefined)[] = [];
+  const service = new TestHistoryService(summaryReader(async () => {throw new Error("not used");}), async query => {
+    observed.push(query.origin); return [];
+  });
+  await service.list();
+  for (const origin of ["pr", "nightly", "other"] as const) {
+    await service.list({origin, includeReruns: "true"});
+    const queries = testHistoryQueries(null, 1, true, origin);
+    const facet = queries.runs.at(-1) as any;
+    expect(facet.$facet.entries).toEqual([{$match: {historySuppressed: false, origin}}, {$limit: 2}]);
+    const suiteMatch = queries.suites[0] as any;
+    expect(suiteMatch.$match.$expr.$eq[1]).toBe(origin);
+    expect(queries.suites.findIndex(stage => "$match" in stage)).toBeLessThan(queries.suites.findIndex(stage => "$limit" in stage));
+    const projection = queries.runs.find(stage => "$project" in stage) as any;
+    expect(JSON.stringify(projection.$project.historySuppressed)).toContain("$$rerun.parentSuiteId");
+  }
+  expect(observed).toEqual([undefined, "pr", "nightly", "other"]);
+  // Other consumers can still request unscoped attempt history explicitly.
+  expect(JSON.stringify((testHistoryQueries(null, 1, true).runs.find(stage => "$project" in stage) as any).$project.historySuppressed))
+    .not.toContain("$$rerun.parentSuiteId");
 });
 
 test("history hides accepted reruns by default and validates the explicit toggle", async () => {
@@ -101,8 +124,11 @@ test("suite history retains accepted job count and exact distinct host/lane pair
     members: [{routineId: "notes", hostId: "mini", laneId: "mac"}, {routineId: "settings", hostId: "mini", laneId: "mac"},
       {routineId: "camera", hostId: "other", laneId: "android"}, {routineId: "historical"}],
   });
-  expect(testHistoryQueries(null, 1).suites).toContainEqual({$lookup: {from: TestRerunModel.collection.name,
-    localField: "suiteId", foreignField: "plan.parent.suiteId", pipeline: [{$match: {state: "accepted"}}, {$count: "count"}], as: "historyReruns"}});
+  const query = testHistoryQueries(null, 1).suites.find(stage => "$lookup" in stage) as any;
+  expect(query.$lookup).toMatchObject({from: TestRerunModel.collection.name, localField: "suiteId", foreignField: "plan.parent.suiteId"});
+  expect(query.$lookup.pipeline).toContainEqual({$group: {_id: "$plan.members.requestId"}});
+  expect(query.$lookup.pipeline).toContainEqual({$match: {"submittedRequest.0": {$exists: true}}});
+
 });
 
 test("one unavailable row preserves its page slot and cursor without failing neighboring entries", async () => {
@@ -169,6 +195,46 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     payload, payloadSha256: requestInputDigest(payload), summaryProjection: createFrameworkRunSummaryProjection(payload, requestInputDigest(payload)), outcome: "pass", uploadsComplete: true});
   const saveSuite = async (payload: TestSuite) => TestSuiteModel.collection.insertOne({suiteId: payload.suiteId, payload,
     startedAt: new Date(payload.startedAt)});
+
+  test("origin tabs follow nightly dispatch plans, exclude suite member attempts, and paginate standalone reruns in Other", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
+    const nightly = {...plan("nightly-original", [member("nightly-a"), member("nightly-b")]), trigger: "manual" as const};
+    await TestSuiteModel.collection.insertOne({suiteId: nightly.suiteId, payload: nightly, startedAt: new Date(at),
+      nightlyPlan: {members: nightly.members}});
+    await saveRun(run("nightly-a")); await saveRun(run("nightly-b"));
+    // A one-member nightly has no suite payload but still has an immutable nightly plan.
+    await TestSuiteModel.collection.insertOne({suiteId: "one-member-nightly", startedAt: new Date(at),
+      nightlyPlan: {members: [member("single-nightly")]}});
+    await saveRun(run("single-nightly"));
+    for (const id of ["manual-dev", "manual-staging", "standalone-pr", "suite-rerun-member", "standalone-rerun"]) {
+      const payload = run(id);
+      if (id === "standalone-pr" || id === "standalone-rerun") payload.build = {...payload.build, channel: "pr", prNumber: 123};
+      if (id === "manual-staging") payload.build = {...payload.build, channel: "staging"};
+      await saveRun(payload);
+    }
+    await TestRerunModel.collection.insertMany([
+      {rerunId: "suite-attempt", state: "accepted", plan: {parent: {suiteId: nightly.suiteId}, members: [{requestId: "suite-rerun-member"}]}},
+      {rerunId: "standalone-attempt", state: "accepted", plan: {parent: {requestId: "standalone-pr"}, members: [{requestId: "standalone-rerun"}]}},
+    ]);
+    const history = new TestHistoryService();
+    const readIds = async (origin: "pr" | "nightly" | "other") => {
+      const ids: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await history.list({origin, includeReruns: "true", limit: "1", ...(cursor ? {cursor} : {})});
+        expect(page.entries).toHaveLength(1);
+        ids.push(...page.entries.map(entry => entry.kind === "suite" ? entry.suiteId : entry.kind === "run" ? entry.runId : entry.id));
+        cursor = page.nextCursor;
+      } while (cursor);
+      return ids;
+    };
+    expect(await readIds("nightly")).toEqual(["nightly-original", "single-nightly"]);
+    expect(await readIds("pr")).toEqual(["standalone-pr"]);
+    expect(await readIds("other")).toEqual(["standalone-rerun", "manual-staging", "manual-dev"]);
+    expect((await history.list({origin: "other", includeReruns: "false"})).entries.map(entry => entry.kind === "run" ? entry.runId : entry.kind === "suite" ? entry.suiteId : entry.id))
+      .toEqual(["manual-staging", "manual-dev"]);
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
+  });
 
   test("open nightly summaries batch member reads and preserve waiting, failures and frozen completion", async () => {
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRequestModel.deleteMany({}); await TestRerunModel.deleteMany({});
@@ -311,6 +377,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
       {rerunId: "accepted-unpublished", state: "accepted", plan: {parent: {suiteId: parent.suiteId}, members: [{requestId: "not-published"}]}},
       {rerunId: "preview-only", state: "preview", plan: {parent: {suiteId: parent.suiteId}, members: [{requestId: "preview-member"}]}},
     ]);
+    await TestRequestModel.collection.insertMany(hidden.map(requestId => ({requestId, state: "awaiting-source"})));
     const history = new TestHistoryService();
     const first = await history.list({limit: "1"});
     expect(first.entries.map(entry => entry.kind === "run" ? entry.runId : "unexpected")).toEqual(["rerun-visible-standalone"]);
@@ -318,7 +385,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     const second = await history.list({limit: "1", cursor: first.nextCursor!});
     expect(second.entries.map(entry => entry.kind === "run" ? entry.runId : "unexpected")).toEqual(["preview-member"]);
     const third = await history.list({limit: "1", cursor: second.nextCursor!});
-    expect(third.entries[0]).toMatchObject({kind: "suite", suiteId: parent.suiteId, rerunCount: 2});
+    expect(third.entries[0]).toMatchObject({kind: "suite", suiteId: parent.suiteId, rerunCount: 30});
     expect(third.nextCursor).toBeNull();
     const shown = await history.list({limit: "100", includeReruns: "true"});
     expect(shown.entries.filter(entry => entry.kind === "run")).toHaveLength(32);
@@ -326,6 +393,29 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
       rerun: {rerunId: "accepted-many", parentSuiteId: parent.suiteId}});
     expect(shown.entries.find(entry => entry.kind === "run" && entry.runId === "preview-member")).not.toHaveProperty("rerun");
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
+  });
+
+  test("suite rerun badges count unique submitted routine attempts, not selected batches or denied members", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({}); await TestRequestModel.deleteMany({});
+    const suite = plan("suite:count-attempts", [member("original-a"), member("original-b")]);
+    await saveSuite(suite);
+    await TestRequestModel.collection.insertMany([
+      {requestId: "whole-a", state: "awaiting-source"},
+      {requestId: "whole-b", state: "queued"},
+      {requestId: "individual-c", state: "terminal"},
+      {requestId: "preview-request", state: "awaiting-source"},
+    ]);
+    await TestRerunModel.collection.insertMany([
+      {rerunId: "whole-filtered", state: "accepted", plan: {parent: {suiteId: suite.suiteId}, members: [
+        {requestId: "whole-a"}, {requestId: "whole-b"}, {requestId: "not-admitted"},
+      ]}},
+      {rerunId: "individual", state: "accepted", plan: {parent: {suiteId: suite.suiteId}, members: [{requestId: "individual-c"}]}},
+      {rerunId: "repeated-identity", state: "accepted", plan: {parent: {suiteId: suite.suiteId}, members: [{requestId: "whole-a"}]}},
+      {rerunId: "unsubmitted-preview", state: "preview", plan: {parent: {suiteId: suite.suiteId}, members: [{requestId: "preview-request"}]}},
+    ]);
+    expect((await new TestHistoryService().list({origin: "nightly", includeReruns: "true"})).entries[0])
+      .toMatchObject({kind: "suite", suiteId: suite.suiteId, rerunCount: 3});
+    await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({}); await TestRequestModel.deleteMany({});
   });
 
   test("groups many exact members before pagination, keeps single jobs and mismatches, and orders equal times deterministically", async () => {

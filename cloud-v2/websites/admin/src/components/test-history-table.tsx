@@ -94,7 +94,7 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
         <a className={LINK} href={suite ? suiteHref(entry.suiteId) : runHref(entry.runId)}><span className="sr-only">{suite ? "Test suite: " : "Routine run: "}</span>{title}</a>
         <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${MUTED}`}>
           <span>{suite ? `${entry.expectedCount} routines` : entry.platform === "ios-on-mac" ? "iOS on Mac" : entry.platform === "android" ? "Android" : entry.platform}</span>
-          {suite && entry.rerunCount > 0 && <a className="inline-flex items-center gap-1 rounded-md border border-[#d0d7de] px-1.5 py-0.5 hover:text-[#0969da]" href={suiteHref(entry.suiteId)} title={`${entry.rerunCount} accepted rerun jobs`}><RotateCcw className="size-3" aria-hidden="true"/>{entry.rerunCount} rerun{entry.rerunCount === 1 ? "" : "s"}</a>}
+          {suite && entry.rerunCount > 0 && <a className="inline-flex items-center gap-1 rounded-md border border-[#d0d7de] px-1.5 py-0.5 hover:text-[#0969da]" href={suiteHref(entry.suiteId)} title={`${entry.rerunCount} routine reruns`}><RotateCcw className="size-3" aria-hidden="true"/>{entry.rerunCount} rerun{entry.rerunCount === 1 ? "" : "s"}</a>}
           {!suite && entry.rerun && <a className={LINK} href={`/?testRerun=${encodeURIComponent(entry.rerun.rerunId)}`}>Rerun</a>}
         </div>
       </div>
