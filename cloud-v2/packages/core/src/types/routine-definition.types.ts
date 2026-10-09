@@ -17,7 +17,9 @@ export const resourceCapabilityMap = {
   app: ['relaunch'], phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
   glasses: ['glasses-ble', 'connection', 'software'], recorder: [],
   audio: ['speech', 'witness', 'synthesis', 'recognition'], browser: ['external-window'],
-  network: ['independent-uplink'], 'fixture-data': [], workspace: [],
+  network: ['independent-uplink'],
+  'fixture-data': ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers'],
+  workspace: [],
 } as const;
 export const routineResourceRequirementSchema = z.object({kind: routineResourceKindSchema,
   capabilities: z.array(routineIdentitySchema).max(30)}).strict().refine(value =>

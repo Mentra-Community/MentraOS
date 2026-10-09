@@ -45,6 +45,24 @@ test('exact targets restrict compatibility and unknown source preparation has on
   expect(unknown.compatibilityKnown).toBe(false); expect(unknown.compatibleLanes).toEqual([]);
   expect(unknown.platformCandidates.map(lane=>lane.laneId)).toEqual(['busy']);
 });
+test('pending fixture requirements exclude generic fixtures and keep capable busy lanes visible', () => {
+  const {row, host} = fixture(), prepared = row.fleetPreparation!;
+  prepared.definition = structuredClone(prepared.definition);
+  prepared.definition.fixtures = [{provider: 'miniapp-appearance', description: 'Owned reviewed references and decoder'}];
+  prepared.definition.execution!.resourceKinds.push('fixture-data');
+  prepared.definition.resourceRequirements.push({kind: 'fixture-data', capabilities: ['reviewed-miniapp-appearance', 'media-decode']});
+  prepared.definitionSha256 = requestInputDigest(prepared.definition);
+  prepared.requirements = routinePortableRequirements({platform: 'android', definition: prepared.definition} as any);
+  row.fleetInputSha256 = routineJobInputDigest(row);
+  host.lanes = host.lanes.slice(0, 2);
+  host.lanes[0]!.resources.push({id: 'generic-fixture', kind: 'fixture-data', capabilities: []});
+  host.lanes[1]!.resources.push({id: 'reviewed-fixture', kind: 'fixture-data', capabilities: ['reviewed-miniapp-appearance', 'media-decode']});
+  const item = pendingQueueItem(row, [host], now);
+  expect(item.compatibilityKnown).toBe(true);
+  expect(item.compatibleLanes.map(lane => lane.laneId)).toEqual(['busy']);
+  expect(item.compatibleLanes[0]!.state).toBe('running');
+  expect(row.fleetPreparation!.definition.fixtures[0]!.provider).toBe('miniapp-appearance');
+});
 test('corrupt exact requirements cannot produce compatible lane claims or hide neighboring rows', () => {
   const {row,host} = fixture(); row.fleetPreparation!.requirements.resources[0]!.capabilities=[];
   const item=pendingQueueItem(row,[host],now); expect(item.compatibleLanes).toEqual([]); expect(item.reason).toContain('unavailable');

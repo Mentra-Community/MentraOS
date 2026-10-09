@@ -14,7 +14,7 @@ const definition = {id:'new-routine',minimumRoutineApiVersion:1,title:'A check',
   requirements:[],fixtures:[],steps:[{id:'check',instruction:'Check',expected:'Checked'}],
   execution:{resourceKinds:['phone','app','recorder','network']},resourceRequirements:[{kind:'phone',capabilities:[]},{kind:'app',capabilities:[]},{kind:'recorder',capabilities:[]},{kind:'network',capabilities:['independent-uplink']}],
   source:{repository:'Mentra-Community/Mentra-Automated-Testing',revision:selection.routineRevision,path:'routines/new-routine/routine.ts'}};
-function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequirements'> & {resourceRequirements: {kind: string; capabilities: string[]}[]; glasses?: {models: string[]}} = definition) {
+function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequirements' | 'fixtures'> & {resourceRequirements: {kind: string; capabilities: string[]}[]; fixtures: {provider: string; description: string}[]; glasses?: {models: string[]}} = definition) {
   let time = Date.parse('2026-10-08T00:00:00Z'), row:StoredRoutineJob|null=null, resolves=0, sources=0;
   let offeredHosts: ReceivedTestHostState[] | undefined, resultFound = false;
   const copy = <T>(value:T):T => structuredClone(value);
@@ -141,6 +141,44 @@ test('descriptor/capability and target fences reject incompatible assignments be
   await expect(f.service.bind(selection.requestId,'mini',{...input,descriptorRevision:'f'.repeat(64)})).rejects.toThrow('descriptor');
   f.lane.resources.find(resource => resource.kind === 'network')!.capabilities=[];f.lane.descriptorRevision=routineLaneDescriptorRevision(f.lane);
   await expect(f.service.bind(selection.requestId,'mini',{...input,descriptorRevision:f.lane.descriptorRevision})).rejects.toThrow('compatible');expect(f.row?.fleetBinding).toBeUndefined();
+});
+test('reviewed fixture operations exclude generic fixtures from routing and binding while preserving exact source', async () => {
+  const selectedDefinition = {...definition,
+    fixtures: [{provider: 'miniapp-appearance', description: 'Owned reviewed references and decoder'}],
+    execution: {resourceKinds: [...definition.execution.resourceKinds, 'fixture-data']},
+    resourceRequirements: [...definition.resourceRequirements, {kind: 'fixture-data', capabilities: ['reviewed-miniapp-appearance', 'media-decode']}]};
+  const f = fixture(selectedDefinition);
+  const lane = (capabilities: string[]): ReceivedTestHostState['lanes'][number] => {
+    const value = {...f.lane, resources: [...f.lane.resources, {id: 'host-fixture', kind: 'fixture-data' as const, capabilities}]};
+    return {...value, descriptorRevision: routineLaneDescriptorRevision(value)};
+  };
+  const observed = (hostId: string, offered: ReceivedTestHostState['lanes'][number]): ReceivedTestHostState => ({
+    hostId, incarnation: 'one', incarnationGeneration: 1, sequence: 1,
+    observedAt: '2026-10-08T00:00:00.000Z', receivedAt: '2026-10-08T00:00:00.000Z', lanes: [offered],
+  });
+  const generic = lane([]), decoderOnly = lane(['media-decode']);
+  f.offer([observed('air', generic), observed('decoder-only', decoderOnly)]);
+  const prepared = await f.prepare(), frozen = structuredClone(f.row!.fleetPreparation);
+  expect(prepared.waitingReason).toBe('Awaiting a compatible enrolled runner');
+  expect(prepared.prepared!.requirements.resources.find(resource => resource.kind === 'fixture-data')!.capabilities)
+    .toEqual(['reviewed-miniapp-appearance', 'media-decode']);
+  expect(prepared.routingLabels).toContain('mentra-cap-3d8d7338377d1ab81665e28e');
+  expect(prepared.routingLabels).toContain('mentra-cap-a8e5ce48dfc27e77cac4aaf5');
+  for (const [hostId, offered] of [['air', generic], ['decoder-only', decoderOnly]] as const)
+    await expect(f.service.bind(selection.requestId, hostId, {inputSha256: prepared.inputSha256, laneId: offered.id,
+      descriptorRevision: offered.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'})).rejects.toThrow('compatible');
+  expect(f.row!.fleetBinding).toBeUndefined();
+  const capable = lane(['reviewed-miniapp-appearance', 'media-decode']);
+  expect(capable.descriptorRevision).not.toBe(generic.descriptorRevision);
+  f.offer([observed('air', generic), observed('mini', capable)]);
+  expect((await f.service.preparation(selection.requestId)).waitingReason).toBeUndefined();
+  expect(f.row!.fleetPreparation).toEqual(frozen);
+  expect(f.row!.fleetInputSha256).toBe(prepared.inputSha256);
+  const bound = await f.service.bind(selection.requestId, 'mini', {inputSha256: prepared.inputSha256, laneId: capable.id,
+    descriptorRevision: capable.descriptorRevision!, actionsRunId: '11', actionsJobId: '21'});
+  expect(bound.execute).toBe(true);
+  expect(bound.binding.hostId).toBe('mini');
+  expect(f.row!.fleetPreparation!.definition.fixtures).toEqual(selectedDefinition.fixtures);
 });
 test('cancel and deadline before bind never revive after preparation retry or observer restart',async()=>{
   const f=fixture(),prepared=await f.prepare();await f.service.cancel(selection.requestId,{reason:'Cancel before runner'});

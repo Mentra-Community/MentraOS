@@ -26,7 +26,7 @@ const resourceCapabilities = {
   audio: ['speech', 'witness', 'synthesis', 'recognition'],
   browser: ['external-window'],
   network: ['independent-uplink'],
-  'fixture-data': [],
+  'fixture-data': ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers'],
   workspace: [],
 }
 export const workDigest = requestInputDigest
