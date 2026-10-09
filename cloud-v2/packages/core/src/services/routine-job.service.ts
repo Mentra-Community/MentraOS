@@ -489,7 +489,8 @@ export class RoutineJobService {
       row.hostRejection?.reason ?? row.preparationRejection?.reason ?? row.preparation?.reason;
     return {jobId, kind: 'run' as const, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256,
       deadline: row.fleetDeadline.toISOString(), state: row.fleetCancellation && !row.fleetBinding ? 'terminal' : row.state,
-      ...(row.fleetBinding ? {binding: row.fleetBinding} : {}), actionsRuns: row.fleetActions ?? [], ...(row.fleetActionsCancellation ? {actionsCancellation:row.fleetActionsCancellation} : {}), ...(reason ? {waitingReason: reason} : {}),
+      ...(row.fleetBinding ? {binding: row.fleetBinding, ...(row.inputSha256 ? {boundInputSha256: row.inputSha256} : {})} : {}),
+      actionsRuns: row.fleetActions ?? [], ...(row.fleetActionsCancellation ? {actionsCancellation:row.fleetActionsCancellation} : {}), ...(reason ? {waitingReason: reason} : {}),
       terminal: !row.fleetBinding ? row.state === 'terminal' || !!row.fleetCancellation
         : !!row.hostRejection || !!row.preparationCancellation || !!row.preparationRejection || !!row.dispatchCompletion && row.state === 'terminal',
       ...(row.dispatchCompletion ? {cleanupDisposition: row.dispatchCompletion.disposition, dispatchCompletion: row.dispatchCompletion} : {}),

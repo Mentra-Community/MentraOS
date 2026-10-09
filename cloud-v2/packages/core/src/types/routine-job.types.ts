@@ -66,6 +66,8 @@ export interface StoredRoutineJob {
   fleetActions?: Array<{actionsRunId: string; recordedAt: string}>;
   fleetCancellation?: {requestedAt: string; reason: string};
   hostId?: string;
+  /** Retained executable input digest after host-specific preparation. */
+  inputSha256?: string;
   dispatchIntent?: unknown;
   dispatchIntentSha256?: string;
   preparation?: {code: string; reason: string; observedAt: string};
