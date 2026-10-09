@@ -5,6 +5,9 @@
 sending `api_key` in the start message. Soniox retires that method on January
 15, 2027: https://soniox.com/docs/guides/migrate-websocket-authentication
 
+Both the repository root and Cloud V2 package manifests register the same patch,
+so either workspace installation applies it.
+
 The patch changes the ESM and CommonJS STT transports to send the
 `soniox-api-key` and API key WebSocket subprotocols when connecting, and removes
 `api_key` from the start message. Soniox supports this connection authentication

@@ -119,7 +119,7 @@
         "@azure/communication-identity": "^1.3.1",
         "@mentra/cloud-protocol": "^3.3.0",
         "@mentra/cloud-shared": "workspace:*",
-        "@soniox/node": "^2.1.0",
+        "@soniox/node": "2.3.0",
         "hono": "^4.11.1",
         "ioredis": "^5.4.1",
         "jose": "^5.9.6",
@@ -330,6 +330,9 @@
   "trustedDependencies": [
     "bun",
   ],
+  "patchedDependencies": {
+    "@soniox/node@2.3.0": "cloud-v2/patches/@soniox%2Fnode@2.3.0.patch",
+  },
   "packages": {
     "@azure-rest/core-client": ["@azure-rest/core-client@2.8.0", "", { "dependencies": { "@azure/abort-controller": "^2.1.2", "@azure/core-auth": "^1.10.0", "@azure/core-rest-pipeline": "^1.24.0", "@azure/core-tracing": "^1.3.0", "@typespec/ts-http-runtime": "^0.3.0", "tslib": "^2.6.2" } }, "sha512-F1ybHeN+++QhyFCF/ehLUEvrOB6fehPdFBFtGdj0C3B2lpQ9zkPiO5JDgsqc6IfjuUe6b3dAbXK0a7+VgSGfhw=="],
 
@@ -557,7 +560,7 @@
 
     "@rtsao/scc": ["@rtsao/scc@1.1.0", "", {}, "sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g=="],
 
-    "@soniox/node": ["@soniox/node@2.1.1", "", {}, "sha512-vPXDJ58nTMxAiFMZD3DqQd2owsuySAZ4PKH++woNz0GSX6o8C66VFfn4vzJ9PcnwdmpUzRZrZcdgiNzkippLKA=="],
+    "@soniox/node": ["@soniox/node@2.3.0", "", {}, "sha512-WGDxaUFzet/NXoLYj5kw/JPAvFFWwce+iwhBNfWupNpXubXR5ijpUO6Qt5xnVYmpqnDtG57t8TIfKaFprL6y3g=="],
 
     "@testing-library/dom": ["@testing-library/dom@10.4.1", "", { "dependencies": { "@babel/code-frame": "^7.10.4", "@babel/runtime": "^7.12.5", "@types/aria-query": "^5.0.1", "aria-query": "5.3.0", "dom-accessibility-api": "^0.5.9", "lz-string": "^1.5.0", "picocolors": "1.1.1", "pretty-format": "^27.0.2" } }, "sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg=="],
 

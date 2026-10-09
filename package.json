@@ -11,6 +11,9 @@
   "trustedDependencies": [
     "bun"
   ],
+  "patchedDependencies": {
+    "@soniox/node@2.3.0": "cloud-v2/patches/@soniox%2Fnode@2.3.0.patch"
+  },
   "devDependencies": {
     "@eslint/css": "^0.10.0",
     "@eslint/js": "^9.36.0",
