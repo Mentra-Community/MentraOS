@@ -52,7 +52,7 @@ test('no user-correlated logs is explicit unavailable and never a fabricated rec
   await new ReportServerLogCollectionService().tick()
   expect(fixture.attach).not.toHaveBeenCalled()
   expect(fixture.outcome).toHaveBeenCalledTimes(2)
-  expect(fixture.outcome.mock.calls[1]![0]).toMatchObject({source: 'miniapp_server', state: 'unavailable'})
+  expect(fixture.outcome.mock.calls[1]![0]).toMatchObject({source: 'miniapp_server', state: 'unavailable', reason: 'No matching miniapp server logs found in the configured source for the incident window'})
 })
 test('empty lookup before the deadline remains eligible and a later tick attaches ingested logs', async () => {
   const fixture = setup(new Date(Date.now() + 60_000).toISOString())

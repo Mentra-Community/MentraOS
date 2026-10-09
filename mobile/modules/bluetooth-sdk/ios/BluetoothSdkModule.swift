@@ -368,8 +368,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         // MARK: - Incident Reporting
 
         AsyncFunction("sendIncidentId") { (incidentId: String, apiBaseUrl: String?) in
-            await MainActor.run {
-                self.bluetoothSdk().sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
+            try await MainActor.run {
+                try self.bluetoothSdk().sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
             }
         }
 

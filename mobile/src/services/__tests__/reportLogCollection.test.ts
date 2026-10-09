@@ -41,6 +41,7 @@ const addLogs = jest.mocked(cloudClientService.core.reports.addLogs)
 const update = jest.mocked(cloudClientService.core.reports.updateLogCollection)
 const sync = jest.mocked(cloudClientService.syncCoreTokenToBluetooth)
 const send = jest.mocked(BluetoothSdk.sendIncidentId)
+const nativeStatus = jest.mocked(BluetoothSdk.getGlassesStatus)
 
 function connected() {
   useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
@@ -55,6 +56,7 @@ describe("report source collection and phone delivery diagnostics", () => {
     update.mockResolvedValue(undefined)
     sync.mockResolvedValue("unused-token")
     send.mockResolvedValue(undefined)
+    nativeStatus.mockResolvedValue({connection: {state: "connected", fullyBooted: true}} as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
   })
 
   afterEach(() => jest.useRealTimers())
@@ -117,12 +119,13 @@ describe("report source collection and phone delivery diagnostics", () => {
     })
   })
 
-  it.each(["core_token_sync", "incident_dispatch"])(
+  it.each(["core_token_sync", "connection_read", "incident_dispatch"])(
     "records sanitized %s failure without leaking native errors",
     async (stage) => {
       connected()
       const privateError = new Error("Authorization: Bearer PRIVATE_SENTINEL")
       if (stage === "core_token_sync") sync.mockRejectedValueOnce(privateError)
+      else if (stage === "connection_read") nativeStatus.mockRejectedValueOnce(privateError)
       else send.mockRejectedValueOnce(privateError)
 
       await submitAutomaticReport(input)
@@ -134,6 +137,39 @@ describe("report source collection and phone delivery diagnostics", () => {
       expect(JSON.stringify([update.mock.calls, addLogs.mock.calls])).not.toContain("PRIVATE_SENTINEL")
     },
   )
+
+  it("does not send when the cached engine says connected but the native link is disconnected", async () => {
+    connected()
+    nativeStatus.mockResolvedValueOnce({connection: {state: "disconnected"}} as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
+
+    await submitAutomaticReport(input)
+
+    expect(sync).toHaveBeenCalledTimes(1)
+    expect(nativeStatus).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith("rep_delivery", "glasses_firmware", {
+      state: "unavailable", reason: "glasses_disconnected",
+    })
+  })
+
+  it("never dispatches after an expired authoritative connection read finishes", async () => {
+    jest.useFakeTimers()
+    connected()
+    let finishRead!: (status: Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>) => void
+    nativeStatus.mockImplementationOnce(() => new Promise(resolve => {finishRead = resolve}))
+
+    const pending = submitAutomaticReport(input)
+    await jest.advanceTimersByTimeAsync(10_000)
+    await pending
+    finishRead({connection: {state: "connected", fullyBooted: true}} as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
+    await Promise.resolve()
+
+    expect(send).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith("rep_delivery", "glasses", {
+      state: "failed", reason: "incident_dispatch_timeout",
+    })
+    expect(jest.getTimerCount()).toBe(0)
+  })
 
   it("bounds local notification and never sends after an expired token synchronization", async () => {
     jest.useFakeTimers()

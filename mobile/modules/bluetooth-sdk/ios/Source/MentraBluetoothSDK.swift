@@ -1667,8 +1667,8 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.sendReboot()
     }
 
-    func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
-        DeviceManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
+    func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) throws {
+        try DeviceManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
     }
 
     public func invalidate() {

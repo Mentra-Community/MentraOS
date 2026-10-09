@@ -130,11 +130,9 @@ async function syncCoreAccessTokenToBluetoothInternal(): Promise<string> {
     throw result.error
   }
 
-  try {
-    await BluetoothSdk.updateBluetoothSettings({[SETTINGS.core_token.key]: token})
-  } catch (err) {
-    console.warn(`${LOG_TAG}: direct Bluetooth core_token sync failed: ${(err as Error)?.message ?? err}`)
-  }
+  // A saved JS token is not a successful native sync. Let callers record a
+  // failed synchronization rather than ask glasses to upload with an old token.
+  await BluetoothSdk.updateBluetoothSettings({[SETTINGS.core_token.key]: token})
 
   return token
 }

@@ -85,13 +85,21 @@ async function notifyGlasses(reportId: string): Promise<ReportLogCollectionUpdat
     return {state: "unavailable", reason: "glasses_disconnected"}
   }
   let expired = false
-  let stage: "core_token_sync" | "incident_dispatch" = "core_token_sync"
+  let stage: "core_token_sync" | "connection_read" | "incident_dispatch" = "core_token_sync"
   let timer: number | undefined
   const dispatch = (async (): Promise<ReportLogCollectionUpdate> => {
     try {
       await cloudClientService.syncCoreTokenToBluetooth()
       if (expired) return {state: "failed", reason: "incident_dispatch_timeout"}
       if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+        return {state: "unavailable", reason: "glasses_disconnected"}
+      }
+      // The engine mirror can be stale after a native disconnect. Read the SDK
+      // immediately before dispatch; the native sender checks the link again.
+      stage = "connection_read"
+      const native = await BluetoothSdk.getGlassesStatus()
+      if (expired) return {state: "failed", reason: "incident_dispatch_timeout"}
+      if (!isGlassesConnected(native.connection)) {
         return {state: "unavailable", reason: "glasses_disconnected"}
       }
       stage = "incident_dispatch"

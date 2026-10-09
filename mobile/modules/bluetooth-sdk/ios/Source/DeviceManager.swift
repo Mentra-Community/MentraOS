@@ -1518,9 +1518,12 @@ struct ViewState {
         sgc?.requestSavedWifiNetworks(requestId: requestId, sid: sid) ?? false
     }
 
-    func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
+    func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) throws {
+        guard let driver = sgc else {
+            throw BluetoothSdkError(code: "glasses_not_connected", message: "Cannot request incident logs because glasses are not connected.")
+        }
         Bridge.log("MAN: Sending incidentId to glasses for log upload: \(incidentId)")
-        sgc?.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
+        try driver.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
     }
 
     func sendWifiCredentials(_ ssid: String, _ password: String) {
