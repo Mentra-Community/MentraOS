@@ -69,7 +69,7 @@ do not substitute `dev`. Do not create staging commits just to test this system.
 
 ## Fix, publish and review
 
-1. Classify the failure before editing: app bug, harness bug, machine or fixture
+1. Classify the failure before editing: app bug, routine bug, framework bug, machine or fixture
    state, or unknown cause. An unknown cause is permission to investigate, not a
    verdict. Authentication failures, the wrong model or session, a malformed
    execution result and actual tool or policy denials are stops: report them and
@@ -92,9 +92,14 @@ do not substitute `dev`. Do not create staging commits just to test this system.
 4. Use [select-pr-routines](../select-pr-routines/SKILL.md): retain the failed
    routine's applicable `routine:<id>` label and select any additional relevant
    coverage. Preserve existing labels and state gaps. Label each fix PR for the
-   component it actually fixes: `bug:app` or `bug:harness`, both only when that
-   PR fixes both. Base this on the PR's diagnosis, not its repository: a MentraOS
-   change to Core, CI, request tooling or this skill can be a harness fix.
+   component it actually fixes: `bug:app` for product app behavior,
+   `bug:routine` for wrong routine actions, expectations or routine fixtures, and
+   `bug:framework` for shared execution, orchestration, recording or test
+   infrastructure. Use multiple labels only when the PR fixes multiple components;
+   do not use `bug:harness`. Base this on the diagnosis, not the repository:
+   MentraOS Core/CI/dispatch changes can be framework fixes. A routine's Super
+   Mode transition expectation is a routine fix; shared Mac scan-row reveal is
+   a framework fix.
    Assigned agents record classification through the controller before it
    reconciles labels; standalone agents record it in the PR and task state. Private harness fixes need
    a trusted merged-worker rerun; a label is not permission to execute unmerged

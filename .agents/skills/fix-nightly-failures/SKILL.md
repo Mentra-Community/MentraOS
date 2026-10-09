@@ -60,7 +60,7 @@ causal group and supporting evidence, existing fix/job, PR/head/review, next act
 and verification result. Fetch the first useful framework result and setup/teardown
 journal before expanding into screenshots, recordings or command logs.
 
-Classify app, harness, machine/fixture state or unknown on evidence. Compare the
+Classify app, routine, framework, machine/fixture state or unknown on evidence. Compare the
 failing source with current source before fixing it. Reuse the relevant diagnosis
 mechanics in `fix-routine-failure`; this suite's completion boundary takes
 precedence over that skill's deployment/rerun loop.
@@ -88,8 +88,13 @@ or repair in orchestration. Follow repository guidance and proven actions;
 avoid new compatibility paths, runners or arbitrary sleeps.
 
 Run meaningful source checks, open a focused PR with diagnosis and validation,
-and use `select-pr-routines` for applicable coverage (`bug:app`/`bug:harness` and
-relevant routine labels). Documentation-only changes need no device coverage.
+and use `select-pr-routines` for applicable coverage. Label product app fixes
+`bug:app`, wrong routine actions/expectations/fixtures `bug:routine`, and shared
+execution/orchestration/recording/infrastructure `bug:framework`; use multiple
+labels only for multiple corrected components, never `bug:harness`. A routine's
+Super Mode transition expectation is routine behavior; shared Mac scan-row reveal
+is framework behavior. Add relevant routine coverage labels separately.
+Documentation-only changes need no device coverage.
 Use the canonical independent `codex-pr-review` skill and its existing launcher
 on every opened or updated PR. Read its verdict and all relevant requested
 changes; address real findings, explain evidence-backed disagreements, and rerun
