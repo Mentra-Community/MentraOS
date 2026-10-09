@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {Hono} from 'hono'
 import type {AppEnv} from '../types/hono.types'
-import {ReportModel} from '../models/report.model'
+import {ReportModel, type Report} from '../models/report.model'
 import {ReportAssetModel} from '../models/report-asset.model'
 import {addLogArtifact, getReport, submitReport, updateReportLogCollection} from './report.service'
 import {initialReportLogCollection} from './report-log-collection'
@@ -82,12 +82,16 @@ const uri = process.env.REPORT_COLLECTION_MONGO_URI
       const foreignId = `rep_foreign${randomUUID().replaceAll('-', '')}`
       await ReportModel.create({reportId: foreignId, mentraUserId: 'other-user', kind: 'bug', status: 'collecting',
         artifacts: [], logCollection: originalCollection, context: {}})
-      const originalUpdate = ReportModel.updateOne.bind(ReportModel)
+      const boundUpdate = ReportModel.updateOne.bind(ReportModel)
+      const originalUpdate = (filter: mongoose.FilterQuery<Report>, change: mongoose.UpdateQuery<Report> | mongoose.UpdateWithAggregationPipeline,
+        options?: (mongoose.mongo.UpdateOptions & mongoose.MongooseUpdateQueryOptions<Report>) | null) => boundUpdate(filter, change, options)
       let intercepted = false, rolledBackId = '', newerReceipt: unknown
-      const update = spyOn(ReportModel, 'updateOne').mockImplementation((async (filter: any, change: any, options: any) => {
-        const result = await originalUpdate(filter, change, options)
-        if (!intercepted && filter.reportId === targetId && change.$push?.artifacts) {
-          intercepted = true; rolledBackId = change.$push.artifacts.$each[0].artifactId
+      const update = spyOn(ReportModel, 'updateOne').mockImplementation((async (...args: Parameters<typeof originalUpdate>) => {
+        const [filter, change] = args
+        const result = await originalUpdate(...args)
+        const batch = (change as {$push?: {artifacts?: {$each?: Array<{artifactId: string}>}}})?.$push?.artifacts?.$each
+        if (!intercepted && filter?.reportId === targetId && batch?.[0]) {
+          intercepted = true; rolledBackId = batch[0].artifactId
           // Exercise a real successful Mongo update whose client observes an ambiguous failure.
           if (concurrent) {
             await addLogArtifact({mentraUserId: userId, reportId: targetId, source: 'phone', entries: [{...entries[0]!, message: 'Newer accepted artifact'}]})
@@ -96,7 +100,7 @@ const uri = process.env.REPORT_COLLECTION_MONGO_URI
           throw new Error('Synthetic response loss after applied Mongo update')
         }
         return result
-      }) as any)
+      }) as unknown as typeof ReportModel.updateOne)
       try {
         await expect(addLogArtifact({mentraUserId: userId, reportId: targetId, source: 'phone', entries}))
           .rejects.toThrow('Synthetic response loss after applied Mongo update')
