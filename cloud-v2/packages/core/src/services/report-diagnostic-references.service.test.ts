@@ -90,7 +90,9 @@ function models(run: RecordedFrameworkRun) {
     expect(selected.length).toBeLessThanOrEqual(100)
     for (const entry of selected) {
       const row = rows.get(entry.artifactId)!
-      expect(entry).toEqual({artifactId: row.artifactId, type: 'state_snapshot', source: 'framework-diagnostic', filename: row.fileName,
+      const screenshot = run.assets.find(asset => asset.id === row.sourceTestAssetId)!.kind === 'screenshot'
+      expect(entry).toEqual({artifactId: row.artifactId, type: screenshot ? 'screenshot' : 'state_snapshot',
+        source: screenshot ? 'framework-screenshot' : 'framework-diagnostic', filename: row.fileName,
         contentType: row.contentType, sizeBytes: row.sizeBytes, createdAt: row.createdAt})
       if (metadata.has(entry.artifactId)) expect(entry).toEqual(metadata.get(entry.artifactId)!)
       metadata.set(entry.artifactId, {...entry})
@@ -177,4 +179,58 @@ test('missing original asset custody rejects before references or metadata can b
   await expect(referenceTestRunDiagnostics(owner, run)).rejects.toMatchObject({status: 503})
   expect(f.writes).toHaveLength(0)
   expect(f.metadataWrites).toHaveLength(0)
+})
+
+function screenshotRun(): RecordedFrameworkRun {
+  const run = frozenRun(2)
+  run.assets.push(...(['png', 'jpeg'] as const).map(extension => ({
+    id: `screenshots/original.${extension}`, kind: 'screenshot' as const, path: `screenshots/original.${extension}`,
+    sha256: createHash('sha256').update(`original ${extension} bytes`).digest('hex'), size: 123,
+    mimeType: `image/${extension}` as 'image/png' | 'image/jpeg',
+  })))
+  run.assets.push({id: 'recording', kind: 'recording', path: 'recordings/original.mp4', sha256: 'a'.repeat(64), size: 456, mimeType: 'video/mp4'})
+  return recordedFrameworkRunSchema.parse(run)
+}
+
+test('screenshots reference original bytes with screenshot metadata, retain JSON diagnostics and reuse exact receipts on retry', async () => {
+  const run = screenshotRun(), before = requestInputDigest(run), f = models(run)
+  f.failAfterCommit(1)
+  await expect(referenceTestRunDiagnostics(owner, run)).rejects.toBe(f.committedError)
+  const originals = new Map([...f.rows].map(([id, row]) => [id, {...row}]))
+  f.allowWrites(); f.resetCalls(); f.forbidWrites()
+  expect(await referenceTestRunDiagnostics(owner, run)).toBe(4)
+  expect(f.writes).toHaveLength(0)
+  expect(f.rows).toEqual(originals)
+  expect([...f.metadata.values()].map(entry => entry.type)).toEqual(['state_snapshot', 'state_snapshot', 'screenshot', 'screenshot'])
+  expect([...f.rows.values()].map(row => row.storageKey)).toEqual(run.assets.slice(0, 4).map(asset => `test-runs/original/${asset.id}`))
+  expect([...f.rows.values()].map(row => row.sourceTestAssetId)).not.toContain('recording')
+  expect(requestInputDigest(run)).toBe(before)
+})
+
+for (const [field, value] of Object.entries({sha256: 'f'.repeat(64), sizeBytes: 999, storageKey: 'different/original', contentType: 'text/plain'})) {
+  test(`a screenshot reference with conflicting ${field} refuses reuse`, async () => {
+    const run = screenshotRun(), f = models(run)
+    await referenceTestRunDiagnostics(owner, run)
+    const row = [...f.rows.values()].find(row => row.contentType === 'image/png')!
+    Object.assign(row, {[field]: value})
+    f.resetCalls()
+    await expect(referenceTestRunDiagnostics(owner, run)).rejects.toMatchObject({status: 409})
+    expect(f.writes).toHaveLength(0); expect(f.metadataWrites).toHaveLength(0)
+  })
+}
+
+for (const [field, value] of Object.entries({sha256: 'f'.repeat(64), sizeBytes: 999})) {
+  test(`screenshot custody with a different ${field} refuses attachment`, async () => {
+    const run = screenshotRun(), f = models(run)
+    Object.assign(f.assets.get('screenshots/original.png')!, {[field]: value})
+    await expect(referenceTestRunDiagnostics(owner, run)).rejects.toMatchObject({status: 503})
+    expect(f.writes).toHaveLength(0); expect(f.metadataWrites).toHaveLength(0)
+  })
+}
+
+test('a screenshot without acknowledged original custody is not attached', async () => {
+  const run = screenshotRun(), f = models(run)
+  f.assets.delete('screenshots/original.png')
+  await expect(referenceTestRunDiagnostics(owner, run)).rejects.toMatchObject({status: 503})
+  expect(f.writes).toHaveLength(0); expect(f.metadataWrites).toHaveLength(0)
 })

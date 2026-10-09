@@ -164,6 +164,25 @@ test("bounded summary declares omissions and preserves exact provenance without 
   expect(bytes).not.toContain("unfiltered-build-secret")
   expect(Buffer.byteLength(bytes)).toBeLessThan(FAILED_RUN_DIAGNOSTIC_BYTES)
 })
+test("screenshots lead capped links and all screenshots retain incident references on retry", async () => {
+  process.env.CLOUD_CORE_ENVIRONMENT = "dev"
+  const frozen = run("android", "test")
+  frozen.assets = Array.from({length: 50}, (_, index) => ({id: `diagnostic-${index}`, kind: "diagnostic",
+    path: `diagnostics/${index}.json`, sha256: "c".repeat(64), size: 2, mimeType: "application/json"}))
+  frozen.assets.push({id: "failed-step-image", kind: "screenshot", path: "screenshots/original-failure.png", sha256: "e".repeat(64), size: 200, mimeType: "image/png"},
+    {id: "generic-screenshot", kind: "screenshot", path: "screenshots/original.png", sha256: "d".repeat(64), size: 100, mimeType: "image/png"})
+  const before = requestInputDigest(frozen), diagnostic = failedRunDiagnostics(frozen)
+  expect(diagnostic.assets.slice(0, 2).map(asset => asset.id)).toEqual(["failed-step-image", "generic-screenshot"])
+  expect(diagnostic.assets).toHaveLength(50); expect(diagnostic.omittedAssets).toBe(2)
+  expect(diagnostic.diagnosticAttachments).toBe(52)
+  expect(diagnostic.assets[0]).toMatchObject({kind: "screenshot", sha256: "e".repeat(64), size: 200,
+    url: `https://admin.dev.mentraglass.com/api/admin/routine-catalog/results/by-run/${frozen.result.runId}/assets/failed-step-image`})
+  const fixture = service()
+  expect(await fixture.instance.complete(frozen, before)).toEqual(await fixture.instance.complete(frozen, before))
+  expect(fixture.attachments.size).toBe(1)
+  expect(fixture.references).toBe(104)
+  expect(requestInputDigest(frozen)).toBe(before)
+})
 test("native completion acknowledges evidence before incident retry and pending Slack does not poison uploads", async () => {
   const frozen = run("android", "setup"),
     hash = requestInputDigest(frozen)
