@@ -58,7 +58,8 @@ public class AeCaptureCallbackTest {
         CameraCaptureSession session = mock(CameraCaptureSession.class);
         CaptureRequest request = mock(CaptureRequest.class);
         TotalCaptureResult result = mock(TotalCaptureResult.class);
-        stateMachine.clearWaitFlags(); // previous shot ended in the same dark scene
+        // Previous shot fired in the same dark scene.
+        stateMachine.noteShotFired(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
         stateMachine.beginWaitingForAe();
         when(result.get(CaptureResult.CONTROL_AE_STATE))
                 .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
@@ -93,7 +94,7 @@ public class AeCaptureCallbackTest {
                 .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
         when(dark.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
         when(dark.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
-        stateMachine.clearWaitFlags();
+        stateMachine.noteShotFired(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
         callback.onCaptureCompleted(session, request, bright); // idle preview, light still on
 
         stateMachine.beginWaitingForAe();
@@ -103,6 +104,43 @@ public class AeCaptureCallbackTest {
 
         assertThat(stateMachine.waitingForAeConvergence()).isTrue();
         assertThat(hooks.captureCount).isZero();
+    }
+
+    @Test
+    public void onCaptureCompleted_brightShotThenOnlyDarkFrames_keepsWaiting() {
+        // The previous shot fired CONVERGED (bright); the light was already off by the time preview
+        // resumed, so no bright frame follows it. The next dark shot must not take the fast path.
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        hooks.reusesRunningCamera = true;
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult bright = mock(TotalCaptureResult.class);
+        when(bright.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+        when(bright.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(400);
+        when(bright.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(25_000_000L);
+        TotalCaptureResult dark = mock(TotalCaptureResult.class);
+        when(dark.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        when(dark.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
+        when(dark.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
+
+        stateMachine.beginWaitingForAe();
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED; i++) {
+            callback.onCaptureCompleted(session, request, bright);
+        }
+        assertThat(hooks.captureCount).isEqualTo(1);
+        stateMachine.clearWaitFlags(); // preview restore after the still
+
+        stateMachine.beginWaitingForAe();
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED + 2; i++) {
+            callback.onCaptureCompleted(session, request, dark);
+        }
+
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        assertThat(hooks.captureCount).isEqualTo(1);
     }
 
     @Test

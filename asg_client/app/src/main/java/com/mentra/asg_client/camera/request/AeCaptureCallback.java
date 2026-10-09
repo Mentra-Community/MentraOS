@@ -127,6 +127,7 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                         + (AeStateMachine.AE_WAIT_MAX_NS / 1_000_000) + "ms), capture delay "
                         + remainingStabilityMs + "ms");
                 aeStateMachine.clearWaitFlags();
+                aeStateMachine.noteShotFired(aeState);
                 hooks.scheduleCapturePhoto(remainingStabilityMs);
                 break;
             }
@@ -135,6 +136,7 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                 Log.i(TAG, "🔍 ✅ AE LOCKED in " + totalElapsedMs + "ms total! State: "
                         + AeStateMachine.getAeStateName(aeState) + ", capturing photo");
                 aeStateMachine.clearWaitFlags();
+                aeStateMachine.noteShotFired(aeState);
                 hooks.capturePhoto();
                 break;
             }
@@ -150,6 +152,7 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                 long minimumStabilityMs = hooks.minimumExposureStabilizationDelayMs();
                 long remainingStabilityMs = Math.max(0L, minimumStabilityMs - stabilityMs);
                 aeStateMachine.clearWaitFlags();
+                aeStateMachine.noteShotFired(aeState);
                 if (remainingStabilityMs > 0L) {
                     Log.i(TAG, "🔍 ✅ AE CONVERGED+STABLE in " + elapsedMs + "ms! State: "
                             + AeStateMachine.getAeStateName(aeState) + " (stability wait "

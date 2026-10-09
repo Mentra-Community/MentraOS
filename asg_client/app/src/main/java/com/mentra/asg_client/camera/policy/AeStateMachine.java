@@ -30,9 +30,9 @@ public final class AeStateMachine {
     private volatile long lastTotalLight;
 
     /**
-     * Whether every repeating frame since the previous AE wait ended reported FLASH_REQUIRED, i.e.
-     * the scene has stayed at the exposure limit since the last shot. Any other AE state (the
-     * light changed, AE is adjusting) clears it until the next wait ends.
+     * Whether the last shot fired at FLASH_REQUIRED and every repeating frame since then also
+     * reported it, i.e. the scene has stayed at the exposure limit since the last shot. Any other
+     * AE state (the light changed, AE is adjusting) clears it until the next shot fires.
      */
     private volatile boolean atExposureLimitSinceLastShot;
 
@@ -128,7 +128,12 @@ public final class AeStateMachine {
     public void clearWaitFlags() {
         waitingForAeConvergence = false;
         aeLockRequested = false;
-        atExposureLimitSinceLastShot = true;
+    }
+
+    /** Call when a wait ends in a capture: arms the fast path only if that shot was at the limit. */
+    public void noteShotFired(Integer aeState) {
+        atExposureLimitSinceLastShot =
+                aeState != null && aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED;
     }
 
     /** Record the HAL AE state of every repeating frame, including frames between shots. */

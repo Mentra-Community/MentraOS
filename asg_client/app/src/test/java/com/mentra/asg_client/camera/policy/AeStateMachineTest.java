@@ -201,11 +201,17 @@ public class AeStateMachineTest {
     }
 
     @Test
-    public void atExposureLimitSinceLastShot_armedAtEndOfWaitAndClearedByOtherStates() {
+    public void atExposureLimitSinceLastShot_armedOnlyByShotAtLimitAndClearedByOtherStates() {
         AeStateMachine sm = new AeStateMachine();
         assertThat(sm.atExposureLimitSinceLastShot()).isFalse();
 
+        // Ending a wait (preview restore, cancel) does not arm it; neither does a bright shot.
         sm.clearWaitFlags();
+        assertThat(sm.atExposureLimitSinceLastShot()).isFalse();
+        sm.noteShotFired(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+        assertThat(sm.atExposureLimitSinceLastShot()).isFalse();
+
+        sm.noteShotFired(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
         sm.noteHalAeState(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
         sm.noteHalAeState(null);
         assertThat(sm.atExposureLimitSinceLastShot()).isTrue();
