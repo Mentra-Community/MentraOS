@@ -1,4 +1,4 @@
-import {expect, test} from "bun:test"
+import {expect, spyOn, test} from "bun:test"
 import mongoose from "mongoose"
 import {createHash, randomUUID} from "node:crypto"
 import {mkdtemp, rm} from "node:fs/promises"
@@ -21,6 +21,9 @@ import {ReportSlackDeliveryService} from "./report-slack-delivery.service"
 import {requestInputDigest} from "./test-request.service"
 import {StorageService} from "./storage/storage.service"
 import {LocalStorageProvider} from "./storage/providers/local-storage.provider"
+import {REPORT_LOG_SOURCES} from "./report-log-collection"
+import * as serverLogs from "./report-cloud-logs"
+import {ReportServerLogCollectionService} from "./report-server-log-collection.service"
 
 const uri = process.env.FAILED_RUN_REPORT_MONGO_URI
 ;(uri ? test : test.skip)(
@@ -133,6 +136,43 @@ const uri = process.env.FAILED_RUN_REPORT_MONGO_URI
       // Repeat/restart only references the same raw object; no test asset is removed or copied.
       expect(await TestAssetModel.countDocuments()).toBe(1)
       expect(await storage.getObject(storageKey)).toEqual(bytes)
+
+      // Both failed-run and worker-diagnostic fallbacks expose collection gaps.
+      // Native diagnostic references and the framework summary are not device logs.
+      const worker = await ensureTestRunReport("worker-run", "f".repeat(64))
+      for (const reportId of [final!.reportId, worker.reportId]) {
+        const row = (await ReportModel.findOne({reportId}).lean())!
+        const collection = row.logCollection!
+        expect(Object.keys(collection).sort()).toEqual([...REPORT_LOG_SOURCES].sort())
+        for (const source of REPORT_LOG_SOURCES) {
+          expect(collection[source]).toMatchObject({state: "unavailable", reason:
+            source === "cloud" || source === "miniapp_server"
+              ? "No trusted Mentra user identity is available for server log correlation"
+              : "No device-filed report is available to request device log collection"})
+          expect(Date.parse(collection[source]!.requestedAt)).toBeFinite()
+          expect(Date.parse(collection[source]!.deadlineAt)).toBeGreaterThan(Date.parse(collection[source]!.requestedAt))
+          expect(collection[source]!.artifactId).toBeUndefined()
+          expect(collection[source]!.receivedAt).toBeUndefined()
+          expect(collection[source]!.entryCount).toBeUndefined()
+        }
+        expect((await getReport(reportId))!.report.logCollection).toEqual(collection)
+        // Bypass Mongoose's immutable timestamp only in this isolated fixture so
+        // the real reconciliation query can otherwise claim the report.
+        await ReportModel.collection.updateOne({reportId}, {$set: {createdAt: new Date(Date.now() - 60_000)}})
+      }
+      const collect = spyOn(serverLogs, "collectServerLogs").mockRejectedValue(new Error("Unexpected automation owner lookup"))
+      try {
+        await new ReportServerLogCollectionService().tick()
+        expect(collect).not.toHaveBeenCalled()
+        expect(await ReportAssetModel.countDocuments()).toBe(2)
+      } finally {collect.mockRestore()}
+      const original = (await ReportModel.findOne({reportId: worker.reportId}).lean())!.logCollection
+      await ensureTestRunReport("worker-run", "f".repeat(64))
+      expect((await ReportModel.findOne({reportId: worker.reportId}).lean())!.logCollection).toEqual(original)
+      // Retries do not backfill retained reports that predate source receipts.
+      await ReportModel.updateOne({reportId: worker.reportId}, {$unset: {logCollection: ""}})
+      await ensureTestRunReport("worker-run", "f".repeat(64))
+      expect((await ReportModel.findOne({reportId: worker.reportId}).lean())!.logCollection).toBeUndefined()
     } finally {
       await mongoose.connection.dropDatabase()
       await mongoose.disconnect()

@@ -125,7 +125,17 @@ export async function ensureTestRunReport(testRunId: string, payloadSha256: stri
   details?: {actualBehavior: string; expectedBehavior: string; context: Record<string, unknown>}) {
   const reportId = stableReportId("rep", `test-run\n${testRunId}\n${payloadSha256}`);
   const mentraUserId = "automation:test-run";
+  const logCollection = initialReportLogCollection(new Date());
+  // A fallback has no device-filed report or trusted customer identity. Keep
+  // these gaps visible without querying server logs for the automation owner.
+  for (const [source, receipt] of Object.entries(logCollection)) {
+    receipt.state = 'unavailable';
+    receipt.reason = source === 'cloud' || source === 'miniapp_server'
+      ? 'No trusted Mentra user identity is available for server log correlation'
+      : 'No device-filed report is available to request device log collection';
+  }
   const document = { reportId, mentraUserId, kind: "automatic", status: "collecting", artifacts: [],
+    logCollection,
     trigger: { type: "automatic", source: REPORT_TESTING_SOURCE, reason: details ? "routine-run-failed" : "worker-diagnostics" },
     report: details ? {actualBehavior: details.actualBehavior, expectedBehavior: details.expectedBehavior} :
       { actualBehavior: "Automation worker diagnostics for a completed test run." },
