@@ -31,11 +31,11 @@ test("dynamic expected members and publication evidence prevent a false pass", (
   result.status = "incomplete"; assert.equal(nightlySummary(result).passed, false)
   result.expectedCount = 2; assert.throws(() => nightlySummary(result), /complete frozen/)
 })
-test("Slack summary reports ran and skipped counts and refuses rerun sends", async () => {
+test("Slack summary matches history failure and skipped counts and refuses rerun sends", async () => {
   const sends = [], options = {result: terminal(), webhook: "https://hooks.slack.com/services/fixture", attempt: 1,
     fetchImpl: async (_, options) => {sends.push(JSON.parse(options.body)); return new Response("ok")}}
   assert.equal((await publishNightlyWebhook(options)).status, "acknowledged")
-  assert.match(sends[0].text, /^🟢 Dev nightly: pass; 1\/1 passed\n<https:\/\/admin\.dev\.mentraglass\.com\/\?testRun=example\|View nightly results>\nBuild: unavailable in the nightly receipt\n1\/1 Ran, 0 skipped$/)
+  assert.match(sends[0].text, /^🟢 Dev nightly: Passed\n<https:\/\/admin\.dev\.mentraglass\.com\/\?testRun=example\|View nightly results>\nBuild: unavailable in the nightly receipt\n0\/1 failed$/)
   assert.equal(sends[0].unfurl_links, false)
   assert.equal(sends[0].unfurl_media, false)
   await assert.rejects(publishNightlyWebhook({...options, attempt: 2}), /reconciliation/)
@@ -80,7 +80,7 @@ async function slackText(result) {
   return body.text.split("\n").slice(2).join("\n")
 }
 
-test("Slack lists failed and unfinished members with per-run links and counts all recorded attempts", async () => {
+test("Slack lists failed and unfinished members with per-run links and history counts", async () => {
   const members = [
     {memberId: "pass", routineId: "passing", platform: "android", status: "pass", runId: "pass", publicationComplete: true},
     {memberId: "failure", routineId: "call", platform: "android", status: "failed", runId: "failed:run/1"},
@@ -92,7 +92,7 @@ test("Slack lists failed and unfinished members with per-run links and counts al
     {memberId: "not-started", routineId: "never-started", platform: "android", status: "not-run"},
   ]
   assert.equal(await slackText({...terminal(), status: "incomplete", expectedCount: members.length, members}),
-    "Build: unavailable in the nightly receipt\n6/8 Ran, 2 skipped\n\n" +
+    "Build: unavailable in the nightly receipt\n3/5 failed, 3 skipped\n\n" +
     "- call (android) · failed - <https://admin.dev.mentraglass.com/?testRun=failed%3Arun%2F1|View result>\n" +
     "- ota (ios-on-mac) · setup-failed - <https://admin.dev.mentraglass.com/?testRun=setup|View result>\n" +
     "- notes&lt;&amp;&gt; (android) · teardown-failed - <https://admin.dev.mentraglass.com/?testRun=teardown|View result>\n" +
@@ -103,16 +103,16 @@ test("Slack lists failed and unfinished members with per-run links and counts al
 })
 
 test("empty selection is neutral and unfinished members are listed", async () => {
-  assert.equal(await slackText({...terminal(), status: "skipped", expectedCount: 0, passed: 0, members: []}), "Build: unavailable in the nightly receipt\n0/0 Ran, 0 skipped")
+  assert.equal(await slackText({...terminal(), status: "skipped", expectedCount: 0, passed: 0, members: []}), "Build: unavailable in the nightly receipt\n0/0 failed")
   assert.equal(await slackText({...terminal(), status: "incomplete", passed: 0,
-    members: [{memberId: "missing", routineId: "missing", platform: "android", status: "incomplete"}]}), "Build: unavailable in the nightly receipt\n0/1 Ran, 1 skipped\n\n- missing (android) · incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
+    members: [{memberId: "missing", routineId: "missing", platform: "android", status: "incomplete"}]}), "Build: unavailable in the nightly receipt\n0/0 failed, 1 skipped\n\n- missing (android) · incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
 })
 
 test("Slack names execution passes with unpublished evidence as unsuccessful members", async () => {
   for (const publicationComplete of [false, undefined]) {
     const result = {...terminal(), status: "incomplete", passed: 0,
       members: [{...terminal().members[0], publicationComplete}]}
-    assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n1/1 Ran, 0 skipped\n\n" +
+    assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n0/1 failed\n\n" +
       "- never-listed-check (android) · execution passed; evidence incomplete - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
   }
 })
@@ -120,9 +120,9 @@ test("Slack names execution passes with unpublished evidence as unsuccessful mem
 test("failure without a run ID uses the occurrence result link without inventing a run", async () => {
   const result = {...terminal(), status: "failed", passed: 0,
     members: [{memberId: "failure", routineId: "call", platform: "android", status: "failed"}]}
-  assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n0/1 Ran, 1 skipped\n\n- call (android) · failed - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
+  assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n1/1 failed\n\n- call (android) · failed - <https://admin.dev.mentraglass.com/?testRun=example|View result>")
   result.resultUrl = undefined
-  assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n0/1 Ran, 1 skipped\n\n- call (android) · failed - Result link unavailable")
+  assert.equal(await slackText(result), "Build: unavailable in the nightly receipt\n1/1 failed\n\n- call (android) · failed - Result link unavailable")
 })
 
 
@@ -130,7 +130,7 @@ test("Slack identifies the frozen release, commit and producer job", async () =>
   const result = terminal()
   result.members[0].build = {releaseIdentity: "dev.559<&>", headSha: "a".repeat(40),
     source: {channel: "dev", buildRunId: 21, publicationAttempt: 2}}
-  assert.equal(await slackText(result), "Build: dev.559&lt;&amp;&gt; · aaaaaaaaaa · <https://github.com/Mentra-Community/MentraOS/actions/runs/21|Build job> (publication 2)\n1/1 Ran, 0 skipped")
+  assert.equal(await slackText(result), "Build: dev.559&lt;&amp;&gt; · aaaaaaaaaa · <https://github.com/Mentra-Community/MentraOS/actions/runs/21|Build job> (publication 2)\n0/1 failed")
   delete result.members[0].build.releaseIdentity
   assert.match(await slackText(result), /^Build: aaaaaaaaaa · <https:\/\/github.com/)
 })
@@ -141,10 +141,40 @@ test("Slack uses the stable suite link and distinguishes success, failure and em
   const send = value => publishNightlyWebhook({result: value, webhook: "https://hooks.slack.com/services/fixture", attempt: 1,
     fetchImpl: async (_, options) => {sends.push(JSON.parse(options.body)); return new Response("ok")}})
   await send(result)
-  assert.match(sends[0].text, /^🟢 Dev nightly: pass; 1\/1 passed/)
+  assert.match(sends[0].text, /^🟢 Dev nightly: Passed/)
   assert.match(sends[0].text, /<https:\/\/admin\.dev\.mentraglass\.com\/\?testSuite=nightly-example\|View nightly results>/)
   await send({...result, status: "failed", passed: 0, members: [{...result.members[0], status: "failed"}]})
-  assert.match(sends[1].text, /^🔴 Dev nightly: failed; 0\/1 passed/)
+  assert.match(sends[1].text, /^🔴 Dev nightly: Failed/)
   await send({...result, status: "skipped", passed: 0, expectedCount: 0, members: []})
-  assert.match(sends[2].text, /^⚪ Dev nightly: skipped; 0\/0 passed/)
+  assert.match(sends[2].text, /^⚪ Dev nightly: Skipped/)
+})
+
+test('history-style summary keeps cancellations and evidence-only incompleteness neutral without pass ratios', async () => {
+  const cases = [
+    {status: 'cancelled', members: [{...terminal().members[0], status: 'cancelled'}], heading: 'Cancelled', counts: '0/1 failed'},
+    {status: 'failed', members: [{...terminal().members[0], status: 'not-run'}], heading: 'Incomplete', counts: '0/0 failed, 1 skipped'},
+    {status: 'incomplete', members: [{...terminal().members[0], publicationComplete: false}], heading: 'Incomplete', counts: '0/1 failed'},
+  ]
+  for (const {status, members, heading, counts} of cases) {
+    let text
+    await publishNightlyWebhook({result: {...terminal(), status, members, passed: 0}, webhook: 'https://hooks.slack.com/services/fixture', attempt: 1,
+      fetchImpl: async (_, options) => {text = JSON.parse(options.body).text; return new Response('ok')}})
+    assert.ok(text.startsWith(`⚪ Dev nightly: ${heading}\n`)); assert.ok(text.includes(`\n${counts}\n`))
+    assert.doesNotMatch(text, /\d+\/\d+ passed|\d+\/\d+ Ran/)
+  }
+})
+
+test('mixed failed and incomplete receipts retain the red Failed history heading', async () => {
+  for (const neighbor of [
+    {...terminal().members[0], memberId: 'missing', status: 'incomplete', runId: undefined},
+    {...terminal().members[0], memberId: 'unpublished', publicationComplete: false},
+  ]) {
+    let text
+    const result = {...terminal(), status: 'incomplete', passed: 0, expectedCount: 2,
+      members: [{...terminal().members[0], status: 'setup-failed'}, neighbor]}
+    await publishNightlyWebhook({result, webhook: 'https://hooks.slack.com/services/fixture', attempt: 1,
+      fetchImpl: async (_, options) => {text = JSON.parse(options.body).text; return new Response('ok')}})
+    assert.ok(text.startsWith('🔴 Dev nightly: Failed\n'))
+    assert.ok(text.includes(neighbor.status === 'incomplete' ? '\n1/1 failed, 1 skipped\n' : '\n1/2 failed\n'))
+  }
 })
