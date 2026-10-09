@@ -22,6 +22,7 @@ import { UserModel } from "../models/user.model";
 import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
 import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
 import { createStorageService, type StorageService } from "./storage/storage.service";
+import type { ByteRange } from "./storage/byte-range";
 
 const logger = createLogger("core").child({ service: "report.service" });
 const attachmentWriteConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
@@ -242,15 +243,16 @@ export async function addLogArtifact(input: {
   });
 }
 
-/** Attach all already-acknowledged native diagnostic bytes by reference, never
+/** Attach all already-acknowledged native diagnostic and screenshot bytes by reference, never
  * copying recordings or reading unbounded device output into the report. */
 export async function referenceTestRunDiagnostics(owner: {reportId: string; mentraUserId: string}, run: RecordedFrameworkRun) {
-  const declared = run.assets.filter(asset => asset.kind === "diagnostic" || asset.kind === "report");
+  const declared = run.assets.filter(asset => asset.kind === "diagnostic" || asset.kind === "report" || asset.kind === "screenshot");
   // A timed-out write may already have committed. Verify and reuse those rows
   // on retry instead of issuing the entire frozen export's upserts again.
   const batchSize = 100;
   for (let offset = 0; offset < declared.length; offset += batchSize) {
     const batch = declared.slice(offset, offset + batchSize);
+    const screenshotIds = new Set(batch.filter(asset => asset.kind === "screenshot").map(asset => asset.id));
     const stored = await TestAssetModel.find({runId: run.result.runId, assetId: {$in: batch.map(asset => asset.id)}})
       .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
     const byId = new Map(stored.map(asset => [asset.assetId, asset]));
@@ -285,7 +287,9 @@ export async function referenceTestRunDiagnostics(owner: {reportId: string; ment
       const row = byArtifactId.get(reference.artifactId);
       if (!row) throw new ReportArtifactError(503, "Routine diagnostic reference is unavailable");
       if (!matches(row, reference)) throw new ReportArtifactError(409, "Routine diagnostic reference already binds different content");
-      return {artifactId: row.artifactId, type: "state_snapshot", source: "framework-diagnostic", filename: row.fileName,
+      const screenshot = screenshotIds.has(reference.sourceTestAssetId);
+      return {artifactId: row.artifactId, type: screenshot ? "screenshot" : "state_snapshot",
+        source: screenshot ? "framework-screenshot" : "framework-diagnostic", filename: row.fileName,
         contentType: row.contentType, sizeBytes: row.sizeBytes, createdAt: row.createdAt};
     });
     const result = await ReportModel.updateOne(owner, {$addToSet: {artifacts: {$each: metadata}}},
@@ -628,18 +632,20 @@ export async function getReport(
 }
 
 /**
- * Payload bytes for one artifact, or null when no such asset row exists.
- * Throws when the row exists but the blob cannot be read (deleted or storage
- * outage) — the API layer decides how to present that.
+ * Frozen metadata and a lazy storage stream, or null when no asset row exists.
+ * Verify the current object's size before serving its original storage key.
  */
-export async function readReportArtifactPayload(
+export async function readReportArtifact(
   reportId: string,
   artifactId: string,
-): Promise<{ bytes: Uint8Array; contentType: string; fileName: string | null; sha256: string } | null> {
+): Promise<{ sizeBytes: number; contentType: string; fileName: string | null; sha256: string;
+  stream: (range?: ByteRange) => Promise<ReadableStream<Uint8Array> | Blob> } | null> {
   const asset = await ReportAssetModel.findOne({ reportId, artifactId }).lean();
   if (!asset) return null;
-  const bytes = await getStorage().getObject(asset.storageKey);
-  return { bytes, contentType: asset.contentType, fileName: asset.fileName ?? null, sha256: asset.sha256 };
+  const storage = getStorage();
+  if ((await storage.statObject(asset.storageKey)).sizeBytes !== asset.sizeBytes) throw new Error("stored report artifact size changed");
+  return { sizeBytes: asset.sizeBytes, contentType: asset.contentType, fileName: asset.fileName ?? null, sha256: asset.sha256,
+    stream: (range) => storage.streamObject(asset.storageKey, range) };
 }
 
 function serializeReportSummary(row: {

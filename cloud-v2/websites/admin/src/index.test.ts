@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { bufferedRangeResponse } from "../../../packages/core/src/services/storage/byte-range";
+import { streamedRangeResponse } from "../../../packages/core/src/services/storage/byte-range";
 import { S3StorageProvider } from "../../../packages/core/src/services/storage/providers/s3-storage.provider";
 import { startAdminServer } from "./index";
 
@@ -49,12 +49,13 @@ test("the real admin proxy preserves authenticated media range lengths and exact
 });
 
 test("the real admin proxy relays authenticated incident artifact ranges with exact lengths", async () => {
-  // Upstream uses Core's real buffered range responder behind a session check.
+  // Upstream uses Core's real streaming responder behind a session check.
   const bytes = Uint8Array.from({ length: 256 * 1024 }, (_, index) => index % 251);
   const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
     if (req.headers.get("cookie") !== "test-session=allowed") return new Response(null, { status: 401 });
-    return bufferedRangeResponse(req, bytes, new Headers({ "content-type": "video/mp4", etag: '"synthetic"',
-      "x-content-type-options": "nosniff", "cache-control": "private, max-age=300" }));
+    return streamedRangeResponse(req, bytes.length, new Headers({ "content-type": "video/mp4", etag: '"synthetic"',
+      "x-content-type-options": "nosniff", "cache-control": "private, max-age=300" }), async range =>
+      new Blob([range ? bytes.subarray(range.start, range.end + 1) : bytes]));
   } });
   const server = startAdminServer({ hostname: "127.0.0.1", port: 0, coreUrl: upstream.url.href });
   await once(server, "listening");

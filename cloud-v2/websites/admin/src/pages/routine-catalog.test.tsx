@@ -314,6 +314,7 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
       {id: "recording", kind: "recording", path: "video.mp4", sha256: "a".repeat(64), size: 100, mimeType: "video/mp4"},
     ],
     result: {
+      stepSources: {setup: [], teardown: [], test: [{id: "step-0", repository: "Mentra-Community/Mentra-Automated-Testing", revision: "c".repeat(40), path: "routines/notes-phone/routine.ts", line: 65}]},
       runId: "request",
       finishedAt: "2026-10-03T19:02:00Z",
       setup: {status: "passed"},
@@ -346,6 +347,8 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
     )
   }
   const html = render(true)
+  expect(html).toContain(`https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/${"c".repeat(40)}/routines/notes-phone/routine.ts#L65`)
+  expect(html).toContain('aria-label="View this step on GitHub"')
   expect(html).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]")
   expect(html.indexOf('aria-label="Run recording"')).toBeLessThan(html.indexOf('aria-label="Execution steps"'))
   expect(html).toContain("order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col")
