@@ -18,7 +18,7 @@ describe("live iOS miniapp visibility policy", () => {
   beforeEach(async () => {
     delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     jest.replaceProperty(Platform, "OS", "ios")
-    await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+    await engine.settings.set("show_mentra_call_ios", false)
     await engine.settings.set(SETTINGS.show_notify_ios.key, false)
   })
   afterEach(() => {
@@ -86,45 +86,42 @@ describe("live iOS miniapp visibility policy", () => {
     expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
     appRegistry.getInstalledVersions = jest.fn(() => ["2.1.29"])
     expect(shouldHideMiniapp(notifyPackageName)).toBe(true)
-    expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
+    expect(engine.settings.descriptor("show_mentra_call_ios")).toBeUndefined()
     workspace.manifest.features.nativeMeetings = false
     expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
     workspace.manifest.features.nativeMeetings = true
     workspace.manifest.miniapps.managed = []
-    await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+    await engine.settings.set("show_mentra_call_ios", true)
     expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
-    await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+    await engine.settings.set("show_mentra_call_ios", false)
     active.mockReturnValue(consumer)
-    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
+    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(false)
   })
 
-  it.each([
-    [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key, notifyPackageName],
-    [notifyPackageName, SETTINGS.show_notify_ios.key, mentraCallPackageName],
-  ])("reads the current local setting for %s without enabling the other miniapp", async (pkg, key, other) => {
-    expect(shouldHideMiniapp(pkg)).toBe(true)
-    await engine.settings.set(key, true)
-    expect(shouldHideMiniapp(pkg)).toBe(false)
-    expect(shouldHideMiniapp(other)).toBe(true)
-    await engine.settings.set(key, false)
-    expect(shouldHideMiniapp(pkg)).toBe(true)
-  })
-
-  it.each([SETTINGS.show_mentra_call_ios.key, SETTINGS.show_notify_ios.key])(
-    "keeps %s local, persistent, and off by default",
-    (key) => {
-      const descriptor = engine.settings.descriptor(key)
-      expect(descriptor).toMatchObject({saveOnServer: false, persist: true})
-      expect(descriptor.defaultValue()).toBe(false)
+  it.each([[notifyPackageName, SETTINGS.show_notify_ios.key, mentraCallPackageName]])(
+    "reads the current local setting for %s without enabling the other miniapp",
+    async (pkg, key, other) => {
+      expect(shouldHideMiniapp(pkg)).toBe(true)
+      await engine.settings.set(key, true)
+      expect(shouldHideMiniapp(pkg)).toBe(false)
+      expect(shouldHideMiniapp(other)).toBe(false)
+      await engine.settings.set(key, false)
+      expect(shouldHideMiniapp(pkg)).toBe(true)
     },
   )
-  it("applies the build override only to Call without changing either saved setting", async () => {
+
+  it.each([SETTINGS.show_notify_ios.key])("keeps %s local, persistent, and off by default", (key) => {
+    const descriptor = engine.settings.descriptor(key)
+    expect(descriptor).toMatchObject({saveOnServer: false, persist: true})
+    expect(descriptor.defaultValue()).toBe(false)
+  })
+  it("ignores the obsolete Call override and retains Notify defaults", async () => {
     process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = "true"
     expect(shouldHideMiniapp(mentraCallPackageName)).toBe(false)
     expect(shouldHideMiniapp(notifyPackageName)).toBe(true)
-    expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
+    expect(engine.settings.descriptor("show_mentra_call_ios")).toBeUndefined()
     expect(engine.settings.get(SETTINGS.show_notify_ios.key)).toBe(false)
     delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
-    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
+    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(false)
   })
 })

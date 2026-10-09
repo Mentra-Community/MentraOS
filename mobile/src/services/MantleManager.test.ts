@@ -882,7 +882,7 @@ describe("MantleManager", () => {
       })()
       instance.installBundledMiniapps = jest.fn(async () => {})
       try {
-        await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+        await engine.settings.set("show_mentra_call_ios", false)
         storage.save("mentra_call_ios_last_enabled", previouslyEnabled)
         instance.setupIosMiniappVisibility()
         // A stale visible consumer entry is restricted before any async work.
@@ -912,7 +912,7 @@ describe("MantleManager", () => {
         await instance.installBundledMiniapp(newerConsumerBundle)
         expect(newerConsumerBundle.downloadAsync).not.toHaveBeenCalled()
         expect(assets).not.toHaveBeenCalled()
-        expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
+        expect(engine.settings.descriptor("show_mentra_call_ios")).toBeUndefined()
       } finally {
         for (const visibility of instance.miniappVisibility.values()) visibility.dispose()
         appRegistry.getReleaseIdentity = originalIdentity
@@ -924,6 +924,32 @@ describe("MantleManager", () => {
       }
     },
   )
+
+  it("installs Call by default and clears the legacy forced-hidden flag only once", async () => {
+    jest.replaceProperty(Platform, "OS", "ios")
+    const instance = new (mantle.constructor as new () => {
+      setupIosMiniappVisibility: () => void
+      prepareIosCall: () => Promise<void>
+      miniappVisibility: Map<string, {reconcile: () => Promise<void>; dispose: () => void}>
+    })()
+    const install = jest.fn(async () => {})
+    instance.prepareIosCall = install
+    storage.save("mentra_call_ios_last_enabled", false)
+    try {
+      instance.setupIosMiniappVisibility()
+      const availability = instance.miniappVisibility.get("call_availability")!
+      await availability.reconcile()
+      expect(install).toHaveBeenCalledTimes(1)
+      expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, false)
+      expect(storage.load("mentra_call_ios_last_enabled")).toMatchObject({value: true})
+      ;(engine.miniapps.setHiddenStatus as jest.Mock).mockClear()
+      await availability.reconcile()
+      expect(engine.miniapps.setHiddenStatus).not.toHaveBeenCalledWith(mentraCallPackageName, false)
+    } finally {
+      for (const visibility of instance.miniappVisibility.values()) visibility.dispose()
+      jest.restoreAllMocks()
+    }
+  })
 
   it("rechecks Call policy after downloading and propagates an install failure", async () => {
     const originalPlatform = Platform.OS
@@ -939,101 +965,111 @@ describe("MantleManager", () => {
     )
     appRegistry.installFromLocalZip = install
     const instance = mantle as unknown as {installBundledMiniapp: (asset: Asset) => Promise<void>}
+    const consumer = createConsumerDeployment()
+    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(consumer)
+    const workspace: WorkspaceDeployment = {
+      kind: "workspace",
+      source: "manual",
+      activatedAt: "2026-10-09T00:00:00Z",
+      workspaceOrigin: "https://workspace.example",
+      manifestUrl: "https://workspace.example/.well-known/mentra-deployment.json",
+      manifest: {...consumer.manifest, features: {...consumer.manifest.features, nativeMeetings: false}},
+    }
     const asset = {
       name: "com.mentra.call-2.1.18.zip",
       localUri: "file:///fixture/call.zip",
       downloadAsync: async () => {
-        await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+        active.mockReturnValue(workspace)
       },
     } as unknown as Asset
     try {
-      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
       await instance.installBundledMiniapp(asset)
       expect(install).not.toHaveBeenCalled()
-      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      active.mockReturnValue(consumer)
       asset.downloadAsync = jest.fn(async () => asset)
       await expect(instance.installBundledMiniapp(asset)).rejects.toThrow(failure)
       expect(install).toHaveBeenCalledWith(asset.localUri)
     } finally {
+      active.mockRestore()
       appRegistry.getInstalledVersions = originalVersions
       appRegistry.installFromLocalZip = originalInstall
       Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
     }
   })
 
-  it.each([
-    [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key, SETTINGS.show_notify_ios.key],
-    [notifyPackageName, SETTINGS.show_notify_ios.key, SETTINGS.show_mentra_call_ios.key],
-  ])("reconciles %s independently and replaces its setting listener cleanly", async (packageName, key, otherKey) => {
-    const originalPlatform = Platform.OS
-    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
-    const instance = new (mantle.constructor as new () => {
-      setupIosMiniappVisibility: () => void
-      setupSubscriptions: () => Promise<void>
-      prepareIosCall: () => Promise<void>
-      subs: Array<{remove: () => void}>
-      miniappVisibility: Map<string, {dispose: () => void}>
-    })()
-    const installCall = jest.fn(async () => {})
-    instance.prepareIosCall = installCall
-    const installNotify = jest.spyOn(builtInMiniappCatalog, "installNotify").mockImplementation(() => {})
-    const install = packageName === mentraCallPackageName ? installCall : installNotify
-    const otherInstall = packageName === mentraCallPackageName ? installNotify : installCall
-    try {
-      await engine.settings.set(key, false)
-      await engine.settings.set(otherKey, false)
-      useAppStatusStore.setState({
-        apps: [
-          {
-            packageName: notifyPackageName,
-            name: "Notify",
-            type: "background",
-            running: true,
-            offline: true,
-            local: false,
-            hidden: false,
-            loading: false,
-            healthy: true,
-            permissions: [],
-            hardwareRequirements: [],
-            offlineRoute: "/miniapps/settings/notifications",
-            webviewUrl: "",
-            logoUrl: "",
-          },
-        ],
-      })
-      instance.setupIosMiniappVisibility()
-      expect(saveLocalAppRunningState).toHaveBeenCalledWith(mentraCallPackageName, false)
-      expect(saveLocalAppRunningState).toHaveBeenCalledWith(notifyPackageName, false)
-      expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, true)
-      expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(notifyPackageName, true)
-      await instance.setupSubscriptions()
-      await engine.settings.set(key, true)
-      await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
-      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, false))
-      expect(otherInstall).not.toHaveBeenCalled()
-      expect(engine.settings.get(otherKey)).toBe(false)
-      await instance.setupSubscriptions()
-      await engine.settings.set(key, false)
-      expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, true)
-      if (packageName === notifyPackageName) {
-        await waitFor(() => expect(engine.phoneNotifications.setPresentationActive).toHaveBeenLastCalledWith(false))
-        expect(localDisplayManager.dismiss).toHaveBeenCalledWith(notifyPackageName)
-        expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith(notifyPackageName)
-        expect(engine.miniapps.stop).toHaveBeenCalledWith(notifyPackageName)
+  it.each([[notifyPackageName, SETTINGS.show_notify_ios.key, "show_mentra_call_ios"]])(
+    "reconciles %s independently and replaces its setting listener cleanly",
+    async (packageName, key, otherKey) => {
+      const originalPlatform = Platform.OS
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+      const instance = new (mantle.constructor as new () => {
+        setupIosMiniappVisibility: () => void
+        setupSubscriptions: () => Promise<void>
+        prepareIosCall: () => Promise<void>
+        subs: Array<{remove: () => void}>
+        miniappVisibility: Map<string, {dispose: () => void}>
+      })()
+      const installCall = jest.fn(async () => {})
+      instance.prepareIosCall = installCall
+      const installNotify = jest.spyOn(builtInMiniappCatalog, "installNotify").mockImplementation(() => {})
+      const install = packageName === mentraCallPackageName ? installCall : installNotify
+      const otherInstall = packageName === mentraCallPackageName ? installNotify : installCall
+      try {
+        await engine.settings.set(key, false)
+        await engine.settings.set(otherKey, false)
+        useAppStatusStore.setState({
+          apps: [
+            {
+              packageName: notifyPackageName,
+              name: "Notify",
+              type: "background",
+              running: true,
+              offline: true,
+              local: false,
+              hidden: false,
+              loading: false,
+              healthy: true,
+              permissions: [],
+              hardwareRequirements: [],
+              offlineRoute: "/miniapps/settings/notifications",
+              webviewUrl: "",
+              logoUrl: "",
+            },
+          ],
+        })
+        instance.setupIosMiniappVisibility()
+        expect(saveLocalAppRunningState).not.toHaveBeenCalledWith(mentraCallPackageName, false)
+        expect(saveLocalAppRunningState).toHaveBeenCalledWith(notifyPackageName, false)
+        expect(engine.miniapps.setHiddenStatus).not.toHaveBeenCalledWith(mentraCallPackageName, true)
+        expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(notifyPackageName, true)
+        await instance.setupSubscriptions()
+        await engine.settings.set(key, true)
+        await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
+        await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, false))
+        expect(otherInstall).not.toHaveBeenCalled()
+        expect(engine.settings.get(otherKey)).toBeUndefined()
+        await instance.setupSubscriptions()
+        await engine.settings.set(key, false)
+        expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, true)
+        if (packageName === notifyPackageName) {
+          await waitFor(() => expect(engine.phoneNotifications.setPresentationActive).toHaveBeenLastCalledWith(false))
+          expect(localDisplayManager.dismiss).toHaveBeenCalledWith(notifyPackageName)
+          expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith(notifyPackageName)
+          expect(engine.miniapps.stop).toHaveBeenCalledWith(notifyPackageName)
+        }
+        install.mockClear()
+        await engine.settings.set(key, true)
+        await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
+        await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, false))
+        expect(otherInstall).not.toHaveBeenCalled()
+      } finally {
+        for (const visibility of instance.miniappVisibility.values()) visibility.dispose()
+        instance.subs.forEach((sub) => sub.remove())
+        installNotify.mockRestore()
+        Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
       }
-      install.mockClear()
-      await engine.settings.set(key, true)
-      await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
-      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, false))
-      expect(otherInstall).not.toHaveBeenCalled()
-    } finally {
-      for (const visibility of instance.miniappVisibility.values()) visibility.dispose()
-      instance.subs.forEach((sub) => sub.remove())
-      installNotify.mockRestore()
-      Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
-    }
-  })
+    },
+  )
 })
 
 describe("runtime recovery initialization", () => {

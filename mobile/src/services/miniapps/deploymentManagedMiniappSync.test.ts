@@ -387,7 +387,6 @@ it("rolls back only its own partially moved bundle and permits a retry", async (
 })
 
 it("does not let a late consumer registry download overwrite a verified workspace release", async () => {
-  await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
   await registry.uninstall(pkg, version)
   const started = deferred()
   const download = deferred()
@@ -418,5 +417,4 @@ it("does not let a late consumer registry download overwrite a verified workspac
   await oldSync
   expect(registry.getReleaseIdentity(pkg, version)?.deploymentId).toBe("enterprise")
   expect(shouldHideMiniapp(pkg, version)).toBe(false)
-  await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
 })

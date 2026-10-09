@@ -29,7 +29,6 @@ export const shouldSkipMiniappInstall = (packageName: string): boolean => {
     return !isDeploymentManagedCall(deployment)
   }
   return shouldHideByPolicy(packageName, undefined, {
-    showIosCall: engine.settings.get(SETTINGS.show_mentra_call_ios.key) === true,
     showIosNotify: engine.settings.get(SETTINGS.show_notify_ios.key) === true,
   })
 }

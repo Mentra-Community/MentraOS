@@ -41,7 +41,7 @@ import {
   UnauthorizedClient,
   type TokenResponse,
 } from "../types/oauth.types"
-import {findOrCreateUser} from "./user.service"
+import {findOrCreateUser, getUser} from "./user.service"
 import {isConfiguredOidcTenant, recordSeenJti, verifyTenantJwt} from "./oem.service"
 import {
   MENTRA_ALG,
@@ -434,7 +434,12 @@ export async function issueMiniappToken(args: {
   const ttlSec = miniappTokenTtlSec()
   const expiresAt = Math.floor(Date.now() / 1000) + ttlSec
 
-  const token = await new jose.SignJWT({tenantId: args.tenantId})
+  const user = await getUser(args.mentraUserId)
+  const token = await new jose.SignJWT({
+    tenantId: args.tenantId,
+    // Account age comes from Core, never the phone or token issuance time.
+    accountCreatedAt: user?.createdAt?.toISOString(),
+  })
     // The `kid` points the developer backend at the miniapp-token public key.
     .setProtectedHeader({alg: MENTRA_ALG, kid: MINIAPP_TOKEN_KID})
     .setIssuer(coreIssuer())
