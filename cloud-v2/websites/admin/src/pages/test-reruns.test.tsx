@@ -1,7 +1,7 @@
 import {expect,test} from 'bun:test';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
-import {readRerunId,AttemptLine,AttemptHistory,AttemptHistoryView,RerunForm,RerunPreviewMembers,TestRerunPage} from './test-reruns';
+import {readRerunId,AttemptLine,AttemptHistory,AttemptHistoryView,RerunForm,RerunPreviewMembers,TestRerunPage,RunRerunLinks} from './test-reruns';
 import type {RerunPlan} from '../../../../packages/core/src/types/test-rerun.types';
 import {TestSuitePage} from './test-suites';
 const attempt={attemptId:'request',requestId:'request',attemptNumber:1,status:'pass',publicationComplete:false,parent:{suiteId:'nightly'},memberId:'item',rerunId:'repair',build:{headSha:'b'.repeat(40),channel:'dev' as const,repository:'Mentra-Community/MentraOS',source:{channel:'dev' as const,buildRunId:123,publicationAttempt:1}}};
@@ -28,6 +28,16 @@ test('suite original verdict stays failed while latest attempt and inline histor
 test('one-member rerun links back to its original suite',()=>{
  const client=new QueryClient();client.setQueryData(['test-rerun','repair'],{parent:{suiteId:'nightly'},reason:'Fix',outcome:'failed',passed:0,attempts:[attempt],state:'accepted'});
  const html=render(<TestRerunPage rerunId="repair"/>,client);expect(html).toContain('?testSuite=nightly');expect(html).toContain('0/1');
+});
+test('standalone original detail exposes its rerun history and attempt links',()=>{
+ const client=new QueryClient();
+ const original={...attempt,attemptId:'standalone-original',requestId:'standalone-original',attemptNumber:0,parent:{requestId:'standalone-original'}};
+ const successor={...attempt,attemptId:'standalone-successor',requestId:'standalone-successor',parent:original.parent,memberId:'standalone-original'};
+ client.setQueryData(['rerun-lineage','standalone-original'],{original:null,lineage:null});
+ client.setQueryData(['rerun-history','standalone-original','standalone-original',null],{original,attempts:[successor],nextBefore:null});
+ const html=render(<RunRerunLinks requestId="standalone-original"/>,client);
+ expect(html).toContain('Attempt history');expect(html).toContain('testRun=standalone-successor');expect(html).toContain('testRerun=repair');
+ expect(html).toContain('Rerun this test');client.clear();
 });
 
 

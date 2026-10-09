@@ -87,6 +87,7 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
   const lanes = suite ? entry.lanes ?? [] : [{hostId: entry.hostId, laneId: entry.laneId}];
   const outcome = suite && entry.outcome === "failed" && entry.failedCount === 0 ? "incomplete"
     : suite ? entry.outcome : runDisplayStatus(entry.outcome, entry.evidenceStatus, entry.uploadsComplete);
+  const rerunCount = entry.rerunCount ?? 0;
   return <TableRow className={suite ? SUITE_ROW : undefined}>
     <TableCell><StartedAt value={entry.startedAt}/></TableCell>
     <TableCell className="min-w-56 max-w-96">
@@ -94,7 +95,7 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
         <a className={LINK} href={suite ? suiteHref(entry.suiteId) : runHref(entry.runId)}><span className="sr-only">{suite ? "Test suite: " : "Routine run: "}</span>{title}</a>
         <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${MUTED}`}>
           <span>{suite ? `${entry.expectedCount} routines` : entry.platform === "ios-on-mac" ? "iOS on Mac" : entry.platform === "android" ? "Android" : entry.platform}</span>
-          {suite && entry.rerunCount > 0 && <a className="inline-flex items-center gap-1 rounded-md border border-[#d0d7de] px-1.5 py-0.5 hover:text-[#0969da]" href={suiteHref(entry.suiteId)} title={`${entry.rerunCount} routine reruns`}><RotateCcw className="size-3" aria-hidden="true"/>{entry.rerunCount} rerun{entry.rerunCount === 1 ? "" : "s"}</a>}
+          {rerunCount > 0 && <a className="inline-flex items-center gap-1 rounded-md border border-[#d0d7de] px-1.5 py-0.5 hover:text-[#0969da]" href={suite ? suiteHref(entry.suiteId) : runHref(entry.runId)} title={`${rerunCount} routine reruns`}><RotateCcw className="size-3" aria-hidden="true"/>{rerunCount} rerun{rerunCount === 1 ? "" : "s"}</a>}
           {!suite && entry.rerun && <a className={LINK} href={`/?testRerun=${encodeURIComponent(entry.rerun.rerunId)}`}>Rerun</a>}
         </div>
       </div>

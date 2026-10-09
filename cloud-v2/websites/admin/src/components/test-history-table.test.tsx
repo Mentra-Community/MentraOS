@@ -33,6 +33,15 @@ test("history is a semantic table with named links, exact lane pairs and accepte
   expect(html).not.toContain('type="checkbox"');
 });
 
+test("standalone rerun counts link to the original run detail and stay out of the status column", () => {
+  const html = renderToStaticMarkup(<TestHistoryTable entries={[{...run, rerunCount: 2}]} routines={[]}/>);
+  expect(html).toContain('title="2 routine reruns"');
+  expect(html).toContain('href="/?testRun=private-run-id" title="2 routine reruns"');
+  expect(html).toContain("2 reruns");
+  expect(html).not.toContain("testRerun=");
+  expect(renderToStaticMarkup(<TestHistoryTable entries={[{...run, rerunCount: 0}]} routines={[]}/>)).not.toContain("routine reruns");
+});
+
 test("history distinguishes failure and pass from neutral cancelled, with textual status", () => {
   expect(renderToStaticMarkup(<HistoryStatus outcome="pass"/>)).toContain("text-[#1a7f37]");
   expect(renderToStaticMarkup(<HistoryStatus outcome="setup-failed"/>)).toContain("text-[#cf222e]");

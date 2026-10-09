@@ -37,6 +37,16 @@ function sourceCursor(after: HistoryCursor | null, kind: "run" | "suite", id: st
     : kind === after.kind ? [{startedAt: time, [id]: {$lt: after.id}}] : [])]};
 }
 
+/** Count unique submitted attempts; accepted selections alone may never have reached admission. */
+function submittedRerunCount(localField: string, foreignField: string, as: string): PipelineStage.Lookup {
+  return {$lookup: {from: TestRerunModel.collection.name, localField, foreignField,
+    pipeline: [{$match: {state: "accepted"}}, {$unwind: "$plan.members"},
+      {$group: {_id: "$plan.members.requestId"}},
+      {$lookup: {from: TestRequestModel.collection.name, localField: "_id", foreignField: "requestId",
+        pipeline: [{$limit: 1}, {$project: {_id: 0, requestId: 1}}], as: "submittedRequest"}},
+      {$match: {"submittedRequest.0": {$exists: true}}}, {$count: "count"}], as}};
+}
+
 /** Paginate after exact indexed membership exclusion in the database, without transferring suppressed raw rows. */
 export function testHistoryQueries(after: HistoryCursor | null, limit: number, includeReruns = false, origin?: TestHistoryOrigin): HistorySourceQueries {
   const nightlySuite = {$or: [{$ne: [{$ifNull: ['$nightlyPlan', null]}, null]}, {$eq: ['$payload.trigger', 'nightly']}]};
@@ -71,11 +81,11 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
         {$anyElementTrue: [{$map: {input: '$historySuites', as: 'suite', in: {$eq: ['$$suite.payload.trigger', 'nightly']}}}]}]},
         'nightly', {$cond: [{$eq: ['$payload.build.channel', 'pr']}, 'pr', 'other']}]}]},
       historySuppressed: {$or: [{$gt: [{$size: "$historySuites"}, 0]},
-        // Suite attempts remain on the original suite page, including individual member reruns.
-        ...(origin ? [{$anyElementTrue: [{$map: {input: "$historyReruns", as: "rerun",
-          in: {$ne: [{$ifNull: ["$$rerun.parentSuiteId", null]}, null]}}}]}] : []),
-        ...(!includeReruns ? [{$gt: [{$size: "$historyReruns"}, 0]}] : [])]}}},
-    {$facet: {entries: [{$match: {historySuppressed: false, ...(origin ? {origin} : {})}}, {$limit: limit + 1}],
+        // Top-level tabs contain originals only; details retain every linked attempt.
+        ...(origin || !includeReruns ? [{$gt: [{$size: "$historyReruns"}, 0]}] : [])]}}},
+    {$facet: {entries: [{$match: {historySuppressed: false, ...(origin ? {origin} : {})}}, {$limit: limit + 1},
+      submittedRerunCount("requestId", "plan.parent.requestId", "submittedReruns"),
+      {$set: {rerunCount: {$ifNull: [{$arrayElemAt: ["$submittedReruns.count", 0]}, 0]}}}, {$unset: "submittedReruns"}],
       scan: [{$group: {_id: null, count: {$sum: 1}, last: {$last: {historyKind: "$historyKind", historyId: "$historyId", historyStartedAt: "$historyStartedAt"}}}}]}},
   ];
   const suites: PipelineStage[] = [
@@ -83,12 +93,7 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
         ...(origin ? {$expr: {$eq: [suiteOrigin, origin]}} : {})}},
       {$sort: {startedAt: -1, suiteId: -1}},
       {$limit: limit + 1},
-      {$lookup: {from: TestRerunModel.collection.name, localField: "suiteId", foreignField: "plan.parent.suiteId",
-        pipeline: [{$match: {state: "accepted"}}, {$unwind: "$plan.members"},
-          {$group: {_id: "$plan.members.requestId"}},
-          {$lookup: {from: TestRequestModel.collection.name, localField: "_id", foreignField: "requestId",
-            pipeline: [{$limit: 1}, {$project: {_id: 0, requestId: 1}}], as: "submittedRequest"}},
-          {$match: {"submittedRequest.0": {$exists: true}}}, {$count: "count"}], as: "historyReruns"}},
+      submittedRerunCount("suiteId", "plan.parent.suiteId", "historyReruns"),
       {$project: {_id: 0, historyKind: {$literal: "suite"}, historyId: "$suiteId",
         historyStartedAt: "$startedAt", rerunCount: {$ifNull: [{$arrayElemAt: ["$historyReruns.count", 0]}, 0]}}},
   ];
@@ -148,7 +153,7 @@ export class TestHistoryService {
       try {
         if (row.historyKind === "run") {
           return {kind: "run", ...await readFrameworkRunSummary({...row, runId: row.historyId} as StoredSummaryRow, deadline),
-            ...(row.rerun ? {rerun: row.rerun} : {})};
+            rerunCount: row.rerunCount ?? 0, ...(row.rerun ? {rerun: row.rerun} : {})};
         }
         // The existing reader preserves frozen completions and computes current waiting members.
         const suite = suiteSummaries.get(row.historyId);

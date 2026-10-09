@@ -43,17 +43,17 @@ test("history forwards each dispatch origin and filters candidates before page s
     await service.list({origin, includeReruns: "true"});
     const queries = testHistoryQueries(null, 1, true, origin);
     const facet = queries.runs.at(-1) as any;
-    expect(facet.$facet.entries).toEqual([{$match: {historySuppressed: false, origin}}, {$limit: 2}]);
+    expect(facet.$facet.entries.slice(0, 2)).toEqual([{$match: {historySuppressed: false, origin}}, {$limit: 2}]);
     const suiteMatch = queries.suites[0] as any;
     expect(suiteMatch.$match.$expr.$eq[1]).toBe(origin);
     expect(queries.suites.findIndex(stage => "$match" in stage)).toBeLessThan(queries.suites.findIndex(stage => "$limit" in stage));
     const projection = queries.runs.find(stage => "$project" in stage) as any;
-    expect(JSON.stringify(projection.$project.historySuppressed)).toContain("$$rerun.parentSuiteId");
+    expect(projection.$project.historySuppressed.$or).toContainEqual({$gt: [{$size: "$historyReruns"}, 0]});
   }
   expect(observed).toEqual([undefined, "pr", "nightly", "other"]);
   // Other consumers can still request unscoped attempt history explicitly.
   expect(JSON.stringify((testHistoryQueries(null, 1, true).runs.find(stage => "$project" in stage) as any).$project.historySuppressed))
-    .not.toContain("$$rerun.parentSuiteId");
+    .not.toContain("$historyReruns");
 });
 
 test("history hides accepted reruns by default and validates the explicit toggle", async () => {
@@ -196,7 +196,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
   const saveSuite = async (payload: TestSuite) => TestSuiteModel.collection.insertOne({suiteId: payload.suiteId, payload,
     startedAt: new Date(payload.startedAt)});
 
-  test("origin tabs follow nightly dispatch plans, exclude suite member attempts, and paginate standalone reruns in Other", async () => {
+  test("origin tabs follow nightly dispatch plans and exclude every rerun before pagination", async () => {
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
     const nightly = {...plan("nightly-original", [member("nightly-a"), member("nightly-b")]), trigger: "manual" as const};
     await TestSuiteModel.collection.insertOne({suiteId: nightly.suiteId, payload: nightly, startedAt: new Date(at),
@@ -230,7 +230,7 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     };
     expect(await readIds("nightly")).toEqual(["nightly-original", "single-nightly"]);
     expect(await readIds("pr")).toEqual(["standalone-pr"]);
-    expect(await readIds("other")).toEqual(["standalone-rerun", "manual-staging", "manual-dev"]);
+    expect(await readIds("other")).toEqual(["manual-staging", "manual-dev"]);
     expect((await history.list({origin: "other", includeReruns: "false"})).entries.map(entry => entry.kind === "run" ? entry.runId : entry.kind === "suite" ? entry.suiteId : entry.id))
       .toEqual(["manual-staging", "manual-dev"]);
     await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({});
@@ -416,6 +416,33 @@ describe.skipIf(!uri)("Mongo combined routine and suite history", () => {
     expect((await new TestHistoryService().list({origin: "nightly", includeReruns: "true"})).entries[0])
       .toMatchObject({kind: "suite", suiteId: suite.suiteId, rerunCount: 3});
     await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({}); await TestRequestModel.deleteMany({});
+  });
+
+  test("standalone originals show unique submitted reruns while child results stay out of every top-level tab", async () => {
+    await TestRunModel.deleteMany({}); await TestSuiteModel.deleteMany({}); await TestRerunModel.deleteMany({}); await TestRequestModel.deleteMany({});
+    const original = run("standalone-original");
+    await saveRun(original);
+    await saveRun(run("submitted-a")); await saveRun(run("submitted-b"));
+    await TestRequestModel.collection.insertMany([
+      {requestId: "submitted-a", state: "terminal"}, {requestId: "submitted-b", state: "queued"},
+      {requestId: "preview-request", state: "awaiting-source"},
+    ]);
+    await TestRerunModel.collection.insertMany([
+      {rerunId: "accepted-a", state: "accepted", plan: {parent: {requestId: original.requestId}, members: [{requestId: "submitted-a"}]}},
+      {rerunId: "accepted-b", state: "accepted", plan: {parent: {requestId: original.requestId}, members: [{requestId: "submitted-b"}]}},
+      {rerunId: "repeat-submit", state: "accepted", plan: {parent: {requestId: original.requestId}, members: [{requestId: "submitted-a"}]}},
+      {rerunId: "not-admitted", state: "accepted", plan: {parent: {requestId: original.requestId}, members: [{requestId: "missing-job"}]}},
+      {rerunId: "preview", state: "preview", plan: {parent: {requestId: original.requestId}, members: [{requestId: "preview-request"}]}},
+    ]);
+    const history = new TestHistoryService();
+    expect(await history.list({origin: "other", includeReruns: "true", limit: "1"})).toMatchObject({
+      entries: [{kind: "run", runId: original.result.runId, requestId: original.requestId, rerunCount: 2}], nextCursor: null,
+    });
+    for (const origin of ["pr", "nightly"])
+      expect((await history.list({origin, includeReruns: "true"})).entries).toEqual([]);
+    // Existing unscoped diagnostics can explicitly read all attempts.
+    expect((await history.list({includeReruns: "true"})).entries.filter(entry => entry.kind === "run")).toHaveLength(3);
+    await TestRunModel.deleteMany({}); await TestRerunModel.deleteMany({}); await TestRequestModel.deleteMany({});
   });
 
   test("groups many exact members before pagination, keeps single jobs and mismatches, and orders equal times deterministically", async () => {
