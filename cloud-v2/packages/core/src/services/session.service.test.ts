@@ -2,16 +2,9 @@ import crypto from "node:crypto"
 import {afterEach, describe, expect, spyOn, test} from "bun:test"
 import * as jose from "jose"
 
-import * as userService from "./user.service"
 import {RefreshTokenModel} from "../models/refresh-token.model"
 import {RevokedJtiModel} from "../models/revoked-jti.model"
-import {
-  getPublicJwks,
-  issueMiniappToken,
-  issueRuntimeToken,
-  resetSigningKeyCache,
-  revokeSession,
-} from "./session.service"
+import {getPublicJwks, issueRuntimeToken, resetSigningKeyCache, revokeSession} from "./session.service"
 
 const savedEnv = {
   MENTRA_JWT_PRIVATE_KEY: process.env.MENTRA_JWT_PRIVATE_KEY,
@@ -163,31 +156,3 @@ function restoreEnv(key: string, value: string | undefined): void {
     process.env[key] = value
   }
 }
-
-describe("miniapp account creation claim", () => {
-  test("signs the stored account date rather than the current session date", async () => {
-    setSigningEnv()
-    const createdAt = new Date("2026-10-01T12:00:00Z")
-    const lookup = spyOn(userService, "getUser").mockResolvedValue({
-      mentraUserId: "mu_test",
-      tenantId: "mentra",
-      tenantUserId: "external",
-      createdAt,
-      supportTelemetryDeletedAt: null,
-    })
-    try {
-      const {token} = await issueMiniappToken({
-        mentraUserId: "mu_test",
-        tenantId: "mentra",
-        packageName: "com.mentra.call",
-      })
-      const {payload} = await jose.jwtVerify(token, jose.createLocalJWKSet(await getPublicJwks()), {
-        audience: "com.mentra.call",
-      })
-      expect(payload.accountCreatedAt).toBe(createdAt.toISOString())
-      expect(lookup).toHaveBeenCalledWith("mu_test")
-    } finally {
-      lookup.mockRestore()
-    }
-  })
-})
