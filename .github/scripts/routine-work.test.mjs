@@ -117,6 +117,47 @@ test('authoring accepts declared audio recognition and refuses playback or recog
   }
 })
 
+test('create/edit intake accepts fixture operations and rejects unsupported, duplicate or wrong-kind requirements', () => {
+  const supported = ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers']
+  for (const kind of ['create', 'edit']) {
+    for (const platform of ['mac', 'android']) {
+      const resources = ['app', 'recorder', ...(platform === 'android' ? ['phone'] : [])].map(kind => ({kind, capabilities: []}))
+      const request = {...input, kind, requirements: {...input.requirements, platform, resources}}
+      const withResource = resource => ({...request, requirements: {...request.requirements,
+        resources: resources.some(value => value.kind === resource.kind)
+          ? resources.map(value => value.kind === resource.kind ? resource : value)
+          : [...resources, resource]}})
+      for (const capabilities of [[], ...supported.map(capability => [capability]), supported]) {
+        const fixture = {kind: 'fixture-data', capabilities}
+        assert.deepEqual(parseRoutineWorkBrief(body(withResource(fixture)), kind).requirements.resources.at(-1), fixture)
+      }
+      for (const capabilities of [['miniapp-appearance'], ['media-decoder'], ['stream-receivers', 'stream-receivers']])
+        assert.throws(() => parseRoutineWorkBrief(body(withResource({kind: 'fixture-data', capabilities})), kind), /resource requirements/)
+      for (const capability of supported) {
+        for (const resourceKind of ['app', 'phone', 'glasses', 'recorder', 'audio', 'browser', 'network', 'workspace'])
+          assert.throws(() => parseRoutineWorkBrief(body(withResource({kind: resourceKind, capabilities: [capability]})), kind), /resource requirements/)
+      }
+    }
+  }
+})
+
+test('authoring intake fixture operation registry stays in sync with the Core contract', async () => {
+  const fixtureCapabilities = async path => {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8')
+    const registry = /const (?:resourceCapabilities|resourceCapabilityMap) = \{([\s\S]*?)\n\}/.exec(source)
+    assert.ok(registry, `Missing resource capability registry in ${path}`)
+    const fixture = /'fixture-data':\s*\[([^\]]*)\]/.exec(registry[1])
+    assert.ok(fixture, `Missing fixture-data capabilities in ${path}`)
+    assert.equal(fixture[1].replace(/'[^']*'/g, '').replace(/[\s,]/g, ''), '', 'Fixture capabilities must remain literal strings')
+    return [...fixture[1].matchAll(/'([^']*)'/g)].map(match => match[1])
+  }
+  const [intake, core] = await Promise.all([
+    fixtureCapabilities('./routine-work.mjs'),
+    fixtureCapabilities('../../cloud-v2/packages/core/src/types/routine-definition.types.ts'),
+  ])
+  assert.deepEqual(intake, core)
+})
+
 test('only one collaborator request brief and one work label can be selected', async () => {
   const comment = {id: 44, body: body(input), author_association: 'MEMBER', user: {type: 'User', login: 'colleague'}}
   assert.deepEqual((await selectedRoutineWork({github: github([comment]), context, number: 12})).brief, input)
