@@ -1,5 +1,6 @@
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, recordedFrameworkRunSchema} from "../types/framework-run.types";
 import type {PipelineStage} from "mongoose";
+import {createLogger} from "@mentra/cloud-shared";
 import {z} from "zod";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
@@ -17,6 +18,7 @@ import {LaneRestorationService} from "./lane-restoration.service";
 import {restorationHostIsFresh, type LaneOverviewList} from "../types/lane-restoration.types";
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
+const logger = createLogger("core").child({component: "test-suite"});
 
 type RecordedInput = z.infer<typeof recordedFrameworkRequestInputSchema>;
 type InputNightlyMember = Omit<NightlyPlan["members"][number], "routineRevision" | "dispatchIntent"> & {
@@ -243,12 +245,16 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
 export class TestSuiteService {
   constructor(private readonly lanes: Pick<LaneRestorationService, "overview"> = new LaneRestorationService()) {}
 
-  private async liveActivity(summaries: Map<string, SuiteSummaryRead>) {
+  private async liveActivity(summaries: Map<string, SuiteSummaryRead>, deadline: number) {
     const hasActiveCandidate = [...summaries.values()].some(suite => !(suite instanceof Error) && !suite.finishedAt
       && suite.members.some(member => member.status === "waiting" && member.requestId && member.hostId && member.laneId));
-    if (!hasActiveCandidate) return summaries;
-    const overview = await this.lanes.overview(), now = Date.now();
-    for (const [id, suite] of summaries) if (!(suite instanceof Error)) summaries.set(id, withLiveLaneActivity(suite, overview, now));
+    if (!hasActiveCandidate || deadline <= Date.now()) return summaries;
+    try {
+      const overview = await this.lanes.overview(deadline), now = Date.now();
+      for (const [id, suite] of summaries) if (!(suite instanceof Error)) summaries.set(id, withLiveLaneActivity(suite, overview, now));
+    } catch (error) {
+      logger.warn({err: error}, "Optional suite lane activity unavailable");
+    }
     return summaries;
   }
 
@@ -336,7 +342,7 @@ export class TestSuiteService {
         summaries.set(row.suiteId, withRequestLanes(summarizeSuite(suite, runs, row.finishedAt ?? undefined, suiteRejections(bound)), bound));
       } catch (error) {summaries.set(row.suiteId, error instanceof Error ? error : new TestRunError(503, "Suite summary is unavailable"));}
     }
-    return this.liveActivity(summaries);
+    return this.liveActivity(summaries, deadline);
   }
   /** Read-only presentation uses the same bounded summaries as test history. */
   async summary(suiteId: string, deadline = Date.now() + 10_000): Promise<SuiteSummary> {
