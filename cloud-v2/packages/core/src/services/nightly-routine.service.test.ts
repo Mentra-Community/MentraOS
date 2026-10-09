@@ -292,6 +292,44 @@ test("nightly preserves a host's precise rejected-member reason without inventin
   expect(await state.service.detail(occurrence.occurrenceId)).toEqual(terminal);
 });
 
+test("nightly completes a rejected publication immediately with its exact reason after a result 404", async () => {
+  const state = fixture([row("publication-rejected", "android")]);
+  const {plan} = await state.service.start(occurrence), member = plan.members[0]!;
+  const request = state.requestRows.get(member.requestId);
+  const failure = {entityId: member.requestId, payloadSha256: "d".repeat(64), manifestSha256: "e".repeat(64),
+    operation: "result-create", status: 409, code: "result_conflict", message: "Invalid frozen fixture action", rejectedAt: startedAt};
+  Object.assign(request, {state: "terminal", terminalStatus: "incomplete", publicationFailure: failure,
+    hostReceipt: {requestId: member.requestId, hostId: request.hostId, inputSha256: request.inputSha256, acceptedAt: startedAt}});
+  expect(await state.service.snapshot(plan)).toMatchObject({status: "incomplete", expectedCount: 1, passed: 0,
+    members: [{status: "incomplete", publicationComplete: false, unavailableReason: "Publication failed: Invalid frozen fixture action"}]});
+  for (const change of [{entityId: "other"}, {code: "unknown"}]) {
+    request.publicationFailure = {...failure, ...change};
+    expect((await state.service.snapshot(plan)).members[0]).toMatchObject({status: "incomplete", publicationComplete: false,
+      unavailableReason: "Publication failure identity differs from the frozen request."});
+  }
+  request.publicationFailure = failure;
+  request.hostReceipt.inputSha256 = "f".repeat(64);
+  expect((await state.service.snapshot(plan)).members[0]!.unavailableReason).toContain("identity differs");
+  request.hostReceipt.inputSha256 = request.inputSha256;
+  const terminal = await state.service.complete(occurrence.occurrenceId);
+  expect(terminal.finishedAt).toBe(new Date(startedAt).toISOString());
+  expect(state.cancelled).toEqual([member.requestId]);
+  expect(terminal.members[0]!.runId).toBeUndefined();
+  request.publicationFailure.message = "changed later";
+  expect(await state.service.detail(occurrence.occurrenceId)).toEqual(terminal);
+});
+
+test("a valid published nightly result wins over a retained publication failure", async () => {
+  const state = fixture([row("publication-recovered", "android")]);
+  const {plan} = await state.service.start(occurrence), member = plan.members[0]!;
+  Object.assign(state.requestRows.get(member.requestId), {state: "terminal", terminalStatus: "incomplete",
+    publicationFailure: {entityId: member.requestId, payloadSha256: "d".repeat(64), manifestSha256: "e".repeat(64),
+      operation: "result-create", status: 409, code: "result_conflict", message: "Original publication rejection", rejectedAt: startedAt}});
+  state.resultRows.set(member.requestId, publishedResult(member, true));
+  expect(await state.service.snapshot(plan)).toMatchObject({status: "pass", passed: 1,
+    members: [{status: "pass", publicationComplete: true, runId: member.requestId}]});
+});
+
 test("deadline cancellation uses the original requests and prevents retrying pending work", async () => {
   const state = fixture(), {plan} = await state.service.start(occurrence);
   expect(state.cancelled).toEqual([]);

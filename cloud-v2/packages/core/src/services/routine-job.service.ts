@@ -97,7 +97,8 @@ export const routineJobRepository: RoutineJobRepository = {
   },
   async publicationFailed(requestId, hostId, completion, publicationFailure) {
     return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, inputSha256: completion.inputSha256,
-      $or: [{fleetBinding: {$exists: true}}, {hostReceipt: {$exists: true}}], runId: {$exists: false}, publicationFailure: {$exists: false},
+      'hostReceipt.requestId': requestId, 'hostReceipt.hostId': hostId, 'hostReceipt.inputSha256': completion.inputSha256,
+      runId: {$exists: false}, publicationFailure: {$exists: false},
       'dispatchCompletion.inputSha256': completion.inputSha256, 'dispatchCompletion.disposition': completion.disposition,
       'dispatchCompletion.completedAt': completion.completedAt},
       {$set: {publicationFailure, state: 'terminal', terminalStatus: 'incomplete', updatedAt: new Date()}},
@@ -441,8 +442,8 @@ export class RoutineJobService {
     };
     const row = await lookup();
     const executable = row as StoredRoutineJob & {inputSha256?: string};
-    const accepted = row.fleetBinding || publicationFailure && row.hostReceipt?.requestId === jobId &&
-      row.hostReceipt.hostId === hostId && row.hostReceipt.inputSha256 === input.inputSha256;
+    const accepted = publicationFailure ? row.hostReceipt?.requestId === jobId &&
+      row.hostReceipt.hostId === hostId && row.hostReceipt.inputSha256 === input.inputSha256 : !!row.fleetBinding;
     if (!accepted || row.hostId !== hostId || executable.inputSha256 !== input.inputSha256)
       throw new TestRequestConflict('Dispatch completion differs from its accepted host and exact executable input');
     if (publicationFailure && publicationFailure.entityId !== jobId)

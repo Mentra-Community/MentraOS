@@ -414,8 +414,10 @@ test('history summaries read portable members through the real nightly snapshot 
  }) as any));
  const queried:string[][]=[];
  mocks.push(spyOn(TestRequestModel,'find').mockImplementation(((filter:{requestId:{$in:string[]}})=>{
-  queried.push(filter.requestId.$in);return {select(){return this},limit(){return this},read(){return this},readConcern(){return this},
-   setOptions(){return this},async lean(){return requests}};
+  queried.push(filter.requestId.$in);let fields: Record<string, number> = {};
+  return {select(value: Record<string, number>){fields=value;expect(fields).toMatchObject({publicationFailure:1,hostReceipt:1});return this},
+   limit(){return this},read(){return this},readConcern(){return this},setOptions(){return this},
+   async lean(){return requests.map(request=>Object.fromEntries(Object.entries(request).filter(([key])=>fields[key])))}};
  }) as any));
  let publishedRows:unknown[]=[];
  const runReads=spyOn(TestRunModel,'find').mockReturnValue({select(){return this},limit(){return this},read(){return this},
@@ -467,6 +469,14 @@ test('history summaries read portable members through the real nightly snapshot 
   expect((await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId)).toMatchObject({members:[{status:'waiting'},{status:'waiting'}]});
  }
  laneRead.mockResolvedValue(overview);
+ Object.assign(requests[1]!,{state:'terminal',terminalStatus:'incomplete',
+  hostReceipt:{requestId:'two',hostId:binding.hostId,inputSha256:requestInputDigest(input),acceptedAt:binding.boundAt},
+  publicationFailure:{entityId:'two',payloadSha256:'d'.repeat(64),manifestSha256:'e'.repeat(64),operation:'result-create',
+   status:409,code:'result_conflict',message:'Invalid frozen fixture action',rejectedAt:binding.boundAt}});
+ const rejected=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
+ expect(rejected).toMatchObject({outcome:'running',passed:0,members:[{status:'waiting'},
+  {status:'not-run',publicationComplete:false,unavailableReason:'Publication failed: Invalid frozen fixture action',
+   hostId:binding.hostId,laneId:binding.laneId}]});
  const finishedAt='2026-10-08T00:02:00Z';
  const run={schemaVersion:1,requestId:'two',hostId:binding.hostId,routineId:intent.routineId,
   definitionRevision:intent.routineRevision,routineSource:intent.routineSource,frameworkBinding:testFrameworkBinding(),

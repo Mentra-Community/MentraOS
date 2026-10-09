@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {expect, test, mock} from 'bun:test';
 import {TestRequestModel} from '../models/test-request.model';
 import {testRoutineSource} from '../testing/framework-fixtures';
-import {requestInputDigest} from './test-request.service';
+import {requestInputDigest, TestRequestService, type TestRequestRepository, type HostAcceptance} from './test-request.service';
 import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
 import type {StoredRoutineJob} from '../types/routine-job.types';
 import type {ReceivedTestHostState} from './test-host-state.service';
@@ -27,7 +27,7 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     async actions(id,digest,value){if(!row||(row.fleetInputSha256!==digest && row.fleetSelectionSha256!==digest))return null;if(!row.fleetActions?.some(action=>action.actionsRunId===value.actionsRunId))row={...row,fleetActions:[...row.fleetActions??[],copy(value)]};return copy(row)},
     async complete(id,hostId,inputSha256,value) {if(!row||row.requestId!==id||row.hostId!==hostId||(row as any).inputSha256!==inputSha256||row.dispatchCompletion)return null;row={...row,dispatchCompletion:copy(value),...(row.fleetCancellation && row.state!=='terminal'?{state:'terminal',terminalStatus:'cancelled'}:{})};return copy(row)},
     async hasResult(){return resultFound},
-    async publicationFailed(id,hostId,completion,failure){if(!row||row.requestId!==id||row.hostId!==hostId||row.runId||row.publicationFailure||requestInputDigest(row.dispatchCompletion)!==requestInputDigest(completion))return null;
+    async publicationFailed(id,hostId,completion,failure){if(!row||row.requestId!==id||row.hostId!==hostId||row.hostReceipt?.requestId!==id||row.hostReceipt.hostId!==hostId||row.hostReceipt.inputSha256!==completion.inputSha256||row.runId||row.publicationFailure||requestInputDigest(row.dispatchCompletion)!==requestInputDigest(completion))return null;
       row={...row,publicationFailure:copy(failure),state:'terminal',terminalStatus:'incomplete'};return copy(row)},
     async cancel(id,digest,value){if(!row||row.requestId!==id||row.fleetSelectionSha256!==digest||row.fleetCancellation)return null;row={...row,fleetCancellation:copy(value),...(row.dispatchCompletion && row.state!=='terminal'?{state:'terminal',terminalStatus:'cancelled'}:{})};return copy(row)},
   };
@@ -43,7 +43,7 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
   // Result lookup intentionally uses the same 404 class as existing Core result APIs.
   const prepare=async()=>{const first=await service.submit(selection);await service.prepared(selection.requestId,{inputSha256:first.fleetSelectionSha256,
     routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(selection.requestId)};
-  return {service,rows,lane,prepare,offer(hosts: ReceivedTestHostState[]){offeredHosts=copy(hosts)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
+  return {service,rows,lane,prepare,offer(hosts: ReceivedTestHostState[]){offeredHosts=copy(hosts)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
 }
 test('run routing chooses an accepting alternate model, refreshes availability and retains exact target and input', async () => {
   const f = fixture({...definition, resourceRequirements: [...definition.resourceRequirements,{kind:'glasses',capabilities:['connection']}], glasses: {models: ['g1', 'mentra-live']}, execution: {resourceKinds: ['phone', 'app', 'recorder', 'network', 'glasses']}});
@@ -370,6 +370,27 @@ const publicationFailure = {entityId:selection.requestId,payloadSha256:'d'.repea
 async function publicationFixture(){const f=fixture(),p=await f.prepare();await f.service.bind(selection.requestId,'mini',{
   inputSha256:p.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'});
  f.accepted('c'.repeat(64));return{f,completion:{inputSha256:'c'.repeat(64),disposition:'clean' as const,completedAt:'2026-10-08T00:00:09.000Z'}}}
+test('publication rejection waits for exact host acceptance and the same report succeeds after late acceptance', async () => {
+  const {f, completion} = await publicationFixture();
+  f.queued(completion.inputSha256);
+  const before = structuredClone(f.row), report = {...completion, publicationFailure};
+  await expect(f.service.complete(selection.requestId, 'mini', report)).rejects.toThrow('accepted host');
+  expect(f.row).toEqual(before);
+  const requests = new TestRequestService({
+    get: f.rows.get,
+    async accept(receipt: HostAcceptance) {
+      if (f.row?.state !== 'queued' || f.row.hostReceipt || f.row.hostId !== receipt.hostId
+        || (f.row as any).inputSha256 !== receipt.inputSha256) return null;
+      f.accepted(receipt.inputSha256);
+      return f.row;
+    },
+  } as unknown as TestRequestRepository);
+  const receipt = {requestId: selection.requestId, hostId: 'mini', inputSha256: completion.inputSha256,
+    acceptedAt: '2026-10-08T00:00:00.000Z'};
+  expect(await requests.accept(receipt, 'mini')).toMatchObject({state: 'accepted', hostReceipt: receipt});
+  expect(await f.service.complete(selection.requestId, 'mini', report)).toEqual(report);
+  expect(f.row).toMatchObject({state: 'terminal', terminalStatus: 'incomplete', publicationFailure});
+});
 for(const cleanupFirst of [false,true])test(`publication failure retains exact cleanup in ${cleanupFirst?'cleanup-first':'rejection-first'} order`,async()=>{
  const {f,completion}=await publicationFixture();if(cleanupFirst)await f.service.complete(selection.requestId,'mini',completion);
  const report={...completion,publicationFailure};expect(await f.service.complete(selection.requestId,'mini',report)).toEqual(report);
@@ -400,7 +421,7 @@ test('publication failure repository fences retained host/input/cleanup and an e
  const original=TestRequestModel.collection.findOneAndUpdate,cas=mock(async(..._args:unknown[])=>null);TestRequestModel.collection.findOneAndUpdate=cas as any;
  const completion={inputSha256:'c'.repeat(64),disposition:'repair' as const,completedAt:'2026-10-08T00:00:09.000Z'};
  try{await routineJobRepository.publicationFailed!(selection.requestId,'mini',completion,publicationFailure);
-  expect(cas.mock.calls[0]![0]).toEqual({requestId:selection.requestId,hostId:'mini',inputSha256:completion.inputSha256,$or:[{fleetBinding:{$exists:true}},{hostReceipt:{$exists:true}}],runId:{$exists:false},publicationFailure:{$exists:false},
+  expect(cas.mock.calls[0]![0]).toEqual({requestId:selection.requestId,hostId:'mini',inputSha256:completion.inputSha256,'hostReceipt.requestId':selection.requestId,'hostReceipt.hostId':'mini','hostReceipt.inputSha256':completion.inputSha256,runId:{$exists:false},publicationFailure:{$exists:false},
    'dispatchCompletion.inputSha256':completion.inputSha256,'dispatchCompletion.disposition':'repair','dispatchCompletion.completedAt':completion.completedAt});
   expect(cas.mock.calls[0]![1]).toMatchObject({$set:{publicationFailure,state:'terminal',terminalStatus:'incomplete'}});
  }finally{TestRequestModel.collection.findOneAndUpdate=original}
