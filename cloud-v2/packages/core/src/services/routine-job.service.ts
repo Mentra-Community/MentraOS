@@ -1,13 +1,14 @@
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {TestRequestModel} from '../models/test-request.model';
+import {TestRunModel} from '../models/test-run.model';
 import {testWriteConcern} from '../models/test-write-concern';
 import {frameworkIdentitySchema} from '../types/framework-request.types';
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
 import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
 import {completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
-  routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
-  type RoutineJobBinding, type RoutineJobPreparation, type StoredRoutineJob} from '../types/routine-job.types';
+  routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionReportSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
+  type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
 import {requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
 import {selectedBuildInput} from '../types/test-build.types';
@@ -21,6 +22,7 @@ import {TestRunError} from './test-result-error';
 /** These are fields on the existing test_requests record, never a separate scheduling queue. */
 export interface RoutineJobRepository {
   get(jobId: string): Promise<StoredRoutineJob | null>;
+  completionRequest?(jobId: string): Promise<StoredRoutineJob | null>;
   insert(row: StoredRoutineJob): Promise<void>;
   prepare(jobId: string, selectionSha256: string, prepared: RoutineJobPreparation, inputSha256: string, now: Date): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
@@ -30,11 +32,15 @@ export interface RoutineJobRepository {
   dispatch?(jobId: string, previous: StoredRoutineJob['fleetDispatch'], value: NonNullable<StoredRoutineJob['fleetDispatch']>): Promise<StoredRoutineJob | null>;
   actions?(jobId: string, inputSha256: string, value: {actionsRunId: string; recordedAt: string}): Promise<StoredRoutineJob | null>;
   complete?(jobId: string, hostId: string, inputSha256: string, value: RoutineJobCompletion): Promise<StoredRoutineJob | null>;
+  publicationFailed?(jobId: string, hostId: string, completion: RoutineJobCompletion, failure: RoutinePublicationFailure): Promise<StoredRoutineJob | null>;
+  hasResult?(jobId: string): Promise<boolean>;
   cancellationProgress?(jobId:string,value:RoutineActionsCancellation,completedRunIds?:string[]):Promise<void>;
   cancel(jobId: string, inputSha256: string, value: NonNullable<StoredRoutineJob['fleetCancellation']>): Promise<StoredRoutineJob | null>;
 }
 export const routineJobRepository: RoutineJobRepository = {
   async get(requestId) {return await TestRequestModel.findOne({requestId, fleetSelection: {$exists: true}})
+    .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
+  async completionRequest(requestId) {return await TestRequestModel.findOne({requestId})
     .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
   async insert(row) {await TestRequestModel.create([row], {writeConcern: testWriteConcern});},
   async prepare(requestId, fleetSelectionSha256, fleetPreparation, fleetInputSha256, now) {
@@ -80,10 +86,22 @@ export const routineJobRepository: RoutineJobRepository = {
       {new: true, writeConcern: testWriteConcern}).lean() as unknown as StoredRoutineJob | null;
   },
   async complete(requestId, hostId, inputSha256, dispatchCompletion) {
-    return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, inputSha256, fleetBinding: {$exists: true},
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, inputSha256, $or: [{fleetBinding: {$exists: true}}, {hostReceipt: {$exists: true}}],
       dispatchCompletion: {$exists: false}}, [{$set: {dispatchCompletion: {$literal: dispatchCompletion}, updatedAt: new Date(),
         state: {$cond: [{$and: [{$ne: [{$type: '$fleetCancellation'}, 'missing']}, {$ne: ['$state', 'terminal']}]}, 'terminal', '$state']},
         terminalStatus: {$cond: [{$and: [{$ne: [{$type: '$fleetCancellation'}, 'missing']}, {$ne: ['$state', 'terminal']}]}, 'cancelled', '$terminalStatus']}}}],
+      {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
+  },
+  async hasResult(requestId) {
+    return !!await TestRunModel.exists({requestId, 'payload.schemaVersion': 1}).read('primary').readConcern('majority');
+  },
+  async publicationFailed(requestId, hostId, completion, publicationFailure) {
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, inputSha256: completion.inputSha256,
+      'hostReceipt.requestId': requestId, 'hostReceipt.hostId': hostId, 'hostReceipt.inputSha256': completion.inputSha256,
+      runId: {$exists: false}, publicationFailure: {$exists: false},
+      'dispatchCompletion.inputSha256': completion.inputSha256, 'dispatchCompletion.disposition': completion.disposition,
+      'dispatchCompletion.completedAt': completion.completedAt},
+      {$set: {publicationFailure, state: 'terminal', terminalStatus: 'incomplete', updatedAt: new Date()}},
       {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
   },
   async cancellationProgress(requestId,fleetActionsCancellation,completedRunIds=[]) {
@@ -414,20 +432,48 @@ export class RoutineJobService {
     return this.observation(jobId);
   }
   async complete(jobId: string, hostId: string, value: unknown) {
-    const input = routineJobCompletionSchema.parse(value), row = await this.job(jobId);
+    const {publicationFailure, ...input} = routineJobCompletionReportSchema.parse(value);
+    const lookup = async () => {
+      if (!publicationFailure || !this.rows.completionRequest) return this.job(jobId);
+      if (!frameworkIdentitySchema.safeParse(jobId).success) throw new TestRunError(400, 'Invalid job identity');
+      const request = await this.rows.completionRequest(jobId);
+      if (!request) throw new TestRunError(404, 'Routine request was not found');
+      return request;
+    };
+    const row = await lookup();
     const executable = row as StoredRoutineJob & {inputSha256?: string};
-    if (!row.fleetBinding || row.hostId !== hostId || executable.inputSha256 !== input.inputSha256)
+    const accepted = publicationFailure ? row.hostReceipt?.requestId === jobId &&
+      row.hostReceipt.hostId === hostId && row.hostReceipt.inputSha256 === input.inputSha256 : !!row.fleetBinding;
+    if (!accepted || row.hostId !== hostId || executable.inputSha256 !== input.inputSha256)
       throw new TestRequestConflict('Dispatch completion differs from its accepted host and exact executable input');
+    if (publicationFailure && publicationFailure.entityId !== jobId)
+      throw new TestRequestConflict('Publication failure differs from its accepted request');
+    let saved = row;
     if (row.dispatchCompletion) {
       if (requestInputDigest(row.dispatchCompletion) !== requestInputDigest(input))
         throw new TestRequestConflict('Dispatch completion changed its original custody disposition');
-      return row.dispatchCompletion;
+    } else {
+      if (!this.rows.complete) throw new TestRunError(503, 'Dispatch completion storage is unavailable');
+      saved = await this.rows.complete(jobId, hostId, input.inputSha256, input) ?? await lookup();
     }
-    if (!this.rows.complete) throw new TestRunError(503, 'Dispatch completion storage is unavailable');
-    const saved = await this.rows.complete(jobId, hostId, input.inputSha256, input) ?? await this.job(jobId);
     if (requestInputDigest(saved.dispatchCompletion) !== requestInputDigest(input))
       throw new TestRequestConflict('Dispatch completion changed its original custody disposition');
-    return saved.dispatchCompletion;
+    if (!publicationFailure) return saved.dispatchCompletion;
+    if (saved.publicationFailure && requestInputDigest(saved.publicationFailure) !== requestInputDigest(publicationFailure))
+      throw new TestRequestConflict('Publication failure changed its original frozen receipt');
+    // An inserted authenticated result may precede its request projection. Never
+    // replace that result with an unpublished outcome; a later result projection
+    // also wins the atomic runId guard below.
+    if (!this.rows.hasResult) throw new TestRunError(503, 'Publication result lookup is unavailable');
+    if (saved.runId || await this.rows.hasResult(jobId)) return {...saved.dispatchCompletion!, resultFound: true as const};
+    if (!saved.publicationFailure) {
+      if (!this.rows.publicationFailed) throw new TestRunError(503, 'Publication failure storage is unavailable');
+      saved = await this.rows.publicationFailed(jobId, hostId, input, publicationFailure) ?? await lookup();
+    }
+    if (saved.runId || await this.rows.hasResult(jobId)) return {...saved.dispatchCompletion!, resultFound: true as const};
+    if (!saved.publicationFailure || requestInputDigest(saved.publicationFailure) !== requestInputDigest(publicationFailure))
+      throw new TestRequestConflict('Publication failure changed its original frozen receipt');
+    return {...saved.dispatchCompletion!, publicationFailure: saved.publicationFailure};
   }
   async observation(jobId: string) {
     let row = await this.deliver(await this.job(jobId));
@@ -439,7 +485,7 @@ export class RoutineJobService {
     let result: unknown;
     if (row.fleetBinding) try {result = await this.results.detail(jobId);}
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
-    const reason = row.fleetCancellation?.reason ?? row.fleetDispatch?.error ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ??
+    const reason = (!row.runId && row.publicationFailure ? `Publication failed: ${row.publicationFailure.message}` : undefined) ?? row.fleetCancellation?.reason ?? row.fleetDispatch?.error ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ??
       row.hostRejection?.reason ?? row.preparationRejection?.reason ?? row.preparation?.reason;
     return {jobId, kind: 'run' as const, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256,
       deadline: row.fleetDeadline.toISOString(), state: row.fleetCancellation && !row.fleetBinding ? 'terminal' : row.state,

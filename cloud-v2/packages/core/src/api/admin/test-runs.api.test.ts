@@ -323,3 +323,15 @@ test("suite summary preserves missing and invalid-receipt errors", async () => {
     expect(response.status).toBe(503);expect(await response.json()).toEqual({error:"test_run_error",message:"Receipt differs"});
   } finally {reads.mockRestore();}
 });
+
+test('unpublished rejection detail keeps its explicit reason without fabricating a run',async()=>{
+ const input={routineSource:testRoutineSource(),routineId:'arbitrary',definitionRevision:'a'.repeat(40),platform:'ios-on-mac',laneId:'mac',resources:[],
+  build:{repository:'Mentra-Community/MentraOS',channel:'dev',headSha:'b'.repeat(40),kind:'mac-ci-package',source:{channel:'dev',buildRunId:1,publicationAttempt:1},
+  archive:{name:'app.zip',url:'https://artifactscdn.mentraglass.com/app.zip',size:100,sha256:'c'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:10,sha256:'d'.repeat(64)}}};
+ const publicationFailure={entityId:'original',payloadSha256:'d'.repeat(64),manifestSha256:'e'.repeat(64),operation:'result-create' as const,status:409 as const,code:'result_conflict' as const,message:'Invalid frozen fixture action',rejectedAt:'2026-10-09T00:00:00.000Z'};
+ class Results extends FrameworkResultService {override async detailByRun():Promise<any>{throw new TestRunError(404,'missing')};override async detail():Promise<any>{throw new TestRunError(404,'missing')}}
+ class Requests extends TestRequestService {override async get():Promise<any>{return{requestId:'original',hostId:'mini',inputSha256:requestInputDigest(input),input,state:'terminal',terminalStatus:'incomplete',publicationFailure}}}
+ const body:any=await(await createTestRunAdminApi(undefined,undefined,new Results(),new Requests()).request('/original')).json();
+ expect(body).toMatchObject({kind:'request',request:{state:'terminal',terminalStatus:'incomplete',reason:'Publication failed: Invalid frozen fixture action',reasonAt:publicationFailure.rejectedAt}});
+ expect(body.run).toBeUndefined();
+});

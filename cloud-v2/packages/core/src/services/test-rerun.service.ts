@@ -125,7 +125,7 @@ export class TestRerunService {
     return {...identity, requestId, status: result?.outcome ?? request.terminalStatus ?? request.state,
       publicationComplete: result?.uploadsComplete === true && result.evidenceStatus === "complete", build: input.data.build, definitionRevision: input.data.definitionRevision,
       ...(result ? {runId: result.runId, startedAt: result.startedAt, finishedAt: result.finishedAt} : {}),
-      ...(request.hostRejection ? {reason: request.hostRejection.reason} : {})};
+      ...(!result && request.publicationFailure ? {reason: `Publication failed: ${request.publicationFailure.message}`} : request.hostRejection ? {reason: request.hostRejection.reason} : {})};
   }
   private async parentMembers(parent: RerunPlan["parent"]): Promise<ParentMember[]> {
     if (!frameworkIdentitySchema.safeParse("suiteId" in parent ? parent.suiteId : parent.requestId).success)

@@ -27,6 +27,7 @@ const schema = new Schema({
   fleetSupersessionCheckedAt: {type: Date},
   fleetDispatch: {type: Schema.Types.Mixed},
   dispatchCompletion: {type: Schema.Types.Mixed, immutable: true},
+  publicationFailure: {type: Schema.Types.Mixed, immutable: true},
   fleetActionsCancellation: {type: Schema.Types.Mixed},
   fleetActions: {type: [Schema.Types.Mixed], default: undefined},
   state: {type: String, required: true, enum: ["awaiting-source", "awaiting-runner", "preparing", "queued", "accepted", "running", "terminal"]},

@@ -7,10 +7,10 @@ import {TestRunModel} from "../models/test-run.model";
 import {TestRequestModel} from "../models/test-request.model";
 import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun, type SuiteRejection} from "../types/test-suite.types";
 import {TestRunError} from "./test-result-error";
-import {hostRejectionSchema, requestInputDigest, type StoredRequest} from "./test-request.service";
+import {hostRejectionSchema, requestInputDigest, type HostAcceptance, type StoredRequest} from "./test-request.service";
 import {frameworkBuildSchema, frameworkIdentitySchema, recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
 import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
-import {routineJobBindingSchema} from "../types/routine-job.types";
+import {routineJobBindingSchema, routinePublicationFailureSchema} from "../types/routine-job.types";
 import {NightlyRoutineService, nightlyPreparedInput, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 import {frameworkResultSummaryFields, readFrameworkResultSummary} from "./framework-result.service";
 import {nativeRunFilter} from "./framework-run-summary.service";
@@ -95,13 +95,14 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
       && (member.status !== "pass" || !member.publicationComplete)).map(member => member.routineId))]};
 }
 type BoundRequest = {requestId: string; hostId?: string | null; input?: unknown; inputSha256?: string | null;
-  dispatchIntent?: unknown; dispatchIntentSha256?: string | null; state?: string; terminalStatus?: string | null; hostRejection?: unknown};
+  dispatchIntent?: unknown; dispatchIntentSha256?: string | null; state?: string; terminalStatus?: string | null; hostRejection?: unknown;
+  hostReceipt?: HostAcceptance; publicationFailure?: unknown};
 
 async function boundSuiteRequests(requestIds: string[]): Promise<BoundRequest[]> {
   if (!requestIds.length) return [];
   const requests = await TestRequestModel.find({requestId: {$in: requestIds}})
     .select({requestId: 1, hostId: 1, inputSha256: 1, input: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
-      state: 1, terminalStatus: 1, hostRejection: 1}).limit(101).read("primary").readConcern("majority").lean();
+      state: 1, terminalStatus: 1, hostRejection: 1, hostReceipt: 1, publicationFailure: 1}).limit(101).read("primary").readConcern("majority").lean();
   if (requests.length > 100) throw new TestRunError(503, "suite request history exceeds the query bound; no verdict available");
   return requests as BoundRequest[];
 }
@@ -133,8 +134,20 @@ function withRequestLanes(suite: ReturnType<typeof summarizeSuite>, requests: Bo
 }
 
 function suiteRejections(requests: BoundRequest[]): SuiteRejection[] {
-  return requests.filter(request => request.hostRejection !== undefined).map(request => {
-    const rejection = hostRejectionSchema.safeParse(request.hostRejection), input = recordedFrameworkRequestInputSchema.safeParse(request.input);
+  return requests.filter(request => request.hostRejection !== undefined || request.publicationFailure !== undefined).map(request => {
+    const input = recordedFrameworkRequestInputSchema.safeParse(request.input);
+    if (request.publicationFailure !== undefined) {
+      const failure = routinePublicationFailureSchema.safeParse(request.publicationFailure);
+      if (!failure.success || !input.success || request.state !== "terminal"
+        || failure.data.entityId !== request.requestId || request.hostReceipt?.requestId !== request.requestId
+        || request.hostReceipt.hostId !== request.hostId || request.hostReceipt.inputSha256 !== request.inputSha256
+        || requestInputDigest(input.data) !== request.inputSha256)
+        throw new TestRunError(503, "suite member publication failure identity is invalid; no verdict available");
+      return {requestId: request.requestId, routineId: input.data.routineId, platform: input.data.platform,
+        definitionRevision: input.data.definitionRevision, channel: input.data.build.channel, headSha: input.data.build.headSha,
+        rejectedAt: failure.data.rejectedAt, reason: `Publication failed: ${failure.data.message}`};
+    }
+    const rejection = hostRejectionSchema.safeParse(request.hostRejection);
     if (!rejection.success || !input.success || request.state !== "terminal" || request.terminalStatus !== "not-run"
       || rejection.data.requestId !== request.requestId || rejection.data.hostId !== request.hostId
       || rejection.data.inputSha256 !== request.inputSha256 || requestInputDigest(input.data) !== request.inputSha256)
@@ -290,7 +303,7 @@ export class TestSuiteService {
     const [requests, results] = await Promise.all([
       requestIds.length ? TestRequestModel.find({requestId: {$in: requestIds}})
         .select({requestId: 1, hostId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
-          state: 1, terminalStatus: 1, hostRejection: 1, preparation: 1, preparationCancellation: 1, preparationRejection: 1,
+          state: 1, terminalStatus: 1, hostRejection: 1, hostReceipt: 1, publicationFailure: 1, preparation: 1, preparationCancellation: 1, preparationRejection: 1,
           fleetSelection: 1, fleetSelectionSha256: 1, fleetBinding: 1, fleetCancellation: 1})
         .limit(requestIds.length + 1).read("primary").readConcern("majority").setOptions(remaining()).lean() : [],
       liveRequestIds.length ? TestRunModel.find({...nativeRunFilter, requestId: {$in: liveRequestIds}})

@@ -14,7 +14,7 @@ import {GithubTestBuildGateway, TestDispatchError} from "./test-builds.service";
 import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
-import {portableRoutineSelectionSchema, routineJobBindingSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
+import {portableRoutineSelectionSchema, routineJobBindingSchema, routinePublicationFailureSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
 import {RoutineJobService} from "./routine-job.service";
 
 export const nightlyOccurrenceSchema = z.object({occurrenceId: frameworkIdentitySchema,
@@ -309,6 +309,15 @@ export class NightlyRoutineService {
           runId: run.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
         if (!(error instanceof TestRunError) || error.status !== 404) return {...this.unavailableEvidence(boundMember, error, "Result"), input, inputSha256: request.inputSha256};
+        if (request.publicationFailure) {
+          const failure = routinePublicationFailureSchema.safeParse(request.publicationFailure);
+          if (!failure.success || failure.data.entityId !== member.requestId || request.hostReceipt?.requestId !== member.requestId
+            || request.hostReceipt.hostId !== request.hostId || request.hostReceipt.inputSha256 !== request.inputSha256)
+            return {...prepared, status: "incomplete", publicationComplete: false,
+              unavailableReason: "Publication failure identity differs from the frozen request."};
+          return {...prepared, status: "incomplete", publicationComplete: false,
+            unavailableReason: `Publication failed: ${failure.data.message}`};
+        }
         if (request.hostRejection) {
           if (request.hostRejection.inputSha256 !== request.inputSha256 || request.hostRejection.hostId !== request.hostId)
             return {...prepared, status: "incomplete", publicationComplete: false, unavailableReason: "Host rejection identity differs from the frozen request."};

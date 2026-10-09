@@ -34,9 +34,15 @@ export const routineJobBindingSchema = z.object({jobId: frameworkIdentitySchema,
   boundAt: z.string().datetime({offset: true})}).strict();
 export const routineJobBindInputSchema = routineJobBindingSchema.pick({laneId: true, descriptorRevision: true, actionsRunId: true, actionsJobId: true})
   .extend({inputSha256: jobHashSchema});
+export const routinePublicationFailureSchema = z.object({entityId: frameworkIdentitySchema,
+  payloadSha256: jobHashSchema, manifestSha256: jobHashSchema, operation: z.literal('result-create'),
+  status: z.literal(409), code: z.literal('result_conflict'), message: z.string().min(1).max(1024),
+  rejectedAt: z.string().datetime({offset: true})}).strict();
 export const routineJobCompletionSchema = z.object({inputSha256: jobHashSchema, disposition: z.enum(['clean', 'repair']),
   completedAt: z.string().datetime({offset: true})}).strict();
+export const routineJobCompletionReportSchema = routineJobCompletionSchema.extend({publicationFailure: routinePublicationFailureSchema.optional()}).strict();
 export const routineJobActionsSchema = z.object({inputSha256: jobHashSchema, actionsRunId: z.string().regex(/^[1-9][0-9]{0,19}$/)}).strict();
+export type RoutinePublicationFailure = z.infer<typeof routinePublicationFailureSchema>;
 export type RoutineJobCompletion = z.infer<typeof routineJobCompletionSchema>;
 export type PortableRoutineSelection = z.infer<typeof portableRoutineSelectionSchema>;
 export type PortableRequirements = z.infer<typeof portableRequirementsSchema>;
@@ -53,6 +59,8 @@ export interface StoredRoutineJob {
   fleetTarget?: z.infer<typeof routineJobTargetSchema>;
   fleetBinding?: RoutineJobBinding;
   dispatchCompletion?: RoutineJobCompletion;
+  publicationFailure?: RoutinePublicationFailure;
+  hostReceipt?: import('../services/test-request.service').HostAcceptance;
   fleetDispatch?: import('../services/routine-job-actions.service').RoutineActionsDispatch;
   fleetActionsCancellation?: import('../services/routine-job-actions.service').RoutineActionsCancellation;
   fleetActions?: Array<{actionsRunId: string; recordedAt: string}>;
