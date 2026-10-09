@@ -12,6 +12,7 @@ import {frameworkBuildSchema, frameworkIdentitySchema, recordedFrameworkRequestI
 import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
 import {routineJobBindingSchema, routinePublicationFailureSchema} from "../types/routine-job.types";
 import {NightlyRoutineService, nightlyPreparedInput, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
+import {nightlyUnassignedReason} from "./nightly-deadline-reason";
 import {frameworkResultSummaryFields, readFrameworkResultSummary} from "./framework-result.service";
 import {nativeRunFilter} from "./framework-run-summary.service";
 import {LaneRestorationService} from "./lane-restoration.service";
@@ -78,6 +79,9 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
       }
     }
     const build = input?.build ?? expected.build;
+    const unavailableReason = nightlyUnassignedReason({reason: receipt.unavailableReason, startedAt: result.startedAt,
+      observedAt: result.finishedAt, unassigned: "selection" in expected && !!expected.selection
+        && !receipt.binding && !receipt.hostId && !receipt.runId && ["incomplete", "not-run"].includes(receipt.status)});
     return {...member, requestId: expected.requestId, routineRevision: "routineRevision" in expected ? expected.routineRevision : expected.definitionRevision,
       hostId: receipt.hostId ?? expected.hostId,
       ...(input?.laneId ? {laneId: input.laneId} : "dispatchIntent" in receipt && receipt.dispatchIntent ? {laneId: receipt.dispatchIntent.laneId}
@@ -85,7 +89,7 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
       ...("dispatchIntent" in receipt && receipt.dispatchIntent ? {dispatchIntent: receipt.dispatchIntent} : {}),
       ...(input?.routineSource ? {routineSource: input.routineSource} : {}), ...(build ? {build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
-      ...(receipt.unavailableReason ? {unavailableReason: receipt.unavailableReason} : {}),
+      ...(unavailableReason ? {unavailableReason} : {}),
       ...(receipt.runId ? {runId: receipt.runId, startedAt: receipt.runStartedAt, finishedAt: receipt.runFinishedAt} : {})};
   });
   const passed = members.filter(member => member.status === "pass" && member.publicationComplete).length;
@@ -242,8 +246,11 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
       || receipt.runId && (receipt.runId !== receipt.requestId || !receipt.runStartedAt || !receipt.runFinishedAt
         || !Number.isFinite(Date.parse(receipt.runStartedAt)) || !Number.isFinite(Date.parse(receipt.runFinishedAt))
         || Date.parse(receipt.runFinishedAt) < Date.parse(receipt.runStartedAt))) invalid();
+    const unavailableReason = nightlyUnassignedReason({reason: receipt!.unavailableReason, startedAt: result.startedAt,
+      observedAt: result.finishedAt, unassigned: !!expected!.portable && !receipt!.binding && !receipt!.hostId
+        && !receipt!.runId && ["incomplete", "not-run"].includes(receipt!.status!)});
     return {...member, requestId: expected!.requestId, status: receipt!.status === "incomplete" ? "not-run" : receipt!.status!,
-      publicationComplete: receipt!.publicationComplete, ...(receipt!.unavailableReason ? {unavailableReason: receipt!.unavailableReason} : {}),
+      publicationComplete: receipt!.publicationComplete, ...(unavailableReason ? {unavailableReason} : {}),
       ...(receipt!.rejectedAt ? {rejectedAt: receipt!.rejectedAt} : {}), ...((receipt!.hostId ?? expected!.hostId) ? {hostId: receipt!.hostId ?? expected!.hostId} : {}),
       ...((receipt!.laneId ?? expected!.laneId) ? {laneId: receipt!.laneId ?? expected!.laneId} : {}),
       ...(receipt!.runId ? {runId: receipt!.runId, startedAt: receipt!.runStartedAt, finishedAt: receipt!.runFinishedAt} : {})};
@@ -304,7 +311,7 @@ export class TestSuiteService {
       requestIds.length ? TestRequestModel.find({requestId: {$in: requestIds}})
         .select({requestId: 1, hostId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
           state: 1, terminalStatus: 1, hostRejection: 1, hostReceipt: 1, publicationFailure: 1, preparation: 1, preparationCancellation: 1, preparationRejection: 1,
-          fleetSelection: 1, fleetSelectionSha256: 1, fleetBinding: 1, fleetCancellation: 1})
+          fleetSelection: 1, fleetSelectionSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1})
         .limit(requestIds.length + 1).read("primary").readConcern("majority").setOptions(remaining()).lean() : [],
       liveRequestIds.length ? TestRunModel.find({...nativeRunFilter, requestId: {$in: liveRequestIds}})
         .select(frameworkResultSummaryFields).limit(liveRequestIds.length + 1).read("primary").readConcern("majority")

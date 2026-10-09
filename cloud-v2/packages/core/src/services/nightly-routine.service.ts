@@ -16,6 +16,7 @@ import {FrameworkResultService} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
 import {portableRoutineSelectionSchema, routineJobBindingSchema, routinePublicationFailureSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
 import {RoutineJobService} from "./routine-job.service";
+import {NIGHTLY_COMPLETION_BOUNDARY_REASON, nightlyUnassignedReason} from "./nightly-deadline-reason";
 
 export const nightlyOccurrenceSchema = z.object({occurrenceId: frameworkIdentitySchema,
   startedAt: z.string().datetime({offset: true}), trigger: z.enum(["nightly", "manual"])}).strict();
@@ -142,7 +143,7 @@ export class NightlyRoutineService {
         // Fence a lost admission acknowledgement after occurrence cancellation/deadline.
         const cancellation = await this.repository.cancellation(suiteId);
         if (cancellation || await this.repository.completed(suiteId) || this.now() >= Date.parse(deadline))
-          await this.jobs.cancel(member.requestId, {reason: cancellation?.reason ?? "Nightly occurrence reached its completion boundary."});
+          await this.jobs.cancel(member.requestId, {reason: cancellation?.reason ?? NIGHTLY_COMPLETION_BOUNDARY_REASON});
         return {memberId: member.memberId, admitted: true};
       } catch {
         return {memberId: member.memberId, admitted: false, reason: "Request admission unavailable; retry this occurrence."};
@@ -234,7 +235,7 @@ export class NightlyRoutineService {
     const deadline = new Date(Date.parse(plan.startedAt) + 3 * 3600_000).toISOString();
     const cancellations = await Promise.allSettled(eligible.map(async member => {
       await this.jobs.cancelFrozen(member.selection!, deadline,
-        {reason: cancellation?.reason ?? "Nightly occurrence reached its completion boundary."});
+        {reason: cancellation?.reason ?? NIGHTLY_COMPLETION_BOUNDARY_REASON});
     }));
     cancellations.forEach((result, index) => {
       if (result.status === "rejected") logger.error({err: result.reason, requestId: eligible[index]!.requestId}, "Nightly deadline cancellation failed");
@@ -276,8 +277,13 @@ export class NightlyRoutineService {
         if (request.requestId !== member.requestId || !portableRoutineSelectionSchema.safeParse(job.fleetSelection).success || requestInputDigest(job.fleetSelection) !== job.fleetSelectionSha256
           || requestInputDigest(job.fleetSelection) !== requestInputDigest(member.selection))
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Request identity differs from the frozen selection."};
-        if (!job.fleetBinding) return {...member, status: job.fleetCancellation ? "incomplete" : "waiting", publicationComplete: false,
-          unavailableReason: job.fleetCancellation?.reason ?? (job.state === "awaiting-source" ? "Awaiting exact routine source preparation." : "Awaiting compatible runner.")};
+        if (!job.fleetBinding) {
+          const recordedWaitingReason = job.preparation?.reason ?? job.fleetDispatch?.error;
+          return {...member, status: job.fleetCancellation ? "incomplete" : "waiting", publicationComplete: false,
+            unavailableReason: nightlyUnassignedReason({reason: job.fleetCancellation?.reason ?? recordedWaitingReason
+              ?? (job.state === "awaiting-source" ? "Awaiting exact routine source preparation." : "Awaiting compatible runner."),
+              startedAt: plan.startedAt, observedAt: job.fleetCancellation?.requestedAt, unassigned: true, recordedWaitingReason})};
+        }
         const binding = routineJobBindingSchema.safeParse(job.fleetBinding), intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
         if (!binding.success || !intent.success || binding.data.jobId !== member.requestId || binding.data.requestId !== member.requestId || request.hostId !== binding.data.hostId || intent.data.laneId !== binding.data.laneId
           || request.dispatchIntentSha256 !== requestInputDigest(intent.data) || job.fleetPreparation && requestInputDigest(intent.data.routineSource) !== requestInputDigest(job.fleetPreparation.routineSource))
