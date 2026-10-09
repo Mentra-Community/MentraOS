@@ -236,13 +236,13 @@ public final class AeStateMachine {
 
     /**
      * AE state the wait should act on. In AE_MODE_ON, FLASH_REQUIRED means "converged but too
-     * dark without flash": exposure is at its limit. Mentra Live has no flash, so on a camera that
-     * is already running treat it as CONVERGED instead of waiting out {@link #AE_WAIT_MAX_NS}. A
-     * cold open keeps waiting: in the dark, stills fired before ~1.5 s come out about twice as
-     * noisy, even at the same exposure and ISO.
+     * dark without flash": exposure is at its limit. Mentra Live has no flash, so when a capture
+     * reuses a camera that is already streaming, treat it as CONVERGED instead of waiting out
+     * {@link #AE_WAIT_MAX_NS}. A cold open or warm-up keeps waiting: in the dark, stills fired
+     * before ~1.5 s come out about twice as noisy, even at the same exposure and ISO.
      */
-    public static Integer aeStateForWait(Integer aeState, boolean cameraAlreadyRunning) {
-        if (cameraAlreadyRunning
+    public static Integer aeStateForWait(Integer aeState, boolean reusesRunningCamera) {
+        if (reusesRunningCamera
                 && aeState != null
                 && aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED) {
             return CaptureResult.CONTROL_AE_STATE_CONVERGED;

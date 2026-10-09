@@ -223,6 +223,11 @@ public final class PhotoSession {
                             }
 
                             @Override
+                            public boolean reusesRunningCamera() {
+                                return mCaptureDispatchedAsWarmReuse;
+                            }
+
+                            @Override
                             public void requestAeLock(CameraCaptureSession session) {
                                 boolean lockRequested =
                                         AePreviewController.requestAeLock(

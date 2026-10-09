@@ -53,6 +53,7 @@ public class AeCaptureCallbackTest {
     public void onCaptureCompleted_flashRequiredOnRunningCamera_capturesAfterStableFrames() {
         AeStateMachine stateMachine = new AeStateMachine();
         FakeHooks hooks = new FakeHooks();
+        hooks.reusesRunningCamera = true;
         AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
         CameraCaptureSession session = mock(CameraCaptureSession.class);
         CaptureRequest request = mock(CaptureRequest.class);
@@ -71,6 +72,30 @@ public class AeCaptureCallbackTest {
 
         assertThat(stateMachine.waitingForAeConvergence()).isFalse();
         assertThat(hooks.captureCount).isEqualTo(1);
+    }
+
+    @Test
+    public void onCaptureCompleted_flashRequiredDuringWarmUp_keepsWaiting() {
+        // A warm-up's own AE wait has no cold settle floor but is often a fresh open: it must not
+        // report ready early in the dark, or the next photo fires before the ISP has settled.
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult result = mock(TotalCaptureResult.class);
+        stateMachine.beginWaitingForAe();
+        when(result.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        when(result.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
+        when(result.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
+
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED + 2; i++) {
+            callback.onCaptureCompleted(session, request, result);
+        }
+
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        assertThat(hooks.captureCount).isZero();
     }
 
     @Test
@@ -269,6 +294,7 @@ public class AeCaptureCallbackTest {
         String errorMessage;
         long lastDelayMs = -1L;
         long minimumExposureStabilizationDelayMs;
+        boolean reusesRunningCamera;
         boolean runDelayedImmediately = true;
         Runnable delayedCapture;
         int captureCount;
@@ -304,6 +330,11 @@ public class AeCaptureCallbackTest {
         @Override
         public long minimumExposureStabilizationDelayMs() {
             return minimumExposureStabilizationDelayMs;
+        }
+
+        @Override
+        public boolean reusesRunningCamera() {
+            return reusesRunningCamera;
         }
 
         @Override

@@ -29,6 +29,12 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
         /** Minimum time from first AE convergence to still capture for the active request. */
         long minimumExposureStabilizationDelayMs();
 
+        /**
+         * Whether this capture reuses a camera that was already streaming for an earlier photo or
+         * a finished warm-up. False for a fresh open and for a warm-up's own AE wait.
+         */
+        boolean reusesRunningCamera();
+
         void requestAeLock(CameraCaptureSession session);
 
         void capturePhoto();
@@ -87,9 +93,7 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                     + precaptureTrigger + ", AE state: " + AeStateMachine.getAeStateName(aeState));
         }
 
-        // No cold-start settle floor means the camera was already running (reuse or warm-up).
-        Integer waitAeState = AeStateMachine.aeStateForWait(
-                aeState, hooks.minimumExposureStabilizationDelayMs() == 0L);
+        Integer waitAeState = AeStateMachine.aeStateForWait(aeState, hooks.reusesRunningCamera());
         aeStateMachine.noteRepeatingFrame(waitAeState, exposureEarly, sensEarly);
 
         long elapsedNs = aeStateMachine.elapsedNsSinceAeStart();
