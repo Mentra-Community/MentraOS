@@ -170,14 +170,14 @@ export function frameworkRunHref(runId: string) {
 
 type RunDisplay = {kind?: "run"; run: RecordedFrameworkRun; definition: RoutineEnrollment["definition"] | null;
   outcome: string; uploadsComplete: boolean; evidenceStatus: "complete" | "failed"; failureScreens?: FrameworkFailureScreen[];
-  incidentReportId?: string | null};
+  incidentReportId?: string | null; incidentReportPending?: boolean};
 type RequestDisplay = {kind: "request"; request: FrameworkRequestDisplay; run?: never; uploadsComplete?: never};
 const CANCELLED_REQUEST_OBSERVATION_MS = 10 * 60 * 1000;
 
 export function frameworkRunRefetchInterval(data: RunDisplay | RequestDisplay | undefined, observedAt: number, now = Date.now()): number | false {
   if (data?.kind === "request") return data.request.state !== "terminal"
     || (data.request.terminalStatus === "cancelled" && now - observedAt < CANCELLED_REQUEST_OBSERVATION_MS) ? 5000 : false;
-  return data?.uploadsComplete === false ? 5000 : false;
+  return data?.uploadsComplete === false || (data?.incidentReportPending && now - observedAt < CANCELLED_REQUEST_OBSERVATION_MS) ? 5000 : false;
 }
 
 function RequestCard({request, observing, refreshing, onRefresh}: {request: FrameworkRequestDisplay; observing: boolean; refreshing: boolean; onRefresh: () => void}) {
@@ -255,9 +255,10 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     api<RunDisplay | RequestDisplay>(`/api/admin/test-runs/${encodeURIComponent(runId)}`),
     refetchInterval: query => frameworkRunRefetchInterval(query.state.data, observedAt)});
   useEffect(() => {
-    if (result.data?.kind === "request" && result.data.request.terminalStatus === "cancelled")
+    if ((result.data?.kind === "request" && result.data.request.terminalStatus === "cancelled")
+      || (result.data?.kind !== "request" && result.data?.incidentReportPending))
       setObservation(current => current.runId === runId && current.startedAt !== null ? current : {runId, startedAt: Date.now()});
-  }, [runId, result.data?.kind, result.data?.kind === "request" ? result.data.request.terminalStatus : undefined]);
+  }, [runId, result.data?.kind, result.data?.kind === "request" ? result.data.request.terminalStatus : result.data?.incidentReportPending]);
   useEffect(() => {
     setStepSearch(""); setSelectedStep(stepId);
     setMediaView(stepId ? 'recording' : 'failure'); setMediaError(null); setImageError(false);
@@ -307,7 +308,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         refreshing={result.isFetching} onRefresh={() => {setObservation({runId, startedAt: request.terminalStatus === "cancelled" ? Date.now() : null}); void result.refetch();}} />
     </div>;
   }
-  const {run, definition, outcome, uploadsComplete, evidenceStatus, failureScreens, incidentReportId} = result.data;
+  const {run, definition, outcome, uploadsComplete, evidenceStatus, failureScreens, incidentReportId, incidentReportPending} = result.data;
   const failureSummary = runFailureSummary(run, outcome, evidenceStatus);
   const actualRunId = result.data.kind === "run" ? run.result.runId : runId;
   const recordingAsset = selectedAsset ?? run.recordingAssetId;
@@ -352,6 +353,9 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
           {failureSummary && <><p className="text-sm text-[#cf222e]">{failureSummary.reason}</p>
             <div className="flex flex-wrap gap-3 sm:justify-end"><TestingButton onClick={goToFailure}>Go to failure</TestingButton>
               {incidentReportId && <a className={`${TESTING_LINK} self-center text-sm`} href={`/?report=${encodeURIComponent(incidentReportId)}`}>Incident report</a>}
+              {!incidentReportId && incidentReportPending && <TestingButton busy={result.isFetching} onClick={() => {
+                setObservation({runId, startedAt: Date.now()}); void result.refetch();
+              }}>Refresh incident</TestingButton>}
             </div></>}
         </div>
       </div>

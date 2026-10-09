@@ -279,7 +279,8 @@ export class FrameworkResultService {
         return deviceReport ?? await this.findIncident(run.result.runId, stored.payloadSha256);
       })().catch(() => null) : null,
     ]) : [[], null];
-    const displayEvidence = includeFailureScreens ? {failureScreens, incidentReportId} : {};
+    const displayEvidence = includeFailureScreens ? {failureScreens, incidentReportId,
+      incidentReportPending: failedRunNeedsReport(run) && incidentReportId === null} : {};
     return {run, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(run), uploadsComplete: stored.uploadsComplete,
       evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed", ...displayEvidence};
   }

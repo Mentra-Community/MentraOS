@@ -77,5 +77,9 @@ test('Admin detail prefers its filed device incident and uses an existing framew
   uploaded = false;
   expect((await service.detailByRun(runId, true)).incidentReportId).toBe('rep_FRAMEWORK');
   failLookup = true;
-  expect((await service.detailByRun(runId, true)).incidentReportId).toBeNull();
+  const pending = await service.detailByRun(runId, true);
+  expect(pending.incidentReportId).toBeNull();
+  expect(pending.incidentReportPending).toBe(true);
+  failLookup = false;
+  expect((await service.detailByRun(runId, true)).incidentReportPending).toBe(false);
 });

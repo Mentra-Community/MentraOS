@@ -423,6 +423,17 @@ test("failed runs select the failure; explicit step links preserve their request
   const client = new QueryClient();
   client.setQueryData(["framework-run", run.requestId], {run, definition: null, outcome: "failed", uploadsComplete: true, evidenceStatus: "complete"});
   const render = (stepId?: string) => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId} stepId={stepId}/></QueryClientProvider>);
+  const incidentPending = {run, definition: null, outcome: "failed", uploadsComplete: true,
+    evidenceStatus: "complete" as const, incidentReportId: null, incidentReportPending: true};
+  const observedAt = Date.parse('2026-10-03T19:01:00Z');
+  expect(frameworkRunRefetchInterval(incidentPending, observedAt, observedAt + 599999)).toBe(5000);
+  expect(frameworkRunRefetchInterval(incidentPending, observedAt, observedAt + 600000)).toBe(false);
+  expect(frameworkRunRefetchInterval({...incidentPending, incidentReportPending: false, incidentReportId: 'rep_CREATED'}, observedAt, observedAt)).toBe(false);
+  client.setQueryData(["framework-run", run.requestId], incidentPending);
+  expect(render()).toContain('Refresh incident');
+  client.setQueryData(["framework-run", run.requestId], {...incidentPending, incidentReportPending: false, incidentReportId: 'rep_CREATED'});
+  expect(render()).toContain('href="/?report=rep_CREATED"');
+  expect(render()).not.toContain('Refresh incident');
   expect(render()).toContain('data-step-id="connect" data-selected="true"');
   expect(render()).not.toContain('data-step-id="open" data-selected="true"');
   expect(render("open")).toContain('data-step-id="open" data-selected="true"');

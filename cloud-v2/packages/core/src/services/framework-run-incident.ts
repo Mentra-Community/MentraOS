@@ -33,7 +33,7 @@ export async function readRunIncident(run: RecordedFrameworkRun,
   if (assets.some(asset => !asset || asset.size < 1 || asset.size > 64 * 1024)) return null;
   const controller = new AbortController();
   let response: Response | undefined;
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let reader: ReturnType<NonNullable<Response['body']>['getReader']> | undefined;
   let expired = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {timer = setTimeout(() => {
@@ -49,11 +49,12 @@ export async function readRunIncident(run: RecordedFrameworkRun,
       });
       response = await Promise.race([reading, deadline]);
       if (response.status !== 200 || !response.body) return null;
-      reader = response.body.getReader();
+      const bodyReader = response.body.getReader();
+      reader = bodyReader;
       const chunks: Uint8Array[] = [];
       let size = 0;
       while (true) {
-        const {done, value} = await Promise.race([reader.read(), deadline]);
+        const {done, value} = await Promise.race([bodyReader.read(), deadline]);
         if (done) break;
         size += value.byteLength;
         if (size > asset!.size) return null;
@@ -61,7 +62,7 @@ export async function readRunIncident(run: RecordedFrameworkRun,
       }
       const bytes = Buffer.concat(chunks);
       if (bytes.length !== asset!.size || createHash('sha256').update(bytes).digest('hex') !== asset!.sha256) return null;
-      bodies.push(bytes); reader.releaseLock(); reader = undefined; response = undefined;
+      bodies.push(bytes); bodyReader.releaseLock(); reader = undefined; response = undefined;
     }
     return expired ? null : recordedRunIncident(run.result.runId, bodies[0]!, bodies[1]!);
   } catch {return null;}
