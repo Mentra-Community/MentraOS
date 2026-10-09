@@ -11,12 +11,17 @@
  *   2. Attach a per-request child logger pre-bound with `reqId`, method, and
  *      path. Handlers should log via `c.var.logger` rather than the root
  *      logger so every log line in a request is automatically correlated.
+ *
+ *   3. Run the rest of the request with that id as the current request id
+ *      (`services/request-context.ts`), so services without the Hono context,
+ *      such as the workspace audit trail, can record it.
  */
 
 import { createMiddleware } from "hono/factory";
 import { ulid } from "ulid";
 import { createLogger } from "@mentra/cloud-shared";
 import type { AppEnv } from "../../types/hono.types";
+import { runWithRequestId } from "../../services/request-context";
 
 const rootLogger = createLogger("core");
 
@@ -36,5 +41,5 @@ export const requestContext = createMiddleware<AppEnv>(async (c, next) => {
 
   c.header("x-request-id", reqId);
 
-  await next();
+  await runWithRequestId(reqId, next);
 });

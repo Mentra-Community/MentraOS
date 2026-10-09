@@ -5,7 +5,7 @@ const MAX_ENTRIES = 4_096
 const MAX_ENTRY_BYTES = 32 * 1024 * 1024
 const MAX_EXPANDED_BYTES = 64 * 1024 * 1024
 
-/** Validate ZIP metadata before handing untrusted workspace bytes to native unzip. */
+/** Validate ZIP metadata before handing untrusted organization bytes to native unzip. */
 export function preflightMiniappZip(bytes: Uint8Array): void {
   if (bytes.byteLength < 22) throw new Error("bundle is not a ZIP archive")
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)

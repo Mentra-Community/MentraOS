@@ -2,74 +2,47 @@ import {LoadingIndicator} from "./components/loading-indicator";
 import {TestRunsTabs} from "./pages/test-runs-tabs";
 import {TestRerunPage, readRerunId} from "./pages/test-reruns";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
-import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, BookOpen, Bug, Check, ClipboardList, FileText, FlaskConical, History, Home, KeyRound, MessageSquareWarning, RefreshCcw, ShieldCheck, Users, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
+import { resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./lib/admin-access";
 import { api, ApiError } from "./lib/api";
 import {
   hasInvalidTestRunListScope, readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
 import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
 import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
+import { OperatorKeysPage } from "./pages/operator-keys";
+import { WorkspacesPage } from "./pages/workspaces";
 import {readLaneSelection} from "./lib/lane-links";
 import {readSystemHealthTab, systemHealthLocation, type SystemHealthTab} from "./lib/system-health-links";
 import { RecordingVideo } from "./components/recording-video";
+import { readWorkspaceInvite, removeWorkspaceInvite, withoutWorkspaceInvite } from "./lib/workspace-invite-link";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
-type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "routine-catalog" | "system-health";
-type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
 
-interface AdminUser {
-  developerId: string;
-  email: string;
-}
+/** Every page, in navigation order. What a principal actually sees is `visiblePages(me)`. */
+const ADMIN_NAV: ReadonlyArray<NavItem & { key: AdminPageKey }> = [
+  { key: "incidents", label: "Incident system", icon: Bug },
+  { key: "test-runs", label: "Test runs", icon: FlaskConical },
+  { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
+  { key: "system-health", label: "System health", icon: ShieldCheck },
+  { key: "workspaces", label: "Workspaces", icon: Users },
+  { key: "operator-keys", label: "Operator keys", icon: KeyRound },
+];
 
-interface Registry {
-  id: string;
-  name: string;
-  environment: Environment;
-  status: string;
-  activeRevisionId: string | null;
-}
-
-interface ReleaseSummary {
-  id: string;
-  packageName: string;
-  displayName: string;
-  version: string;
-  status: ReleaseStatus;
-  bundleSha256: string | null;
-  reviewNotes?: string | null;
-  submittedAt?: string | null;
-  reviewedAt?: string | null;
-  publishedAt?: string | null;
-}
-
-interface RegistryRevision {
-  id: string;
-  status: string;
-  entries: Array<{
-    releaseId: string;
-    installPolicy: InstallPolicy;
-    required: boolean;
-  }>;
-  createdAt: string | null;
-  promotedAt: string | null;
-}
-
-interface AuditEvent {
-  id: string;
-  adminId: string;
-  action: string;
-  targetType: string;
-  targetId: string;
-  reason: string | null;
-  createdAt: string | null;
-}
+const PAGE_META: Record<AdminPageKey, { title: string; body: string }> = {
+  "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
+  "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
+  incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
+  "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
+  workspaces: { title: "Workspaces", body: "Members, invitations, keys, settings and the audit log for each workspace." },
+  "operator-keys": { title: "Operator keys", body: "Organization keys for incident, support-profile and test-run tooling." },
+};
+const NO_ACCESS_META = { title: "Core admin", body: "Nothing is available to this account yet." };
 
 type ReportKind = "bug" | "feedback" | "automatic";
 type ReportStatus = "collecting" | "ready" | "closed";
@@ -131,17 +104,6 @@ const queryClient = new QueryClient({
   },
 });
 
-const ADMIN_NAV: readonly NavItem[] = [
-  { key: "home", label: "Home", icon: Home },
-  { key: "review", label: "Miniapp review", icon: ClipboardList },
-  { key: "preinstalled", label: "Preinstalled miniapps", icon: PackageCheck },
-  { key: "audit", label: "Audit log", icon: History },
-  { key: "incidents", label: "Incident system", icon: Bug },
-  { key: "test-runs", label: "Test runs", icon: FlaskConical },
-  { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
-  { key: "system-health", label: "System health", icon: ShieldCheck },
-];
-
 /**
  * The admin environment is bound to the hostname, not chosen in-app (PRD: no
  * env switcher; opening the matching hostname switches environment). Localhost
@@ -178,13 +140,26 @@ const initialTestRunListScope = readTestRunListScope(window.location.search);
 const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
 const initialHealthTab = readSystemHealthTab(window.location.search);
 const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
+// Invitation links point here as /?workspaceInvite=<token> (or /invite/<token>, which the server redirects
+// to the query form). The token stays in the address bar until the
+// invitation is accepted or the person navigates away, so a sign-in round-trip (LoginGate's return_to)
+// or switching to the invited account still lands back on the accept screen. Like the report id above,
+// the module copy only seeds the first mount and is cleared once the invitation is spent.
+let pendingWorkspaceInvite = readWorkspaceInvite(window.location.search, window.location.pathname);
 
-function AdminPage() {
-  const qc = useQueryClient();
-  const env = ENVIRONMENT;
-  const [page, setPage] = useState<AdminPageKey>(
-    initialSystemHealth ? "system-health" : initialRerunId || initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
+export function AdminPage() {
+  const client = useQueryClient();
+  // The page asked for, if any. What shows is `resolvePage(page, visible)`: a page this principal
+  // cannot see (a deep link) falls back to their default page.
+  const [page, setPage] = useState<AdminPageKey | null>(
+    initialSystemHealth ? "system-health"
+      : initialRerunId || initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs"
+      : initialRoutineCatalog ? "routine-catalog"
+      : pendingWorkspaceInvite ? "workspaces"
+      : pendingDeepLinkReportId ? "incidents"
+      : null,
   );
+  const [workspaceInvite, setWorkspaceInvite] = useState<string | null>(pendingWorkspaceInvite);
   const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
   const [healthTab, setHealthTab] = useState(initialHealthTab);
@@ -193,24 +168,23 @@ function AdminPage() {
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
   const [invalidTestRunListScope, setInvalidTestRunListScope] = useState(() => hasInvalidTestRunListScope(window.location.search));
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
-  const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
-  const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<unknown>(null);
 
   async function signOut() {
     setSigningOut(true);
+    setSignOutError(null);
     try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; reload still drops us at the login gate
+      await signOutOfCore();
+    } catch (error) {
+      setSignOutError(error);
+      setSigningOut(false);
     }
-    window.location.reload();
   }
 
   const me = useQuery({
     queryKey: ["admin-me"],
-    queryFn: () => api<{ authenticated: true; admin: true; user: AdminUser | null }>("/api/admin/me"),
+    queryFn: () => api<AdminMe>("/api/admin/me"),
     retry: false,
   });
 
@@ -227,6 +201,10 @@ function AdminPage() {
   }, [me.isSuccess]);
   useEffect(() => {
     const restore = () => {
+      const invite = readWorkspaceInvite(window.location.search, window.location.pathname);
+      pendingWorkspaceInvite = invite;
+      setWorkspaceInvite(invite);
+      if (invite) { setPage("workspaces"); return; }
       const search = new URLSearchParams(window.location.search);
       setHealthTab(readSystemHealthTab(window.location.search));
       setLaneSelection(readLaneSelection(window.location.search));
@@ -240,8 +218,8 @@ function AdminPage() {
       setTestRunLink(selection);
       setTestRunListScope(scope);
       setInvalidTestRunListScope(hasInvalidTestRunListScope(window.location.search));
-      if (rerun || suite || selection || scope || new URLSearchParams(window.location.search).get("testRuns") === "1") setPage("test-runs");
-      else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
+      if (rerun || suite || selection || scope || search.get("testRuns") === "1") setPage("test-runs");
+      else if (search.get("routineCatalog") === "1") setPage("routine-catalog");
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
@@ -266,143 +244,41 @@ function AdminPage() {
     window.history.replaceState(null, "", testRunListLocation(window.location.href, null));
   }
 
-  const submissions = useQuery({
-    queryKey: ["admin-submissions"],
-    queryFn: () => api<{ submissions: ReleaseSummary[] }>("/api/admin/submissions"),
-    enabled: me.isSuccess && (["home", "review"].includes(page) || detailReleaseId !== null),
-  });
-  const registries = useQuery({
-    queryKey: ["admin-registries"],
-    queryFn: () => api<{ registries: Registry[] }>("/api/admin/preinstalled/registries"),
-    enabled: me.isSuccess && ["home", "preinstalled"].includes(page),
-  });
-  const releases = useQuery({
-    queryKey: ["admin-releases"],
-    queryFn: () => api<{ releases: ReleaseSummary[] }>("/api/admin/preinstalled/releases"),
-    enabled: me.isSuccess && (page === "preinstalled" || detailReleaseId !== null),
-  });
-  const audit = useQuery({
-    queryKey: ["admin-audit"],
-    queryFn: () => api<{ events: AuditEvent[] }>("/api/admin/audit-log"),
-    enabled: me.isSuccess && ["home", "audit"].includes(page),
-  });
-  const activeRegistry = useMemo(
-    () => registries.data?.registries.find(registry => registry.environment === env && registry.name === "default"),
-    [env, registries.data?.registries],
-  );
-  const revisions = useQuery({
-    queryKey: ["admin-revisions", activeRegistry?.id],
-    queryFn: () => api<{ revisions: RegistryRevision[] }>(`/api/admin/preinstalled/registries/${activeRegistry?.id}/revisions`),
-    enabled: me.isSuccess && ["home", "preinstalled"].includes(page) && Boolean(activeRegistry?.id),
-  });
-
-  // Review decisions carry the reviewer's typed notes. "Request changes" is a
-  // reject with feedback the developer sees; the backend has no separate verb.
-  const reviewMutation = useMutation({
-    mutationFn: (input: { releaseId: string; action: "approve" | "reject" | "publish"; notes: string }) =>
-      api<{ release: ReleaseSummary }>(`/api/admin/submissions/${input.releaseId}/${input.action}`, {
-        method: "POST",
-        body: { notes: input.notes },
-      }),
-    onSuccess: async () => {
-      setDetailReleaseId(null);
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["admin-submissions"] }),
-        qc.invalidateQueries({ queryKey: ["admin-releases"] }),
-        qc.invalidateQueries({ queryKey: ["admin-audit"] }),
-      ]);
-    },
-  });
-
-  const publishRegistry = useMutation({
-    mutationFn: async () => {
-      const registry = await api<{ registry: Registry }>("/api/admin/preinstalled/registries", {
-        method: "POST",
-        body: { environment: env },
-      });
-      const revision = await api<{ revision: RegistryRevision }>(
-        `/api/admin/preinstalled/registries/${registry.registry.id}/revisions`,
-        {
-          method: "POST",
-          body: {
-            reason: `Admin preinstall registry publish for ${env}`,
-            entries: [...selectedReleaseIds].map((releaseId, index) => ({
-              releaseId,
-              required: false,
-              installPolicy: "keep_updated" satisfies InstallPolicy,
-              priority: index,
-            })),
-          },
-        },
-      );
-      return api<{ registry: Registry; revision: RegistryRevision }>(
-        `/api/admin/preinstalled/registries/${registry.registry.id}/revisions/${revision.revision.id}/promote`,
-        { method: "POST" },
-      );
-    },
-    onSuccess: async data => {
-      setMessage(`Published ${data.revision.entries.length} release(s) to ${envLabel(env)}.`);
-      setSelectedReleaseIds(new Set());
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["admin-registries"] }),
-        qc.invalidateQueries({ queryKey: ["admin-revisions"] }),
-        qc.invalidateQueries({ queryKey: ["admin-audit"] }),
-      ]);
-    },
-  });
-
-  // Restore (rollback): re-promote a previous revision. Same promote endpoint.
-  const restoreRevision = useMutation({
-    mutationFn: (revisionId: string) =>
-      api(`/api/admin/preinstalled/registries/${activeRegistry?.id}/revisions/${revisionId}/promote`, { method: "POST" }),
-    onSuccess: async () => {
-      setMessage(`Restored a previous preinstall revision for ${envLabel(env)}.`);
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["admin-registries"] }),
-        qc.invalidateQueries({ queryKey: ["admin-revisions"] }),
-        qc.invalidateQueries({ queryKey: ["admin-audit"] }),
-      ]);
-    },
-  });
-
-  const submissionList = submissions.data?.submissions ?? [];
-  const releaseList = releases.data?.releases ?? [];
-  const revisionList = revisions.data?.revisions ?? [];
-  const auditEvents = audit.data?.events ?? [];
-  const pendingReviews = submissionList.filter(release => ["submitted", "in_review"].includes(release.status));
-  const selectedReleases = releaseList.filter(release => selectedReleaseIds.has(release.id));
-  const detailRelease = [...submissionList, ...releaseList].find(release => release.id === detailReleaseId) ?? null;
-
-  const pageMeta: Record<AdminPageKey, { title: string; body: string }> = {
-    home: { title: "Operations home", body: "Pending review, the active preinstall list, and recent admin actions." },
-    review: { title: "Miniapp review", body: "Review developer-submitted releases before they are published to the store." },
-    preinstalled: { title: "Preinstalled miniapps", body: "The managed default set MentraOS installs and keeps updated without a mobile app release." },
-    audit: { title: "Audit log", body: "Every admin mutation: who approved, rejected, published, or promoted something." },
-    incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
-    "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
-    "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
-    "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
-  };
-
-  if (me.isLoading) return <Splash label="Checking admin session" />;
-  if (me.isError) {
-    // A 403 means the Mentra login itself worked but the account isn't on the
-    // admin allowlist; offering the login button again would be misleading.
-    return <LoginGate denied={me.error instanceof ApiError && me.error.status === 403} />;
+  async function spendWorkspaceInvite() {
+    // Accepting added a workspace. Refresh who this is before forgetting the invitation: until then Workspaces
+    // is open only because of the invitation, and a person in no other workspace would lose it.
+    await client.invalidateQueries({ queryKey: ["admin-me"] });
+    pendingWorkspaceInvite = null;
+    setWorkspaceInvite(null);
+    window.history.replaceState(null, "", withoutWorkspaceInvite(window.location.href));
   }
+
+  if (me.isPending) return <Splash label="Checking admin session" />;
+  if (me.isError) return <SessionFailure error={me.error} onRetry={() => void me.refetch()} />;
+
+  const principal = me.data;
+  const visible = visiblePages(principal, { pendingInvite: workspaceInvite !== null });
+  const active = resolvePage(page, visible);
+  const meta = active ? PAGE_META[active] : NO_ACCESS_META;
 
   return (
     <AppShell
-      brandTitle="Admin"
+      brandTitle="Core admin"
       brandSubtitle="MentraOS"
-      badge={<EnvBadge env={env} />}
-      nav={ADMIN_NAV}
-      activeKey={page}
+      badge={<EnvBadge env={ENVIRONMENT} />}
+      nav={ADMIN_NAV.filter(item => visible.includes(item.key))}
+      activeKey={active ?? ""}
       onSelect={key => {
         setPage(key as AdminPageKey);
         setHealthTab("lanes");
         const location = new URL(window.location.href);
         for (const param of ["systemHealth", "healthTab", "restoration", "hostId", "laneId", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
+        // Leaving Workspaces spends the invitation link; staying on it must not.
+        if (key !== "workspaces") {
+          pendingWorkspaceInvite = null;
+          setWorkspaceInvite(null);
+          removeWorkspaceInvite(location);
+        }
         window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
@@ -415,69 +291,30 @@ function AdminPage() {
         setSuiteId(null);
         if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
       }}
-      title={pageMeta[page].title}
-      description={pageMeta[page].body}
-      userEmail={me.data?.user?.email ?? "Admin"}
-      accountLabel="Admin"
+      title={meta.title}
+      description={meta.body}
+      userEmail={principal.user?.email ?? "Signed in"}
+      accountLabel={accountLabel(principal)}
       onSignOut={signOut}
       signingOut={signingOut}
-      headerAction={
-        page === "preinstalled" && selectedReleases.length > 0 ? (
-          <div className="rounded-full border border-[#dfe3dc] bg-white px-4 py-2 text-sm font-semibold text-[#4f5d54]">
-            {selectedReleases.length} selected
-          </div>
-        ) : undefined
-      }
     >
-      {page === "home" ? (
-        <HomePage
-          env={env}
-          loading={submissions.isLoading || registries.isLoading}
-          pendingReviews={pendingReviews}
-          activeRegistry={activeRegistry}
-          activeRevision={revisionList.find(rev => rev.id === activeRegistry?.activeRevisionId)}
-          auditEvents={auditEvents}
-          onOpenRelease={setDetailReleaseId}
-          onGo={setPage}
-        />
+      {signOutError ? <ErrorText error={signOutError} /> : null}
+      {active === null ? (
+        <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
+          <EmptyState
+            title="Your account has no admin access yet."
+            body="Ask an Organization Admin to add you to a workspace or to give you access, or sign out and switch to an account that has it."
+          />
+        </section>
       ) : null}
-
-      {page === "review" ? (
-        <ReviewQueue
-          submissions={submissionList}
-          loading={submissions.isLoading}
-          onOpen={setDetailReleaseId}
-        />
-      ) : null}
-
-      {page === "preinstalled" ? (
-        <PreinstalledPage
-          env={env}
-          releases={releaseList}
-          loading={releases.isLoading}
-          selectedReleaseIds={selectedReleaseIds}
-          setSelectedReleaseIds={setSelectedReleaseIds}
-          onPublish={() => publishRegistry.mutate()}
-          publishing={publishRegistry.isPending}
-          error={publishRegistry.error}
-          message={message}
-          activeRegistry={activeRegistry}
-          revisions={revisionList}
-          onRestore={id => restoreRevision.mutate(id)}
-          restoring={restoreRevision.isPending}
-        />
-      ) : null}
-
-      {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
-
-      {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
-      <div className={["test-runs", "routine-catalog", "system-health"].includes(page) ? "testing-workspace" : undefined}>
-      {page === "test-runs" ? <SystemHealthSummary /> : null}
-      {page === "system-health" ? <SystemHealthPage tab={healthTab} lane={laneSelection} onTabChange={selectHealthTab} /> : null}
-      {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
-      {page === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
-      {page === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
-      {page === "test-runs" && !rerunId && !suiteId ? (
+      {active === "incidents" ? <ReportsPage key={deepLinkReportId ?? "reports"} initialReportId={deepLinkReportId} /> : null}
+      <div className={active === "test-runs" || active === "routine-catalog" || active === "system-health" ? "testing-workspace" : undefined}>
+      {active === "test-runs" ? <SystemHealthSummary /> : null}
+      {active === "system-health" ? <SystemHealthPage tab={healthTab} lane={laneSelection} onTabChange={selectHealthTab} /> : null}
+      {active === "routine-catalog" ? <RoutineCatalogPage /> : null}
+      {active === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
+      {active === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
+      {active === "test-runs" && !rerunId && !suiteId ? (
         testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <TestRunsTabs>
           {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
             <h2 className="font-semibold">Results for the selected build</h2>
@@ -491,20 +328,24 @@ function AdminPage() {
           </section> : <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />}
         </TestRunsTabs>
       ) : null}
-
       </div>
-      {detailRelease ? (
-        <SubmissionDetail
-          release={detailRelease}
-          history={submissionList.filter(r => r.packageName === detailRelease.packageName)}
-          pending={reviewMutation.isPending}
-          error={reviewMutation.error}
-          onClose={() => setDetailReleaseId(null)}
-          onAction={(action, notes) => reviewMutation.mutate({ releaseId: detailRelease.id, action, notes })}
+      {active === "workspaces" ? (
+        <WorkspacesPage
+          initialWorkspaceId={principal.workspaces[0]?.workspaceId ?? null}
+          canAdminister={principal.organization.capabilities.includes("organization.workspaces.administer")}
+          inviteToken={workspaceInvite}
+          onInviteSpent={spendWorkspaceInvite}
         />
       ) : null}
+      {active === "operator-keys" ? <OperatorKeysPage /> : null}
     </AppShell>
   );
+}
+
+/** What the account footer calls this person: an admin, a member of workspaces, or just signed in. */
+function accountLabel(principal: AdminMe): string {
+  if (principal.organization.capabilities.length > 0) return "Admin";
+  return principal.workspaces.length > 0 ? "Workspace member" : "Signed in";
 }
 
 function EnvBadge({ env }: { env: Environment }) {
@@ -526,429 +367,6 @@ function EnvBadge({ env }: { env: Environment }) {
         <span>Env · {envLabel(env)}</span>
         <span className="text-[10px] font-medium normal-case opacity-70">read-only</span>
       </div>
-    </div>
-  );
-}
-
-function HomePage(props: {
-  env: Environment;
-  loading: boolean;
-  pendingReviews: ReleaseSummary[];
-  activeRegistry?: Registry;
-  activeRevision?: RegistryRevision;
-  auditEvents: AuditEvent[];
-  onOpenRelease: (id: string) => void;
-  onGo: (page: AdminPageKey) => void;
-}) {
-  return (
-    <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard
-          label="Pending reviews"
-          value={String(props.pendingReviews.length)}
-          hint="Releases awaiting a decision"
-          tone={props.pendingReviews.length > 0 ? "alert" : "calm"}
-          onClick={() => props.onGo("review")}
-        />
-        <StatCard
-          label={`Preinstall · ${envLabel(props.env)}`}
-          value={props.activeRegistry?.activeRevisionId ? `${props.activeRevision?.entries.length ?? 0} apps` : "None"}
-          hint={props.activeRegistry?.activeRevisionId ? "Active managed default set" : "No active list yet"}
-          tone="calm"
-          onClick={() => props.onGo("preinstalled")}
-        />
-        <StatCard
-          label="Recent admin actions"
-          value={String(props.auditEvents.length)}
-          hint="In the audit log"
-          tone="calm"
-          onClick={() => props.onGo("audit")}
-        />
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
-        <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-          <div className="flex items-center justify-between gap-4 border-b border-[#eceeeb] p-5">
-            <h2 className="text-xl font-bold">Review queue</h2>
-            <Button variant="ghost" className="rounded-full text-[#087d50] hover:bg-[#eef8f2]" onClick={() => props.onGo("review")}>
-              Open queue
-            </Button>
-          </div>
-          {props.loading ? (
-            <div className="p-5"><InlineLoading label="Loading queue" /></div>
-          ) : props.pendingReviews.length === 0 ? (
-            <EmptyState title="Queue is clear" body="No releases are waiting for review right now." />
-          ) : (
-            <div className="divide-y divide-[#eceeeb]">
-              {props.pendingReviews.slice(0, 5).map(release => (
-                <button
-                  key={release.id}
-                  className="flex w-full items-center gap-4 p-5 text-left hover:bg-[#fafbfa]"
-                  onClick={() => props.onOpenRelease(release.id)}
-                >
-                  <ReleaseIdentity release={release} compact />
-                  <span className="shrink-0 text-sm font-semibold text-[#087d50]">Review →</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-[24px] border border-[#e0e4de] bg-white p-5 shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-          <h2 className="text-xl font-bold">Recent actions</h2>
-          <div className="mt-4 space-y-3">
-            {props.auditEvents.length > 0 ? props.auditEvents.slice(0, 6).map(event => (
-              <AuditRow key={event.id} event={event} compact />
-            )) : <p className="text-sm text-[#68746d]">No admin actions yet.</p>}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function StatCard(props: { label: string; value: string; hint: string; tone: "alert" | "calm"; onClick: () => void }) {
-  return (
-    <button
-      onClick={props.onClick}
-      className="rounded-[20px] border border-[#e0e4de] bg-white p-5 text-left shadow-[0_1px_2px_rgba(20,21,27,0.06)] transition hover:border-[#cfe6da] hover:shadow-[0_8px_24px_-18px_rgba(20,21,27,0.4)]"
-    >
-      <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">{props.label}</div>
-      <div className={`mt-2 text-3xl font-bold tracking-[-0.02em] ${props.tone === "alert" ? "text-[#a64235]" : "text-[#14151b]"}`}>{props.value}</div>
-      <div className="mt-1 text-sm text-[#747780]">{props.hint}</div>
-    </button>
-  );
-}
-
-function ReviewQueue(props: { submissions: ReleaseSummary[]; loading: boolean; onOpen: (id: string) => void }) {
-  const queue = props.submissions.filter(release => release.status !== "draft");
-  return (
-    <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-      <div className="flex items-center justify-between gap-4 border-b border-[#eceeeb] p-5">
-        <div>
-          <h2 className="text-xl font-bold">Submitted releases</h2>
-          <p className="mt-1 text-sm text-[#68746d]">Open a release to inspect its metadata and approve, request changes, or publish.</p>
-        </div>
-        <ClipboardList className="size-5 text-[#087d50]" />
-      </div>
-      {props.loading ? (
-        <div className="p-5"><InlineLoading label="Loading submissions" /></div>
-      ) : queue.length === 0 ? (
-        <EmptyState title="No submissions" body="Developer releases appear here after they are submitted for review." />
-      ) : (
-        <div className="divide-y divide-[#eceeeb]">
-          {queue.map(release => (
-            <button key={release.id} className="flex w-full items-center gap-4 p-5 text-left hover:bg-[#fafbfa]" onClick={() => props.onOpen(release.id)}>
-              <ReleaseIdentity release={release} />
-              <span className="shrink-0 text-sm font-semibold text-[#087d50]">Open →</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function SubmissionDetail(props: {
-  release: ReleaseSummary;
-  history: ReleaseSummary[];
-  pending: boolean;
-  error: unknown;
-  onClose: () => void;
-  onAction: (action: "approve" | "reject" | "publish", notes: string) => void;
-}) {
-  const { release } = props;
-  const [notes, setNotes] = useState("");
-  const priorHistory = props.history.filter(r => r.id !== release.id);
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-[#111217]/30" onClick={props.onClose}>
-      <div
-        className="h-full w-full max-w-[560px] overflow-y-auto bg-[#f7f8f6] shadow-2xl"
-        onClick={event => event.stopPropagation()}
-      >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#e4e6e2] bg-white/90 px-6 py-4 backdrop-blur">
-          <h2 className="font-display text-lg font-bold">Release review</h2>
-          <Button variant="ghost" size="icon" className="rounded-full" onClick={props.onClose} aria-label="Close">
-            <X className="size-5" />
-          </Button>
-        </div>
-
-        <div className="space-y-5 p-6">
-          <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
-            <div className="text-lg font-bold">{release.displayName}</div>
-            <div className="mt-1 font-mono text-sm text-[#68746d]">{release.packageName}</div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Tag>{release.version}</Tag>
-              <StatusTag status={release.status} />
-            </div>
-          </div>
-
-          <DetailGrid
-            rows={[
-              ["Bundle SHA-256", release.bundleSha256 ? `${release.bundleSha256.slice(0, 16)}…` : "—"],
-              ["Submitted", formatDate(release.submittedAt)],
-              ["Reviewed", formatDate(release.reviewedAt)],
-              ["Published", formatDate(release.publishedAt)],
-            ]}
-          />
-
-          {release.reviewNotes ? (
-            <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
-              <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Last review notes</div>
-              <p className="mt-2 text-sm leading-6 text-[#4f5d54]">{release.reviewNotes}</p>
-            </div>
-          ) : null}
-
-          {priorHistory.length > 0 ? (
-            <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
-              <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Prior releases for this package</div>
-              <div className="mt-3 space-y-2">
-                {priorHistory.map(prior => (
-                  <div key={prior.id} className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[#4f5d54]">{prior.version}</span>
-                    <StatusTag status={prior.status} small />
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
-            <label className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Review notes (shared with developer on reject / request changes)</label>
-            <textarea
-              value={notes}
-              onChange={event => setNotes(event.target.value)}
-              rows={3}
-              placeholder="Optional for approve / publish. Required when requesting changes."
-              className="mt-2 w-full rounded-[12px] border border-[#e0e4de] bg-white p-3 text-sm outline-none focus:border-[#1bbd7e] focus:ring-2 focus:ring-[#1bbd7e]/20"
-            />
-            {props.error ? <ErrorText error={props.error} /> : null}
-            <div className="mt-4 flex flex-wrap gap-2">
-              {["submitted", "in_review", "rejected"].includes(release.status) ? (
-                <Button
-                  className="rounded-full bg-[#e9f8f1] text-[#087d50] hover:bg-[#dff5eb]"
-                  disabled={props.pending}
-                  onClick={() => props.onAction("approve", notes.trim() || "Approved")}
-                >
-                  <Check className="size-4" /> Approve
-                </Button>
-              ) : null}
-              {["submitted", "in_review", "accepted"].includes(release.status) ? (
-                <Button
-                  className="rounded-full bg-[#fff7df] text-[#a66a00] hover:bg-[#fff0c4]"
-                  disabled={props.pending || notes.trim().length === 0}
-                  onClick={() => props.onAction("reject", notes.trim())}
-                  title={notes.trim().length === 0 ? "Add notes explaining what to change" : undefined}
-                >
-                  <MessageSquareWarning className="size-4" /> Request changes
-                </Button>
-              ) : null}
-              {["submitted", "in_review", "accepted"].includes(release.status) ? (
-                <Button
-                  className="rounded-full bg-[#fff3f1] text-[#a64235] hover:bg-[#ffe7e2]"
-                  disabled={props.pending}
-                  onClick={() => props.onAction("reject", notes.trim() || "Rejected")}
-                >
-                  <X className="size-4" /> Reject
-                </Button>
-              ) : null}
-              {release.status === "accepted" ? (
-                <Button
-                  className="rounded-full bg-[#111217] text-white hover:bg-[#25262c]"
-                  disabled={props.pending}
-                  onClick={() => props.onAction("publish", notes.trim() || "Published")}
-                >
-                  Publish to store
-                </Button>
-              ) : null}
-              {props.pending ? <Loader2 className="size-5 animate-spin self-center text-[#68746d]" /> : null}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PreinstalledPage(props: {
-  env: Environment;
-  releases: ReleaseSummary[];
-  loading: boolean;
-  selectedReleaseIds: Set<string>;
-  setSelectedReleaseIds: React.Dispatch<React.SetStateAction<Set<string>>>;
-  onPublish: () => void;
-  publishing: boolean;
-  error: unknown;
-  message: string | null;
-  activeRegistry?: Registry;
-  revisions: RegistryRevision[];
-  onRestore: (revisionId: string) => void;
-  restoring: boolean;
-}) {
-  return (
-    <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
-      <section className="space-y-6">
-        <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#eceeeb] p-5">
-            <div>
-              <h2 className="text-xl font-bold">Preinstalled miniapp list</h2>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-[#68746d]">
-                Mobile clients fetch this list, so we can add or update default miniapps without shipping a new iOS or Android build.
-              </p>
-            </div>
-            <div className="flex h-9 items-center gap-2 rounded-full border border-[#dfe3dc] bg-[#f6f7f5] px-4 text-sm font-semibold text-[#4f5d54]">
-              {envLabel(props.env)} environment
-            </div>
-          </div>
-
-          <div className="p-5">
-            <div className="mb-4 rounded-[18px] bg-[#f5f7f4] p-4 text-sm leading-6 text-[#68746d]">
-              <span className="font-semibold text-[#111318]">Managed set:</span> selected releases become the default set for <span className="font-semibold">{envLabel(props.env)}</span>. Existing users receive updates through mobile registry sync.
-            </div>
-            <div className="space-y-3">
-              {props.loading ? (
-                <InlineLoading label="Loading approved releases" />
-              ) : props.releases.length === 0 ? (
-                <EmptyState title="No publishable releases" body="Publish a miniapp release from review before adding it to the preinstalled list." />
-              ) : props.releases.map(release => {
-                const selected = props.selectedReleaseIds.has(release.id);
-                return (
-                  <button
-                    key={release.id}
-                    className={`flex w-full items-center gap-4 rounded-[18px] border p-4 text-left ${selected ? "border-[#1bbd7e] bg-[#effaf5]" : "border-[#e0e4de] bg-white"}`}
-                    onClick={() =>
-                      props.setSelectedReleaseIds(current => {
-                        const next = new Set(current);
-                        if (next.has(release.id)) next.delete(release.id);
-                        else next.add(release.id);
-                        return next;
-                      })
-                    }
-                  >
-                    <span className={`flex size-10 items-center justify-center rounded-[14px] ${selected ? "bg-[#1bbd7e] text-white" : "bg-[#e9f8f1] text-[#087d50]"}`}>
-                      {selected ? <Check className="size-4" /> : <PackageCheck className="size-4" />}
-                    </span>
-                    <ReleaseIdentity release={release} compact />
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[#eceeeb] pt-5">
-              <p className="max-w-xl text-sm leading-6 text-[#68746d]">
-                Publishing replaces the active preinstalled miniapp list for {envLabel(props.env)}.
-              </p>
-              <Button className="h-12 rounded-full bg-[#111217] px-6 text-white hover:bg-[#25262c]" disabled={props.selectedReleaseIds.size === 0 || props.publishing} onClick={props.onPublish}>
-                {props.publishing ? <Loader2 className="size-4 animate-spin" /> : <CloudUpload className="size-4" />}
-                Publish preinstalled list
-              </Button>
-            </div>
-            {props.error ? <ErrorText error={props.error} /> : null}
-            {props.message ? <p className="mt-3 rounded-[14px] bg-[#e9f8f1] p-3 text-sm text-[#087d50]">{props.message}</p> : null}
-          </div>
-        </section>
-      </section>
-
-      <aside className="space-y-6">
-        <section className="rounded-[24px] bg-[#111318] p-5 text-white shadow-[0_18px_42px_-22px_rgba(20,21,27,0.55)]">
-          <PackageCheck className="mb-4 size-7 text-[#57d391]" />
-          <h2 className="text-xl font-bold">Active list</h2>
-          <p className="mt-2 text-sm leading-6 text-white/65">
-            {props.activeRegistry?.activeRevisionId ? `${envLabel(props.env)} has an active preinstall list.` : `No active ${envLabel(props.env)} list yet.`}
-          </p>
-        </section>
-
-        <section className="rounded-[24px] border border-[#e0e4de] bg-white p-5 shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-          <h2 className="text-xl font-bold">Revision history</h2>
-          <p className="mt-1 text-sm text-[#68746d]">Restore re-promotes a past revision as the live list.</p>
-          <div className="mt-4 space-y-3">
-            {props.revisions.length > 0 ? props.revisions.map(revision => {
-              const active = revision.id === props.activeRegistry?.activeRevisionId;
-              return (
-                <div key={revision.id} className="rounded-[16px] bg-[#f5f7f4] p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold">{revision.entries.length} miniapp(s)</span>
-                    {active ? (
-                      <span className="rounded-full bg-[#e9f8f1] px-3 py-1 text-xs font-bold uppercase tracking-[0.1em] text-[#087d50]">Active</span>
-                    ) : (
-                      <span className="rounded-full bg-white px-3 py-1 text-xs uppercase tracking-[0.12em] text-[#68746d]">{revision.status}</span>
-                    )}
-                  </div>
-                  <p className="mt-2 text-xs text-[#68746d]">{formatDate(revision.promotedAt ?? revision.createdAt)}</p>
-                  {!active ? (
-                    <Button
-                      variant="ghost"
-                      className="mt-2 h-8 rounded-full px-3 text-xs text-[#4f5d54] hover:bg-white"
-                      disabled={props.restoring}
-                      onClick={() => props.onRestore(revision.id)}
-                    >
-                      <RotateCcw className="size-3.5" /> Restore
-                    </Button>
-                  ) : null}
-                </div>
-              );
-            }) : <p className="text-sm text-[#68746d]">No publishes yet.</p>}
-          </div>
-        </section>
-      </aside>
-    </div>
-  );
-}
-
-function AuditPage(props: { events: AuditEvent[]; loading: boolean }) {
-  const [filter, setFilter] = useState("");
-  const filtered = props.events.filter(event => {
-    if (!filter.trim()) return true;
-    const q = filter.toLowerCase();
-    return [event.action, event.targetType, event.targetId, event.adminId, event.reason ?? ""].some(value => value.toLowerCase().includes(q));
-  });
-  return (
-    <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#eceeeb] p-5">
-        <div>
-          <h2 className="text-xl font-bold">Audit log</h2>
-          <p className="mt-1 text-sm text-[#68746d]">{props.events.length} recorded admin actions.</p>
-        </div>
-        <input
-          value={filter}
-          onChange={event => setFilter(event.target.value)}
-          placeholder="Filter by action, target, admin…"
-          className="h-10 w-full max-w-xs rounded-full border border-[#e0e4de] bg-[#f7f8f6] px-4 text-sm outline-none focus:border-[#1bbd7e] focus:bg-white sm:w-72"
-        />
-      </div>
-      {props.loading ? (
-        <div className="p-5"><InlineLoading label="Loading audit log" /></div>
-      ) : filtered.length === 0 ? (
-        <EmptyState title="No matching events" body={props.events.length === 0 ? "Admin actions will be recorded here." : "Try a different filter."} />
-      ) : (
-        <div className="divide-y divide-[#eceeeb]">
-          {filtered.map(event => <AuditRow key={event.id} event={event} />)}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boolean }) {
-  if (compact) {
-    return (
-      <div className="rounded-[16px] bg-[#f5f7f4] p-4">
-        <div className="font-mono text-xs text-[#087d50]">{event.action}</div>
-        <div className="mt-1 truncate text-sm font-semibold">{event.targetType}:{event.targetId}</div>
-        <div className="mt-1 text-xs text-[#747780]">{formatDate(event.createdAt)}</div>
-      </div>
-    );
-  }
-  return (
-    <div className="grid gap-2 p-5 md:grid-cols-[180px_1fr_180px] md:items-center">
-      <span className="inline-flex w-fit rounded-full bg-[#eef8f2] px-3 py-1 font-mono text-xs font-semibold text-[#087d50]">{event.action}</span>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-semibold">{event.targetType}:{event.targetId}</div>
-        {event.reason ? <div className="mt-0.5 truncate text-sm text-[#68746d]">{event.reason}</div> : null}
-        <div className="mt-0.5 truncate text-xs text-[#a0a3aa]">by {event.adminId}</div>
-      </div>
-      <div className="text-sm text-[#747780] md:text-right">{formatDate(event.createdAt)}</div>
     </div>
   );
 }
@@ -1292,44 +710,11 @@ function reportSummaryText(report: ReportSummary): string {
   return report.trigger?.reason ?? "—";
 }
 
-function formatBytes(bytes: number): string {
+function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function ReleaseIdentity({ release, compact = false }: { release: ReleaseSummary; compact?: boolean }) {
-  return (
-    <div className="min-w-0 flex-1">
-      <div className={`${compact ? "text-sm" : "text-base"} truncate font-bold`}>{release.displayName}</div>
-      <div className="mt-1 truncate font-mono text-xs text-[#68746d]">{release.packageName}</div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        <Tag>{release.version}</Tag>
-        <StatusTag status={release.status} small />
-      </div>
-    </div>
-  );
-}
-
-function Tag({ children }: { children: React.ReactNode }) {
-  return <span className="rounded-full bg-[#f0f2ef] px-2.5 py-1 font-mono text-xs">{children}</span>;
-}
-
-function StatusTag({ status, small = false }: { status: ReleaseStatus; small?: boolean }) {
-  const tone: Record<ReleaseStatus, string> = {
-    draft: "bg-[#f0f2ef] text-[#68746d]",
-    submitted: "bg-[#eef2ff] text-[#3a55c8]",
-    in_review: "bg-[#fff7df] text-[#a66a00]",
-    accepted: "bg-[#e9f8f1] text-[#087d50]",
-    published: "bg-[#111217] text-white",
-    rejected: "bg-[#fff3f1] text-[#a64235]",
-    suspended: "bg-[#fff3f1] text-[#a64235]",
-  };
-  return (
-    <span className={`rounded-full px-2.5 ${small ? "py-0.5" : "py-1"} text-xs font-semibold uppercase tracking-[0.08em] ${tone[status]}`}>
-      {status.replace("_", " ")}
-    </span>
-  );
 }
 
 function DetailGrid({ rows }: { rows: Array<[string, string]> }) {
@@ -1366,19 +751,28 @@ function formatDate(value: string | null | undefined): string {
   return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-function LoginGate({ denied = false }: { denied?: boolean }) {
-  // The full URL preserves report and testRun/step deep links through the
-  // login round-trip; safeReturnTo on Core validates the origin either way.
-  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
+/**
+ * What a failed `/api/admin/me` shows. Only a 401 means "not signed in", so only a 401 offers the login
+ * button; any signed-in person gets a 200 (what they may open follows from their capabilities), so another
+ * failure is a server or network problem that signing in again would not fix.
+ */
+export function SessionFailure({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  if (error instanceof ApiError && error.status === 401) return <LoginGate />;
+  return (
+    <main className="grid min-h-screen place-items-center bg-[#f5f7f4] px-5 text-[#14141a]">
+      <div className="w-full max-w-[420px] rounded-[24px] bg-white p-8 text-center shadow-sm ring-1 ring-black/10">
+        <h1 className="font-display text-[22px] font-bold leading-7">Could not check your session</h1>
+        <ErrorText error={error} />
+        <Button className="mt-5" onClick={onRetry}>Try again</Button>
+      </div>
+    </main>
+  );
+}
 
-  async function signOutAndReload() {
-    try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; the reload lands back on this gate either way
-    }
-    window.location.reload();
-  }
+function LoginGate() {
+  // The full URL preserves report, testRun/step and workspace-invite deep links
+  // through the login round-trip; safeReturnTo on Core validates the origin either way.
+  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8f6_100%)] px-5 py-10 text-[#14141a]">
@@ -1399,37 +793,25 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
 
             <div className="h-[18px]" />
             <h1 className="font-display text-[26px] font-bold leading-[30px] tracking-[-0.52px] text-[#14141a]">
-              {denied ? "No admin access" : "Sign into Mentra Admin"}
+              Sign into Mentra Admin
             </h1>
 
             <div className="h-2.5" />
             <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
-              {denied
-                ? "You're signed in, but this account isn't on the admin allowlist. Switch accounts, or ask for your email to be added to the Core admin allowlist."
-                : "Review miniapp releases, publish preinstalled registries, and manage internal operations."}
+              Manage your workspaces, investigate reports and run Core operations.
             </p>
 
             <div className="h-8" />
-            {denied ? (
-              <button
-                type="button"
-                className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
-                onClick={signOutAndReload}
-              >
-                Sign out and switch account
-              </button>
-            ) : (
-              <a
-                className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
-                href={loginUrl}
-              >
-                Continue with Mentra login
-              </a>
-            )}
+            <a
+              className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
+              href={loginUrl}
+            >
+              Continue with Mentra login
+            </a>
 
             <div className="h-5" />
             <p className="font-body text-[11.5px] leading-4 text-[#a6a6ac]">
-              Admin access is limited to configured internal accounts.
+              What you can open depends on your workspaces and admin access.
             </p>
           </div>
         </div>
@@ -1461,3 +843,10 @@ function ErrorText({ error }: { error: unknown }) {
 }
 
 export default App;
+
+async function signOutOfCore(): Promise<void> {
+  const response = await fetch("/api/console/auth/logout", {method: "POST", headers: {accept: "application/json"}});
+  if (!response.ok) throw new Error("Sign-out failed. Please try again.");
+  const {logoutUrl} = await response.json() as {logoutUrl: string | null};
+  window.location.assign(logoutUrl ?? "/");
+}

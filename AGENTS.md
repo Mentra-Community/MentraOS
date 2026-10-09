@@ -4,15 +4,16 @@ Repository implementation guidelines for coding agents working with MentraOS.
 
 ## Project Overview
 
-MentraOS is an open source operating system, app store, and development framework for smart glasses.
+MentraOS is an open source operating system and development framework for smart glasses.
 
 - Architecture: Smart glasses connect to the user's phone via BLE; the Mentra App runs miniapps locally and connects to Cloud V2 services
 - Mobile app: `mobile` (React Native with native modules)
 - Android logic: `android_core`
 - iOS native module: `mobile/ios`
-- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, admin, console, and portal)
+- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, Core admin, and portal)
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
-- Mentra Miniapp Store and Developer Console: `cloud-v2/websites/`
+- Mentra Miniapp Store, backend, Developer Console and Store moderation: [private miniapp-store repo](https://github.com/Mentra-Community/miniapp-store)
+- Core incident administration stays in `cloud-v2/websites/admin/`.
 
 ### Established iOS behavior
 
@@ -39,15 +40,15 @@ Consult module-specific AGENTS.md when working within that module.
 
 Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
 
-First-party miniapps and their backends also live in `miniapps/`. All of those
-miniapps are part of this repository's source scope. For example,
-`com.mentra.merge` is owned by this monorepo: its client is in
-`miniapps/merge/miniapp/` and its backend is in `miniapps/merge/backend/`.
-Package identifiers can be found in `miniapps/**/miniapp.json`; the surrounding
-component directories contain backend and deployment files. A separate backend
-hostname does not imply a separate repository or third-party ownership.
-The external first-party miniapp repositories are listed under
-"Related Miniapp Repositories" below; their source can be private.
+First-party product miniapps and their backends live in the external repositories
+listed under "Related Miniapp Repositories" below. Their source can be private.
+`miniapps/` retains public SDK examples and development tools. The Mentra App
+continues to preinstall first-party miniapps from `mobile/assets/miniapps/*.zip`;
+source extraction does not remove those bundles. Package identifiers stay stable
+across repository moves (Mentra Maps remains `com.mentra.navigation`).
+
+Use `scripts/miniapp-repos.json` for named source mappings and
+`scripts/sync-miniapp.mjs` to refresh bundled ZIPs and their generated index.
 
 ## Build Commands
 
@@ -81,7 +82,7 @@ validates the public Maven artifact dependency shape.
 - Dev: `bun run dev`
 - Type check: `bun run typecheck`
 - Test: `bun run test`
-- Web portals: `bun run dev:console`, `bun run dev:admin`, or `bun run dev:portal`
+- Web portals: `bun run dev:admin` or `bun run dev:portal`
 
 ## Prerequisites
 
@@ -150,6 +151,10 @@ validates the public Maven artifact dependency shape.
   repo (e.g. "MentraOS is the operating system for smart glasses"). Don't swap
   it for "Mentra" in those cases.
 - The package identifier `@mentra/miniapp` is code; leave it in code formatting.
+- An **Organization** is one Core deployment: a cloud instance and its
+  database (Mentra's own clouds are organizations too). A **Workspace** is a
+  group of people with permissions (owner, admin, developer, member) inside an
+  organization. Do not call a separately deployed cloud a "workspace".
 
 ## Testing Guidelines
 
@@ -213,6 +218,12 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 - [Livestreamer Miniapp](https://github.com/Mentra-Community/Livestreamer-Miniapp)
 - [Mentra AI Miniapp](https://github.com/Mentra-Community/Mentra-AI-Miniapp)
 - [Mentra Enterprise Miniapp](https://github.com/Mentra-Community/Mentra-Enterprise-Miniapp)
+- [Captions](https://github.com/Mentra-Community/captions-miniapp)
+- [Translation](https://github.com/Mentra-Community/translation-miniapp)
+- [Teleprompter](https://github.com/Mentra-Community/teleprompter-miniapp)
+- [Mentra Maps](https://github.com/Mentra-Community/maps-miniapp)
+- [Recorder](https://github.com/Mentra-Community/recorder-miniapp)
+- [Merge](https://github.com/Mentra-Community/merge-miniapp)
 
 If a MentraOS PR also requires changes to one of the external miniapps above, or
 you are otherwise asked to change one of those miniapps:
@@ -221,7 +232,10 @@ you are otherwise asked to change one of those miniapps:
    branch if it is already available locally.
 2. Make the changes in the external miniapp repository, bump its version, and
    push the changes directly to that repository's `main` branch.
-3. Package the updated miniapp as a ZIP archive.
+3. Use the unsigned production ZIP validated and published by that repository’s CI.
+   Install its exact bytes with `bun scripts/sync-miniapp.mjs --repo PATH --no-bump --artifact PATH_TO_CI_ZIP`.
+   For a local build, use the named mapping
+   or `--pack-script pack:prod`.
 4. Add the new ZIP archive to `mobile/assets/miniapps/` in the MentraOS
    monorepo so the external miniapp update is included in the MentraOS mobile
    PR.
@@ -236,7 +250,7 @@ Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports 
 
 1. Get the report id (from Slack, the admin console, or the user)
 2. Fetch it: `./scripts/fetch-incident-logs.sh {reportId}` — downloads `report.json` plus every artifact into `./incident-logs/{reportId}/`
-3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an org API key (`msk_...`) whose synthetic email is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`, or a WorkOS access token of an admin user
+3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an operator key with the incident read scope (`organization.incidents.read`), or a WorkOS access token of an Organization Admin. An existing admin key (`msk_...`, its `api-key@<keyId>.local` address on `CLOUD_CORE_ADMIN_EMAILS`) is an operator key and keeps working with the same token. New operator keys are `mak_...`: create one in the admin dashboard under **Operator keys** (Organization Admins only; the token is shown once): `admin.mentraglass.com` (prod), `admin.staging.mentraglass.com` (staging) or `admin.dev.mentraglass.com` (dev). If you are not an Organization Admin, ask one for a key. Operator keys belong to one Core deployment, so use the key made on the backend you fetch from. A key works only while the Organization Admin who created it remains one (removing them from `CLOUD_CORE_ADMIN_EMAILS` makes their keys answer 401), so create shared or automation keys from an admin who will stay. Any other `msk_...` key is a workspace credential for publishing and carries no organization capability, so the report routes refuse it
 4. Without an environment override, the script tries prod, dev, then staging and reports which backend succeeded. Use `--env prod|dev|staging` or `MENTRA_CORE_URL` to target one backend explicitly.
 
 What you get:
@@ -250,7 +264,7 @@ Other modes: `--json` prints the raw report JSON to stdout (no downloads); `--li
 Example:
 
 ```bash
-export MENTRA_ADMIN_TOKEN=msk_your-admin-key
+export MENTRA_ADMIN_TOKEN=mak_your-operator-key
 ./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD
 ```
 

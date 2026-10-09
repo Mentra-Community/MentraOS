@@ -16,12 +16,11 @@ jest.mock("@mentra/engine", () => ({
   SETTINGS: {},
   useSetting: () => [false],
   getAppsOrder: () => ({is_ok: () => true, value: {}}),
+  isSystemMiniappPackage: (packageName: string) => packageName === "com.mentra.settings",
   saveAppsOrder: jest.fn(),
   sortAppsByPackageNamePriority: (a: ClientApp, b: ClientApp) => a.packageName.localeCompare(b.packageName),
-  useStart: () => mockStart,
   useStop: () => jest.fn(),
-  useSetForeground: () => jest.fn(),
-  engine: {miniapps: {list: () => mockApps}},
+  engine: {miniapps: {list: () => mockApps, start: (...args: unknown[]) => mockStart(...args)}},
 }))
 jest.mock("@/hooks/useAppsExtras", () => ({useForegroundApps: () => mockApps}))
 jest.mock("@/hooks/useCachedRemoteImageSource", () => ({warmCachedRemoteImageSources: jest.fn()}))
@@ -36,7 +35,6 @@ jest.mock("@/utils/PermissionsUtils", () => ({
 }))
 jest.mock("@/contexts/ModalContext", () => ({showAlert: (...args: unknown[]) => mockAlert(...args)}))
 jest.mock("@/components/miniapp/offlineHostedPackages", () => ({isOfflineHosted: () => false}))
-jest.mock("@/constants/miniapps", () => ({SYSTEM_APPS: ["com.mentra.settings"]}))
 jest.mock("@/utils/uninstallAppUI", () => ({uninstallAppUI: jest.fn()}))
 jest.mock("@/utils/storage", () => ({storage: {}}))
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))

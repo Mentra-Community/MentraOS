@@ -13,20 +13,37 @@ key held by the Container Apps environment, uses encrypted SMB, and has
 seven-day share-delete retention. It uses the storage service's authenticated
 public endpoint, matching this reference deployment's non-VNet topology.
 
-Report access uses Core's existing admin authorization, and setup creates the
-administrator key itself. After Core is deployed, setup's **Administrator key**
-step runs `installer/admin-key.ts` inside the Core revision (`az containerapp
-exec`). That script creates the deployment's administration org and an org API
-key through `DeveloperOrgService` and `DeveloperApiKeyService`. It keeps the
-credential in an encrypted journal in Core's database (encrypted with the
+Report access uses Core's organization capabilities. An Organization Admin is a
+verified identity email listed in `coreAdminEmails` (supplied to Core as
+`CLOUD_CORE_ADMIN_EMAILS`). An operator key (`mak_...`) created by an
+Organization Admin reaches the admin routes its scopes allow, including report
+listing and triage, while its creator's email stays on that list. Private Core
+signs employees in through Entra only and browser admin sign-in for private
+deployments is not available, so setup's operator key is the administration
+path.
+
+Setup creates the key itself. After Core is deployed, setup's **Administrator
+key** step adds the installer identity, `operator@private-cloud.local`, to
+`coreAdminEmails` (so later rollouts keep it), waits for the Core revision that
+carries it, and runs `installer/admin-key.ts` inside that revision (`az
+containerapp exec`). The script mints the key through Core's credential service,
+with the incident, support-profile and testing scopes. Core stores only the
+key's hash and keeps an encrypted copy in its database (encrypted with the
 deployment's signing key), so a retried run returns the same key. Setup stores
-the `msk_local_...` value in Key Vault as `mentra-admin-key`, tagged with its
-`keyId`, adds the key's synthetic email `api-key@<keyId>.local` to
-`coreAdminEmails` (supplied to Core as `CLOUD_CORE_ADMIN_EMAILS`, so later
-rollouts keep it), and checks that the key can list reports. The API-key row
-holds only the key's hash, and no app can read the Key Vault secret. An API key
-alone does not grant admin access: its email must be allowlisted. Admin keys
-permit the existing admin routes, including report listing and triage.
+the `mak_local_...` value in Key Vault as `mentra-admin-key`, tagged with its
+`keyId`, and checks that the key can list reports. No app can read the Key Vault
+secret. Keep `operator@private-cloud.local` in `coreAdminEmails`: removing it
+disables the key. The `.local` address cannot be a verified Entra domain, so no
+employee sign-in can claim it.
+
+A deployment whose administrator key is an `msk_local_...` key keeps that key.
+Core treats it as an operator key with the same scopes, created by its address
+`api-key@<keyId>.local`: it works while that address stays in `coreAdminEmails`,
+and setup keeps both the address and the key. Only when the saved key no longer
+works does setup mint a `mak_local_...` key and store it in Key Vault in its
+place. A deployment made with `scripts/deploy.sh` mints its key the same way: add
+`operator@private-cloud.local` to `coreAdminEmails`, deploy, and run
+`installer/admin-key.ts` with the deployment's owner ID inside the Core container.
 
 Setup's summary prints the read command and a report request:
 
@@ -42,8 +59,12 @@ Rotate the administrator key with Mentra support. Do not store a new
 Core's journal, so a hand-made value breaks later setup runs.
 
 Enterprise Dev CI uses the `ENTERPRISE_DEV_CORE_ADMIN_EMAILS` repository variable
-and `ENTERPRISE_DEV_ADMIN_TOKEN` secret. The secret is used only to verify the
-existing authenticated admin report route; the application validates the key
+and `ENTERPRISE_DEV_ADMIN_TOKEN` secret. The workflow always adds
+`operator@private-cloud.local` to that allowlist and keeps every address in the
+variable, so the secret, an operator key of that deployment (its `mak_local_...`
+key, or the `msk_local_...` key whose `api-key@<keyId>.local` address the variable
+lists), keeps working. The secret is
+used only to verify the authenticated admin report route; Core validates the key
 against its database. The deployment helper performs the same check when
 `MENTRA_ADMIN_TOKEN` is set. Preserve signing keys and the refresh-token pepper
 when updating an existing deployment.
@@ -58,7 +79,7 @@ export MENTRA_ADMIN_TOKEN="$(az keyvault secret show --vault-name <key-vault> --
 ./scripts/fetch-incident-logs.sh rep_01...
 ```
 
-`--list` also works with this admin credential. For Enterprise Dev, operators
+`--list` also works with this operator key. For Enterprise Dev, operators
 who keep the key as `MENTRA_ADMIN_TOKEN_ENTERPRISEDEV` can pass
 `MENTRA_ADMIN_TOKEN="$MENTRA_ADMIN_TOKEN_ENTERPRISEDEV"` to the script along
 with the Enterprise Core URL.

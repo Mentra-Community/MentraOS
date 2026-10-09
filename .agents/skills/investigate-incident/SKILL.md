@@ -29,12 +29,16 @@ Run `scripts/fetch-incident-logs.sh` from the repository root. It calls
 `GET /api/admin/reports/:reportId/artifacts/:artifactId`.
 
 The script reads `MENTRA_ADMIN_TOKEN`. Use it if already configured. Otherwise
-check for an existing `MENTRA_ADMIN_TOKEN_PROD` or `MENTRA_ADMIN_TOKEN_DEV`
-matching the notification's environment and pass it to this command only:
+check for an existing `MENTRA_ADMIN_TOKEN_PROD`, `MENTRA_ADMIN_TOKEN_STAGING` or
+`MENTRA_ADMIN_TOKEN_DEV` matching the notification's environment and pass it to
+this command only:
 
 ```bash
 MENTRA_ADMIN_TOKEN="$MENTRA_ADMIN_TOKEN_PROD" \
   ./scripts/fetch-incident-logs.sh rep_REPORT_ID --env prod
+
+MENTRA_ADMIN_TOKEN="$MENTRA_ADMIN_TOKEN_STAGING" \
+  ./scripts/fetch-incident-logs.sh rep_REPORT_ID --env staging
 
 MENTRA_ADMIN_TOKEN="$MENTRA_ADMIN_TOKEN_DEV" \
   ./scripts/fetch-incident-logs.sh rep_REPORT_ID --env dev
@@ -44,12 +48,40 @@ Check whether a variable is set without printing its value. Do not print
 credentials, enable shell tracing, put tokens in committed files, or extract
 browser sessions. If no suitable credential is available, request that the user
 configure `MENTRA_ADMIN_TOKEN` in the environment. Authentication requires an
-admin-allowlisted org API key (`msk_...`) or an admin WorkOS access token.
+operator key with the incident read scope (`organization.incidents.read`), or the
+WorkOS access token of an Organization Admin. An existing admin key (`msk_...`,
+whose `api-key@<keyId>.local` address is on that backend's
+`CLOUD_CORE_ADMIN_EMAILS`) is an operator key and keeps working with the same
+token; new operator keys are `mak_...`. Any other `msk_...` key is a workspace
+credential and does not work: it carries no organization capability.
+
+An operator key belongs to one Core deployment (organization), so keep one per
+backend, which is why `MENTRA_ADMIN_TOKEN_PROD`, `MENTRA_ADMIN_TOKEN_STAGING` and
+`MENTRA_ADMIN_TOKEN_DEV` are separate. To create one, an Organization Admin signs
+in to the admin dashboard of that backend:
+
+- prod: `https://admin.mentraglass.com`
+- staging: `https://admin.staging.mentraglass.com`
+- dev: `https://admin.dev.mentraglass.com`
+
+They open **Operator keys**, choose a name, the **Read incident reports** scope
+and optionally an expiry, and create the key. Only an Organization Admin (a
+person whose verified email is on that backend's `CLOUD_CORE_ADMIN_EMAILS`) can
+do this; anyone else asks one of them for a key. The token is shown once; store
+it in the secret manager or shell environment under the variable above. Rotate
+by creating a new key and revoking the old one on the same page.
+
+A key works only while the Organization Admin who created it remains one. If
+its creator is removed from the admin list, every key they created answers 401
+from the next request. Create shared or automation keys (the team's
+`MENTRA_ADMIN_TOKEN_*`, console-mcp configs, CI) from an admin who will stay.
 
 Use the environment from the report notification. Without `--env`, the script
 tries prod, dev, then staging. `MENTRA_CORE_URL` overrides even `--env`; check
 for an unintended override before interpreting a missing report. Distinguish
-401 (rejected credential), 403 (not admin-allowlisted), and 404 (wrong ID,
+401 (rejected credential: revoked, expired, made on another backend, or its
+creator is no longer an Organization Admin),
+403 (the token lacks the incident read capability), and 404 (wrong ID,
 environment, or unavailable endpoint). Report authentication failures directly;
 do not fall back to console automation.
 

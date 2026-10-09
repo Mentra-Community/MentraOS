@@ -8,15 +8,15 @@ import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 import {deploymentDebugOverrides, resolveDeploymentManifest, saveDeploymentCloudOverrides} from "./debugOverrides"
 import {createConsumerDeployment, createOfficialManifest} from "./officialManifest"
 import {deploymentManifestSchema} from "./schema"
-import {deploymentStore, DeploymentStore, type DeploymentStorage} from "./store"
-import type {ActiveDeployment, DeploymentCandidate} from "./types"
+import {deploymentStore, DeploymentStore, type DeploymentStorage, type PersistedDeploymentSelection} from "./store"
+import type {DeploymentCandidate} from "./types"
 
 jest.mock("@/utils/cloudClient/devHost", () => ({METRO_AUTO: "metro-auto", devServerHost: jest.fn()}))
 
 const originalCore = process.env.EXPO_PUBLIC_CLOUD_CORE_URL
 const originalRuntime = process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL
-const workspace: DeploymentCandidate = {
-  workspaceOrigin: "https://organization.example",
+const organization: DeploymentCandidate = {
+  organizationOrigin: "https://organization.example",
   manifestUrl: "https://organization.example/.well-known/mentra-deployment.json",
   manifest: {
     ...createOfficialManifest(),
@@ -82,31 +82,34 @@ it("uses shared dev defaults for missing or blank environment values", () => {
   })
 })
 
-it.each(["consumer", "workspace"])("uses one resolver for %s debug overrides, startup and reconnect", async (kind) => {
-  if (kind === "workspace") await deploymentStore.activate(workspace)
-  const deployment = deploymentStore.getActive()
-  const originalManifest = JSON.stringify(deployment.manifest)
-  await saveDeploymentCloudOverrides(deployment, {core: "http://localhost:3000", runtime: "http://localhost:3001"})
-  const config = deploymentCloudConfigValues(deployment)
-  expect(resolvedEndpoints()).toEqual({core: "http://localhost:3000", runtime: "http://localhost:3001"})
-  expect(config).toMatchObject({coreUrl: "http://localhost:3000", runtimeUrl: "http://localhost:3001"})
-  expect(config.resolveCloudEndpoints?.()).toEqual({core: "http://localhost:3000", runtime: "http://localhost:3001"})
-  cloudClient.reconnect()
-  expect(cloudClientService.reconnect).toHaveBeenCalledWith(null)
-  expect(JSON.stringify(deployment.manifest)).toBe(originalManifest)
+it.each(["consumer", "organization"])(
+  "uses one resolver for %s debug overrides, startup and reconnect",
+  async (kind) => {
+    if (kind === "organization") await deploymentStore.activate(organization)
+    const deployment = deploymentStore.getActive()
+    const originalManifest = JSON.stringify(deployment.manifest)
+    await saveDeploymentCloudOverrides(deployment, {core: "http://localhost:3000", runtime: "http://localhost:3001"})
+    const config = deploymentCloudConfigValues(deployment)
+    expect(resolvedEndpoints()).toEqual({core: "http://localhost:3000", runtime: "http://localhost:3001"})
+    expect(config).toMatchObject({coreUrl: "http://localhost:3000", runtimeUrl: "http://localhost:3001"})
+    expect(config.resolveCloudEndpoints?.()).toEqual({core: "http://localhost:3000", runtime: "http://localhost:3001"})
+    cloudClient.reconnect()
+    expect(cloudClientService.reconnect).toHaveBeenCalledWith(null)
+    expect(JSON.stringify(deployment.manifest)).toBe(originalManifest)
 
-  await saveDeploymentCloudOverrides(deployment, {core: "", runtime: ""})
-  expect(resolvedEndpoints()).toEqual({
-    core: deployment.manifest.services.coreUrl,
-    runtime: deployment.manifest.services.runtimeUrl,
-  })
-  expect(deploymentStore.getActive()).toBe(deployment)
-})
+    await saveDeploymentCloudOverrides(deployment, {core: "", runtime: ""})
+    expect(resolvedEndpoints()).toEqual({
+      core: deployment.manifest.services.coreUrl,
+      runtime: deployment.manifest.services.runtimeUrl,
+    })
+    expect(deploymentStore.getActive()).toBe(deployment)
+  },
+)
 
-it.each(["consumer", "workspace"])(
+it.each(["consumer", "organization"])(
   "resolves Metro dynamically for %s and falls back to its own defaults",
   async (kind) => {
-    if (kind === "workspace") await deploymentStore.activate(workspace)
+    if (kind === "organization") await deploymentStore.activate(organization)
     const deployment = deploymentStore.getActive()
     await saveDeploymentCloudOverrides(deployment, {core: METRO_AUTO, runtime: METRO_AUTO})
     jest.mocked(devServerHost).mockReturnValue("192.0.2.10")
@@ -118,24 +121,44 @@ it.each(["consumer", "workspace"])(
   },
 )
 
-it("preserves legacy consumer overrides but never applies them to a restored workspace", () => {
+it("preserves legacy consumer overrides but never applies them to a restored organization", () => {
   engine.settings.setManyLocal({cloud_core_url: "http://localhost:3000", cloud_runtime_url: "http://localhost:3001"})
   expect(resolvedEndpoints().core).toBe("http://localhost:3000")
-  const restored = {...workspace, kind: "workspace", source: "manual", activatedAt: new Date().toISOString()} as const
-  expect(resolveDeploymentManifest(restored).services).toEqual(workspace.manifest.services)
+  const restored = {
+    ...organization,
+    kind: "organization",
+    source: "manual",
+    activatedAt: new Date().toISOString(),
+  } as const
+  expect(resolveDeploymentManifest(restored).services).toEqual(organization.manifest.services)
 })
 
-it.each(["activate", "returnToMentra", "beginWorkspaceSelection", "clearSelection"])(
+it("keeps the shipped debug-override scope format", async () => {
+  await deploymentStore.activate(organization)
+  const deployment = deploymentStore.getActive()
+  // Persisted in the engine settings by builds that already shipped.
+  const shippedScope = "workspace:enterprise-demo:https://organization.example"
+  await saveDeploymentCloudOverrides(deployment, {core: "http://localhost:3000", runtime: "http://localhost:3001"})
+  expect(engine.settings.get(SETTINGS.cloud_url_deployment.key)).toBe(shippedScope)
+
+  await engine.settings.setManyLocal({
+    [SETTINGS.cloud_core_url.key]: "http://localhost:4000",
+    [SETTINGS.cloud_url_deployment.key]: shippedScope,
+  })
+  expect(deploymentDebugOverrides(deployment).core).toBe("http://localhost:4000")
+})
+
+it.each(["activate", "returnToMentra", "beginOrganizationSelection", "clearSelection"])(
   "clears overrides on %s",
   async (action) => {
-    await deploymentStore.activate(workspace)
+    await deploymentStore.activate(organization)
     await saveDeploymentCloudOverrides(deploymentStore.getActive(), {
       core: "https://debug.example",
       runtime: "https://debug.example",
     })
     engine.settings.setManyLocal({ota_version_url: "https://debug.example/ota.json"})
-    if (action === "activate") await deploymentStore.activate(workspace)
-    else await deploymentStore[action as "returnToMentra" | "beginWorkspaceSelection" | "clearSelection"]()
+    if (action === "activate") await deploymentStore.activate(organization)
+    else await deploymentStore[action as "returnToMentra" | "beginOrganizationSelection" | "clearSelection"]()
     expect(engine.settings.get(SETTINGS.cloud_core_url.key)).toBe("")
     expect(engine.settings.get(SETTINGS.cloud_runtime_url.key)).toBe("")
     expect(engine.settings.get(SETTINGS.ota_version_url.key)).toBe("")
@@ -144,7 +167,7 @@ it.each(["activate", "returnToMentra", "beginWorkspaceSelection", "clearSelectio
 )
 
 it("keeps overrides on a normal restart while rebuilding official defaults from the current build", async () => {
-  let value: ActiveDeployment | null = createConsumerDeployment()
+  let value: PersistedDeploymentSelection | null = createConsumerDeployment()
   const persistence: DeploymentStorage = {
     load: () => value,
     save: (next) => {
@@ -165,9 +188,9 @@ it("keeps overrides on a normal restart while rebuilding official defaults from 
   expect(resolveDeploymentManifest(restored).services.coreUrl).toBe("http://localhost:3000")
 })
 
-it("retains workspace capability limits and official OTA fallback policy", async () => {
+it("retains organization capability limits and official OTA fallback policy", async () => {
   expect(deploymentCloudConfigValues(deploymentStore.getActive()).allowLegacyOtaFallback).toBe(true)
-  await deploymentStore.activate(workspace)
+  await deploymentStore.activate(organization)
   expect(deploymentCloudConfigValues(deploymentStore.getActive())).toMatchObject({
     features: {nativeMeetings: false, cloudSpeech: false, onDeviceSpeech: false, navigation: false},
     runtimeRealtimeSession: false,
@@ -183,7 +206,7 @@ it("preserves legacy overrides when restoring an existing consumer login after u
   expect(store.isResolved()).toBe(true)
   expect(resolveDeploymentManifest(store.getActive()).services.coreUrl).toBe("http://localhost:3000")
 
-  await store.beginWorkspaceSelection()
+  await store.beginOrganizationSelection()
   store.restoreConsumerSessionSelection()
   expect(store.isResolved()).toBe(false)
 })
@@ -209,11 +232,11 @@ it("does not complete a deployment switch when clearing persisted settings fails
   })
   const write = jest.spyOn(settingsStorage, "save").mockReturnValueOnce(Res.error(new Error("Cannot persist settings")))
   try {
-    await expect(store.activate(workspace)).rejects.toThrow("Cannot persist settings")
+    await expect(store.activate(organization)).rejects.toThrow("Cannot persist settings")
     expect(persistence.save).not.toHaveBeenCalled()
     expect(store.getActive().kind).toBe("consumer")
     expect(engine.settings.get(SETTINGS.cloud_core_url.key)).toBe("http://localhost:3000")
-    await store.activate(workspace)
+    await store.activate(organization)
     expect(persistence.save).toHaveBeenCalledTimes(1)
     expect(engine.settings.get(SETTINGS.cloud_core_url.key)).toBe("")
     const persisted = settingsStorage.load(SETTINGS.cloud_core_url.key)
@@ -237,12 +260,12 @@ it("does not enable navigation in the China official manifest", () => {
   }
 })
 
-it.each(["activate", "returnToMentra", "beginWorkspaceSelection", "clearSelection"] as const)(
+it.each(["activate", "returnToMentra", "beginOrganizationSelection", "clearSelection"] as const)(
   "restores overrides when %s cannot persist the selection",
   async (action) => {
     const persistence: DeploymentStorage = {load: () => null, save: jest.fn(), remove: jest.fn()}
     const store = new DeploymentStore(persistence)
-    await store.activate(workspace)
+    await store.activate(organization)
     const previous = store.getActive()
     await saveDeploymentCloudOverrides(previous, {
       core: "https://debug-core.example",
@@ -265,12 +288,12 @@ it.each(["activate", "returnToMentra", "beginWorkspaceSelection", "clearSelectio
       throw new Error("Cannot persist deployment")
     })
 
-    await expect(action === "activate" ? store.activate(workspace) : store[action]()).rejects.toThrow(
+    await expect(action === "activate" ? store.activate(organization) : store[action]()).rejects.toThrow(
       "Cannot persist deployment",
     )
     expect(store.getActive()).toBe(previous)
     expect(store.isResolved()).toBe(true)
-    expect(store.isSelectingWorkspace()).toBe(false)
+    expect(store.isSelectingOrganization()).toBe(false)
     const {storage: settingsStorage} = jest.requireActual<
       typeof import("../../../modules/engine/src/utils/storage/storage")
     >("../../../modules/engine/src/utils/storage/storage")
@@ -281,7 +304,7 @@ it.each(["activate", "returnToMentra", "beginWorkspaceSelection", "clearSelectio
       expect(persisted.value).toBe(oldValues[key])
     }
 
-    if (action === "activate") await store.activate(workspace)
+    if (action === "activate") await store.activate(organization)
     else await store[action]()
     for (const key of keys) expect(engine.settings.get(key)).toBe("")
   },

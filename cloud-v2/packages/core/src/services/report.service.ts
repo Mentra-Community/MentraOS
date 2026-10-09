@@ -20,7 +20,7 @@ import { REPORT_TESTING_SOURCE, type ReportCategory } from "./report-category";
 import type {ReportSlackDelivery} from './report-slack-delivery.service';
 import { UserModel } from "../models/user.model";
 import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
-import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
+import { configuredAdminAllowlist, isConfiguredOrganizationAdminEmail } from "./workspaces/organization";
 import { createStorageService, type StorageService } from "./storage/storage.service";
 import type { ByteRange } from "./storage/byte-range";
 
@@ -508,7 +508,7 @@ async function addArtifacts(input: {
 }
 
 // === Admin read surface ===
-// Consumed by the adminAuth-gated routes behind the internal admin console.
+// Consumed by the capability-gated (organization.incidents.read) routes behind the internal admin console.
 
 export interface AdminReportArtifact {
   artifactId: string;
@@ -594,13 +594,15 @@ export async function listReports(filter: ListReportsFilter = {}): Promise<Admin
  * All kinds, Automatic, Testing, and detail remain available without a directory lookup.
  */
 async function internalReporterIds(): Promise<string[]> {
-  const allowlist = getAdminEmailAllowlist();
+  const allowlist = configuredAdminAllowlist();
   // GoTrue searches substrings: the full base email would miss local+tag@domain.
   // Search the local part, then apply the complete email/domain policy below.
   const filters = [...allowlist.emails.map(email => email.split("@")[0]!), ...allowlist.domains.map(domain => `@${domain}`)];
   if (filters.length === 0) return [];
   const identities = await findUsersByEmailFilters(filters);
-  const adminIds = identities.filter(identity => isAdminEmail(identity.email, allowlist)).map(identity => identity.id);
+  const adminIds = identities
+    .filter(identity => isConfiguredOrganizationAdminEmail(identity.email, allowlist))
+    .map(identity => identity.id);
   if (adminIds.length === 0) return [];
   // OEM subject IDs are a different identity namespace, even if the strings collide.
   const users = await UserModel.find({ tenantId: "mentra", tenantUserId: { $in: adminIds } }, { mentraUserId: 1 }).lean();

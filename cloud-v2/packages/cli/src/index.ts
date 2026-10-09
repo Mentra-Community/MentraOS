@@ -1,44 +1,56 @@
 #!/usr/bin/env bun
 
 import { Command } from "commander";
-import { buildProduction as buildMiniappProduction, dev as devMiniapp, pack as packMiniapp } from "@mentra/miniapp-cli";
+import {
+  buildProduction as buildMiniappProduction,
+  createAndSavePackageSigningKey,
+  dev as devMiniapp,
+  exportPackageSigningKey,
+  importPackageSigningKey,
+  loadPackageSigningKey,
+  pack as packMiniapp,
+  publisherKeyFingerprint,
+} from "@mentra/miniapp-cli";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import {
-  createAdminRegistryRevision,
   createApp,
   createRelease,
+  createWorkspace,
   deleteApp,
-  ensureAdminRegistry,
   getAdminMe,
-  getOrg,
-  listAdminPreinstallReleases,
-  listAdminRegistries,
-  listAdminRegistryRevisions,
+  getConsoleSession,
   listApps,
   listReleases,
-  promoteAdminRegistryRevision,
   pollLoginToken,
+  publishRelease,
+  readPublishingProfile,
   refreshLoginToken,
+  resolveWorkspaceId,
+  setPackagePrefix,
   startLogin,
   submitRelease,
-  upsertOrg,
-  type AdminReleaseSummary,
-  type AdminRegistry,
-  type PreinstallEnvironment,
-  type PreinstallPolicy,
+  type CliWorkspace,
+  type ConsoleSessionResponse,
 } from "./api";
 import { getConfig } from "./config";
 import { clearCredentials, loadCredentials, saveCredentials, type CliCredentials } from "./credentials";
 import { openBrowser } from "./open-browser";
-import { encodeDevAttestation, ensureSigningKey, signBundleMetadata, signDevAttestation } from "./signing";
+import { verifyPackedBundle } from "./validate-bundle";
+import { registerStoreCommands } from "./store-commands";
 
 const program = new Command();
+const CLI_VERSION = (
+  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }
+).version;
 
-program
-  .name("mentra")
-  .description("Mentra developer CLI")
-  .version("2.0.0-alpha.0");
+program.name("mentra").description("Mentra developer CLI").version(CLI_VERSION)
+  .option("--store-url <url>", "use an explicit local or self-hosted Store")
+  .hook("preAction", command => {
+    const storeUrl = command.opts().storeUrl;
+    if (storeUrl) process.env.MENTRA_STORE_URL = storeUrl;
+  });
 
 program
   .command("login")
@@ -83,20 +95,35 @@ program
             ? new Date(storedAt.getTime() + token.expires_in * 1000)
             : expiresAtFromToken(token.access_token)
               ? new Date(expiresAtFromToken(token.access_token)! * 1000)
-            : undefined;
-        const storage = await saveCredentials({
+              : undefined;
+        const credentials: CliCredentials = {
           token: token.access_token,
           refreshToken: token.refresh_token,
           workosUserId: token.user.id,
           email: token.user.email,
           organizationId: token.organization_id,
           authenticationMethod: token.authentication_method,
-          coreUrl: config.coreUrl,
+          storeUrl: config.storeUrl,
           storedAt: storedAt.toISOString(),
           expiresAt: expiresAt?.toISOString(),
-        });
+        };
+        let availableWorkspaceCount = 0;
+        try {
+          const session = await getConsoleSession(credentials);
+          availableWorkspaceCount = session.workspaces.length;
+          credentials.workspaceId =
+            session.activeWorkspaceId ?? (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
+        } catch {
+          // Authentication still succeeded. The first Store command will report
+          // any connectivity or workspace-selection problem explicitly.
+        }
+        const storage = await saveCredentials(credentials);
         console.log(`Signed in as ${token.user.email}`);
-        if (token.organization_id) console.log(`Organization: ${token.organization_id}`);
+        if (token.organization_id) console.log(`WorkOS organization: ${token.organization_id}`);
+        if (credentials.workspaceId) console.log(`Workspace: ${credentials.workspaceId}`);
+        if (availableWorkspaceCount > 1 && !credentials.workspaceId) {
+          console.log("Multiple workspaces are available. Run `mentra workspace list`, then `mentra workspace use <id>`.");
+        }
         console.log(`Credentials stored in ${storage === "keychain" ? "OS keychain" : "~/.mentra/cli-v2"}`);
         return;
       }
@@ -124,53 +151,133 @@ program
 
     console.log(`Email: ${creds.email}`);
     console.log(`WorkOS user: ${creds.workosUserId}`);
-    if (creds.organizationId) console.log(`Organization: ${creds.organizationId}`);
-    console.log(`Core: ${config.coreUrl}`);
+    if (creds.organizationId) console.log(`WorkOS organization: ${creds.organizationId}`);
+    if (creds.workspaceId) console.log(`Workspace: ${creds.workspaceId}`);
+    console.log(`Store: ${creds.storeUrl}`);
     if (creds.expiresAt) console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);
   });
 
-const org = program.command("org").description("Manage the current developer organization");
+const workspace = program.command("workspace").description("Manage the active workspace");
 
-org
-  .command("show")
-  .description("Show the current developer organization")
+workspace
+  .command("list")
+  .description("List workspaces available to this account")
   .action(async () => {
     const creds = await requireCredentials();
     if (!creds) return;
 
     try {
-      const { org: developerOrg } = await getOrg(creds);
-      if (!developerOrg) {
-        console.log("No developer org yet. Run `mentra org init --name \"Your Org\" --prefix com.example`.");
+      const session = await getConsoleSession(creds);
+      if (session.workspaces.length === 0) {
+        console.log("No workspaces yet. Create one with `mentra workspace create <name>`.");
         return;
       }
-
-      console.log(`Name: ${developerOrg.name}`);
-      console.log(`Package prefix: ${developerOrg.packagePrefix}`);
-      console.log(`Prefix status: ${developerOrg.packagePrefixStatus}`);
-      if (developerOrg.workosOrgId) console.log(`WorkOS org: ${developerOrg.workosOrgId}`);
+      const activeId = creds.workspaceId ?? session.activeWorkspaceId;
+      for (const entry of session.workspaces) {
+        console.log(`${entry.workspaceId === activeId ? "*" : " "} ${entry.workspaceId}\t${entry.name}\t${entry.membership.role}`);
+      }
     } catch (error) {
       fail(error);
     }
   });
 
-org
-  .command("init")
-  .description("Create or update the current developer organization")
-  .requiredOption("--name <name>", "organization display name")
-  .requiredOption("--prefix <prefix>", "package prefix, e.g. com.example")
-  .action(async (options: { name: string; prefix: string }) => {
+workspace
+  .command("use")
+  .argument("<workspaceId>", "workspace id from `mentra workspace list`")
+  .description("Select the workspace used by future CLI commands")
+  .action(async (workspaceId: string) => {
     const creds = await requireCredentials();
     if (!creds) return;
 
     try {
-      const { org: developerOrg } = await upsertOrg(creds, {
-        displayName: options.name,
-        packagePrefix: options.prefix,
-      });
-      console.log(`Developer org ready: ${developerOrg.name}`);
-      console.log(`Package prefix: ${developerOrg.packagePrefix} (${developerOrg.packagePrefixStatus})`);
-      if (developerOrg.workosOrgId) console.log(`WorkOS org: ${developerOrg.workosOrgId}`);
+      const session = await getConsoleSession(creds);
+      const selected = session.workspaces.find(candidate => candidate.workspaceId === workspaceId);
+      if (!selected) throw new Error("You do not have access to that workspace");
+      await saveCredentials({...creds, workspaceId: selected.workspaceId});
+      console.log(`Using ${selected.name} (${selected.workspaceId})`);
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+workspace
+  .command("show")
+  .description("Show the active workspace and its publishing profile")
+  .action(async () => {
+    const creds = await requireCredentials();
+    if (!creds) return;
+
+    try {
+      const session = await getConsoleSession(creds);
+      const active = activeWorkspace(creds, session);
+      if (!active) {
+        if (creds.workspaceId) {
+          throw new Error(`Workspace ${creds.workspaceId} is not available to this account. Run \`mentra workspace list\`, then \`mentra workspace use <id>\`.`);
+        }
+        console.log("No workspace selected. Run `mentra workspace list`, then `mentra workspace use <id>`, or create one with `mentra workspace create <name>`.");
+        return;
+      }
+
+      console.log(`Workspace: ${active.name} (${active.workspaceId})`);
+      console.log(`Role: ${active.membership.role}`);
+      const profile = await readPublishingProfile({...creds, workspaceId: active.workspaceId});
+      if (profile.state === "hidden") {
+        console.log("Package prefix: not visible to your role");
+      } else if (profile.state === "not_set" || !profile.profile.packagePrefix) {
+        console.log("Package prefix: not set");
+        console.log(
+          "Set one with `mentra workspace set-prefix <prefix>` (for example com.example) or in the Developer Console.",
+        );
+      } else {
+        console.log(`Package prefix: ${profile.profile.packagePrefix}`);
+        console.log(`Prefix status: ${profile.profile.packagePrefixStatus}`);
+      }
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+workspace
+  .command("set-prefix")
+  .argument("<prefix>", "package prefix for the workspace's miniapps, e.g. com.example")
+  .description("Set the package prefix of the active workspace")
+  .action(async (prefix: string) => {
+    const creds = await requireCredentials();
+    if (!creds) return;
+
+    try {
+      const workspaceId = await resolveWorkspaceId(creds);
+      const profile = await setPackagePrefix({...creds, workspaceId}, prefix);
+      console.log(`Package prefix: ${profile.packagePrefix} (${profile.packagePrefixStatus})`);
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+workspace
+  .command("create")
+  .argument("<name>", "workspace name")
+  .option("--package-prefix <prefix>", "package prefix for the workspace's miniapps, e.g. com.example")
+  .description("Create a workspace and make it the active one")
+  .action(async (name: string, options: { packagePrefix?: string }) => {
+    const creds = await requireCredentials();
+    if (!creds) return;
+
+    try {
+      const created = await createWorkspace(creds, name);
+      // Selected before the prefix is set, so a refused prefix still leaves the new workspace active.
+      const next = {...creds, workspaceId: created.workspaceId};
+      await saveCredentials(next);
+      console.log(`Workspace created: ${created.name} (${created.workspaceId})`);
+      if (options.packagePrefix) {
+        try {
+          const profile = await setPackagePrefix(next, options.packagePrefix);
+          console.log(`Package prefix: ${profile.packagePrefix} (${profile.packagePrefixStatus})`);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(`The workspace was created and selected, but its package prefix was not set: ${reason}`);
+        }
+      }
     } catch (error) {
       fail(error);
     }
@@ -178,9 +285,69 @@ org
 
 const miniapps = program.command("miniapps").description("Manage miniapp package records");
 
+const miniappKeys = miniapps.command("keys").description("Manage durable publisher signing keys");
+
+miniappKeys
+  .command("create")
+  .requiredOption("--package <packageName>", "package name")
+  .description("Create a package-scoped publisher signing key")
+  .action(async (options: { package: string }) => {
+    try {
+      const { key, storage } = await createAndSavePackageSigningKey(options.package);
+      console.log(`Publisher key: ${publisherKeyFingerprint(key.publicKeyJwk)}`);
+      console.log(`Stored in: ${storage === "keychain" ? "OS keychain" : "~/.mentra/cli-v2"}`);
+      console.log("Back this key up before publishing. Losing it prevents future updates.");
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+miniappKeys
+  .command("show")
+  .requiredOption("--package <packageName>", "package name")
+  .description("Show the package publisher key fingerprint")
+  .action(async (options: { package: string }) => {
+    try {
+      const key = await loadPackageSigningKey(options.package);
+      if (!key) throw new Error(`No publisher signing key exists for ${options.package}`);
+      console.log(publisherKeyFingerprint(key.publicKeyJwk));
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+miniappKeys
+  .command("import")
+  .argument("<path>", "publisher key backup")
+  .requiredOption("--package <packageName>", "package name")
+  .option("--replace", "replace a different locally stored key")
+  .description("Import a package publisher signing key")
+  .action(async (path: string, options: { package: string; replace?: boolean }) => {
+    try {
+      const { key, storage } = await importPackageSigningKey(options.package, path, { overwrite: options.replace });
+      console.log(`Imported ${publisherKeyFingerprint(key.publicKeyJwk)} into ${storage}`);
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+miniappKeys
+  .command("export")
+  .argument("<path>", "new backup file path")
+  .requiredOption("--package <packageName>", "package name")
+  .description("Export a package publisher signing key backup")
+  .action(async (path: string, options: { package: string }) => {
+    try {
+      console.log(`Exported private publisher key to ${await exportPackageSigningKey(options.package, path)}`);
+      console.log("Keep this file secret and store it in your organization's secure backup system.");
+    } catch (error) {
+      fail(error);
+    }
+  });
+
 miniapps
   .command("list")
-  .description("List miniapps owned by the current developer org")
+  .description("List miniapps owned by the active workspace")
   .action(async () => {
     const creds = await requireCredentials();
     if (!creds) return;
@@ -246,12 +413,17 @@ releases
   .command("list")
   .argument("<packageName>", "package name")
   .description("List releases for a miniapp")
-  .action(async (packageName: string) => {
+  .option("--json", "print machine-readable JSON")
+  .action(async (packageName: string, options: { json?: boolean }) => {
     const creds = await requireCredentials();
     if (!creds) return;
 
     try {
       const { releases: releaseList } = await listReleases(creds, packageName);
+      if (options.json) {
+        console.log(JSON.stringify({ releases: releaseList }, null, 2));
+        return;
+      }
       if (releaseList.length === 0) {
         console.log("No releases yet.");
         return;
@@ -259,7 +431,36 @@ releases
 
       for (const release of releaseList) {
         const size = release.bundleSizeBytes ? `${Math.round(release.bundleSizeBytes / 1024)} KB` : "no bundle";
-        console.log(`${release.version}\t${release.status}\t${size}\t${release.bundleSha256 ?? "no hash"}`);
+        console.log(`${release.version}\t${release.releaseTrack}\t${release.status}\t${size}\t${release.bundleSha256 ?? "no hash"}`);
+        if (release.reviewNotes) console.log(`  Review: ${release.reviewNotes}`);
+      }
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+releases
+  .command("status")
+  .argument("<packageName>", "package name")
+  .argument("[releaseId]", "release id; defaults to the latest release")
+  .option("--json", "print machine-readable JSON")
+  .description("Show release state and review feedback")
+  .action(async (packageName: string, releaseId: string | undefined, options: { json?: boolean }) => {
+    const creds = await requireCredentials();
+    if (!creds) return;
+    try {
+      const { releases: releaseList } = await listReleases(creds, packageName);
+      const release = releaseId ? releaseList.find(item => item.id === releaseId) : releaseList[0];
+      if (!release) throw new Error(releaseId ? `Release not found: ${releaseId}` : `No releases for ${packageName}`);
+      if (options.json) console.log(JSON.stringify({ release }, null, 2));
+      else {
+        console.log(`${packageName}@${release.version}`);
+        console.log(`Status: ${release.status}`);
+        console.log(`Track: ${release.releaseTrack}`);
+        console.log(`Release: ${release.id}`);
+        if (release.reviewNotes) console.log(`Review: ${release.reviewNotes}`);
+        if (release.bundleSha256) console.log(`Bundle SHA-256: ${release.bundleSha256}`);
+        if (release.manifestSha256) console.log(`Manifest SHA-256: ${release.manifestSha256}`);
       }
     } catch (error) {
       fail(error);
@@ -277,7 +478,7 @@ releases
 
     try {
       const { release } = await submitRelease(creds, { packageName, releaseId });
-      console.log(`Submitted ${packageName}@${release.version} for review`);
+      console.log(`Submitted ${packageName}@${release.version} (${release.releaseTrack}) for review`);
     } catch (error) {
       fail(error);
     }
@@ -295,187 +496,7 @@ admin
     try {
       const me = await getAdminMe(creds);
       console.log(`Admin: ${me.user?.email ?? "unknown"}`);
-      console.log(`Core: ${creds.coreUrl}`);
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-const preinstall = admin
-  .command("preinstall")
-  .description("Manage the internal preinstalled miniapp registry");
-
-preinstall
-  .command("releases")
-  .description("List releases eligible for preinstall")
-  .option("-e, --environment <environment>", "target registry environment")
-  .option("--verbose", "include release ids")
-  .action(async (options: { environment?: string; verbose?: boolean }) => {
-    const creds = await requireCredentials();
-    if (!creds) return;
-
-    try {
-      const environment = options.environment
-        ? parseEnvironment(options.environment)
-        : inferEnvironment(creds.coreUrl);
-      const { releases: releaseList } = await listAdminPreinstallReleases(creds);
-      if (releaseList.length === 0) {
-        console.log("No publishable releases.");
-        return;
-      }
-      const activeReleaseIds = await activePreinstallReleaseIds(creds, environment);
-      const groups = groupAdminReleases(releaseList, activeReleaseIds);
-      console.log(`Publishable miniapps for ${environment} preinstall:`);
-      for (const group of groups) {
-        console.log(formatAdminReleaseGroup(group));
-        if (options.verbose) {
-          for (const release of group.releases) {
-            const marker = release.id === group.current?.id ? "*" : " ";
-            console.log(`  ${marker} ${release.version}\t${release.status}\t${release.id}`);
-          }
-        }
-      }
-      console.log("");
-      console.log("Publish with:");
-      console.log(`  ${commandNameForCoreUrl(creds.coreUrl)} admin preinstall publish --release ${groups[0]?.packageName}@${groups[0]?.latest.version} --environment ${environment}`);
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-preinstall
-  .command("status")
-  .description("Show the active preinstall registry for an environment")
-  .option("-e, --environment <environment>", "target registry environment")
-  .action(async (options: { environment?: string }) => {
-    const creds = await requireCredentials();
-    if (!creds) return;
-
-    try {
-      const environment = options.environment
-        ? parseEnvironment(options.environment)
-        : inferEnvironment(creds.coreUrl);
-      const { registries } = await listAdminRegistries(creds);
-      const registry = registries.find(item => item.environment === environment && item.name === "default");
-      if (!registry) {
-        console.log(`No active ${environment} preinstall registry.`);
-        return;
-      }
-
-      console.log(`${environment} preinstall registry`);
-      console.log(`Registry: ${registry.id}`);
-      console.log(`Status: ${registry.status}`);
-      if (!registry.activeRevisionId) {
-        console.log("Active revision: none");
-        return;
-      }
-
-      const { revisions } = await listAdminRegistryRevisions(creds, registry.id);
-      const active = revisions.find(revision => revision.id === registry.activeRevisionId);
-      console.log(`Active revision: ${registry.activeRevisionId}`);
-      if (!active || active.entries.length === 0) {
-        console.log("No preinstalled releases.");
-        return;
-      }
-
-      const { releases: releaseList } = await listAdminPreinstallReleases(creds);
-      const byId = new Map(releaseList.map(release => [release.id, release]));
-      for (const entry of active.entries) {
-        const release = byId.get(entry.releaseId);
-        const label = release ? `${release.packageName}@${release.version}` : entry.releaseId;
-        console.log(`- ${label}\t${entry.installPolicy}\trequired=${entry.required}`);
-      }
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-preinstall
-  .command("registries")
-  .description("List preinstall registries and active revisions")
-  .option("-e, --environment <environment>", "filter by environment")
-  .action(async (options: { environment?: string }) => {
-    const creds = await requireCredentials();
-    if (!creds) return;
-
-    try {
-      const environment = options.environment ? parseEnvironment(options.environment) : null;
-      const { registries } = await listAdminRegistries(creds);
-      const filtered = environment
-        ? registries.filter(registry => registry.environment === environment)
-        : registries;
-      if (filtered.length === 0) {
-        console.log("No preinstall registries.");
-        return;
-      }
-
-      for (const registry of filtered) {
-        console.log(formatRegistry(registry));
-        if (registry.activeRevisionId) {
-          const { revisions } = await listAdminRegistryRevisions(creds, registry.id);
-          const active = revisions.find(revision => revision.id === registry.activeRevisionId);
-          if (active) {
-            console.log(`  active revision: ${active.id}`);
-            for (const entry of active.entries) {
-              console.log(`  - ${entry.releaseId}\t${entry.installPolicy}\trequired=${entry.required}`);
-            }
-          }
-        }
-      }
-    } catch (error) {
-      fail(error);
-    }
-  });
-
-preinstall
-  .command("publish")
-  .description("Replace the active preinstalled miniapp list with selected releases")
-  .requiredOption("-r, --release <release>", "release id or package@version; repeat for multiple releases", collect, [])
-  .option("-e, --environment <environment>", "target registry environment")
-  .option("--policy <policy>", "install policy for all entries", "keep_updated")
-  .option("--required", "mark entries required")
-  .option("--reason <reason>", "audit reason")
-  .option("--yes", "confirm prod registry replacement")
-  .action(async (options: {
-    release: string[];
-    environment?: string;
-    policy: string;
-    required?: boolean;
-    reason?: string;
-    yes?: boolean;
-  }) => {
-    const creds = await requireCredentials();
-    if (!creds) return;
-
-    try {
-      const environment = options.environment
-        ? parseEnvironment(options.environment)
-        : inferEnvironment(creds.coreUrl);
-      const installPolicy = parsePolicy(options.policy);
-      if (environment === "prod" && !options.yes) {
-        throw new Error("prod preinstall publish requires --yes");
-      }
-
-      const { releases: releaseList } = await listAdminPreinstallReleases(creds);
-      const selected = resolveReleaseRefs(options.release, releaseList);
-      const { registry } = await ensureAdminRegistry(creds, { environment });
-      const { revision } = await createAdminRegistryRevision(creds, registry.id, {
-        reason: options.reason ?? `Admin preinstall registry publish for ${environment}`,
-        entries: selected.map((release, index) => ({
-          releaseId: release.id,
-          required: Boolean(options.required),
-          installPolicy,
-          priority: index,
-        })),
-      });
-      const promoted = await promoteAdminRegistryRevision(creds, registry.id, revision.id);
-
-      console.log(`Published ${selected.length} release(s) to ${environment} preinstall registry.`);
-      console.log(`Registry: ${promoted.registry.id}`);
-      console.log(`Revision: ${promoted.revision.id}`);
-      for (const release of selected) {
-        console.log(`- ${release.packageName}@${release.version}\t${release.id}`);
-      }
+      console.log(`Store: ${creds.storeUrl}`);
     } catch (error) {
       fail(error);
     }
@@ -483,40 +504,15 @@ preinstall
 
 program
   .command("dev")
-  .description("Start the local miniapp dev server with signed Cloud V2 identity when logged in")
+  .description("Start the local miniapp dev server; the phone runs it under the manifest package name")
   .option("--cwd <path>", "miniapp project directory", process.cwd())
-  .option("--auth", "require signed dev auto-auth setup before starting")
   .option("--usb", "reach the phone over USB via adb reverse instead of the LAN (Android only)")
   .option("--device <serial>", "target a specific adb device serial (use with --usb)")
-  .action(async (options: { cwd: string; auth?: boolean; usb?: boolean; device?: string }) => {
-    const cwd = resolve(options.cwd);
+  .action(async (options: { cwd: string; usb?: boolean; device?: string }) => {
     try {
-      const manifest = readManifest(cwd);
-      const packageName = stringField(manifest, "packageName");
-      const name = stringField(manifest, "name") || packageName;
-      const description = typeof manifest.description === "string" ? manifest.description : null;
-      const creds = await loadFreshCredentials(getConfig());
-      let signer:
-        | ((input: { packageName: string; devServerUrl: string }) => string)
-        | undefined;
-
-      if (creds) {
-        await ensureMiniappRecord(creds, { packageName, displayName: name, description });
-        const signingKey = await ensureSigningKey(creds);
-        signer = ({ packageName: signedPackageName, devServerUrl }) =>
-          encodeDevAttestation(signDevAttestation({
-            signingKey,
-            packageName: signedPackageName,
-            devServerUrl,
-          }));
-        console.log(`Dev auto-auth enabled for ${packageName}`);
-      } else if (options.auth) {
-        throw new Error("Not signed in. Run `mentra login` before `mentra dev --auth`.");
-      } else {
-        console.log("Dev auto-auth disabled. Run `mentra login` if this miniapp uses session.auth.");
-      }
-
-      await devMiniapp({ cwd, signDevAttestation: signer, usb: options.usb, device: options.device });
+      // Local only: the phone treats the build as its package, refuses it over
+      // an install signed by a publisher, and requests miniapp tokens itself.
+      await devMiniapp({ cwd: resolve(options.cwd), usb: options.usb, device: options.device });
     } catch (error) {
       fail(error);
     }
@@ -539,9 +535,16 @@ program
   .description("Pack the current miniapp into build/<packageName>-<version>.zip")
   .option("--cwd <path>", "miniapp project directory", process.cwd())
   .option("--no-build", "skip production build before packing")
-  .action(async (options: { cwd: string; build: boolean }) => {
+  .option("--sign", "sign with the stored publisher key (unsigned by default)")
+  .option("--signing-key <path>", "publisher signing key file (CI/non-persistent use)")
+  .action(async (options: { cwd: string; build: boolean; sign?: boolean; signingKey?: string }) => {
     try {
-      await packMiniapp({ cwd: resolve(options.cwd), build: options.build });
+      await packMiniapp({
+        cwd: resolve(options.cwd),
+        build: options.build,
+        sign: options.sign,
+        signingKeyPath: options.signingKey,
+      });
     } catch (error) {
       fail(error);
     }
@@ -549,16 +552,34 @@ program
 
 program
   .command("publish")
-  .description("Build, pack, and upload the current miniapp release bundle")
+  .description("Build and upload the current miniapp release bundle to the Store without signing")
   .option("--cwd <path>", "miniapp project directory", process.cwd())
   .option("--no-build", "skip running bun run build before packing")
   .option("--no-pack", "skip running bun run pack and upload the existing build zip")
-  .action(async (options: { cwd: string; build: boolean; pack: boolean }) => {
+  .option("--no-submit", "upload as draft without submitting for review")
+  .option("--publish", "also publish; requires an approved release or an app publishing token")
+  .option("--skip-existing", "skip published versions and safely resume matching unfinished uploads")
+  .option("--track <track>", "release track: stable or beta", "stable")
+  .option("--json", "print machine-readable JSON")
+  .action(async (options: {
+    cwd: string;
+    build: boolean;
+    pack: boolean;
+    submit: boolean;
+    publish?: boolean;
+    skipExisting?: boolean;
+    track: string;
+    json?: boolean;
+  }) => {
     const creds = await requireCredentials();
     if (!creds) return;
 
     const cwd = resolve(options.cwd);
     try {
+      if (options.track !== "stable" && options.track !== "beta") {
+        throw new Error("--track must be either stable or beta");
+      }
+      if (options.publish && !options.submit) throw new Error("--publish cannot be combined with --no-submit");
       const manifest = readManifest(cwd);
       const packageName = stringField(manifest, "packageName");
       const version = stringField(manifest, "version");
@@ -567,10 +588,29 @@ program
 
       await ensureMiniappRecord(creds, { packageName, displayName: name, description });
 
-      if (options.pack) {
-        await packMiniapp({ cwd, build: options.build });
-      } else if (options.build) {
-        await buildMiniappProduction(cwd);
+      const existing = options.skipExisting
+        ? (await listReleases(creds, packageName)).releases.find(release => release.version === version && release.releaseTrack === options.track)
+        : undefined;
+      if (existing?.status === "published") {
+        if (options.json) console.log(JSON.stringify({release: existing, skipped: true}, null, 2));
+        else console.log(`Skipped ${packageName}@${version}: already published`);
+        return;
+      }
+      if (existing && !["draft", "submitted", "in_review", "accepted"].includes(existing.status)) {
+        throw new Error(`Existing release is ${existing.status}; resolve it before retrying or bump the version`);
+      }
+
+      // An unfinished immutable release must resume from its original ZIP.
+      // Repacking first can destroy the only local copy of those exact bytes.
+      if (!existing && options.pack) {
+        await packMiniapp({
+          cwd,
+          build: options.build,
+          silent: options.json,
+          sign: false,
+        });
+      } else if (!existing && options.build) {
+        await buildMiniappProduction(cwd, { silent: options.json });
       }
 
       const zipPath = join(cwd, "build", `${packageName}-${version}.zip`);
@@ -578,31 +618,44 @@ program
         throw new Error(`Release bundle not found: ${zipPath}`);
       }
       const bundle = readFileSync(zipPath);
-      const signingKey = await ensureSigningKey(creds);
-      const signedBundle = signBundleMetadata({
-        signingKey,
+      const verifiedBundle = await verifyPackedBundle(bundle, manifest);
+      if (existing && existing.bundleSha256 !== createHash("sha256").update(bundle).digest("hex")) {
+        throw new Error("This version already has different bundle bytes. Retry with the original ZIP or bump miniapp.json version.");
+      }
+      const { release } = existing ? {release: existing} : await createRelease(creds, {
         packageName,
         version,
+        releaseTrack: options.track,
         manifest,
         bundle,
-      });
-      const { release } = await createRelease(creds, {
-        packageName,
-        version,
-        manifest,
-        bundleBase64: bundle.toString("base64"),
         fileName: basename(zipPath),
-        signedBundle,
       });
-      const submitted = await submitRelease(creds, {
-        packageName,
-        releaseId: release.id,
-      });
+      let submitted = options.submit && release.status === "draft"
+        ? await submitRelease(creds, { packageName, releaseId: release.id })
+        : { release };
+      if (options.publish && submitted.release.status !== "published") {
+        submitted = await publishRelease(creds, packageName, release.id);
+      }
       const sizeKb = Math.round(statSync(zipPath).size / 1024);
-      console.log(`Published ${packageName}@${release.version}`);
-      console.log(`Release: ${submitted.release.status}`);
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            {
+              release: submitted.release,
+              bundle: basename(zipPath),
+              publisherKeyFingerprint: verifiedBundle.publisherKeyFingerprint ?? null,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`Uploaded ${packageName}@${release.version}`);
+      console.log(`Status: ${submitted.release.status}`);
+      console.log(`Track: ${submitted.release.releaseTrack}`);
       console.log(`Bundle: ${basename(zipPath)} (${sizeKb} KB)`);
-      console.log(`Signing key: ${signedBundle.signingKeyId}`);
+      console.log(`Publisher key: ${verifiedBundle.publisherKeyFingerprint ?? "unsigned"}`);
       if (release.bundleSha256) console.log(`SHA-256: ${release.bundleSha256}`);
     } catch (error) {
       fail(error);
@@ -613,11 +666,12 @@ program
   .command("logout")
   .description("Clear the current CLI login")
   .action(async () => {
-    await clearCredentials(getConfig().coreUrl);
+    await clearCredentials(getConfig().storeUrl);
     console.log("Logged out");
   });
 
-program.parse();
+registerStoreCommands(program, requireCredentials);
+await program.parseAsync();
 
 async function requireCredentials(): Promise<CliCredentials | null> {
   const config = getConfig();
@@ -631,7 +685,7 @@ async function requireCredentials(): Promise<CliCredentials | null> {
 }
 
 async function loadFreshCredentials(config = getConfig()): Promise<CliCredentials | null> {
-  const creds = await loadCredentials(config.coreUrl);
+  const creds = await loadCredentials(config.storeUrl);
   if (!creds) return null;
   if (!shouldRefresh(creds)) return creds;
 
@@ -642,7 +696,11 @@ async function loadFreshCredentials(config = getConfig()): Promise<CliCredential
   }
 
   try {
-    const refreshed = await refreshLoginToken(config, creds.refreshToken, creds.organizationId);
+    const refreshed = await refreshLoginToken(
+      {...config, storeUrl: creds.storeUrl},
+      creds.refreshToken,
+      creds.organizationId,
+    );
     const storedAt = new Date();
     const expiresAt =
       typeof refreshed.expires_in === "number"
@@ -656,13 +714,14 @@ async function loadFreshCredentials(config = getConfig()): Promise<CliCredential
       workosUserId: refreshed.user.id,
       email: refreshed.user.email,
       organizationId: refreshed.organization_id,
+      workspaceId: creds.workspaceId,
       authenticationMethod: refreshed.authentication_method ?? creds.authenticationMethod,
-      coreUrl: config.coreUrl,
+      storeUrl: creds.storeUrl,
       storedAt: storedAt.toISOString(),
       expiresAt: expiresAt?.toISOString(),
     };
     await saveCredentials(nextCredentials);
-    return nextCredentials;
+    return {...nextCredentials, storeUrl: creds.storeUrl};
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
@@ -678,7 +737,9 @@ function shouldRefresh(creds: CliCredentials): boolean {
 
 function expiresAtFromToken(token: string): number {
   try {
-    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { exp?: unknown };
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as {
+      exp?: unknown;
+    };
     return typeof payload.exp === "number" ? payload.exp : 0;
   } catch {
     return 0;
@@ -720,8 +781,17 @@ async function ensureMiniappRecord(
   const { apps } = await listApps(creds);
   const existing = apps.find(app => app.packageName === input.packageName && app.status !== "archived");
   if (!existing) {
-    throw new Error(`Package ${input.packageName} is already claimed by another developer org.`);
+    throw new Error(`Package ${input.packageName} is already claimed by another workspace.`);
   }
+}
+
+/** The workspace commands act in: the saved selection, else the Store's active one, else the account's only one. */
+function activeWorkspace(creds: CliCredentials, session: ConsoleSessionResponse): CliWorkspace | null {
+  const id =
+    creds.workspaceId ??
+    session.activeWorkspaceId ??
+    (session.workspaces.length === 1 ? session.workspaces[0]!.workspaceId : null);
+  return session.workspaces.find(candidate => candidate.workspaceId === id) ?? null;
 }
 
 function fail(error: unknown): void {
@@ -729,145 +799,6 @@ function fail(error: unknown): void {
   process.exitCode = 1;
 }
 
-function collect(value: string, previous: string[]): string[] {
-  return [...previous, value];
-}
-
-function parseEnvironment(value: string): PreinstallEnvironment {
-  const normalized = value.trim().toLowerCase();
-  if (["debug", "dev", "staging", "prod"].includes(normalized)) {
-    return normalized as PreinstallEnvironment;
-  }
-  throw new Error("environment must be debug, dev, staging, or prod");
-}
-
-function inferEnvironment(coreUrl: string): PreinstallEnvironment {
-  const host = new URL(coreUrl).hostname;
-  if (host.includes(".debug.")) return "debug";
-  if (host.includes(".dev.")) return "dev";
-  if (host.includes(".staging.")) return "staging";
-  if (host === "localhost" || host === "127.0.0.1") return "dev";
-  return "prod";
-}
-
-function parsePolicy(value: string): PreinstallPolicy {
-  const normalized = value.trim().toLowerCase();
-  if (["install_once", "keep_updated", "mandatory"].includes(normalized)) {
-    return normalized as PreinstallPolicy;
-  }
-  throw new Error("policy must be install_once, keep_updated, or mandatory");
-}
-
-function resolveReleaseRefs(refs: string[], releases: AdminReleaseSummary[]): AdminReleaseSummary[] {
-  const selected = refs.map(ref => {
-    const trimmed = ref.trim();
-    const byId = releases.find(release => release.id === trimmed);
-    if (byId) return byId;
-
-    const atIndex = trimmed.lastIndexOf("@");
-    if (atIndex > 0) {
-      const packageName = trimmed.slice(0, atIndex);
-      const version = trimmed.slice(atIndex + 1);
-      const matches = releases.filter(release => release.packageName === packageName && release.version === version);
-      if (matches.length === 1) return matches[0];
-      if (matches.length > 1) throw new Error(`release ref ${trimmed} matched more than one release`);
-    }
-
-    throw new Error(`release not found or not publishable: ${trimmed}`);
-  });
-
-  const seen = new Set<string>();
-  const seenPackages = new Map<string, string>();
-  for (const release of selected) {
-    if (seen.has(release.id)) throw new Error(`duplicate release: ${release.id}`);
-    seen.add(release.id);
-
-    const previous = seenPackages.get(release.packageName);
-    if (previous) {
-      throw new Error(
-        `preinstall registry can only include one release per miniapp; ${release.packageName} selected as ${previous} and ${release.version}`,
-      );
-    }
-    seenPackages.set(release.packageName, release.version);
-  }
-  return selected;
-}
-
-async function activePreinstallReleaseIds(
-  credentials: CliCredentials,
-  environment: PreinstallEnvironment,
-): Promise<Set<string>> {
-  const { registries } = await listAdminRegistries(credentials);
-  const registry = registries.find(item => item.environment === environment && item.name === "default");
-  if (!registry?.activeRevisionId) return new Set();
-  const { revisions } = await listAdminRegistryRevisions(credentials, registry.id);
-  const active = revisions.find(revision => revision.id === registry.activeRevisionId);
-  return new Set(active?.entries.map(entry => entry.releaseId) ?? []);
-}
-
-interface AdminReleaseGroup {
-  packageName: string;
-  displayName: string;
-  latest: AdminReleaseSummary;
-  current: AdminReleaseSummary | null;
-  releases: AdminReleaseSummary[];
-}
-
-function groupAdminReleases(
-  releases: AdminReleaseSummary[],
-  activeReleaseIds: Set<string>,
-): AdminReleaseGroup[] {
-  const groups = new Map<string, AdminReleaseSummary[]>();
-  for (const release of releases) {
-    groups.set(release.packageName, [...(groups.get(release.packageName) ?? []), release]);
-  }
-
-  return [...groups.values()].map(groupReleases => {
-    const sorted = [...groupReleases].sort(compareReleaseRecency);
-    return {
-      packageName: sorted[0]!.packageName,
-      displayName: sorted[0]!.displayName,
-      latest: sorted[0]!,
-      current: sorted.find(release => activeReleaseIds.has(release.id)) ?? null,
-      releases: sorted,
-    };
-  }).sort((a, b) => {
-    if (a.current && !b.current) return -1;
-    if (!a.current && b.current) return 1;
-    return a.packageName.localeCompare(b.packageName);
-  });
-}
-
-function compareReleaseRecency(a: AdminReleaseSummary, b: AdminReleaseSummary): number {
-  const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
-  const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
-  if (aTime !== bTime) return bTime - aTime;
-  return b.version.localeCompare(a.version, undefined, { numeric: true, sensitivity: "base" });
-}
-
-function formatAdminReleaseGroup(group: AdminReleaseGroup): string {
-  const marker = group.current ? "ACTIVE" : "      ";
-  const current = group.current?.version ?? "none";
-  const latest = group.latest.version;
-  const label = group.displayName && group.displayName !== group.packageName
-    ? `${group.displayName} (${group.packageName})`
-    : group.packageName;
-  return `${marker} ${label}\tcurrent=${current}\tlatest=${latest}\tversions=${group.releases.length}`;
-}
-
-function formatRegistry(registry: AdminRegistry): string {
-  const active = registry.activeRevisionId ? `active=${registry.activeRevisionId}` : "no active revision";
-  return `${registry.id}\t${registry.environment}\t${registry.name}\t${registry.status}\t${active}`;
-}
-
-function commandNameForCoreUrl(coreUrl: string): string {
-  const environment = inferEnvironment(coreUrl);
-  const host = new URL(coreUrl).hostname;
-  if (host === "localhost" || host === "127.0.0.1") return "mentra:local";
-  if (environment === "prod") return "mentra:prod";
-  return `mentra:${environment}`;
-}
-
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

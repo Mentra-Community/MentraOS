@@ -19,7 +19,6 @@ on:
         default: all
         options:
           - all
-          - console
           - admin
           - portal
   push:

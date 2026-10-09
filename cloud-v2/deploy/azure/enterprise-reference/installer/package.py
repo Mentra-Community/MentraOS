@@ -81,6 +81,8 @@ starts its guided setup, which previews the change and asks before upgrading.
 It creates the Microsoft sign-in apps, previews the Azure resources with Azure what-if, installs, adds
 DNS records when the zone is in Azure, verifies the deployment and creates the administrator key.
 Signing keys and the administrator key are created in your Azure Key Vault; nothing secret is stored here.
+The administrator key is a Core operator key (mak_) created by operator@private-cloud.local; keep that
+address in coreAdminEmails or the key stops working.
 Setup state (non-secret) is kept in ~/mentra-install/mentra-state. Keep Cloud Shell's storage mounted;
 if the folder is lost, run the install command with the same answers and setup continues the deployment.
 

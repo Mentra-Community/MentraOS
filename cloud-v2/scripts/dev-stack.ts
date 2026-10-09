@@ -9,6 +9,7 @@
  *
  *   test-oem : http://127.0.0.1:3102   (mint OEM JWTs)
  *   core     : http://127.0.0.1:3000   (client auth, REST)
+ *   Store runs separately from Mentra-Community/miniapp-store (optional).
  *   auth     : http://127.0.0.1:3002   (local-dev runtime tokens)
  *   runtime  : ws://127.0.0.1:3001/ws/session   (+ UDP :8000)
  *

@@ -21,7 +21,7 @@ jest.mock("@/services/MantleManager", () => ({
 jest.mock("@/services/deployment/store", () => ({
   deploymentStore: {
     isResolved: jest.fn(),
-    isSelectingWorkspace: jest.fn(),
+    isSelectingOrganization: jest.fn(),
     getActive: jest.fn(),
   },
 }))
@@ -31,7 +31,7 @@ jest.mock("@/utils/auth/authClient", () => ({__esModule: true, default: {getSess
 beforeEach(() => {
   jest.clearAllMocks()
   jest.mocked(deploymentStore.isResolved).mockReturnValue(true)
-  jest.mocked(deploymentStore.isSelectingWorkspace).mockReturnValue(false)
+  jest.mocked(deploymentStore.isSelectingOrganization).mockReturnValue(false)
   ;(deploymentStore.getActive as jest.Mock).mockReturnValue({kind: "consumer"})
   ;(mentraAuth.getSession as jest.Mock).mockResolvedValue({is_error: () => false, value: {token: "session"}})
   ;(mantle.init as jest.Mock).mockResolvedValue(undefined)
@@ -98,8 +98,8 @@ test("a failed startup can be retried", async () => {
   expect(engine.glasses.connectDefault).toHaveBeenCalledTimes(1)
 })
 
-test("workspace recovery requires a silently restored access token", async () => {
-  ;(deploymentStore.getActive as jest.Mock).mockReturnValue({kind: "workspace"})
+test("organization recovery requires a silently restored access token", async () => {
+  ;(deploymentStore.getActive as jest.Mock).mockReturnValue({kind: "organization"})
   ;(createDeploymentAuthProvider as jest.Mock).mockReturnValue({
     getSession: jest.fn().mockResolvedValue({identity: {subject: "cached-account"}}),
   })
@@ -108,10 +108,10 @@ test("workspace recovery requires a silently restored access token", async () =>
   expect(mentraAuth.getSession).not.toHaveBeenCalled()
 })
 
-test("a signed-in workspace restores through the same startup path", async () => {
-  ;(deploymentStore.getActive as jest.Mock).mockReturnValue({kind: "workspace"})
+test("a signed-in organization restores through the same startup path", async () => {
+  ;(deploymentStore.getActive as jest.Mock).mockReturnValue({kind: "organization"})
   ;(createDeploymentAuthProvider as jest.Mock).mockReturnValue({
-    getSession: jest.fn().mockResolvedValue({accessToken: "workspace-session"}),
+    getSession: jest.fn().mockResolvedValue({accessToken: "organization-session"}),
   })
   await recoverBackgroundRuntime()
   expect(mantle.init).toHaveBeenCalledWith({background: true})

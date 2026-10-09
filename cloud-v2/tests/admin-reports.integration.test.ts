@@ -1,19 +1,21 @@
 /**
  * @fileoverview Admin report triage API integration tests.
  *
- * Covers the adminAuth-gated read surface behind the internal admin console:
- * list (filters, context excluded), detail (context + asset rows), artifact
- * payload bytes, and the auth gate itself (401 without credentials, 403 for a
- * non-allowlisted principal).
+ * Covers the read surface behind the internal admin console, gated by the
+ * `organization.incidents.read` capability: list (filters, context excluded),
+ * detail (context + asset rows), artifact payload bytes, and the gate itself
+ * (401 without credentials, 403 for a principal without the capability). An
+ * Organization Admin reaches it with a WorkOS token, and an operator key
+ * (`mak_`, minted here through `createOperatorKey`) with its scope.
  *
- * Admin auth uses the org API-key bearer path: an `msk_…` token is not a JWT,
- * so authenticateBearerToken falls through to the local DB validation without
- * touching WorkOS, and the resulting synthetic `api-key@{keyId}.local` email
- * is allowlisted via CLOUD_CORE_ADMIN_EMAILS. Fully local — no WorkOS needed.
+ * WorkOS authentication is stubbed at the identity-provider boundary. Core's
+ * real admin allowlist, principal resolution, credentials, report APIs,
+ * storage and database are exercised.
  *
- * Prereq: a running Mongo. Defaults to
- * `mongodb://127.0.0.1:27017/mentra-cloud-v2-test`; override via `MONGO_URL`.
- * The test wipes its own collections between cases — do NOT point at a real DB.
+ * Prereq: a running Mongo replica set (operator keys are created in a
+ * transaction). Defaults to `mongodb://127.0.0.1:27017/mentra-cloud-v2-test`;
+ * override via `MONGO_URL`. The test wipes its own collections between cases —
+ * do NOT point at a real DB.
  *
  * Run: `bun test tests/admin-reports.integration.test.ts`
  */
@@ -22,7 +24,7 @@ import crypto from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test, spyOn } from "bun:test";
 
 const STORAGE_DIR = join(tmpdir(), `mentra-admin-reports-test-${process.pid}`);
 const savedAdminEmails = process.env.CLOUD_CORE_ADMIN_EMAILS;
@@ -67,8 +69,11 @@ const directory = Bun.serve({
   process.env.SUPABASE_URL = directory.url.origin;
   process.env.SUPABASE_SERVICE_ROLE_KEY = "local-directory-test-key";
   process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = STORAGE_DIR;
-  // Pin the API-key environment label so minted keys validate deterministically.
+  // Pin the environment label for deterministic local requests.
   process.env.CLOUD_CORE_ENVIRONMENT = "local";
+  process.env.WORKOS_API_KEY = "test-workos-service-secret";
+  process.env.WORKOS_CLIENT_ID = "client_test";
+  process.env.WORKOS_COOKIE_PASSWORD = "test-cookie-password-with-at-least-32-characters";
 }
 
 // eslint-disable-next-line import/first
@@ -78,23 +83,35 @@ import {
   mongoReadinessCheck,
 } from "../packages/core/src/connections/mongo.connection";
 import { createApp } from "../packages/core/src/api/app";
+import * as developerAuth from "../packages/developer-auth/src/index";
 import { ReportModel } from "../packages/core/src/models/report.model";
 import { ReportAssetModel } from "../packages/core/src/models/report-asset.model";
 import { UserModel } from "../packages/core/src/models/user.model";
+import { AccessCredentialModel } from "../packages/core/src/models/access-credential.model";
+import { IdentityLinkModel } from "../packages/core/src/models/identity-link.model";
+import { WorkspaceAuditCounterModel } from "../packages/core/src/models/workspace-audit-counter.model";
+import { WorkspaceAuditEventModel } from "../packages/core/src/models/workspace-audit-event.model";
+import { createOperatorKey } from "../packages/core/src/services/workspaces/credential.service";
+import { resolveWorkosUser } from "../packages/core/src/services/workspaces/identity-link.service";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
-import { DeveloperOrgApiKeyModel } from "../packages/core/src/models/developer-org-api-key.model";
-import { DeveloperApiKeyService } from "../packages/core/src/services/developer-orgs/developer-api-key.service";
 
 const REPORTS_PATH = "http://localhost/api/client/reports";
 const ADMIN_REPORTS_PATH = "http://localhost/api/admin/reports";
 
 let coreApp: ReturnType<typeof createApp>;
 let userAccessToken: string;
-let adminBearer: string;
-let nonAdminBearer: string;
-let adminEmail: string;
+const adminEmail = "admin@example.com";
+const adminBearer = "test-workos-admin-token";
+const nonAdminBearer = "test-workos-developer-token";
+// Same allowlisted address as the admin, but WorkOS has not verified the email.
+const unverifiedAdminBearer = "test-workos-unverified-admin-token";
+let authSpy: ReturnType<typeof spyOn>;
+// Operator keys (`mak_`) minted by an allowlisted, verified Organization Admin.
+let incidentsKey: { token: string; credentialId: string };
+let testingKey: { token: string; credentialId: string };
+const WORKOS_USER_PREFIX = "admin-reports-workos-";
 
 beforeAll(async () => {
   await connectMongo(process.env.MONGO_URL!);
@@ -105,32 +122,72 @@ beforeAll(async () => {
     RefreshTokenModel.syncIndexes(),
     SeenJtiModel.syncIndexes(),
     RevokedJtiModel.syncIndexes(),
-    DeveloperOrgApiKeyModel.syncIndexes(),
+    AccessCredentialModel.init(),
+    IdentityLinkModel.init(),
+    WorkspaceAuditCounterModel.init(),
+    WorkspaceAuditEventModel.init(),
   ]);
   coreApp = createApp({ readinessChecks: [mongoReadinessCheck] });
+  authSpy = spyOn(developerAuth, "authenticateWorkosRequest").mockImplementation(async c => {
+    const token = c.req.header("authorization");
+    const bearers = [adminBearer, nonAdminBearer, unverifiedAdminBearer].map(bearer => `Bearer ${bearer}`);
+    if (!token || !bearers.includes(token)) {
+      return {authenticated: false, reason: "invalid_token"};
+    }
+    return {
+      authenticated: true,
+      user: {
+        id: `${WORKOS_USER_PREFIX}${token.slice("Bearer ".length)}`,
+        email: token === `Bearer ${nonAdminBearer}` ? "developer@example.com" : "admin@example.com",
+        emailVerified: token !== `Bearer ${unverifiedAdminBearer}`,
+      },
+      organizationId: null,
+      accessToken: token.slice("Bearer ".length),
+    };
+  });
 
   const exchanged = await exchange(mintSupabaseJwt("admin-reports-user-1"));
   expect(exchanged.status).toBe(200);
   userAccessToken = ((await exchanged.json()) as { access_token: string }).access_token;
 
-  const apiKeys = new DeveloperApiKeyService();
-  const adminKey = await apiKeys.create("org_admin_reports_test", "admin", "user_admin", "local");
-  const nonAdminKey = await apiKeys.create("org_admin_reports_test", "plain", "user_plain", "local");
-  adminBearer = adminKey.value!;
-  nonAdminBearer = nonAdminKey.value!;
-  adminEmail = `api-key@${adminKey.id}.local`;
+  process.env.CLOUD_CORE_ADMIN_EMAILS = "admin@example.com";
+
+  // Link the stubbed WorkOS people up front, while the directory is healthy: a first sign-in
+  // consults it, and later cases switch it off on purpose.
+  const admin = await resolveWorkosUser({
+    workosUserId: `${WORKOS_USER_PREFIX}${adminBearer}`, email: adminEmail, emailVerified: true, name: null,
+  });
+  for (const [bearer, email, emailVerified] of [
+    [nonAdminBearer, "developer@example.com", true],
+    [unverifiedAdminBearer, adminEmail, false],
+  ] as const) {
+    await resolveWorkosUser({ workosUserId: `${WORKOS_USER_PREFIX}${bearer}`, email, emailVerified, name: null });
+  }
+  const actor = {
+    kind: "user" as const, mentraUserId: admin.mentraUserId, email: adminEmail, emailVerified: true, name: null,
+    isOrganizationAdmin: true,
+  };
+  const mint = async (name: string, scope: "organization.incidents.read" | "organization.testing.read") => {
+    const created = await createOperatorKey(actor, { name, scopes: [scope] });
+    return { token: created.token, credentialId: created.credential.credentialId };
+  };
+  incidentsKey = await mint("admin-reports incidents", "organization.incidents.read");
+  testingKey = await mint("admin-reports testing", "organization.testing.read");
 });
 
 afterAll(async () => {
   if (savedAdminEmails === undefined) delete process.env.CLOUD_CORE_ADMIN_EMAILS;
   else process.env.CLOUD_CORE_ADMIN_EMAILS = savedAdminEmails;
+  authSpy?.mockRestore();
   if (savedAdminDomains === undefined) delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS;
   else process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = savedAdminDomains;
   if (savedServiceKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
   else process.env.SUPABASE_SERVICE_ROLE_KEY = savedServiceKey;
   directory.stop(true);
+  await AccessCredentialModel.deleteMany({ credentialId: { $in: [incidentsKey?.credentialId, testingKey?.credentialId].filter(Boolean) } });
+  await IdentityLinkModel.deleteMany({ subject: { $regex: `^${WORKOS_USER_PREFIX}` } });
+  await UserModel.deleteMany({ tenantId: "workos", tenantUserId: { $regex: `^${WORKOS_USER_PREFIX}` } });
   await UserModel.deleteMany({ tenantUserId: /^internal-fixture-/ });
-  await DeveloperOrgApiKeyModel.deleteMany({ orgId: "org_admin_reports_test" });
   await disconnectMongo();
   await rm(STORAGE_DIR, { recursive: true, force: true });
 });
@@ -159,6 +216,69 @@ describe("admin reports auth gate", () => {
       new Request(ADMIN_REPORTS_PATH, { headers: { authorization: `Bearer ${nonAdminBearer}` } }),
     );
     expect(forbidden.status).toBe(403);
+
+    // An allowlisted address only counts once the identity provider verified it.
+    const unverified = await coreApp.fetch(
+      new Request(ADMIN_REPORTS_PATH, { headers: { authorization: `Bearer ${unverifiedAdminBearer}` } }),
+    );
+    expect(unverified.status).toBe(403);
+  });
+});
+
+describe("admin reports with an operator key", () => {
+  test("a key holding organization.incidents.read reads the list, detail and artifact bytes", async () => {
+    const screenshot = crypto.randomBytes(900);
+    const reportId = await seedReport("operator key crash", screenshot);
+
+    const list = await keyGet(ADMIN_REPORTS_PATH, incidentsKey.token);
+    expect(list.status).toBe(200);
+    const { reports } = (await list.json()) as { reports: Array<{ reportId: string }> };
+    expect(reports.map(r => r.reportId)).toEqual([reportId]);
+
+    const detail = await keyGet(`${ADMIN_REPORTS_PATH}/${reportId}`, incidentsKey.token);
+    expect(detail.status).toBe(200);
+    const { report } = (await detail.json()) as { report: { artifacts: Array<{ artifactId: string; type: string }> } };
+    const shot = report.artifacts.find(a => a.type === "screenshot")!;
+
+    const url = `${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${shot.artifactId}`;
+    const bytes = await keyGet(url, incidentsKey.token);
+    expect(bytes.status).toBe(200);
+    expect(Buffer.from(await bytes.arrayBuffer()).equals(screenshot)).toBe(true);
+    const ranged = await coreApp.fetch(new Request(url, { headers: { authorization: `Bearer ${incidentsKey.token}`, range: "bytes=0-3" } }));
+    expect(ranged.status).toBe(206);
+    expect(Buffer.from(await ranged.arrayBuffer()).equals(screenshot.subarray(0, 4))).toBe(true);
+    const head = await coreApp.fetch(new Request(url, { method: "HEAD", headers: { authorization: `Bearer ${incidentsKey.token}` } }));
+    expect(head.status).toBe(200);
+  });
+
+  test("a key without the scope, or with only another one, is refused on every report route", async () => {
+    const reportId = await seedReport("scoped crash");
+    const detail = await keyGet(`${ADMIN_REPORTS_PATH}/${reportId}`, incidentsKey.token);
+    const { report } = (await detail.json()) as { report: { artifacts: Array<{ artifactId: string }> } };
+
+    for (const path of [ADMIN_REPORTS_PATH, `${ADMIN_REPORTS_PATH}/${reportId}`, `${ADMIN_REPORTS_PATH}/${reportId}/artifacts/${report.artifacts[0].artifactId}`]) {
+      const refused = await keyGet(path, testingKey.token);
+      expect([path, refused.status]).toEqual([path, 403]);
+      expect(await refused.json()).toEqual({ error: "forbidden" });
+    }
+  });
+
+  test("the incidents key cannot write test dispatches, and stops working once its creator is no longer an admin", async () => {
+    const dispatch = await coreApp.fetch(new Request("http://localhost/api/admin/test-dispatches", {
+      method: "POST",
+      headers: { authorization: `Bearer ${incidentsKey.token}`, "content-type": "application/json" },
+      body: "{}",
+    }));
+    expect(dispatch.status).toBe(403);
+
+    expect((await keyGet(ADMIN_REPORTS_PATH, incidentsKey.token)).status).toBe(200);
+    process.env.CLOUD_CORE_ADMIN_EMAILS = "someone-else@example.com";
+    expect((await keyGet(ADMIN_REPORTS_PATH, incidentsKey.token)).status).toBe(401);
+  });
+
+  test("the key is not a WorkOS credential: a tampered secret is 401", async () => {
+    expect((await keyGet(ADMIN_REPORTS_PATH, `${incidentsKey.token}x`)).status).toBe(401);
+    expect((await keyGet(ADMIN_REPORTS_PATH, "mak_local_notakey")).status).toBe(401);
   });
 });
 
@@ -528,7 +648,7 @@ describe("admin reports read surface", () => {
         await res.arrayBuffer();
       }
 
-      // Ranges and HEAD do not bypass the admin gate.
+      // Ranges and HEAD do not bypass the capability gate.
       for (const method of ["GET", "HEAD"]) {
         const anonymous = await fetch(url, { method, headers: { range: "bytes=0-1" } });
         expect(anonymous.status).toBe(401);
@@ -614,7 +734,11 @@ describe("admin reports read surface", () => {
 // === Helpers ===
 
 function adminGet(url: string): Promise<Response> {
-  return coreApp.fetch(new Request(url, { headers: { authorization: `Bearer ${adminBearer}` } }));
+  return keyGet(url, adminBearer);
+}
+
+function keyGet(url: string, bearer: string): Promise<Response> {
+  return coreApp.fetch(new Request(url, { headers: { authorization: `Bearer ${bearer}` } }));
 }
 
 /** Submit a bug report with one log bundle and one screenshot; returns the reportId. */

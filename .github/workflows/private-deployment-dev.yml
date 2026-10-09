@@ -160,6 +160,13 @@ jobs:
           parameters="$RUNNER_TEMP/private-deployment-dev.parameters.json"
           trap 'rm -f "$parameters"' EXIT
           umask 077
+          # ENTERPRISE_DEV_ADMIN_TOKEN is an operator key that works only while its
+          # creator stays allowlisted: operator@private-cloud.local for a key minted
+          # by the installer's bootstrap-admin, api-key@<keyId>.local for an msk_
+          # administrator key. Every deployment keeps both.
+          export CORE_ADMIN_EMAILS="$(printf '%s,operator@private-cloud.local' "${CORE_ADMIN_EMAILS:-}" \
+            | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | grep -v '^$' | sort -u | paste -sd, -)"
           jq -n \
             --arg cloudImage "${{ steps.source.outputs.image }}" \
             --arg registryName "$AZURE_REGISTRY" \

@@ -7,13 +7,17 @@ import {UserModel} from "../../models/user.model"
 import {findUserByEmail} from "../../services/account/gotrue.client"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidRequest} from "../../types/oauth.types"
+import {principalLabel} from "../middleware/principal.middleware"
 
 const app = new Hono<AppEnv>()
 const querySchema = z.object({email: z.string().email().max(320)}).strict()
 
 app.get("/lookup", lookupByEmail)
 
+/** Mounted behind `organization.supportProfiles.read`; refuses a request that somehow has no principal rather than reading anonymously. */
 async function lookupByEmail(c: AppContext) {
+  const principal = c.get("principal")
+  if (!principal) return c.json({error: "unauthorized"}, 401)
   const parsed = querySchema.safeParse({email: c.req.query("email")})
   if (!parsed.success) throw new InvalidRequest("a valid email is required")
 
@@ -21,7 +25,7 @@ async function lookupByEmail(c: AppContext) {
   const user = identity ? await UserModel.findOne({tenantId: "mentra", tenantUserId: identity.id}).lean() : null
   const targetId = user?.mentraUserId ?? "email_lookup_miss"
   await AdminActionAuditLogModel.create({
-    adminId: c.var.developer?.email || c.var.developer?.developerId || "admin",
+    adminId: principalLabel(principal),
     action: "support_profile.read",
     targetType: "user_support_profile",
     targetId,

@@ -13,6 +13,10 @@ export const navigationPackageName = "com.mentra.navigation" // "Mentra Map"
 export const mentraCallPackageName = "com.mentra.call"
 export const linkLingoPackageName = "com.mentra.link"
 
+// Build-selected Stores cannot be replaced by organization-managed userland.
+// Shared by deployment validation and the host's install-authority setup.
+export const BUNDLED_STORE_MINIAPP_PACKAGES = ["com.mentra.store"] as const
+
 /** True when this binary is the China (com.mentra.mentra.cn) build. */
 export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
 
@@ -39,8 +43,14 @@ export const shouldHideMiniapp = (
   return false
 }
 
-// these apps cannot be uninstalled:
-export const SYSTEM_APPS = [
+/**
+ * Host utilities that should not appear in the glasses' launch menu.
+ *
+ * This is deliberately separate from SYSTEM identity: bundled glasses-facing
+ * miniapps such as Notes and Translation are SYSTEM-owned but remain valid
+ * menu choices.
+ */
+export const GLASSES_MENU_EXCLUDED_APPS = [
   cameraPackageName,
   galleryPackageName,
   settingsPackageName,

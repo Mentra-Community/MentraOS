@@ -11,7 +11,8 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import {decideDevOpenRoute, engine} from "@mentra/engine"
-import {registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
+import {assertDevBuildAllowed, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
+import {showDevBuildError} from "@/utils/devMiniappAlerts"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@mentra/engine"
@@ -69,6 +70,17 @@ export default function MiniappDeveloperUrlScreen() {
   }
 
   const launchDevMiniapp = async (entry: RecentDevApp) => {
+    try {
+      await openDevMiniapp(entry)
+    } catch (error) {
+      showDevBuildError(error)
+    }
+  }
+
+  const openDevMiniapp = async (entry: RecentDevApp) => {
+    // A dev build is unsigned code under its package name, refused while that
+    // package is installed with a publisher signature.
+    assertDevBuildAllowed(entry.packageName)
     // One round trip: reachability + manifest. Avoids a second fetch
     // for the permission-gate input.
     const launchResult = await decideDevOpenRoute(entry.packageName, entry.url)
@@ -87,6 +99,7 @@ export default function MiniappDeveloperUrlScreen() {
     }
 
     const packageName = launchResult.manifest.packageName || entry.packageName
+    assertDevBuildAllowed(packageName)
     const appName = launchResult.manifest.name || entry.name
     const manifestPermissions: AppletPermission[] = Array.isArray(launchResult.manifest.permissions)
       ? (launchResult.manifest.permissions as AppletPermission[])

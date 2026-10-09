@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { relative, resolve } from "node:path";
+import { workspaceInviteRedirect } from "./lib/workspace-invite-link";
 
 const coreUrl = process.env.CORE_URL ?? process.env.BUN_PUBLIC_CORE_URL ?? "http://localhost:3000";
 const distRoot = resolve(import.meta.dir, "../dist");
@@ -10,6 +11,7 @@ async function proxyCoreRequest(req: Request, upstreamCoreUrl: string) {
   const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, upstreamCoreUrl);
   const headers = new Headers(req.headers);
   headers.delete("host");
+  headers.set("x-mentra-public-origin", sourceUrl.origin);
 
   const response = await fetch(upstreamUrl, {
     method: req.method,
@@ -63,6 +65,9 @@ if (import.meta.main) {
 
 async function serveBuiltApp(req: Request): Promise<Response> {
   const url = new URL(req.url);
+  // A Developer Console-style invitation link: the app reads the query form (its assets are relative).
+  const invite = workspaceInviteRedirect(url);
+  if (invite) return new Response(null, { status: 302, headers: { location: invite, "cache-control": "no-store" } });
   if (url.pathname !== "/") {
     let decodedPath: string;
     try {

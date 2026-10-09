@@ -35,7 +35,8 @@ test("PR and release producer links preserve exact current-platform scopes", asy
   expect(readTestRunListScope(new URL(url).search)).toEqual({repository: "Mentra-Community/MentraOS", channel: "pr", pr: "123", headSha: sha, archiveSha256: digest, routineId: "coverage", platform});
  }
  const [block] = await coordinatedRoutineLinks({BRANCH: "dev", REPOSITORY: "Mentra-Community/MentraOS", FINALIZE_RESULT: "success", RELEASE_IDENTITY: "3.3.0-dev.223", SHA: sha, TEST_RUN_INGEST_TOKEN: "synthetic", MAC_URL: "https://example.com/mac.zip"},
-  async () => new Response(JSON.stringify({routines: [{routineId: "coverage", platform: "ios-on-mac", definitionRevision: sha, definition: {id: "coverage", title: "Coverage", platforms: ["ios-on-mac"], execution: {module: "routine.ts", export: "createRoutine"}}}]})),
+  // Core's current routine source inventory: one Harness revision and the routine IDs present at it.
+  async () => new Response(JSON.stringify({routineRevision: sha, routines: [{routineId: "coverage"}]})),
   {select: async () => ({archive: {url: "https://example.com/mac.zip", sha256: digest}})});
  const match = block.text.text.match(/<(https:[^|]+)\|Results for this exact build>/)!;
  expect(readTestRunListScope(new URL(match[1]).search)).toEqual({repository: "Mentra-Community/MentraOS", channel: "dev", headSha: sha, archiveSha256: digest, routineId: "coverage", platform: "ios-on-mac"});

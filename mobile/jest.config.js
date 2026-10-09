@@ -2,6 +2,10 @@
 module.exports = {
   preset: "jest-expo",
   setupFilesAfterEnv: ["<rootDir>/jest.setup.js"],
+  // Keep workspace source imports on the app's dependency graph. Bun gives
+  // modules/engine its own physical node_modules links; resolving those first
+  // would bypass the native-module mocks installed from this root.
+  moduleDirectories: ["<rootDir>/node_modules", "node_modules"],
   moduleNameMapper: {
     "^@babel/runtime/(.*)$": "<rootDir>/node_modules/@babel/runtime/$1",
     "^@/(.*)$": "<rootDir>/src/$1",

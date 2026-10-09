@@ -14,7 +14,10 @@ import {routineDispatchIntentSchema} from '../../types/routine-dispatch.types';
 import {portableRoutineSelectionSchema, type StoredRoutineJob} from '../../types/routine-job.types';
 import {LaneRestorationService} from "../../services/lane-restoration.service";
 
-/** Results and delivery projections only; the host controller owns lanes and repairs. */
+/**
+ * Results and delivery projections only; the host controller owns lanes and repairs. Mounted only behind Core
+ * admin.api's `organization.testing.*` gates: read to look, manage to write (the rerun routes).
+ */
 export function createTestRunAdminApi(health = new TestHostHealthService(), history = new TestHistoryService(),
   results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService()) {
   const app = new Hono<AppEnv>();

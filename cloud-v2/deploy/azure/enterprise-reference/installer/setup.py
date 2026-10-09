@@ -1002,41 +1002,93 @@ def execute_admin_script(config, current, owner, script):
     return result
 
 
+# The identity installer/admin-key.ts mints the operator key as; keep both in sync.
+# An operator key works only while its creator's email is in CLOUD_CORE_ADMIN_EMAILS.
+OPERATOR_EMAIL = 'operator@private-cloud.local'
+# The installer mints mak_ operator keys. An msk_ administrator key from an earlier
+# installer is an operator key too, created by its own address, api-key@<keyId>.local.
+OPERATOR_KEY = re.compile(r'(mak|msk)_local_([0-9A-HJKMNP-TV-Z]{26})\.[A-Za-z0-9_-]{43}')
+CORE_REVISION_TIMEOUT_SECONDS = 900
+
+
+def operator_key_creator(prefix, key_id):
+    return OPERATOR_EMAIL if prefix == 'mak' else 'api-key@' + key_id + '.local'
+
+
+def core_admin_emails(current):
+    return next((entry.get('value', '') for entry in current['properties']['template']['containers'][0]['env']
+                 if entry['name'] == 'CLOUD_CORE_ADMIN_EMAILS'), '')
+
+
+def admin_allowlist(*values):
+    emails = {email.strip() for value in values for email in value.split(',')}
+    return ','.join(sorted(email for email in emails if email))
+
+
+def working_key(credential, allowlist):
+    """The saved key's creator when its creator is allowlisted, so Core accepts it; otherwise None."""
+    key = OPERATOR_KEY.fullmatch(credential.get('value', ''))
+    if not key or credential.get('id') != key.group(2):
+        return None
+    creator = operator_key_creator(key.group(1), key.group(2))
+    listed = {email.strip().lower() for email in allowlist.split(',')}
+    return creator if creator.lower() in listed else None
+
+
+def wait_for_core_allowlist(config, allowlist):
+    import time
+    deadline = time.monotonic() + CORE_REVISION_TIMEOUT_SECONDS
+    while True:
+        current = azure(config, 'containerapp', 'show', '--name', config['coreName'], '--resource-group', config['resourceGroup'])
+        properties = current['properties']
+        if (properties.get('latestReadyRevisionName') == properties.get('latestRevisionName')
+                and core_admin_emails(current) == allowlist):
+            return current
+        if time.monotonic() >= deadline:
+            raise SetupError('Core has not finished rolling out the administrator allowlist. Retry bootstrap-admin.')
+        time.sleep(10)
+
+
 def bootstrap_admin(args, directory, config, state):
     # The administrator key lives in Key Vault. Core's own journal returns the
     # same key if this is retried before the Key Vault write completes.
     if not state.get('outputs', {}).get('coreOrigin'):
         raise SetupError('Deploy Core before creating its administrator key')
     current = azure(config, 'containerapp', 'show', '--name', config['coreName'], '--resource-group', config['resourceGroup'])
+    deployed = core_admin_emails(current)
+    allowlist = admin_allowlist(deployed, config.get('coreAdminEmails', ''), OPERATOR_EMAIL)
+    # Preserve the setting in installer configuration so later setup runs retain it.
+    if config.get('coreAdminEmails', '') != allowlist:
+        update_configuration(directory, config, state, coreAdminEmails=allowlist)
+    if deployed != allowlist:
+        # Core mints an operator key only for an Organization Admin, so the
+        # installer identity must be allowlisted in the revision that runs it.
+        azure(config, 'containerapp', 'update', '--name', config['coreName'], '--resource-group', config['resourceGroup'],
+              '--set-env-vars', 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
+        current = wait_for_core_allowlist(config, allowlist)
     saved = vault_get(config, ADMIN_KEY_SECRET)
-    if saved:
-        credential = {'id': (saved.get('tags') or {}).get('keyId', ''), 'value': saved.get('value', '')}
-    else:
+    credential = {'id': (saved.get('tags') or {}).get('keyId', ''), 'value': saved.get('value', '')} if saved else {}
+    creator = working_key(credential, allowlist)
+    if not creator:
+        # No key yet, or a saved key whose creator is not allowlisted, which Core does not accept.
+        # Core returns the journaled key while it still works, and mints a mak_ key otherwise.
         result = execute_admin_script(config, current, state['owner'], (ROOT / 'installer/admin-key.ts').read_bytes())
         match = re.search(r'MENTRA_ADMIN_BEGIN(.*?)MENTRA_ADMIN_END', result.stdout, re.S)
         if not match:
             raise SetupError('Core admin bootstrap did not return a credential. Check the selected Core revision; raw output withheld.')
         credential = json.loads(match.group(1))
-    if not re.fullmatch(r'[0-9A-HJKMNP-TV-Z]{26}', credential.get('id', '')) or not credential.get('value', '').startswith('msk_local_'):
-        raise SetupError('Core returned an invalid administrator credential')
-    if not saved:
+        creator = working_key(credential, allowlist)
+        if not creator:
+            raise SetupError('Core returned an invalid administrator credential')
+    if not saved or saved.get('value') != credential['value']:
         vault_set(config, ADMIN_KEY_SECRET, credential['value'], keyId=credential['id'])
-    email = 'api-key@' + credential['id'] + '.local'
-    values = next((entry.get('value', '') for entry in current['properties']['template']['containers'][0]['env']
-                   if entry['name'] == 'CLOUD_CORE_ADMIN_EMAILS'), '')
-    emails = sorted(set(filter(None, (values + ',' + config.get('coreAdminEmails', '') + ',' + email).split(','))))
-    allowlist = ','.join(emails)
-    if allowlist != values:
-        # Preserve the setting in installer configuration so later resume retains it.
-        update_configuration(directory, config, state, coreAdminEmails=allowlist)
-        azure(config, 'containerapp', 'update', '--name', config['coreName'], '--resource-group', config['resourceGroup'],
-              '--set-env-vars', 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
     check_admin_access(state['outputs']['coreOrigin'], credential['value'])
     checkpoint(directory, state, state['phase'], adminKey={'keyVault': config['keyVaultName'], 'secret': ADMIN_KEY_SECRET,
                                                             'keyId': credential['id'], 'verifiedAt': now()})
     return {'status': 'admin_key_ready', 'keyVault': config['keyVaultName'], 'secret': ADMIN_KEY_SECRET,
             'read': admin_key_command(config),
-            'next': 'Use this key as MENTRA_ADMIN_TOKEN to retrieve feedback reports.'}
+            'next': 'Use this key as MENTRA_ADMIN_TOKEN to retrieve feedback reports. '
+                    'It works while ' + creator + ' stays in coreAdminEmails.'}
 
 
 def admin_key_command(config):

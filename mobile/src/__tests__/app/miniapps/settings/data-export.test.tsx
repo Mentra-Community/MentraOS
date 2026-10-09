@@ -163,7 +163,7 @@ describe("authentication export follows the current auth session", () => {
     ["Copy", copiedExport],
     ["Share", sharedExport],
   ])("%s exports the signed-in profile without the access token", async (_path, exportPayload) => {
-    // Shape produced by AuthContext.toMentraSession for a workspace account.
+    // Shape produced by AuthContext.toMentraSession for an organization account.
     const user: MentraAuthUser = {
       id: "workspace:synthetic-deployment:https%3A%2F%2Fissuer.example.test:subject-1",
       email: "export-user@example.test",

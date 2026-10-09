@@ -1,7 +1,7 @@
 /**
  * @fileoverview MeetingModule — phone-native meeting (ACS Teams).
  *
- * Workspace credentials belong to the host. Consumer token pass-through remains
+ * Organization credentials belong to the host. Consumer token pass-through remains
  * available for older hosts and Call backends. Never persist credentials.
  */
 

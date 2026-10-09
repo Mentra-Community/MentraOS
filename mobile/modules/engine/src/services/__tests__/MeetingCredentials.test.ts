@@ -81,7 +81,7 @@ describe("host-owned meeting creation", () => {
     await expect(createMeeting(options)).rejects.toThrow("Consent required")
     expect(createTeamsMeeting).not.toHaveBeenCalled()
   })
-  test("does not send an old workspace's token after an authentication change", async () => {
+  test("does not send an old organization's token after an authentication change", async () => {
     setAuth({
       getTeamsToken: async () => {
         setAuth({})
@@ -91,7 +91,7 @@ describe("host-owned meeting creation", () => {
     await expect(createMeeting(options)).rejects.toThrow("Deployment changed")
     expect(createTeamsMeeting).not.toHaveBeenCalled()
   })
-  test("rejects a creation result after a workspace switch", async () => {
+  test("rejects a creation result after an organization switch", async () => {
     createTeamsMeeting.mockImplementation(async () => {
       setAuth({})
       return {
@@ -202,11 +202,11 @@ describe("host-owned meeting credentials", () => {
       expect(getMeetingCredential).not.toHaveBeenCalled()
     })
   for (const reuseAuth of [false, true])
-    test(`does not send an old workspace's subject after switching (reuse auth: ${reuseAuth})`, async () => {
+    test(`does not send an old organization's subject after switching (reuse auth: ${reuseAuth})`, async () => {
       setAuth({
         getTeamsToken: async () => {
           setAuth(reuseAuth ? auth : {})
-          return "old-workspace-subject"
+          return "old-organization-subject"
         },
       })
       await expect(meetingCredential()).rejects.toThrow("Deployment changed")
@@ -270,7 +270,7 @@ describe("meeting identity preflight", () => {
     })
     await expect(meetingIdentity()).rejects.toThrow("Consent required")
   })
-  test("rejects an account lookup that outlives its workspace", async () => {
+  test("rejects an account lookup that outlives its organization", async () => {
     setAuth({
       getMeetingAccount: async () => {
         setAuth({})

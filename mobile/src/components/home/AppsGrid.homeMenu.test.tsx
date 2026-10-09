@@ -25,6 +25,7 @@ jest.mock("@mentra/engine", () => ({
   useStart: () => mockStart,
   useStop: () => jest.fn(),
   useSetForeground: () => jest.fn(),
+  isSystemMiniappPackage: () => false,
   engine: {
     miniapps: {
       list: () => mockApps,

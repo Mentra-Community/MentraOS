@@ -14,7 +14,7 @@ export default function IosMiniappSettings() {
   const [showIosNotify, setShowIosNotify] = useSetting<boolean>(SETTINGS.show_notify_ios.key)
   if (Platform.OS !== "ios") return null
   const callBuildEnabled = isIosCallBuildEnabled()
-  const workspace = deploymentStore.getActive().kind === "workspace"
+  const organization = deploymentStore.getActive().kind === "organization"
 
   const updateSetting = async (value: boolean, setSetting: typeof setShowIosCall) => {
     const result = await setSetting(value)
@@ -29,14 +29,14 @@ export default function IosMiniappSettings() {
         testID="debug-show-mentra-call-ios"
         label={translate("debugSettings:showMentraCallIos")}
         subtitle={translate(
-          workspace
-            ? "debugSettings:mentraCallWorkspacePolicy"
+          organization
+            ? "debugSettings:mentraCallOrganizationPolicy"
             : callBuildEnabled
               ? "debugSettings:mentraCallBuildOverride"
               : "debugSettings:showMentraCallIosSubtitle",
         )}
-        value={workspace ? isDeploymentManagedCall() : callBuildEnabled || showIosCall}
-        disabled={workspace || callBuildEnabled}
+        value={organization ? isDeploymentManagedCall() : callBuildEnabled || showIosCall}
+        disabled={organization || callBuildEnabled}
         onValueChange={(value) => void updateSetting(value, setShowIosCall)}
       />
       <ToggleSetting

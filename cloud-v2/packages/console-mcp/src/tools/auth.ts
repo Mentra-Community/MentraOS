@@ -10,7 +10,7 @@ export function registerAuthTools(server: McpServer, config: ConsoleMcpConfig): 
     {
       description:
         "Report the configured Cloud V2 core URL and capability groups (no secrets). " +
-        "Pass verify: true to also call /api/admin/me and confirm the token is admin-allowlisted.",
+        "Pass verify: true to also call /api/admin/me and list the organization capabilities the token holds.",
       inputSchema: {
         verify: z.boolean().optional().describe("Also verify the token against /api/admin/me"),
       },
@@ -21,15 +21,16 @@ export function registerAuthTools(server: McpServer, config: ConsoleMcpConfig): 
         capabilities: config.capabilities,
         hints: {
           reports:
-            "Set MENTRA_ADMIN_TOKEN: an org API key (msk_...) allowlisted via CLOUD_CORE_ADMIN_EMAILS, " +
-            "or a WorkOS access token of an admin user. msk_ keys are env-pinned — match MENTRA_CORE_URL/MENTRA_ENV.",
+            "Set MENTRA_ADMIN_TOKEN: an operator key with the organization.incidents.read scope (mak_..., or an " +
+            "allowlisted msk_... admin key), or a WorkOS access token of an Organization Admin. Operator keys are " +
+            "env-pinned — match MENTRA_CORE_URL/MENTRA_ENV.",
         },
       };
 
       if (verify && config.capabilities.reports) {
         try {
           const me = await createAdminReportsClient(config).me();
-          status.verified = { admin: me.admin, user: me.user };
+          status.verified = { user: me.user, credential: me.credential, capabilities: me.organization.capabilities };
         } catch (error) {
           status.verified = { error: error instanceof Error ? error.message : String(error) };
         }

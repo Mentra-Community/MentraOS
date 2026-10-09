@@ -15,7 +15,7 @@ export const isSuperModeMiniappAllowed = (packageName: string): boolean =>
 
 export function isDeploymentManagedCall(deployment: ActiveDeployment = deploymentStore.getActive()): boolean {
   return (
-    deployment.kind === "workspace" &&
+    deployment.kind === "organization" &&
     deployment.manifest.features.nativeMeetings &&
     deployment.manifest.miniapps.managed.some((entry) => entry.packageName === mentraCallPackageName)
   )
@@ -25,7 +25,7 @@ export function isDeploymentManagedCall(deployment: ActiveDeployment = deploymen
 export const shouldSkipMiniappInstall = (packageName: string): boolean => {
   if (!isSuperModeMiniappAllowed(packageName)) return true
   const deployment = deploymentStore.getActive()
-  if (packageName === mentraCallPackageName && deployment.kind === "workspace") {
+  if (packageName === mentraCallPackageName && deployment.kind === "organization") {
     return !isDeploymentManagedCall(deployment)
   }
   return shouldHideByPolicy(packageName, undefined, {
@@ -35,14 +35,14 @@ export const shouldSkipMiniappInstall = (packageName: string): boolean => {
 }
 
 /**
- * Also gate cached home/All Apps entries on the verified workspace release. A
+ * Also gate cached home/All Apps entries on the verified organization release. A
  * scanned developer Call stands in for it only in super mode, matching the
  * engine's `isDevMiniappAllowed`.
  */
 export const shouldHideMiniapp = (packageName: string, version?: string, options?: {dev?: boolean}): boolean => {
   if (shouldSkipMiniappInstall(packageName)) return true
   const deployment = deploymentStore.getActive()
-  if (packageName !== mentraCallPackageName || deployment.kind !== "workspace") return false
+  if (packageName !== mentraCallPackageName || deployment.kind !== "organization") return false
   if (options?.dev || version?.startsWith("dev-")) return engine.settings.get(SETTINGS.super_mode.key) !== true
   const entry = deployment.manifest.miniapps.managed.find((item) => item.packageName === packageName)
   if (!entry || (version !== undefined && version !== entry.version)) return true
@@ -51,7 +51,7 @@ export const shouldHideMiniapp = (packageName: string, version?: string, options
     !appRegistry.getInstalledVersions(packageName).includes(entry.version) ||
     identity?.source !== "deployment_manifest" ||
     identity.deploymentId !== deployment.manifest.deploymentId ||
-    identity.deploymentOrigin !== deployment.workspaceOrigin ||
+    identity.deploymentOrigin !== deployment.organizationOrigin ||
     identity.bundleSha256 !== entry.sha256.toLowerCase()
   )
 }

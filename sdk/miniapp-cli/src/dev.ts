@@ -20,11 +20,6 @@ const USB_TUNNEL_POLL_MS = 5_000;
 /** Where `adb reverse` publishes the laptop from the phone's point of view. */
 const USB_LOOPBACK_HOST = '127.0.0.1';
 
-export interface DevAttestationInput {
-  packageName: string;
-  devServerUrl: string;
-}
-
 export interface DevOptions {
   cwd?: string;
   qrOutput?: string;
@@ -42,9 +37,6 @@ export interface DevOptions {
    * this to false; the sidecar still forwards console logs.
    */
   hotReload?: boolean;
-  signDevAttestation?: (
-    input: DevAttestationInput,
-  ) => string | Promise<string | null | undefined> | null | undefined;
 }
 
 function contentTypeFor(path: string): string {
@@ -294,23 +286,15 @@ export async function dev(options: DevOptions = {}): Promise<void> {
 
   const mdnsHost = getMdnsHostname();
 
-  const buildDevUrl = async (ip: string): Promise<string> => {
+  // The phone runs the dev build under `package` (the manifest package name)
+  // and applies its installed-signer rule to it; the QR carries no credential.
+  const buildDevUrl = (ip: string): string => {
     const devServerUrl = `http://${ip}:${port}`;
     const base = `miniapp://dev?url=${encodeURIComponent(devServerUrl)}&name=${encodeURIComponent(name)}&package=${encodeURIComponent(packageName)}`;
     const withDevPort = sidecarPort ? `${base}&dev=${sidecarPort}` : base;
     // mDNS hint lets the phone retry via ComputerName.local when the raw IP
     // goes stale after a Wi-Fi/DHCP change — same QR, new address under the hood.
-    const withMdns = mdnsHost ? `${withDevPort}&mdns=${encodeURIComponent(mdnsHost)}` : withDevPort;
-    if (!options.signDevAttestation) return withMdns;
-
-    try {
-      const attestation = await options.signDevAttestation({ packageName, devServerUrl });
-      if (!attestation) return withMdns;
-      return `${withMdns}&attestation=${encodeURIComponent(attestation)}`;
-    } catch (error) {
-      console.warn(`Warning: could not sign dev URL (${(error as Error).message}). Miniapp auto-auth will be unavailable.`);
-      return withMdns;
-    }
+    return mdnsHost ? `${withDevPort}&mdns=${encodeURIComponent(mdnsHost)}` : withDevPort;
   };
 
   const printBanner = (): void => {
@@ -363,7 +347,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   // non-null here: the only path that leaves it null exits above unless the
   // tunnel came up.
   const devHost = usbActive ? USB_LOOPBACK_HOST : lanIp!;
-  const devUrl = await buildDevUrl(devHost);
+  const devUrl = buildDevUrl(devHost);
   await emitQR(devUrl, devHost);
 
   // Confirm the reverse mappings survive. They are dropped on unplug, on
@@ -419,7 +403,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
         if (mdnsHost) {
           console.log(`mDNS: ${mdnsHost}\n`);
         }
-        const newDevUrl = await buildDevUrl(newIp);
+        const newDevUrl = buildDevUrl(newIp);
         await emitQR(newDevUrl, newIp);
       } finally {
         ipCheckInFlight = false;

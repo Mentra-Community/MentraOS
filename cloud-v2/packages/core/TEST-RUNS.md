@@ -62,7 +62,11 @@ offsets; unexecuted steps have no invented timestamps or recording locations.
 
 ## Admin dispatch and reading
 
-Admin endpoints require the existing admin authentication:
+Admin endpoints need an organization capability: `organization.testing.read` for
+reads and `organization.testing.manage` for anything that writes (dispatches,
+reruns, routine preferences). An Organization Admin's console session or WorkOS
+token holds both; an operator key holds the scopes it was created with.
+
 
 - `GET /api/admin/test-routines`: current enrolled executable definitions.
 - `GET /api/admin/test-builds`: published build inventory for the requested source

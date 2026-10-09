@@ -6,11 +6,21 @@ import * as Calendar from "expo-calendar"
 import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
-import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
+import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
-import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, linkLingoPackageName, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
+import {
+  BUNDLED_MINIAPPS,
+  BUNDLED_SYSTEM_MINIAPP_PACKAGES,
+  BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
+} from "@/generated/bundledMiniapps"
+import {
+  BUNDLED_STORE_MINIAPP_PACKAGES,
+  CHINA_HIDDEN_APPS,
+  linkLingoPackageName,
+  mentraCallPackageName,
+  notifyPackageName,
+} from "@/constants/miniapps"
 import {IosMiniappVisibility} from "@/services/miniapps/IosMiniappVisibility"
 import {isSuperModeMiniappAllowed, shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
 import {storage} from "@/utils/storage"
@@ -19,9 +29,10 @@ import {buildSpokenNotification} from "@/services/notifications/spokenNotificati
 import {deploymentCloudConfigValues} from "@/services/cloudClient"
 import {requestPhoneQrScan} from "@/services/qrScanRequest"
 import {isPhoneWifiEnabled, requestPhoneWifiEnable} from "@/services/phoneWifi"
-import {engine, BgTimer, SETTINGS} from "@mentra/engine"
+import {engine, BgTimer, isSystemMiniappPackage, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
+  getDevAppRecords,
   audioPlaybackService,
   displayProcessor,
   gallerySyncService,
@@ -29,10 +40,11 @@ import {
   localMiniappRuntime,
   micStateCoordinator,
   miniappLauncher,
+  isHostTrustedSystemMiniapp,
   offlineSpeechModelService,
   saveLocalAppRunningState,
   ttsModelManager,
-  useAppStatusStore,
+  shouldActivateBundledVersion,
 } from "@mentra/engine-host-internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
@@ -40,9 +52,18 @@ import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 import {showAlert} from "@/utils/AlertUtils"
+import type {GlassesMenuItem} from "@/utils/glassesMenu"
 import {translate} from "@/i18n"
 import {Buffer} from "@craftzdog/react-native-buffer"
 import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployment"
+import {PERSISTED_USER_ID_PREFIX} from "@/services/deployment/legacyPersistedNames"
+
+// Build-time Store trust table. OEM builds may add Store packages here and
+// assign SYSTEM bundle ownership below; the same list configures install
+// authority and invisible update scheduling so multiple Stores can coexist.
+const BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS = Object.fromEntries(
+  BUNDLED_SYSTEM_MINIAPP_PACKAGES.map((packageName) => [packageName, "com.mentra.store"]),
+)
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
@@ -132,9 +153,7 @@ class MantleManager {
   private constructor() {}
 
   private isNotifyRunning(): boolean {
-    return useAppStatusStore
-      .getState()
-      .apps.some((miniapp) => miniapp.packageName === notifyPackageName && miniapp.running)
+    return engine.miniapps.list().some((miniapp) => miniapp.packageName === notifyPackageName && miniapp.running)
   }
 
   /**
@@ -411,39 +430,39 @@ class MantleManager {
     // start the runtime. The remaining work below is Mentra-app UI/v1-cloud
     // startup, not an island configuration seam.
     const deployment = deploymentStore.getActive()
-    const workspaceAuth = deployment.kind === "workspace" ? createDeploymentAuthProvider(deployment) : null
+    const organizationAuth = deployment.kind === "organization" ? createDeploymentAuthProvider(deployment) : null
     engine.configure({
-      auth: workspaceAuth
+      auth: organizationAuth
         ? {
             getMeetingAccount: async () => {
-              const session = await workspaceAuth.getSession()
-              if (!session) throw new Error("Sign in to your workspace to use Teams")
+              const session = await organizationAuth.getSession()
+              if (!session) throw new Error("Sign in to your organization to use Teams")
               const {displayName, email} = session.identity
               return {displayName, email}
             },
             getTeamsToken: async () => {
               if (deployment.manifest.auth.mode !== "microsoft-entra") {
-                throw new Error("This workspace does not have a Microsoft Entra identity")
+                throw new Error("This organization does not have a Microsoft Entra identity")
               }
-              return workspaceAuth.getAccessToken({scopes: deployment.manifest.auth.teamsScopes})
+              return organizationAuth.getAccessToken({scopes: deployment.manifest.auth.teamsScopes})
             },
             getSubjectToken: async () => ({
-              token: await workspaceAuth.getAccessToken({
+              token: await organizationAuth.getAccessToken({
                 scopes:
-                  deployment.kind === "workspace" && deployment.manifest.auth.mode === "microsoft-entra"
+                  deployment.kind === "organization" && deployment.manifest.auth.mode === "microsoft-entra"
                     ? deployment.manifest.auth.sessionScopes
                     : [],
               }),
               type: "oidc",
             }),
             getUserId: async () => {
-              const current = await workspaceAuth.getSession()
-              if (!current) throw new Error("engine.configure: no workspace identity available")
+              const current = await organizationAuth.getSession()
+              if (!current) throw new Error("engine.configure: no organization identity available")
               const {identity} = current
-              return `workspace:${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
+              return `${PERSISTED_USER_ID_PREFIX}${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
             },
             onStateChange: (callback) => ({
-              unsubscribe: workspaceAuth.onStateChange((session) =>
+              unsubscribe: organizationAuth.onStateChange((session) =>
                 callback(session ? "SIGNED_IN" : "SIGNED_OUT", session ? {token: session.accessToken ?? null} : null),
               ),
             }),
@@ -499,7 +518,16 @@ class MantleManager {
           },
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
-      config: {...deploymentCloudConfigValues(deployment), isLocalMiniappAllowed: isSuperModeMiniappAllowed},
+      config: {
+        ...deploymentCloudConfigValues(deployment),
+        isLocalMiniappAllowed: isSuperModeMiniappAllowed,
+        bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
+        bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
+        bundledSystemMiniappStoreOwners: BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS,
+        bundledSystemMiniappPublisherKeys: BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
+        isMiniappAvailable: (packageName, mode) =>
+          mode === "background" || !BUNDLED_STORE_MINIAPP_PACKAGES.some((store) => store === packageName),
+      },
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
@@ -639,6 +667,7 @@ class MantleManager {
     // Remove all event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
+    storeUpdateScheduler.stop()
     this.activePhoneNotificationId = null
 
     // Spoken notifications: a queued summary would otherwise synthesize and play
@@ -711,8 +740,8 @@ class MantleManager {
     const deployment = deploymentStore.getActive()
     const isCurrent = () => generation === this.miniappGeneration && deploymentStore.getActive() === deployment
 
-    // Remove previous workspace releases before restoring consumer bundles,
-    // including an identical bundled release adopted by a workspace.
+    // Remove previous organization releases before restoring consumer bundles,
+    // including an identical bundled release adopted by an organization.
     if (!background) await deploymentManagedMiniappSync.sync(deployment)
     if (!isCurrent()) return
 
@@ -730,13 +759,10 @@ class MantleManager {
       if (!isCurrent()) return
     }
 
-    // Then reconcile the admin-managed preinstall registry from Cloud V2. This
-    // lets Core move users to newer bundled miniapp releases without shipping a
-    // new mobile binary.
-    if (!background && deploymentStore.getActive().kind === "consumer") {
-      await preinstalledMiniappSync.sync()
-      if (!isCurrent()) return
-    }
+    // Store packages run only as background update workers. Clear any old
+    // preview UI/autostart state without interrupting an active maintenance action.
+    await this.prepareBackgroundStores()
+    if (!isCurrent()) return
 
     // Region-restricted miniapps must not surface or autostart from an old install.
     this.hidePlatformBlockedMiniapps()
@@ -751,6 +777,40 @@ class MantleManager {
     await miniappLauncher
       .autostartLocalMiniapps()
       .catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
+    if (!isCurrent()) return
+
+    // Restore user sessions before the first check so updates defer for apps
+    // the user left running. Only schedule Stores allowed by this deployment.
+    const installed = await appRegistry.getInstalledMiniapps({includeBackgroundOnly: true})
+    if (!isCurrent()) return
+    void storeUpdateScheduler.start(
+      BUNDLED_STORE_MINIAPP_PACKAGES.filter((packageName) => installed.some((app) => app.packageName === packageName)),
+    )
+  }
+
+  private async prepareBackgroundStores(): Promise<void> {
+    for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
+      engine.miniapps.setHiddenStatus(packageName, true)
+    }
+
+    const menuItems = engine.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | null
+    const visibleMenuItems = menuItems?.filter(
+      (item) => !BUNDLED_STORE_MINIAPP_PACKAGES.some((packageName) => packageName === item.packageName),
+    )
+    if (menuItems && visibleMenuItems && visibleMenuItems.length !== menuItems.length) {
+      await engine.settings.set(SETTINGS.menu_apps.key, visibleMenuItems)
+    }
+    for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
+      const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
+      if (app?.foregrounded) engine.miniapps.clearForeground()
+      // A user-started context from an older preview must not survive. An
+      // invocation-owned background context may already be applying an update.
+      if (app?.running || miniappLauncher.isProjectedRunning(packageName)) {
+        await miniappLauncher.stop(packageName)
+      }
+      saveLocalAppRunningState(packageName, false)
+    }
+    await engine.miniapps.refresh()
   }
 
   /**
@@ -773,7 +833,7 @@ class MantleManager {
       try {
         const asset = Asset.fromModule(module)
         const parsed = parseBundledMiniappName(asset.name)
-        // iOS Call uses its visibility controller (consumer) or managed sync (workspace).
+        // iOS Call uses its visibility controller (consumer) or managed sync (organization).
         if (Platform.OS === "ios" && parsed?.packageName === mentraCallPackageName) continue
         await this.installBundledMiniapp(asset)
       } catch (error) {
@@ -784,13 +844,13 @@ class MantleManager {
 
   private async prepareIosCall() {
     const deployment = deploymentStore.getActive()
-    if (deployment.kind === "workspace") {
+    if (deployment.kind === "organization") {
       // Managed releases must retain manifest ownership and digest verification;
-      // the consumer binary's ZIP is outside the workspace system-app allowlist.
+      // the consumer binary's ZIP is outside the organization system-app allowlist.
       // initMiniapps owns managed synchronization; never start an independent
       // retry that could install a bundle without publishing its visibility.
       if (shouldHideMiniapp(mentraCallPackageName)) {
-        throw new Error("The workspace Call bundle could not be installed and verified")
+        throw new Error("The organization Call bundle could not be installed and verified")
       }
       return
     }
@@ -808,17 +868,64 @@ class MantleManager {
     if (!parsed) throw new Error(`Bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
     const {packageName, version} = parsed
     const deployment = deploymentStore.getActive()
-    // A workspace pin owns this package even when the system-app allowlist is
+    // An organization pin owns this package even when the system-app allowlist is
     // unrestricted. A newer consumer ZIP must not replace its active version.
     if (
-      deployment.kind === "workspace" &&
+      deployment.kind === "organization" &&
       deployment.manifest.miniapps.managed.some((app) => app.packageName === packageName)
     )
       return
     const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
-    // Bundled consumer assets excluded by the workspace are expected skips.
+    // Bundled consumer assets excluded by the organization are expected skips.
     if (approved !== null && !approved.includes(packageName)) return
-    if (shouldHideMiniapp(packageName) || appRegistry.getInstalledVersions(packageName).includes(version)) return
+    if (shouldHideMiniapp(packageName)) return
+
+    // A QR-selected live build (including its offline snapshot) remains the
+    // consumer's choice across restarts and Mentra App upgrades.
+    if (deployment.kind === "consumer" && getDevAppRecords().some((app) => app.packageName === packageName)) return
+
+    // Bundling is an initial-delivery/update channel, not a way to undo a
+    // user's uninstall choice. SYSTEM packages are the deliberate
+    // exception: the build owns them and AppRegistry does not permit their
+    // removal in the first place.
+    if (!isSystemMiniappPackage(packageName) && appRegistry.wasUserUninstalled(packageName)) {
+      return
+    }
+
+    const installedVersions = appRegistry.getInstalledVersions(packageName)
+    if (installedVersions.length > 0) {
+      const activeVersion = await appRegistry.getActiveVersion(packageName)
+      const activeIdentity = activeVersion ? appRegistry.getReleaseIdentity(packageName, activeVersion) : null
+      const manuallyInstalled = deployment.kind === "consumer" && activeIdentity?.source === "direct_download"
+      if (manuallyInstalled && activeVersion === version) return
+      if (
+        !shouldActivateBundledVersion(
+          version,
+          activeVersion,
+          manuallyInstalled || isHostTrustedSystemMiniapp(packageName, activeIdentity),
+        )
+      ) {
+        console.log(`MANTLE: preserving newer selected miniapp ${packageName}@${activeVersion} over bundled ${version}`)
+        return
+      }
+    }
+
+    if (installedVersions.includes(version)) {
+      // The directory alone is not enough for privileged bundled apps: an
+      // older direct/dev install may have claimed the same package and
+      // version. Reinstall once unless host-owned bundled provenance is
+      // already recorded, which also migrates pre-provenance installs.
+      const identity = appRegistry.getReleaseIdentity(packageName, version)
+      if (
+        identity?.source === "bundled_asset" &&
+        appRegistry.getPublisherKeyFingerprint(packageName) ===
+          (BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS[packageName as keyof typeof BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS] ??
+            null)
+      ) {
+        return
+      }
+    }
+
     if (packageName === "com.mentra.example" && !engine.settings.get(SETTINGS.super_mode.key)) return
 
     await asset.downloadAsync()
@@ -858,7 +965,7 @@ class MantleManager {
           else builtInMiniappCatalog.installNotify()
         },
         stop: async () => {
-          if (useAppStatusStore.getState().foregroundedPackage === packageName) {
+          if (engine.miniapps.list().some((app) => app.packageName === packageName && app.foregrounded)) {
             engine.miniapps.clearForeground()
           }
           if (packageName === notifyPackageName) {
@@ -902,7 +1009,9 @@ class MantleManager {
         await this.installBundledMiniapp(asset)
       },
       stop: async () => {
-        if (useAppStatusStore.getState().foregroundedPackage === packageName) engine.miniapps.clearForeground()
+        if (engine.miniapps.list().some((app) => app.packageName === packageName && app.foregrounded)) {
+          engine.miniapps.clearForeground()
+        }
         await miniappLauncher.stop(packageName)
       },
     })
@@ -981,8 +1090,7 @@ class MantleManager {
     // core owner projected from the app store so a notification can briefly
     // replace Captions and then restore the latest caption frame.
     let notifyWasRunning = this.isNotifyRunning()
-    const syncAppPresentationState = () => {
-      const apps = useAppStatusStore.getState().apps
+    const syncAppPresentationState = (apps = engine.miniapps.list()) => {
       const coreApp = apps.find((app) => app.running && (app.type === "standard" || !app.type))
       localDisplayManager.onCoreAppChange(coreApp?.packageName ?? null)
 
@@ -994,7 +1102,7 @@ class MantleManager {
       notifyWasRunning = notifyIsRunning
     }
     syncAppPresentationState()
-    const unsubscribeAppPresentationState = useAppStatusStore.subscribe(syncAppPresentationState)
+    const unsubscribeAppPresentationState = engine.miniapps.onChanged(syncAppPresentationState)
     this.subs.push({remove: unsubscribeAppPresentationState})
     this.subs.push({
       remove: engine.settings.onChanged(SETTINGS.native_notifications_enabled.key, () => {

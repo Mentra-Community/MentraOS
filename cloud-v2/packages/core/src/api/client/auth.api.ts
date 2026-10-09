@@ -11,7 +11,10 @@
  *   POST /runtime-token — Core access token (Bearer) in, short-lived Runtime
  *                         token out (`aud=cloud-runtime`).
  *   POST /miniapp-token — Access token (Bearer) + packageName in, a short-lived
- *                         miniapp-scoped Ed25519 JWT out.
+ *                         miniapp-scoped Ed25519 JWT out. The phone decides
+ *                         which package is running (installed or a dev build
+ *                         of that package) and Core mints the same token for
+ *                         either.
  *
  * These are the paths the mobile client / device hits. Per auth/spec.md's
  * caller convention, device-called routes live under /api/client/*, while
@@ -27,7 +30,6 @@
  */
 
 import {Hono} from "hono"
-import type {ContentfulStatusCode} from "hono/utils/http-status"
 import {InvalidRequest, UnsupportedGrantType, type TokenResponse} from "../../types/oauth.types"
 import {
   createSession,
@@ -36,11 +38,6 @@ import {
   issueRuntimeToken,
   revokeSession,
 } from "../../services/session.service"
-import {
-  DeveloperSigningService,
-  DeveloperSigningServiceError,
-  type DevMiniappAttestation,
-} from "../../services/miniapps/developer-signing.service"
 import {userAuth} from "../middleware/user-auth.middleware"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 
@@ -48,7 +45,6 @@ const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
 const JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"
 
 const app = new Hono<AppEnv>()
-const developerSigning = new DeveloperSigningService()
 
 // === Routes ===
 
@@ -116,18 +112,6 @@ async function postMiniappToken(c: AppContext) {
     throw new InvalidRequest("packageName is required")
   }
 
-  const devAttestation = typeof body.devAttestation === "string" ? parseDevAttestation(body.devAttestation) : null
-  if (devAttestation) {
-    try {
-      await developerSigning.verifyDevAttestation(packageName, devAttestation)
-    } catch (error) {
-      if (error instanceof DeveloperSigningServiceError) {
-        return c.json({error: error.code, error_description: error.message}, error.status as ContentfulStatusCode)
-      }
-      throw error
-    }
-  }
-
   const {token, expiresAt} = await issueMiniappToken({
     mentraUserId: user.mentraUserId,
     tenantId: user.tenantId,
@@ -188,25 +172,6 @@ async function readJsonBody(c: AppContext): Promise<Record<string, unknown>> {
     // fall through to the InvalidRequest below
   }
   throw new InvalidRequest("request body must be a JSON object")
-}
-
-function parseDevAttestation(value: string): DevMiniappAttestation {
-  try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>
-    if (
-      typeof parsed.packageName === "string" &&
-      typeof parsed.devServerUrl === "string" &&
-      typeof parsed.nonce === "string" &&
-      typeof parsed.expiresAt === "string" &&
-      typeof parsed.signingKeyId === "string" &&
-      typeof parsed.signature === "string"
-    ) {
-      return parsed as unknown as DevMiniappAttestation
-    }
-  } catch {
-    // fall through to InvalidRequest below
-  }
-  throw new InvalidRequest("devAttestation must be a signed mentra dev attestation")
 }
 
 export default app

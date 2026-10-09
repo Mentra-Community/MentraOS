@@ -9,7 +9,13 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import {decideDevOpenRoute, engine} from "@mentra/engine"
-import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
+import {
+  assertDevBuildAllowed,
+  installMiniappFromJsonUrl,
+  registerDevApp,
+  type DevAppRecord,
+} from "@mentra/engine-host-internal"
+import {showDevBuildError} from "@/utils/devMiniappAlerts"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@mentra/engine"
@@ -41,7 +47,7 @@ export default function MiniappDeveloperScannerScreen() {
         const baseUrl = decodeURIComponent(url.searchParams.get("url") || "")
         if (!baseUrl) throw new Error("release QR missing url param")
 
-        const res = await appRegistry.installFromJsonUrl(baseUrl)
+        const res = await installMiniappFromJsonUrl(baseUrl)
         if (res.is_error()) {
           showAlert("Install failed", res.error.message ?? String(res.error), [
             {text: "OK", onPress: () => setScanned(false)},
@@ -63,7 +69,6 @@ export default function MiniappDeveloperScannerScreen() {
       let name: string | undefined
       let devPort: string | undefined
       let mdnsHost: string | undefined
-      let devAttestation: string | undefined
 
       if (data.startsWith("miniapp://dev")) {
         const url = new URL(data)
@@ -72,7 +77,6 @@ export default function MiniappDeveloperScannerScreen() {
         packageName = url.searchParams.get("package") || undefined
         devPort = url.searchParams.get("dev") || undefined
         mdnsHost = url.searchParams.get("mdns") || undefined
-        devAttestation = url.searchParams.get("attestation") || undefined
       } else if (data.startsWith("http://") || data.startsWith("https://")) {
         devUrl = data
       } else {
@@ -92,6 +96,10 @@ export default function MiniappDeveloperScannerScreen() {
         )
         return
       }
+
+      // A dev build is unsigned code under its package name: refuse it before
+      // probing when that package is installed with a publisher signature.
+      if (packageName) assertDevBuildAllowed(packageName)
 
       // Pass mDNS up front — storage hasn't been written yet on first scan, so
       // decideDevOpenRoute can't read `_dev_mdns` until we persist below.
@@ -115,12 +123,12 @@ export default function MiniappDeveloperScannerScreen() {
       ).replace(/\/$/, "")
       let iconUrl: string | undefined
       if (iconPath) {
-        iconUrl = /^https?:\/\//.test(iconPath)
-          ? iconPath
-          : `${resolvedBase}/${iconPath.replace(/^\//, "")}`
+        iconUrl = /^https?:\/\//.test(iconPath) ? iconPath : `${resolvedBase}/${iconPath.replace(/^\//, "")}`
       }
 
       const portNum = devPort ? parseInt(devPort, 10) : NaN
+      // The manifest may name a different package than the QR did.
+      if (knownPackageName) assertDevBuildAllowed(knownPackageName)
 
       // Persist a package-keyed home tile and routing record so this dev
       // miniapp remains independently launchable without rescanning. Its icon
@@ -137,7 +145,6 @@ export default function MiniappDeveloperScannerScreen() {
           // Explicit empty clears a prior QR's sidecar port / mDNS for this package.
           devPort: Number.isFinite(portNum) ? portNum : undefined,
           mdnsHost: mdnsHost ?? "",
-          devAttestation,
           type: manifest.type as DevAppRecord["type"],
           permissions: manifest.permissions as DevAppRecord["permissions"],
           hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
@@ -157,13 +164,6 @@ export default function MiniappDeveloperScannerScreen() {
           storage.save(`${knownPackageName}_dev_port`, portNum)
         } else {
           storage.remove(`${knownPackageName}_dev_port`)
-        }
-        // Keep the QR attestation so offline "Try again" can register with the
-        // same auto-auth proof the live scanner path would have used.
-        if (devAttestation) {
-          storage.save(`${knownPackageName}_dev_attestation`, devAttestation)
-        } else {
-          storage.remove(`${knownPackageName}_dev_attestation`)
         }
       }
 
@@ -208,7 +208,7 @@ export default function MiniappDeveloperScannerScreen() {
       await engine.miniapps.refresh()
       await engine.miniapps.setForeground(packageName)
     } catch (error) {
-      showAlert("Error", String(error), [{text: "OK", onPress: () => setScanned(false)}])
+      showDevBuildError(error, () => setScanned(false))
     }
   }
 

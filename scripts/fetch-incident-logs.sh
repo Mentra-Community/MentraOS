@@ -19,17 +19,19 @@
 #   --limit N        (--list) max reports to return (1-200, default 50)
 #
 # Environment variables:
-#   MENTRA_ADMIN_TOKEN  (required) Bearer token for the admin API: an org API
-#                       key (msk_...) whose synthetic email is allowlisted in
-#                       CLOUD_CORE_ADMIN_EMAILS, or a WorkOS access token of
-#                       an admin user.
+#   MENTRA_ADMIN_TOKEN  (required) Bearer token for the admin API: an operator
+#                       key with the incident read scope (mak_..., created in
+#                       the admin dashboard under Operator keys, or an msk_...
+#                       admin key whose api-key@<keyId>.local address is on
+#                       CLOUD_CORE_ADMIN_EMAILS), or a WorkOS access token of an
+#                       Organization Admin.
 #   MENTRA_CORE_URL     (optional) Core API base URL; disables auto-discovery
 #                       and overrides --env.
 
 set -euo pipefail
 
 usage() {
-  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 
@@ -114,11 +116,14 @@ fi
 if [ -z "${MENTRA_ADMIN_TOKEN:-}" ]; then
   err "MENTRA_ADMIN_TOKEN environment variable not set"
   note ""
-  note "The admin reports API needs a bearer token with admin access:"
-  note "  - an org API key (msk_...) allowlisted via CLOUD_CORE_ADMIN_EMAILS, or"
-  note "  - a WorkOS access token of an admin user"
+  note "The admin reports API needs a bearer token that can read incidents:"
+  note "  - an operator key (mak_...) with the incident read scope, created in the"
+  note "    admin dashboard under Operator keys,"
+  note "  - an msk_... admin key whose api-key@<keyId>.local address is on"
+  note "    CLOUD_CORE_ADMIN_EMAILS, or"
+  note "  - a WorkOS access token of an Organization Admin"
   note ""
-  note "  export MENTRA_ADMIN_TOKEN=msk_..."
+  note "  export MENTRA_ADMIN_TOKEN=mak_..."
   exit 1
 fi
 
@@ -135,8 +140,8 @@ fail_for_status() {
   local status="$1" body="$2" what="$3"
   case "$status" in
     2??) return 0 ;;
-    401) err "unauthorized (401) fetching $what — MENTRA_ADMIN_TOKEN was rejected" ;;
-    403) err "forbidden (403) fetching $what — token is valid but not admin-allowlisted (CLOUD_CORE_ADMIN_EMAILS)" ;;
+    401) err "unauthorized (401) fetching $what — MENTRA_ADMIN_TOKEN was rejected (revoked, expired, made on another backend, or its creator is no longer an Organization Admin)" ;;
+    403) err "forbidden (403) fetching $what — token is valid but lacks the required organization capability (an operator key needs the incident read scope)" ;;
     404) err "not found (404) fetching $what — wrong report id, or this environment does not serve the admin reports API yet" ;;
     *) err "HTTP $status fetching $what" ;;
   esac
@@ -148,8 +153,8 @@ fail_for_status() {
 #
 # Uses a single backend when --env or MENTRA_CORE_URL is explicit. Otherwise,
 # tries each Cloud V2 environment until the request succeeds. This matters for
-# environment-pinned msk_<env>_* API keys and report ids whose origin is not
-# known when copied from a notification.
+# operator keys (each belongs to one Core deployment) and report ids whose
+# origin is not known when copied from a notification.
 discover_get() {
   local path="$1" body="$2" what="$3"
   local i status attempts=""

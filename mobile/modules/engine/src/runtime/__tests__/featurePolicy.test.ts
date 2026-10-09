@@ -19,7 +19,7 @@ describe("deployment feature policy", () => {
     expect(isFeatureEnabled("navigation")).toBe(true)
   })
 
-  test("fails closed for explicitly disabled workspace capabilities", () => {
+  test("fails closed for explicitly disabled organization capabilities", () => {
     configure({
       auth: {},
       config: {
@@ -75,6 +75,28 @@ describe("deployment feature policy", () => {
     ).toBe(false)
   })
 
+  test("a managed pin takes precedence over an unrestricted bundled-app allowlist", () => {
+    configure({
+      auth: {},
+      config: {
+        localMiniappPolicy: {
+          systemPackageNames: null,
+          managed: [
+            {
+              packageName: "com.mentra.call",
+              version: "2.1.31",
+              sha256: "abc",
+              deploymentId: "acme",
+              deploymentOrigin: "https://acme.example",
+            },
+          ],
+        },
+      },
+    })
+    expect(isInstalledMiniappAllowed("com.mentra.call", "2.1.31", {source: "bundled_asset"})).toBe(false)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "1.0.0", {source: "bundled_asset"})).toBe(true)
+  })
+
   test("admits a developer build only in super mode, and only for a managed package", () => {
     configure({
       auth: {},
@@ -123,7 +145,7 @@ describe("deployment feature policy", () => {
     expect(check()).toEqual([false, false, false, false])
   })
 
-  test("composes Super Mode restrictions with managed workspace policy", () => {
+  test("composes Super Mode restrictions with managed organization policy", () => {
     let allowed = false
     const packageName = "com.mentra.link"
     const identity = {
@@ -158,5 +180,48 @@ describe("deployment feature policy", () => {
     expect(isInstalledMiniappAllowed(packageName, "1.0.17", identity)).toBe(false)
     expect(isDevMiniappAllowed(packageName, false)).toBe(false)
     expect(isDevMiniappAllowed(packageName, true)).toBe(true)
+  })
+})
+
+describe("organization Store release visibility", () => {
+  afterEach(resetForTests)
+  const identity = {source: "system_store", storePackageName: "com.mentra.store"}
+  function configureOrganization(approved: string[] | null, managed: boolean = false) {
+    configure({
+      auth: {},
+      config: {
+        bundledSystemMiniappPackages: ["com.mentra.notes", "com.mentra.store"],
+        bundledStoreMiniappPackages: ["com.mentra.store"],
+        bundledSystemMiniappStoreOwners: {"com.mentra.notes": "com.mentra.store"},
+        localMiniappPolicy: {
+          systemPackageNames: approved,
+          managed: managed
+            ? [
+                {
+                  packageName: "com.mentra.notes",
+                  version: "1.0.0",
+                  sha256: "abc",
+                  deploymentId: "acme",
+                  deploymentOrigin: "https://acme.example",
+                },
+              ]
+            : [],
+        },
+      },
+    })
+  }
+  test.each([null, ["com.mentra.notes"]])("keeps an approved Store-updated release visible (%j)", (approved) => {
+    configureOrganization(approved)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(true)
+    expect(
+      isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {...identity, storePackageName: "com.other.store"}),
+    ).toBe(false)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {source: "direct_download"})).toBe(false)
+  })
+  test("does not bypass an excluded package or organization pin", () => {
+    configureOrganization([])
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(false)
+    configureOrganization(null, true)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(false)
   })
 })

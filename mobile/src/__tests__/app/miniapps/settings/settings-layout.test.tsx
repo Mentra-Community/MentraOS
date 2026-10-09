@@ -6,9 +6,9 @@ import ProfileSettingsPage from "@/app/miniapps/settings/profile"
 import {spacing} from "@/theme/spacing"
 
 let mockDeployment = {
-  kind: "consumer" as "consumer" | "workspace",
+  kind: "consumer" as "consumer" | "organization",
   manifest: {displayName: "Mentra"},
-  workspaceOrigin: "https://workspace.example.test",
+  organizationOrigin: "https://organization.example.test",
 }
 let mockUser = {name: "Test User", email: "user@example.test", provider: "email", createdAt: "2026-01-01"}
 
@@ -31,7 +31,7 @@ jest.mock("@/utils/auth/authClient", () => ({__esModule: true, default: {}}))
 jest.mock("@/utils/auth/authErrors", () => ({mapAuthError: jest.fn()}))
 jest.mock("@/utils/settleFrame", () => ({settleFrame: jest.fn()}))
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))
-jest.mock("@/components/auth/WorkspaceBrand", () => ({WorkspaceBrand: () => null}))
+jest.mock("@/components/auth/OrganizationBrand", () => ({OrganizationBrand: () => null}))
 jest.mock("@/components/settings/DeviceSettingsSection", () => ({DeviceSettingsSection: () => null}))
 jest.mock("@/components/dev/VersionInfo", () => ({
   VersionInfo: () => {
@@ -75,7 +75,7 @@ beforeEach(() => {
   mockDeployment = {
     kind: "consumer",
     manifest: {displayName: "Mentra"},
-    workspaceOrigin: "https://workspace.example.test",
+    organizationOrigin: "https://organization.example.test",
   }
   mockUser = {name: "Test User", email: "user@example.test", provider: "email", createdAt: "2026-01-01"}
 })
@@ -117,22 +117,22 @@ test.each(["email", "google", "apple"])("groups the visible %s account actions w
   }
 })
 
-test("hides the default Mentra workspace and leaves space under the profile content", () => {
+test("hides the default Mentra organization and leaves space under the profile content", () => {
   render(<ProfileSettingsPage />)
 
-  expect(screen.queryByText("workspace:workspaceLabel")).toBeNull()
+  expect(screen.queryByText("organization:organizationLabel")).toBeNull()
   expect(screen.queryByText("Mentra")).toBeNull()
   expectBottomSpacing()
 })
 
-test("preserves workspace details and rounds the sole workspace account action", () => {
-  mockDeployment.kind = "workspace"
-  mockDeployment.manifest.displayName = "Test Workspace"
+test("preserves organization details and rounds the sole organization account action", () => {
+  mockDeployment.kind = "organization"
+  mockDeployment.manifest.displayName = "Test Organization"
   render(<ProfileSettingsPage />)
 
-  expect(screen.getByText("workspace:workspaceLabel")).toBeTruthy()
-  expect(screen.getByText("Test Workspace")).toBeTruthy()
-  expect(screen.getByText(mockDeployment.workspaceOrigin)).toBeTruthy()
+  expect(screen.getByText("organization:organizationLabel")).toBeTruthy()
+  expect(screen.getByText("Test Organization")).toBeTruthy()
+  expect(screen.getByText(mockDeployment.organizationOrigin)).toBeTruthy()
   expect(screen.queryByText("profileSettings:changePassword")).toBeNull()
   expect(screen.queryByText("profileSettings:requestDataExport")).toBeNull()
   expect(screen.queryByText("profileSettings:deleteAccount")).toBeNull()

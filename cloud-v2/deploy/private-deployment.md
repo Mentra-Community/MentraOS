@@ -30,7 +30,7 @@ private keys or database credentials.
 | --- | --- | --- |
 | Service configuration | URLs, module selectors, issuer metadata, ports, version floors | Container environment |
 | Secrets | Mongo credentials, refresh pepper, signing private keys, ACS connection string | Secret manager/container secret references |
-| Mentra App policy | Workspace name, service URLs, auth, branding, legal links, miniapps, glasses, features, telemetry | Deployment manifest served by Runtime |
+| Mentra App policy | Organization name, service URLs, auth, branding, legal links, miniapps, glasses, features, telemetry | Deployment manifest served by Runtime |
 
 Never put secrets in the image, deployment manifest, command line, or source
 repository.
@@ -75,6 +75,72 @@ Core issues an opaque Mentra user id. It retains provider metadata only for host
 integrations such as proving an ACS token belongs to the same Entra employee.
 Miniapp tokens never contain the federated identity.
 
+## Organization, workspaces and credentials
+
+A Private Deployment is one **organization**: this Core deployment and its
+database. Inside it, people belong to **workspaces** with a role (`owner`,
+`admin`, `developer` or `member`). Core owns workspaces, memberships,
+invitations, workspace credentials (`msk_...`) and operator keys (`mak_...`);
+the Store and the optional Fleet integration ask Core through its signed
+internal API (see [Store integration](../docs/store-integration.md) and
+[Fleet integration](../docs/fleet-integration.md)).
+
+An **Organization Admin** is a person whose _verified_ identity email is listed
+in `CLOUD_CORE_ADMIN_EMAILS` or has a domain in `CLOUD_CORE_ADMIN_EMAIL_DOMAINS`
+(comma lists; exact domains, no subdomains). Organization Admins create operator
+keys in the admin dashboard under **Operator keys**. Operator keys carry only
+incident, support-profile and test-run scopes, never workspace administration.
+An operator key works only while the Organization Admin who created it remains
+one: Core checks the creator's email against the allowlist on every request, so
+removing that person from `CLOUD_CORE_ADMIN_EMAILS` (or their domain from
+`CLOUD_CORE_ADMIN_EMAIL_DOMAINS`) ends every key they created. Create shared and
+automation keys from an admin who will stay.
+
+An admin API key whose address `api-key@<keyId>.local` is listed in
+`CLOUD_CORE_ADMIN_EMAILS` (an `msk_...` developer-organization key of this Core,
+such as an earlier installer's administrator key) is an operator key too. When
+Core starts it gives each listed key the operator scopes, keeping its token, so
+the key works while its address stays listed. Removing the address ends it like
+any operator key, and revoking it under **Operator keys** ends it for good. New
+keys are `mak_...` operator keys.
+Core reads the variables below when it uses them, so a changed value takes effect
+on the next request. The values shown are placeholders.
+
+- `CLOUD_CORE_ADMIN_EMAILS`, `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` (public): the Organization Admins, as above.
+- `CLOUD_CORE_CREDENTIAL_ENVIRONMENTS` (public): comma list of the environment labels credentials may carry in `msk_<label>_...` and `mak_<label>_...`. New credentials use the first label. Without it Core uses `CLOUD_CORE_ENVIRONMENT`, then `local`. Labels are lowercased and reduced to `[a-z0-9]`. Credentials migrated from the Mentra Store keep their original labels, so list every label they carry (for the Mentra Store, `prod,dev`) or those keys stop validating.
+- `CLOUD_CORE_WORKSPACE_CREATION` (public): `open` (default) lets any signed-in person create a workspace. `organization-admins` limits creation to Organization Admins. Any other value is a configuration error and workspace creation fails.
+- `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE` (public): absolute http(s) URL that contains `{token}`. It becomes the invitation link in the email and in the inviter's response, so it must open a page that accepts invitations. Two forms work: the admin dashboard's `https://<admin-host>/?workspaceInvite={token}` (it also accepts `https://<admin-host>/invite/{token}`), and the Developer Console's `https://<console-host>/invite/{token}`. A Private Deployment runs the admin dashboard and no Developer Console, so use the admin form. Without a usable value, inviting fails rather than minting a link that cannot work.
+- `CLOUD_CORE_SERVICE_SECRETS` (secret): JSON object of service name (`store`, `fleet`) to a list of shared secrets, newest first, for example `{"store":["<new>","<old>"],"fleet":["<secret>"]}`. Core verifies callers of `/api/internal/workspaces/*` with them; list the old secret beside the new one to rotate. Unset means no service can call; a value that is not that shape (including a service whose list is empty or holds only blank secrets) answers every call 503 `service_auth_misconfigured`. Unknown names are ignored with a warning.
+- `CLOUD_CORE_FLEET_URL` (public): base URL (optional path prefix) of the optional Fleet integration. Unset or blank means Fleet is not installed. See [Fleet integration](../docs/fleet-integration.md).
+- `CLOUD_CORE_FLEET_SECRET` (secret): the secret that signs what Core forwards to Fleet; required when `CLOUD_CORE_FLEET_URL` is set.
+- `CLOUD_CORE_FLEET_MAX_BODY_BYTES`, `CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES`, `CLOUD_CORE_FLEET_TIMEOUT_MS` (public): the largest request body Core forwards (default `1048576`), the largest Fleet response body Core buffers (default `10485760`; a larger one is a `503 fleet_unavailable`) and how long Fleet may take to answer (default `10000`). Values that are not positive integers fall back to the defaults.
+- `CLOUD_CORE_FLEET_HISTORY_MAX_DAYS` (public): how many days back Fleet may ask about membership history (default `90`); earlier is `400 history_window_exceeded`. A value that is not a positive integer falls back to the default.
+
+Example (placeholders only):
+
+```text
+CLOUD_CORE_CREDENTIAL_ENVIRONMENTS=private
+CLOUD_CORE_WORKSPACE_CREATION=organization-admins
+CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE=https://admin.acme.example/?workspaceInvite={token}
+CLOUD_CORE_SERVICE_SECRETS={"store":["<store-secret>"],"fleet":["<fleet-secret>"]}
+CLOUD_CORE_FLEET_URL=https://fleet.acme.example
+CLOUD_CORE_FLEET_SECRET=<core-to-fleet-secret>
+```
+
+Invitations and Organization Admin standing follow a person's verified email.
+To match a person's WorkOS sign-in to an existing Mentra account, Core needs its
+GoTrue directory: set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. When they are absent, such
+as in a deployment with no Mentra accounts, Core skips the match and gives each
+WorkOS user an identity of their own. When they are set but GoTrue errors, the
+sign-in fails and can be retried. A WorkOS user is linked once, permanently, on
+first sign-in, so a deployment that should match Mentra accounts must have
+these variables set before anyone signs in. Otherwise those people end up with
+a separate `workos` identity and do not see the memberships of their Mentra
+account.
+
+Migrating existing Store developer organizations into workspaces is a one-time
+operator task; see [Store integration](../docs/store-integration.md#migrating-developer-organizations).
+
 ## Runtime modules
 
 `RUNTIME_SERVICES` is a comma-separated positive allowlist. Unknown names fail
@@ -105,7 +171,7 @@ only Core-issued tokens:
 
 ```text
 CLOUD_RUNTIME_AUTH_AUDIENCE=cloud-runtime
-CLOUD_RUNTIME_AUTH_ISSUERS=[{"issuer":"https://core.workspace.example","jwksUrl":"https://core.workspace.example/.well-known/jwks.json","userIdClaim":"sub","tenantIdClaim":"tenant_id","algorithms":["EdDSA"]}]
+CLOUD_RUNTIME_AUTH_ISSUERS=[{"issuer":"https://core.acme.example","jwksUrl":"https://core.acme.example/.well-known/jwks.json","userIdClaim":"sub","tenantIdClaim":"tenant_id","algorithms":["EdDSA"]}]
 ```
 
 The authenticated credential endpoint is `POST /api/meetings/acs/token`. An
@@ -122,19 +188,19 @@ and provider errors do not trigger guest issuance.
 The Mentra App obtains credentials using its selected Runtime and Core-brokered
 Runtime bearer. Its Entra provider supplies the separate Teams subject token when
 available. `session.meeting.getConfiguration()` exposes the host's calling policy;
-workspace miniapps omit `token` from `session.meeting.join()`. Meeting state and
+organization miniapps omit `token` from `session.meeting.join()`. Meeting state and
 `onState` report `identityMode` (`guest` or `teams-user`) and, for guests,
 `guestReason` (`no-entra-identity` or `teams-license-unavailable`). Neither the Entra
 nor ACS credential is returned to miniapp JavaScript.
 
-Workspace Mentra Call supports joining work/school Teams links using direct
+Organization Mentra Call supports joining work/school Teams links using direct
 local glasses video. It does not contact the public Call backend for startup,
 restore, credentials, or meeting creation. Existing consumer token pass-through
 and Call backend routes remain supported; consumer joins still require the
 miniapp-supplied credential. Older clients need no backend change.
 A Mentra App native build containing Teams-user agent support is required for
 employee identity. Install the matching managed miniapp ZIP and re-select the
-workspace to refresh the cached manifest. The new Call bundle requires host
+organization to refresh the cached manifest. The new Call bundle requires host
 meeting-policy discovery even when the host version is otherwise compatible.
 Hosts without that API show an update message and cannot enable public-backend
 access. Existing installed Call bundles and legacy token joins are unchanged.
@@ -208,7 +274,7 @@ Important schema-v1 fields are:
 
 | Field | Contract |
 | --- | --- |
-| `deploymentId`, `displayName` | Stable local namespace and workspace name. |
+| `deploymentId`, `displayName` | Stable local namespace and organization name. |
 | `services.coreUrl`, `services.runtimeUrl` | Required by the first template. Null never falls back to Mentra services. |
 | `auth` | Exact Entra tenant, Mentra App public-client id, `mentra.session` scope, optional Teams scopes. |
 | `branding.logoUrls` | Optional light/dark PNGs. |
@@ -216,7 +282,7 @@ Important schema-v1 fields are:
 | `miniapps.managed` | Userland bundle package, version, URL, and SHA-256 descriptors. |
 | `miniapps.configuration` | Optional non-secret package-scoped string values. |
 | `features` | Explicit mobile/Runtime capability policy. |
-| `telemetry` | Whether the workspace permits Mentra telemetry. |
+| `telemetry` | Whether the organization permits Mentra telemetry. |
 
 Most miniapps ignore `miniapps.configuration`. A miniapp that explicitly
 supports a customer backend may read an optional `backendUrl` through
@@ -231,8 +297,8 @@ backend dedicated to one Private Deployment verifies them locally with
 ```ts
 const auth = createMentraAuth({
   packageName: "com.example.remoteassist",
-  issuer: "https://core.workspace.example",
-  jwksUrl: "https://core.workspace.example/.well-known/jwks.json",
+  issuer: "https://core.acme.example",
+  jwksUrl: "https://core.acme.example/.well-known/jwks.json",
 })
 ```
 
@@ -301,7 +367,7 @@ services:
       MENTRA_JWT_PUBLIC_KEY: ${MENTRA_JWT_PUBLIC_KEY:?required}
       MENTRA_MINIAPP_JWT_PRIVATE_KEY: ${MENTRA_MINIAPP_JWT_PRIVATE_KEY:?required}
       MENTRA_MINIAPP_JWT_PUBLIC_KEY: ${MENTRA_MINIAPP_JWT_PUBLIC_KEY:?required}
-      CLOUD_CORE_ISSUER: https://core.workspace.example
+      CLOUD_CORE_ISSUER: https://core.acme.example
       CLOUD_CORE_OIDC_PROVIDERS: ${CLOUD_CORE_OIDC_PROVIDERS:?required}
     secrets: [mongo_password]
     depends_on: [mongo]
@@ -333,13 +399,13 @@ secrets:
 ## Validation, upgrades, and rollback
 
 ```bash
-curl --fail https://core.workspace.example/healthz | jq
-curl --fail https://core.workspace.example/ready | jq
-curl --fail https://core.workspace.example/.well-known/jwks.json | jq
-curl --fail https://workspace.example/healthz | jq
-curl --fail https://workspace.example/ready | jq
-curl --fail https://workspace.example/api/client/min-version | jq
-curl --fail https://workspace.example/.well-known/mentra-deployment.json | jq
+curl --fail https://core.acme.example/healthz | jq
+curl --fail https://core.acme.example/ready | jq
+curl --fail https://core.acme.example/.well-known/jwks.json | jq
+curl --fail https://cloud.acme.example/healthz | jq
+curl --fail https://cloud.acme.example/ready | jq
+curl --fail https://cloud.acme.example/api/client/min-version | jq
+curl --fail https://cloud.acme.example/.well-known/mentra-deployment.json | jq
 ```
 
 Upgrade Core and Runtime to the same new digest while preserving Mongo, secrets,

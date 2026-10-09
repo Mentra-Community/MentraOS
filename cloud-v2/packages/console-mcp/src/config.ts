@@ -3,11 +3,12 @@
  *
  * The server talks to one Cloud V2 core deployment, selected by
  * MENTRA_CORE_URL (explicit base URL) or MENTRA_ENV (prod | staging | dev).
- * Report tools require MENTRA_ADMIN_TOKEN: an org API key (msk_...) whose
- * synthetic email (api-key@{keyId}.local) is allowlisted via
- * CLOUD_CORE_ADMIN_EMAILS, or a WorkOS access token of an admin user.
- * API keys are env-pinned — a key minted for prod will not authenticate
- * against staging or dev.
+ * Report tools require MENTRA_ADMIN_TOKEN: an operator key with the incident
+ * read scope (organization.incidents.read), either a mak_ key created in the
+ * admin dashboard under Operator keys or an msk_ admin key whose
+ * api-key@<keyId>.local address is on CLOUD_CORE_ADMIN_EMAILS, or a WorkOS
+ * access token of an Organization Admin. Operator keys belong to one Core deployment (organization) — a key
+ * created on prod will not authenticate against staging or dev.
  */
 
 export const CORE_URLS: Record<string, string> = {

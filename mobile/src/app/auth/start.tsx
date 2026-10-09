@@ -147,19 +147,19 @@ export default function LoginScreen() {
 
         <View className="flex-row items-center my-6">
           <View className="flex-1 h-px bg-border" />
-          <Text className="mx-3 text-sm text-muted-foreground">{translate("workspace:or")}</Text>
+          <Text className="mx-3 text-sm text-muted-foreground">{translate("organization:or")}</Text>
           <View className="flex-1 h-px bg-border" />
         </View>
 
         <Button
           preset="secondary"
-          text={translate("workspace:connectAction")}
+          text={translate("organization:connectAction")}
           onPress={async () => {
             // Stop Mentra telemetry/cloud effects before contacting the
-            // customer workspace, even when a prior consumer selection was
+            // customer organization, even when a prior consumer selection was
             // persisted on this installation.
-            if (!(await selectDeployment(() => store.beginWorkspaceSelection()))) return
-            push("/auth/workspace")
+            if (!(await selectDeployment(() => store.beginOrganizationSelection()))) return
+            push("/auth/organization")
           }}
           LeftAccessory={() => <Icon name="building" size={20} color={theme.colors.foreground} />}
         />

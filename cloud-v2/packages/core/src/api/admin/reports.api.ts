@@ -7,8 +7,9 @@
  *   GET|HEAD /:reportId/artifacts/:artifactId — raw artifact payload bytes,
  *     honoring a single byte Range
  *
- * Mounted behind the admin console auth gate. The private report-agent router
- * reuses only the exported detail and artifact handlers, never the list route.
+ * Mounted behind admin.api's `organization.incidents.read` gate. The private
+ * report-agent router reuses only the exported detail and artifact handlers,
+ * never the list route.
  */
 
 import { Hono } from "hono";

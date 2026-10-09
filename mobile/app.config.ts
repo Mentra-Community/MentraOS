@@ -181,7 +181,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       infoPlist: {
         // Native collection must remain off until the deployment profile has
         // been restored. FirebaseAnalyticsSetup enables it for consumer or
-        // explicitly opted-in workspace deployments.
+        // explicitly opted-in organization deployments.
         FIREBASE_ANALYTICS_COLLECTION_ENABLED: false,
         CFBundleURLTypes: [
           {

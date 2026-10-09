@@ -27,6 +27,7 @@ import {RoutineJobService} from './services/routine-job.service'
 import {RoutineWorkService} from './services/routine-work.service'
 import {NightlyRoutineService} from "./services/nightly-routine.service"
 import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
+import {warnIfWorkosIdentitiesStaySeparate} from "./services/workspaces/identity-link.service"
 
 const logger = createLogger("core")
 
@@ -59,6 +60,8 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     })
     throw error
   }
+
+  warnIfWorkosIdentitiesStaySeparate(logger)
 
   const app = createApp({readinessChecks: [mongoReadinessCheck]})
   const server = serveCore(app.fetch, port)

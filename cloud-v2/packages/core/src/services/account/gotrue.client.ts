@@ -14,15 +14,34 @@ import { AccountError } from "./account-error";
 export interface GotrueIdentity {
   id: string;
   email: string;
+  /** `email_confirmed_at`, falling back to `confirmed_at`. */
   emailVerified: boolean;
+  /**
+   * `email_confirmed_at` alone. `confirmed_at` can be set by confirming something other than the
+   * email (a phone number), so anything that matches a person by email address for good (identity
+   * linking) must use this, never {@link emailVerified}.
+   */
+  emailConfirmed: boolean;
   name?: string;
   avatarUrl?: string;
 }
+
+const STRICT_LOOKUP_TIMEOUT_MS = 5_000;
 
 function baseUrl(): string {
   const url = process.env.SUPABASE_URL?.trim();
   if (!url) throw new AccountError("server_error", "SUPABASE_URL not configured", 500);
   return url.replace(/\/+$/, "");
+}
+
+/**
+ * Whether the admin directory can be queried at all: both the project URL and
+ * the service-role key are set. A deployment without GoTrue (a private
+ * deployment, say) has no Mentra accounts to match, which is a different state
+ * from a configured directory that is failing.
+ */
+export function isGotrueAdminConfigured(): boolean {
+  return Boolean(process.env.SUPABASE_URL?.trim() && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
 }
 
 function anonKey(): string {
@@ -69,6 +88,7 @@ function identityFrom(user: any): GotrueIdentity {
     id: user.id,
     email: user.email,
     emailVerified: Boolean(user.email_confirmed_at ?? user.confirmed_at),
+    emailConfirmed: Boolean(user.email_confirmed_at),
     name: meta.full_name ?? meta.name ?? undefined,
     avatarUrl: meta.avatar_url ?? meta.picture ?? undefined,
   };
@@ -131,23 +151,50 @@ export async function resendVerification(email: string): Promise<void> {
  * `per_page: 1` could silently return the wrong (or no) user. We page through
  * results (bounded) and exact-match the email ourselves, so a missing user is
  * a real miss, not a pagination artifact.
+ *
+ * A failed directory request returns null, indistinguishable from "no such
+ * user", which is right for reset/change/delete (they answer uniformly). A
+ * caller that records the answer permanently passes `strict`: then anything
+ * short of a definite answer throws instead of reading as a miss. That covers a
+ * non-200, a 200 whose body is not a user list, a request that errors or runs
+ * past `timeoutMs` (default 5s, for the whole lookup), and a directory with
+ * more full pages than the scan limit.
  */
-export async function findUserByEmail(email: string): Promise<GotrueIdentity | null> {
+export async function findUserByEmail(
+  email: string,
+  options: { strict?: boolean; timeoutMs?: number } = {},
+): Promise<GotrueIdentity | null> {
+  const strict = options.strict === true;
   const wanted = email.toLowerCase();
   const PER_PAGE = 200;
   const MAX_PAGES = 20; // safety cap: 4000 users scanned worst case
+  const signal = strict ? AbortSignal.timeout(options.timeoutMs ?? STRICT_LOOKUP_TIMEOUT_MS) : undefined;
+  const inconclusive = (what = "failed") => new AccountError("server_error", `account directory lookup ${what}`, 502);
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const { status, body } = await gotrue("/admin/users", {
-      method: "GET",
-      admin: true,
-      query: { filter: email, page: String(page), per_page: String(PER_PAGE) },
-    });
-    if (status !== 200) return null;
+    let response: { status: number; body: any };
+    try {
+      response = await gotrue("/admin/users", {
+        method: "GET",
+        admin: true,
+        signal,
+        query: { filter: email, page: String(page), per_page: String(PER_PAGE) },
+      });
+    } catch (err) {
+      if (!strict || err instanceof AccountError) throw err;
+      throw inconclusive((err as Error)?.name === "TimeoutError" ? "timed out" : "failed");
+    }
+    const { status, body } = response;
+    if (status !== 200) {
+      if (strict) throw inconclusive();
+      return null;
+    }
+    if (strict && !Array.isArray(body?.users)) throw inconclusive();
     const users: any[] = body?.users ?? [];
     const match = users.find((u) => u.email?.toLowerCase() === wanted);
     if (match) return identityFrom(match);
-    if (users.length < PER_PAGE) break; // last page reached, no match
+    if (users.length < PER_PAGE) return null; // last page reached, no match
   }
+  if (strict) throw inconclusive(); // every page was full: the match may lie beyond the scan limit
   return null;
 }
 

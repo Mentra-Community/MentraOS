@@ -478,10 +478,10 @@ function withAndroidManifestModifications(config: any) {
         app["meta-data"] = []
       }
 
-      // The official binary can be enrolled into a workspace that disables
+      // The official binary can be enrolled into an organization that disables
       // telemetry. Keep Firebase Analytics off during native startup; the
       // JavaScript deployment gate enables collection only after the embedded
-      // consumer profile or an opted-in workspace has been resolved.
+      // consumer profile or an opted-in organization has been resolved.
       const analyticsCollection = app["meta-data"].find(
         (m: any) => m.$["android:name"] === "firebase_analytics_collection_enabled",
       )

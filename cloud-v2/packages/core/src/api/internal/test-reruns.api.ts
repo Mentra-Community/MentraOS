@@ -1,12 +1,13 @@
-import {Hono} from "hono";
+import {Hono, type Context} from "hono";
 import type {AppEnv} from "../../types/hono.types";
 import {TestRerunService} from "../../services/test-rerun.service";
 import {TestDispatchError} from "../../services/test-builds.service";
 import {TestRunError} from "../../services/test-result-error";
 import {testRunIngestAuth} from "../middleware/test-run-ingest-auth.middleware";
+import {principalLabel} from "../middleware/principal.middleware";
 import {frameworkBodyLimit, frameworkJson} from "./framework-json";
 
-/** Shared route builder: mounted behind internal capability or existing Admin authentication. */
+/** Shared route builder: mounted behind internal capability or admin.api's `organization.testing.*` gates. */
 export function createTestRerunRoutes(service = new TestRerunService(), audience: "internal" | "admin" = "internal") {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
@@ -15,8 +16,11 @@ export function createTestRerunRoutes(service = new TestRerunService(), audience
     c.var.logger?.error({errorName: error.name}, "test rerun unavailable");
     return c.json({error: "test_rerun_unavailable", message: "Rerun unavailable; reconcile the original ID before retrying"}, 503);
   });
-  const actor = (c: Parameters<typeof frameworkJson>[0]) => audience === "admin" ?
-    `admin:${c.var.developer?.developerId ?? "authenticated"}` : "internal:ingest";
+  const actor = (c: Context<AppEnv>) => {
+    if (audience !== "admin") return "internal:ingest";
+    const principal = c.get("principal");
+    return `admin:${principal ? principalLabel(principal) : "authenticated"}`;
+  };
   app.post("/preview", frameworkBodyLimit(16384), async c => c.json(await service.preview(await frameworkJson(c), actor(c))));
   app.post("/individual", frameworkBodyLimit(8192), async c => c.json(await service.individual(await frameworkJson(c), actor(c))));
   app.post("/submit", frameworkBodyLimit(4096), async c => c.json(await service.submit(await frameworkJson(c)), 202));

@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "fs"
+import {spawnSync} from "child_process"
 import {tmpdir} from "os"
 import {join} from "path"
 import {
@@ -190,6 +191,25 @@ describe("isSamePackageZip / pruneOtherZips", () => {
 })
 
 describe("syncMiniapp", () => {
+  test("installs exact CI bytes without running pack or changing the manifest", () => {
+    const base = makeFixtureRoot()
+    const {repo, miniappDir} = writeFixtureRepo(base, {packFails: true})
+    const {assetsDir, mobileRoot} = writeMentraLayout(base)
+    const ctx = {repoRoot: base, mobileRoot, assetsDir, reposConfigPath: join(base, "missing.json")}
+    const artifact = join(base, "release.zip")
+    const manifest = readFileSync(join(miniappDir, "miniapp.json"), "utf8")
+    expect(spawnSync("python3", ["-c", "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],'w'); z.writestr('miniapp.json',sys.argv[2]); z.close()", artifact, manifest]).status).toBe(0)
+    const bytes = readFileSync(artifact)
+    expect(syncMiniapp(["--repo", repo, "--artifact", artifact], ctx).code).toBe(1)
+    expect(syncMiniapp(["--repo", repo, "--artifact", artifact, "--no-bump"], ctx).code).toBe(0)
+    expect(readFileSync(join(assetsDir, "com.mentra.test-1.0.0.zip"))).toEqual(bytes)
+    expect(readFileSync(join(miniappDir, "miniapp.json"), "utf8")).toBe(manifest)
+    writeFileSync(artifact, "bad archive")
+    expect(syncMiniapp(["--repo", repo, "--artifact", artifact, "--no-bump"], ctx).code).toBe(1)
+    expect(readFileSync(artifact, "utf8")).toBe("bad archive")
+    expect(readFileSync(join(assetsDir, "com.mentra.test-1.0.0.zip"))).toEqual(bytes)
+  })
+
   test("selects the production pack script and never falls back when it is missing", () => {
     const base = makeFixtureRoot()
     const {repo} = writeFixtureRepo(base)

@@ -2,8 +2,10 @@ import {engine, type ClientApp} from "@mentra/engine"
 
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
+import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
 
 export const uninstallAppUI = async (app: ClientApp): Promise<void> => {
+  if (blockUpdatingMiniapp(app.packageName)) return
   console.log(`Uninstalling app: ${app.packageName}`)
 
   const result = await showAlert({
@@ -16,10 +18,12 @@ export const uninstallAppUI = async (app: ClientApp): Promise<void> => {
   })
 
   if (result !== 1) return
+  if (blockUpdatingMiniapp(app.packageName)) return
 
   if (app.running) {
     await engine.miniapps.stop(app.packageName)
   }
+  if (blockUpdatingMiniapp(app.packageName)) return
 
   const res = await engine.miniapps.uninstall(app.packageName)
   if (res.is_error()) {

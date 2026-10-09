@@ -74,13 +74,13 @@ public final class MentraEntraAuthModule: Module {
         }
     }
 
-    /// The workspace auth contract is intentionally single-account. Refuse an
+    /// The organization auth contract is intentionally single-account. Refuse an
     /// ambiguous cache instead of silently choosing another employee.
     private func singleAccount(_ app: MSALPublicClientApplication) throws -> MSALAccount? {
         let accounts = try app.allAccounts()
         guard accounts.count <= 1 else {
             throw NSError(domain: "MentraEntraAuth", code: 2, userInfo: [
-                NSLocalizedDescriptionKey: "Multiple Microsoft accounts are cached; sign in again to select the workspace account",
+                NSLocalizedDescriptionKey: "Multiple Microsoft accounts are cached; sign in again to select the organization account",
             ])
         }
         return accounts.first

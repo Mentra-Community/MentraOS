@@ -200,9 +200,9 @@ describe("glasses model selection", () => {
     expect(preparePairingScan).not.toHaveBeenCalled()
   })
 
-  it("shows only model ids approved by the workspace manifest", () => {
+  it("shows only model ids approved by the organization manifest", () => {
     ;(deploymentStore.getActive as jest.Mock).mockReturnValue({
-      kind: "workspace",
+      kind: "organization",
       manifest: {glasses: {allowedModelsOverride: ["mentra-live"]}},
     })
     const {getByTestId, queryByTestId} = render(<SelectGlassesModelScreen />)

@@ -6,6 +6,7 @@ import {fileURLToPath} from "node:url"
 
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
+const CLOUD_V2_SERVICES = Object.freeze(["core", "runtime"])
 
 export const CLOUD_V2_TARGETS = Object.freeze({
   dev: Object.freeze({
@@ -134,7 +135,7 @@ function observeServices(pods) {
     (pod) => !pod.metadata?.deletionTimestamp && !["Failed", "Succeeded"].includes(pod.status?.phase),
   )
   const observed = []
-  for (const service of ["core", "runtime"]) {
+  for (const service of CLOUD_V2_SERVICES) {
     const servicePods = active.filter((pod) => pod.metadata?.labels?.["porter.run/service-name"] === service)
     if (servicePods.length === 0) throw new Error(`No active ${service} pods were observed`)
     const digests = new Set()
@@ -310,12 +311,12 @@ export function validateCloudV2DeploymentRecord({plan, record, allowValidated = 
   if (typeof record.deploymentId !== "string" || record.deploymentId.length === 0) {
     throw new Error("Cloud V2 deployment record is missing its observed deployment identity")
   }
-  if (!Array.isArray(record.observedServices) || record.observedServices.length !== 2) {
+  if (!Array.isArray(record.observedServices) || record.observedServices.length !== CLOUD_V2_SERVICES.length) {
     throw new Error("Cloud V2 deployment record must observe Core and Runtime")
   }
   const services = new Set()
   for (const observed of record.observedServices) {
-    if (!new Set(["core", "runtime"]).has(observed.service) || services.has(observed.service)) {
+    if (!new Set(CLOUD_V2_SERVICES).has(observed.service) || services.has(observed.service)) {
       throw new Error("Cloud V2 deployment record contains invalid observed services")
     }
     services.add(observed.service)

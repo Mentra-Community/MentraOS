@@ -21,19 +21,19 @@ jest.mock("./store", () => ({
   deploymentStore: {getActive: jest.fn()},
 }))
 
-describe("workspace glasses policy", () => {
+describe("organization glasses policy", () => {
   it("uses an explicit model id for Simulated Glasses", () => {
     expect(deploymentGlassesModelId(DeviceTypes.SIMULATED)).toBe("simulated-glasses")
   })
 
-  it("requires Simulated Glasses in a populated workspace allowlist", () => {
+  it("requires Simulated Glasses in a populated organization allowlist", () => {
     ;(deploymentStore.getActive as jest.Mock).mockReturnValue({
-      kind: "workspace",
+      kind: "organization",
       manifest: {glasses: {allowedModelsOverride: ["mentra-live"]}},
     })
     expect(isGlassesModelAllowedByDeployment(DeviceTypes.SIMULATED)).toBe(false)
     ;(deploymentStore.getActive as jest.Mock).mockReturnValue({
-      kind: "workspace",
+      kind: "organization",
       manifest: {glasses: {allowedModelsOverride: ["mentra-live", "simulated-glasses"]}},
     })
     expect(isGlassesModelAllowedByDeployment(DeviceTypes.SIMULATED)).toBe(true)

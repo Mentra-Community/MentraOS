@@ -1,6 +1,6 @@
 import {deploymentManifestSchema} from "./schema"
 import type {DeploymentCandidate, DeploymentManifest} from "./types"
-import {SYSTEM_APPS} from "@/constants/miniapps"
+import {GLASSES_MENU_EXCLUDED_APPS, BUNDLED_STORE_MINIAPP_PACKAGES} from "@/constants/miniapps"
 
 const MANIFEST_PATH = "/.well-known/mentra-deployment.json"
 const DEFAULT_MAX_BYTES = 256 * 1024
@@ -14,7 +14,7 @@ export class DeploymentResolutionError extends Error {
   constructor(
     message: string,
     readonly code:
-      | "invalid-workspace"
+      | "invalid-organization"
       | "network"
       | "not-found"
       | "redirect"
@@ -34,27 +34,27 @@ export interface ResolveDeploymentOptions {
   allowInsecureLocalhost?: boolean
 }
 
-export function normalizeWorkspaceOrigin(input: string, allowInsecureLocalhost = false): string {
+export function normalizeOrganizationOrigin(input: string, allowInsecureLocalhost = false): string {
   const trimmed = input.trim()
   if (!trimmed) {
-    throw new DeploymentResolutionError("Enter an organization address.", "invalid-workspace")
+    throw new DeploymentResolutionError("Enter an organization address.", "invalid-organization")
   }
 
   let url: URL
   try {
     url = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`)
   } catch {
-    throw new DeploymentResolutionError("Enter a valid organization address.", "invalid-workspace")
+    throw new DeploymentResolutionError("Enter a valid organization address.", "invalid-organization")
   }
 
   const isLocalhost = isLoopbackHostname(url.hostname)
   if (url.protocol !== "https:" && !(allowInsecureLocalhost && isLocalhost && url.protocol === "http:")) {
-    throw new DeploymentResolutionError("The organization address must use HTTPS.", "invalid-workspace")
+    throw new DeploymentResolutionError("The organization address must use HTTPS.", "invalid-organization")
   }
   if (url.username || url.password) {
     throw new DeploymentResolutionError(
       "Enter an organization address without a username or password.",
-      "invalid-workspace",
+      "invalid-organization",
     )
   }
 
@@ -64,11 +64,11 @@ export function normalizeWorkspaceOrigin(input: string, allowInsecureLocalhost =
 }
 
 export async function resolveDeploymentCandidate(
-  workspaceInput: string,
+  organizationInput: string,
   options: ResolveDeploymentOptions,
 ): Promise<DeploymentCandidate> {
-  const workspaceOrigin = normalizeWorkspaceOrigin(workspaceInput, options.allowInsecureLocalhost)
-  const manifestUrl = new URL(MANIFEST_PATH, workspaceOrigin).toString()
+  const organizationOrigin = normalizeOrganizationOrigin(organizationInput, options.allowInsecureLocalhost)
+  const manifestUrl = new URL(MANIFEST_PATH, organizationOrigin).toString()
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
 
@@ -84,23 +84,23 @@ export async function resolveDeploymentCandidate(
       signal: controller.signal,
     })
     if (response.status >= 300 && response.status < 400) {
-      throw new DeploymentResolutionError("Workspace manifest redirects are not allowed.", "redirect")
+      throw new DeploymentResolutionError("Organization manifest redirects are not allowed.", "redirect")
     }
     if (response.status === 404 || response.status === 410) {
-      throw new DeploymentResolutionError("No workspace manifest exists at this address.", "not-found")
+      throw new DeploymentResolutionError("No organization manifest exists at this address.", "not-found")
     }
     if (!response.ok) {
-      throw new DeploymentResolutionError(`Workspace manifest returned HTTP ${response.status}.`, "network")
+      throw new DeploymentResolutionError(`Organization manifest returned HTTP ${response.status}.`, "network")
     }
-    if (new URL(response.url || manifestUrl).origin !== workspaceOrigin) {
-      throw new DeploymentResolutionError("Workspace manifest changed origin.", "redirect")
+    if (new URL(response.url || manifestUrl).origin !== organizationOrigin) {
+      throw new DeploymentResolutionError("Organization manifest changed origin.", "redirect")
     }
 
     body = await readResponseBody(response, options.maxBytes ?? DEFAULT_MAX_BYTES)
   } catch (error) {
     if (error instanceof DeploymentResolutionError) throw error
     const reason = error instanceof Error && error.name === "AbortError" ? "timed out" : "failed"
-    throw new DeploymentResolutionError(`Workspace manifest request ${reason}.`, "network")
+    throw new DeploymentResolutionError(`Organization manifest request ${reason}.`, "network")
   } finally {
     clearTimeout(timeout)
   }
@@ -109,34 +109,37 @@ export async function resolveDeploymentCandidate(
   try {
     raw = JSON.parse(body)
   } catch {
-    throw new DeploymentResolutionError("Workspace manifest is not valid JSON.", "invalid-manifest")
+    throw new DeploymentResolutionError("Organization manifest is not valid JSON.", "invalid-manifest")
   }
 
   const parsed = deploymentManifestSchema.safeParse(raw)
   if (!parsed.success) {
-    throw new DeploymentResolutionError("Workspace manifest does not match the supported schema.", "invalid-manifest")
+    throw new DeploymentResolutionError(
+      "Organization manifest does not match the supported schema.",
+      "invalid-manifest",
+    )
   }
 
-  validateDeploymentManifest(parsed.data, workspaceOrigin, options.allowInsecureLocalhost)
-  return {workspaceOrigin, manifestUrl, manifest: parsed.data}
+  validateDeploymentManifest(parsed.data, organizationOrigin, options.allowInsecureLocalhost)
+  return {organizationOrigin, manifestUrl, manifest: parsed.data}
 }
 
 export function validateDeploymentManifest(
   manifest: DeploymentManifest,
-  workspaceOrigin: string,
+  organizationOrigin: string,
   allowInsecureLocalhost = false,
 ): void {
   if (!manifest.services.coreUrl) {
-    throw new DeploymentResolutionError("This workspace does not configure Core.", "invalid-manifest")
+    throw new DeploymentResolutionError("This organization does not configure Core.", "invalid-manifest")
   }
   if (!manifest.services.runtimeUrl) {
-    throw new DeploymentResolutionError("This workspace does not configure Runtime.", "invalid-manifest")
+    throw new DeploymentResolutionError("This organization does not configure Runtime.", "invalid-manifest")
   }
   secureServiceBaseUrl(manifest.services.coreUrl, allowInsecureLocalhost)
   const runtimeOrigin = secureServiceBaseUrl(manifest.services.runtimeUrl, allowInsecureLocalhost)
-  if (runtimeOrigin !== workspaceOrigin) {
+  if (runtimeOrigin !== organizationOrigin) {
     throw new DeploymentResolutionError(
-      "Runtime must use the workspace origin in deployment schema v1.",
+      "Runtime must use the organization origin in deployment schema v1.",
       "origin-mismatch",
     )
   }
@@ -144,9 +147,9 @@ export function validateDeploymentManifest(
     const logoOrigins = Object.values(manifest.branding.logoUrls).map((logoUrl) =>
       secureUrlOrigin(logoUrl, allowInsecureLocalhost),
     )
-    if (logoOrigins.some((origin) => origin !== workspaceOrigin)) {
+    if (logoOrigins.some((origin) => origin !== organizationOrigin)) {
       throw new DeploymentResolutionError(
-        "Workspace logos must use the workspace origin in deployment schema v1.",
+        "Organization logos must use the organization origin in deployment schema v1.",
         "origin-mismatch",
       )
     }
@@ -162,9 +165,9 @@ export function validateDeploymentManifest(
     }
     managedPackageNames.add(entry.packageName)
     const bundleUrl = new URL(entry.bundleUrl)
-    if (secureUrlOrigin(entry.bundleUrl, allowInsecureLocalhost) !== workspaceOrigin) {
+    if (secureUrlOrigin(entry.bundleUrl, allowInsecureLocalhost) !== organizationOrigin) {
       throw new DeploymentResolutionError(
-        "Managed miniapp bundles must use the workspace origin in deployment schema v1.",
+        "Managed miniapp bundles must use the organization origin in deployment schema v1.",
         "origin-mismatch",
       )
     }
@@ -183,7 +186,9 @@ export function validateDeploymentManifest(
     managedBundlePaths.add(bundleUrl.pathname)
   }
   const approvedSystemMiniapps = manifest.systemMiniapps.approvedPackageNamesOverride
-  const systemPackageNames = new Set<string>(SYSTEM_APPS)
+  // Organizations may pin userland versions of preinstalled miniapps such as Call.
+  // They may never replace native host utilities or the build-selected Stores.
+  const systemPackageNames = new Set<string>([...GLASSES_MENU_EXCLUDED_APPS, ...BUNDLED_STORE_MINIAPP_PACKAGES])
   if (
     [...managedPackageNames].some((packageName) => systemPackageNames.has(packageName)) ||
     approvedSystemMiniapps?.some((packageName) => managedPackageNames.has(packageName))
@@ -210,7 +215,7 @@ export function validateDeploymentManifest(
   }
   if (manifest.auth.mode !== "microsoft-entra") {
     throw new DeploymentResolutionError(
-      "This Mentra App release does not support the workspace authentication mode.",
+      "This Mentra App release does not support the organization authentication mode.",
       "invalid-manifest",
     )
   }
@@ -281,7 +286,7 @@ function isLoopbackHostname(hostname: string): boolean {
 async function readResponseBody(response: Response, maxBytes: number): Promise<string> {
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new DeploymentResolutionError("Workspace manifest is too large.", "response-too-large")
+    throw new DeploymentResolutionError("Organization manifest is too large.", "response-too-large")
   }
 
   const reader = response.body?.getReader()
@@ -290,7 +295,7 @@ async function readResponseBody(response: Response, maxBytes: number): Promise<s
     // response before the caller can enforce maxBytes and replacement-decodes
     // malformed UTF-8. The production Expo fetch path always streams; custom
     // fetch implementations must provide the same bounded contract.
-    throw new DeploymentResolutionError("Workspace manifest response cannot be read safely.", "invalid-manifest")
+    throw new DeploymentResolutionError("Organization manifest response cannot be read safely.", "invalid-manifest")
   }
 
   const decoder = new TextDecoder("utf-8", {fatal: true})
@@ -303,7 +308,7 @@ async function readResponseBody(response: Response, maxBytes: number): Promise<s
       byteLength += chunk.value.byteLength
       if (byteLength > maxBytes) {
         await reader.cancel()
-        throw new DeploymentResolutionError("Workspace manifest is too large.", "response-too-large")
+        throw new DeploymentResolutionError("Organization manifest is too large.", "response-too-large")
       }
       value += decoder.decode(chunk.value, {stream: true})
     }
@@ -311,7 +316,7 @@ async function readResponseBody(response: Response, maxBytes: number): Promise<s
     return value
   } catch (error) {
     if (error instanceof DeploymentResolutionError) throw error
-    throw new DeploymentResolutionError("Workspace manifest body is not valid UTF-8.", "invalid-manifest")
+    throw new DeploymentResolutionError("Organization manifest body is not valid UTF-8.", "invalid-manifest")
   }
 }
 

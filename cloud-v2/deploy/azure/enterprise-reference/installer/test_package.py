@@ -80,6 +80,14 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(self.output.with_name('release.tar.gz.sha256').read_text().split()[0],
                          package.sha(self.output.read_bytes()))
 
+    def test_install_guide_names_the_operator_key_flow(self):
+        self.build()
+        with tarfile.open(self.output) as archive:
+            guide = archive.extractfile('mentra-private-cloud/INSTALL.txt').read().decode()
+        self.assertIn('operator key (mak_)', guide)
+        self.assertIn('operator@private-cloud.local', guide)
+        self.assertNotIn('api-key@', guide)
+
     def test_same_committed_release_packages_identical_bytes_on_rerun(self):
         self.build()
         original = self.output.read_bytes()

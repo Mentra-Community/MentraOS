@@ -215,6 +215,19 @@ target; it needs an A record to the environment's static inbound IP and TXT or
 HTTP domain-control validation, which the reference template does not
 configure (its managed certificate uses CNAME validation only).
 
+## Administrator access
+
+Core's admin API (report retrieval and triage) uses an operator key (`mak_...`).
+Setup creates it after Core is deployed: it adds the installer identity
+`operator@private-cloud.local` to `coreAdminEmails`, mints the key, and stores
+it in Key Vault as `mentra-admin-key`. Setup's summary prints the command that
+reads it; use the value as `MENTRA_ADMIN_TOKEN`. The key works only while
+`operator@private-cloud.local` stays in `coreAdminEmails`. A deployment that
+already has an `msk_local_...` administrator key keeps it while its
+`api-key@<keyId>.local` address stays in `coreAdminEmails`. Browser admin
+sign-in is not available for private deployments. See
+[reports and durable attachments](operations.md#reports-and-durable-attachments).
+
 ## 3. Verify the manifest
 
 Use the [manifest reference](../../deployment-manifest-reference.md) for the

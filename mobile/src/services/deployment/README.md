@@ -8,7 +8,7 @@ Every active deployment has a schema-v1 `DeploymentManifest`:
   regional app configuration. The selection is persisted, but the official
   manifest is reconstructed from the installed build, never restored from an old
   build's cached values.
-- **Workspace:** the resolver downloads and validates the customer's manifest.
+- **Organization:** the resolver downloads and validates the customer's manifest.
   Consumer environment variables do not change these defaults. The cached source
   manifest remains unchanged when debugging.
 
@@ -18,13 +18,22 @@ Core requests, boot's Runtime version check, Debug Settings, startup, and manual
 or automatic cloud reconnects all use the same endpoint resolver. Manifest
 fields also supply the app's links, wallpapers, feature settings, and allowlists.
 Authentication still selects the provider appropriate to the manifest's mode;
-the remote workspace validator continues to require Microsoft Entra.
+the remote organization validator continues to require Microsoft Entra.
+
+## Persisted names
+
+Builds that already shipped called an organization a "workspace" and persisted
+that name: the stored selection's `kind` and origin field, the ownership file,
+the `lmas-workspace` bundle directory, the local miniapp user-id prefix and the
+debug-override scope. In code the concept is an organization. `legacyPersistedNames.ts`
+holds the persisted strings, and each serialization boundary maps to and from
+them. Never change those strings; upgraded devices still read them.
 
 ## Debug overrides
 
 The existing `cloud_core_url` and `cloud_runtime_url` settings remain the only
 stored URL overrides. `cloud_url_deployment` identifies their owning deployment
-(consumer, or workspace ID plus origin). Older, unscoped values remain valid for
+(consumer, or organization ID plus origin). Older, unscoped values remain valid for
 consumer mode only. Build-environment changes still clear these settings.
 
 Debug Settings shows baseline and effective URLs for both deployment types:
@@ -34,7 +43,7 @@ Debug Settings shows baseline and effective URLs for both deployment types:
   the new deployment.
 - **Reset** clears the overrides and restores the selected manifest's URLs. It
   clears the old backend's cached version requirement before retrying and does
-  not leave the workspace. URL writes own cache invalidation so a delayed React
+  not leave the organization. URL writes own cache invalidation so a delayed React
   effect cannot erase a freshly fetched requirement.
 - **Restart** keeps the overrides. `metro-auto` resolves against the current
   Metro host each time; if unavailable, it uses the selected manifest's defaults.
@@ -62,10 +71,10 @@ configuration is rejected; it never falls back to a previous bundled pin.
 The selected pin still goes through the existing host/engine adapter.
 Its engine adapter
 preserves the existing embedded-engine release fallback and pre-39 glasses
-protocol behavior. Workspace OTA uses the manifest's source, with `null` meaning
-disabled. A deliberate OTA debug override takes precedence for workspaces too,
+protocol behavior. Organization OTA uses the manifest's source, with `null` meaning
+disabled. A deliberate OTA debug override takes precedence for organizations too,
 and remains gated by Super Mode. Reset restores the manifest policy; absent an
-override, workspaces never inherit an official/device-reported OTA URL.
+override, organizations never inherit an official/device-reported OTA URL.
 
 STT/TTS model base URL fields remain reserved as described in the deployment
 manifest reference; this change does not add model hosting support.

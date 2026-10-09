@@ -169,7 +169,7 @@ export default function CloudUrl() {
       setCoreInput("")
       setRuntimeInput("")
       cloudClient.reconnect()
-      showAlert("Success", translate("workspace:cloudReset"), [{text: "OK"}])
+      showAlert("Success", translate("organization:cloudReset"), [{text: "OK"}])
     } catch (error) {
       showAlert(translate("common:error"), error instanceof Error ? error.message : String(error), [{text: "OK"}])
     } finally {
@@ -226,12 +226,12 @@ export default function CloudUrl() {
       <View className="flex-1">
         <Text className="flex-wrap text-base text-foreground">Cloud V2</Text>
         <Text className="mt-1 flex-wrap text-xs text-muted-foreground">
-          {translate("workspace:cloudOverridesDescription", {name: activeDeployment.manifest.displayName})}
+          {translate("organization:cloudOverridesDescription", {name: activeDeployment.manifest.displayName})}
         </Text>
 
         <Text className="mt-3.5 text-[13px] font-semibold text-foreground">Core URL</Text>
         <Text className="mt-1 text-xs text-muted-foreground">
-          {translate("workspace:cloudDefault", {url: activeDeployment.manifest.services.coreUrl ?? ""})}
+          {translate("organization:cloudDefault", {url: activeDeployment.manifest.services.coreUrl ?? ""})}
         </Text>
         <Text className="mt-1 flex-wrap text-xs text-muted-foreground">
           Currently using: {active.core}
@@ -251,7 +251,7 @@ export default function CloudUrl() {
 
         <Text className="mt-3.5 text-[13px] font-semibold text-foreground">Runtime URL</Text>
         <Text className="mt-1 text-xs text-muted-foreground">
-          {translate("workspace:cloudDefault", {url: activeDeployment.manifest.services.runtimeUrl ?? ""})}
+          {translate("organization:cloudDefault", {url: activeDeployment.manifest.services.runtimeUrl ?? ""})}
         </Text>
         <Text className="mt-1 flex-wrap text-xs text-muted-foreground">
           Currently using: {active.runtime}

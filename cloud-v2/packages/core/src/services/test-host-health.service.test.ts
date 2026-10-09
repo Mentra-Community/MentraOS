@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { createTestHostObservationsApi } from "../api/internal/test-host-observations.api";
 import { createTestRunAdminApi } from "../api/admin/test-runs.api";
-import { adminAuth } from "../api/middleware/admin-auth.middleware";
+import { principalAuth } from "../api/middleware/principal.middleware";
 import { HOST_FRESH_MS, HOST_SAMPLE_LIMIT, hostIsFresh, testHostSampleSchema, type TestHostSample } from "../types/test-host-health.types";
 import type { AppEnv } from "../types/hono.types";
 import { hostHistoryProjection, MongoTestHostHealthRepository, TestHostHealthService, type StoredHostSample, type TestHostHealthRepository } from "./test-host-health.service";
@@ -169,7 +169,7 @@ describe("host health authorization", () => {
     const input = sample(start, { memory: { totalBytes: 8 * 1024 ** 3, usedBytes: 5 * 1024 ** 3, compressedBytes: 1024 ** 3,
       swapUsedBytes: 0, pressureFreePercent: 61, pressure: "normal" } });
     await service.ingest(input);
-    const app = new Hono<AppEnv>(); app.use("*", adminAuth);
+    const app = new Hono<AppEnv>(); app.use("*", principalAuth);
     app.route("/", createTestRunAdminApi(service));
     for (const path of ["/health", "/health/mini-1?days=7"]) expect((await app.request(path, { headers: { authorization: "Bearer " + token } })).status).toBe(401);
     const read = createTestRunAdminApi(service);

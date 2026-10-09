@@ -82,10 +82,10 @@ export interface DeploymentManifest {
   telemetry: boolean
 }
 
-export interface WorkspaceDeployment {
-  kind: "workspace"
+export interface OrganizationDeployment {
+  kind: "organization"
   source: "manual"
-  workspaceOrigin: string
+  organizationOrigin: string
   manifestUrl: string
   manifest: DeploymentManifest
   activatedAt: string
@@ -97,10 +97,10 @@ export interface ConsumerDeployment {
   manifest: DeploymentManifest
 }
 
-export type ActiveDeployment = ConsumerDeployment | WorkspaceDeployment
+export type ActiveDeployment = ConsumerDeployment | OrganizationDeployment
 
 export interface DeploymentCandidate {
-  workspaceOrigin: string
+  organizationOrigin: string
   manifestUrl: string
   manifest: DeploymentManifest
 }

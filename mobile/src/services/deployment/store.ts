@@ -1,13 +1,31 @@
 import {storage} from "@/utils/storage/storage"
 
-import type {ActiveDeployment, DeploymentCandidate, WorkspaceDeployment} from "./types"
+import type {
+  ActiveDeployment,
+  ConsumerDeployment,
+  DeploymentCandidate,
+  DeploymentManifest,
+  OrganizationDeployment,
+} from "./types"
 import {withClearedDeploymentDebugOverrides} from "./debugOverrides"
+import {PERSISTED_DEPLOYMENT_KIND, PERSISTED_ORIGIN_FIELD} from "./legacyPersistedNames"
 import {createConsumerDeployment} from "./officialManifest"
 import {deploymentManifestSchema} from "./schema"
 import {validateDeploymentManifest} from "./resolver"
 
 const ACTIVE_DEPLOYMENT_KEY = "mentra.deployment.active.v1"
-type PersistedDeploymentSelection = ActiveDeployment
+
+/** Shape of a selected organization on disk. Builds that already shipped wrote these names. */
+interface PersistedOrganizationDeployment {
+  kind: typeof PERSISTED_DEPLOYMENT_KIND
+  source: "manual"
+  [PERSISTED_ORIGIN_FIELD]: string
+  manifestUrl: string
+  manifest: DeploymentManifest
+  activatedAt: string
+}
+
+export type PersistedDeploymentSelection = ConsumerDeployment | PersistedOrganizationDeployment
 
 export interface DeploymentStorage {
   load(): unknown | null
@@ -39,7 +57,7 @@ class MmkvDeploymentStorage implements DeploymentStorage {
 export class DeploymentStore {
   private active: ActiveDeployment
   private resolved: boolean
-  private selectingWorkspace = false
+  private selectingOrganization = false
   private readonly listeners = new Set<(deployment: ActiveDeployment, resolved: boolean) => void>()
 
   constructor(private readonly persistence: DeploymentStorage = new MmkvDeploymentStorage()) {
@@ -52,14 +70,14 @@ export class DeploymentStore {
     return this.active
   }
 
-  /** False only while a fresh install is waiting for Mentra vs workspace selection. */
+  /** False only while a fresh install is waiting for Mentra vs organization selection. */
   isResolved(): boolean {
     return this.resolved
   }
 
   /** True while the user is deliberately replacing a consumer selection. */
-  isSelectingWorkspace(): boolean {
-    return this.selectingWorkspace
+  isSelectingOrganization(): boolean {
+    return this.selectingOrganization
   }
 
   /** Whether Mentra-owned telemetry may initialize for the current selection. */
@@ -68,17 +86,17 @@ export class DeploymentStore {
     return this.active.manifest.telemetry
   }
 
-  async activate(candidate: DeploymentCandidate): Promise<WorkspaceDeployment> {
-    const deployment: WorkspaceDeployment = {
-      kind: "workspace",
+  async activate(candidate: DeploymentCandidate): Promise<OrganizationDeployment> {
+    const deployment: OrganizationDeployment = {
+      kind: "organization",
       source: "manual",
-      workspaceOrigin: candidate.workspaceOrigin,
+      organizationOrigin: candidate.organizationOrigin,
       manifestUrl: candidate.manifestUrl,
       manifest: candidate.manifest,
       activatedAt: new Date().toISOString(),
     }
-    await withClearedDeploymentDebugOverrides(() => this.persistence.save(deployment))
-    this.selectingWorkspace = false
+    await withClearedDeploymentDebugOverrides(() => this.persistence.save(toPersistedSelection(deployment)))
+    this.selectingOrganization = false
     this.setActive(deployment)
     return deployment
   }
@@ -87,33 +105,33 @@ export class DeploymentStore {
     // Login buttons also reconfirm an existing consumer after token expiry.
     // Only an actual deployment switch should discard its debug configuration.
     const deployment = createConsumerDeployment()
-    if (this.active.kind === "workspace" || this.selectingWorkspace) {
+    if (this.active.kind === "organization" || this.selectingOrganization) {
       await withClearedDeploymentDebugOverrides(() => this.persistence.save(deployment))
     } else {
       this.persistence.save(deployment)
     }
-    this.selectingWorkspace = false
+    this.selectingOrganization = false
     this.setActive(deployment, true)
   }
 
   /** Upgrade an existing consumer login without treating restoration as a switch. */
   restoreConsumerSessionSelection(): void {
-    if (this.active.kind !== "consumer" || this.resolved || this.selectingWorkspace) return
+    if (this.active.kind !== "consumer" || this.resolved || this.selectingOrganization) return
     this.persistence.save(this.active)
     this.setActive(this.active, true)
   }
 
   /** Enter discovery without allowing cached consumer credentials to opt back in. */
-  async beginWorkspaceSelection(): Promise<void> {
+  async beginOrganizationSelection(): Promise<void> {
     await withClearedDeploymentDebugOverrides(() => this.persistence.remove())
-    this.selectingWorkspace = true
+    this.selectingOrganization = true
     this.setActive(createConsumerDeployment(), false)
   }
 
   /** Return to the neutral selector without opting into consumer telemetry. */
   async clearSelection(): Promise<void> {
     await withClearedDeploymentDebugOverrides(() => this.persistence.remove())
-    this.selectingWorkspace = false
+    this.selectingOrganization = false
     this.setActive(createConsumerDeployment(), false)
   }
 
@@ -129,16 +147,29 @@ export class DeploymentStore {
   }
 }
 
-function restoreDeploymentSelection(value: unknown): PersistedDeploymentSelection | null {
+function toPersistedSelection(deployment: ActiveDeployment): PersistedDeploymentSelection {
+  if (deployment.kind === "consumer") return deployment
+  return {
+    kind: PERSISTED_DEPLOYMENT_KIND,
+    source: deployment.source,
+    [PERSISTED_ORIGIN_FIELD]: deployment.organizationOrigin,
+    manifestUrl: deployment.manifestUrl,
+    manifest: deployment.manifest,
+    activatedAt: deployment.activatedAt,
+  }
+}
+
+function restoreDeploymentSelection(value: unknown): ActiveDeployment | null {
   if (!value || typeof value !== "object") return null
-  const persisted = value as Partial<PersistedDeploymentSelection>
+  const persisted = value as Partial<ConsumerDeployment>
   if (persisted.kind === "consumer" && persisted.source === "embedded") return createConsumerDeployment()
 
-  const candidate = value as Partial<WorkspaceDeployment>
+  const candidate = value as Partial<PersistedOrganizationDeployment>
+  const origin = candidate[PERSISTED_ORIGIN_FIELD]
   if (
-    candidate.kind !== "workspace" ||
+    candidate.kind !== PERSISTED_DEPLOYMENT_KIND ||
     candidate.source !== "manual" ||
-    typeof candidate.workspaceOrigin !== "string" ||
+    typeof origin !== "string" ||
     typeof candidate.manifestUrl !== "string" ||
     typeof candidate.activatedAt !== "string" ||
     !candidate.manifest ||
@@ -149,20 +180,27 @@ function restoreDeploymentSelection(value: unknown): PersistedDeploymentSelectio
   const parsedManifest = deploymentManifestSchema.safeParse(candidate.manifest)
   if (!parsedManifest.success) return null
   try {
-    const workspaceOrigin = new URL(candidate.workspaceOrigin)
+    const organizationOrigin = new URL(origin)
     const manifestUrl = new URL(candidate.manifestUrl)
     if (
-      workspaceOrigin.origin !== candidate.workspaceOrigin ||
-      manifestUrl.origin !== candidate.workspaceOrigin ||
+      organizationOrigin.origin !== origin ||
+      manifestUrl.origin !== origin ||
       manifestUrl.pathname !== "/.well-known/mentra-deployment.json"
     ) {
       return null
     }
-    validateDeploymentManifest(parsedManifest.data, candidate.workspaceOrigin)
+    validateDeploymentManifest(parsedManifest.data, origin)
   } catch {
     return null
   }
-  return {...(candidate as WorkspaceDeployment), manifest: parsedManifest.data}
+  return {
+    kind: "organization",
+    source: "manual",
+    organizationOrigin: origin,
+    manifestUrl: candidate.manifestUrl,
+    manifest: parsedManifest.data,
+    activatedAt: candidate.activatedAt,
+  }
 }
 
 export const deploymentStore = new DeploymentStore()

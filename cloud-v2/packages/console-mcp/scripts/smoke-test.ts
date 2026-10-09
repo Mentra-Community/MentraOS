@@ -5,7 +5,7 @@
  * or MENTRA_ENV to pick a deployment — defaults to prod).
  *
  * Usage:
- *   export MENTRA_ADMIN_TOKEN=msk_...
+ *   export MENTRA_ADMIN_TOKEN=mak_...
  *   export MENTRA_ENV=dev            # or MENTRA_CORE_URL=http://localhost:3000
  *   bun run scripts/smoke-test.ts
  */
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   console.log(`Core URL: ${config.coreUrl}`);
   console.log(`Capabilities: reports=${config.capabilities.reports}\n`);
 
-  // Reachability — /api/admin/health sits before the adminAuth gate.
+  // Reachability — /api/admin/health sits before the admin principal gate.
   try {
     const res = await fetch(`${config.coreUrl}/api/admin/health`);
     if (res.ok) pass("core reachable", config.coreUrl);

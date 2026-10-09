@@ -9,6 +9,7 @@ import {
   useDeployment,
 } from "@/services/deployment"
 import {clearDeploymentDebugOverrides} from "@/services/deployment/debugOverrides"
+import {PERSISTED_USER_ID_PREFIX} from "@/services/deployment/legacyPersistedNames"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import {storage} from "@/utils/storage"
 import mentraAuth from "@/utils/auth/authClient"
@@ -20,19 +21,19 @@ interface AuthContextProps {
   session: MentraAuthSession | null
   loading: boolean
   logout: () => Promise<void>
-  signInWorkspace: () => Promise<void>
-  leaveWorkspace: (destination: "consumer" | "selector") => Promise<void>
+  signInOrganization: () => Promise<void>
+  leaveOrganization: (destination: "consumer" | "selector") => Promise<void>
 }
 
 // Native provider sign-out (MSAL) removes every cached account for the client
-// id, so a sign-out still running from a previous workspace visit must finish
+// id, so a sign-out still running from a previous organization visit must finish
 // before a new interactive sign-in stores its account.
 let pendingProviderCleanup: Promise<void> = Promise.resolve()
 
 function queueProviderCleanup(provider: DeploymentAuthProvider): Promise<void> {
   const cleanup = pendingProviderCleanup.then(() =>
     provider.signOut().catch((error) => {
-      console.warn("AuthContext: failed to clear workspace provider account", error)
+      console.warn("AuthContext: failed to clear organization provider account", error)
     }),
   )
   pendingProviderCleanup = cleanup
@@ -44,14 +45,14 @@ const AuthContext = createContext<AuthContextProps>({
   session: null,
   loading: true,
   logout: async () => {},
-  signInWorkspace: async () => {},
-  leaveWorkspace: async () => {},
+  signInOrganization: async () => {},
+  leaveOrganization: async () => {},
 })
 
 function toMentraSession(session: DeploymentAuthSession | null): MentraAuthSession | null {
   if (!session) return null
   const {identity} = session
-  const id = `workspace:${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
+  const id = `${PERSISTED_USER_ID_PREFIX}${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
   return {
     token: session.accessToken,
     user: {
@@ -69,8 +70,8 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
   const [loading, setLoading] = useState(true)
   const [_authEmail, setAuthEmail] = useSetting(SETTINGS.auth_email.key)
   const {activeDeployment, selectionResolved, store} = useDeployment()
-  const workspaceAuth = useMemo<DeploymentAuthProvider | null>(
-    () => (activeDeployment.kind === "workspace" ? createDeploymentAuthProvider(activeDeployment) : null),
+  const organizationAuth = useMemo<DeploymentAuthProvider | null>(
+    () => (activeDeployment.kind === "organization" ? createDeploymentAuthProvider(activeDeployment) : null),
     [activeDeployment],
   )
 
@@ -101,19 +102,19 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       const refresh = storage.load<string>("mentra.account.refreshToken")
       const hasExistingConsumerSession =
         (access.is_ok() && Boolean(access.value)) || (refresh.is_ok() && Boolean(refresh.value))
-      if (hasExistingConsumerSession && !store.isSelectingWorkspace()) {
+      if (hasExistingConsumerSession && !store.isSelectingOrganization()) {
         store.restoreConsumerSessionSelection()
       } else {
         applySession(null, false)
       }
-    } else if (workspaceAuth && activeDeployment.kind === "workspace") {
+    } else if (organizationAuth && activeDeployment.kind === "organization") {
       const allowTelemetry = activeDeployment.manifest.telemetry
-      unsubscribe = workspaceAuth.onStateChange((next) => applySession(toMentraSession(next), allowTelemetry))
-      void workspaceAuth
+      unsubscribe = organizationAuth.onStateChange((next) => applySession(toMentraSession(next), allowTelemetry))
+      void organizationAuth
         .getSession()
         .then((next) => applySession(toMentraSession(next), allowTelemetry))
         .catch((error) => {
-          console.warn("AuthContext: failed to restore workspace session", error)
+          console.warn("AuthContext: failed to restore organization session", error)
           applySession(null, allowTelemetry)
         })
     } else {
@@ -151,14 +152,14 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       cancelled = true
       unsubscribe?.()
     }
-  }, [activeDeployment, selectionResolved, setAuthEmail, store, workspaceAuth])
+  }, [activeDeployment, selectionResolved, setAuthEmail, store, organizationAuth])
 
-  const signInWorkspace = async () => {
-    if (!workspaceAuth) throw new Error("No organization workspace is active")
+  const signInOrganization = async () => {
+    if (!organizationAuth) throw new Error("No organization is active")
     setLoading(true)
     try {
       await pendingProviderCleanup
-      const next = toMentraSession(await workspaceAuth.signIn())
+      const next = toMentraSession(await organizationAuth.signIn())
       setSession(next)
       setUser(next?.user ?? null)
       if (activeDeployment.kind === "consumer" && next?.user?.email) setAuthEmail(next.user.email)
@@ -170,13 +171,13 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
   const logout = async () => {
     console.log("AuthContext: Starting logout process")
     try {
-      if (workspaceAuth && activeDeployment.kind === "workspace") {
+      if (organizationAuth && activeDeployment.kind === "organization") {
         try {
           await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
-          await queueProviderCleanup(workspaceAuth)
+          await queueProviderCleanup(organizationAuth)
         } finally {
-          // Log out means leaving the workspace, including its cached manifest.
-          // A future same-workspace account switch must be a separate action.
+          // Log out means leaving the organization, including its cached manifest.
+          // A future same-organization account switch must be a separate action.
           await store.clearSelection()
         }
       } else {
@@ -197,26 +198,26 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     }
   }
 
-  const leaveWorkspace = async (destination: "consumer" | "selector") => {
-    const workspaceAuthToClear = workspaceAuth
+  const leaveOrganization = async (destination: "consumer" | "selector") => {
+    const organizationAuthToClear = organizationAuth
 
-    // Leaving the unauthenticated workspace screen must never be blocked by
-    // native provider cleanup. Workspace activation and workspace logout have
+    // Leaving the unauthenticated organization screen must never be blocked by
+    // native provider cleanup. Organization activation and organization logout have
     // already performed the full local-data teardown; this path only removes
     // a possibly cached provider account and changes the deployment selection.
     // Switch immediately so a rejected or slow MSAL sign-out cannot trap the
-    // user inside a workspace they have not signed in to.
+    // user inside an organization they have not signed in to.
     if (destination === "consumer") await store.returnToMentra()
     else await store.clearSelection()
     setSession(null)
     setUser(null)
     Sentry.setUser(null)
 
-    if (workspaceAuthToClear) void queueProviderCleanup(workspaceAuthToClear)
+    if (organizationAuthToClear) void queueProviderCleanup(organizationAuthToClear)
   }
 
   return (
-    <AuthContext.Provider value={{user, session, loading, logout, signInWorkspace, leaveWorkspace}}>
+    <AuthContext.Provider value={{user, session, loading, logout, signInOrganization, leaveOrganization}}>
       {children}
     </AuthContext.Provider>
   )

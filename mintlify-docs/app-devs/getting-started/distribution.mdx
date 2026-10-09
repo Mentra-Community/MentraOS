@@ -30,6 +30,13 @@ test multiple dev miniapps together. Rescanning the same package updates that
 entry. Use a release install when you want the miniapp to run without the
 computer.
 
+A dev build runs as the package named in its `miniapp.json`, so it can stand in
+for an installed copy of that package. Dev code is unsigned: the Mentra App runs
+it in place of an unsigned install, but refuses it while the package is
+installed from a bundle signed with a publisher key. Uninstall the miniapp from
+the phone first, then scan again. `session.auth` works in a dev build the same
+way it does for the installed miniapp.
+
 ## Release install (local testing over LAN)
 
 To put a real, installed build on one or more test phones on your local network,

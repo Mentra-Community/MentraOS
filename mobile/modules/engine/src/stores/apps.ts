@@ -25,6 +25,8 @@ import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import {isMiniappAvailable} from "../runtime/bootstrap"
+import {isStoreMiniappPackage} from "../services/SystemMiniappPolicy"
 import {resolveHiddenStatus} from "./appVisibility"
 import {SETTINGS, useSettingsStore} from "./settings"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
@@ -40,6 +42,8 @@ export interface StartOptions {
 }
 
 export interface AppStoreHooks {
+  /** The host renders an explanation when an update blocks a user open. */
+  onUpdateBlocked?: (app: ClientApp) => void
   /**
    * A start was blocked because the app is hardware-incompatible. Engine made
    * the decision (and raised the `version_incompatible` notification); the host
@@ -62,6 +66,7 @@ export interface AppStoreHooks {
 }
 
 let hostHooks: AppStoreHooks = {}
+const uninstallingPackages = new Set<string>()
 
 export function installAppStoreHooks(hooks: AppStoreHooks): void {
   hostHooks = {...hostHooks, ...hooks}
@@ -73,6 +78,8 @@ export function installAppStoreHooks(hooks: AppStoreHooks): void {
 
 interface AppStatusState {
   apps: ClientApp[]
+  updatingPackages: ReadonlySet<string>
+  runUpdate: <T>(packageName: string, update: () => Promise<T>) => Promise<T>
   /**
    * Source of truth for which app is foregrounded in the Compositor overlay.
    * The per-app `foregrounded` boolean is derived from this in `projectApps`
@@ -187,6 +194,7 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[]): Cli
   // Dedupe by packageName, keep first occurrence.
   const byPackage = new Map<string, ClientApp>()
   for (const app of localApps) {
+    if (!isMiniappAvailable(app.packageName)) continue
     if (!byPackage.has(app.packageName)) byPackage.set(app.packageName, app)
   }
 
@@ -238,6 +246,7 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[]): Cli
       // through to the root router (restart). Deriving here keeps the flag stable
       // across both passes.
       foregrounded: app.packageName === previousState.foregroundedPackage,
+      updating: previousState.updatingPackages.has(app.packageName),
     }
     const prev = previousByPackage.get(app.packageName)
     return prev && shallowEqualApp(prev, next) ? prev : next
@@ -279,20 +288,58 @@ function compatibilityEqual(a?: CompatibilityResult, b?: CompatibilityResult): b
 
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
+  updatingPackages: new Set(),
   foregroundedPackage: null,
 
   refresh: async () => {
-    const previousState = get()
     const localApps = await appRegistry.getInstalledMiniapps()
-    set({apps: projectApps(previousState, localApps)})
+    // Installation/foreground state may have changed while reading the registry.
+    set((state) => {
+      // Explicitly unavailable apps lose foreground ownership. Keep ownership
+      // across temporary registry omissions so ordinary refreshes do not reopen
+      // or restart the hosted UI.
+      const foregroundedPackage =
+        state.foregroundedPackage && isMiniappAvailable(state.foregroundedPackage) ? state.foregroundedPackage : null
+      return {
+        foregroundedPackage,
+        apps: projectApps({...state, foregroundedPackage}, localApps),
+      }
+    })
+  },
+
+  runUpdate: async (packageName, update) => {
+    if (get().updatingPackages.has(packageName)) throw new Error(`${packageName} is already updating`)
+    if (uninstallingPackages.has(packageName)) throw new Error(`${packageName} is being uninstalled`)
+    const setUpdating = (updating: boolean) => {
+      set((state) => {
+        const updatingPackages = new Set(state.updatingPackages)
+        if (updating) updatingPackages.add(packageName)
+        else updatingPackages.delete(packageName)
+        return {
+          updatingPackages,
+          apps: state.apps.map((app) => (app.packageName === packageName ? {...app, updating} : app)),
+        }
+      })
+    }
+    setUpdating(true)
+    try {
+      return await update()
+    } finally {
+      setUpdating(false)
+    }
   },
 
   start: async (clientApp: ClientApp, opts?: StartOptions) => {
     const state = get()
     const packageName = clientApp.packageName
+    if (!isMiniappAvailable(packageName)) return false
     const app = state.apps.find((a) => a.packageName === packageName)
     if (!app) {
       console.error(`ISLAND: app not found for package name: ${packageName}`)
+      return false
+    }
+    if (get().updatingPackages.has(packageName)) {
+      hostHooks.onUpdateBlocked?.(app)
       return false
     }
 
@@ -344,6 +391,12 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return false
     }
 
+    // A model/permission check above may have yielded while an update started.
+    if (get().updatingPackages.has(packageName)) {
+      hostHooks.onUpdateBlocked?.(app)
+      return false
+    }
+
     // Host navigation / open-animation seam. Runs on EVERY accepted open —
     // including re-opening an already-running app — so the animation always
     // plays (BuiltInMiniappCatalog.navigateForApp: overlay apps setForeground
@@ -367,7 +420,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // Foreground-only-one rule: stop other running standard apps.
     if (app.type === "standard") {
       const runningForeground = state.apps.filter(
-        (a) => a.running && a.type === "standard" && a.packageName !== packageName,
+        (a) =>
+          a.running && a.type === "standard" && a.packageName !== packageName && !isStoreMiniappPackage(a.packageName),
       )
       for (const r of runningForeground) {
         await get().stop(r.packageName)
@@ -443,9 +497,14 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   setForeground: async (packageName: string) => {
+    if (!isMiniappAvailable(packageName)) return
     const app = get().apps.find((a) => a.packageName === packageName)
     if (!app) {
       console.error(`ISLAND: setForeground — app not found: ${packageName}`)
+      return
+    }
+    if (get().updatingPackages.has(packageName)) {
+      hostHooks.onUpdateBlocked?.(app)
       return
     }
 
@@ -492,9 +551,16 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
   uninstall: (packageName, version) => {
     return Res.try_async(async () => {
-      const res = await appRegistry.uninstall(packageName, version)
-      if (res.is_error()) throw res.error
-      set((s) => ({apps: s.apps.filter((a) => a.packageName !== packageName)}))
+      if (get().updatingPackages.has(packageName)) throw new Error(`${packageName} is updating; try again shortly`)
+      if (uninstallingPackages.has(packageName)) throw new Error(`${packageName} is already being uninstalled`)
+      uninstallingPackages.add(packageName)
+      try {
+        const res = await appRegistry.uninstall(packageName, version)
+        if (res.is_error()) throw res.error
+        set((s) => ({apps: s.apps.filter((a) => a.packageName !== packageName)}))
+      } finally {
+        uninstallingPackages.delete(packageName)
+      }
     })
   },
 
@@ -529,7 +595,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     return value
   },
 
-  setApps: (apps) => set({apps}),
+  setApps: (apps) =>
+    set((state) => ({apps: apps.map((app) => ({...app, updating: state.updatingPackages.has(app.packageName)}))})),
 }))
 
 // Project miniappRunningRegistry membership into the store's `running` field

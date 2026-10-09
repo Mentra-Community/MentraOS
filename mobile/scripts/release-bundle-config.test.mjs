@@ -85,7 +85,7 @@ test("assertBundleEnvironment accepts expected nonempty runtime values", () => {
     EXPO_PUBLIC_BUILD_COMMIT: "abc1234",
     EXPO_PUBLIC_SENTRY_DSN: "",
   }
-  const bundle = Buffer.from("prefix https://example.test/pin.json abc1234 suffix")
+  const bundle = Buffer.from("prefix https://example.test/pin.json abc1234 https://store.example.test suffix")
 
   assert.doesNotThrow(() => assertBundleEnvironment(bundle, env, "iOS"))
 })

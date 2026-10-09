@@ -13,6 +13,7 @@
  * delegating shim while construction and runtime wiring live in island.
  */
 import {cloudClientService} from "@mentra/engine-host-internal"
+import Constants from "expo-constants"
 
 import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost} from "@/utils/cloudClient/devHost"
@@ -43,6 +44,8 @@ export function cloudConfigValues(): {
   privateMeetings?: boolean
   coreUrl: string | null
   runtimeUrl: string | null
+  hostVersion: string
+  supportedMiniappSdkRange: string
   audioFrameSizeBytes: number
   devServerHost: () => string | undefined
   runtimeRealtimeSession?: boolean
@@ -78,11 +81,11 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
   const manifest = resolveDeploymentManifest(deployment)
   const systemAllowlist = manifest.systemMiniapps.approvedPackageNamesOverride
   const authStorageKey =
-    deployment.kind === "workspace"
-      ? `mentra.cloud-client.${manifest.deploymentId}.${encodeURIComponent(deployment.workspaceOrigin)}.refreshToken`
+    deployment.kind === "organization"
+      ? `mentra.cloud-client.${manifest.deploymentId}.${encodeURIComponent(deployment.organizationOrigin)}.refreshToken`
       : undefined
   return {
-    privateMeetings: deployment.kind === "workspace",
+    privateMeetings: deployment.kind === "organization",
     coreUrl: manifest.services.coreUrl,
     runtimeUrl: manifest.services.runtimeUrl,
     runtimeRealtimeSession: manifest.features.runtimeRealtimeSession,
@@ -94,7 +97,7 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
         ? null
         : [...new Set([...systemAllowlist, ...manifest.miniapps.managed.map((entry) => entry.packageName)])],
     localMiniappPolicy:
-      deployment.kind === "workspace"
+      deployment.kind === "organization"
         ? {
             systemPackageNames: systemAllowlist,
             managed: manifest.miniapps.managed.map((entry) => ({
@@ -102,7 +105,7 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
               version: entry.version,
               sha256: entry.sha256.toLowerCase(),
               deploymentId: manifest.deploymentId,
-              deploymentOrigin: deployment.workspaceOrigin,
+              deploymentOrigin: deployment.organizationOrigin,
             })),
           }
         : undefined,
@@ -122,6 +125,8 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
     },
     audioFrameSizeBytes: lc3FrameSizeBytes(),
     devServerHost,
+    hostVersion: Constants.expoConfig?.version ?? process.env.EXPO_PUBLIC_MENTRAOS_VERSION ?? "0.0.0",
+    supportedMiniappSdkRange: "^0.3.0",
   }
 }
 
@@ -130,7 +135,7 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
  * methods live in island (`cloudClientService`); this delegates so existing consumers
  * (PhonePhotoCoordinator, cloudStreamApi, the dev Cloud-URL switcher) are
  * untouched. `reconnect()` re-resolves the active deployment's endpoints before
- * rebuilding. Overrides apply equally to official and workspace deployments.
+ * rebuilding. Overrides apply equally to official and organization deployments.
  */
 export const cloudClient = {
   clearAuthSession: (): Promise<void> => cloudClientService.clearAuthSession(),
@@ -140,8 +145,7 @@ export const cloudClient = {
     // an explicit engine reconnect pin.
     cloudClientService.reconnect(null)
   },
-  getPreinstalledMiniappRegistry: () => cloudClientService.getPreinstalledMiniappRegistry(),
-  getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>
+  getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number}) =>
     cloudClientService.getMiniappAuthToken(packageName, opts),
   startManagedPhoto: () => cloudClientService.startManagedPhoto(),
   awaitManagedPhotoReady: (requestId: string) => cloudClientService.awaitManagedPhotoReady(requestId),

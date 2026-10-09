@@ -1,14 +1,14 @@
 # 011 - Miniapp Registry and Auto Update
 
-**Status:** Developer registry, release submit/review/publish, admin
-preinstall registry, mobile startup reconciliation, and device-side bundle hash
-verification are implemented locally. Store listing media, richer admin roles,
-and presigned uploads are next.
+**Status:** Developer registry, release submit/review/publish, Store catalog,
+and device-side bundle verification are implemented locally. The earlier
+preinstalled-registry experiment was removed in favor of the Store's single
+install and automatic-update path.
 
 ## Problem
 
 Cloud v2 needs one source of truth for miniapp package identity, versioned
-release bundles, store media, review state, and preinstalled defaults. The old
+release bundles, store media, and review state. The old
 cloud had too many storage paths and overlapping concepts. The rewrite should
 keep those boundaries crisp from the start.
 
@@ -19,16 +19,13 @@ keep those boundaries crisp from the start.
 - Route all bundle and media bytes through the Core storage service.
 - Keep release review/publish state on the release, not on the MiniApp.
 - Let Console2 and `@mentra/cli` share the same Core API.
-- Later, let mobile reconcile installed/preinstalled miniapps from a signed
-  registry response.
+- Let the Store catalog and host install API own remote installation and update
+  reconciliation.
 
 ## Non-goals
 
 - Do not rebuild the Store catalog UI in this issue.
-- Do not let developers publish directly into the preinstalled registry.
 - Do not duplicate S3/R2/local storage provider code inside miniapp-service.
-- Do not require the enterprise portal before Mentra-default preinstalled
-  registry works.
 
 ## Core Concepts
 
@@ -201,78 +198,15 @@ release bundle zip to Core, then submits that release for admin review.
 
 ## Device Contract
 
-Implemented mobile registry endpoint:
+The Store miniapp fetches the catalog through the Miniapp SDK and invokes the
+host-owned install/update API. The host verifies the canonical ZIP manifest,
+signature, package identity, compatibility, and Store provenance before
+activation. Automatic updates use the same Store catalog and host transaction;
+there is no second registry or startup reconciler.
 
-```txt
-GET /api/client/miniapps/registry
-Authorization: Bearer <cloud-core access token>
-```
+## Admin Review
 
-Response:
-
-```ts
-interface ClientMiniappRegistry {
-  generatedAt: string
-  entries: ClientMiniappRegistryEntry[]
-}
-
-interface ClientMiniappRegistryEntry {
-  packageName: string
-  version: string
-  bundleUrl: string
-  bundleSha256: string
-  required: boolean
-  installPolicy: "install_once" | "keep_updated" | "mandatory"
-  channel: string
-  minMobileVersion?: string
-  maxMobileVersion?: string
-  tenantId?: string
-}
-```
-
-Mobile owns local reconciliation in
-`mobile/src/services/miniapps/preinstalledMiniappSync.ts`, called from
-`MantleManager.initMiniapps()` after bundled miniapps install:
-
-1. Fetch registry after auth and periodically after refresh.
-2. Install missing `install_once` entries only when no version is already
-   installed.
-3. Upgrade `keep_updated` and `mandatory` entries when the target version is
-   missing.
-4. Never delete an installed miniapp solely because it disappeared from a bad
-   registry response.
-5. Download the bundle to a local cache path, verify `bundleSha256` before
-   unzipping, and keep the previous installed version on mismatch.
-
-## Admin Review and Preinstalled Registry
-
-Admin review should operate on MiniAppRelease rows. The preinstalled registry is
-admin-controlled policy layered on top of accepted/published releases.
-
-```ts
-interface PreinstalledRegistry {
-  id: string
-  name: string
-  environment: "debug" | "dev" | "staging" | "prod"
-  tenantId?: string
-  status: "draft" | "active" | "archived"
-  activeRevisionId?: string
-}
-
-interface PreinstalledRegistryEntry {
-  id: string
-  registryRevisionId: string
-  miniAppId: string
-  releaseId: string
-  required: boolean
-  installPolicy: "install_once" | "keep_updated" | "mandatory"
-  minMobileVersion?: string
-  maxMobileVersion?: string
-  priority: number
-}
-```
-
-Implemented admin preinstall API:
+Admin review operates on MiniAppRelease rows:
 
 ```txt
 GET  /api/admin/me
@@ -280,12 +214,6 @@ GET  /api/admin/submissions
 POST /api/admin/submissions/:releaseId/approve
 POST /api/admin/submissions/:releaseId/reject
 POST /api/admin/submissions/:releaseId/publish
-GET  /api/admin/preinstalled/registries
-POST /api/admin/preinstalled/registries
-GET  /api/admin/preinstalled/releases
-GET  /api/admin/preinstalled/registries/:registryId/revisions
-POST /api/admin/preinstalled/registries/:registryId/revisions
-POST /api/admin/preinstalled/registries/:registryId/revisions/:revisionId/promote
 GET  /api/admin/audit-log
 ```
 
@@ -295,9 +223,6 @@ for explicit `CLOUD_CORE_ADMIN_EMAILS` or email domains from
 internal builds. This is a first slice; role-based internal admin permissions
 are tracked in issue 015.
 
-The client registry lookup prefers an OEM-specific active registry and falls
-back to the default registry (`tenantId: null`) for the same environment.
-
 Implemented admin UI:
 
 ```txt
@@ -306,11 +231,7 @@ bun run dev:admin   # http://localhost:5174
 ```
 
 It signs in through the same Mentra/WorkOS login, reviews submitted release
-bundles, publishes accepted releases, and promotes selected release bundles to
-the active preinstall registry revision.
-
-Registry changes are revisioned so a bad default set can be rolled back and
-audited.
+bundles, publishes accepted releases, and audits those mutations.
 
 ## Verification
 

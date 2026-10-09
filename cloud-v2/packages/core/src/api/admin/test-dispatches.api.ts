@@ -20,7 +20,10 @@ import {routineAdmissionInput} from "../../services/routine-admission.service";
 const pickerSubmission = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema.optional(), laneId: frameworkIdentitySchema.optional(), routineId: routineIdentitySchema, routineRevision: routineRevisionSchema.optional(), minimumFrameworkVersion: frameworkVersionSchema.optional(), platform: z.enum(["ios-on-mac", "android"]), source: testBuildSourceSchema, archiveSha256: z.string().regex(/^[a-f0-9]{64}$/)}).strict().refine(value => !value.laneId || !!value.hostId, 'A targeted lane requires its host');
 const submission = z.object({requestId: frameworkIdentitySchema, hostId: frameworkIdentitySchema, input: frameworkRequestInputSchema}).strict();
 export const HOST_STATE_FRESHNESS_MS = 120_000;
-/** Admin retains exact selections before the trusted fleet workflow assigns a host. */
+/**
+ * Admin retains exact selections before the trusted fleet workflow assigns a host. Mounted behind admin.api's
+ * `organization.testing.*` gates (read to look, manage to dispatch); worker capability tokens do not grant access.
+ */
 export function createTestDispatchAdminApi(service = new TestRequestService(), definitions = new RoutineDefinitionService(), builds: TestBuildGateway = new GithubTestBuildGateway(), hosts = new TestHostStateService(),
   dispatch = new RoutineDispatchService(definitions, builds, hosts, service), jobs = new RoutineJobService()) {
   const app = new Hono<AppEnv>();

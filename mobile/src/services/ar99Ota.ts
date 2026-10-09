@@ -144,8 +144,8 @@ export async function downloadAr99Firmware(
 }
 
 function assertConsumerVendorNetworkAllowed(): void {
-  if (deploymentStore.getActive().kind === "workspace") {
-    throw new Error("Vendor firmware services are unavailable in this organization workspace")
+  if (deploymentStore.getActive().kind === "organization") {
+    throw new Error("Vendor firmware services are unavailable in this organization")
   }
 }
 
