@@ -617,7 +617,7 @@ class BluetoothSdkModule : Module() {
         // MARK: - Incident Reporting
 
         SdkAsyncFunction("sendIncidentId") { incidentId: String, apiBaseUrl: String? ->
-            sdk?.sendIncidentId(incidentId, apiBaseUrl)
+            requireSdk().sendIncidentId(incidentId, apiBaseUrl)
         }
 
         // MARK: - Native Notification Centre

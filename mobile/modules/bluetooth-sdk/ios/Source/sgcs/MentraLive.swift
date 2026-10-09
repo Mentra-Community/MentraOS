@@ -1349,7 +1349,7 @@ class MentraLive: NSObject, SGCManager {
             // Queued writes are session-bound: transmitting them into the NEXT session
             // (e.g. a stale handshake whose reply activates v2 before the new session
             // negotiated) is the bug class this clear removes.
-            Task { await commandQueue.removeAll() }
+            commandQueue.removeAll()
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
             DeviceStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
@@ -2123,8 +2123,7 @@ class MentraLive: NSObject, SGCManager {
         /// Wire-session generation at enqueue time; the drain loop drops entries from a
         /// previous session so a stale write (worst case: an old handshake whose reply
         /// would activate v2 pre-negotiation) can never cross a session boundary. This is
-        /// the deterministic guard - the async removeAll() on disconnect is best-effort
-        /// cleanup that may land after a reconnect has already resumed the drain loop.
+        /// the deterministic guard if a consumer already dequeued a previous-session write.
         let generation: Int
     }
 
@@ -2166,7 +2165,7 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: Cleared pending ACK mId \(pendingMessage.id) because \(reason)")
     }
 
-    actor CommandQueue {
+    @MainActor final class CommandQueue {
         private var commands: [PendingMessage] = []
 
         func enqueue(_ command: PendingMessage) -> Int {
@@ -2282,15 +2281,11 @@ class MentraLive: NSObject, SGCManager {
             )
 
             // Push to front of queue for immediate retry
-            Task {
-                let queueSize = await self.commandQueue.pushToFront(retryMessage)
-                await MainActor.run {
-                    self.logBleWriteTrace("retry_queued", retryMessage.trace, extra: [
-                        "retryDelayMs": 0,
-                        "queueSizeAfterAdd": queueSize,
-                    ])
-                }
-            }
+            let queueSize = commandQueue.pushToFront(retryMessage)
+            logBleWriteTrace("retry_queued", retryMessage.trace, extra: [
+                "retryDelayMs": 0,
+                "queueSizeAfterAdd": queueSize,
+            ])
 
             Bridge.log(
                 "🔄 Retrying message mId: \(pendingMessage.id) (attempt \(retryMessage.retries)/3)"
@@ -3714,7 +3709,19 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
-    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) {
+    var incidentLogTransportReady: Bool {
+        connectedPeripheral?.state == .connected && txCharacteristic != nil
+    }
+
+    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) throws {
+        guard incidentLogTransportReady else {
+            throw BluetoothSdkError(code: "glasses_not_connected", message: "Cannot request incident logs because the glasses BLE link is not ready.")
+        }
+        // Token sync may happen after glasses_ready; never rely on the last pairing's token.
+        let coreToken = DeviceStore.shared.get("bluetooth", "core_token") as? String ?? ""
+        guard !coreToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw BluetoothSdkError(code: "core_token_unavailable", message: "Cannot request incident logs without the current Core access token.")
+        }
         var base = (apiBaseUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if base.isEmpty {
             base = "https://api.mentra.glass"
@@ -3731,10 +3738,20 @@ class MentraLive: NSObject, SGCManager {
             fileBaseKey: lKey, incidentId: incidentId, apiBaseUrl: base, kind: .logcat
         )
 
-        Bridge.log(
-            "LIVE: Sending incidentId to glasses for log upload: \(incidentId) (BLE relay \(bKey), \(lKey))"
-        )
-        sendJson(["type": "upload_incident_logs", "incidentId": incidentId, "apiBaseUrl": base], wakeUp: true)
+        let auth: [String: Any] = [
+            "type": "auth_token", "coreToken": coreToken,
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+        ]
+        // MainActor queue insertion preserves auth-before-upload order, including all fragments.
+        guard sendJson(auth, wakeUp: true, requireAck: true, bridgeLogging: true),
+              sendJson(["type": "upload_incident_logs", "incidentId": incidentId, "apiBaseUrl": base],
+                       wakeUp: true, requireAck: true, bridgeLogging: true)
+        else {
+            bleIncidentLogRelays.removeValue(forKey: bKey)
+            bleIncidentLogRelays.removeValue(forKey: lKey)
+            throw BluetoothSdkError(code: "incident_dispatch_failed", message: "Could not queue the glasses incident-log request.")
+        }
+        Bridge.log("LIVE: Queued incidentId to glasses for log upload: \(incidentId) (BLE relay \(bKey), \(lKey))")
     }
 
     private static func incidentBleFileBase(incidentId: String, prefix: Character) -> String {
@@ -4671,20 +4688,13 @@ class MentraLive: NSObject, SGCManager {
 
     func queueSend(_ data: Data, id: String, trace: BleWriteTrace?) {
         let significantQueueSize = SIGNIFICANT_BLE_TRACE_QUEUE_SIZE
-        // Capture the epoch at enqueue-request time: the Task body may run after a
-        // session reset, and a pre-reset payload stamped with the new generation would
-        // defeat the stale-write guard in the drain loop.
+        // Insert synchronously on MainActor so fragments and dependent commands retain call order.
         let generation = wireSessionGeneration
-        Task {
-            let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace, generation: generation))
-            guard trace != nil, queueSize >= significantQueueSize else {
-                return
-            }
-            await MainActor.run {
-                self.logBleChunkTrace("queued", trace, extra: [
-                    "queueSizeAfterAdd": queueSize,
-                ])
-            }
+        let queueSize = commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace, generation: generation))
+        if trace != nil, queueSize >= significantQueueSize {
+            logBleChunkTrace("queued", trace, extra: [
+                "queueSizeAfterAdd": queueSize,
+            ])
         }
     }
 
@@ -5201,9 +5211,8 @@ class MentraLive: NSObject, SGCManager {
                             bridgeLogging: bridgeLogging
                         )
                     }
-                    // Wi-Fi credentials are sent unchanged but never logged; the BLE trace
-                    // above records this command with the password redacted.
-                    let loggedPayload = json["password"] == nil
+                    // Credentials reach the wire unchanged; diagnostic logs omit their values.
+                    let loggedPayload = json["password"] == nil && json["coreToken"] == nil
                         ? jsonString : "<\(commandInfo.commandType) with credentials omitted>"
                     transportLog("LIVE: Sending data to glasses: \(loggedPayload)", bridgeLogging: bridgeLogging)
                     let packedData =
@@ -6000,7 +6009,7 @@ class MentraLive: NSObject, SGCManager {
         // Stop all timers
         stopAllTimers()
         resetWireNegotiationState()
-        Task { await commandQueue.removeAll() } // stale writes die with the session
+        commandQueue.removeAll() // stale writes die with the session
         closeL2capFileChannel()
 
         // Disconnect BLE
