@@ -890,10 +890,6 @@ const en = {
     androidInnerShadow: "Inner shadow",
   },
   debugSettings: {
-    showMentraCallIos: "Show Mentra Call (experimental)",
-    showMentraCallIosSubtitle: "Show Mentra Call on this device for testing.",
-    mentraCallWorkspacePolicy: "Mentra Call availability is managed by your workspace.",
-    mentraCallBuildOverride: "Enabled by this build's EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS override.",
     showNotifyIos: "Show Notify (experimental)",
     showNotifyIosSubtitle: "Show Notify on this device for testing.",
     miniappVisibilityError: "Could not update miniapp availability. Try turning the setting off and on again.",

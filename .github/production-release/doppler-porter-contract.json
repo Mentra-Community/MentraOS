@@ -785,6 +785,9 @@
       "keys": [
         "ACS_CONNECTION_STRING",
         "BETTERSTACK_SOURCE_TOKEN",
+        "CALL_POST_TRIAL_CALLS_PER_WEEK",
+        "CALL_TRIAL_CALLS_PER_WEEK",
+        "CALL_TRIAL_WEEKS",
         "CLIENT_ID",
         "CLIENT_SECRET",
         "DOPPLER_CONFIG",
@@ -815,6 +818,9 @@
       "keys": [
         "ACS_CONNECTION_STRING",
         "BETTERSTACK_SOURCE_TOKEN",
+        "CALL_POST_TRIAL_CALLS_PER_WEEK",
+        "CALL_TRIAL_CALLS_PER_WEEK",
+        "CALL_TRIAL_WEEKS",
         "CALL_QUOTA_UNLIMITED",
         "CLIENT_ID",
         "CLIENT_SECRET",

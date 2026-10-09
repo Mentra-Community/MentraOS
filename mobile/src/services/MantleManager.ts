@@ -822,7 +822,7 @@ class MantleManager {
     if (packageName === "com.mentra.example" && !engine.settings.get(SETTINGS.super_mode.key)) return
 
     await asset.downloadAsync()
-    // The user can disable Call while the bundle is being materialized.
+    // Deployment policy can change while the bundle is being materialized.
     if (
       generation !== this.miniappGeneration ||
       deploymentStore.getActive() !== deployment ||
@@ -838,7 +838,7 @@ class MantleManager {
   private setupIosMiniappVisibility(): void {
     if (Platform.OS !== "ios") return
     for (const [packageName, settingKey, policyKey] of [
-      [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key, "mentra_call_ios_last_enabled"],
+      [mentraCallPackageName, "call_availability", "mentra_call_ios_last_enabled"],
       [notifyPackageName, SETTINGS.show_notify_ios.key, "notify_ios_last_enabled"],
     ]) {
       const visibility = new IosMiniappVisibility({
@@ -969,6 +969,8 @@ class MantleManager {
     this.subs = []
 
     for (const [settingKey, visibility] of this.miniappVisibility) {
+      // Call follows deployment policy and is reconciled by initMiniapps.
+      if (settingKey === "call_availability") continue
       this.subs.push({
         remove: engine.settings.onChanged(settingKey, () => {
           void visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))

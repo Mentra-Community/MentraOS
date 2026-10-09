@@ -80,7 +80,7 @@ class BuiltInMiniappCatalog {
     }
     syncMiniappDeveloperVisibility(Boolean(engine.settings.get(SETTINGS.miniapp_dev_mode.key)))
     engine.settings.onChanged<boolean>(SETTINGS.miniapp_dev_mode.key, syncMiniappDeveloperVisibility)
-    for (const key of [SETTINGS.show_mentra_call_ios.key, SETTINGS.show_notify_ios.key]) {
+    for (const key of [SETTINGS.show_notify_ios.key]) {
       engine.settings.onChanged(key, () => {
         void this.syncGlassesMenuApps()
       })
