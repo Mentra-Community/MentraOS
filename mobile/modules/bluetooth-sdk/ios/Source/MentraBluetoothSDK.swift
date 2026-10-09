@@ -134,9 +134,12 @@ private final class PendingVideoRecordingRequest {
 private final class PendingVersionInfoRequest {
     let pending: PendingResponse<VersionInfoResult>
     let accumulator: VersionInfoResponseAccumulator
+    let requestId: String
+    let startedAt = ProcessInfo.processInfo.systemUptime
 
     init(pending: PendingResponse<VersionInfoResult>, requestId: String) {
         self.pending = pending
+        self.requestId = requestId
         accumulator = VersionInfoResponseAccumulator(expectedRequestId: requestId)
     }
 }
@@ -1396,7 +1399,8 @@ public final class MentraBluetoothSDK {
     }
 
     public func requestVersionInfo() async throws -> VersionInfoResult {
-        guard pendingVersionInfo == nil else {
+        if let request = pendingVersionInfo {
+            logVersionInfoRequest(request, stage: "refused", extra: ["code": "request_in_flight"])
             throw BluetoothSdkError(
                 code: "request_in_flight",
                 message: "A version info request is already waiting for a glasses response."
@@ -1406,17 +1410,24 @@ public final class MentraBluetoothSDK {
         let pending = PendingResponse<VersionInfoResult>(operation: "version info request")
         let request = PendingVersionInfoRequest(pending: pending, requestId: requestId)
         pendingVersionInfo = request
+        logVersionInfoRequest(request, stage: "registered")
         DeviceManager.shared.requestVersionInfo(requestId: requestId)
         do {
             let status = try await pending.wait()
             if pendingVersionInfo === request {
                 pendingVersionInfo = nil
             }
+            logVersionInfoRequest(request, stage: "resolved")
             return status
         } catch {
             if pendingVersionInfo === request {
                 pendingVersionInfo = nil
             }
+            let sdkError = error as? BluetoothSdkError
+            logVersionInfoRequest(request, stage: "rejected", extra: [
+                "code": sdkError?.code ?? String((error as NSError).code),
+                "message": String((sdkError?.message ?? error.localizedDescription).prefix(256)),
+            ])
             throw error
         }
     }
@@ -2379,15 +2390,46 @@ public final class MentraBluetoothSDK {
 
     private func handleVersionInfoForRequest(_ data: [String: Any]) {
         guard let request = pendingVersionInfo else { return }
-        switch request.accumulator.accept(data) {
+        let outcome = request.accumulator.accept(data)
+        var response: [String: Any] = [
+            "responseRequestId": String((data[VersionInfoResponseAccumulator.responseRequestIdKey] as? String ?? "").prefix(128)),
+            "responseChunk": String((data[VersionInfoResponseAccumulator.responseChunkKey] as? String ?? "").prefix(64)),
+        ]
+        for key in [VersionInfoResponseAccumulator.responseIndexKey,
+                    VersionInfoResponseAccumulator.responseCountKey,
+                    VersionInfoResponseAccumulator.responseFinalKey]
+        {
+            // Typed strings survive the logger's Bool/NSNumber sanitization and
+            // preserve malformed metadata rather than making it look valid.
+            if let value = data[key] as? NSNumber {
+                response[key] = CFGetTypeID(value) == CFBooleanGetTypeID()
+                    ? "boolean:\(value.boolValue)" : "number:\(value.stringValue)"
+            } else if let value = data[key] as? String {
+                response[key] = "string:\(value.prefix(64))"
+            } else if let value = data[key] {
+                response[key] = "unsupported:\(type(of: value))"
+            }
+        }
+        switch outcome {
         case .ignored:
-            break
+            logVersionInfoRequest(request, stage: "response-ignored", extra: response)
         case .waiting:
-            break
+            logVersionInfoRequest(request, stage: "response-waiting", extra: response)
         case let .complete(result):
+            logVersionInfoRequest(request, stage: "response-complete", extra: response)
             pendingVersionInfo = nil
             request.pending.resolve(result)
         }
+    }
+
+    private func logVersionInfoRequest(_ request: PendingVersionInfoRequest, stage: String, extra: [String: Any] = [:]) {
+        var payload: [String: Any] = [
+            "requestId": request.requestId,
+            "stage": stage,
+            "elapsedMs": Int((ProcessInfo.processInfo.systemUptime - request.startedAt) * 1000),
+        ]
+        payload.merge(extra) { _, value in value }
+        BleTraceLogger.logMap(direction: "phone_app", layer: "sdk_version_request", type: "version_info", payload: payload)
     }
 
     private func dispatchBridgeEvent(_ eventName: String, _ data: [String: Any]) {
