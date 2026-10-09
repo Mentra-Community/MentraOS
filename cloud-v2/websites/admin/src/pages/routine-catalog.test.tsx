@@ -615,6 +615,34 @@ test("routine lifecycle rows report real actions without video and keep failures
   }
   expect(teardown).not.toContain("Log upload unavailable")
   expect(html.slice(html.indexOf('<h3 class="font-semibold">Evidence</h3>'))).toContain("Log upload unavailable")
+  const appImage = {id: 'lifecycle-app', kind: 'screenshot' as const, path: 'setup-evidence/screenshots/app.png',
+    mimeType: 'image/png' as const, size: 10, sha256: 'd'.repeat(64)};
+  const desktopImage = {...appImage, id: 'lifecycle-desktop', path: 'setup-evidence/screenshots/desktop.png'};
+  const renderLifecycle = () => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId="lifecycle-run" /></QueryClientProvider>);
+  for (const phase of ['setup', 'teardown'] as const) {
+    const failed = {...run.result.failures.find(failure => failure.phase === 'teardown')!, phase};
+    const candidate = {...run, assets: [...run.assets, appImage, desktopImage], result: {...run.result, failures: [failed]}};
+    const failureScreens = [{phase, actionId: failed.actionId, assetId: appImage.id, desktopAssetId: desktopImage.id}];
+    const display = {run: candidate, definition: null, outcome: `${phase}-failed`, uploadsComplete: true,
+      evidenceStatus: 'complete', failureScreens};
+    client.setQueryData(['framework-run', 'lifecycle-run'], display);
+    const both = renderLifecycle();
+    expect(both).toContain(`alt="Failure screenshot: ${failed.actionId}"`);
+    expect(both).toContain('/assets/lifecycle-app');
+    expect(both).toContain('Desktop screenshot</button>');
+    expect(both).toContain('Watch recording');
+    expect(both).not.toContain('<video');
+    expect(selectedFailureScreen(candidate, failureScreens, failed.actionId, phase, 'desktop')).toEqual(desktopImage);
+    expect(selectedFailureScreen(candidate, failureScreens, failed.actionId, phase === 'setup' ? 'teardown' : 'setup', 'desktop')).toBeUndefined();
+    client.setQueryData(['framework-run', 'lifecycle-run'], {...display, failureScreens: [{phase, actionId: failed.actionId, desktopAssetId: desktopImage.id}]});
+    const desktopOnly = renderLifecycle();
+    expect(desktopOnly).toContain(`alt="Desktop screenshot: ${failed.actionId}"`);
+    expect(desktopOnly).toContain('/assets/lifecycle-desktop');
+    expect(desktopOnly).not.toContain('alt="Failure screenshot:');
+    expect(desktopOnly).not.toContain('<video');
+    client.setQueryData(['framework-run', 'lifecycle-run'], {...display, uploadsComplete: false});
+    expect(renderLifecycle()).not.toContain('<img');
+  }
   // Expand stages up to the last failure, independently for setup and teardown.
   for (const phase of ["setup", "teardown"] as const) for (const failed of [[], [3], [0, 4]]) {
     const candidate = structuredClone(run);

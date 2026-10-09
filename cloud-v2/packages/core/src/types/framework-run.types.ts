@@ -169,7 +169,8 @@ export type RecordedFrameworkRun = z.infer<typeof recordedFrameworkRunSchema>;
 export interface FrameworkFailureScreen {
   phase: RecordedFrameworkRun['result']['failures'][number]['phase'];
   actionId: string;
-  assetId: string;
+  assetId?: string;
+  desktopAssetId?: string;
 }
 
 export function frameworkRunOutcome(run: RecordedFrameworkRun) {
