@@ -1,0 +1,4 @@
+interface:
+  display_name: "Investigate routine failure"
+  short_description: "Find run evidence using existing report and GitHub access"
+  default_prompt: "Use $investigate-routine-failure on this Admin run link. Retrieve the result and relevant verified artifacts using the existing incident-report token, inspect the exact routine source through GitHub, explain the failure and how the evidence was found, and state any gaps. Continue with $fix-routine-failure only when a fix is requested."
