@@ -8,8 +8,11 @@ import {requestInputDigest} from "./test-request.service";
 import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 import {testSuiteSchema} from "../types/test-suite.types";
 import {createRecordedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {LaneRestorationService} from "./lane-restoration.service";
+import {TestHistoryService, type StoredHistoryRow} from "./test-history.service";
 const mocks: {mockRestore(): void}[] = [];
 beforeEach(() => {
+  mocks.push(spyOn(LaneRestorationService.prototype, "overview").mockResolvedValue({generatedAt: new Date().toISOString(), freshForMs: 120_000, hosts: [], truncated: false}));
   mocks.push(spyOn(TestRequestModel, "find").mockReturnValue({select() {return this;}, limit() {return this;},
     read() {return this;}, readConcern() {return this;}, lean: async () => []} as any));
 });
@@ -396,6 +399,7 @@ test('history summaries read portable members through the real nightly snapshot 
  const compactBuild={repository:build.repository,channel:build.channel,headSha:build.headSha};
  // Emulate the actual Mongo history projection, rather than supplying the unprojected plan.
  let terminal=false;
+ let extraRows: unknown[]=[];
  const projected=()=>({suiteId:suite.suiteId,payload:suite,nightlyPlan:{suiteId:suite.suiteId,occurrenceId:'portable-occurrence',
   startedAt:suite.startedAt,trigger:'nightly',members:members.map(member=>({...member,portable:true,build:compactBuild,
    ...(terminal?{selection:undefined}:{selection:member.selection})}))},
@@ -406,7 +410,7 @@ test('history summaries read portable members through the real nightly snapshot 
     ...(index===1?{hostId:binding.hostId,laneId:binding.laneId,binding}:{})}))}}:{})});
  mocks.push(spyOn(TestSuiteModel,'aggregate').mockImplementation(((pipeline:unknown[])=>{
   expect(pipeline[2]).toEqual(suiteHistoryProjection);
-  return {read(){return this},readConcern(){return this},option(){return this},async exec(){return [projected()]}};
+  return {read(){return this},readConcern(){return this},option(){return this},async exec(){return [projected(),...extraRows]}};
  }) as any));
  const queried:string[][]=[];
  mocks.push(spyOn(TestRequestModel,'find').mockImplementation(((filter:{requestId:{$in:string[]}})=>{
@@ -427,6 +431,42 @@ test('history summaries read portable members through the real nightly snapshot 
  expect(executable).not.toBeInstanceOf(Error);
  expect(executable).toMatchObject({outcome:'running',passed:0,members:[{status:'waiting'},
   {status:'waiting',hostId:binding.hostId,laneId:binding.laneId}]});
+ const timestamp=new Date().toISOString(),owner={id:'two',kind:'run' as const,requestId:'two'};
+ const overview={generatedAt:timestamp,freshForMs:120_000,truncated:false,hosts:[{hostId:binding.hostId,observedAt:timestamp,receivedAt:timestamp,
+  lanes:[{id:binding.laneId,platform:'android' as const,state:'running',dispatchMode:'automatic',activity:{generation:3,owner}}]}]};
+ const laneRead=spyOn(LaneRestorationService.prototype,'overview').mockResolvedValue(overview);laneRead.mockClear();mocks.push(laneRead);
+ const deadline=Date.now()+5000;
+ const running=(await service.summaries([suite.suiteId],deadline)).get(suite.suiteId);
+ expect(running).toMatchObject({outcome:'running',passed:0,failedRoutines:[],members:[{status:'waiting'},{status:'running',hostId:binding.hostId,laneId:binding.laneId}]});
+ expect(laneRead).toHaveBeenCalledTimes(1);
+ expect(laneRead).toHaveBeenLastCalledWith(deadline);
+ // Optional controller failure cannot hide either an open suite or a frozen completion on the same history page.
+ const completed={...suite,suiteId:'completed-neighbor',finishedAt:'2026-10-08T00:02:00Z',outcome:'failed' as const,passed:0,
+  failedRoutines:suite.members.map(member=>member.routineId),members:suite.members.map(member=>({...member,
+   requestId:undefined,status:'not-run' as const,publicationComplete:false}))};
+ extraRows=[{suiteId:completed.suiteId,completedResult:completed}];
+ laneRead.mockRejectedValue(new Error('Unrelated controller observation is malformed'));
+ const historyRows:StoredHistoryRow[]=[suite,completed].map(value=>({historyKind:'suite',historyId:value.suiteId,
+  historyStartedAt:new Date(value.startedAt),rerunCount:0}));
+ const history=await new TestHistoryService(service,async()=>[[],historyRows]).list();
+ expect(history.entries).toHaveLength(2);
+ expect(history.entries.find(entry=>entry.kind==='suite'&&entry.suiteId===suite.suiteId)).toMatchObject({kind:'suite',outcome:'running',passed:0});
+ expect(history.entries.find(entry=>entry.kind==='suite'&&entry.suiteId===completed.suiteId)).toMatchObject({kind:'suite',outcome:'failed',passed:0});
+ expect((await service.summaries([suite.suiteId,completed.suiteId],Date.now()+5000)).get(suite.suiteId))
+  .toMatchObject({members:[{status:'waiting'},{status:'waiting'}]});
+ extraRows=[];laneRead.mockResolvedValue(overview);
+ for(const mutate of [
+  (o:typeof overview)=>{o.hosts[0]!.observedAt='2026-10-01T00:00:00Z';},
+  (o:typeof overview)=>{o.hosts[0]!.receivedAt='2026-10-01T00:00:00Z';},
+  (o:typeof overview)=>{o.hosts[0]!.lanes[0]!.activity.owner={...owner,id:'neighbor',requestId:'neighbor'};},
+  (o:typeof overview)=>{o.hosts[0]!.lanes[0]!.state='in-repair';},
+  (o:typeof overview)=>{o.hosts[0]!.lanes[0]!.id='other-lane';},
+  (o:typeof overview)=>{o.hosts[0]!.hostId='other-host';},
+ ]){
+  const changed=structuredClone(overview);mutate(changed);laneRead.mockResolvedValue(changed);
+  expect((await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId)).toMatchObject({members:[{status:'waiting'},{status:'waiting'}]});
+ }
+ laneRead.mockResolvedValue(overview);
  const finishedAt='2026-10-08T00:02:00Z';
  const run={schemaVersion:1,requestId:'two',hostId:binding.hostId,routineId:intent.routineId,
   definitionRevision:intent.routineRevision,routineSource:intent.routineSource,frameworkBinding:testFrameworkBinding(),
@@ -443,8 +483,9 @@ test('history summaries read portable members through the real nightly snapshot 
  expect(published).toMatchObject({outcome:'running',passed:1,members:[{status:'not-run',publicationComplete:false},
   {status:'pass',publicationComplete:true,runId:'two',hostId:binding.hostId,laneId:binding.laneId}]});
  expect(queried.at(-1)).toEqual(['one','two']);
- terminal=true;const readsBefore=queried.length,runReadsBefore=runReads.mock.calls.length;
+ terminal=true;const readsBefore=queried.length,runReadsBefore=runReads.mock.calls.length,laneReadsBefore=laneRead.mock.calls.length;
  const final=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
  expect(final).toMatchObject({outcome:'failed',passed:0,members:[{status:'not-run'},{status:'not-run',hostId:binding.hostId,laneId:binding.laneId}]});
  expect(queried).toHaveLength(readsBefore);expect(runReads.mock.calls).toHaveLength(runReadsBefore);
+ expect(laneRead.mock.calls).toHaveLength(laneReadsBefore);
 });

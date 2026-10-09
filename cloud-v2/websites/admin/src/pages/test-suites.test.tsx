@@ -61,6 +61,21 @@ function renderSuite(value: TestSuiteResult) {
   return renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={value.suiteId}/></QueryClientProvider>);
 }
 
+test("live suite members show active execution and their actual linked lane", () => {
+  const html = renderSuite({...suite, finishedAt: undefined, outcome: "running", members: [
+    {...suite.members[0]!, status: "running", publicationComplete: false, runId: undefined, hostId: "testing-air-1", laneId: "testing-air-1-mac"},
+    {...suite.members[1]!, status: "waiting", hostId: undefined, laneId: undefined},
+  ]});
+  expect(html).toContain('href="/?systemHealth=1&amp;hostId=testing-air-1&amp;laneId=testing-air-1-mac"');
+  expect(html).toContain('title="testing-air-1 / testing-air-1-mac"');
+  expect(html).toContain('>testing air 1 mac</a>');
+  expect(html).toContain('animate-spin');
+  expect(html).toContain('>In progress</span>');
+  expect(html).toContain('>Waiting</span>');
+  expect(html).not.toContain('>Mac</td>');
+  expect(html).not.toContain('>Android</td>');
+});
+
 test("suite totals and routine rows use hours for long durations", () => {
   const html = renderSuite({...suite, finishedAt: "2026-10-01T13:02:03Z", members: [
     {...suite.members[0]!, startedAt: suite.startedAt, finishedAt: "2026-10-01T12:02:03Z"}, suite.members[1]!,

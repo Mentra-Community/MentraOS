@@ -25,7 +25,7 @@ type StoredState = {
 }
 export interface LaneRestorationRepository {
   list(limit: number, hostId?: string): Promise<StoredState[]>
-  overview(limit: number): Promise<StoredState[]>
+  overview(limit: number, timeoutMS?: number): Promise<StoredState[]>
 }
 export const laneOverviewFields = {
   'snapshot.hostId': 1, 'snapshot.observedAt': 1,
@@ -39,9 +39,9 @@ export const laneOverviewFields = {
   frameworkHistory: {$slice: -1}, receivedAt: 1, deploymentObservation: 1, deploymentReceivedAt: 1, _id: 0,
 } as const
 export class MongoLaneRestorationRepository implements LaneRestorationRepository {
-  async overview(limit: number) {
+  async overview(limit: number, timeoutMS = 5_000) {
     return await TestHostStateModel.find({}).select(laneOverviewFields).sort({hostId: 1}).limit(limit)
-      .maxTimeMS(5_000).read('primary').readConcern('majority').lean() as StoredState[]
+      .setOptions({timeoutMS, maxTimeMS: timeoutMS}).read('primary').readConcern('majority').lean() as StoredState[]
   }
   async list(limit: number, hostId?: string) {
     return (await TestHostStateModel.find(hostId ? {hostId} : {})
@@ -91,8 +91,10 @@ export class LaneRestorationService {
     private repository: LaneRestorationRepository = new MongoLaneRestorationRepository(),
     private now = Date.now,
   ) {}
-  async overview(): Promise<LaneOverviewList> {
-    const rows = await this.repository.overview(HOST_LIMIT + 1)
+  async overview(deadline = this.now() + 5_000): Promise<LaneOverviewList> {
+    const timeoutMS = Math.min(5_000, deadline - this.now())
+    if (timeoutMS <= 0) throw new TestRunError(503, 'Current lane query timed out.')
+    const rows = await this.repository.overview(HOST_LIMIT + 1, timeoutMS)
     const hosts = rows.slice(0, HOST_LIMIT).map(row => {
       const parsed = currentSnapshotSchema.safeParse(row.snapshot)
       if (!parsed.success || !Number.isFinite(row.receivedAt?.getTime()))

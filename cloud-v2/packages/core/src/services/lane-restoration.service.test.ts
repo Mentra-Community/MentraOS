@@ -175,20 +175,32 @@ test('overview never substitutes another execution or lane for the current repai
 
 test('overview repository fetches only current fields and host detail selects exactly one controller', async () => {
   const original = TestHostStateModel.find;
-  const reads: Array<{filter: unknown; projection?: unknown; limit?: number}> = [];
+  const reads: Array<{filter: unknown; projection?: unknown; limit?: number; options?: unknown}> = [];
   TestHostStateModel.find = ((filter: unknown) => {
     const read: typeof reads[number] = {filter}; reads.push(read);
     const query = {select(projection: unknown) {read.projection = projection; return query}, sort() {return query},
       limit(limit: number) {read.limit = limit; return query}, maxTimeMS() {return query}, read() {return query},
+      setOptions(options: unknown) {read.options = options; return query},
       readConcern() {return query}, async lean() {return []}};
     return query;
   }) as unknown as typeof TestHostStateModel.find;
   try {
     const repo = new MongoLaneRestorationRepository();
-    await repo.overview(33); await repo.list(1, 'selected-host');
-    expect(reads[0]).toEqual({filter: {}, projection: laneOverviewFields, limit: 33});
+    await repo.overview(33, 321); await repo.list(1, 'selected-host');
+    expect(reads[0]).toEqual({filter: {}, projection: laneOverviewFields, limit: 33, options: {timeoutMS: 321, maxTimeMS: 321}});
     expect(reads[1]).toMatchObject({filter: {hostId: 'selected-host'}, limit: 1});
   } finally {TestHostStateModel.find = original}
+});
+
+test('overview uses only the remaining caller budget and does not query after expiry', async () => {
+  const budgets: (number | undefined)[] = [];
+  const service = new LaneRestorationService({async overview(_limit, timeoutMS) {budgets.push(timeoutMS); return []},
+    async list() {return []}}, () => 1_000);
+  await service.overview(1_321);
+  await service.overview(11_000);
+  expect(budgets).toEqual([321, 5_000]);
+  await expect(service.overview(1_000)).rejects.toThrow('timed out');
+  expect(budgets).toHaveLength(2);
 });
 
 test('host-filtered history preserves full receipts; malformed current custody never becomes idle', async () => {
