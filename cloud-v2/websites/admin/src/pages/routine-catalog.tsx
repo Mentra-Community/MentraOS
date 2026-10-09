@@ -230,10 +230,10 @@ export function stepRecordingPlayback(run: RecordedFrameworkRun, step: RecordedF
 }
 
 export function selectedFailureScreen(run: RecordedFrameworkRun, screens: FrameworkFailureScreen[] | undefined, actionId: string | undefined,
-  phase: FrameworkFailureScreen['phase']) {
+  phase: FrameworkFailureScreen['phase'], source: 'app' | 'desktop' = 'app') {
   const failure = run.result.failures.find(failure => failure.actionId === actionId && failure.phase === phase);
   const screen = failure && screens?.find(screen => screen.phase === failure.phase && screen.actionId === failure.actionId);
-  return screen && run.assets.find(asset => asset.id === screen.assetId && asset.kind === 'screenshot' &&
+  return screen && run.assets.find(asset => asset.id === (source === 'app' ? screen.assetId : screen.desktopAssetId) && asset.kind === 'screenshot' &&
     ['image/png', 'image/jpeg'].includes(asset.mimeType));
 }
 
@@ -244,7 +244,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const pendingPlayback = useRef<ReturnType<typeof stepRecordingPlayback>>(null);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [selectedStep, setSelectedStep] = useState<string | undefined>(stepId);
-  const [mediaView, setMediaView] = useState<'failure' | 'recording'>(stepId ? 'recording' : 'failure');
+  const [mediaView, setMediaView] = useState<'failure' | 'desktop' | 'recording'>(stepId ? 'recording' : 'failure');
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
   const [stepSearch, setStepSearch] = useState("");
@@ -328,11 +328,17 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-run/${encodeURIComponent(actualRunId)}/assets/${encodeURIComponent(id)}`;
   const hasRecording = uploadsComplete && run.assets.some(asset => asset.id === recordingAsset && asset.kind === "recording");
   const selectedScreen = uploadsComplete ? selectedFailureScreen(run, failureScreens, activeStep, 'test') : undefined;
-  const failureScreen = selectedScreen ?? (uploadsComplete && failureSummary
+  const selectedDesktop = uploadsComplete ? selectedFailureScreen(run, failureScreens, activeStep, 'test', 'desktop') : undefined;
+  const selectedFailure = !!selectedScreen || !!selectedDesktop;
+  const failureScreen = selectedFailure ? selectedScreen : (uploadsComplete && failureSummary
     ? selectedFailureScreen(run, failureScreens, failureSummary.actionId, failureSummary.phase) : undefined);
-  const failureScreenAction = selectedScreen ? activeStep : failureSummary?.actionId;
-  const showFailureScreen = !!failureScreen && mediaView === 'failure';
-  const hasMedia = hasRecording || !!failureScreen;
+  const desktopScreen = selectedFailure ? selectedDesktop : (uploadsComplete && failureSummary
+    ? selectedFailureScreen(run, failureScreens, failureSummary.actionId, failureSummary.phase, 'desktop') : undefined);
+  const failureScreenAction = selectedFailure ? activeStep : failureSummary?.actionId;
+  const displayedScreen = mediaView === 'desktop' ? desktopScreen : failureScreen ?? desktopScreen;
+  const showFailureScreen = !!displayedScreen && mediaView !== 'recording';
+  const screenLabel = displayedScreen === desktopScreen ? 'Desktop screenshot' : 'Failure screenshot';
+  const hasMedia = hasRecording || !!failureScreen || !!desktopScreen;
   const definitionSteps = new Map(definition?.steps.map(step => [step.id, step]) ?? []);
   const visibleSteps = run.result.steps.map((step, index) => ({step, index, source: definitionSteps.get(step.id)}))
     .filter(({step, source}) => matchesStepSearch(step, source, stepSearch));
@@ -371,9 +377,10 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     <div className={hasMedia ? "grid gap-5 lg:h-[calc(var(--recording-height)+8rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
     {hasMedia && <section aria-label="Run evidence viewer" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold">{showFailureScreen ? 'Failure screenshot' : 'Recording'}</h3>
-        {failureScreen && <div className="flex gap-2">
-          <TestingButton disabled={showFailureScreen} onClick={() => {video.current?.pause(); setMediaView('failure');}}>Failure screenshot</TestingButton>
+        <h3 className="font-semibold">{showFailureScreen ? screenLabel : 'Recording'}</h3>
+        {(failureScreen || desktopScreen) && <div className="flex flex-wrap gap-2">
+          {failureScreen && <TestingButton disabled={showFailureScreen && displayedScreen === failureScreen} onClick={() => {video.current?.pause(); setMediaView('failure'); setImageError(false);}}>Failure screenshot</TestingButton>}
+          {desktopScreen && <TestingButton disabled={showFailureScreen && displayedScreen === desktopScreen} onClick={() => {video.current?.pause(); setMediaView('desktop'); setImageError(false);}}>Desktop screenshot</TestingButton>}
           {hasRecording && <TestingButton disabled={!showFailureScreen} onClick={() => {
             const step = run.result.steps.find(step => step.id === activeStep);
             if (step) seekStep(step, true);
@@ -383,10 +390,10 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       </div>
       <div className="mt-3 lg:min-h-0 lg:flex-1">
       {showFailureScreen ? <>
-        {imageError ? <p role="alert">Failure screenshot could not load.</p> : <img src={assetHref(failureScreen.id)}
-          alt={`Failure screenshot: ${failureScreenAction}`} onError={() => setImageError(true)}
+        {imageError ? <p role="alert">Failure screenshot could not load.</p> : <img src={assetHref(displayedScreen!.id)}
+          alt={`${screenLabel}: ${failureScreenAction}`} onError={() => setImageError(true)}
           className="mx-auto block h-[var(--recording-height)] w-full max-w-[60rem] rounded-lg bg-black object-contain" />}
-        <a className={`${TESTING_LINK} mt-2 inline-block text-sm`} href={assetHref(failureScreen.id)}>Open failure screenshot</a>
+        <a className={`${TESTING_LINK} mt-2 inline-block text-sm`} href={assetHref(displayedScreen!.id)}>Open {screenLabel.toLowerCase()}</a>
       </> : hasRecording ? <><RecordingVideo ref={video} data-asset-id={recordingAsset!} className="scroll-mt-[calc(var(--admin-header-height,6rem)+1rem)]" src={assetHref(recordingAsset!)} onLoadedMetadata={() => {
         const playback = pendingPlayback.current;
         if (video.current && playback && video.current.dataset.assetId === playback.assetId) {

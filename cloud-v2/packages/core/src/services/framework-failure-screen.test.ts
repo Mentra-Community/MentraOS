@@ -1,10 +1,10 @@
 import {createHash} from 'node:crypto';
 import {createServer, type AddressInfo, type Socket} from 'node:net';
 import {expect, test, spyOn} from 'bun:test';
-import {recordedFrameworkRunSchema} from '../types/framework-run.types';
+import {recordedFrameworkRunSchema, type RecordedFrameworkRun} from '../types/framework-run.types';
 import {testRoutineSource} from '../testing/framework-fixtures';
 import {FrameworkResultService} from './framework-result.service';
-import {failureDiagnosticAsset, readFailureScreens, recordedFailureScreens} from './framework-failure-screen';
+import {failureDiagnosticAssets, readFailureScreens, recordedFailureScreens} from './framework-failure-screen';
 import {TestAssetService} from './test-asset.service';
 import {StorageService} from './storage/storage.service';
 import {S3StorageProvider} from './storage/providers/s3-storage.provider';
@@ -66,8 +66,12 @@ test('diagnostic display read validates frozen size and digest and refuses missi
   expect(await readFailureScreens(run, async () => new Response(Buffer.alloc(bytes.length, 32)))).toEqual([]);
   expect(await readFailureScreens(run, async () => new Response(null, {status: 404}))).toEqual([]);
   expect(await readFailureScreens(run, async () => {throw new Error('unavailable');})).toEqual([]);
-  expect(failureDiagnosticAsset({...run, assets: [{...run.assets[1]!, size: 8 * 1024 ** 2 + 1}]})).toBeUndefined();
-  expect(failureDiagnosticAsset({...run, result: {...run.result, failures: []}})).toBeUndefined();
+  let oversizedRead = false;
+  expect(await readFailureScreens({...run, assets: [{...run.assets[1]!, size: 8 * 1024 ** 2 + 1}]}, async () => {
+    oversizedRead = true; return new Response(bytes);
+  })).toEqual([]);
+  expect(oversizedRead).toBe(false);
+  expect(failureDiagnosticAssets({...run, result: {...run.result, failures: []}})).toEqual([]);
 });
 
 test('a stalled diagnostic body is cancelled within the display deadline', async () => {
@@ -167,4 +171,96 @@ test('Admin projects optional failure images without changing frozen results or 
     expect(missing.outcome).toBe('failed');
     expect(missing.run).toEqual(run);
   } finally {media.mockRestore();}
+});
+
+const journalPath = (id: string) => `setup-evidence/mac-commands-${id.repeat(8)}-${id.repeat(4)}-${id.repeat(4)}-${id.repeat(4)}-${id.repeat(12)}.json`;
+function lifecycleFixture(phase: 'setup' | 'teardown' = 'setup') {
+  const run = fixture('ios-on-mac');
+  const original = {...failure, phase};
+  const app = {...screenshot, path: 'setup-evidence/screenshots/app-original.png'};
+  const desktop = {...screenshot, id: 'desktop-original', path: 'setup-evidence/screenshots/display-original.png'};
+  const rows = [
+    {command: 'failure-screenshot', state: 'complete', ...original, source: 'screenshot', screenshotPath: app.path},
+    {command: 'failure-screenshot', state: 'complete', ...original, source: 'desktop-screenshot', screenshotPath: desktop.path},
+  ];
+  return {run: {...run, assets: [app, desktop], result: {...run.result, failures: [original]}}, original, app, desktop, rows};
+}
+function jsonAsset(id: string, path: string, value: unknown) {
+  const body = Buffer.from(JSON.stringify(value));
+  return {body, asset: {id, path, kind: 'diagnostic' as const, mimeType: 'application/json' as const,
+    size: body.length, sha256: createHash('sha256').update(body).digest('hex')}};
+}
+
+test.each(['setup', 'teardown'] as const)('Mac %s journal associates each public source by exact original failure and declared relative path', phase => {
+  const {run, original, app, desktop, rows} = lifecycleFixture(phase);
+  const expected = [{phase, actionId: original.actionId, assetId: app.id, desktopAssetId: desktop.id}];
+  expect(recordedFailureScreens(run, {records: rows})).toEqual(expected);
+  for (const changed of [{phase: phase === 'setup' ? 'teardown' : 'setup'}, {actionId: 'other'}, {message: 'Other error'},
+    {state: 'error'}, {state: 'suppressed'}, {privateEvidence: true}, {source: 'unknown'}, {screenshotPath: undefined, path: app.path}])
+    expect(recordedFailureScreens(run, {records: rows.map(row => ({...row, ...changed}))})).toEqual([]);
+  expect(recordedFailureScreens(run, {records: [{...rows[0], screenshotPath: '/absolute/' + app.path}]})).toEqual([]);
+  expect(recordedFailureScreens(run, {records: [rows[1]]})).toEqual([{phase, actionId: original.actionId, desktopAssetId: desktop.id}]);
+  expect(recordedFailureScreens({...run, assets: [desktop]}, {records: rows})).toEqual([{phase, actionId: original.actionId, desktopAssetId: desktop.id}]);
+  const foreign = {...app, id: 'conflicting-app', path: 'setup-evidence/screenshots/unrelated.png'};
+  expect(recordedFailureScreens({...run, assets: [...run.assets, foreign]}, {records: [...rows, {...rows[0], screenshotPath: foreign.path}]}))
+    .toEqual([{phase, actionId: original.actionId, desktopAssetId: desktop.id}]);
+  expect(recordedFailureScreens({...run, assets: [...run.assets, {...app, id: 'duplicate-path'}]}, {records: rows}))
+    .toEqual([{phase, actionId: original.actionId, desktopAssetId: desktop.id}]);
+  expect(recordedFailureScreens({...run, assets: [...run.assets, {...desktop, path: 'different-path.png'}]}, {records: rows}))
+    .toEqual([{phase, actionId: original.actionId, assetId: app.id}]);
+});
+
+test('multiple declared Mac journals merge before association and share one total byte budget', async () => {
+  const {run, rows, original, app, desktop} = lifecycleFixture();
+  const first = jsonAsset('journal-a', journalPath('a'), {records: [rows[0]]});
+  const second = jsonAsset('journal-b', journalPath('b'), {records: [rows[1]]});
+  const reads: string[] = [], signals: AbortSignal[] = [];
+  const read = async (asset: RecordedFrameworkRun['assets'][number], signal: AbortSignal) => {
+    reads.push(asset.id); signals.push(signal); return new Response(asset.id === first.asset.id ? first.body : second.body);
+  };
+  expect(await readFailureScreens({...run, assets: [...run.assets, first.asset, second.asset]}, read))
+    .toEqual([{phase: original.phase, actionId: original.actionId, assetId: app.id, desktopAssetId: desktop.id}]);
+  expect(reads).toEqual([first.asset.id, second.asset.id]);
+  expect(signals[0]).toBe(signals[1]);
+  reads.length = 0;
+  expect(await readFailureScreens({...run, assets: [...run.assets, {...first.asset, size: 5 * 1024 ** 2},
+    {...second.asset, size: 5 * 1024 ** 2}]}, read)).toEqual([]);
+  expect(reads).toEqual([]);
+  const conflicting = jsonAsset('journal-c', journalPath('c'), {records: [{...rows[0], screenshotPath: 'unknown.png'}]});
+  expect(await readFailureScreens({...run, assets: [...run.assets, first.asset, second.asset, conflicting.asset]}, async asset =>
+    new Response(asset.id === first.asset.id ? first.body : asset.id === second.asset.id ? second.body : conflicting.body)))
+    .toEqual([{phase: original.phase, actionId: original.actionId, desktopAssetId: desktop.id}]);
+});
+
+test('all Mac journal reads share the original three-second deadline and refuse a partial association', async () => {
+  const {run, rows} = lifecycleFixture();
+  const first = jsonAsset('journal-a', journalPath('a'), {records: [rows[0]]});
+  const second = jsonAsset('journal-b', journalPath('b'), {records: [rows[1]]});
+  let cancelled = false;
+  let signal: AbortSignal | undefined;
+  const started = performance.now();
+  expect(await readFailureScreens({...run, assets: [...run.assets, first.asset, second.asset]}, async (asset, supplied) => {
+    signal = supplied;
+    if (asset.id === first.asset.id) {await Bun.sleep(1800); return new Response(first.body);}
+    return new Response(new ReadableStream({pull() {return new Promise(() => {});}, cancel() {cancelled = true;}}));
+  })).toEqual([]);
+  expect(performance.now() - started).toBeLessThan(4000);
+  expect(cancelled).toBe(true);
+  expect(signal?.aborted).toBe(true);
+});
+
+test('bundled Mac lifecycle journals retain their exact bytes and associations, with nested digest verification', async () => {
+  const {run, rows, original, app, desktop} = lifecycleFixture('teardown');
+  const originalJournal = jsonAsset('journal-a', journalPath('a'), {records: rows});
+  const entry = {id: originalJournal.asset.id, path: originalJournal.asset.path, size: originalJournal.asset.size,
+    sha256: originalJournal.asset.sha256, bytesBase64: originalJournal.body.toString('base64')};
+  const makeBundle = (member: unknown) => jsonAsset('bundle', `setup-evidence-bundles/${'d'.repeat(64)}.json`,
+    {schemaVersion: 1, kind: 'setup-diagnostic-bundle', encoding: 'base64', files: [member]});
+  const good = makeBundle(entry);
+  expect(await readFailureScreens({...run, assets: [...run.assets, good.asset]}, async () => new Response(good.body)))
+    .toEqual([{phase: original.phase, actionId: original.actionId, assetId: app.id, desktopAssetId: desktop.id}]);
+  for (const changed of [{sha256: 'e'.repeat(64)}, {size: entry.size + 1}, {bytesBase64: 'bad'}, {path: 'setup-evidence/unrelated.json'}]) {
+    const bad = makeBundle({...entry, ...changed});
+    expect(await readFailureScreens({...run, assets: [...run.assets, bad.asset]}, async () => new Response(bad.body))).toEqual([]);
+  }
 });
