@@ -6,6 +6,7 @@ import {
   FrameworkRunPage,
   initialFrameworkStep,
   stepRecordingPlayback,
+  selectedFailureScreen,
   runFailureSummary,
   FrameworkRunsPage,
   RoutineCatalogCard,
@@ -350,15 +351,15 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
   expect(html).toContain(`https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/${"c".repeat(40)}/routines/notes-phone/routine.ts#L65`)
   expect(html).toContain('aria-label="View this step on GitHub"')
   expect(html).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]")
-  expect(html.indexOf('aria-label="Run recording"')).toBeLessThan(html.indexOf('aria-label="Execution steps"'))
+  expect(html.indexOf('aria-label="Run evidence viewer"')).toBeLessThan(html.indexOf('aria-label="Execution steps"'))
   expect(html).toContain("order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col")
-  expect(html).toContain("lg:h-[calc(var(--recording-height)+5rem)]")
+  expect(html).toContain("lg:h-[calc(var(--recording-height)+8rem)]")
   expect(html).toContain('role="region" aria-label="Execution details" tabindex="0"')
   expect(html).toContain("lg:overflow-y-auto")
   expect(html).not.toContain("lg:sticky")
   expect(html).toContain("h-[var(--recording-height)]")
   expect(html).toContain("object-contain")
-  expect(html.indexOf('aria-label="Setup details"')).toBeLessThan(html.indexOf('aria-label="Run recording"'))
+  expect(html.indexOf('aria-label="Setup details"')).toBeLessThan(html.indexOf('aria-label="Run evidence viewer"'))
   expect(html.indexOf('aria-label="Teardown details"')).toBeGreaterThan(html.indexOf('aria-label="Execution steps"'))
   expect(html.indexOf('aria-label="Teardown details"')).toBeLessThan(
     html.indexOf('<h3 class="font-semibold">Evidence</h3>'),
@@ -432,6 +433,31 @@ test("failed runs select the failure; explicit step links preserve their request
   const failed = run.result.steps[1]!;
   expect(stepRecordingPlayback(run, failed, true)).toEqual({assetId: "recording", offset: 15, pause: true});
   expect(stepRecordingPlayback(run, failed)).toEqual({assetId: "recording", offset: 5, pause: false});
+  const screen = {id: 'failure-image', kind: 'screenshot' as const, path: 'screenshots/opaque.png',
+    sha256: 'd'.repeat(64), size: 10, mimeType: 'image/png' as const};
+  const withScreen = {...run, assets: [...run.assets, screen]};
+  const failureScreens = [{phase: 'test' as const, actionId: 'connect', assetId: screen.id}];
+  client.setQueryData(['framework-run', run.requestId], {run: withScreen, definition: null, outcome: 'failed',
+    uploadsComplete: true, evidenceStatus: 'complete', failureScreens});
+  const opening = render();
+  expect(opening).toContain('alt="Failure screenshot: connect"');
+  expect(opening).toContain('/assets/failure-image');
+  expect(opening).toContain('Watch recording');
+  expect(opening).toContain('Watch this step');
+  expect(opening).not.toContain('<video');
+  expect(render('open')).toContain('<video');
+  expect(render('open')).not.toContain('<img');
+  expect(selectedFailureScreen(withScreen, failureScreens, 'connect', 'test')).toEqual(screen);
+  expect(selectedFailureScreen(withScreen, failureScreens, 'connect', 'setup')).toBeUndefined();
+  expect(selectedFailureScreen(withScreen, [{...failureScreens[0]!, assetId: 'foreign'}], 'connect', 'test')).toBeUndefined();
+  expect(selectedFailureScreen(withScreen, failureScreens, 'open', 'test')).toBeUndefined();
+  client.setQueryData(['framework-run', run.requestId], {run: withScreen, definition: null, outcome: 'failed',
+    uploadsComplete: false, evidenceStatus: 'complete', failureScreens});
+  expect(render()).not.toContain('<img');
+  client.setQueryData(['framework-run', run.requestId], {run: withScreen, definition: null, outcome: 'failed',
+    uploadsComplete: true, evidenceStatus: 'complete', failureScreens: []});
+  expect(render()).toContain('<video');
+  expect(render()).not.toContain('<img');
   expect(stepRecordingPlayback(run, {...failed, recordingLocation: {assetId: "recording", startOffsetMs: 5000}}, true)?.offset).toBe(5);
   expect(stepRecordingPlayback(run, run.result.steps[2]!, true)).toBeNull();
   const missingRecording = {...run, recordingAssetId: undefined, assets: []};
@@ -555,7 +581,7 @@ test("routine lifecycle rows report real actions without video and keep failures
       <FrameworkRunPage runId="lifecycle-run" />
     </QueryClientProvider>,
   )
-  const setup = html.slice(html.indexOf('aria-label="Setup details"'), html.indexOf('aria-label="Run recording"'))
+  const setup = html.slice(html.indexOf('aria-label="Setup details"'), html.indexOf('aria-label="Run evidence viewer"'))
   const teardown = html.slice(
     html.indexOf('aria-label="Teardown details"'),
     html.indexOf('<h3 class="font-semibold">Evidence</h3>'),

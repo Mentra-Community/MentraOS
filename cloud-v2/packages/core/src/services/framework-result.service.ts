@@ -14,6 +14,7 @@ import {TestRunError} from "./test-result-error";
 import {TestAssetService, type TestAsset} from "./test-asset.service";
 import type {CandidateVerification} from '../types/candidate-verification.types';
 import type {RoutineSourceRef} from '../types/framework-version.types';
+import {readFailureScreens} from './framework-failure-screen';
 
 export class FrameworkResultConflict extends Error {}
 const resultCursorSchema = z.object({startedAt: z.string().datetime({offset: true}), runId: z.string().min(1).max(240)}).strict();
@@ -248,7 +249,8 @@ export class FrameworkResultService {
   async detailForHost(requestId: string, hostId: string) {
     const binding = await this.request(requestId);
     if (!binding || binding.hostId !== hostId) throw new TestRunError(404, 'Framework run was not found for this host');
-    return {...await this.detail(requestId), ...(binding.input.verification ? {verification: binding.input.verification} : {})};
+    return {...await this.describe(await this.repository.getByRequest(requestId), false),
+      ...(binding.input.verification ? {verification: binding.input.verification} : {})};
   }
 
   async mediaForHost(requestId: string, assetId: string, hostId: string, request: Request) {
@@ -261,10 +263,14 @@ export class FrameworkResultService {
     return this.describe(await this.repository.getByRun(runId));
   }
 
-  private async describe(stored: StoredFrameworkRun | null) {
+  private async describe(stored: StoredFrameworkRun | null, includeFailureScreens = true) {
     if (!stored) throw new TestRunError(404, "Framework run was not found");
     const run = recordedFrameworkRunSchema.parse(stored.payload), definition = await this.definition(run);
-    return {run, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(run), uploadsComplete: stored.uploadsComplete, evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed"};
+    const displayEvidence = includeFailureScreens ? {failureScreens: stored.uploadsComplete
+      ? await readFailureScreens(run, asset => this.mediaByRun(run.result.runId, asset.id,
+        new Request('http://localhost/frozen-failure-diagnostic'))) : []} : {};
+    return {run, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(run), uploadsComplete: stored.uploadsComplete,
+      evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed", ...displayEvidence};
   }
 
   async media(requestId: string, assetId: string, request: Request) {
