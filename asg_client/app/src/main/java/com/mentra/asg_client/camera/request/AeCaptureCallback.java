@@ -80,11 +80,14 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                     + " | LockRequested: " + aeStateMachine.aeLockRequested());
         }
 
+        Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
+        // Watch frames between shots too, so a light change since the last shot is visible.
+        aeStateMachine.noteHalAeState(aeState);
+
         if (!aeStateMachine.waitingForAeConvergence()) {
             return;
         }
 
-        Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
         Integer precaptureTrigger = request.get(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER);
         Boolean zslInRequest = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
 
@@ -93,7 +96,11 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                     + precaptureTrigger + ", AE state: " + AeStateMachine.getAeStateName(aeState));
         }
 
-        Integer waitAeState = AeStateMachine.aeStateForWait(aeState, hooks.reusesRunningCamera());
+        // Fast path only if the scene has stayed at the exposure limit since the last shot;
+        // after a light change, keep the normal wait.
+        Integer waitAeState = AeStateMachine.aeStateForWait(
+                aeState,
+                hooks.reusesRunningCamera() && aeStateMachine.atExposureLimitSinceLastShot());
         aeStateMachine.noteRepeatingFrame(waitAeState, exposureEarly, sensEarly);
 
         long elapsedNs = aeStateMachine.elapsedNsSinceAeStart();

@@ -201,6 +201,21 @@ public class AeStateMachineTest {
     }
 
     @Test
+    public void atExposureLimitSinceLastShot_armedAtEndOfWaitAndClearedByOtherStates() {
+        AeStateMachine sm = new AeStateMachine();
+        assertThat(sm.atExposureLimitSinceLastShot()).isFalse();
+
+        sm.clearWaitFlags();
+        sm.noteHalAeState(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        sm.noteHalAeState(null);
+        assertThat(sm.atExposureLimitSinceLastShot()).isTrue();
+
+        sm.noteHalAeState(CaptureResult.CONTROL_AE_STATE_SEARCHING);
+        sm.noteHalAeState(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        assertThat(sm.atExposureLimitSinceLastShot()).isFalse();
+    }
+
+    @Test
     public void aeStateForWait_coldOpenOrOtherStates_unchanged() {
         assertThat(AeStateMachine.aeStateForWait(
                 CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED, false))

@@ -58,6 +58,7 @@ public class AeCaptureCallbackTest {
         CameraCaptureSession session = mock(CameraCaptureSession.class);
         CaptureRequest request = mock(CaptureRequest.class);
         TotalCaptureResult result = mock(TotalCaptureResult.class);
+        stateMachine.clearWaitFlags(); // previous shot ended in the same dark scene
         stateMachine.beginWaitingForAe();
         when(result.get(CaptureResult.CONTROL_AE_STATE))
                 .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
@@ -72,6 +73,36 @@ public class AeCaptureCallbackTest {
 
         assertThat(stateMachine.waitingForAeConvergence()).isFalse();
         assertThat(hooks.captureCount).isEqualTo(1);
+    }
+
+    @Test
+    public void onCaptureCompleted_lightChangedSinceLastShot_keepsWaiting() {
+        // Running camera, but a frame between shots was CONVERGED (the light just went off): the
+        // fast path stays off for this wait even though every frame in the wait is FLASH_REQUIRED.
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        hooks.reusesRunningCamera = true;
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult bright = mock(TotalCaptureResult.class);
+        when(bright.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+        TotalCaptureResult dark = mock(TotalCaptureResult.class);
+        when(dark.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        when(dark.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
+        when(dark.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
+        stateMachine.clearWaitFlags();
+        callback.onCaptureCompleted(session, request, bright); // idle preview, light still on
+
+        stateMachine.beginWaitingForAe();
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED + 2; i++) {
+            callback.onCaptureCompleted(session, request, dark);
+        }
+
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        assertThat(hooks.captureCount).isZero();
     }
 
     @Test
