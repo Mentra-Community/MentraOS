@@ -2,6 +2,7 @@ import {TestRunError} from './test-result-error';
 import {createHash} from 'node:crypto';
 import {expect, test, mock} from 'bun:test';
 import {TestRequestModel} from '../models/test-request.model';
+import {createRoutineJobsApi} from '../api/internal/routine-jobs.api';
 import {testRoutineSource} from '../testing/framework-fixtures';
 import {requestInputDigest, TestRequestService, type TestRequestRepository, type HostAcceptance} from './test-request.service';
 import {RoutineJobService, isAutomaticPrRoutineJob, routineJobRepository, routineLaneDescriptorRevision, routineRequirementLabels, compatibleRoutineLane, type RoutineJobRepository} from './routine-job.service';
@@ -45,6 +46,47 @@ function fixture(selectedDefinition: Omit<typeof definition, 'resourceRequiremen
     routineSource:testRoutineSource(selection.routineRevision),definitionSha256:requestInputDigest(selectedDefinition),definition:selectedDefinition});return service.preparation(selection.requestId)};
   return {service,rows,lane,prepare,offer(hosts: ReceivedTestHostState[]){offeredHosts=copy(hosts)},settle(inputSha256:string){if(row)row={...row,state:'terminal',terminalStatus:'pass',inputSha256} as any},queued(inputSha256:string){if(row)row={...row,state:'queued',inputSha256,hostReceipt:undefined} as any},accepted(inputSha256:string){if(row)row={...row,state:'accepted',inputSha256,hostReceipt:{requestId:row.requestId,hostId:row.hostId!,inputSha256,acceptedAt:new Date(time).toISOString()}} as any},result(insertedOnly=false){resultFound=true;if(row&&!insertedOnly)row={...row,runId:selection.requestId,state:'terminal',terminalStatus:'pass'}},get row(){return row},get resolves(){return resolves},get sources(){return sources},advance(ms:number){time+=ms}};
 }
+test('bound observation never substitutes prepared input before executable preparation', async () => {
+  const f = fixture(), prepared = await f.prepare();
+  expect(await f.service.observation(selection.requestId)).not.toHaveProperty('boundInputSha256');
+  const input = {inputSha256: prepared.inputSha256, laneId: f.lane.id, descriptorRevision: f.lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'};
+  const bound = await f.service.bind(selection.requestId, 'mini', input);
+  expect(bound.observation).toMatchObject({inputSha256: prepared.inputSha256, state: 'preparing', terminal: false});
+  expect(bound.observation).not.toHaveProperty('boundInputSha256');
+});
+
+for (const state of ['queued', 'accepted'] as const) {
+  test(`${state} observation exposes the retained executable digest without changing prepared identity or custody`, async () => {
+    const f = fixture(), prepared = await f.prepare(), executableDigest = 'c'.repeat(64);
+    const input = {inputSha256: prepared.inputSha256, laneId: f.lane.id, descriptorRevision: f.lane.descriptorRevision!, actionsRunId: '10', actionsJobId: '20'};
+    const bound = await f.service.bind(selection.requestId, 'mini', input);
+    f[state](executableDigest);
+    const original = structuredClone(f.row);
+    const previousToken = process.env.TEST_RUN_INGEST_TOKEN, token = 'routine-observation-regression-token-at-least-thirty-two-characters';
+    let observation: unknown;
+    try {
+      process.env.TEST_RUN_INGEST_TOKEN = token;
+      const response = await createRoutineJobsApi(f.service).request(`/${selection.requestId}/observation`,
+        {headers: {authorization: `Bearer ${token}`}});
+      expect(response.status).toBe(200);
+      observation = await response.json();
+    } finally {
+      if (previousToken === undefined) delete process.env.TEST_RUN_INGEST_TOKEN;
+      else process.env.TEST_RUN_INGEST_TOKEN = previousToken;
+    }
+    expect(observation).toMatchObject({inputSha256: prepared.inputSha256, boundInputSha256: executableDigest,
+      state, terminal: false, binding: bound.binding});
+    expect(executableDigest).not.toBe(prepared.inputSha256);
+    const duplicate = await f.service.bind(selection.requestId, 'mini', input);
+    expect(duplicate.observation).toMatchObject({inputSha256: prepared.inputSha256, boundInputSha256: executableDigest,
+      state, terminal: false, binding: bound.binding});
+    expect(f.row).toEqual(original);
+    expect(observation).not.toHaveProperty('result');
+    expect(f.row).not.toHaveProperty('fleetCancellation');
+    expect(f.row).not.toHaveProperty('dispatchCompletion');
+  });
+}
+
 test('run routing chooses an accepting alternate model, refreshes availability and retains exact target and input', async () => {
   const f = fixture({...definition, resourceRequirements: [...definition.resourceRequirements,{kind:'glasses',capabilities:['connection']}], glasses: {models: ['g1', 'mentra-live']}, execution: {resourceKinds: ['phone', 'app', 'recorder', 'network', 'glasses']}});
   const time = Date.parse('2026-10-08T00:00:00Z');
