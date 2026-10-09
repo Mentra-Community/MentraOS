@@ -239,6 +239,66 @@ test("suite rejection projects the exact request reason without fabricating a ru
   await expect(new TestSuiteService().detail(payload.suiteId)).rejects.toThrow("rejection identity");
 })
 
+test("ordinary suite readers retain publication failure, preserve a later result and freeze the precise disposition", async () => {
+  const startedAt = "2026-10-03T11:00:00Z", finishedAt = "2026-10-03T11:01:00Z";
+  const input = {routineId: "ordinary-product", platform: "android", definitionRevision: "a".repeat(40),
+    laneId: "phone", routineSource: testRoutineSource(), resources: [],
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
+  const requestId = "publication-request", inputSha256 = requestInputDigest(input);
+  const payload = testSuiteSchema.parse({suiteId: "ordinary-publication", channel: "dev", trigger: "manual", startedAt,
+    build: {headSha: input.build.headSha}, members: [{memberId: "one", requestId, routineId: input.routineId,
+      platform: input.platform, definitionRevision: input.definitionRevision}, {memberId: "two", routineId: "other", platform: "android"}]});
+  const request = {requestId, hostId: "mini", input, inputSha256, state: "terminal", terminalStatus: "incomplete",
+    hostReceipt: {requestId, hostId: "mini", inputSha256, acceptedAt: startedAt},
+    publicationFailure: {entityId: requestId, payloadSha256: "d".repeat(64), manifestSha256: "e".repeat(64),
+      operation: "result-create", status: 409, code: "result_conflict", message: "Invalid frozen fixture action", rejectedAt: finishedAt}};
+  const stored: any = {suiteId: payload.suiteId, payload};
+  const query = {read() {return this;}, readConcern() {return this;}, async lean() {return stored;}};
+  mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue(query as any));
+  mocks.push(spyOn(TestSuiteModel, "aggregate").mockReturnValue({read() {return this;}, readConcern() {return this;},
+    option() {return this;}, async exec() {return [stored];}} as any));
+  mocks.push(spyOn(TestRequestModel, "find").mockImplementation((() => {
+    let fields: Record<string, number> = {};
+    return {select(value: Record<string, number>) {fields = value; expect(fields).toMatchObject({hostReceipt: 1, publicationFailure: 1}); return this;},
+      limit() {return this;}, read() {return this;}, readConcern() {return this;}, setOptions() {return this;},
+      async lean() {return [Object.fromEntries(Object.entries(request).filter(([key]) => fields[key]))];}};
+  }) as any));
+  let results: unknown[] = [];
+  const runReads = spyOn(TestRunModel, "find").mockReturnValue({select() {return this;}, limit() {return this;}, read() {return this;},
+    readConcern() {return this;}, setOptions() {return this;}, async lean() {return results;}} as any); mocks.push(runReads);
+  mocks.push(spyOn(TestSuiteModel, "updateOne").mockImplementation((async (_filter: unknown, update: any) => {
+    Object.assign(stored, update.$set); return {modifiedCount: 1};
+  }) as any));
+  const service = new TestSuiteService(), expected = {status: "not-run", publicationComplete: false,
+    unavailableReason: "Publication failed: Invalid frozen fixture action", rejectedAt: finishedAt, hostId: "mini", laneId: "phone"};
+  expect((await service.detail(payload.suiteId)).members[0]).toMatchObject(expected);
+  expect((await service.summaries([payload.suiteId], Date.now() + 5000)).get(payload.suiteId))
+    .toMatchObject({passed: 0, members: [expected, {status: "waiting"}]});
+  request.hostReceipt.inputSha256 = "f".repeat(64);
+  await expect(service.detail(payload.suiteId)).rejects.toThrow("publication failure identity");
+  request.hostReceipt.inputSha256 = inputSha256;
+  const {resources: _resources, ...runIdentity} = input;
+  const run = {schemaVersion: 1, ...runIdentity, requestId, hostId: request.hostId, frameworkBinding: testFrameworkBinding(),
+    startedAt, finishedAt, assets: [], result: {runId: requestId, finishedAt, setup: {status: "passed"}, test: "passed",
+      steps: [{id: "check", status: "passed", durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [], evidence: [], timing: {startedAt, setupMs: 0, testMs: 1, teardownMs: 0}}};
+  const payloadSha256 = requestInputDigest(run);
+  request.terminalStatus = "pass"; // A later authentic result retains the original failure receipt.
+  results = [{runId: requestId, requestId, payload: run, payloadSha256, uploadsComplete: true,
+    summaryProjection: createRecordedFrameworkRunSummaryProjection(run, payloadSha256)}];
+  expect((await service.detail(payload.suiteId)).members[0]).toMatchObject({status: "pass", publicationComplete: true, runId: requestId});
+  expect((await service.summaries([payload.suiteId], Date.now() + 5000)).get(payload.suiteId))
+    .toMatchObject({passed: 1, members: [{status: "pass", publicationComplete: true, runId: requestId}, {status: "waiting"}]});
+  results = []; request.terminalStatus = "incomplete";
+  const terminal = await service.complete(payload.suiteId, {finishedAt});
+  expect(terminal).toMatchObject({outcome: "failed", passed: 0, members: [expected, {status: "not-run"}]});
+  expect(terminal.members[0]!.runId).toBeUndefined();
+  request.publicationFailure.message = "changed later";
+  const beforeReads = runReads.mock.calls.length;
+  expect(await service.detail(payload.suiteId)).toEqual(terminal);
+  expect(runReads.mock.calls).toHaveLength(beforeReads);
+});
+
 test("a live nightly keeps waiting members out of failed routines and its terminal receipt retains missing outcomes", async () => {
   const payload = testSuiteSchema.parse({suiteId: "live-nightly", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T11:00:00Z",
     build: {headSha: "a".repeat(40)}, members: [
