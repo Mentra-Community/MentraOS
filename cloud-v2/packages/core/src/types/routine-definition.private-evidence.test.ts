@@ -20,6 +20,15 @@ test('audio recognition is an explicit requested capability; undeclared and unsu
   expect(routineResourceRequirementSchema.safeParse({kind: 'audio', capabilities: ['playback']}).success).toBe(false);
   expect(routineResourceRequirementSchema.safeParse({kind: 'phone', capabilities: ['recognition']}).success).toBe(false);
 });
+test('fixture operations are explicit capabilities and cannot become physical device requirements', () => {
+  const capabilities = ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode'];
+  expect(routineResourceRequirementSchema.parse({kind: 'fixture-data', capabilities})).toEqual({kind: 'fixture-data', capabilities});
+  for (const capability of capabilities) for (const kind of ['phone', 'glasses', 'audio', 'browser'])
+    expect(routineResourceRequirementSchema.safeParse({kind, capabilities: [capability]}).success).toBe(false);
+  for (const invalid of [['miniapp-appearance'], ['reviewed-miniapp-appearanc'], ['clipboard', 'clipboard']])
+    expect(routineResourceRequirementSchema.safeParse({kind: 'fixture-data', capabilities: invalid}).success).toBe(false);
+  expect(routineResourceRequirementSchema.parse({kind: 'fixture-data', capabilities: []})).toEqual({kind: 'fixture-data', capabilities: []});
+});
 test('private recording intervals retain the exact source declaration without replacing step results', () => {
   const interval = {startStepId: 'share', endStepId: 'dismiss', reason: 'Native share previews contain account data'};
   const parsed = publishedRoutineDefinitionSchema.parse({...definition, privateEvidenceIntervals: [interval]});

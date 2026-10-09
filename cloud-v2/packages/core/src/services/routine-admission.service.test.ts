@@ -177,6 +177,32 @@ test("mixed host audio and external-window requirements retain their exact resou
   expect(() => select(definition, build, observed)).toThrow("exactly one audio resource");
 });
 
+test('fixture presence cannot admit reviewed appearance without every requested host operation', () => {
+  for (const platform of ['android', 'ios-on-mac'] as const) {
+    const definition = enrollment();
+    definition.platform = platform;
+    definition.definition.platforms = [platform];
+    const capabilities = ['reviewed-miniapp-appearance', 'media-decode'];
+    definition.definition.resourceRequirements.push({kind: 'fixture-data', capabilities});
+    definition.definition.execution!.resourceKinds.push('fixture-data');
+    definition.definition.fixtures = [{provider: 'miniapp-appearance', description: 'Reviewed references and decoder remain required by the source fixture'}];
+    const observed = host(), lane = observed.lanes[0]!;
+    lane.platform = platform;
+    const fixture = {id: 'host-fixture', kind: 'fixture-data' as const, capabilities: [] as string[]};
+    lane.resources.push(fixture);
+    expect(() => select(definition, {...build, platform}, observed)).toThrow('required fixture-data resource capabilities');
+    fixture.capabilities = ['reviewed-miniapp-appearance'];
+    expect(() => select(definition, {...build, platform}, observed)).toThrow('required fixture-data resource capabilities');
+    fixture.capabilities.push('media-decode');
+    const input = select(definition, {...build, platform}, observed);
+    expect(input.resources).toContainEqual({id: 'host-fixture', kind: 'fixture-data'});
+    expect(input.routineSource).toEqual(definition.routineSource);
+    expect(lane.glasses![0]!.capabilities).toEqual(['connection']);
+    expect(definition.definition.fixtures[0]!.provider).toBe('miniapp-appearance');
+    expect(definition.definition.resourceRequirements.find(resource => resource.kind === 'fixture-data')!.capabilities).toEqual(capabilities);
+  }
+});
+
 test("projecting known host providers preserves missing real and unknown glasses capability refusals", () => {
   for (const capability of ["connection", "unimplemented-glasses-feature"]) {
     const definition = enrollment(); definition.definition.resourceRequirements.find(value => value.kind === "glasses")!.capabilities = [capability];
