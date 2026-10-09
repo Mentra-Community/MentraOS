@@ -1,3 +1,4 @@
+import {StepSourceLink} from "../components/step-source-link";
 import {LoadingIndicator} from "../components/loading-indicator";
 import {HistoryStatus, runDisplayStatus} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
@@ -151,7 +152,7 @@ function RoutineDetailPage({id, platform}: {id: string; platform: string}) {
       <ul className="mt-3 list-disc pl-5">{definition.requirements.map(text => <li key={text}>{text}</li>)}</ul>
       {definition.fixtures.map(fixture => <p className="mt-2" key={fixture.provider}>{fixture.description}</p>)}
       <h3 className="mt-5 font-semibold">Steps</h3><ol className="mt-3 list-decimal space-y-2 pl-5">{definition.steps.map(step => <li key={step.id}>{step.instruction}<p className="text-sm text-[#68746d]">Expected: {step.expected}</p></li>)}</ol>
-      <p className="mt-4 text-xs">Source revision: <code>{row.definitionRevision}</code></p>
+      <p className="mt-4 text-sm"><a className={TESTING_LINK} href={definitionSourceHref(definition.source)} target="_blank" rel="noreferrer">View routine definition on GitHub</a> · <code>{row.definitionRevision.slice(0, 10)}</code></p>
     </section>
     <section id="run-history" className={PANEL}><h3 className="font-semibold">Run history</h3>
       {!row.history.length && <p className="mt-3">No runs yet.</p>}
@@ -309,7 +310,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       {!uploadsComplete && <p role="status" className="mt-3 text-sm text-[#747780]">Evidence upload pending.</p>}
     </section>
     <LifecyclePanel phase="setup" actions={run.result.setup.actions} status={run.result.setup.status}
-      actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
+      actionId={run.result.setup.actionId} durationMs={run.result.timing.setupMs} sources={run.result.stepSources?.setup} failures={run.result.failures.filter(failure => failure.phase === "setup")} />
     <div className={hasRecording ? "grid gap-5 lg:h-[calc(var(--recording-height)+5rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : "space-y-5"}>
     {hasRecording && <section aria-label="Run recording" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
       <h3 className="shrink-0 font-semibold">Recording</h3>
@@ -326,8 +327,9 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         return <li key={step.id} className={`flex gap-3 rounded-lg border p-3 ${selectedStep === step.id ? "border-[#3b7650] bg-[#edf6ef]" : "border-[#e0e4de]"}`}>
           <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
           <div className="min-w-0 flex-1">
-          {step.recordingLocation && uploadsComplete ? <button type="button" className="block w-full rounded-sm text-left text-sm hover:text-[#0969da] focus-visible:outline-2 focus-visible:outline-[#0969da]" aria-current={selectedStep === step.id ? "step" : undefined} onClick={() => seekStep(step.id, step.recordingLocation!)}><span className="font-medium">{title}</span> <StepStatus status={step.status} /> · {elapsedDuration(step.durationMs)}<span className="block text-sm">Watch this step · {recordingOffset(step.recordingLocation.startOffsetMs)}</span></button>
+          <div className="flex items-start gap-2"><div className="min-w-0 flex-1">{step.recordingLocation && uploadsComplete ? <button type="button" className="block w-full rounded-sm text-left text-sm hover:text-[#0969da] focus-visible:outline-2 focus-visible:outline-[#0969da]" aria-current={selectedStep === step.id ? "step" : undefined} onClick={() => seekStep(step.id, step.recordingLocation!)}><span className="font-medium">{title}</span> <StepStatus status={step.status} /> · {elapsedDuration(step.durationMs)}<span className="block text-sm">Watch this step · {recordingOffset(step.recordingLocation.startOffsetMs)}</span></button>
             : <p>{title} <StepStatus status={step.status} />{step.status !== "not-run" && ` · ${elapsedDuration(step.durationMs)}`}<span className="block text-sm text-[#68746d]">{step.status === "not-run" ? "Not executed" : "Recording location unavailable"}</span></p>}
+          </div><StepSourceLink source={run.result.stepSources?.test.find(source => source.id === step.id)}/></div>
           {source && <p className="mt-1 text-sm">Expected: {source.expected}</p>}
           {step.causedBy && <p className="mt-1 text-sm">Caused by: {step.causedBy}</p>}
           </div>
@@ -338,7 +340,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     </section>
     </div>
     <LifecyclePanel phase="teardown" actions={run.result.teardown.actions} status={run.result.teardown.ready ? "passed" : "failed"}
-      durationMs={run.result.timing.teardownMs} failures={run.result.failures.filter(failure => failure.phase === "teardown")}
+      durationMs={run.result.timing.teardownMs} sources={run.result.stepSources?.teardown} failures={run.result.failures.filter(failure => failure.phase === "teardown")}
       unavailable={run.result.teardown.unavailableResources} />
     <section id="run-phase-evidence" tabIndex={-1} className={PANEL}><h3 className="font-semibold">Evidence</h3>
       {run.result.failures.filter(failure => failure.phase === "evidence").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
@@ -349,9 +351,10 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
 }
 
 type LifecycleAction = NonNullable<FrameworkRun["result"]["setup"]["actions"]>[number];
-function LifecyclePanel({phase, actions, status, actionId, durationMs, failures, unavailable = []}: {
+function LifecyclePanel({phase, actions, status, actionId, durationMs, failures, sources, unavailable = []}: {
   phase: "setup" | "teardown";
   actions?: LifecycleAction[];
+  sources?: NonNullable<FrameworkRun["result"]["stepSources"]>["setup"];
   status: "passed" | "failed" | "cancelled";
   actionId?: string;
   durationMs: number;
@@ -377,8 +380,8 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
     className={`flex gap-3 rounded-lg border border-l-4 p-3 ${action.scope === "routine"
       ? "border-[#bbd4c2] border-l-[#3b7650] bg-[#f3f8f4]" : "border-[#d9dfe5] border-l-[#778493] bg-[#f7f8fa]"}`}>
     <span aria-hidden="true" className="w-7 shrink-0 text-right">{start + index + 1}.</span>
-    <div className="min-w-0 flex-1"><p>{action.instruction} <StepStatus status={action.status} />
-      {action.status !== "not-run" && ` · ${elapsedDuration(action.durationMs)}`}</p>
+    <div className="min-w-0 flex-1"><div className="flex items-start gap-2"><p className="min-w-0 flex-1">{action.instruction} <StepStatus status={action.status} />
+      {action.status !== "not-run" && ` · ${elapsedDuration(action.durationMs)}`}</p><StepSourceLink source={sources?.find(source => source.id === action.id)}/></div>
       <span className={`mt-1 inline-block rounded px-2 py-0.5 text-xs font-semibold ${action.scope === "routine"
         ? "bg-[#dcecdf] text-[#285538]" : "bg-[#e5e9ee] text-[#455160]"}`}>{action.scope === "routine" ? "Routine" : "Framework"}</span>
       <p className="mt-1 text-sm text-[#68746d]">Expected: {action.expected}</p>

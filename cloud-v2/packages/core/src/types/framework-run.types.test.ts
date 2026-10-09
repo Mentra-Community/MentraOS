@@ -319,3 +319,13 @@ test('rejected public recording retains original step offsets only with matching
   if (!rejected.success) expect(rejected.error.issues.map(issue => issue.path)).toEqual(
     steps.map((_, index) => ['result', 'steps', index, 'recordingLocation']));
 });
+
+test('step source pins are bounded and tied to the recorded routine and installed framework commits', () => {
+  const good = run(), source = {id: 'settings', repository: 'Mentra-Community/Mentra-Automated-Testing', revision: good.definitionRevision,
+    path: 'routines/no-glasses/routine.ts', line: 28};
+  const pinned = {...good, result: {...good.result, stepSources: {setup: [], test: [source], teardown: []}}};
+  expect(frameworkRunSchema.safeParse(pinned).success).toBe(true);
+  for (const changes of [{revision: 'c'.repeat(40)}, {path: 'routines/../secrets.ts'}, {line: 0}, {id: 'foreign'},
+    {repository: 'someone/else'}, {path: 'framework/run.ts'}])
+    expect(frameworkRunSchema.safeParse({...pinned, result: {...pinned.result, stepSources: {setup: [], test: [{...source, ...changes}], teardown: []}}}).success).toBe(false);
+});

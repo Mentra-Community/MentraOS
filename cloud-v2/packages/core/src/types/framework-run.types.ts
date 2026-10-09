@@ -11,6 +11,12 @@ export const frameworkAssetIdSchema = z.string().min(1).max(500)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/);
 const id = frameworkRunIdSchema;
 const ms = z.number().finite().nonnegative();
+export const stepSourceSchema = z.object({id, repository: z.literal("Mentra-Community/Mentra-Automated-Testing"),
+  revision: z.string().regex(/^[a-f0-9]{40}$/), path: z.string().max(500).regex(/^(?:routines|framework|tools)\/[\w./-]+\.ts$/)
+    .refine(path => path.split("/").every(part => part !== "." && part !== ".." && part !== "")),
+  line: z.number().int().positive().safe()}).strict();
+const stepSourcesSchema = z.object({setup: z.array(stepSourceSchema).max(500), test: z.array(stepSourceSchema).max(500),
+  teardown: z.array(stepSourceSchema).max(500)}).strict();
 const lifecycleAction = z.object({id, instruction: z.string().min(1).max(2000), expected: z.string().min(1).max(2000),
   stage: z.enum(["validation", "before-entry", "entry", "after-entry", "recording", "teardown-actions", "resource-cleanup"]).optional(),
   scope: z.enum(["shared", "routine"]), fixtureProvider: routineIdentitySchema.optional(), status: z.enum(["passed", "failed", "cancelled", "not-run"]), durationMs: ms,
@@ -34,7 +40,7 @@ const frozenFrameworkRunSchema = z.object({
   assets: z.array(z.object({id: frameworkAssetIdSchema, kind: z.enum(["recording", "screenshot", "diagnostic", "report"]), path: z.string().min(1).max(500), sha256: z.string().regex(/^[a-f0-9]{64}$/),
     size: z.number().int().positive().max(2 * 1024 * 1024 * 1024),
     mimeType: z.enum(["video/mp4", "video/webm", "image/png", "image/jpeg", "application/json", "text/plain"])}).strict()).max(FRAMEWORK_RUN_ASSET_LIMIT),
-  result: z.object({runId: id, finishedAt: z.string().datetime({offset: true}), test: z.enum(["passed", "failed", "not-run", "cancelled"]),
+  result: z.object({stepSources: stepSourcesSchema.optional(), runId: id, finishedAt: z.string().datetime({offset: true}), test: z.enum(["passed", "failed", "not-run", "cancelled"]),
     setup: z.object({status: z.enum(["passed", "failed", "cancelled"]), actionId: id.optional(),
       actions: z.array(lifecycleAction).max(1000).optional()}).strict(),
     steps: z.array(z.object({id, status: z.enum(["passed", "failed", "not-run"]), durationMs: ms, causedBy: id.optional(),
@@ -48,7 +54,7 @@ const frozenFrameworkRunSchema = z.object({
   }).strict(),
 }).strict();
 type FrozenFrameworkRun = z.infer<typeof frozenFrameworkRunSchema>;
-function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof FrozenFrameworkRun, 'routineSource' | 'frameworkBinding'>>, ctx: z.RefinementCtx) {
+function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof FrozenFrameworkRun, 'routineSource' | 'frameworkBinding'>> & {frameworkBinding?: FrozenFrameworkRun['frameworkBinding']}, ctx: z.RefinementCtx) {
   const problem = (message: string) => ctx.addIssue({code: "custom", message});
   if (run.result.runId !== run.requestId || run.startedAt !== run.result.timing.startedAt
     || run.finishedAt !== run.result.finishedAt
@@ -85,6 +91,17 @@ function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof 
       || (location.endOffsetMs !== undefined && location.endOffsetMs < location.startOffsetMs)))
       ctx.addIssue({code: 'custom', message: 'Step recording location is invalid or undeclared',
         path: ['result', 'steps', index, 'recordingLocation']});
+  }
+  if (run.result.stepSources) for (const phase of ["setup", "test", "teardown"] as const) {
+    const actions = phase === "test" ? run.result.steps : run.result[phase].actions ?? [];
+    const sources = run.result.stepSources[phase];
+    if (new Set(sources.map(source => source.id)).size !== sources.length) problem("Duplicate step source identity");
+    for (const source of sources) {
+      const action = actions.find(action => action.id === source.id);
+      const routine = source.path.startsWith("routines/");
+      if (!action || source.revision !== (routine ? run.definitionRevision : run.frameworkBinding?.revision)
+        || phase === "test" && !routine) problem("Step source contradicts recorded run provenance");
+    }
   }
   if (new Set(run.result.steps.map(step => step.id)).size !== run.result.steps.length) problem("Duplicate step identity");
   for (const phase of ["setup", "teardown"] as const) {
