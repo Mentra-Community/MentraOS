@@ -220,17 +220,19 @@ export function initialFrameworkStep(run: RecordedFrameworkRun | undefined, step
     ?? run.result.steps.find(step => step.status === "failed")
     ?? run.result.steps.find(step => step.status !== "not-run");
 }
-export function stepPlaybackOffset(step: RecordedFrameworkRun["result"]["steps"][number], atFailure = false) {
+export function stepRecordingPlayback(run: RecordedFrameworkRun, step: RecordedFrameworkRun["result"]["steps"][number], atFailure = false) {
   const location = step.recordingLocation;
-  if (!location) return null;
-  return (atFailure ? location.endOffsetMs ?? location.startOffsetMs : location.startOffsetMs) / 1000;
+  if (!location || !run.assets.some(asset => asset.id === location.assetId && asset.kind === "recording")) return null;
+  return {assetId: location.assetId,
+    offset: (atFailure ? location.endOffsetMs ?? location.startOffsetMs : location.startOffsetMs) / 1000,
+    pause: atFailure};
 }
 
 export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: string}) {
   const video = useRef<HTMLVideoElement>(null);
   const executionDetails = useRef<HTMLDivElement>(null);
   const [failureTarget, setFailureTarget] = useState<string | null>(null);
-  const pendingOffset = useRef<number | null>(null);
+  const pendingPlayback = useRef<ReturnType<typeof stepRecordingPlayback>>(null);
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [selectedStep, setSelectedStep] = useState<string | undefined>(stepId);
   const [stepSearch, setStepSearch] = useState("");
@@ -245,7 +247,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   }, [runId, result.data?.kind, result.data?.kind === "request" ? result.data.request.terminalStatus : undefined]);
   useEffect(() => {
     setStepSearch(""); setSelectedStep(stepId);
-    pendingOffset.current = null; setSelectedAsset(null);
+    pendingPlayback.current = null; setSelectedAsset(null);
   }, [runId, stepId]);
   const loadedRun = result.data?.kind === "request" ? undefined : result.data?.run;
   const activeStep = selectedStep ?? initialFrameworkStep(loadedRun, stepId)?.id;
@@ -253,14 +255,9 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     if (!loadedRun) return;
     const step = initialFrameworkStep(loadedRun, stepId);
     setSelectedStep(step?.id);
-    const offset = step && stepPlaybackOffset(step, !stepId && step.status === "failed");
-    if (step?.recordingLocation && offset != null) {
-      pendingOffset.current = offset;
-      setSelectedAsset(step.recordingLocation.assetId);
-      if (video.current?.readyState && video.current.dataset.assetId === step.recordingLocation.assetId) {
-        video.current.currentTime = offset; pendingOffset.current = null;
-      }
-    } else {pendingOffset.current = null; setSelectedAsset(null);}
+    const playback = step && stepRecordingPlayback(loadedRun, step, !stepId && step.status === "failed");
+    if (playback) seekRecording(playback);
+    else {pendingPlayback.current = null; setSelectedAsset(null);}
   }, [runId, stepId, loadedRun?.result.runId]);
   useEffect(() => {
     const container = executionDetails.current;
@@ -277,6 +274,15 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     target?.focus({preventScroll: true});
     setFailureTarget(null);
   }, [failureTarget]);
+  const seekRecording = (playback: NonNullable<ReturnType<typeof stepRecordingPlayback>>) => {
+    pendingPlayback.current = playback;
+    setSelectedAsset(playback.assetId);
+    if (video.current?.readyState && video.current.dataset.assetId === playback.assetId) {
+      if (playback.pause) video.current.pause();
+      video.current.currentTime = playback.offset;
+      pendingPlayback.current = null;
+    }
+  };
   if (result.isPending) return <LoadingIndicator label="Loading run" />;
   if (result.error && !result.data) return <p role="alert">Could not load run: {result.error.message}</p>;
   if (result.data.kind === "request") {
@@ -291,26 +297,22 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
   const failureSummary = runFailureSummary(run, outcome, evidenceStatus);
   const actualRunId = result.data.kind === "run" ? run.result.runId : runId;
   const recordingAsset = selectedAsset ?? run.recordingAssetId;
-  const seekStep = (id: string, location: NonNullable<FrameworkRun["result"]["steps"][number]["recordingLocation"]>, atFailure = false) => {
-    setSelectedStep(id);
-    pendingOffset.current = (atFailure ? location.endOffsetMs ?? location.startOffsetMs : location.startOffsetMs) / 1000;
-    setSelectedAsset(location.assetId);
-    if (recordingAsset === location.assetId && video.current?.readyState) {
-      video.current.currentTime = pendingOffset.current;
-      pendingOffset.current = null;
-    }
+  const seekStep = (step: RecordedFrameworkRun["result"]["steps"][number], atFailure = false) => {
+    setSelectedStep(step.id);
+    const playback = stepRecordingPlayback(run, step, atFailure);
+    if (playback) seekRecording(playback);
     video.current?.scrollIntoView({block: "nearest", behavior: "smooth"});
   };
   const goToFailure = () => {
     if (!failureSummary) return;
     setStepSearch("");
     const step = run.result.steps.find(item => item.id === failureSummary.actionId);
-    if (step?.recordingLocation) seekStep(step.id, step.recordingLocation, true);
+    if (step) seekStep(step, true);
     else setSelectedStep(failureSummary.actionId);
     setFailureTarget(failureSummary.target);
   };
   const assetHref = (id: string) => `/api/admin/routine-catalog/results/by-run/${encodeURIComponent(actualRunId)}/assets/${encodeURIComponent(id)}`;
-  const hasRecording = Boolean(recordingAsset && uploadsComplete);
+  const hasRecording = uploadsComplete && run.assets.some(asset => asset.id === recordingAsset && asset.kind === "recording");
   const definitionSteps = new Map(definition?.steps.map(step => [step.id, step]) ?? []);
   const visibleSteps = run.result.steps.map((step, index) => ({step, index, source: definitionSteps.get(step.id)}))
     .filter(({step, source}) => matchesStepSearch(step, source, stepSearch));
@@ -350,7 +352,11 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
     {hasRecording && <section aria-label="Run recording" className={`${PANEL} order-1 min-w-0 lg:order-2 lg:flex lg:min-h-0 lg:flex-col`}>
       <h3 className="shrink-0 font-semibold">Recording</h3>
       <div className="mt-3 lg:min-h-0 lg:flex-1"><RecordingVideo ref={video} data-asset-id={recordingAsset!} className="scroll-mt-[calc(var(--admin-header-height,6rem)+1rem)]" src={assetHref(recordingAsset!)} onLoadedMetadata={() => {
-        if (video.current && pendingOffset.current !== null) {video.current.currentTime = pendingOffset.current; pendingOffset.current = null;}
+        const playback = pendingPlayback.current;
+        if (video.current && playback && video.current.dataset.assetId === playback.assetId) {
+          if (playback.pause) video.current.pause();
+          video.current.currentTime = playback.offset; pendingPlayback.current = null;
+        }
       }} /></div>
     </section>}
     <section id="run-phase-test" tabIndex={-1} aria-label="Execution steps" className={`${PANEL} min-w-0 ${hasRecording ? "order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col" : ""}`}><h3 className="shrink-0 font-semibold">Execution</h3>
@@ -362,7 +368,7 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
         return <li key={step.id} data-step-id={step.id} data-selected={activeStep === step.id} className={`flex gap-3 rounded-lg border p-3 ${activeStep === step.id ? "border-[#3b7650] bg-[#edf6ef]" : "border-[#e0e4de]"}`}>
           <span aria-hidden="true" className="w-7 shrink-0 text-right">{index + 1}.</span>
           <div className="min-w-0 flex-1">
-          {step.recordingLocation && uploadsComplete ? <button type="button" className="block w-full rounded-sm text-left text-sm hover:text-[#0969da] focus-visible:outline-2 focus-visible:outline-[#0969da]" aria-current={activeStep === step.id ? "step" : undefined} onClick={() => seekStep(step.id, step.recordingLocation!)}><span className="font-medium">{title}</span> <StepStatus status={step.status} /> · {elapsedDuration(step.durationMs)}<span className="block text-sm">Watch this step · {recordingOffset(step.recordingLocation.startOffsetMs)}</span></button>
+          {stepRecordingPlayback(run, step) && uploadsComplete ? <button type="button" className="block w-full rounded-sm text-left text-sm hover:text-[#0969da] focus-visible:outline-2 focus-visible:outline-[#0969da]" aria-current={activeStep === step.id ? "step" : undefined} onClick={() => seekStep(step)}><span className="font-medium">{title}</span> <StepStatus status={step.status} /> · {elapsedDuration(step.durationMs)}<span className="block text-sm">Watch this step · {recordingOffset(step.recordingLocation!.startOffsetMs)}</span></button>
             : <p>{title} <StepStatus status={step.status} />{step.status !== "not-run" && ` · ${elapsedDuration(step.durationMs)}`}<span className="block text-sm text-[#68746d]">{step.status === "not-run" ? "Not executed" : "Recording location unavailable"}</span></p>}
           {source && <p className="mt-1 text-sm">Expected: {source.expected}</p>}
           {step.causedBy && <p className="mt-1 text-sm">Caused by: {step.causedBy}</p>}

@@ -5,7 +5,7 @@ import {QueryClient, QueryClientProvider} from "@tanstack/react-query"
 import {
   FrameworkRunPage,
   initialFrameworkStep,
-  stepPlaybackOffset,
+  stepRecordingPlayback,
   runFailureSummary,
   FrameworkRunsPage,
   RoutineCatalogCard,
@@ -427,10 +427,16 @@ test("failed runs select the failure; explicit step links preserve their request
   expect(initialFrameworkStep(run, "open")?.id).toBe("open");
   expect(initialFrameworkStep(run, "missing")?.id).toBe("connect");
   const failed = run.result.steps[1]!;
-  expect(stepPlaybackOffset(failed, true)).toBe(15);
-  expect(stepPlaybackOffset(failed)).toBe(5);
-  expect(stepPlaybackOffset({...failed, recordingLocation: {assetId: "recording", startOffsetMs: 5000}}, true)).toBe(5);
-  expect(stepPlaybackOffset(run.result.steps[2]!, true)).toBeNull();
+  expect(stepRecordingPlayback(run, failed, true)).toEqual({assetId: "recording", offset: 15, pause: true});
+  expect(stepRecordingPlayback(run, failed)).toEqual({assetId: "recording", offset: 5, pause: false});
+  expect(stepRecordingPlayback(run, {...failed, recordingLocation: {assetId: "recording", startOffsetMs: 5000}}, true)?.offset).toBe(5);
+  expect(stepRecordingPlayback(run, run.result.steps[2]!, true)).toBeNull();
+  const missingRecording = {...run, recordingAssetId: undefined, assets: []};
+  expect(stepRecordingPlayback(missingRecording, failed, true)).toBeNull();
+  client.setQueryData(["framework-run", run.requestId], {run: missingRecording, definition: null, outcome: "failed", uploadsComplete: true, evidenceStatus: "failed"});
+  expect(render()).toContain('data-step-id="connect" data-selected="true"');
+  expect(render()).not.toContain("<video");
+  expect(render()).toContain("Recording location unavailable");
   expect(initialFrameworkStep({...run, result: {...run.result, steps: []}})).toBeUndefined();
   expect(initialFrameworkStep(undefined)).toBeUndefined();
   const passed = {...run, result: {...run.result, steps: run.result.steps.slice(0, 1)}};
