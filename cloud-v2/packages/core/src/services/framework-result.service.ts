@@ -15,6 +15,9 @@ import {TestAssetService, type TestAsset} from "./test-asset.service";
 import type {CandidateVerification} from '../types/candidate-verification.types';
 import type {RoutineSourceRef} from '../types/framework-version.types';
 import {readFailureScreens} from './framework-failure-screen';
+import {readRunIncident} from './framework-run-incident';
+import {findTestRunReport} from './report.service';
+import {failedRunNeedsReport} from './failed-framework-run-report.service';
 
 export class FrameworkResultConflict extends Error {}
 const resultCursorSchema = z.object({startedAt: z.string().datetime({offset: true}), runId: z.string().min(1).max(240)}).strict();
@@ -134,7 +137,8 @@ export class FrameworkResultService {
     private readonly definition: (run: RecordedFrameworkRun) => Promise<RoutineEnrollment | null> = definitionFor,
     private readonly assets: TestAssetService = new TestAssetService(),
     private readonly acknowledgements: FrameworkUploadAcknowledgements = uploadAcknowledgements,
-    private readonly incidents: Pick<FailedFrameworkRunReportService, 'complete'> = new FailedFrameworkRunReportService()) {}
+    private readonly incidents: Pick<FailedFrameworkRunReportService, 'complete'> = new FailedFrameworkRunReportService(),
+    private readonly findIncident: typeof findTestRunReport = findTestRunReport) {}
   async ingest(input: unknown, authenticatedHostId: string) {
     const parsed = frameworkRunSchema.safeParse(input);
     // Custom checks use fixed contract descriptions; built-in messages may echo input values.
@@ -266,9 +270,16 @@ export class FrameworkResultService {
   private async describe(stored: StoredFrameworkRun | null, includeFailureScreens: boolean) {
     if (!stored) throw new TestRunError(404, "Framework run was not found");
     const run = recordedFrameworkRunSchema.parse(stored.payload), definition = await this.definition(run);
-    const displayEvidence = includeFailureScreens ? {failureScreens: stored.uploadsComplete
-      ? await readFailureScreens(run, (asset, signal) => this.mediaByRun(run.result.runId, asset.id,
-        new Request('http://localhost/frozen-failure-diagnostic', {signal}))) : []} : {};
+    const read = (asset: RecordedFrameworkRun['assets'][number], signal: AbortSignal) =>
+      this.mediaByRun(run.result.runId, asset.id, new Request('http://localhost/frozen-failure-diagnostic', {signal}));
+    const [failureScreens, incidentReportId] = includeFailureScreens ? await Promise.all([
+      stored.uploadsComplete ? readFailureScreens(run, read) : [],
+      failedRunNeedsReport(run) ? (async () => {
+        const deviceReport = stored.uploadsComplete ? await readRunIncident(run, read) : null;
+        return deviceReport ?? await this.findIncident(run.result.runId, stored.payloadSha256);
+      })().catch(() => null) : null,
+    ]) : [[], null];
+    const displayEvidence = includeFailureScreens ? {failureScreens, incidentReportId} : {};
     return {run, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(run), uploadsComplete: stored.uploadsComplete,
       evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed", ...displayEvidence};
   }

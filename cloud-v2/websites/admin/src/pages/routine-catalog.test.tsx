@@ -1133,3 +1133,27 @@ test("failure summary follows the execution verdict and stays brief", () => {
   run.result.failures = [{phase: "test", actionId: "connect", message: "x".repeat(300)}];
   expect(runFailureSummary(run, "failed", "complete")?.reason.length).toBe(164);
 });
+
+test('failed run links to its reported incident without changing failure selection', () => {
+  const run = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: 'incident-run', hostId: 'mini', routineId: 'notes-phone',
+    definitionRevision: 'c'.repeat(40), platform: 'android', laneId: 'android',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: '2026-10-09T19:00:00Z', finishedAt: '2026-10-09T19:01:00Z', assets: [],
+    result: {runId: 'incident-run', finishedAt: '2026-10-09T19:01:00Z', setup: {status: 'failed', actionId: 'pair'}, test: 'not-run',
+      steps: [{id: 'observe', status: 'not-run', durationMs: 0, causedBy: 'pair'}],
+      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: 'setup', actionId: 'pair', message: 'Glasses not found'}], evidence: [],
+      timing: {startedAt: '2026-10-09T19:00:00Z', setupMs: 1, testMs: 0, teardownMs: 0}}});
+  const client = new QueryClient();
+  const render = (incidentReportId?: string | null, outcome = 'setup-failed') => {
+    client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome, uploadsComplete: true,
+      evidenceStatus: 'complete', incidentReportId});
+    return renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+  };
+  expect(render('rep_EXACT')).toContain('href="/?report=rep_EXACT"');
+  expect(render('rep_EXACT')).toContain('>Incident report</a>');
+  expect(render('rep_EXACT')).toContain('Go to failure');
+  expect(render(null)).not.toContain('>Incident report</a>');
+  expect(render()).not.toContain('>Incident report</a>');
+  expect(render('rep_EXACT', 'pass')).not.toContain('>Incident report</a>');
+});
