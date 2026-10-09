@@ -38,6 +38,7 @@ export interface StoredTestRequest {
   cancellationAcknowledged?: boolean;
   runId?: string;
   terminalStatus?: string;
+  publicationFailure?: import('../types/routine-job.types').RoutinePublicationFailure;
   createdAt?: Date;
   catalogEligible?: boolean;
   dispatchIntent?: RoutineDispatchIntent;

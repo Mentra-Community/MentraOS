@@ -100,8 +100,8 @@ function displayRequest(row: StoredRequest): FrameworkRequestDisplay {
       ...(input.minimumFrameworkVersion !== undefined ? {minimumFrameworkVersion: input.minimumFrameworkVersion} : {}),
       laneId: input.laneId, build: input.build, state: row.state, terminalStatus: row.terminalStatus,
       createdAt: row.createdAt?.toISOString(), acceptedAt: row.hostReceipt?.acceptedAt,
-      reason: rejection ? `${rejection.code}: ${rejection.reason}` : cancellation?.reason,
-      reasonAt: rejection?.rejectedAt ?? cancellation?.requestedAt,
+      reason: !row.runId && row.publicationFailure ? `Publication failed: ${row.publicationFailure.message}` : rejection ? `${rejection.code}: ${rejection.reason}` : cancellation?.reason,
+      reasonAt: !row.runId && row.publicationFailure ? row.publicationFailure.rejectedAt : rejection?.rejectedAt ?? cancellation?.requestedAt,
       ...(cancellation ? {cancellationRequested: true, cancellationAcknowledged: row.cancellationAcknowledged === true} : {})};
     if (fleet.fleetBinding) {request.assignment = fleet.fleetBinding;request.actionsRuns = fleet.fleetActions ?? [];}
     return request;
