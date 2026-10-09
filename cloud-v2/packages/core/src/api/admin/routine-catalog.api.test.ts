@@ -44,8 +44,8 @@ test("framework result route preserves missing-result and media errors", async (
 test("run and request result routes stay explicit and media responses keep their range headers", async () => {
   const calls: unknown[] = [];
   class Results extends FrameworkResultService {
-    override async detailByRun(id: string): Promise<any> {calls.push({runId: id}); return {run: {result: {runId: id}}, outcome: "pass"};}
-    override async detail(id: string): Promise<any> {calls.push({requestId: id}); return {run: {requestId: id}, outcome: "pass"};}
+    override async detailByRun(id: string, includeFailureScreens = false): Promise<any> {calls.push({runId: id, includeFailureScreens}); return {run: {result: {runId: id}}, outcome: "pass"};}
+    override async detail(id: string, includeFailureScreens = false): Promise<any> {calls.push({requestId: id, includeFailureScreens}); return {run: {requestId: id}, outcome: "pass"};}
     override async mediaByRun(id: string, asset: string, request: Request): Promise<Response> {
       calls.push({runId: id, asset, method: request.method, range: request.headers.get("range")});
       return new Response("xy", {status: 206, headers: {"content-range": "bytes 0-1/20"}});
@@ -58,7 +58,7 @@ test("run and request result routes stay explicit and media responses keep their
   expect(media.status).toBe(206);
   expect(media.headers.get("content-range")).toBe("bytes 0-1/20");
   expect(await media.text()).toBe("xy");
-  expect(calls).toEqual([{runId: "run-1"}, {requestId: "request-1"}, {runId: "run-1", asset: "video", method: "GET", range: "bytes=0-1"}]);
+  expect(calls).toEqual([{runId: "run-1", includeFailureScreens: true}, {requestId: "request-1", includeFailureScreens: true}, {runId: "run-1", asset: "video", method: "GET", range: "bytes=0-1"}]);
 });
 
 

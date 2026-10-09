@@ -83,19 +83,21 @@ test('Admin projects optional failure images without changing frozen results or 
       routineSource: testRoutineSource(), platform: run.platform, laneId: run.laneId, build: run.build}}), async () => {}, async () => null);
   const media = spyOn(service, 'mediaByRun').mockImplementation(async () => new Response(bytes));
   try {
-    const detail = await service.detailByRun(run.result.runId);
+    const detail = await service.detailByRun(run.result.runId, true);
     expect(detail.failureScreens).toEqual(association);
     expect(detail.outcome).toBe('failed');
     expect(JSON.stringify(run)).toBe(original);
     media.mockClear();
+    expect(await service.detail(run.requestId)).not.toHaveProperty('failureScreens');
+    expect(await service.detailByRun(run.result.runId)).not.toHaveProperty('failureScreens');
     expect(await service.detailForHost(run.requestId, run.hostId)).not.toHaveProperty('failureScreens');
     expect(media).not.toHaveBeenCalled();
     stored.uploadsComplete = false;
-    expect((await service.detail(run.requestId)).failureScreens).toEqual([]);
+    expect((await service.detail(run.requestId, true)).failureScreens).toEqual([]);
     expect(media).not.toHaveBeenCalled();
     stored.uploadsComplete = true;
     media.mockImplementation(async () => {throw new Error('missing diagnostic');});
-    const missing = await service.detail(run.requestId);
+    const missing = await service.detail(run.requestId, true);
     expect(missing.failureScreens).toEqual([]);
     expect(missing.outcome).toBe('failed');
     expect(missing.run).toEqual(run);

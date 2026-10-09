@@ -231,8 +231,8 @@ export class FrameworkResultService {
     return {runs: await Promise.all(page.map(row => readFrameworkRunSummary(row))), nextCursor};
   }
 
-  async detail(requestId: string) {
-    return this.describe(await this.repository.getByRequest(requestId));
+  async detail(requestId: string, includeFailureScreens = false) {
+    return this.describe(await this.repository.getByRequest(requestId), includeFailureScreens);
   }
 
   /** Occurrence polling reads the existing verified verdict without transferring its manifest or execution evidence. */
@@ -249,8 +249,7 @@ export class FrameworkResultService {
   async detailForHost(requestId: string, hostId: string) {
     const binding = await this.request(requestId);
     if (!binding || binding.hostId !== hostId) throw new TestRunError(404, 'Framework run was not found for this host');
-    return {...await this.describe(await this.repository.getByRequest(requestId), false),
-      ...(binding.input.verification ? {verification: binding.input.verification} : {})};
+    return {...await this.detail(requestId), ...(binding.input.verification ? {verification: binding.input.verification} : {})};
   }
 
   async mediaForHost(requestId: string, assetId: string, hostId: string, request: Request) {
@@ -259,11 +258,11 @@ export class FrameworkResultService {
     return this.media(requestId, assetId, request);
   }
 
-  async detailByRun(runId: string) {
-    return this.describe(await this.repository.getByRun(runId));
+  async detailByRun(runId: string, includeFailureScreens = false) {
+    return this.describe(await this.repository.getByRun(runId), includeFailureScreens);
   }
 
-  private async describe(stored: StoredFrameworkRun | null, includeFailureScreens = true) {
+  private async describe(stored: StoredFrameworkRun | null, includeFailureScreens: boolean) {
     if (!stored) throw new TestRunError(404, "Framework run was not found");
     const run = recordedFrameworkRunSchema.parse(stored.payload), definition = await this.definition(run);
     const displayEvidence = includeFailureScreens ? {failureScreens: stored.uploadsComplete
