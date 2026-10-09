@@ -329,6 +329,20 @@ export class NightlyRoutineService {
         : singleResultId ? {resultUrl: `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(singleResultId)}`} : {})};
   }
 
+  /** Cancelled or expired occurrences finish even if their initiating CI process stopped. */
+  async reconcilePending() {
+    const rows = await TestSuiteModel.find({nightlyPlan: {$exists: true}, nightlyResult: {$exists: false},
+      // Input-based historical occurrences are finalized once from their original receipts.
+      "nightlyPlan.members.input": {$exists: false},
+      $or: [{nightlyCancellation: {$exists: true}}, {startedAt: {$lte: new Date(this.now() - 3 * 3600_000)}}]})
+      .select({"nightlyPlan.occurrenceId": 1, suiteId: 1}).sort({startedAt: 1, suiteId: 1}).limit(20)
+      .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
+    await Promise.allSettled(rows.map(async row => {
+      try {await this.complete(row.nightlyPlan.occurrenceId);}
+      catch (error) {logger.error({err: error, suiteId: row.suiteId}, "Nightly completion will retry");}
+    }));
+  }
+
   async complete(occurrenceId: string) {
     const plan = await this.plan(occurrenceId), completed = await this.repository.completed(plan.suiteId),
       cancellation = await this.repository.cancellation(plan.suiteId);
