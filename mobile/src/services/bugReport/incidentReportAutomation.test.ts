@@ -1,4 +1,4 @@
-import {submitIncidentReport} from "@mentra/engine"
+import {IncidentReportError, submitIncidentReport} from "@mentra/engine"
 
 import {parseIncidentReportRequest, submitIncidentReportOnce} from "./incidentReportAutomation"
 
@@ -7,6 +7,13 @@ jest.mock("@mentra/engine", () => ({
   engine: {settings: {get: () => mockSuperMode()}},
   SETTINGS: {super_mode: {key: "super_mode"}},
   submitIncidentReport: jest.fn(),
+  IncidentReportError: class IncidentReportError extends Error {
+    result: unknown
+    constructor(value: unknown) {
+      super("Incident report submission did not complete")
+      this.result = value
+    }
+  },
 }))
 
 const request = {
@@ -85,6 +92,20 @@ it("returns a correlated failure if the uploader unexpectedly rejects", async ()
     status: "failed",
     error: "offline",
   })
+})
+
+it("presents a rejected partial receipt without re-filing after remount", async () => {
+  const partial = {
+    ...receipt,
+    status: "failed" as const,
+    error: "Required incident log collection did not complete",
+    collection: {reportId: "rep_test", state: "failed" as const, logCollection: {}},
+  }
+  jest.mocked(submitIncidentReport).mockRejectedValueOnce(new IncidentReportError(partial))
+  const first = submitIncidentReportOnce("partial/dev", request)
+  await expect(first).resolves.toEqual(partial)
+  expect(submitIncidentReportOnce("partial/dev", request)).toBe(first)
+  expect(submitIncidentReport).toHaveBeenCalledTimes(1)
 })
 
 it.each(["Mac", "Android"])("submits a first normal-mode %s report through the shared uploader", async (source) => {
