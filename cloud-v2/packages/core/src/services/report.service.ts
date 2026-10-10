@@ -214,7 +214,10 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     throw new ReportArtifactError(409, 'Invalid automated incident correlation');
   const {incidentKey} = input;
   if (incidentKey !== undefined) {
-    const existing = await findIncidentKeyReport(input.mentraUserId, incidentKey);
+    // Bound the dedup lookup to the same 10s budget as the commit wait: an
+    // unresponsive primary must surface temporarily_unavailable, not hang.
+    const existing = await committedRead(timeoutMs => findIncidentKeyReport(input.mentraUserId, incidentKey, timeoutMs),
+      committedReadWait.timeoutMs);
     if (existing) return existing;
   }
   const reportId = `rep_${ulid()}`;
@@ -249,7 +252,7 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     // A concurrent submission with the same incident key won the unique index.
     // Its write may still be pending or roll back, so answer only once it is committed.
     if (incidentKey === undefined || (error as {code?: number}).code !== 11000) throw error;
-    const existing = await awaitCommitted(() => findIncidentKeyReport(input.mentraUserId, incidentKey));
+    const existing = await awaitCommitted(timeoutMs => findIncidentKeyReport(input.mentraUserId, incidentKey, timeoutMs));
     if (!existing) throw new ReportArtifactError(503, "incident report is not committed yet");
     return existing;
   }
@@ -276,19 +279,42 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
   return { reportId, status };
 }
 
-async function findIncidentKeyReport(mentraUserId: string, incidentKey: string): Promise<SubmitReportResult | null> {
+async function findIncidentKeyReport(mentraUserId: string, incidentKey: string, timeoutMs: number): Promise<SubmitReportResult | null> {
+  // serverSelectionTimeoutMS bounds only connection setup, not an in-flight
+  // query, so carry the remaining deadline onto the operation itself.
   const row = await ReportModel.findOne({mentraUserId, incidentKey}, {_id: 0, reportId: 1, status: 1})
-    .read('primary').readConcern('majority').lean<{reportId: string; status: ReportStatus}>();
+    .read('primary').readConcern('majority').setOptions({timeoutMS: timeoutMs})
+    .lean<{reportId: string; status: ReportStatus}>();
   return row ? {reportId: row.reportId, status: row.status, deduplicated: true} : null;
 }
 
 /** Bound for waiting on a concurrent winner's majority commit; matches its write timeout. */
 export const committedReadWait = {timeoutMs: attachmentWriteConcern.wtimeout, pollMs: 100};
 
-async function awaitCommitted<T>(read: () => Promise<T | null>): Promise<T | null> {
+/** Mongo surfaces an exhausted operation deadline as maxTimeMS (code 50) or the
+ * driver's client-side operation timeout. A keyed submission/upload must then
+ * observe temporarily_unavailable rather than a primary that never answers. */
+function isQueryTimeout(error: unknown): boolean {
+  return (error as {code?: number}).code === 50 || (error as Error).name === "MongoOperationTimeoutError";
+}
+
+/** Run one committed read under the remaining deadline, translating an exhausted
+ * query deadline into a 503 instead of letting the caller hang on the primary. */
+async function committedRead<T>(read: (timeoutMs: number) => Promise<T | null>, timeoutMs: number): Promise<T | null> {
+  try {
+    return await read(timeoutMs);
+  } catch (error) {
+    if (isQueryTimeout(error)) throw new ReportArtifactError(503, "incident read exceeded its deadline");
+    throw error;
+  }
+}
+
+async function awaitCommitted<T>(read: (timeoutMs: number) => Promise<T | null>): Promise<T | null> {
   const deadline = Date.now() + committedReadWait.timeoutMs;
   for (;;) {
-    const row = await read();
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return null;
+    const row = await committedRead(read, remaining);
     if (row || Date.now() >= deadline) return row;
     await new Promise(resolve => setTimeout(resolve, committedReadWait.pollMs));
   }
@@ -446,7 +472,9 @@ async function addRetryableLogArtifact(input: {
       contentType, sizeBytes: bytes.byteLength, sha256, source: input.source }], { writeConcern: attachmentWriteConcern });
   } catch (error) { if ((error as { code?: number }).code !== 11000) throw error; }
   // Bind only against a committed reservation: a concurrent winner's may still roll back.
-  const asset = await awaitCommitted(() => ReportAssetModel.findOne({ artifactId }).read("primary").readConcern("majority").lean());
+  // Carry the remaining deadline onto the lookup so a stalled primary cannot hang the upload.
+  const asset = await awaitCommitted(timeoutMs => ReportAssetModel.findOne({ artifactId })
+    .read("primary").readConcern("majority").setOptions({timeoutMS: timeoutMs}).lean());
   if (!asset) throw new ReportArtifactError(503, "attachment reservation is not committed yet");
   // Reservations made before sources were bound carry none.
   if (asset.reportId !== reportId || asset.mentraUserId !== mentraUserId || asset.storageKey !== storageKey

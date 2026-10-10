@@ -672,6 +672,34 @@ describe("report idempotency keys", () => {
     expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(1);
   });
 
+  test("a keyed submission returns 503 when the dedup lookup query times out", async () => {
+    // serverSelectionTimeoutMS does not bound an in-flight query, so a stalled
+    // primary that aborts the operation must surface temporarily_unavailable.
+    const fake = timeoutUncommittedRows(ReportModel, "incidentKey");
+    try {
+      const res = await submit(crashReport(INCIDENT_KEY));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+      expect(fake.timeouts.length).toBeGreaterThan(0);
+      expect(fake.timeouts.every(timeoutMS => typeof timeoutMS === "number" && timeoutMS > 0)).toBe(true);
+    } finally { fake.restore(); }
+    expect(await ReportModel.countDocuments({})).toBe(0);
+  });
+
+  test("a keyed upload returns 503 when the reservation lookup query times out", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:full" };
+    const fake = timeoutUncommittedRows(ReportAssetModel, "artifactId");
+    try {
+      const res = await uploadLogs(reportId, body);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+      expect(fake.timeouts.length).toBeGreaterThan(0);
+      expect(fake.timeouts.every(timeoutMS => typeof timeoutMS === "number" && timeoutMS > 0)).toBe(true);
+    } finally { fake.restore(); }
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(0);
+  });
+
   test("a retry key reused for another source returns 409 without a second artifact or receipt", async () => {
     const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
     const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "shared-key" };
@@ -1014,6 +1042,34 @@ function hideUncommittedRows(model: { findOne: unknown }, field: string, committ
     return query;
   };
   return { reads, restore: () => { model.findOne = original; } };
+}
+
+/**
+ * Simulate a primary that stops responding: matching `findOne` queries abort
+ * with the driver's operation-timeout error instead of resolving, as they would
+ * once their client-side `timeoutMS` deadline is exhausted. Records the deadline
+ * each such query carried so the caller can assert the read was actually bounded.
+ */
+function timeoutUncommittedRows(model: { findOne: unknown }, field: string) {
+  type FakeQuery = {
+    exec: () => Promise<unknown>;
+    getFilter: () => Record<string, unknown>;
+    getOptions: () => { timeoutMS?: number };
+  };
+  const original = model.findOne as (...args: unknown[]) => FakeQuery;
+  const timeouts: Array<number | undefined> = [];
+  model.findOne = function (this: unknown, ...args: unknown[]) {
+    const query = original.apply(this, args);
+    if (!(field in query.getFilter())) return query;
+    query.exec = async () => {
+      timeouts.push(query.getOptions().timeoutMS);
+      const error = new Error("operation exceeded time limit") as Error & { name: string };
+      error.name = "MongoOperationTimeoutError";
+      throw error;
+    };
+    return query;
+  };
+  return { timeouts, restore: () => { model.findOne = original; } };
 }
 
 /** Let the first blob write succeed and fail the second one. */
