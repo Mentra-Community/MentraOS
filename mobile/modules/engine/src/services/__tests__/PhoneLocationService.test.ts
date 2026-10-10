@@ -379,8 +379,9 @@ function makeLocationHost(savedTier: string) {
     "AppState",
     "BgTimer",
     "LOG_TAG",
+    "dismissRunningUpdatePrompts",
     `${runtimeCode}; return LocalMiniappRuntime`,
-  )({setLocationTier}, {subscribe: () => () => {}}, appState, {clearTimeout() {}}, "TEST")
+  )({setLocationTier}, {subscribe: () => () => {}}, appState, {clearTimeout() {}}, "TEST", () => {})
   const runtime = new Runtime() as {
     initialize(): void
     cleanup(): void
@@ -389,6 +390,7 @@ function makeLocationHost(savedTier: string) {
     lastAppliedLocationRate: string | null
   }
   Object.assign(runtime, {
+    storeSessionEpoch: 0,
     connectedApps: new Map(),
     streamSubscribers: new Map(),
     foregroundProbeTimers: new Map(),

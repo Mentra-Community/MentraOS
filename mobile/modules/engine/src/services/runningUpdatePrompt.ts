@@ -60,6 +60,7 @@ let environment = defaultEnvironment
 const promptListeners = new Set<(prompt: PendingRunningUpdatePrompt) => void>()
 const failureListeners = new Set<(failure: RunningUpdateFailure) => void>()
 let openPrompt: string | null = null
+const openSettlers = new Set<(answer: RunningUpdatePromptAnswer) => void>()
 
 /** Whether a prompt for this miniapp would be shown right now. */
 export function canShowRunningUpdatePrompt(packageName: string): boolean {
@@ -85,9 +86,11 @@ export function requestRunningUpdatePrompt(request: RunningUpdatePromptRequest):
     const settle = (answer: RunningUpdatePromptAnswer) => {
       if (settled) return
       settled = true
+      openSettlers.delete(settle)
       openPrompt = null
       resolve(answer)
     }
+    openSettlers.add(settle)
     const pending: PendingRunningUpdatePrompt = {
       ...request,
       answer: (choice) => settle(choice === "update" ? "update" : "not_now"),
@@ -101,6 +104,15 @@ export function requestRunningUpdatePrompt(request: RunningUpdatePromptRequest):
     }
     environment.recordPrompted(request.packageName, environment.now())
   })
+}
+
+/**
+ * Settle every open prompt as "not_shown" when the session that asked ends
+ * (sign-out or a deployment switch). Nothing is stopped; a later answer from a
+ * prompt still on screen is ignored.
+ */
+export function dismissRunningUpdatePrompts(): void {
+  for (const settle of [...openSettlers]) settle("not_shown")
 }
 
 /** Host UI: render each prompt and answer it. Returns an unsubscribe function. */
@@ -133,6 +145,7 @@ export function emitRunningUpdateFailed(failure: RunningUpdateFailure): void {
 export function setRunningUpdatePromptEnvironmentForTests(next: RunningUpdatePromptEnvironment | null): void {
   environment = next ?? defaultEnvironment
   openPrompt = null
+  openSettlers.clear()
   promptListeners.clear()
   failureListeners.clear()
 }

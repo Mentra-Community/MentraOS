@@ -138,7 +138,7 @@ mock.module("expo-file-system", () => ({
   },
 }))
 
-const {installMiniappRelease} = await import("../miniappReleaseInstall")
+const {installMiniappRelease, MiniappInstallCancelledError} = await import("../miniappReleaseInstall")
 const {miniappLauncher} = await import("../MiniappLauncher")
 const {miniappRunningRegistry} = await import("../MiniappRunningRegistry")
 isProjected = (packageName) => miniappRunningRegistry.has(packageName)
@@ -167,7 +167,7 @@ const router = {
 
 let foreground = true
 let now = 10_000_000
-let answer: "update" | "not_now" = "update"
+let answer: "update" | "not_now" | "hold" = "update"
 const prompts: PendingRunningUpdatePrompt[] = []
 const failures: unknown[] = []
 const blocked: string[] = []
@@ -225,7 +225,7 @@ beforeEach(async () => {
   prompt.onRunningUpdatePrompt((pending) => {
     prompts.push(pending)
     calls.push("prompt")
-    pending.answer(answer)
+    if (answer !== "hold") pending.answer(answer)
   })
   prompt.onRunningUpdateFailed((failure) => failures.push(failure))
   useAppStatusStore.setState({apps: [], updatingPackages: new Set(), foregroundedPackage: null})
@@ -406,5 +406,45 @@ describe("update prompt for a running miniapp", () => {
     expect(prompts).toHaveLength(0)
     expect(active).toBe("1.1.0")
     expect(calls.filter((call) => call.startsWith("start:"))).toEqual([])
+  })
+})
+
+describe("an update whose session ends (sign-out or a deployment switch)", () => {
+  test("an idle update that finishes downloading afterwards never activates", async () => {
+    let cancelled = false
+    const download = deferred()
+    downloadGate = download.promise
+    const update = release({isCancelled: () => cancelled})
+    await Promise.resolve()
+    cancelled = true
+    download.resolve()
+    await expect(update).rejects.toBeInstanceOf(MiniappInstallCancelledError)
+    expect(active).toBe("1.0.0")
+    expect(calls).not.toContain("activate")
+    expect(useAppStatusStore.getState().apps[0].updating).toBe(false)
+  })
+
+  test("an open prompt closes unanswered and the miniapp keeps running", async () => {
+    answer = "hold"
+    await runApp({open: true})
+    const update = release()
+    while (!calls.includes("prompt")) await Promise.resolve()
+    prompt.dismissRunningUpdatePrompts()
+    await expect(update).rejects.toBeInstanceOf(MiniappRunningError)
+    // A late tap on the prompt still on screen is ignored.
+    prompts[0]!.answer("update")
+    expect(calls).toEqual(["download", "verify", "unpack", "prompt"])
+    expect(active).toBe("1.0.0")
+    expect(miniappRunningRegistry.has(pkg)).toBe(true)
+  })
+
+  test("after Update it neither activates nor restarts the miniapp, and shows no failure", async () => {
+    await runApp({open: true})
+    await expect(release({isCancelled: () => calls.includes(`stop:${pkg}`)})).rejects.toBeInstanceOf(
+      MiniappInstallCancelledError,
+    )
+    expect(calls).toEqual(["download", "verify", "unpack", "prompt", `stop:${pkg}`])
+    expect(active).toBe("1.0.0")
+    expect(failures).toEqual([])
   })
 })

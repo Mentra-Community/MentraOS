@@ -109,6 +109,7 @@ import {
 } from "./SystemMiniappPolicy"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
 import {installMiniappRelease} from "./miniappReleaseInstall"
+import {dismissRunningUpdatePrompts} from "./runningUpdatePrompt"
 import {
   checkMiniappInstallCompatibility,
   type MiniappCompatibilityPolicy,
@@ -6438,6 +6439,8 @@ class LocalMiniappRuntime {
   private actionCallSeq = 0
   /** Packages a Store request is installing or uninstalling: one operation per package. */
   private storeMutationsInFlight = new Set<string>()
+  /** Bumped by cleanup(): a Store install requested before sign-out or a deployment switch never activates. */
+  private storeSessionEpoch = 0
 
   private interopApps(): ClientApp[] {
     return useAppStatusStore.getState().apps
@@ -6726,6 +6729,7 @@ class LocalMiniappRuntime {
   ): Promise<void> {
     const target = typeof payload.packageName === "string" ? payload.packageName.trim() : undefined
     if (!this.requireHostTrustedStore(storePackageName, requestId, "install", target)) return
+    const sessionEpoch = this.storeSessionEpoch
     const fail = (code: MiniappErrorCode, message: string) => {
       this.sendResult(storePackageName, requestId, false, undefined, {code, message})
       this.auditInterop({caller: storePackageName, op: "install", target, ok: false, errorCode: code})
@@ -6817,6 +6821,7 @@ class LocalMiniappRuntime {
         compatibilityPolicy,
         onlyIfStopped,
         askIfRunning,
+        isCancelled: () => sessionEpoch !== this.storeSessionEpoch,
         beforeActivate: () => {
           if (onlyIfStopped && this.hasDevelopmentSelection(target)) {
             throw new Error(`${target} uses a manually selected build`)
@@ -7317,6 +7322,10 @@ class LocalMiniappRuntime {
 
   public cleanup(): void {
     console.log(`${LOG_TAG}: cleanup()`)
+    // Store installs already in flight belong to the ending session: they must
+    // not activate afterwards, and their open update prompts close unanswered.
+    this.storeSessionEpoch += 1
+    dismissRunningUpdatePrompts()
     this.visibilityUnsubscribe?.()
     this.visibilityUnsubscribe = null
     this.appStateSubscription?.remove()

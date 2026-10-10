@@ -20,6 +20,20 @@ export interface ReleaseInstallOptions extends InstallBundleOptions {
    * release and ask whether to update now. Declined or unshown prompts defer.
    */
   askIfRunning?: boolean
+  /**
+   * True once the session that requested the install has ended (sign-out or a
+   * deployment switch). The release is then never activated, no prompt is
+   * shown, and nothing restarts into the ended session.
+   */
+  isCancelled?: () => boolean
+}
+
+/** The session that requested an install ended before the release activated. */
+export class MiniappInstallCancelledError extends Error {
+  constructor(packageName: string) {
+    super(`The update of ${packageName} was cancelled because its session ended`)
+    this.name = "MiniappInstallCancelledError"
+  }
 }
 
 /**
@@ -37,8 +51,23 @@ export interface ReleaseInstallOptions extends InstallBundleOptions {
  *   release commits, and the miniapp reopens.
  */
 export async function installMiniappRelease(bundleUrl: string, options: ReleaseInstallOptions): Promise<void> {
-  const {onlyIfStopped, askIfRunning, ...installOptions} = options
+  const {onlyIfStopped, askIfRunning, isCancelled, ...requestedOptions} = options
   const packageName = options.expectedPackageName
+  const assertCurrent = () => {
+    if (isCancelled?.()) throw new MiniappInstallCancelledError(packageName)
+  }
+  // Only the activation hook is wrapped: a `whenStaged` hook moves unpacking
+  // out of the serialized install queue, so it is never added here.
+  const installOptions: InstallBundleOptions = isCancelled
+    ? {
+        ...requestedOptions,
+        beforeActivate: () => {
+          assertCurrent()
+          requestedOptions.beforeActivate?.()
+        },
+      }
+    : requestedOptions
+  assertCurrent()
   // An early check avoids stopping or reserving an app for a known downgrade.
   // AppRegistry checks again in its serialized filesystem transaction.
   appRegistry.assertCanInstallVersion(packageName, options.expectedVersion)
@@ -60,7 +89,7 @@ export async function installMiniappRelease(bundleUrl: string, options: ReleaseI
   assertStillInstalled(packageName)
   try {
     if (askIfRunning && miniappLauncher.isProjectedRunning(packageName)) {
-      await installRunningUpdate(bundleUrl, installOptions, packageName, options.expectedVersion)
+      await installRunningUpdate(bundleUrl, installOptions, packageName, options.expectedVersion, isCancelled)
     } else {
       await installIdleUpdate(bundleUrl, installOptions, packageName)
     }
@@ -99,7 +128,11 @@ async function installRunningUpdate(
   options: InstallBundleOptions,
   packageName: string,
   version: string,
+  isCancelled: (() => boolean) | undefined,
 ): Promise<void> {
+  const assertCurrent = () => {
+    if (isCancelled?.()) throw new MiniappInstallCancelledError(packageName)
+  }
   // Do not download a release the user would not be asked about.
   if (!canShowRunningUpdatePrompt(packageName)) throw new MiniappRunningError(packageName)
   const displayName =
@@ -116,6 +149,7 @@ async function installRunningUpdate(
     const result = await appRegistry.installFromUrl(bundleUrl, {
       ...options,
       whenStaged: async () => {
+        assertCurrent()
         await options.whenStaged?.()
         // The download, signer, version and compatibility checks have passed
         // and the files are unpacked; nothing is reserved yet. If the user
@@ -123,6 +157,7 @@ async function installRunningUpdate(
         if (miniappLauncher.isRunning(packageName)) {
           const answer = await requestRunningUpdatePrompt({packageName, displayName, version})
           if (answer !== "update") throw new MiniappRunningError(packageName)
+          assertCurrent()
           accepted = true
         }
         endUpdate = useAppStatusStore.getState().beginUpdate(packageName)
@@ -153,9 +188,10 @@ async function installRunningUpdate(
   }
 
   // Reopen what the user had: the new release after a commit, otherwise the
-  // version that is still installed.
-  if (stopped) await restartAfterUpdate(packageName, stopped.reopen)
-  if (!committed && accepted) emitRunningUpdateFailed({packageName, displayName, installedVersion})
+  // version that is still installed. Nothing restarts into an ended session.
+  const cancelled = isCancelled?.() === true
+  if (stopped && !cancelled) await restartAfterUpdate(packageName, stopped.reopen)
+  if (!committed && accepted && !cancelled) emitRunningUpdateFailed({packageName, displayName, installedVersion})
   if (!committed) throw failure
 }
 
