@@ -31,6 +31,14 @@ export class ReportServerLogCollectionService {
       }
       await addLogArtifact({...owner, entries})
     } catch (error) {
+      if (error instanceof ServerLogCollectionError && error.transient
+        && Date.parse(report.logCollection?.[source]?.deadlineAt ?? '') > Date.now()) {
+        // Keep the original incident window and lease. A later reconciliation
+        // tick can recover a provider interruption without another report or
+        // an inline retry; the original collection deadline still applies.
+        await updateReportLogCollection({...owner, state: 'requested', reason: error.reason})
+        return
+      }
       await updateReportLogCollection({...owner, state: 'failed', reason: error instanceof ServerLogCollectionError ? error.reason : 'Server log artifact storage failed'})
     }
   }

@@ -9,6 +9,7 @@ const mocks: Array<{mockRestore(): void}> = []
 afterEach(() => mocks.splice(0).forEach(mock => mock.mockRestore()))
 const createdAt = new Date('2026-10-09T16:00:00Z')
 const row = {reportId: 'rep_SYNTHETIC', mentraUserId: 'mu_01M2JJVEVTR0DJJD5Z6AN3GTM2', createdAt}
+const owner = {reportId: row.reportId, mentraUserId: row.mentraUserId}
 function setup(deadlineAt = new Date(Date.now() - 1).toISOString()) {
   const logCollection = initialReportLogCollection(createdAt)
   logCollection.cloud.deadlineAt = deadlineAt
@@ -45,6 +46,38 @@ test('one query failure records its reason and does not suppress the other serve
   expect(fixture.attach).toHaveBeenCalledTimes(1)
   expect(fixture.attach.mock.calls[0]![0].source).toBe('miniapp_server')
   expect(fixture.outcome).toHaveBeenCalledWith({reportId: row.reportId, mentraUserId: row.mentraUserId, source: 'cloud', state: 'failed', reason: 'query unavailable'})
+})
+test('a transient provider interruption keeps the original lease and later attaches the same incident window', async () => {
+  const fixture = setup(new Date(Date.now() + 60_000).toISOString())
+  fixture.collect.mockRejectedValueOnce(new serverLogs.ServerLogCollectionError('response interrupted', true))
+  const collector = new ReportServerLogCollectionService()
+  await collector.tick()
+  expect(fixture.collect).toHaveBeenCalledTimes(2)
+  expect(fixture.attach).toHaveBeenCalledTimes(1)
+  expect(fixture.outcome).toHaveBeenCalledWith({...owner, source: 'cloud', state: 'requested', reason: 'response interrupted'})
+  const update = fixture.outcome.mock.calls[0]![0]
+  expect(update).not.toHaveProperty('deadlineAt')
+  expect(update).not.toHaveProperty('leaseUntil')
+  await collector.tick()
+  expect(fixture.attach).toHaveBeenCalledTimes(3)
+  expect(fixture.collect.mock.calls[2]![0]).toEqual({...row, source: 'cloud'})
+})
+test('a transient failure after the original deadline is terminal and preserves its precise reason', async () => {
+  const fixture = setup()
+  fixture.collect.mockRejectedValueOnce(new serverLogs.ServerLogCollectionError('response timed out', true))
+  await new ReportServerLogCollectionService().tick()
+  expect(fixture.outcome).toHaveBeenCalledWith({...owner, source: 'cloud', state: 'failed', reason: 'response timed out'})
+  expect(fixture.attach).toHaveBeenCalledTimes(1)
+})
+test('malformed data and storage failures are terminal even before the deadline', async () => {
+  const fixture = setup(new Date(Date.now() + 60_000).toISOString())
+  fixture.collect.mockRejectedValueOnce(new serverLogs.ServerLogCollectionError('malformed row'))
+  fixture.attach.mockRejectedValueOnce(new Error('private storage error'))
+  await new ReportServerLogCollectionService().tick()
+  expect(fixture.outcome.mock.calls.map(([input]) => input)).toEqual([
+    {...owner, source: 'cloud', state: 'failed', reason: 'malformed row'},
+    {...owner, source: 'miniapp_server', state: 'failed', reason: 'Server log artifact storage failed'},
+  ])
 })
 test('no user-correlated logs is explicit unavailable and never a fabricated received artifact', async () => {
   const fixture = setup()
