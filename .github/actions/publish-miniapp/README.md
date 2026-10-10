@@ -10,8 +10,11 @@ first-party miniapps kept in `miniapps/` to the Mentra Miniapp Store.
 4. On a push to `dev`, `operation: publish` downloads that same artifact and
    publishes it with the miniapp's app-restricted publishing key.
 
-Publication skips a version the Store has already published, before touching
-the listing, and skips a run whose commit is no longer the tip of `dev`. Bump
+The workflow first checks the Store's public catalog and publishes nothing,
+with no key needed, when the Store's current release already has this version.
+The action then checks again with the key: it skips a version the Store has
+already published, before touching the listing, and skips a run whose commit
+is no longer the tip of `dev`. Bump
 `miniapp.json` to publish a new release or listing change.
 
 Each miniapp keeps `store/listing.json` (the `mentra listing update --file`
