@@ -5,6 +5,7 @@ import io
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -374,9 +375,14 @@ class GuidedTests(unittest.TestCase):
              patch.object(setup, 'vault_get', return_value={'value': 'stored-by-create'}), \
              patch.object(setup, 'resolve_principal', return_value={'id': TENANT, 'collection': 'users'}), \
              patch.object(setup, 'update_configuration') as update, \
-             patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}) as install:
+             patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}) as install, \
+             patch.object(setup, 'apply_teams_policy', return_value=(True, '')) as apply:
             self.args.teams_organizer = 'organizer@acme.example'
             result = setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
+        # Setup applies the Teams policy itself, from the saved script.
+        self.assertEqual(apply.call_args.args[1], self.directory / 'teams-policy.ps1')
+        self.assertTrue(result['teamsPolicyApplied'])
+        self.assertEqual(setup.read_json(self.directory / 'state.json')['teamsPolicyApplied'], SUB)
         # create_meetings_app stored the secret itself.
         vault_set.assert_not_called()
         self.assertEqual(update.call_args.kwargs, {'teamsGraphTenantId': TENANT, 'teamsGraphClientId': SUB,
@@ -604,6 +610,44 @@ class GuidedTests(unittest.TestCase):
         # One failing entry doesn't stop the others.
         self.assertIn('HTTP 503', reasons['Night Shift'])
         self.assertEqual(posted, ['alice-id', 'existing', 'mail-only', 'flaky'])
+
+    def fake_pwsh(self, stdout, returncode=0):
+        tokens = iter([json.dumps({'accessToken': 'graph-token'}), json.dumps({'accessToken': 'teams-token'})])
+        ran = []
+
+        def subprocess_run(argv, **kwargs):
+            ran.append((argv, kwargs['env']))
+            return subprocess.CompletedProcess(argv, returncode, stdout, '')
+        return (patch.object(setup.shutil, 'which', return_value='/usr/bin/pwsh'),
+                patch.object(setup, 'run', side_effect=lambda argv, **kw: next(tokens)),
+                patch.object(setup.subprocess, 'run', side_effect=subprocess_run), ran)
+
+    def test_teams_policy_is_applied_with_the_signed_in_account(self):
+        which, run, sub, ran = self.fake_pwsh('MENTRA_TEAMS_POLICY_APPLIED Teams can take up to 30 minutes to apply it.\n')
+        with which, run, sub:
+            applied, reason = setup.apply_teams_policy(self.config, self.directory / 'teams-policy.ps1')
+        self.assertEqual((applied, reason), (True, ''))
+        argv, env = ran[0]
+        self.assertEqual(argv[-1], str(self.directory / 'teams-policy.ps1'))
+        self.assertEqual((env['MENTRA_GRAPH_TOKEN'], env['MENTRA_TEAMS_TOKEN']), ('graph-token', 'teams-token'))
+
+    def test_teams_policy_stops_for_another_apps_policy_or_missing_powershell(self):
+        which, run, sub, _ = self.fake_pwsh('MENTRA_TEAMS_POLICY_CONFLICT This tenant already has Teams application '
+                                            'access policies: Tag:Other.\n', returncode=3)
+        with which, run, sub:
+            applied, reason = setup.apply_teams_policy(self.config, self.directory / 'teams-policy.ps1')
+        self.assertFalse(applied)
+        self.assertIn('Tag:Other', reason)
+        with patch.object(setup.shutil, 'which', return_value=None):
+            self.assertEqual(setup.apply_teams_policy(self.config, self.directory / 'teams-policy.ps1'),
+                             (False, 'PowerShell is not installed here'))
+
+    def test_teams_policy_script_never_replaces_another_apps_policy(self):
+        text = '\n'.join(setup.teams_policy_commands(SUB, TENANT, TENANT))
+        # The conflict check runs before anything is granted.
+        self.assertLess(text.index('MENTRA_TEAMS_POLICY_CONFLICT'), text.index('-Global'))
+        self.assertIn('Connect-MicrosoftTeams -AccessTokens', text)
+        self.assertIn('Get-Module -ListAvailable MicrosoftTeams', text)
 
     def test_teams_policy_commands_target_the_tenant_and_keep_other_apps(self):
         commands = setup.teams_policy_commands(SUB, TENANT, TENANT, previous_client_id='99999999-9999-9999-9999-999999999999')
