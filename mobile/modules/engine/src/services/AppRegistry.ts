@@ -330,25 +330,11 @@ function assertPublisherContinuity(packageName: string, publisherKeyFingerprint:
 }
 
 /**
- * Download a miniapp zip from `url` into the cache and return its local path
- * and bytes. The response is streamed through a size ceiling and a deadline,
- * so an attacker-controlled server cannot exhaust memory or hang an install.
+ * Download a miniapp zip from `url` and return its bytes. The response is
+ * streamed through a size ceiling and a deadline, so an attacker-controlled
+ * server cannot exhaust memory or hang an install.
  */
-async function downloadMiniAppZip(url: string): Promise<{uri: string; bytes: Uint8Array}> {
-  const downloadDir = new Directory(Paths.cache, "lma_downloads")
-  try {
-    if (!downloadDir.exists) {
-      downloadDir.create()
-    }
-  } catch (error) {
-    console.error("ZIP: Error creating download directory", error)
-    throw new Error("CREATE_DOWNLOAD_DIR_FAILED")
-  }
-
-  // Use a unique host-owned cache name. Never derive a filesystem path from
-  // an untrusted URL, and never let two simultaneous downloads (dev snapshot
-  // and release both serve /bundle.zip) alias the same cache entry.
-  const output = new File(downloadDir, `bundle-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.zip`)
+async function downloadMiniAppZip(url: string): Promise<Uint8Array> {
   const abortController = new AbortController()
   const timeout = setTimeout(() => abortController.abort(), REMOTE_BUNDLE_TIMEOUT_MS)
   try {
@@ -370,11 +356,9 @@ async function downloadMiniAppZip(url: string): Promise<{uri: string; bytes: Uin
     if (bytes.byteLength === 0) {
       throw new Error(`bundle must be between 1 and ${MAX_REMOTE_BUNDLE_BYTES} bytes`)
     }
-    output.write(bytes)
-    return {uri: output.uri, bytes}
+    return bytes
   } catch (error) {
     console.error("ZIP: Error downloading zip file", error)
-    if (output.exists) output.delete()
     if (abortController.signal.aborted) {
       throw new Error(`bundle download timed out after ${REMOTE_BUNDLE_TIMEOUT_MS}ms`)
     }
@@ -382,6 +366,29 @@ async function downloadMiniAppZip(url: string): Promise<{uri: string; bytes: Uin
   } finally {
     clearTimeout(timeout)
   }
+}
+
+/**
+ * Write validated archive bytes to a unique host-owned cache file. Native
+ * extraction reads this private copy, never a caller's path that could change
+ * while the install waits in the queue. Startup cleanup removes leftovers.
+ */
+function writePrivateArchive(bytes: Uint8Array): File {
+  const directory = new Directory(Paths.cache, "lma_downloads")
+  try {
+    if (!directory.exists) directory.create()
+  } catch (error) {
+    console.error("ZIP: Error creating the archive cache directory", error)
+    throw new Error("CREATE_DOWNLOAD_DIR_FAILED")
+  }
+  // Never derive the name from an untrusted URL or caller path, and never let
+  // two simultaneous installs alias the same file.
+  const archive = new File(
+    directory,
+    `bundle-${nextInstallOperationId()}-${Math.random().toString(36).slice(2, 10)}.zip`,
+  )
+  archive.write(bytes)
+  return archive
 }
 
 type AdoptExistingBundle = (
@@ -938,16 +945,11 @@ class AppRegistry {
    */
   public installFromUrl(url: string, opts?: InstallBundleOptions): AsyncResult<void, Error> {
     return Res.try_async(async () => {
-      this.assertNotReplacingDevBuild(opts)
-      const downloaded = await downloadMiniAppZip(url)
-      const downloadedZip = new File(downloaded.uri)
-      try {
-        console.log("ZIP: done downloading, starting unzip")
-        await this.installArchive(downloaded.uri, downloaded.bytes, opts, false)
-        console.log("APP_REGISTRY: Downloaded and installed mini app")
-      } finally {
-        if (downloadedZip.exists) downloadedZip.delete()
-      }
+      if (opts?.expectedPackageName) this.assertNoReplacementInProgress(opts.expectedPackageName, opts.versionOverride)
+      const bytes = await downloadMiniAppZip(url)
+      console.log("ZIP: done downloading, starting unzip")
+      await this.installArchive(bytes, opts, false)
+      console.log("APP_REGISTRY: Downloaded and installed mini app")
     })
   }
 
@@ -963,7 +965,7 @@ class AppRegistry {
     opts?: LocalZipInstallOptions,
   ): AsyncResult<{packageName: string; version: string}, Error> {
     return Res.try_async(async () => {
-      this.assertNotReplacingDevBuild(opts)
+      if (opts?.expectedPackageName) this.assertNoReplacementInProgress(opts.expectedPackageName, opts.versionOverride)
       if (
         opts?.adoptIdenticalInstalledVersion &&
         (opts.releaseIdentity?.source !== "deployment_manifest" ||
@@ -973,8 +975,9 @@ class AppRegistry {
           !opts.rejectExistingVersion)
       )
         throw new Error("Bundle adoption requires a verified deployment release with an exact identity")
+      // Read the caller's file once. Validation and extraction both use this
+      // snapshot, so replacing the file afterwards cannot change what installs.
       const installed = await this.installArchive(
-        zipPath,
         await new File(zipPath).bytes(),
         opts,
         true,
@@ -990,12 +993,13 @@ class AppRegistry {
     })
   }
 
-  private assertNotReplacingDevBuild(opts: InstallBundleOptions | undefined): void {
-    if (
-      opts?.expectedPackageName &&
-      !opts.versionOverride?.startsWith("dev-") &&
-      this.retainedDevVersions.has(opts.expectedPackageName)
-    )
+  /**
+   * A release may not land while a dev build replacement of the same package
+   * (retainDevVersions) is settling; dev snapshots belong to that replacement.
+   * Checked before download, inside the serialized install, and at commit.
+   */
+  private assertNoReplacementInProgress(packageName: string, version: string | undefined): void {
+    if (!version?.startsWith("dev-") && this.retainedDevVersions.has(packageName))
       throw new Error("Cannot install a release during miniapp replacement")
   }
 
@@ -1007,7 +1011,6 @@ class AppRegistry {
    * that commits first cannot make this one's earlier decision valid.
    */
   private async installArchive(
-    zipPath: string,
     bytes: Uint8Array,
     opts: InstallBundleOptions | undefined,
     localZip: boolean,
@@ -1028,30 +1031,41 @@ class AppRegistry {
       ...(manifest.publisherKeyFingerprint ? {publisherKeyFingerprint: manifest.publisherKeyFingerprint} : {}),
     }
     const validateTrust = () => {
+      this.assertNoReplacementInProgress(manifest.packageName, version)
       assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint)
       this.assertCanInstallVersion(manifest.packageName, version)
     }
     // Fail fast before extraction; the transaction checks again under the queue.
     validateTrust()
-    return unpackMiniApp(
-      zipPath,
-      opts?.versionOverride,
-      {
-        packageName: manifest.packageName,
-        version: manifest.version,
-        rejectExistingVersion: opts?.rejectExistingVersion,
-      },
-      ({packageName, version: installedVersion}, activation) =>
-        this.finalizeInstall(packageName, installedVersion, releaseIdentity, (state) =>
-          activation.recordRecoveryState(state),
-        ),
-      () => {
-        validateTrust()
-        opts?.beforeActivate?.()
-      },
-      validateTrust,
-      adoptExisting,
-    )
+    // Extract exactly the bytes that were validated.
+    const archive = writePrivateArchive(bytes)
+    try {
+      return await unpackMiniApp(
+        archive.uri,
+        opts?.versionOverride,
+        {
+          packageName: manifest.packageName,
+          version: manifest.version,
+          rejectExistingVersion: opts?.rejectExistingVersion,
+        },
+        ({packageName, version: installedVersion}, activation) =>
+          this.finalizeInstall(packageName, installedVersion, releaseIdentity, (state) =>
+            activation.recordRecoveryState(state),
+          ),
+        () => {
+          validateTrust()
+          opts?.beforeActivate?.()
+        },
+        validateTrust,
+        adoptExisting,
+      )
+    } finally {
+      try {
+        if (archive.exists) archive.delete()
+      } catch (error) {
+        console.warn("ZIP: Error removing the private archive copy", error)
+      }
+    }
   }
 
   /**
@@ -1116,6 +1130,9 @@ class AppRegistry {
 
     return {
       apply: () => {
+        // The commit point: apply and the commit rename run without yielding,
+        // so a replacement that began after the queue's checks still wins.
+        this.assertNoReplacementInProgress(packageName, version)
         if (releaseInstall) {
           // A dev probe or snapshot download started earlier must not
           // reactivate development code over this release.

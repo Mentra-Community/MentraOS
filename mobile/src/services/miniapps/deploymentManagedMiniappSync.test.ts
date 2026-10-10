@@ -21,6 +21,7 @@ let mockDigest = "a".repeat(64)
 let mockScript = "verified call"
 let mockVersion = "2.1.29"
 let mockPublisherFingerprint: string | undefined
+const mockValidatedArchives: string[] = []
 let mockFailNextActiveWrite = false
 const mockDownload = jest.fn()
 const mockRemoteRead = jest.fn()
@@ -168,8 +169,8 @@ jest.mock("expo-file-system", () => {
   }
 })
 jest.mock("react-native-zip-archive", () => ({
-  unzip: async (_zip: string, target: string) => {
-    await mockUnzip()
+  unzip: async (zip: string, target: string) => {
+    await mockUnzip(zip)
     const {File} = require("expo-file-system")
     new File(target, "miniapp.json").write(
       JSON.stringify({packageName: "com.mentra.call", version: mockVersion, entry: {background: "call.js"}}),
@@ -187,12 +188,15 @@ jest.mock("./preinstalledMiniappSync", () => ({sha256Hex: async () => mockDigest
 // exercise ownership, byte comparison, the version and signer rules,
 // activation rollback and cancellation.
 jest.mock("../../../modules/engine/src/services/validateInstallBundle", () => ({
-  validateInstallBundleArchive: async () => ({
-    packageName: "com.mentra.call",
-    version: mockVersion,
-    hardwareRequirements: [],
-    ...(mockPublisherFingerprint ? {publisherKeyFingerprint: mockPublisherFingerprint} : {}),
-  }),
+  validateInstallBundleArchive: async (bytes: Uint8Array) => {
+    mockValidatedArchives.push(Buffer.from(bytes).toString("utf8"))
+    return {
+      packageName: "com.mentra.call",
+      version: mockVersion,
+      hardwareRequirements: [],
+      ...(mockPublisherFingerprint ? {publisherKeyFingerprint: mockPublisherFingerprint} : {}),
+    }
+  },
 }))
 jest.mock("./miniappZipPreflight", () => ({preflightMiniappZip: jest.fn()}))
 
@@ -259,6 +263,7 @@ beforeEach(async () => {
   mockVersion = "2.1.29"
   mockPublisherFingerprint = undefined
   mockFailNextActiveWrite = false
+  mockValidatedArchives.length = 0
   selectDeployment(workspace)
   expect((await registry.installFromLocalZip("consumer.zip")).is_ok()).toBe(true)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
@@ -749,6 +754,70 @@ describe("one installer for every install source", () => {
     release.resolve()
     expect(errorOf(await pending)).toContain("Unsigned bundle cannot replace signed miniapp")
     expect(registry.getPublisherKeyFingerprint(pkg)).toBe("sha256:publisher-a")
+  })
+
+  it("extracts exactly the archive bytes that passed validation, not a file replaced later", async () => {
+    mockValidatedArchives.length = 0
+    const source = new File(Paths.cache, "caller-owned.zip")
+    source.write("validated archive")
+    let extractedFrom: string | undefined
+    mockUnzip.mockImplementationOnce(async (zipPath: string) => {
+      // Another writer replaces the caller's file while the install waits to extract.
+      source.write("replacement archive")
+      extractedFrom = zipPath
+      mockScript = require("node:fs").readFileSync(zipPath, "utf8")
+    })
+    const result = await registry.installFromLocalZip(source.uri, {expectedPackageName: pkg, expectedVersion: version})
+    expect(result.is_ok()).toBe(true)
+    expect(mockValidatedArchives).toEqual(["validated archive"])
+    expect(extractedFrom).not.toBe(source.uri)
+    expect(installedScript()).toBe("validated archive")
+    expect(source.textSync()).toBe("replacement archive")
+    // The private copy is removed once the install settles.
+    expect(new File(extractedFrom!).exists).toBe(false)
+  })
+
+  it("refuses a release whose download finishes after a dev build replacement started", async () => {
+    await registerDevApp(devRecord)
+    const entered = deferred()
+    const download = deferred()
+    mockRemoteRead.mockImplementationOnce(() => {
+      entered.resolve()
+      return download.promise
+    })
+    mockVersion = "2.1.30"
+    const pending = install("manual")
+    await entered.promise
+    const releaseReplacement = registry.retainDevVersions(pkg, ["dev-1"])
+    try {
+      download.resolve()
+      expect(errorOf(await pending)).toContain("during miniapp replacement")
+      expect(mockUnzip).toHaveBeenCalledTimes(1) // beforeEach only
+      expect(registry.getInstalledVersions(pkg)).toEqual([version])
+      expect(storage.load(`${pkg}_dev_url`)).toMatchObject({value: devRecord.devUrl})
+    } finally {
+      releaseReplacement()
+    }
+  })
+
+  it("rechecks the dev build replacement guard at the commit point", async () => {
+    await registerDevApp(devRecord)
+    let releaseReplacement: (() => void) | undefined
+    mockScript = "release"
+    const result = await install("manual", {
+      // The replacement begins after the queue's checks, right before activation.
+      beforeActivate: () => {
+        releaseReplacement = registry.retainDevVersions(pkg, [])
+      },
+    })
+    try {
+      expect(errorOf(result)).toContain("during miniapp replacement")
+      expect(installedScript()).toBe("verified call")
+      expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
+      expect(storage.load(`${pkg}_dev_url`)).toMatchObject({value: devRecord.devUrl})
+    } finally {
+      releaseReplacement?.()
+    }
   })
 
   it("recovers an activation interrupted before commit on the next launch", async () => {
