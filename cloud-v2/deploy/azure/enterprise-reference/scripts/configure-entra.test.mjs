@@ -167,3 +167,34 @@ for (const [output, status] of [
     assert.equal(result.creates.length, 0)
   })
 }
+
+test("the private Azure CLI profile keeps a service principal's sign-in", (t) => {
+  const copier = source.match(/<<'PYPROFILE'\n([\s\S]*?)\nPYPROFILE/)[1]
+  const root = mkdtempSync(path.join(tmpdir(), "entra-profile-"))
+  t.after(() => rmSync(root, {recursive: true, force: true}))
+  const from = path.join(root, "from")
+  const to = path.join(root, "to")
+  spawnSync("mkdir", ["-p", from, to])
+  for (const name of ["azureProfile.json", "service_principal_entries.json", "commands.log"]) {
+    writeFileSync(path.join(from, name), name)
+  }
+  const result = spawnSync("python3", ["-", from, to], {input: copier, encoding: "utf8"})
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(readFileSync(path.join(to, "service_principal_entries.json"), "utf8"), "service_principal_entries.json")
+  assert.equal(readFileSync(path.join(to, "azureProfile.json"), "utf8"), "azureProfile.json")
+  assert.throws(() => readFileSync(path.join(to, "commands.log")))
+})
+
+test("retries stay quiet until the last attempt", () => {
+  const retry = source.match(/^retry\(\) \{[\s\S]*?^\}/m)[0]
+  const run = (script) => spawnSync("/bin/bash", ["-c", `MENTRA_ENTRA_RETRY_SECONDS=0\n${retry}\n${script}`], {encoding: "utf8"})
+  // Succeeds on the third try: the two expected failures print nothing.
+  const recovered = run(`n=0\nflaky() { n=$((n + 1)); [[ $n -ge 3 ]] || { echo "does not exist" >&2; return 1; }; echo ok; }\nretry flaky`)
+  assert.equal(recovered.status, 0)
+  assert.equal(recovered.stdout.trim(), "ok")
+  assert.equal(recovered.stderr, "")
+  // Never succeeds: only the final attempt's error is shown.
+  const failed = run(`broken() { echo "does not exist" >&2; return 1; }\nretry broken`)
+  assert.notEqual(failed.status, 0)
+  assert.equal(failed.stderr.trim(), "does not exist")
+})
