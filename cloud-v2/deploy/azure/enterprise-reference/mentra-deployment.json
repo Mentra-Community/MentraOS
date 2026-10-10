@@ -54,9 +54,9 @@
     "managed": [
       {
         "packageName": "com.mentra.call",
-        "version": "2.1.58",
-        "bundleUrl": "https://mentra.acmeworkspace.com/miniapps/com.mentra.call-2.1.58.zip",
-        "sha256": "daae7b27b8e73c94bc1e48b62fa8be31b2902ccabf651cea4b97eca0f482799a"
+        "version": "2.1.59",
+        "bundleUrl": "https://mentra.acmeworkspace.com/miniapps/com.mentra.call-2.1.59.zip",
+        "sha256": "82e11e698c5b018d27e2c2cfbea24fe576f7bb8f63dbcb4ad501614c4fe8e8ec"
       }
     ],
     "configuration": {}
