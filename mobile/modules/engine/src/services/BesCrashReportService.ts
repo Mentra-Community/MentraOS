@@ -2,11 +2,16 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {createMMKV, type MMKV} from "react-native-mmkv"
 
 import {requestGlassesReportLogs, submitAutomaticReport} from "../facades/reports"
+import {BgTimer} from "../utils/timers"
+import {cloudClientService} from "./CloudClientService"
 
 const LOG_TAG = "BesCrashReport"
 const STORAGE_ID = "mentra-bes-crash-reports"
 const ENTRY_PREFIX = "incident:"
 const MAX_STORED_INCIDENTS = 64
+const RETRY_DELAYS_MS = [30_000, 120_000, 600_000]
+const RETRY_INTERVAL_MS = 1_800_000
+const MAX_RETRIES = 8
 const INCIDENT_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
 const REPORT_ID_PATTERN = /^rep_[A-Za-z0-9]+$/
 
@@ -56,16 +61,29 @@ interface StoredIncident {
   savedMs: number
 }
 
+interface PendingRetry {
+  event: BesCrashDetectedEvent
+  retriesUsed: number
+  timer: number | undefined
+}
+
 let subscription: {remove(): void} | null = null
 let store: MMKV | null = null
+let generation = 0
 const inFlight = new Map<string, Promise<BesCrashReportOutcome>>()
+const retries = new Map<string, PendingRetry>()
 
 function incidentStore(): MMKV {
   return (store ??= createMMKV({id: STORAGE_ID}))
 }
 
-function readStoredReportId(incidentKey: string): string | null {
-  const raw = incidentStore().getString(ENTRY_PREFIX + incidentKey)
+// The user id is URI-encoded so it cannot contain the ":" that incidentKeys may use.
+function entryKey(userId: string, incidentKey: string): string {
+  return `${ENTRY_PREFIX}${encodeURIComponent(userId)}:${incidentKey}`
+}
+
+function readStoredReportId(userId: string, incidentKey: string): string | null {
+  const raw = incidentStore().getString(entryKey(userId, incidentKey))
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw) as Partial<StoredIncident>
@@ -75,9 +93,9 @@ function readStoredReportId(incidentKey: string): string | null {
   }
 }
 
-function storeReportId(incidentKey: string, reportId: string): void {
+function storeReportId(userId: string, incidentKey: string, reportId: string): void {
   const entries = incidentStore()
-  entries.set(ENTRY_PREFIX + incidentKey, JSON.stringify({reportId, savedMs: Date.now()} satisfies StoredIncident))
+  entries.set(entryKey(userId, incidentKey), JSON.stringify({reportId, savedMs: Date.now()} satisfies StoredIncident))
   const keys = entries.getAllKeys().filter((key) => key.startsWith(ENTRY_PREFIX))
   if (keys.length <= MAX_STORED_INCIDENTS) return
   const byAge = keys
@@ -172,14 +190,22 @@ async function acknowledgeAndUpload(
 async function processIncident(event: BesCrashDetectedEvent): Promise<BesCrashReportOutcome> {
   const {incidentKey} = event
   if (event.state === "REPORTED" && typeof event.reportId === "string" && REPORT_ID_PATTERN.test(event.reportId)) {
-    storeReportId(incidentKey, event.reportId)
     return acknowledgeAndUpload(incidentKey, event.reportId, false)
   }
   if (event.state !== "STORED" && event.state !== "REPORTED") {
     return {status: "ignored", reason: `state_${event.state}`}
   }
 
-  const storedReportId = readStoredReportId(incidentKey)
+  let userId: string
+  try {
+    userId = await cloudClientService.resolveMentraUserId()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[${LOG_TAG}] ${incidentKey}: user identity unavailable:`, message)
+    return {status: "failed", error: message}
+  }
+
+  const storedReportId = readStoredReportId(userId, incidentKey)
   if (storedReportId) return acknowledgeAndUpload(incidentKey, storedReportId, false)
 
   const reason = besCrashTriggerReason(event)
@@ -199,25 +225,70 @@ async function processIncident(event: BesCrashDetectedEvent): Promise<BesCrashRe
     console.error(`[${LOG_TAG}] ${incidentKey}: submit failed:`, error)
     return {status: "failed", error}
   }
-  storeReportId(incidentKey, result.reportId)
+  storeReportId(userId, incidentKey, result.reportId)
   return acknowledgeAndUpload(incidentKey, result.reportId, true)
 }
 
-/** Report one `bes_crash_detected` event; a duplicate while its key is in flight joins that run. */
+/** Delay before retry number `retry` (1-based). */
+export function besCrashRetryDelayMs(retry: number): number {
+  return RETRY_DELAYS_MS[retry - 1] ?? RETRY_INTERVAL_MS
+}
+
+function cancelRetry(incidentKey: string): void {
+  const pending = retries.get(incidentKey)
+  if (pending?.timer !== undefined) BgTimer.clearTimeout(pending.timer)
+  retries.delete(incidentKey)
+}
+
+function scheduleRetry(event: BesCrashDetectedEvent): void {
+  const {incidentKey} = event
+  const retriesUsed = retries.get(incidentKey)?.retriesUsed ?? 0
+  if (retriesUsed >= MAX_RETRIES) {
+    retries.delete(incidentKey)
+    console.warn(`[${LOG_TAG}] ${incidentKey}: giving up after ${MAX_RETRIES} retries`)
+    return
+  }
+  const delayMs = besCrashRetryDelayMs(retriesUsed + 1)
+  const timer = BgTimer.setTimeout(() => {
+    const pending = retries.get(incidentKey)
+    if (pending?.timer !== timer) return
+    pending.timer = undefined
+    void runFlow(pending.event)
+  }, delayMs)
+  retries.set(incidentKey, {event, retriesUsed: retriesUsed + 1, timer})
+}
+
+function runFlow(event: BesCrashDetectedEvent): Promise<BesCrashReportOutcome> {
+  const {incidentKey} = event
+  const existing = inFlight.get(incidentKey)
+  if (existing) return existing
+  const startedGeneration = generation
+  const run = processIncident(event)
+    .catch((error): BesCrashReportOutcome => {
+      console.error(`[${LOG_TAG}] ${incidentKey}: unexpected error:`, error)
+      return {status: "failed", error: error instanceof Error ? error.message : String(error)}
+    })
+    .then((outcome) => {
+      inFlight.delete(incidentKey)
+      if (startedGeneration !== generation) return outcome
+      if (outcome.status === "failed" || outcome.status === "ack_failed") scheduleRetry(event)
+      else cancelRetry(incidentKey)
+      return outcome
+    })
+  inFlight.set(incidentKey, run)
+  return run
+}
+
+/**
+ * Report one `bes_crash_detected` event. A new event restarts the retry
+ * schedule for its key; while a flow for the key is in flight it joins it.
+ */
 export function handleBesCrashDetected(event: BesCrashDetectedEvent): Promise<BesCrashReportOutcome> {
   if (!event || typeof event.incidentKey !== "string" || !INCIDENT_KEY_PATTERN.test(event.incidentKey)) {
     return Promise.resolve({status: "ignored", reason: "invalid_incident_key"})
   }
-  const existing = inFlight.get(event.incidentKey)
-  if (existing) return existing
-  const run = processIncident(event)
-    .catch((error): BesCrashReportOutcome => {
-      console.error(`[${LOG_TAG}] ${event.incidentKey}: unexpected error:`, error)
-      return {status: "failed", error: error instanceof Error ? error.message : String(error)}
-    })
-    .finally(() => inFlight.delete(event.incidentKey))
-  inFlight.set(event.incidentKey, run)
-  return run
+  cancelRetry(event.incidentKey)
+  return runFlow(event)
 }
 
 export function startBesCrashReportService(): void {
@@ -230,4 +301,6 @@ export function startBesCrashReportService(): void {
 export function stopBesCrashReportService(): void {
   subscription?.remove()
   subscription = null
+  generation++
+  for (const incidentKey of [...retries.keys()]) cancelRetry(incidentKey)
 }
