@@ -76,10 +76,23 @@ it("shows the correlated incident ID and returns to the previous screen with Don
   expect(mockDismiss).toHaveBeenCalledTimes(1)
 })
 
+it("shows the partial failed incident and allows teardown to dismiss it", async () => {
+  const failed = {
+    ...receipt,
+    status: "failed" as const,
+    error: "Required incident log collection did not complete",
+    collection: {reportId: receipt.report_id, state: "timed-out" as const, logCollection: {}},
+  }
+  jest.mocked(submitIncidentReportOnce).mockResolvedValueOnce(failed)
+  const tree = render(<IncidentReportRequest params={request} onDismiss={mockDismiss} />)
+  await act(async () => {})
+  expect(JSON.parse(tree.getByTestId("incident-report-result").props.children)).toEqual(failed)
+  fireEvent.press(tree.getByTestId("incident-report-done"))
+  expect(mockDismiss).toHaveBeenCalledTimes(1)
+})
+
 it("preserves the correlation IDs when invalid details prevent submission", () => {
-  const tree = render(
-    <IncidentReportRequest params={{...request, failure_message: ""}} onDismiss={mockDismiss} />,
-  )
+  const tree = render(<IncidentReportRequest params={{...request, failure_message: ""}} onDismiss={mockDismiss} />)
   expect(JSON.parse(tree.getByTestId("incident-report-result").props.children)).toEqual({
     alert_id: request.alert_id,
     test_run_id: request.test_run_id,

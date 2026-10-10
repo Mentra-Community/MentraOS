@@ -1,10 +1,12 @@
-import {reports, submitAutomaticReport, type ReportCollectionResult} from "../facades/reports"
+import {ReportCollectionError, reports, submitAutomaticReport, type ReportCollectionResult} from "../facades/reports"
+import {useSettingsStore} from "../stores/settings"
+import {DeviceTypes} from "../types"
 import {
   logAutomaticReportSubmissionStatus,
-  logUnexpectedAutomaticReportError,
   toAutomaticReportSubmissionStatus,
   type AutomaticReportSubmissionStatus,
 } from "./AutomaticReportResult"
+import {projectPairingIdentity} from "./PairingIdentity"
 
 const LOG_TAG = "SubmitIncidentReport"
 export type IncidentReportResult = {
@@ -20,6 +22,14 @@ export type IncidentReportResult = {
   collection?: ReportCollectionResult
 }
 
+/** A rejected submission retains any created report and its partial collection receipts. */
+export class IncidentReportError extends Error {
+  constructor(readonly result: IncidentReportResult) {
+    super(result.error ?? result.reason ?? "Incident report submission did not complete")
+    this.name = "IncidentReportError"
+  }
+}
+
 function readString(event: Record<string, unknown>, key: string): string | undefined {
   const value = event[key]
   return typeof value === "string" && value.trim().length > 0 ? value : undefined
@@ -31,10 +41,11 @@ function logIncidentResult(params: {
   failureCode: string
   scenarioName?: string
   result: AutomaticReportSubmissionStatus
+  reportId?: string
   collection?: ReportCollectionResult
 }): IncidentReportResult {
   const {alertId, testRunId, failureCode, scenarioName, result} = params
-  const reportId = result.status === "filed" ? result.reportId : undefined
+  const reportId = result.status === "filed" ? result.reportId : params.reportId
 
   const payload: IncidentReportResult = {
     alert_id: alertId,
@@ -68,10 +79,20 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
       : "The workflow should complete without this incident.")
 
   const throttleKey = [source, failureCode, scenarioName || "unknown", alertId || "unknown"].join("|")
+  let reportId: string | undefined
 
   try {
     if (!rawEvent || typeof rawEvent !== "object" || Array.isArray(rawEvent))
       throw new Error("Incident report request must be an object")
+    const loaded = await useSettingsStore.getState().loadAllSettings()
+    if (loaded.is_error()) throw loaded.error
+    // A paired device remains required if it disconnects while collecting. A
+    // selection that never completed pairing has no glasses logs to collect.
+    const identity = projectPairingIdentity()
+    const sources =
+      identity.kind === "paired" && identity.model === DeviceTypes.LIVE
+        ? (["phone", "glasses", "glasses_firmware"] as const)
+        : (["phone"] as const)
     const actualBehavior = JSON.stringify({failureCode, failureMessage, testRunId, scenarioName, event}, null, 2)
     const submitResult = await submitAutomaticReport({
       kind: "automatic",
@@ -89,21 +110,29 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
     })
 
     const result = toAutomaticReportSubmissionStatus(submitResult)
-    let collection: ReportCollectionResult | undefined
-    if (result.status === "filed") {
-      try {
-        collection = await reports.waitForCollection(result.reportId, {
-          sources: ["phone", "glasses", "glasses_firmware"],
-          timeoutMs: 20_000,
-        })
-      } catch {
-        collection = {reportId: result.reportId, state: "unavailable", logCollection: {}}
-      }
+    if (result.status !== "filed") {
+      logAutomaticReportSubmissionStatus(LOG_TAG, result, throttleKey)
+      throw new IncidentReportError(logIncidentResult({alertId, testRunId, failureCode, scenarioName, result}))
     }
+    reportId = result.reportId
+    const collection = await reports.waitForCollection(reportId, {sources: [...sources], timeoutMs: 20_000})
     logAutomaticReportSubmissionStatus(LOG_TAG, result, throttleKey)
     return logIncidentResult({alertId, testRunId, failureCode, scenarioName, result, collection})
   } catch (error) {
-    const result = logUnexpectedAutomaticReportError(LOG_TAG, error)
-    return logIncidentResult({alertId, testRunId, failureCode, scenarioName, result})
+    if (error instanceof IncidentReportError) throw error
+    const collection =
+      error instanceof ReportCollectionError
+        ? error.collection
+        : reportId
+        ? {reportId, state: "unavailable" as const, logCollection: {}}
+        : undefined
+    const result: AutomaticReportSubmissionStatus = {
+      status: "failed",
+      error: reportId ? "Required incident log collection did not complete" : "Incident report submission failed",
+    }
+    logAutomaticReportSubmissionStatus(LOG_TAG, result)
+    throw new IncidentReportError(
+      logIncidentResult({alertId, testRunId, failureCode, scenarioName, result, reportId, collection}),
+    )
   }
 }

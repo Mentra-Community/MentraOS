@@ -1,4 +1,4 @@
-import {submitIncidentReport, type IncidentReportResult} from "@mentra/engine"
+import {IncidentReportError, submitIncidentReport, type IncidentReportResult} from "@mentra/engine"
 
 const fields = {
   alert_id: 160,
@@ -74,7 +74,13 @@ export function submitIncidentReportOnce(scope: string, request: IncidentReportR
     settled: false,
     result: Promise.resolve()
       .then(() => submitIncidentReport(request))
-      .catch((error: unknown) => failed(request, error instanceof Error ? error.message : String(error)))
+      // This is the presentation boundary: show the rejected API's partial
+      // receipt and let the host dismiss it before continuing cleanup.
+      .catch((error: unknown) =>
+        error instanceof IncidentReportError
+          ? error.result
+          : failed(request, error instanceof Error ? error.message : String(error)),
+      )
       .finally(() => {
         entry.settled = true
       }),

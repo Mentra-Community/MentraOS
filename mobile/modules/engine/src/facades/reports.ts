@@ -58,8 +58,16 @@ export type ReportSubmitResult =
 
 export type ReportCollectionResult = {
   reportId: string
-  state: "complete" | "timed-out" | "unavailable"
+  state: "complete" | "failed" | "timed-out" | "unavailable"
   logCollection: Partial<Record<ReportLogSource, ReportLogCollection>>
+}
+
+/** Collection failure retains safe receipts without exposing transport errors or source log contents. */
+export class ReportCollectionError extends Error {
+  constructor(readonly collection: ReportCollectionResult) {
+    super("Report log collection did not complete")
+    this.name = "ReportCollectionError"
+  }
 }
 
 const DEFAULT_AUTOMATIC_REPORT_THROTTLE_MS = 90_000
@@ -269,23 +277,31 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
   return {status: "submitted", reportId, reportStatus}
 }
 
-/** Wait for selected source receipts; complete includes recorded failures and unavailability. */
+const collectionTimestamp = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+  Number.isFinite(Date.parse(value)) &&
+  new Date(value).toISOString() === value
+
+/** Resolve only when every selected source has a stored artifact; failures reject with partial receipts. */
 async function waitForCollection(
   reportId: string,
   options: {sources: ReportLogSource[]; timeoutMs?: number},
 ): Promise<ReportCollectionResult> {
   const result: ReportCollectionResult = {reportId, state: "unavailable", logCollection: {}}
-  const timeoutMs = options.timeoutMs ?? REPORT_COLLECTION_TIMEOUT_MS
+  const timeoutMs = options?.timeoutMs ?? REPORT_COLLECTION_TIMEOUT_MS
   if (
     !cloudClientService.hasCore() ||
+    typeof reportId !== "string" ||
     !/^rep_[A-Za-z0-9]+$/.test(reportId) ||
     !Number.isFinite(timeoutMs) ||
-    timeoutMs <= 0
+    timeoutMs <= 0 ||
+    !Array.isArray(options?.sources)
   )
-    return result
+    throw new ReportCollectionError(result)
   const sources = [...new Set(options.sources)]
   if (!sources.every((source) => ["phone", "glasses", "glasses_firmware", "cloud", "miniapp_server"].includes(source)))
-    return result
+    throw new ReportCollectionError(result)
   if (sources.length === 0) return {...result, state: "complete"}
 
   const controller = new AbortController()
@@ -295,7 +311,7 @@ async function waitForCollection(
   const expired = new Promise<never>((_, reject) => {
     timeoutTimer = BgTimer.setTimeout(() => {
       controller.abort()
-      reject(new Error("Report collection wait timed out"))
+      reject(new ReportCollectionError({...result, state: "timed-out"}))
     }, timeoutMs)
   })
   try {
@@ -304,17 +320,54 @@ async function waitForCollection(
         cloudClientService.core.reports.getLogCollection(reportId, controller.signal),
         expired,
       ])
-      if (Date.now() >= deadlineAt) return {...result, state: "timed-out"}
-      if (snapshot.reportId !== reportId) return result
-      result.logCollection = snapshot.logCollection
-      const complete = sources.every((source) => {
+      if (Date.now() >= deadlineAt) throw new ReportCollectionError({...result, state: "timed-out"})
+      if (
+        !snapshot ||
+        snapshot.reportId !== reportId ||
+        !snapshot.logCollection ||
+        typeof snapshot.logCollection !== "object" ||
+        Array.isArray(snapshot.logCollection)
+      )
+        throw new ReportCollectionError(result)
+      const logCollection: ReportCollectionResult["logCollection"] = {}
+      for (const source of ["phone", "glasses", "glasses_firmware", "cloud", "miniapp_server"] as const) {
         const receipt = snapshot.logCollection[source]
-        if (!receipt) return false
-        if (receipt.state === "received")
-          return typeof receipt.artifactId === "string" && /^art_[A-Za-z0-9]+$/.test(receipt.artifactId)
-        return ["unavailable", "failed", "timed-out"].includes(receipt.state)
-      })
-      if (complete) return {...result, state: "complete"}
+        if (receipt === undefined) continue
+        if (
+          !receipt ||
+          typeof receipt !== "object" ||
+          Array.isArray(receipt) ||
+          !["requested", "received", "unavailable", "failed", "timed-out"].includes(receipt.state) ||
+          !collectionTimestamp(receipt.requestedAt) ||
+          !collectionTimestamp(receipt.deadlineAt) ||
+          (receipt.receivedAt !== undefined && !collectionTimestamp(receipt.receivedAt)) ||
+          (receipt.artifactId !== undefined &&
+            (typeof receipt.artifactId !== "string" || !/^art_[A-Za-z0-9]{1,80}$/.test(receipt.artifactId))) ||
+          (receipt.entryCount !== undefined &&
+            (typeof receipt.entryCount !== "number" ||
+              !Number.isSafeInteger(receipt.entryCount) ||
+              receipt.entryCount < 0))
+        )
+          throw new ReportCollectionError(result)
+        logCollection[source] = {
+          state: receipt.state,
+          requestedAt: receipt.requestedAt,
+          deadlineAt: receipt.deadlineAt,
+          ...(typeof receipt.receivedAt === "string" ? {receivedAt: receipt.receivedAt} : {}),
+          ...(typeof receipt.artifactId === "string" ? {artifactId: receipt.artifactId} : {}),
+          ...(typeof receipt.entryCount === "number" ? {entryCount: receipt.entryCount} : {}),
+          ...(typeof receipt.reason === "string" ? {reason: receipt.reason.slice(0, 500)} : {}),
+        }
+      }
+      result.logCollection = logCollection
+      for (const source of sources) {
+        const receipt = logCollection[source]
+        if (!receipt) continue
+        if (receipt.state === "failed" || receipt.state === "unavailable" || receipt.state === "timed-out")
+          throw new ReportCollectionError({...result, state: receipt.state})
+        if (receipt.state === "received" && receipt.artifactId === undefined) throw new ReportCollectionError(result)
+      }
+      if (sources.every((source) => logCollection[source]?.state === "received")) return {...result, state: "complete"}
       await Promise.race([
         new Promise<void>((resolve) => {
           pollTimer = BgTimer.setTimeout(
@@ -326,9 +379,10 @@ async function waitForCollection(
       ])
       pollTimer = undefined
     }
-    return {...result, state: "timed-out"}
-  } catch {
-    return {...result, state: controller.signal.aborted ? "timed-out" : "unavailable"}
+    throw new ReportCollectionError({...result, state: "timed-out"})
+  } catch (error) {
+    if (error instanceof ReportCollectionError) throw error
+    throw new ReportCollectionError({...result, state: controller.signal.aborted ? "timed-out" : "unavailable"})
   } finally {
     if (timeoutTimer !== undefined) BgTimer.clearTimeout(timeoutTimer)
     if (pollTimer !== undefined) BgTimer.clearTimeout(pollTimer)

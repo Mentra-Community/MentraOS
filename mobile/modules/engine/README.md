@@ -114,19 +114,23 @@ path because those clients ignore the URL sent by the phone.
 
 `submitIncidentReport(event)` is the shared Promise entrypoint for Android intent
 and Mac app incident requests. It files once, submits phone diagnostics, asks the
-connected glasses for ASG/BES logs, then waits for their Core storage receipts
+paired Mentra Live for ASG/BES logs, then waits for their Core storage receipts
 before returning the final `INCIDENT_REPORT_RESULT`. The testing framework awaits
 that receipt before ordinary teardown; it does not need report-reader credentials.
 
-The returned `collection` keeps each source's outcome and artifact ID. A collection
-state of `complete` means every requested source is terminal, including explicit
-`failed` or `unavailable` outcomes; only `received` confirms a stored artifact.
-The incident wait is bounded to 20 seconds and reports `timed-out` with the last receipts if
-uploads remain pending. It never re-files the incident or changes the original test
-failure. Cloud and miniapp server collection continue independently because they
-do not need a live glasses connection.
+The Promise resolves only when every required log source is `received` with a stored
+artifact ID. Without a paired Mentra Live, only phone logs are required. Requirements
+are captured before submission; a subsequent disconnect does not drop glasses logs.
+A source failure, unavailability or the 20-second collection deadline rejects with
+`IncidentReportError.result`, retaining the created report ID and partial receipts.
+The host catches that error to show the failed receipt; the testing framework records
+it and continues every teardown step and the next independent test. It never re-files
+the incident or changes the original test failure. Cloud and miniapp server
+collection continue independently because they do not need a live glasses connection.
 
-Hosts with a different workflow can use the same typed API:
+`engine.reports.submit` creates a report and starts collection. Feedback uses this
+surface without waiting for glasses uploads. Hosts needing completion can await the
+separate storage receipt, whose failure rejects with `ReportCollectionError.collection`:
 
 ```ts
 const submitted = await engine.reports.submit(report)
