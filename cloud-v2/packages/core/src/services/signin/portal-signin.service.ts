@@ -356,14 +356,25 @@ export async function finishPortalSignIn(c: C, portal: PortalKind): Promise<Resp
     }
     const code = (err as {code?: string})?.code
     // openid-client protocol errors (bad state, a refused code, a malformed
-    // response) are refusals; anything else is an outage and fails closed.
-    if (err instanceof client.ClientError || (typeof code === "string" && code.startsWith("OAUTH_"))) {
+    // response) are refusals; a provider answering 5xx, a network failure or a
+    // database failure is an outage, and every failure fails closed.
+    const providerStatus = upstreamStatus(err)
+    const protocolError = err instanceof client.ClientError || (typeof code === "string" && code.startsWith("OAUTH_"))
+    if (protocolError && !(providerStatus !== undefined && providerStatus >= 500)) {
       logger.warn({portal, code, errorName: (err as Error).name}, "portal sign-in refused by the identity provider exchange")
       return signInFailed(c, portal)
     }
     logger.error({portal, errorName: (err as Error)?.name, code}, "portal sign-in failed")
     return signInFailed(c, portal, 503)
   }
+}
+
+/** The HTTP status of the identity provider response behind an openid-client error, when there is one. */
+function upstreamStatus(err: unknown): number | undefined {
+  const error = err as {status?: unknown; cause?: unknown}
+  if (typeof error?.status === "number") return error.status
+  if (error?.cause instanceof Response) return error.cause.status
+  return undefined
 }
 
 async function supabaseSignIn(provider: WebIdentityProvider, pc: PortalClient, accessToken: string): Promise<SessionIdentity> {

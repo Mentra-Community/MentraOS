@@ -117,6 +117,8 @@ export interface FakeIdp {
   readonly logoutCalls: LogoutRecord[]
   readonly sessions: Map<string, FakeSession>
   readonly userLookups: string[]
+  /** Every secret value this provider issued: authorization codes, access, ID and refresh tokens. */
+  readonly issuedSecrets: string[]
   jwksFetches: number
   discoveryFetches: number
   /** Make every request to this provider fail with 503 (an outage). */
@@ -182,6 +184,7 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
     logoutCalls: [],
     sessions: new Map(),
     userLookups: [],
+    issuedSecrets: [],
     jwksFetches: 0,
     discoveryFetches: 0,
     outage: false,
@@ -234,6 +237,7 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
       if (!client.redirectUris.includes(redirectUri)) throw new Error("fake IdP: invalid redirect_uri")
       if (url.searchParams.get("code_challenge_method") !== "S256") throw new Error("fake IdP: S256 PKCE required")
       const code = randomBytes(16).toString("base64url")
+      idp.issuedSecrets.push(code)
       users.set(person.sub, {...users.get(person.sub), ...person})
       codes.set(code, {
         clientId,
@@ -401,7 +405,9 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
         },
         {alg: "HS256"},
       )
-      return record(200, {access_token: accessToken, token_type: "bearer", expires_in: ttl, refresh_token: randomBytes(12).toString("hex")})
+      const refreshToken = randomBytes(12).toString("hex")
+      idp.issuedSecrets.push(accessToken, refreshToken)
+      return record(200, {access_token: accessToken, token_type: "bearer", expires_in: ttl, refresh_token: refreshToken})
     }
 
     const claims = {sub: grant.person.sub, email: grant.person.email, ...grant.person.claims}
@@ -410,6 +416,7 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
       {alg: grant.person.idTokenAlg ?? "RS256"},
     )
     const accessToken = await idp.mint({...claims, aud: "api://core", iat, azp: client.id}, {alg: "RS256"})
+    idp.issuedSecrets.push(accessToken, idToken)
     return record(200, {access_token: accessToken, id_token: idToken, token_type: "Bearer", expires_in: ttl})
   }
 
