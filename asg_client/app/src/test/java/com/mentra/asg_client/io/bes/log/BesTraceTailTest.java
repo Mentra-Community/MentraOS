@@ -312,6 +312,17 @@ public class BesTraceTailTest {
     }
 
     @Test
+    public void subscribesAgainOnEverySrSyvrBecauseTheBesMayHaveClearedItsConsumerState() throws Exception {
+        mTail.onWireCaps(caps(true, true));
+        idle();
+        assertEquals(1, count("mh_rlog_sub"));
+        mTail.onWireCaps(caps(true, true)); // the BES announced itself again, with no link loss
+        idle();
+        assertEquals(2, count("mh_rlog_sub"));
+        assertTrue(last("mh_rlog_sub").contains("\\\"on\\\":1"));
+    }
+
+    @Test
     public void staysUnsubscribedWithoutTheCapability() throws Exception {
         mTail.onWireCaps(caps(true, false));
         idle();

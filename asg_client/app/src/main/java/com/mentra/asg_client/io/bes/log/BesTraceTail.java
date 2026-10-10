@@ -202,8 +202,18 @@ public final class BesTraceTail {
     public void onWireCaps(JSONObject caps) {
         boolean uart = caps != null && caps.optInt("rlog_uart", 0) == 1;
         mSubSupported = uart && caps.optInt("rlog_sub", 0) == 1;
+        // A fresh sr_syvr means the BES (re)announced itself: it may have cleared its consumer
+        // state while the MTK was off, so a subscription held before this call is sent again.
+        final boolean held = mSubSupported && (mSubSent || mSubConfirmed);
         setSupported(uart);
-        post(() -> syncSubscription(SystemClock.elapsedRealtime()));
+        post(() -> {
+            if (held) {
+                mSubSent = false;
+                mSubConfirmed = false;
+                mSubAttemptAtMs = -1;
+            }
+            syncSubscription(SystemClock.elapsedRealtime());
+        });
     }
 
     /** From sr_syvr {@code wire_caps.rlog_uart}; false on every UART link invalidation. */
