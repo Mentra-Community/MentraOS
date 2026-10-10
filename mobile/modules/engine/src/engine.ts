@@ -32,6 +32,7 @@ import {
   startMentraJSCrashloopReportService,
   stopMentraJSCrashloopReportService,
 } from "./services/MentraJSCrashloopReportService"
+import {startBesCrashReportService, stopBesCrashReportService} from "./services/BesCrashReportService"
 import {ensureMiniappEngine, stopMiniappEngine} from "./services/MiniappEngine"
 import localMiniappRuntime from "./services/LocalMiniappRuntime"
 import displayProcessor from "./services/DisplayProcessor"
@@ -125,6 +126,9 @@ export const engine = {
     // MentraJS crashloop-disabled is runtime state; engine owns filing the
     // automatic report while hosts only render alert/telemetry side effects.
     if (cloudClientService.hasCore()) startMentraJSCrashloopReportService()
+    // Glasses-detected BES crashes and unexpected resets become one Cloud
+    // report per incident; the glasses upload their bundle after the ack.
+    if (cloudClientService.hasCore()) startBesCrashReportService()
     // Bring up the local-miniapp engine so a bare OEM can run MentraJS miniapps:
     // the LocalMiniappRuntime (registry + WebView bridge), the MentraJS router
     // (crust-bound spawn/dispatch pump + launcher wiring), the DisplayProcessor
@@ -156,6 +160,7 @@ export const engine = {
     await safely("support profile sync", stopSupportProfileSync)
     await safely("phone notifications sync", stopPhoneNotificationsSync)
     await safely("mentrajs crashloop report service", stopMentraJSCrashloopReportService)
+    await safely("bes crash report service", stopBesCrashReportService)
     await safely("miniapp engine", stopMiniappEngine)
     await safely("local miniapp runtime", () => localMiniappRuntime.cleanup())
     await safely("display processor", () => displayProcessor.detachFromRuntime())

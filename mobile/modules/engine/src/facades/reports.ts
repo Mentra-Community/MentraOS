@@ -42,11 +42,19 @@ export type EngineSubmitReportInput =
       context?: Partial<ReportContext>
     })
 
-export type EngineSubmitAutomaticReportInput = Omit<Extract<SubmitReportInput, {kind: "automatic"}>, "context"> & {
+type AutomaticSubmitReportInput = Extract<SubmitReportInput, {kind: "automatic"}> & {incidentKey?: string}
+
+export type EngineSubmitAutomaticReportInput = Omit<AutomaticSubmitReportInput, "context"> & {
   context?: Partial<ReportContext>
   screenshots?: ReportAttachmentInput[]
   throttleKey?: string
   throttleWindowMs?: number
+  /**
+   * Request glasses log upload (`upload_incident_logs`) for the new report.
+   * Defaults to true. Pass false when the caller must first hand the reportId
+   * to the glasses, then call `requestGlassesReportLogs` itself.
+   */
+  notifyGlasses?: boolean
 }
 
 type InternalSubmitReportInput = EngineSubmitReportInput | EngineSubmitAutomaticReportInput
@@ -162,6 +170,41 @@ async function updateLogCollection(
   }
 }
 
+function automaticSubmitBody(
+  input: EngineSubmitAutomaticReportInput,
+  context: ReportContext,
+): AutomaticSubmitReportInput {
+  return {
+    kind: "automatic",
+    ...(input.automationCorrelation ? {automationCorrelation: input.automationCorrelation} : {}),
+    ...(input.incidentKey ? {incidentKey: input.incidentKey} : {}),
+    trigger: input.trigger,
+    report: input.report,
+    context,
+  }
+}
+
+/**
+ * Ask the connected glasses to upload their logs for `reportId` and record the
+ * dispatch outcome on the report's glasses log-collection receipts.
+ */
+export async function requestGlassesReportLogs(reportId: string): Promise<{
+  dispatch: ReportLogCollectionUpdate
+  receiptsStored: boolean
+}> {
+  const dispatch = await notifyGlasses(reportId)
+  let receiptsStored = true
+  for (const source of ["glasses", "glasses_firmware"] as const) {
+    if (!(await updateLogCollection(reportId, source, dispatch))) receiptsStored = false
+  }
+  logBuffer.append({
+    level: dispatch.state === "failed" ? "warn" : "info",
+    source: "reports",
+    message: `Report ${reportId}: glasses log notification ${dispatch.state} (${dispatch.reason})`,
+  })
+  return {dispatch, receiptsStored}
+}
+
 async function submitReportInternal(input: InternalSubmitReportInput): Promise<ReportSubmitResult> {
   if (!cloudClientService.hasCore()) {
     return {status: "failed", error: "Reports are unavailable in this deployment"}
@@ -202,13 +245,7 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
               report: input.report,
               context,
             })
-          : await cloudClientService.core.reports.submit({
-              kind: "automatic",
-              ...(input.automationCorrelation ? {automationCorrelation: input.automationCorrelation} : {}),
-              trigger: input.trigger,
-              report: input.report,
-              context,
-            })
+          : await cloudClientService.core.reports.submit(automaticSubmitBody(input, context))
     reportId = res.reportId
     reportStatus = res.status
   } catch (error) {
@@ -225,15 +262,10 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
       await updateLogCollection(reportId, "phone", {state: "failed", reason: "phone_log_upload_failed"})
     }
 
-    const dispatch = await notifyGlasses(reportId)
-    for (const source of ["glasses", "glasses_firmware"] as const) {
-      if (!(await updateLogCollection(reportId, source, dispatch))) artifactsComplete = false
+    if (input.kind !== "automatic" || input.notifyGlasses !== false) {
+      const {receiptsStored} = await requestGlassesReportLogs(reportId)
+      if (!receiptsStored) artifactsComplete = false
     }
-    logBuffer.append({
-      level: dispatch.state === "failed" ? "warn" : "info",
-      source: "reports",
-      message: `Report ${reportId}: glasses log notification ${dispatch.state} (${dispatch.reason})`,
-    })
     let deliveryLogs = logBuffer.getRecentLogs().filter((entry) => !originalLogs.has(entry))
     if (deliveryLogs.length > MAX_PHONE_DELIVERY_LOGS) {
       deliveryLogs = [
