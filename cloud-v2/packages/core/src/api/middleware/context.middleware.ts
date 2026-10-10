@@ -12,7 +12,7 @@
  *      path. Handlers should log via `c.var.logger` rather than the root
  *      logger so every log line in a request is automatically correlated.
  *      The path never includes the query string: sign-in callbacks
- *      (`/api/*/auth/callback?code=…&state=…`) carry authorization codes there.
+ *      (`/api/admin/auth/callback?code=…&state=…`) carry authorization codes there.
  */
 
 import { createMiddleware } from "hono/factory";
