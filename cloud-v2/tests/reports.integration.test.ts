@@ -64,7 +64,7 @@ import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
-import { getReport, listReports } from "../packages/core/src/services/report.service";
+import { committedReadWait, getReport, listReports } from "../packages/core/src/services/report.service";
 import {
   createStorageService,
   sha256Hex,
@@ -486,6 +486,265 @@ describe("report MP4 video artifacts", () => {
   }
 });
 
+describe("report idempotency keys", () => {
+  const INCIDENT_KEY = "ML395018B-dump-0000002a-1f2e3d4c";
+  const crashReport = (incidentKey?: string) => ({
+    kind: "automatic",
+    ...(incidentKey !== undefined ? { incidentKey } : {}),
+    trigger: { type: "automatic", source: "glasses_firmware_crash", reason: "bes_crash" },
+    report: { actualBehavior: "BES crashed", systemPriority: "critical" },
+    context: { glasses: { model: "Mentra Live" } },
+  });
+  const crashEntries = [
+    { timestamp: 1760000000000, level: "error", message: "[CRASH-CONTEXT] v=2 seq=42", source: "BES_CRASH" },
+    { timestamp: 1760000000001, level: "info", message: "trace line", source: "BES" },
+  ];
+  const submit = (body: unknown, token = accessToken) => coreApp.fetch(new Request(REPORTS_PATH, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }));
+  const uploadLogs = (reportId: string, body: unknown) => coreApp.fetch(new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+    method: "POST",
+    headers: { ...authHeaders(), "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }));
+
+  test("returns the existing report for a repeated incident key without creating another", async () => {
+    const first = await submit(crashReport(INCIDENT_KEY));
+    expect(first.status).toBe(200);
+    const created = await first.json() as { reportId: string; status: string };
+    expect(created).toEqual({ reportId: expect.stringMatching(/^rep_/), status: "collecting" });
+
+    const second = await submit(crashReport(INCIDENT_KEY));
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({ reportId: created.reportId, status: "collecting", deduplicated: true });
+    expect(await ReportModel.countDocuments({})).toBe(1);
+    expect((await ReportModel.collection.findOne({ reportId: created.reportId }))?.incidentKey).toBe(INCIDENT_KEY);
+
+    // The existing report's current status is returned, whatever the resubmitted kind.
+    expect((await completeReport(created.reportId)).status).toBe(200);
+    const third = await submit({ kind: "feedback", incidentKey: INCIDENT_KEY, feedback: "again", context: {} });
+    expect(await third.json()).toEqual({ reportId: created.reportId, status: "ready", deduplicated: true });
+    expect(await ReportModel.countDocuments({})).toBe(1);
+  });
+
+  test("concurrent submissions with one incident key converge on a single report", async () => {
+    const responses = await Promise.all(Array.from({ length: 8 }, () => submit(crashReport(INCIDENT_KEY))));
+    const bodies = await Promise.all(responses.map(async res => {
+      expect(res.status).toBe(200);
+      return await res.json() as { reportId: string; status: string; deduplicated?: true };
+    }));
+    expect(new Set(bodies.map(body => body.reportId)).size).toBe(1);
+    expect(bodies.filter(body => body.deduplicated === undefined)).toHaveLength(1);
+    expect(bodies.filter(body => body.deduplicated === true)).toHaveLength(7);
+    expect(await ReportModel.countDocuments({})).toBe(1);
+  });
+
+  test("submissions without an incident key keep creating distinct reports with no key stored", async () => {
+    const bodies = [];
+    for (let i = 0; i < 2; i++) {
+      const res = await submit(crashReport());
+      expect(res.status).toBe(200);
+      const body = await res.json() as Record<string, unknown>;
+      expect(Object.keys(body).sort()).toEqual(["reportId", "status"]);
+      bodies.push(body);
+    }
+    expect(bodies[0]!.reportId).not.toBe(bodies[1]!.reportId);
+    const docs = await ReportModel.collection.find({}).toArray();
+    expect(docs).toHaveLength(2);
+    for (const doc of docs) expect("incidentKey" in doc).toBe(false);
+  });
+
+  test("the same incident key from another user creates a separate report", async () => {
+    const other = await exchange(mintSupabaseJwt("reports-user-2"));
+    const otherToken = ((await other.json()) as { access_token: string }).access_token;
+    const mine = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const theirs = await (await submit(crashReport(INCIDENT_KEY), otherToken)).json() as { reportId: string; deduplicated?: true };
+    expect(theirs.reportId).not.toBe(mine.reportId);
+    expect(theirs.deduplicated).toBeUndefined();
+    expect(await ReportModel.countDocuments({ incidentKey: INCIDENT_KEY })).toBe(2);
+  });
+
+  test("rejects malformed incident keys and keeps the index partial and unique", async () => {
+    for (const incidentKey of ["", "has space", "slash/key", "x".repeat(129), 42]) {
+      expect((await submit({ ...crashReport(), incidentKey })).status).toBe(400);
+    }
+    expect(await ReportModel.countDocuments({})).toBe(0);
+    const index = (await ReportModel.collection.indexes()).find(row => row.key.incidentKey === 1);
+    expect(index).toMatchObject({ key: { mentraUserId: 1, incidentKey: 1 }, unique: true,
+      partialFilterExpression: { incidentKey: { $type: "string" } } });
+  });
+
+  test("a log upload repeated with the same retry key and bytes is stored once", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:full" };
+    const first = await uploadLogs(reportId, body);
+    expect(first.status).toBe(200);
+    const receipt = await first.json() as { stored: number; receipt: { artifactId: string; sha256: string; sizeBytes: number } };
+    expect(receipt).toMatchObject({ stored: 1, receipt: { artifactId: expect.stringMatching(/^art_/) } });
+    const second = await uploadLogs(reportId, body);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual(receipt);
+
+    const doc = await ReportModel.collection.findOne({ reportId });
+    const artifacts = (doc?.artifacts ?? []) as Array<Record<string, unknown>>;
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]).toMatchObject({ artifactId: receipt.receipt.artifactId, type: "logs", source: "glasses_firmware" });
+    expect(doc?.logCollection?.glasses_firmware).toMatchObject({ state: "received", artifactId: receipt.receipt.artifactId, entryCount: 2 });
+    const assets = await ReportAssetModel.find({ reportId }).lean();
+    expect(assets).toHaveLength(1);
+    const stored = await createStorageService().getObject(assets[0]!.storageKey);
+    expect(sha256Hex(stored)).toBe(receipt.receipt.sha256);
+    expect(JSON.parse(Buffer.from(stored).toString("utf8"))).toEqual({ entries: crashEntries });
+  });
+
+  test("different bytes under an existing retry key return 409 and store nothing new", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:relay" };
+    expect((await uploadLogs(reportId, body)).status).toBe(200);
+    const conflict = await uploadLogs(reportId, { ...body, entries: [...crashEntries, { timestamp: 2, level: "info", message: "extra" }] });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ error: "conflict" });
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(1);
+    expect(await ReportAssetModel.countDocuments({ reportId })).toBe(1);
+  });
+
+  test("a keyed retry answers a concurrent winner only after its majority commit", async () => {
+    // The winner's row is visible to local reads while its majority acknowledgement is pending.
+    await ReportModel.collection.insertOne({ reportId: "rep_PENDINGWINNER", mentraUserId, kind: "automatic",
+      incidentKey: INCIDENT_KEY, status: "collecting", artifacts: [], context: {}, createdAt: new Date() });
+    let committed = false;
+    const fake = hideUncommittedRows(ReportModel, "incidentKey", () => committed);
+    try {
+      setTimeout(() => { committed = true; }, 300);
+      const res = await submit(crashReport(INCIDENT_KEY));
+      expect(committed).toBe(true);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ reportId: "rep_PENDINGWINNER", status: "collecting", deduplicated: true });
+      expect(fake.reads.length).toBeGreaterThan(1);
+      expect(fake.reads.every(read => read.level === "majority" && read.mode === "primary")).toBe(true);
+    } finally { fake.restore(); }
+    expect(await ReportModel.countDocuments({})).toBe(1);
+  });
+
+  test("a keyed retry returns 503, not the winner, when the winner never commits within the bound", async () => {
+    await ReportModel.collection.insertOne({ reportId: "rep_NEVERCOMMITS", mentraUserId, kind: "automatic",
+      incidentKey: INCIDENT_KEY, status: "collecting", artifacts: [], context: {}, createdAt: new Date() });
+    const fake = hideUncommittedRows(ReportModel, "incidentKey", () => false);
+    const savedTimeout = committedReadWait.timeoutMs;
+    committedReadWait.timeoutMs = 300;
+    try {
+      const res = await submit(crashReport(INCIDENT_KEY));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+    } finally {
+      committedReadWait.timeoutMs = savedTimeout;
+      fake.restore();
+    }
+    expect(await ReportModel.countDocuments({})).toBe(1);
+  });
+
+  test("a keyed upload binds only against a majority-committed reservation", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:full" };
+    const never = hideUncommittedRows(ReportAssetModel, "artifactId", () => false);
+    const savedTimeout = committedReadWait.timeoutMs;
+    committedReadWait.timeoutMs = 300;
+    try {
+      const pending = await uploadLogs(reportId, body);
+      expect(pending.status).toBe(503);
+      expect(never.reads.every(read => read.level === "majority" && read.mode === "primary")).toBe(true);
+    } finally {
+      committedReadWait.timeoutMs = savedTimeout;
+      never.restore();
+    }
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(0);
+
+    let committed = false;
+    const delayed = hideUncommittedRows(ReportAssetModel, "artifactId", () => committed);
+    try {
+      setTimeout(() => { committed = true; }, 300);
+      const res = await uploadLogs(reportId, body);
+      expect(committed).toBe(true);
+      expect(res.status).toBe(200);
+    } finally { delayed.restore(); }
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(1);
+  });
+
+  test("a keyed submission returns 503 when the dedup lookup query times out", async () => {
+    // serverSelectionTimeoutMS does not bound an in-flight query, so a stalled
+    // primary that aborts the operation must surface temporarily_unavailable.
+    const fake = timeoutUncommittedRows(ReportModel, "incidentKey");
+    try {
+      const res = await submit(crashReport(INCIDENT_KEY));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+      expect(fake.timeouts.length).toBeGreaterThan(0);
+      expect(fake.timeouts.every(timeoutMS => typeof timeoutMS === "number" && timeoutMS > 0)).toBe(true);
+    } finally { fake.restore(); }
+    expect(await ReportModel.countDocuments({})).toBe(0);
+  });
+
+  test("a keyed upload returns 503 when the reservation lookup query times out", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:full" };
+    const fake = timeoutUncommittedRows(ReportAssetModel, "artifactId");
+    try {
+      const res = await uploadLogs(reportId, body);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+      expect(fake.timeouts.length).toBeGreaterThan(0);
+      expect(fake.timeouts.every(timeoutMS => typeof timeoutMS === "number" && timeoutMS > 0)).toBe(true);
+    } finally { fake.restore(); }
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(0);
+  });
+
+  test("a retry key reused for another source returns 409 without a second artifact or receipt", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "shared-key" };
+    expect((await uploadLogs(reportId, body)).status).toBe(200);
+    const conflict = await uploadLogs(reportId, { ...body, source: "glasses" });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ error: "conflict" });
+
+    const doc = await ReportModel.collection.findOne({ reportId });
+    expect(((doc?.artifacts ?? []) as Array<{ source: string }>).map(artifact => artifact.source)).toEqual(["glasses_firmware"]);
+    expect(doc?.logCollection?.glasses_firmware?.state).toBe("received");
+    expect(doc?.logCollection?.glasses?.state).toBe("requested");
+    expect(await ReportAssetModel.countDocuments({ reportId })).toBe(1);
+    expect((await uploadLogs(reportId, body)).status).toBe(200);
+  });
+
+  test("concurrent reuse of one retry key from two sources lets exactly one source win", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", entries: crashEntries, retryKey: "shared-key" };
+    const responses = await Promise.all(["glasses_firmware", "glasses"].map(source => uploadLogs(reportId, { ...body, source })));
+    expect(responses.map(res => res.status).sort()).toEqual([200, 409]);
+    const winner = responses[0]!.status === 200 ? "glasses_firmware" : "glasses";
+    const loser = winner === "glasses" ? "glasses_firmware" : "glasses";
+
+    const doc = await ReportModel.collection.findOne({ reportId });
+    expect(((doc?.artifacts ?? []) as Array<{ source: string }>).map(artifact => artifact.source)).toEqual([winner]);
+    expect(doc?.logCollection?.[winner]?.state).toBe("received");
+    expect(doc?.logCollection?.[loser]?.state).toBe("requested");
+    expect(await ReportAssetModel.countDocuments({ reportId })).toBe(1);
+  });
+
+  test("log uploads without a retry key keep storing a new artifact each time", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries };
+    for (let i = 0; i < 2; i++) {
+      const res = await uploadLogs(reportId, body);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ stored: 1 });
+    }
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(2);
+    expect(await ReportAssetModel.countDocuments({ reportId })).toBe(2);
+    expect((await uploadLogs(reportId, { ...body, retryKey: "bad key" })).status).toBe(400);
+  });
+});
+
 describe("report Slack notifications", () => {
   const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
   const realFetch = globalThis.fetch;
@@ -646,6 +905,19 @@ describe("report Slack notifications", () => {
     });
   }
 
+  test("a deduplicated feedback submission sends no second notification", async () => {
+    const body = JSON.stringify({ kind: "feedback", incidentKey: "feedback-once", feedback: "only once", context: {} });
+    const send = () => coreApp.fetch(new Request(REPORTS_PATH, {
+      method: "POST", headers: { ...authHeaders(), "content-type": "application/json" }, body }));
+    const first = await (await send()).json() as { reportId: string };
+    await delivered;
+    const second = await (await send()).json() as { reportId: string; deduplicated?: true };
+    expect(second).toEqual({ reportId: first.reportId, status: "ready", deduplicated: true });
+    // Give a wrongly fired notifier time to reach the mocked bot.
+    await new Promise(resolve => setTimeout(resolve, 200));
+    expect(slackCalls).toHaveLength(1);
+  });
+
   test("submits successfully with no Slack call when the bot token is unset", async () => {
     delete process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
 
@@ -741,6 +1013,63 @@ async function expectOnlyArtifact(reportId: string, artifactId: string): Promise
   expect(assets.map((asset) => asset.artifactId)).toEqual([artifactId]);
   const blobs = await readdir(join(STORAGE_DIR, "reports", reportId));
   expect(blobs).toEqual([artifactId]);
+}
+
+/**
+ * Simulate rows whose majority acknowledgement is still pending: `findOne`
+ * queries filtering on `field` see nothing under majority read concern until
+ * `committed()` is true, while local reads see the stored row. Records the read
+ * concern and read preference of each such query.
+ */
+function hideUncommittedRows(model: { findOne: unknown }, field: string, committed: () => boolean) {
+  type FakeQuery = {
+    exec: () => Promise<unknown>;
+    getFilter: () => Record<string, unknown>;
+    getOptions: () => { readConcern?: { level?: string }; readPreference?: { mode?: string } };
+  };
+  const original = model.findOne as (...args: unknown[]) => FakeQuery;
+  const reads: Array<{ level?: string; mode?: string }> = [];
+  model.findOne = function (this: unknown, ...args: unknown[]) {
+    const query = original.apply(this, args);
+    if (!(field in query.getFilter())) return query;
+    const exec = query.exec.bind(query);
+    query.exec = async () => {
+      const options = query.getOptions();
+      reads.push({ level: options.readConcern?.level, mode: options.readPreference?.mode });
+      const row = await exec();
+      return options.readConcern?.level === "majority" && !committed() ? null : row;
+    };
+    return query;
+  };
+  return { reads, restore: () => { model.findOne = original; } };
+}
+
+/**
+ * Simulate a primary that stops responding: matching `findOne` queries abort
+ * with the driver's operation-timeout error instead of resolving, as they would
+ * once their client-side `timeoutMS` deadline is exhausted. Records the deadline
+ * each such query carried so the caller can assert the read was actually bounded.
+ */
+function timeoutUncommittedRows(model: { findOne: unknown }, field: string) {
+  type FakeQuery = {
+    exec: () => Promise<unknown>;
+    getFilter: () => Record<string, unknown>;
+    getOptions: () => { timeoutMS?: number };
+  };
+  const original = model.findOne as (...args: unknown[]) => FakeQuery;
+  const timeouts: Array<number | undefined> = [];
+  model.findOne = function (this: unknown, ...args: unknown[]) {
+    const query = original.apply(this, args);
+    if (!(field in query.getFilter())) return query;
+    query.exec = async () => {
+      timeouts.push(query.getOptions().timeoutMS);
+      const error = new Error("operation exceeded time limit") as Error & { name: string };
+      error.name = "MongoOperationTimeoutError";
+      throw error;
+    };
+    return query;
+  };
+  return { timeouts, restore: () => { model.findOne = original; } };
 }
 
 /** Let the first blob write succeed and fail the second one. */

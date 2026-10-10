@@ -133,6 +133,31 @@ describe("Core reports client", () => {
     ]);
   });
 
+  test("sends an incident key on submit and a retry key on log uploads through the bound Core API", async () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const core = new Core({ http: fakeHttp(calls) });
+    const input: SubmitReportInput = {
+      kind: "automatic",
+      incidentKey: "ML395018B-dump-0000002a-1f2e3d4c",
+      trigger: { type: "automatic", source: "glasses_firmware_crash", reason: "bes_crash" },
+      report: { actualBehavior: "BES crashed", systemPriority: "critical" },
+      context: {},
+    };
+    const entries = [{ timestamp: 1, level: "error", message: "[CRASH-CONTEXT] v=2", source: "BES_CRASH" }];
+
+    await core.reports.submit(input);
+    await core.reports.addLogs("rep_123", "glasses_firmware", entries, { retryKey: "glasses_firmware:full" });
+
+    expect(calls).toEqual([
+      { method: "POST", path: "/api/client/reports", body: input },
+      {
+        method: "POST",
+        path: "/api/client/reports/rep_123/artifacts",
+        body: { type: "logs", source: "glasses_firmware", entries, retryKey: "glasses_firmware:full" },
+      },
+    ]);
+  });
+
   test("records a source collection attempt without claiming artifact receipt", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const reports = new Reports({ http: fakeHttp(calls) });

@@ -22,6 +22,8 @@ const ReportAssetSchema = new Schema(
     contentType: { type: String, required: true },
     sizeBytes: { type: Number, required: true },
     sha256: { type: String, required: true },
+    // Artifact source bound by a keyed retry reservation; absent on other rows.
+    source: { type: String },
     // Shared native evidence remains owned by the test run; it is not copied.
     sourceTestRunId: { type: String },
     sourceTestAssetId: { type: String },
