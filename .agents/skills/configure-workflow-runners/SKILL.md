@@ -24,6 +24,9 @@ each job's `runs-on` must select a Blacksmith runner.
   without cancelling another branch's work. Check the runner's repository access
   and required Xcode/toolchain before relying on it in another repo.
 
+Hardware/device-test jobs must stay on the configured self-hosted runner that
+owns their attached devices. Use Blacksmith for general Linux CI compute.
+
 Do not introduce `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, or another
 GitHub-hosted Linux label unless the user explicitly requests an exception.
 Do not fall back to GitHub-hosted macOS when the office runner is unavailable;
