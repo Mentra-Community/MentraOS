@@ -1549,8 +1549,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 linkState.capsAdvertised(applyBesWireCaps(json));
                                 JSONObject caps = json.optJSONObject("wire_caps");
                                 I2sReadyGate.setSupported(caps != null && caps.optInt("i2s_ready", 0) == 1);
-                                BesTraceTail.get()
-                                        .setSupported(caps != null && caps.optInt("rlog_uart", 0) == 1);
+                                BesTraceTail.get().onWireCaps(caps);
                             });
             if (result == BesUartTransportCoordinator.SystemVersionResult.IGNORED) {
                 Log.i(TAG, "Ignoring sr_syvr from a retired UART session");
