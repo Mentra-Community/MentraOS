@@ -359,12 +359,13 @@ public class BesCrashDumpCollectorTest {
         Rig rig = new Rig(T0);
         rig.syvr(syvr(true, BOOT_A, null, 0, null, 0, 0));
         // Requested reboot / power-on / all-zero / unknown codes: expected, no incident.
-        rig.syvr(syvr(true, BOOT_B, null, 0, null, 0x1, 1L << 16));
+        rig.syvr(syvr(true, BOOT_B, null, 0, null, 0x2, 0x00810030L)); // OTA apply
         rig.syvr(syvr(true, BOOT_C, null, 0, null, 0, 0));
         assertTrue(rig.incidents().isEmpty());
         assertTrue(rig.stored.isEmpty());
 
-        // The default classifier recognizes only the firmware's crash-reboot bit.
+        // The default classifier recognizes the firmware's crash-reboot bit (a hardware watchdog
+        // restart with no dump is covered by DefaultResetClassifier's own test).
         String boot = "00000000000000d4";
         rig.syvr(syvr(true, boot, null, 0, null, 0, SW_CRASH_REBOOT));
         JSONObject reset = rig.only();

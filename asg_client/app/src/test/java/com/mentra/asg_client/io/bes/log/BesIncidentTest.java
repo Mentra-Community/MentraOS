@@ -97,7 +97,12 @@ public class BesIncidentTest {
     public void defaultResetClassifierIsConservative() {
         ResetClassifier classifier = new DefaultResetClassifier();
         assertFalse(classifier.isUnexpected(0, 0));
-        assertFalse(classifier.isUnexpected(0x1f, 0));
+        assertFalse(classifier.isUnexpected(0x1e, 0));
+        // Measured codes (docs/crash-timestamps.md): watchdog/assert/exception restart.
+        assertTrue(classifier.isUnexpected(0x01, 0x00800030));
+        // Requested restarts: BES soft reboot and OTA apply.
+        assertFalse(classifier.isUnexpected(0x02, 0x00800030));
+        assertFalse(classifier.isUnexpected(0x02, 0x00810030));
         assertFalse(classifier.isUnexpected(0, 1L << 16));
         assertFalse(classifier.isUnexpected(0xffff, 0x00ffffff));
         assertTrue(classifier.isUnexpected(0, 1L << 25));
