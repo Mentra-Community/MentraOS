@@ -6,6 +6,7 @@ import {
   isFeatureEnabled,
   isInstalledMiniappAllowed,
   isLocalMiniappPackageAllowed,
+  isMiniappAvailable,
   isOfflineSystemMiniappAllowed,
   resetForTests,
 } from "../bootstrap"
@@ -158,5 +159,61 @@ describe("deployment feature policy", () => {
     expect(isInstalledMiniappAllowed(packageName, "1.0.17", identity)).toBe(false)
     expect(isDevMiniappAllowed(packageName, false)).toBe(false)
     expect(isDevMiniappAllowed(packageName, true)).toBe(true)
+  })
+})
+
+describe("Store-updated bundled releases", () => {
+  afterEach(resetForTests)
+  const identity = {source: "system_store", storePackageName: "com.mentra.store"}
+  function configureOrganization(approved: string[] | null, managed = false) {
+    configure({
+      auth: {},
+      config: {
+        bundledSystemMiniappPackages: ["com.mentra.notes", "com.mentra.store"],
+        bundledStoreMiniappPackages: ["com.mentra.store"],
+        bundledSystemMiniappStoreOwners: {"com.mentra.notes": "com.mentra.store"},
+        localMiniappPolicy: {
+          systemPackageNames: approved,
+          managed: managed
+            ? [
+                {
+                  packageName: "com.mentra.notes",
+                  version: "1.0.0",
+                  sha256: "abc",
+                  deploymentId: "acme",
+                  deploymentOrigin: "https://acme.example",
+                },
+              ]
+            : [],
+        },
+      },
+    })
+  }
+
+  test.each([null, ["com.mentra.notes"]])("stay visible where the bundled release is approved (%j)", (approved) => {
+    configureOrganization(approved)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(true)
+    expect(
+      isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {...identity, storePackageName: "com.other.store"}),
+    ).toBe(false)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {source: "direct_download"})).toBe(false)
+  })
+
+  test("do not bypass an excluded package or an organization pin", () => {
+    configureOrganization([])
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(false)
+    configureOrganization(null, true)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(false)
+  })
+
+  test("the host's availability gate separates launches from background maintenance", () => {
+    expect(isMiniappAvailable("com.mentra.store")).toBe(true)
+    configure({
+      auth: {},
+      config: {isMiniappAvailable: (packageName, mode) => mode === "background" || packageName !== "com.mentra.store"},
+    })
+    expect(isMiniappAvailable("com.mentra.store")).toBe(false)
+    expect(isMiniappAvailable("com.mentra.store", "background")).toBe(true)
+    expect(isMiniappAvailable("com.mentra.notes")).toBe(true)
   })
 })

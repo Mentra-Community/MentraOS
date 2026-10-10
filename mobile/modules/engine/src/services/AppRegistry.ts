@@ -39,10 +39,12 @@ import {configuredDevHost} from "../utils/configuredDevHost"
 import {invalidateDevSnapshotRequests} from "../utils/devSnapshotRequests"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
+import {sha256Hex} from "../utils/sha256"
 import {
   getConfigValues,
   isDevMiniappAllowed,
   isInstalledMiniappAllowed,
+  isMiniappAvailable,
   isOfflineSystemMiniappAllowed,
 } from "../runtime/bootstrap"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
@@ -59,6 +61,7 @@ import {
   runInstallFilesystemTransaction,
 } from "./installOperation"
 import {checkManifestVersions} from "./manifestVersionGate"
+import {checkMiniappInstallCompatibility, type MiniappCompatibilityPolicy} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {normalizeManifestPermissions} from "./manifestPermissions"
 import {
@@ -68,7 +71,9 @@ import {
 } from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {assertPublisherIdentityPolicy, assertUnsignedDevBuildAllowed} from "./publisherIdentityPolicy"
+import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
 import {sameMiniappBundle} from "./sameMiniappBundle"
+import {requiresConnectedGlasses} from "./SystemMiniappPolicy"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
@@ -127,8 +132,11 @@ export function buildHardwareRequirements(
     }
   }
 
-  // Always require glasses to be connected for any local miniapp.
-  out.push({type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED})
+  // Most miniapps require connected glasses. A Store manages apps from the
+  // phone and runs its background updates while the glasses are away.
+  if (requiresConnectedGlasses(packageName)) {
+    out.push({type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED})
+  }
   return out
 }
 
@@ -143,10 +151,24 @@ interface InstalledLma {
 }
 
 export interface MiniappReleaseIdentity {
-  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "deployment_manifest" | "dev_snapshot"
+  /**
+   * `store`: installed by a bundled Store. `system_store`: a bundled package
+   * updated by the Store the build assigns to it. `preinstalled_registry`:
+   * installed by Core's retired preinstall registry (read for existing installs).
+   */
+  source:
+    | "direct_download"
+    | "bundled_asset"
+    | "preinstalled_registry"
+    | "deployment_manifest"
+    | "dev_snapshot"
+    | "store"
+    | "system_store"
   releaseId?: string
   bundleSha256?: string
   channel?: string
+  /** The Store that installed this release (`store` / `system_store`). */
+  storePackageName?: string
   deploymentId?: string
   deploymentOrigin?: string
   /**
@@ -170,6 +192,24 @@ export interface InstallBundleOptions {
   expectedVersion?: string
   /** Refuse to overwrite a version that is already installed. */
   rejectExistingVersion?: boolean
+  /** The downloaded ZIP must have this SHA-256 (a Store's selected release). */
+  expectedBundleSha256?: string
+  /**
+   * Bearer the calling Store already holds for its own backend. Attached
+   * verbatim to the download only; never followed across a redirect, never
+   * minted, inspected or reused by the host.
+   */
+  bundleAuthorization?: string
+  /** Refuse a bundle this host or the user's glasses cannot run. */
+  compatibilityPolicy?: MiniappCompatibilityPolicy | Omit<MiniappCompatibilityPolicy, "hardwareCapabilities">
+  onProgress?: (phase: InstallProgressPhase) => void
+  /**
+   * Runs once the bundle is downloaded, verified, checked against the signer,
+   * version and compatibility rules, and unpacked, before the serialized
+   * activation. It may wait (for example for the user's consent) without
+   * holding up other installs. Throwing discards the unpacked files.
+   */
+  whenStaged?: () => Promise<void>
   /**
    * Synchronous check run inside the serialized install, after extraction and
    * immediately before installed files change. Throwing aborts the install
@@ -177,6 +217,8 @@ export interface InstallBundleOptions {
    */
   beforeActivate?: () => void
 }
+
+export type InstallProgressPhase = "downloading" | "verifying" | "extracting" | "activating"
 
 /** Local ZIP installs may additionally adopt an identical, already installed bundle. */
 export interface LocalZipInstallOptions extends InstallBundleOptions {
@@ -329,23 +371,55 @@ function assertPublisherContinuity(packageName: string, publisherKeyFingerprint:
   })
 }
 
+function assertInstallCompatibility(
+  manifest: Awaited<ReturnType<typeof validateInstallBundleArchive>>,
+  policy: NonNullable<InstallBundleOptions["compatibilityPolicy"]>,
+): void {
+  if (!("hardwareCapabilities" in policy)) {
+    const versions = checkManifestVersions(manifest, policy)
+    if (!versions.ok) throw new Error(versions.reason)
+    return
+  }
+  const compatibility = checkMiniappInstallCompatibility(manifest, policy)
+  if (!compatibility.compatible) throw new Error(compatibility.reason)
+}
+
 /**
  * Download a miniapp zip from `url` and return its bytes. The response is
  * streamed through a size ceiling and a deadline, so an attacker-controlled
- * server cannot exhaust memory or hang an install.
+ * server cannot exhaust memory or hang an install. An expected SHA-256 is
+ * checked before any other step reads the bytes.
  */
-async function downloadMiniAppZip(url: string): Promise<Uint8Array> {
+async function downloadMiniAppZip(
+  url: string,
+  options: Pick<InstallBundleOptions, "expectedBundleSha256" | "bundleAuthorization" | "onProgress"> = {},
+): Promise<Uint8Array> {
   const abortController = new AbortController()
   const timeout = setTimeout(() => abortController.abort(), REMOTE_BUNDLE_TIMEOUT_MS)
   try {
+    options.onProgress?.("downloading")
     // React Native's global fetch polyfill does not expose Response.body.
     // Expo fetch provides the native ReadableStream required for bounded
     // downloads without buffering an attacker-controlled response first.
     const requestUrl = new URL(url)
-    const response = await expoFetch(url, {signal: abortController.signal})
+    const authorization = options.bundleAuthorization?.trim()
+    const response = await expoFetch(
+      url,
+      authorization
+        ? {
+            signal: abortController.signal,
+            headers: {Authorization: `Bearer ${authorization}`},
+            // Never forward the caller's bearer credential through a redirect.
+            redirect: "error",
+          }
+        : {signal: abortController.signal},
+    )
     if (!response.ok) throw new Error(`bundle download failed with HTTP ${response.status}`)
     if (requestUrl.protocol === "https:" && response.url && new URL(response.url).protocol !== "https:") {
       throw new Error("bundle download redirected away from HTTPS")
+    }
+    if (authorization && response.url && new URL(response.url).origin !== requestUrl.origin) {
+      throw new Error("authorized bundle download changed origin")
     }
     const declaredSize = Number(response.headers.get("content-length"))
     if (Number.isFinite(declaredSize) && declaredSize > MAX_REMOTE_BUNDLE_BYTES) {
@@ -355,6 +429,12 @@ async function downloadMiniAppZip(url: string): Promise<Uint8Array> {
     const bytes = await readBoundedByteStream(response.body, MAX_REMOTE_BUNDLE_BYTES)
     if (bytes.byteLength === 0) {
       throw new Error(`bundle must be between 1 and ${MAX_REMOTE_BUNDLE_BYTES} bytes`)
+    }
+    if (options.expectedBundleSha256 !== undefined) {
+      const expected = options.expectedBundleSha256.toLowerCase()
+      if (!/^[a-f0-9]{64}$/.test(expected)) throw new Error("expected bundle SHA-256 is invalid")
+      const actual = await sha256Hex(bytes)
+      if (actual !== expected) throw new Error(`bundle SHA-256 mismatch: expected ${expected}, got ${actual}`)
     }
     return bytes
   } catch (error) {
@@ -403,6 +483,11 @@ interface InstalledBundle {
   version: string
 }
 
+interface UnpackOptions {
+  onProgress?: InstallBundleOptions["onProgress"]
+  whenStaged?: InstallBundleOptions["whenStaged"]
+}
+
 /**
  * Unpack a local miniapp zip and install it under
  * `lmas/<packageName>/<version>/` inside the serialized install transaction.
@@ -414,6 +499,11 @@ interface InstalledBundle {
  * committed), `beforeActivate` runs after extraction and before installed
  * files change, and `finalize` writes registry metadata before the atomic
  * commit. Any failure before commit restores the previous installation.
+ *
+ * With `whenStaged`, extraction happens first, into a private cache directory
+ * outside the queue, and the hook may wait before the queue is entered; the
+ * queue then activates the already-unpacked files. Without it, extraction stays
+ * inside the queue.
  *
  * @param zipPath          file:// URI of the zip on local disk.
  * @param versionOverride  override the manifest's version field (dev snapshots).
@@ -429,21 +519,58 @@ async function unpackMiniApp(
   beforeActivate: () => void,
   validate: () => void,
   adoptExisting?: AdoptExistingBundle,
+  options: UnpackOptions = {},
 ): Promise<InstalledBundle> {
-  return completeInstallFilesystemTransaction(
-    () => unpackMiniAppExclusive(zipPath, versionOverride, expected, beforeActivate, adoptExisting),
-    finalize,
-    validate,
-  )
+  if (!options.whenStaged) {
+    return completeInstallFilesystemTransaction(
+      () =>
+        withExtractedMiniApp(zipPath, expected, options.onProgress, (extracted) =>
+          activateExtractedMiniApp(
+            extracted,
+            versionOverride,
+            expected,
+            beforeActivate,
+            adoptExisting,
+            options.onProgress,
+          ),
+        ),
+      finalize,
+      validate,
+    )
+  }
+  const whenStaged = options.whenStaged
+  return withExtractedMiniApp(zipPath, expected, options.onProgress, async (extracted) => {
+    await whenStaged()
+    return completeInstallFilesystemTransaction(
+      () =>
+        activateExtractedMiniApp(
+          extracted,
+          versionOverride,
+          expected,
+          beforeActivate,
+          adoptExisting,
+          options.onProgress,
+        ),
+      finalize,
+      validate,
+    )
+  })
 }
 
-async function unpackMiniAppExclusive(
+interface ExtractedMiniApp {
+  directory: Directory
+  operationId: string
+  packageName: string
+  manifestVersion: string
+}
+
+/** Unzip into a private cache directory, run `run`, and always remove the directory afterwards. */
+async function withExtractedMiniApp<T>(
   zipPath: string,
-  versionOverride: string | undefined,
   expected: MiniappInstallExpectations,
-  beforeActivate: () => void,
-  adoptExisting?: AdoptExistingBundle,
-): Promise<ActivatedInstall<InstalledBundle>> {
+  onProgress: InstallBundleOptions["onProgress"],
+  run: (extracted: ExtractedMiniApp) => Promise<T>,
+): Promise<T> {
   const operationId = nextInstallOperationId()
   const unzipDir = new Directory(Paths.cache, `lma_unzip-${operationId}`)
   try {
@@ -454,15 +581,7 @@ async function unpackMiniAppExclusive(
   }
 
   try {
-    return await activateExtractedMiniApp(
-      zipPath,
-      unzipDir,
-      operationId,
-      versionOverride,
-      expected,
-      beforeActivate,
-      adoptExisting,
-    )
+    return await run(await extractMiniApp(zipPath, unzipDir, operationId, expected, onProgress))
   } finally {
     try {
       if (unzipDir.exists) unzipDir.delete()
@@ -472,16 +591,15 @@ async function unpackMiniAppExclusive(
   }
 }
 
-async function activateExtractedMiniApp(
+async function extractMiniApp(
   zipPath: string,
   unzipDir: Directory,
   operationId: string,
-  versionOverride: string | undefined,
   expected: MiniappInstallExpectations,
-  beforeActivate: () => void,
-  adoptExisting?: AdoptExistingBundle,
-): Promise<ActivatedInstall<InstalledBundle>> {
+  onProgress: InstallBundleOptions["onProgress"],
+): Promise<ExtractedMiniApp> {
   try {
+    onProgress?.("extracting")
     console.log("ZIP: unzipping", zipPath)
     await unzip(zipPath, unzipDir.uri)
   } catch (error) {
@@ -510,7 +628,19 @@ async function activateExtractedMiniApp(
   // The extracted manifest must be the one that was validated.
   const identityError = miniappInstallIdentityError({packageName, version: manifestVersion}, expected)
   if (identityError) throw new Error(identityError)
-  const version = versionOverride ?? manifestVersion
+  return {directory: unzipDir, operationId, packageName, manifestVersion}
+}
+
+async function activateExtractedMiniApp(
+  extracted: ExtractedMiniApp,
+  versionOverride: string | undefined,
+  expected: MiniappInstallExpectations,
+  beforeActivate: () => void,
+  adoptExisting: AdoptExistingBundle | undefined,
+  onProgress: InstallBundleOptions["onProgress"],
+): Promise<ActivatedInstall<InstalledBundle>> {
+  const {directory: appDir, operationId, packageName} = extracted
+  const version = versionOverride ?? extracted.manifestVersion
   console.log(`ZIP: installing ${packageName} as version ${version}`)
 
   const basePackageDir = new Directory(Paths.document, "lmas", packageName)
@@ -568,6 +698,7 @@ async function activateExtractedMiniApp(
   // restore a previous same-version directory instead of leaving a partial
   // installation behind.
   let movedExisting = false
+  onProgress?.("activating")
   try {
     // Move an existing target aside before creating the pending marker. A
     // crash in that first move leaves only a backup, which startup restores.
@@ -946,7 +1077,11 @@ class AppRegistry {
   public installFromUrl(url: string, opts?: InstallBundleOptions): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       if (opts?.expectedPackageName) this.assertNoReplacementInProgress(opts.expectedPackageName, opts.versionOverride)
-      const bytes = await downloadMiniAppZip(url)
+      const bytes = await downloadMiniAppZip(url, {
+        expectedBundleSha256: opts?.expectedBundleSha256,
+        bundleAuthorization: opts?.bundleAuthorization,
+        onProgress: opts?.onProgress,
+      })
       console.log("ZIP: done downloading, starting unzip")
       await this.installArchive(bytes, opts, false)
       console.log("APP_REGISTRY: Downloaded and installed mini app")
@@ -977,8 +1112,14 @@ class AppRegistry {
         throw new Error("Bundle adoption requires a verified deployment release with an exact identity")
       // Read the caller's file once. Validation and extraction both use this
       // snapshot, so replacing the file afterwards cannot change what installs.
+      const bytes = await new File(zipPath).bytes()
+      if (opts?.expectedBundleSha256 !== undefined) {
+        const expected = opts.expectedBundleSha256.toLowerCase()
+        const actual = await sha256Hex(bytes)
+        if (actual !== expected) throw new Error(`bundle SHA-256 mismatch: expected ${expected}, got ${actual}`)
+      }
       const installed = await this.installArchive(
-        await new File(zipPath).bytes(),
+        bytes,
         opts,
         true,
         opts?.adoptIdenticalInstalledVersion
@@ -1017,10 +1158,13 @@ class AppRegistry {
     adoptExisting?: AdoptExistingBundle,
   ): Promise<InstalledBundle> {
     const expected = {packageName: opts?.expectedPackageName, version: opts?.expectedVersion}
+    opts?.onProgress?.("verifying")
     const manifest = await validateInstallBundleArchive(bytes, expected)
     // The artifact must be the package and version its source selected.
     const identityError = miniappInstallIdentityError(manifest, expected)
     if (identityError) throw new Error(identityError)
+    // The bundle's own manifest decides compatibility, not the catalog that offered it.
+    if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
     const version = opts?.versionOverride ?? manifest.version
     // The publisher fingerprint only ever comes from signature verification.
     const {publisherKeyFingerprint: _callerFingerprint, ...callerIdentity} = opts?.releaseIdentity ?? {
@@ -1058,6 +1202,7 @@ class AppRegistry {
         },
         validateTrust,
         adoptExisting,
+        {onProgress: opts?.onProgress, whenStaged: opts?.whenStaged},
       )
     } finally {
       try {
@@ -1279,6 +1424,39 @@ class AppRegistry {
     }
   }
 
+  /**
+   * Remove obsolete release directories after a Store update committed. Keeps
+   * the given versions (the new release and the one it replaced), the active
+   * selection, organization-owned releases and every dev snapshot. Runs in the
+   * install queue so it never touches a version another install is activating.
+   */
+  public gcReleaseVersions(packageName: string, keepVersions: readonly string[]): Promise<void> {
+    return runInstallFilesystemTransaction(async () => {
+      const keep = new Set(keepVersions.filter(Boolean))
+      const active = storage.load<string>(activeVersionKey(packageName))
+      if (active.is_ok()) keep.add(active.value)
+      for (const version of this.getInstalledVersions(packageName)) {
+        if (this.getReleaseIdentity(packageName, version)?.source === "deployment_manifest") keep.add(version)
+      }
+      const obsolete = selectReleaseVersionsForGarbageCollection(this.getInstalledVersions(packageName), keep)
+      for (const version of obsolete) {
+        try {
+          const directory = new Directory(Paths.document, "lmas", packageName, version)
+          if (directory.exists) directory.delete()
+          this.removeReleaseIdentity(packageName, version)
+        } catch (error) {
+          console.warn(`APP_REGISTRY: failed to garbage-collect ${packageName}@${version}:`, error)
+        }
+      }
+      if (obsolete.length > 0) {
+        this.refreshNeeded = true
+        this.notify()
+      }
+    }).catch((error) => {
+      console.warn(`APP_REGISTRY: release garbage collection failed for ${packageName}:`, error)
+    })
+  }
+
   /** An explicitly selected packed snapshot takes precedence over scanned live URLs. */
   public getSelectedDevSnapshot(packageName: string): string | null {
     const selected = storage.load<string>(`${packageName}_dev_selected_snapshot`)
@@ -1491,7 +1669,7 @@ class AppRegistry {
    * disk install of the same package; installing a release clears that dev
    * registration in finalizeInstall. Native offline apps keep top priority.
    */
-  private mergeProjectedApps(diskApps: ClientApp[]): ClientApp[] {
+  private mergeProjectedApps(diskApps: ClientApp[], includeBackgroundOnly = false): ClientApp[] {
     const offline = this.projectOfflineApps().filter((app) => isOfflineSystemMiniappAllowed(app.packageName))
     const offlinePackages = new Set(offline.map((app) => app.packageName))
     const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
@@ -1511,10 +1689,16 @@ class AppRegistry {
         !offlinePackages.has(app.packageName) &&
         !devPackages.has(app.packageName),
     )
-    return [...installed, ...dev, ...offline]
+    // A background-only miniapp (a Store) never appears in user-facing lists;
+    // only the host's own maintenance asks for it.
+    return [...installed, ...dev, ...offline].filter((app) =>
+      isMiniappAvailable(app.packageName, includeBackgroundOnly ? "background" : "interactive"),
+    )
   }
 
-  public async getInstalledMiniapps(): Promise<ClientApp[]> {
+  public async getInstalledMiniapps({includeBackgroundOnly = false}: {includeBackgroundOnly?: boolean} = {}): Promise<
+    ClientApp[]
+  > {
     if (!this.refreshNeeded && this.cachedApps.length > 0) {
       // Cache hit: re-project running from the registry. The cached array
       // IS the disk-derived truth; running comes from the mount registry.
@@ -1523,6 +1707,7 @@ class AppRegistry {
           ...a,
           running: miniappRunningRegistry.has(a.packageName),
         })),
+        includeBackgroundOnly,
       )
     }
 
@@ -1538,7 +1723,14 @@ class AppRegistry {
           permissions?: Array<string | {type: string; required?: boolean; description?: string}>
           hardwareRequirements?: Array<{type: string; level: string; description?: string}>
           type?: string
-          actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
+          actions?: Array<{
+            id?: unknown
+            description?: unknown
+            parameters?: unknown
+            outputSchema?: unknown
+            lifecycle?: unknown
+            audience?: unknown
+          }>
         } | null
 
         const permissions = normalizeManifestPermissions(manifest?.permissions)
@@ -1586,7 +1778,7 @@ class AppRegistry {
 
       this.cachedApps = out
       this.refreshNeeded = false
-      return this.mergeProjectedApps(this.cachedApps)
+      return this.mergeProjectedApps(this.cachedApps, includeBackgroundOnly)
     } catch (error) {
       console.error("APP_REGISTRY: Error getting local applets", error)
       return this.mergeProjectedApps(
@@ -1594,6 +1786,7 @@ class AppRegistry {
           ...a,
           running: miniappRunningRegistry.has(a.packageName),
         })),
+        includeBackgroundOnly,
       )
     }
   }
@@ -1767,7 +1960,14 @@ export interface DevAppRecord {
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
   /** Manifest-declared actions — so dev-sideloaded miniapps can be invoked too. */
-  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
+  actions?: Array<{
+    id?: unknown
+    description?: unknown
+    parameters?: unknown
+    outputSchema?: unknown
+    lifecycle?: unknown
+    audience?: unknown
+  }>
   /** Legacy single-slot migration field. New records use the real packageName directly. */
   sourcePackageName?: string
 }

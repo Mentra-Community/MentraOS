@@ -1,6 +1,7 @@
 import {afterAll, beforeEach, expect, mock, test} from "bun:test"
 import {result as Res} from "typesafe-ts"
 
+import "./reactNativeTestMock"
 import {assertMiniappUpdateVersion} from "../miniappInstallIdentity"
 
 let active = "1.0.0"
@@ -9,6 +10,9 @@ let failInstall: Error | undefined
 let failLaunch = false
 const events: string[] = []
 let installOptions: Record<string, unknown> | undefined
+mock.module("../../utils/storage/storage", () => ({
+  storage: {load: () => ({is_ok: () => false}), save: () => ({is_ok: () => true})},
+}))
 mock.module("../AppRegistry", () => ({
   default: {
     assertCanInstallVersion: (pkg: string, version: string) => assertMiniappUpdateVersion(pkg, version, [active]),
@@ -42,6 +46,7 @@ mock.module("../MiniappLauncher", () => ({
 mock.module("../../stores/apps", () => ({
   useAppStatusStore: {
     getState: () => ({
+      runUpdate: async (_packageName: string, update: () => Promise<unknown>) => update(),
       refresh: async () => {
         events.push("refresh")
       },
