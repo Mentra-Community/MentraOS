@@ -35,6 +35,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -1877,7 +1878,7 @@ public class OtaHelper {
         long fileSize;
         try (OtaHttpRequest request = new OtaHttpRequest(context, urlStr, "apk");
                 InputStream in = request.openStream();
-                FileOutputStream out = new FileOutputStream(apkFile)) {
+                OutputStream out = request.openOutput(apkFile)) {
             byte[] buffer = new byte[4096];
             int len;
             long total = 0;
