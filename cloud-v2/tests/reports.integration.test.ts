@@ -64,7 +64,7 @@ import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
-import { getReport, listReports } from "../packages/core/src/services/report.service";
+import { committedReadWait, getReport, listReports } from "../packages/core/src/services/report.service";
 import {
   createStorageService,
   sha256Hex,
@@ -610,6 +610,99 @@ describe("report idempotency keys", () => {
     expect(await ReportAssetModel.countDocuments({ reportId })).toBe(1);
   });
 
+  test("a keyed retry answers a concurrent winner only after its majority commit", async () => {
+    // The winner's row is visible to local reads while its majority acknowledgement is pending.
+    await ReportModel.collection.insertOne({ reportId: "rep_PENDINGWINNER", mentraUserId, kind: "automatic",
+      incidentKey: INCIDENT_KEY, status: "collecting", artifacts: [], context: {}, createdAt: new Date() });
+    let committed = false;
+    const fake = hideUncommittedRows(ReportModel, "incidentKey", () => committed);
+    try {
+      setTimeout(() => { committed = true; }, 300);
+      const res = await submit(crashReport(INCIDENT_KEY));
+      expect(committed).toBe(true);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ reportId: "rep_PENDINGWINNER", status: "collecting", deduplicated: true });
+      expect(fake.reads.length).toBeGreaterThan(1);
+      expect(fake.reads.every(read => read.level === "majority" && read.mode === "primary")).toBe(true);
+    } finally { fake.restore(); }
+    expect(await ReportModel.countDocuments({})).toBe(1);
+  });
+
+  test("a keyed retry returns 503, not the winner, when the winner never commits within the bound", async () => {
+    await ReportModel.collection.insertOne({ reportId: "rep_NEVERCOMMITS", mentraUserId, kind: "automatic",
+      incidentKey: INCIDENT_KEY, status: "collecting", artifacts: [], context: {}, createdAt: new Date() });
+    const fake = hideUncommittedRows(ReportModel, "incidentKey", () => false);
+    const savedTimeout = committedReadWait.timeoutMs;
+    committedReadWait.timeoutMs = 300;
+    try {
+      const res = await submit(crashReport(INCIDENT_KEY));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+    } finally {
+      committedReadWait.timeoutMs = savedTimeout;
+      fake.restore();
+    }
+    expect(await ReportModel.countDocuments({})).toBe(1);
+  });
+
+  test("a keyed upload binds only against a majority-committed reservation", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:full" };
+    const never = hideUncommittedRows(ReportAssetModel, "artifactId", () => false);
+    const savedTimeout = committedReadWait.timeoutMs;
+    committedReadWait.timeoutMs = 300;
+    try {
+      const pending = await uploadLogs(reportId, body);
+      expect(pending.status).toBe(503);
+      expect(never.reads.every(read => read.level === "majority" && read.mode === "primary")).toBe(true);
+    } finally {
+      committedReadWait.timeoutMs = savedTimeout;
+      never.restore();
+    }
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(0);
+
+    let committed = false;
+    const delayed = hideUncommittedRows(ReportAssetModel, "artifactId", () => committed);
+    try {
+      setTimeout(() => { committed = true; }, 300);
+      const res = await uploadLogs(reportId, body);
+      expect(committed).toBe(true);
+      expect(res.status).toBe(200);
+    } finally { delayed.restore(); }
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(1);
+  });
+
+  test("a retry key reused for another source returns 409 without a second artifact or receipt", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "shared-key" };
+    expect((await uploadLogs(reportId, body)).status).toBe(200);
+    const conflict = await uploadLogs(reportId, { ...body, source: "glasses" });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ error: "conflict" });
+
+    const doc = await ReportModel.collection.findOne({ reportId });
+    expect(((doc?.artifacts ?? []) as Array<{ source: string }>).map(artifact => artifact.source)).toEqual(["glasses_firmware"]);
+    expect(doc?.logCollection?.glasses_firmware?.state).toBe("received");
+    expect(doc?.logCollection?.glasses?.state).toBe("requested");
+    expect(await ReportAssetModel.countDocuments({ reportId })).toBe(1);
+    expect((await uploadLogs(reportId, body)).status).toBe(200);
+  });
+
+  test("concurrent reuse of one retry key from two sources lets exactly one source win", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", entries: crashEntries, retryKey: "shared-key" };
+    const responses = await Promise.all(["glasses_firmware", "glasses"].map(source => uploadLogs(reportId, { ...body, source })));
+    expect(responses.map(res => res.status).sort()).toEqual([200, 409]);
+    const winner = responses[0]!.status === 200 ? "glasses_firmware" : "glasses";
+    const loser = winner === "glasses" ? "glasses_firmware" : "glasses";
+
+    const doc = await ReportModel.collection.findOne({ reportId });
+    expect(((doc?.artifacts ?? []) as Array<{ source: string }>).map(artifact => artifact.source)).toEqual([winner]);
+    expect(doc?.logCollection?.[winner]?.state).toBe("received");
+    expect(doc?.logCollection?.[loser]?.state).toBe("requested");
+    expect(await ReportAssetModel.countDocuments({ reportId })).toBe(1);
+  });
+
   test("log uploads without a retry key keep storing a new artifact each time", async () => {
     const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
     const body = { type: "logs", source: "glasses_firmware", entries: crashEntries };
@@ -892,6 +985,35 @@ async function expectOnlyArtifact(reportId: string, artifactId: string): Promise
   expect(assets.map((asset) => asset.artifactId)).toEqual([artifactId]);
   const blobs = await readdir(join(STORAGE_DIR, "reports", reportId));
   expect(blobs).toEqual([artifactId]);
+}
+
+/**
+ * Simulate rows whose majority acknowledgement is still pending: `findOne`
+ * queries filtering on `field` see nothing under majority read concern until
+ * `committed()` is true, while local reads see the stored row. Records the read
+ * concern and read preference of each such query.
+ */
+function hideUncommittedRows(model: { findOne: unknown }, field: string, committed: () => boolean) {
+  type FakeQuery = {
+    exec: () => Promise<unknown>;
+    getFilter: () => Record<string, unknown>;
+    getOptions: () => { readConcern?: { level?: string }; readPreference?: { mode?: string } };
+  };
+  const original = model.findOne as (...args: unknown[]) => FakeQuery;
+  const reads: Array<{ level?: string; mode?: string }> = [];
+  model.findOne = function (this: unknown, ...args: unknown[]) {
+    const query = original.apply(this, args);
+    if (!(field in query.getFilter())) return query;
+    const exec = query.exec.bind(query);
+    query.exec = async () => {
+      const options = query.getOptions();
+      reads.push({ level: options.readConcern?.level, mode: options.readPreference?.mode });
+      const row = await exec();
+      return options.readConcern?.level === "majority" && !committed() ? null : row;
+    };
+    return query;
+  };
+  return { reads, restore: () => { model.findOne = original; } };
 }
 
 /** Let the first blob write succeed and fail the second one. */

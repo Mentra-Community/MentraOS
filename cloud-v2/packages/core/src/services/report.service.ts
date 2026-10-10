@@ -241,13 +241,16 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
   try {
     // The recovery reader requires majority visibility. A correlated creation
     // must not be acknowledged before its binding is committed at that level.
-    if (correlation) await ReportModel.create([document], {writeConcern: attachmentWriteConcern});
+    // A keyed creation is held to the same bar, since its key may be answered
+    // to a retry as an existing report.
+    if (correlation || incidentKey !== undefined) await ReportModel.create([document], {writeConcern: attachmentWriteConcern});
     else await ReportModel.create(document);
   } catch (error) {
     // A concurrent submission with the same incident key won the unique index.
+    // Its write may still be pending or roll back, so answer only once it is committed.
     if (incidentKey === undefined || (error as {code?: number}).code !== 11000) throw error;
-    const existing = await findIncidentKeyReport(input.mentraUserId, incidentKey);
-    if (!existing) throw error;
+    const existing = await awaitCommitted(() => findIncidentKeyReport(input.mentraUserId, incidentKey));
+    if (!existing) throw new ReportArtifactError(503, "incident report is not committed yet");
     return existing;
   }
 
@@ -275,8 +278,20 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
 
 async function findIncidentKeyReport(mentraUserId: string, incidentKey: string): Promise<SubmitReportResult | null> {
   const row = await ReportModel.findOne({mentraUserId, incidentKey}, {_id: 0, reportId: 1, status: 1})
-    .read('primary').lean<{reportId: string; status: ReportStatus}>();
+    .read('primary').readConcern('majority').lean<{reportId: string; status: ReportStatus}>();
   return row ? {reportId: row.reportId, status: row.status, deduplicated: true} : null;
+}
+
+/** Bound for waiting on a concurrent winner's majority commit; matches its write timeout. */
+export const committedReadWait = {timeoutMs: attachmentWriteConcern.wtimeout, pollMs: 100};
+
+async function awaitCommitted<T>(read: () => Promise<T | null>): Promise<T | null> {
+  const deadline = Date.now() + committedReadWait.timeoutMs;
+  for (;;) {
+    const row = await read();
+    if (row || Date.now() >= deadline) return row;
+    await new Promise(resolve => setTimeout(resolve, committedReadWait.pollMs));
+  }
 }
 
 /** Exact durable device-report link only. No collection-success inference and no
@@ -413,8 +428,9 @@ export async function referenceTestRunDiagnostics(owner: {reportId: string; ment
   return declared.length;
 }
 
-/** Worker retry path through the same report/asset models and blob provider. Reserve the
- * digest before writing: a concurrent different body cannot overwrite the winning blob.
+/** Keyed retry path through the same report/asset models and blob provider. Reserve the
+ * digest and source before writing: a concurrent different body or source cannot
+ * overwrite the winning blob or publish a second artifact under the same key.
  * Interrupted uploads keep their reservation so an identical retry can finish it. */
 async function addRetryableLogArtifact(input: {
   mentraUserId: string; reportId: string; source: string; entries: ReportLogEntry[];
@@ -427,11 +443,15 @@ async function addRetryableLogArtifact(input: {
   const storageKey = `reports/${reportId}/${artifactId}`, contentType = "application/json";
   try {
     await ReportAssetModel.create([{ artifactId, reportId, mentraUserId, storageKey, fileName: null,
-      contentType, sizeBytes: bytes.byteLength, sha256 }], { writeConcern: attachmentWriteConcern });
+      contentType, sizeBytes: bytes.byteLength, sha256, source: input.source }], { writeConcern: attachmentWriteConcern });
   } catch (error) { if ((error as { code?: number }).code !== 11000) throw error; }
-  const asset = await ReportAssetModel.findOne({ artifactId }).lean();
-  if (!asset || asset.reportId !== reportId || asset.mentraUserId !== mentraUserId || asset.storageKey !== storageKey
-    || asset.sha256 !== sha256 || asset.sizeBytes !== bytes.byteLength || asset.contentType !== contentType)
+  // Bind only against a committed reservation: a concurrent winner's may still roll back.
+  const asset = await awaitCommitted(() => ReportAssetModel.findOne({ artifactId }).read("primary").readConcern("majority").lean());
+  if (!asset) throw new ReportArtifactError(503, "attachment reservation is not committed yet");
+  // Reservations made before sources were bound carry none.
+  if (asset.reportId !== reportId || asset.mentraUserId !== mentraUserId || asset.storageKey !== storageKey
+    || asset.sha256 !== sha256 || asset.sizeBytes !== bytes.byteLength || asset.contentType !== contentType
+    || (asset.source != null && asset.source !== input.source))
     throw new ReportArtifactError(409, "attachment key already binds different content");
   // Published metadata proves an earlier verified write. A retry only reads it;
   // an unavailable/corrupt completed object must not trigger a destructive rewrite.

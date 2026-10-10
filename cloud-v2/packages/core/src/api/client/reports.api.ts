@@ -162,11 +162,17 @@ async function postSubmitReport(c: AppContext) {
     || parsed.data.trigger.source !== 'mentra_automated_testing'
     || parsed.data.trigger.reason !== 'incident_report_requested')) throw new InvalidRequest('invalid automated incident correlation');
 
-  const result = await submitReport({
-    mentraUserId: user.mentraUserId,
-    ...parsed.data,
-    ...(correlation !== undefined ? {automationCorrelation: reportAutomationCorrelation(correlation)!} : {}),
-  });
+  let result: Awaited<ReturnType<typeof submitReport>>;
+  try {
+    result = await submitReport({
+      mentraUserId: user.mentraUserId,
+      ...parsed.data,
+      ...(correlation !== undefined ? {automationCorrelation: reportAutomationCorrelation(correlation)!} : {}),
+    });
+  } catch (error) {
+    if (error instanceof ReportArtifactError) return reportArtifactErrorResponse(c, error);
+    throw error;
+  }
   return c.json(result, 200);
 }
 
@@ -207,11 +213,15 @@ async function postReportArtifacts(c: AppContext) {
       entries: parsed.data.entries,
     }, retryKey !== undefined ? { key: retryKey } : undefined);
   } catch (error) {
-    if (!(error instanceof ReportArtifactError)) throw error;
-    return c.json({ error: error.status === 409 ? "conflict" : "temporarily_unavailable", error_description: error.message }, error.status);
+    if (error instanceof ReportArtifactError) return reportArtifactErrorResponse(c, error);
+    throw error;
   }
   if (!result) return c.json({ error: "report not found" }, 404);
   return c.json(result, 200);
+}
+
+function reportArtifactErrorResponse(c: AppContext, error: ReportArtifactError) {
+  return c.json({ error: error.status === 409 ? "conflict" : "temporarily_unavailable", error_description: error.message }, error.status);
 }
 
 async function postReportComplete(c: AppContext) {
