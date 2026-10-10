@@ -28,6 +28,7 @@ import {RoutineWorkService} from './services/routine-work.service'
 import {NightlyRoutineService} from "./services/nightly-routine.service"
 import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
 import {ReportServerLogCollectionService} from './services/report-server-log-collection.service'
+import {assertSupabaseApiKeys} from "./services/account/gotrue.client"
 
 const logger = createLogger("core")
 
@@ -49,6 +50,7 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const port = opts.port ?? Number.parseInt(process.env.PORT ?? "3000", 10)
   const mongoUrl = opts.mongoUrl ?? process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2"
 
+  assertSupabaseApiKeys()
   await connectMongo(mongoUrl)
   try {
     await runStartupMigrations()
