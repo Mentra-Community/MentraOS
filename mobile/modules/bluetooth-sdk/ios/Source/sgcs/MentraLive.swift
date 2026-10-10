@@ -941,8 +941,12 @@ extension MentraLive: CBCentralManagerDelegate {
             // Clean up characteristics
             self.txCharacteristic = nil
             self.rxCharacteristic = nil
+            self.securePairingConfirmed = false
+            self.awaitingSecurePairingConfirmation = false
 
-            if self.pairingYieldAwaitingReclaim, Self.isPairingAuthFailure(error) {
+            // Entering pairing forgets the owner, so an auth failure while reconnecting saved
+            // glasses means this phone lost ownership even if it missed entering_pairing_mode.
+            if !self.isExplicitPairingAttempt(), Self.isPairingAuthFailure(error) {
                 self.standDownAfterOwnerLoss(reason: "ios_auth_fail")
                 return
             }
@@ -975,7 +979,9 @@ extension MentraLive: CBCentralManagerDelegate {
             self.connectedPeripheral = nil
             self.updateConnectionState(ConnTypes.DISCONNECTED)
 
-            if self.pairingYieldAwaitingReclaim, Self.isPairingAuthFailure(error) {
+            // Entering pairing forgets the owner, so an auth failure while reconnecting saved
+            // glasses means this phone lost ownership even if it missed entering_pairing_mode.
+            if !self.isExplicitPairingAttempt(), Self.isPairingAuthFailure(error) {
                 self.standDownAfterOwnerLoss(reason: "ios_auth_fail")
                 return
             }
@@ -1546,6 +1552,12 @@ class MentraLive: NSObject, SGCManager {
     /// Glasses opened pairing window — stand down without forgetting identity/bonds.
     private var pairingYieldActive = false
     private var pairingYieldAwaitingReclaim = false
+    /// Names seen advertising the secure-pairing trailer; survives manager recreation.
+    private static var securePairingNames = Set<String>()
+    /// glasses_ready arrived for a secure pairing target before pairing_info confirmed the bond.
+    private var awaitingSecurePairingConfirmation = false
+    /// pairing_info from secure firmware arrived on this BLE session.
+    private var securePairingConfirmed = false
     private var pairingYieldEndWorkItem: DispatchWorkItem?
     /// Hold GATT teardown until the unpair write can leave the phone.
     private var unpairFlushPending = false
@@ -1731,50 +1743,6 @@ class MentraLive: NSObject, SGCManager {
 
     func isPairingYieldActive() -> Bool {
         pairingYieldActive
-    }
-
-    private func enterPairingYield(windowMs: Int) {
-        cancelPendingReconnect(reason: "pairing_yield")
-        pairingYieldActive = true
-        pairingYieldAwaitingReclaim = false
-        pairingYieldEndWorkItem?.cancel()
-        if isScanning {
-            stopScan()
-        }
-        // Publish disconnect immediately for Phone A UI. didDisconnectPeripheral may lag
-        // or race with cancelPeripheralConnection; do not wait on it for stand-down.
-        isConnecting = false
-        connected = false
-        fullyBooted = false
-        glassesSessionId = nil
-        streamControlVersion = 0
-        readinessCompletedThisBleSession = false
-        rgbLedAuthorityClaimed = false
-        stopAllTimers()
-        closeL2capFileChannel()
-        txCharacteristic = nil
-        rxCharacteristic = nil
-        updateConnectionState(ConnTypes.DISCONNECTED)
-        if let peripheral = connectedPeripheral {
-            centralManager?.cancelPeripheralConnection(peripheral)
-        }
-        connectedPeripheral = nil
-        connectingPeripheral = nil
-        // Stand down for the whole window. Probing GATT during yield races the new
-        // phone for the single BLE slot and is exactly what entering_pairing_mode forbids.
-
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            Bridge.log("LIVE: Pairing yield ended — resume reconnect if still owned")
-            self.pairingYieldActive = false
-            self.pairingYieldAwaitingReclaim = true
-            self.pairingYieldEndWorkItem = nil
-            if !self.isKilled, self.connectedPeripheral == nil {
-                self.handleReconnection()
-            }
-        }
-        pairingYieldEndWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(windowMs), execute: work)
     }
 
     /// Pairing/auth failures after yield — CoreBluetooth codes, not localized strings.
@@ -3009,16 +2977,19 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: Received pong response - connection healthy")
 
         case "entering_pairing_mode":
-            let windowMs = max(5000, min(180_000, json["window_ms"] as? Int ?? 120_000))
-            Bridge.log("LIVE: Glasses entering pairing mode — yield \(windowMs)ms (no forget)")
-            enterPairingYield(windowMs: windowMs)
-            let body: [String: Any] = [
-                "window_ms": windowMs,
-                "reason": json["reason"] as? String ?? "user_gesture",
-            ]
-            Bridge.sendTypedMessage("entering_pairing_mode", body: body)
+            // The glasses forget the previous owner as soon as pairing mode starts.
+            // This phone has lost them: disconnect and do not try to reconnect.
+            Bridge.log("LIVE: Glasses entering pairing mode — owner lost, no reconnect")
+            standDownAfterOwnerLoss(reason: "entering_pairing_mode")
 
         case "pairing_info":
+            if json["secure_pairing_capable"] as? Bool == true {
+                securePairingConfirmed = true
+                if awaitingSecurePairingConfirmation {
+                    Bridge.log("LIVE: pairing_info confirms owner commit — reporting ready")
+                    markFullyBooted()
+                }
+            }
             Bridge.sendPairingInfo(
                 hadPreviousBond: json["had_previous_bond"] as? Bool ?? false,
                 pairingCode: json["pairing_code"] as? String,
@@ -3955,9 +3926,37 @@ class MentraLive: NSObject, SGCManager {
             }
         }
 
+        // handleDeviceReady promotes the pairing target to the default device. Secure glasses
+        // own a phone only after a BLE bond and announce it with pairing_info; GATT works
+        // unencrypted inside the open window, so readiness alone is not a pairing.
+        if isExplicitPairingAttempt(), isSecurePairingTarget(), !securePairingConfirmed {
+            Bridge.log("LIVE: glasses_ready before owner commit — waiting for pairing_info")
+            awaitingSecurePairingConfirmation = true
+            return
+        }
+        markFullyBooted()
+    }
+
+    private func markFullyBooted() {
+        awaitingSecurePairingConfirmation = false
         fullyBooted = true
         connected = true
         updateConnectionState(ConnTypes.CONNECTED)
+    }
+
+    private func isSecurePairingTarget() -> Bool {
+        if DeviceStore.shared.get("bluetooth", "pending_device_secure_pairing_capable") as? Bool == true {
+            return true
+        }
+        guard let name = connectedPeripheral?.name else { return false }
+        return Self.securePairingNames.contains(name)
+    }
+
+    /// The user is pairing from the scan screen rather than reconnecting a saved owner.
+    private func isExplicitPairingAttempt() -> Bool {
+        let pendingName = DeviceStore.shared.get("bluetooth", "pending_device_name") as? String ?? ""
+        let pendingAddress = DeviceStore.shared.get("bluetooth", "pending_device_address") as? String ?? ""
+        return manualDiscoveryActive || !pendingName.isEmpty || !pendingAddress.isEmpty
     }
 
     private func handleWifiScanResult(_ json: [String: Any]) {
@@ -5863,6 +5862,9 @@ class MentraLive: NSObject, SGCManager {
         pairingCode: String?,
         securePairingCapable: Bool
     ) {
+        if securePairingCapable {
+            Self.securePairingNames.insert(name)
+        }
         discoveredAdvPairing[name] = CachedAdvPairing(
             pairingMode: pairingMode,
             pairingCode: pairingCode,
