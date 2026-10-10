@@ -88,6 +88,32 @@ describe("POST /miniapp-token email claims", () => {
   })
 })
 
+describe("POST /miniapp-token for development builds", () => {
+  test("mints from the access token and package name alone, without verifying or calling anything else", async () => {
+    // A dev build of a package is that package: the phone applies the signer
+    // rule and Core mints exactly what it mints for the installed miniapp.
+    mocks.push(spyOn(trustedEmail, "trustedAccountEmail").mockResolvedValue(null))
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => {
+      throw new Error("the miniapp-token route must not call another service")
+    }) as never)
+    mocks.push(fetchSpy)
+
+    // A field left over from an older dev QR is ignored, never verified.
+    for (const body of [{packageName: "com.example.dev"}, {packageName: "com.example.dev", devAttestation: "old-qr"}]) {
+      const app = new Hono<AppEnv>().route("/", authApi)
+      const response = await app.request("/miniapp-token", {
+        method: "POST",
+        headers: {Authorization: "Bearer access", "Content-Type": "application/json"},
+        body: JSON.stringify(body),
+      })
+      expect(response.status).toBe(200)
+      const claims = await verifiedClaims(((await response.json()) as {token: string}).token, "com.example.dev")
+      expect(claims).toMatchObject({sub: "mu_01TEST", aud: "com.example.dev", tenantId: "mentra"})
+    }
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+})
+
 async function mint(packageName: string): Promise<string> {
   const app = new Hono<AppEnv>().route("/", authApi)
   const response = await app.request("/miniapp-token", {
