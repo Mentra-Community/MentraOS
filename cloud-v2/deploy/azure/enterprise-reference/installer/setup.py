@@ -1506,11 +1506,12 @@ def assign_employees(config, sp_id, entries):
 def entra_handoff(config, state):
     # For an Entra administrator; setup itself only needs the two IDs it prints.
     return {'step': 'Sign-in apps', 'action': (
-        f"An Application Administrator or Cloud Application Administrator, signed in to tenant {config['tenantId']}, "
-        f'downloads the installer without starting setup (the guide\'s install command, ending in '
-        f'"&& MENTRA_START=0 bash mentra-install.sh") and runs:\n'
+        'A Global Administrator, Application Administrator or Cloud Application Administrator runs this in Cloud Shell, '
+        f"signed in to tenant {config['tenantId']}:\n"
         f'    ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh --core-name {shlex.quote(app_name(config, "Core"))} '
         f'--mobile-name {shlex.quote(app_name(config, "Mobile"))} --installer-owner {state["owner"]} --grant-admin-consent\n'
+        '  If that is you, run it here. Anyone else first downloads the installer with the guide\'s install command, '
+        'ending in "&& MENTRA_START=0 bash mentra-install.sh".\n'
         f'  It prints coreApiClientId and mobileClientId. Then run: {setup_command()} configure-entra '
         '--core-client-id CORE_ID --mobile-client-id MOBILE_ID')}
 
@@ -1960,7 +1961,7 @@ def guided(args, directory):
             print(f"Setup also creates two Microsoft Entra app registrations for employee sign-in: "
                   f"\"{app_name(config, 'Core')}\" and \"{app_name(config, 'Mobile')}\".")
         print('These resources incur Azure charges; this profile uses authenticated public endpoints.')
-        if not confirm('Create these resources now? This takes about 15 minutes.', True, interactive):
+        if not confirm('Create these resources now? This takes about 20 minutes.', True, interactive):
             if checks['resourceGroup'] == 'new':
                 # The group was created only for the preview and is still empty.
                 print('  Removing the empty resource group created for the preview...')
@@ -2040,7 +2041,7 @@ def finish(directory, result):
     section('Done' if state['phase'] == 'infrastructure_verified' else 'Status')
     if state['phase'] == 'infrastructure_verified':
         print(f'Mentra Private Cloud is running at {origin}')
-        print(f'Employees: install the Mentra App, choose Connect to organization, and enter {origin.removeprefix("https://")}.')
+        print(f'Employees: install the Mentra App, tap Sign in to your organization, and enter {origin.removeprefix("https://")}.')
         print(f'Administrator key: {admin_key_command(config)}')
         core = state.get('outputs', {}).get('coreOrigin')
         if core:

@@ -67,7 +67,7 @@ import sys
 
 source, target = map(Path, sys.argv[1:])
 for name in ('azureProfile.json', 'msal_token_cache.json', 'msal_token_cache.bin',
-             'msal_http_cache.bin', 'config'):
+             'msal_http_cache.bin', 'service_principal_entries.json', 'service_principal_entries.bin', 'config'):
     path = source / name
     if path.is_file():
         shutil.copyfile(path, target / name)
@@ -92,10 +92,12 @@ OWNER_TAG="${INSTALLER_OWNER:+mentraInstallerOwner:$INSTALLER_OWNER}"
 
 # A directory object created moments ago can take a while to be readable
 # everywhere; retry reads and updates of new objects instead of failing.
+# Entra takes a while to show objects it just created. Earlier attempts stay
+# quiet so expected "does not exist" replies don't read as failures.
 retry() {
   local attempt
   for attempt in 1 2 3 4 5 6 7 8 9 10 11; do
-    "$@" && return 0
+    "$@" 2>/dev/null && return 0
     sleep "${MENTRA_ENTRA_RETRY_SECONDS:-5}"
   done
   "$@"
@@ -208,6 +210,7 @@ tag_service_principal() {
     --headers 'Content-Type=application/json' --body "$body" --output none
 }
 
+printf 'Setting up the Microsoft Entra sign-in apps. This can take a few minutes while Entra catches up.\n' >&2
 CORE_OBJECT_ID="$(find_or_create_app "$CORE_CLIENT_ID" "$CORE_NAME")"
 CORE_CLIENT_ID="$(retry az ad app show --id "$CORE_OBJECT_ID" --query appId -o tsv)"
 CORE_SCOPE_ID="$(retry az ad app show --id "$CORE_OBJECT_ID" --query "api.oauth2PermissionScopes[?value=='mentra.session'].id | [0]" -o tsv)"
