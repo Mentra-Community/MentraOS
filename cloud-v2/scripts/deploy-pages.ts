@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 
 const environments = ["dev", "staging", "prod"] as const;
 const sites = {
-  console: "mentra-console2",
   admin: "mentra-admin",
   portal: "mentra-enterprise-portal",
 } as const;

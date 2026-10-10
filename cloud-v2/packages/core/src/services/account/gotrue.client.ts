@@ -8,6 +8,11 @@
  * Two credentials, both server-only (never shipped to the app):
  *   - SUPABASE_ANON_KEY   -> the password/pkce token grants
  *   - SUPABASE_SERVICE_ROLE_KEY -> the admin API (user mutation, delete, links)
+ *
+ * Each holds either the project's legacy JWT key (`anon` / `service_role`) or
+ * its replacement (`sb_publishable_...` / `sb_secret_...`). New-format keys are
+ * not JWTs, so they travel only in the `apikey` header; a legacy key also goes
+ * in `Authorization: Bearer`, as GoTrue has always accepted it.
  */
 import { AccountError } from "./account-error";
 
@@ -17,6 +22,34 @@ export interface GotrueIdentity {
   emailVerified: boolean;
   name?: string;
   avatarUrl?: string;
+}
+
+export type SupabaseApiKeyFormat = "legacy_jwt" | "publishable" | "secret";
+
+export function supabaseApiKeyFormat(key: string): SupabaseApiKeyFormat {
+  if (key.startsWith("sb_publishable_")) return "publishable";
+  if (key.startsWith("sb_secret_")) return "secret";
+  return "legacy_jwt";
+}
+
+/**
+ * Refuse swapped keys at startup: a secret key in the anon slot, or a
+ * publishable key in the service slot. Unset keys are allowed; the calls that
+ * need them fail with "not configured".
+ */
+export function assertSupabaseApiKeys(env: Record<string, string | undefined> = process.env): void {
+  const anon = env.SUPABASE_ANON_KEY?.trim();
+  const service = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (anon && supabaseApiKeyFormat(anon) === "secret") {
+    throw new Error("SUPABASE_ANON_KEY holds a secret key (sb_secret_); set it to the project's publishable key");
+  }
+  if (service && supabaseApiKeyFormat(service) === "publishable") {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY holds a publishable key (sb_publishable_); set it to the project's secret key");
+  }
+}
+
+function keyHeaders(key: string): Record<string, string> {
+  return supabaseApiKeyFormat(key) === "legacy_jwt" ? { apikey: key, authorization: `Bearer ${key}` } : { apikey: key };
 }
 
 function baseUrl(): string {
@@ -46,8 +79,7 @@ async function gotrue(
   const res = await fetch(`${baseUrl()}/auth/v1${path}${qs}`, {
     method: init.method,
     headers: {
-      apikey: key,
-      authorization: `Bearer ${key}`,
+      ...keyHeaders(key),
       "content-type": "application/json",
     },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),

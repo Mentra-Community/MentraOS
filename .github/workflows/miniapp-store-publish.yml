@@ -1,0 +1,123 @@
+name: Publish first-party miniapps to the Store
+
+# Builds and validates the first-party miniapps kept in miniapps/ on every
+# change, and publishes them to the Mentra Miniapp Store from dev. A version
+# the Store already has is skipped, so publishing happens when a miniapp.json
+# version is bumped.
+
+on:
+  pull_request:
+    paths:
+      - "miniapps/captions/**"
+      - "miniapps/translation/**"
+      - "miniapps/teleprompter/**"
+      - "miniapps/navigation/**"
+      - "miniapps/recorder/**"
+      - "sdk/miniapp-cli/**"
+      - "mobile/modules/miniapp/**"
+      - ".github/actions/publish-miniapp/**"
+      - ".github/workflows/miniapp-store-publish.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "miniapps/captions/**"
+      - "miniapps/translation/**"
+      - "miniapps/teleprompter/**"
+      - "miniapps/navigation/**"
+      - "miniapps/recorder/**"
+      - "sdk/miniapp-cli/**"
+      - "mobile/modules/miniapp/**"
+      - ".github/actions/publish-miniapp/**"
+      - ".github/workflows/miniapp-store-publish.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: miniapp-store-publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    name: Validate ${{ matrix.miniapp }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        miniapp: [captions, translation, teleprompter, navigation, recorder]
+    env:
+      # Public Mapbox tiles token baked into the Maps UI bundle.
+      PUBLIC_MAPBOX_TOKEN: ${{ vars.PUBLIC_MAPBOX_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Build the Mentra Miniapp SDK
+        working-directory: mobile/modules/miniapp
+        run: bun run build
+      - name: Test
+        if: matrix.miniapp == 'navigation'
+        working-directory: miniapps/${{ matrix.miniapp }}
+        run: bun test
+      - name: Production pack
+        working-directory: miniapps/${{ matrix.miniapp }}
+        run: NODE_ENV=production bun run pack
+      - uses: ./.github/actions/publish-miniapp
+        with:
+          operation: prepare
+          directory: miniapps/${{ matrix.miniapp }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: miniapp-${{ matrix.miniapp }}-${{ github.sha }}
+          path: miniapps/${{ matrix.miniapp }}/build/*.zip
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
+  publish:
+    name: Publish ${{ matrix.miniapp }}
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
+    needs: validate
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - miniapp: captions
+            key: MENTRA_STORE_PUBLISH_TOKEN_CAPTIONS
+          - miniapp: translation
+            key: MENTRA_STORE_PUBLISH_TOKEN_TRANSLATION
+          - miniapp: teleprompter
+            key: MENTRA_STORE_PUBLISH_TOKEN_TELEPROMPTER
+          - miniapp: navigation
+            key: MENTRA_STORE_PUBLISH_TOKEN_MAPS
+          - miniapp: recorder
+            key: MENTRA_STORE_PUBLISH_TOKEN_RECORDER
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: miniapp-${{ matrix.miniapp }}-${{ github.sha }}
+          path: miniapps/${{ matrix.miniapp }}/build
+      - name: Require the publishing key
+        env:
+          HAS_KEY: ${{ secrets[matrix.key] != '' }}
+        run: |
+          if [[ "$HAS_KEY" != "true" ]]; then
+            echo "::error::Repository secret ${{ matrix.key }} is not set. A Store administrator issues an app-restricted publishing key for this miniapp."
+            exit 1
+          fi
+      - uses: ./.github/actions/publish-miniapp
+        with:
+          operation: publish
+          directory: miniapps/${{ matrix.miniapp }}
+          branch: dev
+          token: ${{ secrets[matrix.key] }}

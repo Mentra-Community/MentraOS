@@ -417,13 +417,13 @@ class MantleManager {
         ? {
             getMeetingAccount: async () => {
               const session = await workspaceAuth.getSession()
-              if (!session) throw new Error("Sign in to your workspace to use Teams")
+              if (!session) throw new Error("Sign in to your organization to use Teams")
               const {displayName, email} = session.identity
               return {displayName, email}
             },
             getTeamsToken: async () => {
               if (deployment.manifest.auth.mode !== "microsoft-entra") {
-                throw new Error("This workspace does not have a Microsoft Entra identity")
+                throw new Error("This organization does not have a Microsoft Entra identity")
               }
               return workspaceAuth.getAccessToken({scopes: deployment.manifest.auth.teamsScopes})
             },
@@ -790,7 +790,7 @@ class MantleManager {
       // initMiniapps owns managed synchronization; never start an independent
       // retry that could install a bundle without publishing its visibility.
       if (shouldHideMiniapp(mentraCallPackageName)) {
-        throw new Error("The workspace Call bundle could not be installed and verified")
+        throw new Error("The organization's Call bundle could not be installed and verified")
       }
       return
     }

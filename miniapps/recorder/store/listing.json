@@ -1,0 +1,11 @@
+{
+  "subtitle": "Record audio from your smart glasses.",
+  "longDescription": "Capture audio from your glasses microphone and save it as an audio file on your phone. Recorder gives you simple recording controls inside the Mentra App.\n\nPlay back recordings and export them as WAV files to keep or share. Requires compatible glasses and microphone access.",
+  "categories": [
+    "productivity",
+    "tools"
+  ],
+  "privacyPolicyUrl": "https://mentraglass.com/privacy-policy",
+  "supportUrl": "https://mentraglass.com/contact",
+  "websiteUrl": "https://mentraglass.com/"
+}

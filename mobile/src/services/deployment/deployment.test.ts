@@ -377,7 +377,7 @@ describe("resolveDeploymentCandidate", () => {
     })
     await expect(resolveDeploymentCandidate(WORKSPACE, {fetch: async () => malformed})).rejects.toMatchObject({
       code: "invalid-manifest",
-      message: "Workspace manifest body is not valid UTF-8.",
+      message: "Organization manifest body is not valid UTF-8.",
     })
   })
 
