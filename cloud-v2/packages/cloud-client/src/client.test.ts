@@ -469,6 +469,146 @@ describe("CloudClient construction", () => {
   })
 })
 
+describe("Core-brokered Runtime token retries", () => {
+  function photoClient(
+    mintToken: () => Promise<Response>,
+    allocatePhoto = async () =>
+      jsonResponse({requestId: "photo-1", uploadUrl: "https://upload", readUrl: "https://read"}),
+  ) {
+    const calls: string[] = []
+    const delays: number[] = []
+    const coreToken = testJwt({sub: "user-1", tenant_id: "tenant-1", exp: Math.floor(Date.now() / 1000) + 3600})
+    const cloud = new CloudClient(
+      config({
+        endpoints: {core: "https://core.example.test", runtime: "https://runtime.example.test"},
+        auth: {
+          core: {accessToken: coreToken, refreshToken: "refresh-1"},
+          runtime: {source: "core"},
+        },
+        timers: {
+          ...immediateTimers,
+          setTimeout(callback, delayMs) {
+            delays.push(delayMs)
+            callback()
+            return 0
+          },
+        },
+        http: async (input, init) => {
+          const path = new URL(String(input)).pathname
+          calls.push(path)
+          if (path === "/api/client/auth/refresh") {
+            return jsonResponse({
+              access_token: coreToken,
+              refresh_token: "refresh-2",
+              token_type: "Bearer",
+              expires_in: 3600,
+            })
+          }
+          if (path === "/api/client/auth/runtime-token") {
+            expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${coreToken}`)
+            return mintToken()
+          }
+          if (path === "/api/camera/photo") {
+            expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer runtime-token")
+            return allocatePhoto()
+          }
+          throw new Error(`unexpected fetch: ${path}`)
+        },
+      }),
+    )
+    return {cloud, calls, delays}
+  }
+
+  function mintedToken() {
+    return jsonResponse({access_token: "runtime-token", token_type: "Bearer", expires_in: 3600})
+  }
+
+  test("recovers a photo from a transient token transport failure and caches the token for the next photo", async () => {
+    let attempts = 0
+    const {cloud, calls, delays} = photoClient(async () => {
+      if (++attempts === 1) throw new TypeError("Network request failed")
+      return mintedToken()
+    })
+
+    await expect(cloud.runtime.startManagedPhoto()).resolves.toMatchObject({requestId: "photo-1"})
+    await expect(cloud.runtime.startManagedPhoto()).resolves.toMatchObject({requestId: "photo-1"})
+    expect(calls).toEqual([
+      "/api/client/auth/refresh",
+      "/api/client/auth/runtime-token",
+      "/api/client/auth/runtime-token",
+      "/api/camera/photo",
+      "/api/camera/photo",
+    ])
+    expect(delays).toEqual([250])
+  })
+
+  test("concurrent callers share one token retry sequence", async () => {
+    let attempts = 0
+    const {cloud, delays} = photoClient(async () => {
+      if (++attempts < 3) throw new TypeError("Network request failed")
+      return mintedToken()
+    })
+
+    await expect(Promise.all([cloud.auth.getRuntimeToken(), cloud.auth.getRuntimeToken()])).resolves.toEqual([
+      "runtime-token",
+      "runtime-token",
+    ])
+    expect(attempts).toBe(3)
+    expect(delays).toEqual([250, 500])
+  })
+
+  test("exhaustion preserves the network error without allocating a photo and allows a later request", async () => {
+    let offline = true
+    let attempts = 0
+    const {cloud, calls, delays} = photoClient(async () => {
+      attempts += 1
+      if (offline) throw new TypeError("Network request failed")
+      return mintedToken()
+    })
+
+    const error = await cloud.runtime.startManagedPhoto().catch((failure: unknown) => failure)
+    expect(error).toBeInstanceOf(HttpError)
+    expect(error).toMatchObject({status: 0, code: "NETWORK_ERROR"})
+    expect(attempts).toBe(3)
+    expect(delays).toEqual([250, 500])
+    expect(calls).not.toContain("/api/camera/photo")
+
+    offline = false
+    await expect(cloud.runtime.startManagedPhoto()).resolves.toMatchObject({requestId: "photo-1"})
+    expect(attempts).toBe(4)
+  })
+
+  test.each([401, 403, 503])("does not retry a definite HTTP %i token response", async (status) => {
+    let attempts = 0
+    const {cloud, calls, delays} = photoClient(async () => {
+      attempts += 1
+      return new Response(JSON.stringify({code: "TOKEN_REJECTED"}), {status})
+    })
+
+    const error = await cloud.runtime.startManagedPhoto().catch((failure: unknown) => failure)
+    expect(error).toBeInstanceOf(HttpError)
+    expect(error).toMatchObject({status, code: "TOKEN_REJECTED"})
+    expect(attempts).toBe(1)
+    expect(delays).toEqual([])
+    expect(calls).not.toContain("/api/camera/photo")
+  })
+
+  test("does not retry the non-idempotent photo allocation POST", async () => {
+    let allocations = 0
+    const {cloud, delays} = photoClient(
+      async () => mintedToken(),
+      async () => {
+        allocations += 1
+        throw new TypeError("Network request failed")
+      },
+    )
+
+    await expect(cloud.runtime.startManagedPhoto()).rejects.toMatchObject({status: 0, code: "NETWORK_ERROR"})
+    expect(allocations).toBe(1)
+    expect(delays).toEqual([])
+  })
+})
+
 function config(
   overrides: Pick<CloudClientConfig, "endpoints" | "auth" | "timers"> & {
     storage?: CloudClientTransports["storage"]
