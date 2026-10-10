@@ -4,17 +4,28 @@ import {CrustModuleEvents} from "./Crust.types"
 
 class CrustModule extends NativeModule<CrustModuleEvents> {
   PI = Math.PI
+  private readonly httpRequests = new Map<string, AbortController>()
   async setValueAsync(value: string): Promise<void> {
     this.emit("onChange", {value})
   }
-  async nativeHttpRequest(method: string, url: string, headers: Record<string, string>, body?: string | null) {
-    const response = await fetch(url, {method, headers, body})
-    return {
-      status: response.status,
-      statusText: response.statusText,
-      headers: Object.fromEntries(response.headers.entries()),
-      body: await response.text(),
+  async nativeHttpRequest(requestId: string, method: string, url: string, headers: Record<string, string>, body?: string | null) {
+    const controller = new AbortController()
+    this.httpRequests.set(requestId, controller)
+    try {
+      const response = await fetch(url, {method, headers, body, signal: controller.signal})
+      return {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+        body: await response.text(),
+      }
+    } finally {
+      this.httpRequests.delete(requestId)
     }
+  }
+  async cancelNativeHttpRequest(requestId: string): Promise<void> {
+    this.httpRequests.get(requestId)?.abort()
+    this.httpRequests.delete(requestId)
   }
   hello() {
     return "Hello world! 👋"

@@ -21,7 +21,7 @@ import {Platform} from "react-native"
 import type {AudioPosition, AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import CrustModule from "@mentra/crust"
+import CrustModule, {nativeHttpRequest} from "@mentra/crust"
 import {getAuth, getConfigValues, isFeatureEnabled} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
@@ -347,11 +347,13 @@ function ensureTransports(): void {
       return globalThis.fetch(input, init)
     }
     const headers = Object.fromEntries(new Headers(init?.headers).entries())
-    const result = await CrustModule.nativeHttpRequest(
+    const result = await nativeHttpRequest(
+      CrustModule,
       init?.method ?? "GET",
       input,
       headers,
       (init?.body as string | undefined) ?? null,
+      init?.signal ?? undefined,
     )
     return new Response(nativeHttpResponseBody(result.status, result.body), {
       status: result.status,

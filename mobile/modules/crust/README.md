@@ -46,3 +46,15 @@ sibling, which is declared as a dependency.
 
 Source lives in the [MentraOS monorepo](https://github.com/Mentra-Community/MentraOS)
 under `mobile/modules/crust`. Issues and contributions welcome there.
+
+## Android native HTTP cancellation
+
+Engine's cloud client uses `nativeHttpRequest(CrustModule, method, url, headers,
+body, signal?)` from `@mentra/crust`. The helper preserves Android's native
+background HTTP transport and connects the caller's `AbortSignal` to cancellation
+of that exact OkHttp call. Request IDs and native call ownership stay inside the
+transport. Completion removes its listener and native registry entry; module
+shutdown cancels only that module's outstanding host requests.
+
+Engine callers use the ordinary cloud-client API with a signal. They do not call
+native start/cancel methods or maintain their own request registry.
