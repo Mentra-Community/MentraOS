@@ -1,3 +1,4 @@
+import type {BesCrashDetectedEvent} from "@mentra/bluetooth-sdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {createMMKV, type MMKV} from "react-native-mmkv"
 
@@ -16,39 +17,6 @@ const INCIDENT_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
 const REPORT_ID_PATTERN = /^rep_[A-Za-z0-9]+$/
 
 export type BesCrashReason = "bes_crash" | "bes_unexpected_reset"
-
-// TODO(OS-1988 integration): replace with BesCrashDetectedEvent from @mentra/bluetooth-sdk.
-export interface BesCrashDetectedEvent {
-  type: "bes_crash_detected"
-  incidentKey: string
-  reason: BesCrashReason
-  state: string
-  reportId: string | null
-  summary?: {
-    attribution?: "match" | "older" | "unknown"
-    dumpId?: string | null
-    bootId?: string | null
-    resetHw?: number
-    resetSw?: number
-    crashUnixMs?: number | null
-    coveredFromMs?: number
-    coveredToMs?: number
-    traceGaps?: number
-    truncated?: boolean
-    torn?: boolean
-    tailCaptured?: boolean
-    dumpGap?: boolean
-    evictedCount?: number
-    recentEvictions?: Array<{incidentKey?: string; reason?: string; bytes?: number; ms?: number}>
-  }
-}
-
-// TODO(OS-1988 integration): drop once BluetoothSdk declares the event and method.
-interface BesCrashBluetoothSdk {
-  addListener(eventName: "bes_crash_detected", listener: (event: BesCrashDetectedEvent) => void): {remove(): void}
-  sendBesCrashReported(incidentKey: string, reportId: string): Promise<void>
-}
-const besCrashSdk = BluetoothSdk as unknown as BesCrashBluetoothSdk
 
 export type BesCrashReportOutcome =
   | {status: "reported"; reportId: string; submitted: boolean}
@@ -121,7 +89,7 @@ export function besCrashTriggerReason(event: Pick<BesCrashDetectedEvent, "incide
 const isoOrUnknown = (ms: number | null | undefined): string =>
   typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : "unknown"
 
-const hex = (value: number | undefined): string => (typeof value === "number" ? `0x${value.toString(16)}` : "unknown")
+const hex = (value: number | null | undefined): string => (typeof value === "number" ? `0x${value.toString(16)}` : "unknown")
 
 const yesNo = (value: boolean | undefined): string => (value === undefined ? "unknown" : value ? "yes" : "no")
 
@@ -174,7 +142,7 @@ async function acknowledgeAndUpload(
   submitted: boolean,
 ): Promise<BesCrashReportOutcome> {
   try {
-    await besCrashSdk.sendBesCrashReported(incidentKey, reportId)
+    await BluetoothSdk.sendBesCrashReported(incidentKey, reportId)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.warn(`[${LOG_TAG}] ${incidentKey}: glasses did not acknowledge ${reportId}:`, message)
@@ -293,7 +261,7 @@ export function handleBesCrashDetected(event: BesCrashDetectedEvent): Promise<Be
 
 export function startBesCrashReportService(): void {
   if (subscription) return
-  subscription = besCrashSdk.addListener("bes_crash_detected", (event) => {
+  subscription = BluetoothSdk.addListener("bes_crash_detected", (event) => {
     void handleBesCrashDetected(event)
   })
 }
