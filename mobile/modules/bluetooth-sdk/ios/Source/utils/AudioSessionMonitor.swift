@@ -10,9 +10,11 @@ import Foundation
 
 #if !os(macOS)
 import AVFoundation
+import OSLog
 import UIKit
 
 class AudioSessionMonitor {
+    private static let readinessLog = Logger(subsystem: "com.mentra.bluetooth-sdk", category: "AudioReadiness")
     /// Singleton instance
     private static var instance: AudioSessionMonitor?
 
@@ -96,15 +98,26 @@ class AudioSessionMonitor {
     /// This avoids switching A2DP music playback to HFP microphone mode
     static func isDevicePaired(devicePattern: String) -> Bool {
         let session = AVAudioSession.sharedInstance()
+        let activeTarget = isAudioDeviceConnected(devicePattern: devicePattern)
+        let availableInputs = session.availableInputs
+        let bluetoothInput = availableInputs?.first { input in
+            input.portType == .bluetoothHFP
+                && input.portName.localizedCaseInsensitiveContains(devicePattern)
+        }
+
+        // NSLog messages redact the native route checks in retained Mac logs.
+        // Keep categorical evidence at notice level without exposing names or
+        // selecting an input, activating the session, or changing audio routing.
+        readinessLog.notice("Pair audio: iosOnMac=\(ProcessInfo.processInfo.isiOSAppOnMac, privacy: .public) targetPresent=\(!devicePattern.isEmpty, privacy: .public) category=\(session.category.rawValue, privacy: .public) outputs=\(session.currentRoute.outputs.count, privacy: .public) inputs=\(availableInputs?.count ?? -1, privacy: .public) activeTarget=\(activeTarget, privacy: .public) hfpTarget=\(bluetoothInput != nil, privacy: .public)")
 
         // Check if already active (using A2DP for music or HFP for calls)
-        if isAudioDeviceConnected(devicePattern: devicePattern) {
+        if activeTarget {
             Bridge.log("AudioMonitor: Device '\(devicePattern)' already active")
             return true
         }
 
         // Try to find in availableInputs (includes paired devices)
-        guard let availableInputs = session.availableInputs else {
+        guard let availableInputs else {
             Bridge.log("AudioMonitor: ❌ availableInputs is nil")
             return false
         }
@@ -112,11 +125,6 @@ class AudioSessionMonitor {
         Bridge.log("AudioMonitor: availableInputs count: \(availableInputs.count)")
         for input in availableInputs {
             Bridge.log("AudioMonitor:   - \(input.portName) (type: \(input.portType.rawValue))")
-        }
-
-        let bluetoothInput = availableInputs.first { input in
-            input.portType == .bluetoothHFP
-                && input.portName.localizedCaseInsensitiveContains(devicePattern)
         }
 
         if let btInput = bluetoothInput {
