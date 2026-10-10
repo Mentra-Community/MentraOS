@@ -3,12 +3,14 @@ import type {ReactNode} from "react"
 
 import LoginScreen from "@/app/auth/start"
 import EmailLoginScreen from "@/app/auth/email-login"
+import ForgotPasswordScreen from "@/app/auth/forgot-password"
 
 const mockPush = jest.fn()
 const mockReturnToMentra = jest.fn()
 const mockShowAlert = jest.fn()
+const mockRouteParams: {email?: string} = {}
 
-jest.mock("expo-router", () => ({useLocalSearchParams: () => ({})}))
+jest.mock("expo-router", () => ({useLocalSearchParams: () => mockRouteParams}))
 jest.mock("@/contexts/NavigationHistoryContext", () => ({focusEffectPreventBack: jest.fn()}))
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {
@@ -44,6 +46,7 @@ jest.mock("@/components/ignite", () => {
 beforeEach(() => {
   jest.clearAllMocks()
   mockReturnToMentra.mockResolvedValue(undefined)
+  delete mockRouteParams.email
 })
 
 test("Log in uses the same deployment-gated navigation for native activation and touch", async () => {
@@ -65,8 +68,22 @@ test("Log in uses the same deployment-gated navigation for native activation and
 test("Forgot password opens the existing form through native activation and touch", () => {
   const {getByText} = render(<EmailLoginScreen />)
   fireEvent(getByText("login:forgotPassword"), "accessibilityTap")
-  expect(mockPush).toHaveBeenCalledWith("/auth/forgot-password")
+  expect(mockPush).toHaveBeenCalledWith("/auth/forgot-password", {email: ""})
   expect(mockPush).toHaveBeenCalledTimes(1)
   fireEvent.press(getByText("login:forgotPassword"))
   expect(mockPush).toHaveBeenCalledTimes(2)
+})
+
+test("a signup handoff prefills sign-in and carries the email into password recovery", () => {
+  mockRouteParams.email = "returning@example.test"
+  const screen = render(<EmailLoginScreen />)
+  expect(screen.getByPlaceholderText("login:emailPlaceholder").props.value).toBe(mockRouteParams.email)
+  fireEvent.press(screen.getByText("login:forgotPassword"))
+  expect(mockPush).toHaveBeenCalledWith("/auth/forgot-password", {email: mockRouteParams.email})
+})
+
+test("password recovery prefills the email passed from sign-in", () => {
+  mockRouteParams.email = "returning@example.test"
+  const screen = render(<ForgotPasswordScreen />)
+  expect(screen.getByPlaceholderText("login:emailPlaceholder").props.value).toBe(mockRouteParams.email)
 })

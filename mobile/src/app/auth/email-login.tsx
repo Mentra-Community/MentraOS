@@ -1,4 +1,5 @@
 import {FontAwesome} from "@expo/vector-icons"
+import {useLocalSearchParams} from "expo-router"
 import {useState} from "react"
 import {
   ActivityIndicator,
@@ -29,7 +30,8 @@ import AppleIcon from "assets/icons/component/AppleIcon"
 import GoogleIcon from "assets/icons/component/GoogleIcon"
 
 export default function EmailLoginScreen() {
-  const [email, setEmail] = useState("")
+  const {email: initialEmail} = useLocalSearchParams<{email?: string}>()
+  const [email, setEmail] = useState(initialEmail ?? "")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -91,7 +93,7 @@ export default function EmailLoginScreen() {
   }
   const handleGoogleSignIn = () => handleSocialSignIn("google")
   const handleAppleSignIn = () => handleSocialSignIn("apple")
-  const handleForgotPassword = () => push("/auth/forgot-password")
+  const handleForgotPassword = () => push("/auth/forgot-password", {email: email.trim()})
 
   return (
     <Screen preset="fixed">

@@ -1,5 +1,5 @@
 import {afterEach, beforeEach, describe, expect, test} from "bun:test"
-import {assertSupabaseApiKeys, deleteUser, supabaseApiKeyFormat, verifyPassword} from "./gotrue.client"
+import {assertSupabaseApiKeys, deleteUser, signUp, supabaseApiKeyFormat, verifyPassword} from "./gotrue.client"
 
 const LEGACY_ANON = "legacy-anon-key"
 const LEGACY_SERVICE = "legacy-service-role-key"
@@ -96,5 +96,57 @@ describe("assertSupabaseApiKeys", () => {
     expect(() => assertSupabaseApiKeys({SUPABASE_SERVICE_ROLE_KEY: "sb_publishable_x"})).toThrow(
       /SUPABASE_SERVICE_ROLE_KEY/,
     )
+  })
+})
+
+describe("signup outcomes", () => {
+  beforeEach(() => {
+    process.env.SUPABASE_ANON_KEY = LEGACY_ANON
+  })
+
+  test("an obfuscated duplicate directs a returning user to sign-in", async () => {
+    respondWith(200, {id: "obfuscated-id", identities: [], app_metadata: {provider: "email"}})
+    await expect(signUp("returning@example.test", "new-password")).rejects.toMatchObject({
+      code: "email_taken",
+      httpStatus: 409,
+      description: "This email is already registered. Please sign in.",
+    })
+    expect(seen).toHaveLength(1)
+  })
+
+  test.each(["user_already_exists", "email_exists"])("handles explicit duplicate code %s", async (error_code) => {
+    respondWith(422, {error_code, msg: "User already registered"})
+    await expect(signUp("returning@example.test", "new-password")).rejects.toMatchObject({
+      code: "email_taken",
+      httpStatus: 409,
+    })
+  })
+
+  test.each([200, 201])("preserves verification for a new or unconfirmed account (HTTP %s)", async (status) => {
+    respondWith(status, {id: "unconfirmed-id", email_confirmed_at: null, identities: [{provider: "email"}]})
+    await expect(signUp("new@example.test", "new-password")).resolves.toBeUndefined()
+  })
+
+  test("does not mistake an invited, unconfirmed account for a confirmed duplicate", async () => {
+    respondWith(200, {id: "invited-id", identities: [], invited_at: "2026-01-01T00:00:00Z"})
+    await expect(signUp("invited@example.test", "new-password")).resolves.toBeUndefined()
+  })
+
+  test("rate limiting does not claim a verification email was sent", async () => {
+    respondWith(429, {error_code: "over_email_send_rate_limit"})
+    await expect(signUp("new@example.test", "new-password")).rejects.toMatchObject({
+      code: "rate_limited",
+      httpStatus: 429,
+    })
+  })
+
+  test("an unrelated 422 is not reported as success or an existing account", async () => {
+    respondWith(422, {error_code: "email_address_invalid", msg: "Invalid email address"})
+    await expect(signUp("invalid", "new-password")).rejects.toMatchObject({code: "server_error"})
+  })
+
+  test("preserves weak-password errors", async () => {
+    respondWith(422, {error_code: "weak_password", msg: "Password is too weak"})
+    await expect(signUp("new@example.test", "weak")).rejects.toMatchObject({code: "weak_password"})
   })
 })

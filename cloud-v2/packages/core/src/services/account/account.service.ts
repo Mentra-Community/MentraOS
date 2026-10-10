@@ -30,7 +30,7 @@ async function sessionForIdentity(identity: gotrue.GotrueIdentity): Promise<Toke
 
 export async function signup(email: string, password: string): Promise<void> {
   await gotrue.signUp(email, password)
-  // Uniform: caller returns "verification_sent" regardless (anti-enumeration).
+  // Confirmed duplicates surface as email_taken; only verification flows succeed.
 }
 
 export async function resendVerification(email: string): Promise<void> {

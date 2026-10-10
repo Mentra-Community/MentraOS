@@ -59,6 +59,7 @@ let userVerified = true;
 let storedPassword = TEST_PASSWORD;
 let storedEmail = TEST_EMAIL;
 let lastEmailConfirmFlag: unknown = null;
+let signupExistingProvider: string | null = null;
 
 beforeAll(async () => {
   // Mock GoTrue: password grant, admin user lookup/update.
@@ -107,7 +108,15 @@ beforeAll(async () => {
         }
         return send(200, userObj);
       }
-      if (url.pathname === "/auth/v1/signup") return send(200, userObj);
+      if (url.pathname === "/auth/v1/signup") {
+        return send(200, {
+          ...userObj,
+          id: signupExistingProvider ? "obfuscated-id" : SUPABASE_USER_ID,
+          email_confirmed_at: null,
+          identities: signupExistingProvider ? [] : [{provider: "email"}],
+          app_metadata: {provider: "email", providers: ["email"]},
+        });
+      }
       if (url.pathname === "/auth/v1/resend") return send(200, {});
       return send(404, { error: "not found" });
     });
@@ -151,6 +160,7 @@ beforeEach(async () => {
   storedPassword = TEST_PASSWORD;
   storedEmail = TEST_EMAIL;
   lastEmailConfirmFlag = null;
+  signupExistingProvider = null;
   resetAccountRateLimits();
   await Promise.all([
     UserModel.deleteMany({ tenantId: "mentra" }),
@@ -174,6 +184,36 @@ function post(path: string, body: unknown, token?: string): Promise<Response> {
 }
 
 describe("account auth", () => {
+  test.each(["email", "apple", "google"])("signup for a confirmed %s account returns a private-details-free conflict", async (provider) => {
+    signupExistingProvider = provider;
+    const res = await post("/api/account/signup", {email: TEST_EMAIL, password: "new-password"});
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "email_taken",
+      error_description: "This email is already registered. Please sign in.",
+    });
+    expect(storedPassword).toBe(TEST_PASSWORD);
+    expect(await UserModel.countDocuments({})).toBe(0);
+    expect(await RefreshTokenModel.countDocuments({})).toBe(0);
+  });
+
+  test("new and unconfirmed signups still return the verification response", async () => {
+    const res = await post("/api/account/signup", {email: "new@example.test", password: TEST_PASSWORD});
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({status: "verification_sent"});
+  });
+
+  test("duplicate signup disclosure retains the per-IP limit", async () => {
+    signupExistingProvider = "apple";
+    for (let i = 0; i < 5; i++) {
+      const res = await post("/api/account/signup", {email: TEST_EMAIL, password: TEST_PASSWORD});
+      expect(res.status).toBe(409);
+    }
+    const res = await post("/api/account/signup", {email: "different@example.test", password: TEST_PASSWORD});
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toBe("rate_limited");
+  });
+
   test("login with valid credentials returns a V2 session whose refresh works", async () => {
     const res = await post("/api/account/login", { email: TEST_EMAIL, password: TEST_PASSWORD });
     expect(res.status).toBe(200);
