@@ -394,6 +394,26 @@ class GuidedTests(unittest.TestCase):
         self.assertIn(f'New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {SUB}', policy)
         self.assertEqual(result['adminConsent'], 'granted')
 
+    def test_a_failed_re_run_keeps_an_applied_teams_policy(self):
+        self.args.teams_client_id = SUB
+        not_admin = (False, 'your account is not a Teams administrator here (guest accounts are refused)')
+        with patch.object(setup, 'vault_get', return_value={'value': 'saved'}), patch.object(setup, 'check_graph_secret'), \
+             patch.object(setup, 'update_configuration'), patch.object(setup, 'meetings_consent', return_value=True), \
+             patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}), \
+             patch.object(setup, 'apply_teams_policy', return_value=not_admin):
+            # Renewing the secret from an account that isn't a Teams administrator changes nothing in Teams.
+            state = self.write_state('infrastructure_verified', outputs={'keyVaultName': 'kvacmementra12345678'},
+                                     teamsPolicyApplied=SUB)
+            result = setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
+            self.assertTrue(result['teamsPolicyApplied'])
+            self.assertEqual(setup.read_json(self.directory / 'state.json')['teamsPolicyApplied'], SUB)
+            # A different app still needs its own policy.
+            state = self.write_state('infrastructure_verified', outputs={'keyVaultName': 'kvacmementra12345678'},
+                                     teamsPolicyApplied=TENANT)
+            result = setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
+            self.assertFalse(result['teamsPolicyApplied'])
+            self.assertEqual(setup.read_json(self.directory / 'state.json')['teamsPolicyApplied'], '')
+
     def meetings_graph(self, existing_names=(), recorded_app=None):
         calls = []
         role = {'value': 'OnlineMeetings.ReadWrite.All', 'id': 'role-id'}
@@ -535,7 +555,8 @@ class GuidedTests(unittest.TestCase):
         self.args.teams_client_id = SUB
         with patch.object(setup, 'vault_get', side_effect=saved), patch.object(setup, 'meetings_consent', return_value=True), \
              patch.object(setup, 'check_graph_secret'), \
-             patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}), patch.object(setup, 'update_configuration'):
+             patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}), patch.object(setup, 'update_configuration'), \
+             patch.object(setup, 'apply_teams_policy', return_value=(True, '')):
             self.assertEqual(setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)['adminConsent'], 'granted')
 
     def test_a_failed_teams_rollout_stays_pending_for_the_next_run(self):
@@ -544,6 +565,7 @@ class GuidedTests(unittest.TestCase):
         with patch.object(setup, 'vault_get', return_value={'value': 'saved'}), patch.object(setup, 'check_graph_secret'), \
              patch.object(setup, 'update_configuration'), \
              patch.object(setup, 'meetings_consent', return_value=True), \
+             patch.object(setup, 'apply_teams_policy', return_value=(True, '')), \
              patch.object(setup, 'install', side_effect=setup.SetupError('preflight failed')):
             with self.assertRaises(setup.SetupError):
                 setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)

@@ -1889,9 +1889,17 @@ def configure_teams(args, directory, config, state, interactive=None):
     policy = teams_policy_commands(client_id, organizer, config['tenantId'], previous)
     # Kept with the setup files, for the Teams administrator who runs it.
     (directory / 'teams-policy.ps1').write_text('\n'.join(policy) + '\n')
+    # The script only ever adds this app, so a failed re-run leaves an earlier success in place.
+    earlier = state.get('teamsPolicyApplied') == client_id
     print('  Applying the Teams policy as your account...', flush=True)
     applied, reason = apply_teams_policy(config, directory / 'teams-policy.ps1')
-    print('  Applied. Teams can take up to 30 minutes to apply it.' if applied else f'  Not applied: {reason}.')
+    if applied:
+        print('  Applied. Teams can take up to 30 minutes to apply it.')
+    elif earlier:
+        print(f'  Not applied again ({reason}); the policy applied earlier still covers this app.')
+    else:
+        print(f'  Not applied: {reason}.')
+    applied = applied or earlier
     checkpoint(directory, state, state['phase'], teamsPolicyApplied=client_id if applied else '')
     rollout = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
     result = {'status': 'meeting_creation_configured' if rollout['status'] == 'infrastructure_verified' else rollout['status'],
