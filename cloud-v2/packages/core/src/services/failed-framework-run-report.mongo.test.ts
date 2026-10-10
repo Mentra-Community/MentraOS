@@ -5,7 +5,7 @@ import {mkdtemp, rm} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import {join} from "node:path"
 import {ReportModel} from "../models/report.model"
-import {ReportAssetModel} from "../models/report-asset.model"
+import {ReportAssetModel, reconcileReportAssetIndexes} from "../models/report-asset.model"
 import {TestAssetModel} from "../models/test-run.model"
 import {testFrameworkBinding, testRoutineSource} from "../testing/framework-fixtures"
 import {recordedFrameworkRunSchema} from "../types/framework-run.types"
@@ -15,6 +15,7 @@ import {
   getReport,
   readReportArtifact,
   referenceTestRunDiagnostics,
+  referenceDeviceIncidentDiagnostics,
 } from "./report.service"
 import {FailedFrameworkRunReportService} from "./failed-framework-run-report.service"
 import {ReportSlackDeliveryService} from "./report-slack-delivery.service"
@@ -173,6 +174,30 @@ const uri = process.env.FAILED_RUN_REPORT_MONGO_URI
       await ReportModel.updateOne({reportId: worker.reportId}, {$unset: {logCollection: ""}})
       await ensureTestRunReport("worker-run", "f".repeat(64))
       expect((await ReportModel.findOne({reportId: worker.reportId}).lean())!.logCollection).toBeUndefined()
+
+      // Model the already-deployed unique payload index. Cut it over before a
+      // device and fallback report can share the same acknowledged test blob.
+      await ReportAssetModel.collection.createIndex({storageKey: 1}, {unique: true})
+      await reconcileReportAssetIndexes()
+      await ReportAssetModel.createIndexes()
+      const deviceOwner = {reportId: "rep_DEVICEshared", mentraUserId: "authenticated-device-owner"}
+      const correlation = {alertId: "original-alert", testRunId: frozen.result.runId}
+      await ReportModel.create({...deviceOwner, kind: "automatic", status: "ready", artifacts: [], context: {},
+        automationCorrelation: correlation,
+        trigger: {source: "mentra_automated_testing", reason: "incident_report_requested"}})
+      await Promise.all([referenceDeviceIncidentDiagnostics(deviceOwner.reportId, correlation, frozen),
+        referenceDeviceIncidentDiagnostics(deviceOwner.reportId, correlation, frozen)])
+      await referenceDeviceIncidentDiagnostics(deviceOwner.reportId, correlation, frozen)
+      const shared = await ReportAssetModel.find({storageKey}).lean()
+      expect(shared).toHaveLength(2)
+      expect(new Set(shared.map(row => row.reportId))).toEqual(new Set([final!.reportId, deviceOwner.reportId]))
+      expect(new Set(shared.map(row => row.artifactId)).size).toBe(2)
+      expect(shared.every(row => row.sha256 === digest && row.sizeBytes === bytes.length)).toBe(true)
+      expect((await getReport(deviceOwner.reportId))!.report.artifacts).toHaveLength(1)
+      const deviceRaw = shared.find(row => row.reportId === deviceOwner.reportId)!
+      const deviceArtifact = (await readReportArtifact(deviceOwner.reportId, deviceRaw.artifactId))!
+      expect(Buffer.from(await new Response(await deviceArtifact.stream()).arrayBuffer())).toEqual(bytes)
+      expect(await storage.getObject(storageKey)).toEqual(bytes)
     } finally {
       await mongoose.connection.dropDatabase()
       await mongoose.disconnect()

@@ -21,7 +21,7 @@ import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.m
 import { reconcileTestRunIndexes, TestAssetModel, TestRunModel } from "../models/test-run.model";
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import {ReportModel} from '../models/report.model';
-import {ReportAssetModel} from '../models/report-asset.model';
+import {ReportAssetModel, reconcileReportAssetIndexes} from '../models/report-asset.model';
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
@@ -73,6 +73,7 @@ export async function runStartupMigrations(): Promise<void> {
   await TestAssetModel.createIndexes();
   // Native incident creation and shared diagnostic references must dedupe before completion ACK.
   await ReportModel.createIndexes();
+  await reconcileReportAssetIndexes();
   await ReportAssetModel.createIndexes();
   // No device execution grant is safe until request IDs are unique across all Core instances.
   // The send receipt must be unique before any admin can submit a device request.
