@@ -162,6 +162,37 @@ link, and the admin proxy keeps exact lengths on these ranged responses.
 Browser playback and seeking still need qualification. `scripts/fetch-incident-logs.sh` saves these
 artifacts with an `.mp4` extension.
 
+## Idempotency keys
+
+A device that can retry a report after a reboot or a lost response names the
+event with an optional `incidentKey` on `POST /api/client/reports`. Every kind
+accepts it; it must match `^[A-Za-z0-9._:-]{1,128}$`. With a key, Core returns
+the existing report for the authenticated `(mentraUserId, incidentKey)` pair
+instead of creating one. The response keeps the `{reportId, status}` shape, with
+the existing report's current status, and adds `deduplicated: true` on that path
+only. A deduplicated submission writes nothing and sends no Slack notification.
+Concurrent submissions converge on one report: a unique partial index on
+`{mentraUserId, incidentKey}` decides the race, and the loser reads the winner.
+The same key from another account creates that account's own report. Without a
+key, submission is unchanged: a new `rep_<ulid>` every time, the same response,
+and the same Slack timing. Reports without a key are not in the index.
+
+A JSON log upload to `POST /api/client/reports/:reportId/artifacts` accepts an
+optional `retryKey` with the same pattern. With it, Core uses the SHA-256-bound
+retry path that server diagnostic uploads already use: the artifact ID derives
+from the report and key, and the first stored bytes bind it. Repeating the key
+with identical entries returns the same `{stored: 1, receipt: {artifactId,
+sha256, sizeBytes}}` without storing anything new; different entries under the
+same key return `409` (`error: "conflict"`). The first accepted keyed upload for
+a collection source marks that source `received`. Uploads without `retryKey`
+keep the existing behavior and store a new artifact on every call.
+
+Cloud Client exposes `incidentKey` on `SubmitReportInput`, `deduplicated` on
+`SubmitReportResult`, and `core.reports.addLogs(reportId, source, entries,
+{retryKey})`. A Cloud that predates these fields strips them during validation:
+it creates a new report and stores a new artifact, and never returns
+`deduplicated`. Callers must treat a missing `deduplicated` as "possibly new".
+
 ## Slack routing
 
 The admin list API keeps `kind=bug|feedback|automatic` as a stored-kind filter,
@@ -238,6 +269,20 @@ MentraJS crashloop:
 - Host remains responsible for Sentry and user-facing alert copy in
   `mobile/src/services/mentraJsBootstrap.ts`.
 
+Mentra Live BES firmware crash:
+
+- Trigger: `glasses_firmware_crash` / `bes_crash` when the glasses recovered a
+  saved crash dump, or `bes_unexpected_reset` for an unexpected reset without one.
+  `report.systemPriority` is `critical`.
+- The report carries `incidentKey` `<serial>-dump-<dump_id>` or
+  `<serial>-reset-<boot_id>`, so a crash re-announced after reconnects or reboots
+  files one report.
+- Evidence is uploaded with artifact `source: glasses_firmware` and `retryKey`
+  `glasses_firmware:full` (glasses Wi-Fi upload) or `glasses_firmware:relay`
+  (phone BLE relay). Dump lines use entry `source: "BES_CRASH"`; the frozen
+  firmware TRACE uses entry `source: "BES"`.
+- Contract: `notes/superpowers/specs/2026-10-10-os-1988-bes-crash-contract.md`.
+
 Miniapp start failure:
 
 - The old Cloud V1/RestComms online-miniapp start diagnostic was removed.
@@ -287,6 +332,7 @@ External incident requests, including the captions tester:
 - `context`
 - `artifacts`
 - `status`: `collecting`, `ready`, or `closed`
+- `incidentKey`: optional; unique per `mentraUserId` when present
 
 ## Why This Shape
 
@@ -298,7 +344,8 @@ External incident requests, including the captions tester:
 - `userSeverity` and `systemPriority` avoid mixing subjective user pain with
   runtime priority.
 - Automatic trigger throttling stays local to island services. Cloud V2 creates
-  one report record for each submit request.
+  one report record for each submit request, except that a repeated
+  `incidentKey` returns the existing report.
 - `kind` keeps bugs, feedback, and automatic diagnostics in one reporting
   product while preserving different payload shapes.
 
