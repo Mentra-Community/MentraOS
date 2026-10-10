@@ -559,3 +559,31 @@ test('history summaries read portable members through the real nightly snapshot 
  expect(queried).toHaveLength(readsBefore);expect(runReads.mock.calls).toHaveLength(runReadsBefore);
  expect(laneRead.mock.calls).toHaveLength(laneReadsBefore);
 });
+
+test("large summary pages bound receipt batches and concurrency under one deadline", async () => {
+  const ids = Array.from({length: 52}, (_, index) => `suite-${index}`);
+  const deadline = Date.now() + 10_000;
+  let active = 0, peak = 0;
+  const selected: string[] = [];
+  mocks.push(spyOn(TestSuiteModel, "aggregate").mockImplementation(((pipeline: any[]) => {
+    const batch = pipeline[0].$match.suiteId.$in as string[];
+    expect(batch.length).toBeLessThanOrEqual(5);
+    expect(pipeline[1]).toEqual({$limit: batch.length + 1});
+    expect(pipeline[2]).toEqual(suiteHistoryProjection);
+    selected.push(...batch);
+    return {read() {return this;}, readConcern() {return this;}, option(options: {timeoutMS: number}) {
+      expect(options.timeoutMS).toBeGreaterThan(0);
+      expect(options.timeoutMS).toBeLessThanOrEqual(deadline - Date.now());
+      return this;
+    }, async exec() {
+      active++; peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      return batch.map(suiteId => ({suiteId, completedResult: {suiteId, finishedAt: "2026-10-09T01:00:00Z", members: []}}));
+    }};
+  }) as any));
+  const result = await new TestSuiteService().summaries(ids, deadline);
+  expect(selected).toEqual(ids);
+  expect(result.size).toBe(ids.length);
+  expect(peak).toBe(5);
+});
