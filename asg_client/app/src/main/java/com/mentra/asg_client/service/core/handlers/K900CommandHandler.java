@@ -4,7 +4,9 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.log.BesCrashDumpCollector;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
+import com.mentra.asg_client.io.bes.log.BesLogTransferLock;
 import com.mentra.asg_client.io.bes.log.BesTraceStore;
 import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
@@ -36,7 +38,7 @@ public class K900CommandHandler {
     private final ICommunicationManager communicationManager;
     private final IPeripheralBus peripheralBus;
 
-    private BesLogManager mBesLogSession;
+    private volatile BesLogManager mBesLogSession;
 
     public K900CommandHandler(
             AsgClientServiceManager serviceManager,
@@ -81,11 +83,15 @@ public class K900CommandHandler {
     }
 
     /**
-     * Handle a streamed sr_log packet from BES (response to our mh_logs request). Delegates
-     * reassembly to the active BesLogManager session.
+     * Handle a streamed sr_log packet from BES. {@code sr_log} packets carry no transfer id, so
+     * they go to whoever owns the {@link BesLogTransferLock}: the crash dump pull ({@code cs_log})
+     * or, otherwise, the active user {@code mh_logs} session, which reassembles them.
      */
     private void handleBesLogPacket(JSONObject bData) {
-        if (mBesLogSession == null) {
+        BesLogTransferLock.Owner owner = BesLogTransferLock.get().current();
+        boolean crashPull = owner == BesLogTransferLock.Owner.CRASH_CS_LOG;
+
+        if (!crashPull && mBesLogSession == null) {
             Log.w(TAG, "📥 sr_log received but no active BES log session — ignoring");
             return;
         }
@@ -108,11 +114,16 @@ public class K900CommandHandler {
             tracePayload.put("cur", cur);
             tracePayload.put("chars", body != null ? body.length() : 0);
             tracePayload.put("terminator", cur == 255 && "end".equals(body));
+            tracePayload.put("owner", crashPull ? "crash_cs_log" : "user_mh_logs");
         } catch (JSONException ignored) {
             // Keep trace logging non-fatal.
         }
         BleTraceLogger.logEvent("bes_to_asg", "bes_log_stream", "sr_log", tracePayload);
 
+        if (crashPull) {
+            BesCrashDumpCollector.get().onLogPacket(cur, body);
+            return;
+        }
         mBesLogSession.onLogPacketReceived(cur, body);
     }
 
@@ -210,11 +221,73 @@ public class K900CommandHandler {
             return;
         }
 
-        // Replace any stale session from a previous request
-        mBesLogSession =
+        BesLogManager session =
                 (relayFirmwareJson != null)
                         ? new BesLogManager(incidentId, context, configManager, relayFirmwareJson)
                         : new BesLogManager(incidentId, context, configManager, apiBaseUrl);
+
+        // The UART log channel is shared with the crash dump pull and the TRACE tail. A bug report
+        // that starts during a pull waits (up to BesLogManager's own overall timeout) instead of
+        // being dropped or interleaving into the dump.
+        BesLogTransferLock lock = BesLogTransferLock.get();
+        boolean acquired;
+        try {
+            acquired = lock.acquire(BesLogTransferLock.Owner.USER_MH_LOGS, 0);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            session.abort();
+            deliverEmptyRelay(relayFirmwareJson);
+            return;
+        }
+        if (acquired) {
+            startBesLogSession(session, relayFirmwareJson);
+            return;
+        }
+        Log.i(TAG, "⏳ BES log channel busy (" + lock.current() + ") — bug report waits for it");
+        new Thread(
+                        () -> {
+                            boolean got = false;
+                            try {
+                                got =
+                                        lock.acquire(
+                                                BesLogTransferLock.Owner.USER_MH_LOGS,
+                                                AsgConstants.BES_LOG_USER_LOCK_WAIT_MS);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                            if (got) {
+                                startBesLogSession(session, relayFirmwareJson);
+                            } else {
+                                Log.w(TAG, "⚠️ BES log channel stayed busy — no BES logs");
+                                session.abort();
+                                deliverEmptyRelay(relayFirmwareJson);
+                            }
+                        },
+                        "bes-logs-wait")
+                .start();
+    }
+
+    private static void deliverEmptyRelay(java.util.function.Consumer<String> relayFirmwareJson) {
+        if (relayFirmwareJson != null) {
+            relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
+        }
+    }
+
+    /**
+     * Send mh_logs for a session that already owns the {@link BesLogTransferLock}. The session
+     * releases the lock when its UART stream ends; a stale session that was replaced by a newer
+     * request must not release the newer one's lock.
+     */
+    private void startBesLogSession(
+            BesLogManager session, java.util.function.Consumer<String> relayFirmwareJson) {
+        // Replace any stale session from a previous request
+        mBesLogSession = session;
+        session.setOnFinished(
+                () -> {
+                    if (mBesLogSession == session) {
+                        BesLogTransferLock.get().release(BesLogTransferLock.Owner.USER_MH_LOGS);
+                    }
+                });
 
         try {
             JSONObject k900Command = new JSONObject();
@@ -226,28 +299,34 @@ public class K900CommandHandler {
             Log.d(TAG, "📤 Sending mh_logs: " + commandStr);
 
             boolean sent =
-                    serviceManager
-                            .getBluetoothManager()
-                            .sendMessage(
-                                    commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    serviceManager != null
+                            && serviceManager.getBluetoothManager() != null
+                            && serviceManager
+                                    .getBluetoothManager()
+                                    .sendMessage(
+                                            commandStr.getBytes(
+                                                    java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
                 Log.i(TAG, "✅ mh_logs sent — starting BES log collection timeouts");
-                mBesLogSession.startTimeouts();
+                session.startTimeouts();
             } else {
                 Log.e(TAG, "❌ Failed to send mh_logs");
-                mBesLogSession = null;
-                if (relayFirmwareJson != null) {
-                    relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
-                }
+                failBesLogSession(session, relayFirmwareJson);
             }
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error building mh_logs command", e);
-            mBesLogSession = null;
-            if (relayFirmwareJson != null) {
-                relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
-            }
+            failBesLogSession(session, relayFirmwareJson);
         }
+    }
+
+    private void failBesLogSession(
+            BesLogManager session, java.util.function.Consumer<String> relayFirmwareJson) {
+        session.abort(); // releases the lock through the onFinished hook
+        if (mBesLogSession == session) {
+            mBesLogSession = null;
+        }
+        deliverEmptyRelay(relayFirmwareJson);
     }
 
     /** Refresh BES identity, capabilities and phone presence through its UART coordinator. */

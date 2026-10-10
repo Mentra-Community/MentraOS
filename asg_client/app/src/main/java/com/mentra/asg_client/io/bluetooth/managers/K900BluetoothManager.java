@@ -11,6 +11,7 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
+import com.mentra.asg_client.io.bes.log.BesCrashDumpCollector;
 import com.mentra.asg_client.io.bes.log.BesLivenessMonitor;
 import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
@@ -1547,6 +1548,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 // both mutations atomic with the baud-state transition.
                                 applyPhonePresenceFromSyvr(bData);
                                 linkState.capsAdvertised(applyBesWireCaps(json));
+                                // OS-1988: a BES with wire_caps.crash_pull reports its boot and
+                                // saved crash dump here; the collector ignores any other BES.
+                                BesCrashDumpCollector.get()
+                                        .onSystemVersion(json, this::sendQuietCommand);
                                 JSONObject caps = json.optJSONObject("wire_caps");
                                 I2sReadyGate.setSupported(caps != null && caps.optInt("i2s_ready", 0) == 1);
                                 BesTraceTail.get().onWireCaps(caps);

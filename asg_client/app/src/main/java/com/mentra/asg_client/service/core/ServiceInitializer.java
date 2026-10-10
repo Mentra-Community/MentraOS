@@ -2,6 +2,7 @@ package com.mentra.asg_client.service.core;
 
 import android.util.Log;
 import androidx.annotation.NonNull;
+import com.mentra.asg_client.io.bes.log.BesCrashDumpCollector;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
@@ -88,6 +89,9 @@ public final class ServiceInitializer {
         this.configurationManager = new ConfigurationManager(context);
         this.stateManager = new StateManager(serviceManager);
         serviceManager.setStateManager(this.stateManager);
+        // OS-1988: opens files/bes_incident; the collector stays idle unless the BES advertises
+        // wire_caps.crash_pull.
+        BesCrashDumpCollector.get().attach(context);
 
         this.streamingManager = new MediaManager(context, serviceManager);
         this.batteryAnnouncementExecutor =
