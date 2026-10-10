@@ -32,6 +32,7 @@ import {
 } from "@mentra/cloud-shared"
 import {RefreshTokenModel} from "../models/refresh-token.model"
 import {RevokedJtiModel} from "../models/revoked-jti.model"
+import {UserModel} from "../models/user.model"
 import {OemModel} from "../models/oem.model"
 import {EnterpriseOrgModel} from "../models/enterprise-org.model"
 import {
@@ -41,6 +42,7 @@ import {
   UnauthorizedClient,
   type TokenResponse,
 } from "../types/oauth.types"
+import {getUserById} from "./account/gotrue.client"
 import {findOrCreateUser} from "./user.service"
 import {isConfiguredOidcTenant, recordSeenJti, verifyTenantJwt} from "./oem.service"
 import {
@@ -407,6 +409,78 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
   return verified
 }
 
+/** First-party packages whose backends may read the wearer's verified email. */
+const DEFAULT_EMAIL_CLAIM_PACKAGES = "com.mentra.call"
+const EMAIL_CLAIM_TIMEOUT_MS = 500
+const EMAIL_CLAIM_CACHE_MS = 60_000
+
+export interface MiniappEmailClaim {
+  email: string
+  email_verified: boolean
+}
+
+type EmailClaimLookup = (args: {
+  mentraUserId: string
+  tenantId: string
+}) => Promise<MiniappEmailClaim | null>
+
+const emailClaimCache = new Map<string, {value: MiniappEmailClaim | null; expiresAt: number}>()
+let emailClaimLookupOverride: EmailClaimLookup | null = null
+
+export function miniappEmailClaimPackages(): Set<string> {
+  const raw = process.env.MENTRA_MINIAPP_EMAIL_CLAIM_PACKAGES?.trim()
+  const source = raw ? raw : DEFAULT_EMAIL_CLAIM_PACKAGES
+  return new Set(
+    source
+      .split(/[,\s]+/)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  )
+}
+
+/** Test hook. Pass null to restore the identity-provider lookup. */
+export function setMiniappEmailClaimLookupForTests(lookup: EmailClaimLookup | null): void {
+  emailClaimLookupOverride = lookup
+  emailClaimCache.clear()
+}
+
+/**
+ * Email and verification from the identity provider, not from an editable profile.
+ * A slow or failed lookup returns null so token minting never waits on it.
+ */
+async function miniappEmailClaim(args: {mentraUserId: string; tenantId: string}): Promise<MiniappEmailClaim | null> {
+  const cached = emailClaimCache.get(args.mentraUserId)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  const lookup = emailClaimLookupOverride ?? defaultMiniappEmailClaimLookup
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const pending = lookup(args).catch(() => null)
+  const outcome = await Promise.race([
+    pending.then((value) => ({timedOut: false as const, value})),
+    new Promise<{timedOut: true}>((resolve) => {
+      timer = setTimeout(() => resolve({timedOut: true}), EMAIL_CLAIM_TIMEOUT_MS)
+      timer.unref?.()
+    }),
+  ])
+  if (timer) clearTimeout(timer)
+  if (outcome.timedOut) return null
+
+  emailClaimCache.set(args.mentraUserId, {value: outcome.value, expiresAt: Date.now() + EMAIL_CLAIM_CACHE_MS})
+  return outcome.value
+}
+
+async function defaultMiniappEmailClaimLookup(args: {
+  mentraUserId: string
+  tenantId: string
+}): Promise<MiniappEmailClaim | null> {
+  if (args.tenantId !== "mentra") return null
+  const user = await UserModel.findOne({mentraUserId: args.mentraUserId}).lean()
+  if (!user || user.tenantId !== "mentra" || !user.tenantUserId) return null
+  const identity = await getUserById(user.tenantUserId)
+  if (!identity?.email) return null
+  return {email: identity.email, email_verified: identity.emailVerified === true}
+}
+
 /**
  * Mint a miniapp-scoped token for one packageName.
  *
@@ -424,6 +498,10 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
  * TTL defaults to 1h and is env-overridable via MENTRA_MINIAPP_TOKEN_TTL_SEC
  * so tests can shorten it. Returns the token and its absolute expiry as Unix
  * seconds (what the client caches against).
+ *
+ * Allowlisted packages also receive `email` and `email_verified` from the
+ * identity provider. A lookup that fails or exceeds its budget is omitted;
+ * minting still succeeds.
  */
 export async function issueMiniappToken(args: {
   mentraUserId: string
@@ -434,7 +512,18 @@ export async function issueMiniappToken(args: {
   const ttlSec = miniappTokenTtlSec()
   const expiresAt = Math.floor(Date.now() / 1000) + ttlSec
 
-  const token = await new jose.SignJWT({tenantId: args.tenantId})
+  const claims: jose.JWTPayload & {tenantId: string; email?: string; email_verified?: boolean} = {
+    tenantId: args.tenantId,
+  }
+  if (miniappEmailClaimPackages().has(args.packageName)) {
+    const email = await miniappEmailClaim(args)
+    if (email) {
+      claims.email = email.email
+      claims.email_verified = email.email_verified
+    }
+  }
+
+  const token = await new jose.SignJWT(claims)
     // The `kid` points the developer backend at the miniapp-token public key.
     .setProtectedHeader({alg: MENTRA_ALG, kid: MINIAPP_TOKEN_KID})
     .setIssuer(coreIssuer())

@@ -113,6 +113,9 @@ describe("cloud.auth.getMiniappToken (real core)", () => {
     expect(claims.aud).toBe(TEST_PACKAGE);
     expect(claims.sub).toBe(mentraUserId);
     expect(claims.tenantId).toBe(TEST_OEM_ID);
+    // com.test.app is not on the email-claim allowlist.
+    expect(claims.email).toBeUndefined();
+    expect(claims.email_verified).toBeUndefined();
   });
 
   test("caches per packageName: a second call returns the same token", async () => {
