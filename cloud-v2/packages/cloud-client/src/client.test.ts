@@ -469,6 +469,128 @@ describe("CloudClient construction", () => {
   })
 })
 
+describe("cloud.auth refresh on a transient failure", () => {
+  test("keeps the persisted refresh token when the refresh request cannot reach Core", async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const storage = memoryStorage({"mentra.cloud-client.refreshToken": "refresh-1"})
+    const calls: string[] = []
+    let expiredCalls = 0
+    let offline = true
+
+    const http: NonNullable<CloudClientTransports["http"]> = async (input, init) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.endsWith("/api/client/auth/refresh")) {
+        if (offline) throw new TypeError("Network request failed")
+        expect(String(init?.body)).toContain("refresh_token=refresh-1")
+        return jsonResponse({
+          access_token: testJwt({sub: "user-1", tenant_id: "tenant-1", exp: nowSeconds + 3600}),
+          refresh_token: "refresh-2",
+          token_type: "Bearer",
+          expires_in: 3600,
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }
+
+    const cloud = new CloudClient(
+      config({
+        endpoints: {core: "https://core.example.test", runtime: "https://runtime.example.test"},
+        auth: {
+          core: {subjectToken: "one-shot-subject", subjectTokenType: "oem-jwt"},
+          runtime: {getToken: async () => "runtime-token"},
+        },
+        storage,
+        http,
+      }),
+    )
+    cloud.auth.onExpired(() => {
+      expiredCalls += 1
+    })
+
+    // Offline: the refresh cannot reach Core. That is not a verdict on the
+    // refresh token, so it must survive and the host must not be told to re-login.
+    const failure = await cloud.auth.getCoreToken().catch((err: unknown) => err)
+    expect(await storage.get("mentra.cloud-client.refreshToken")).toBe("refresh-1")
+    expect(expiredCalls).toBe(0)
+    expect(failure).toBeInstanceOf(HttpError)
+    expect((failure as HttpError).status).toBe(0)
+    expect(failure).not.toBeInstanceOf(AuthExpiredError)
+
+    // Back online: the same refresh token refreshes normally, with no /exchange.
+    offline = false
+    await expect(cloud.auth.getCoreToken()).resolves.toBeDefined()
+    expect(calls.every((url) => url.endsWith("/api/client/auth/refresh"))).toBe(true)
+    expect(await storage.get("mentra.cloud-client.refreshToken")).toBe("refresh-2")
+  })
+
+  test("keeps the persisted refresh token when Core answers the refresh with a 5xx", async () => {
+    const storage = memoryStorage({"mentra.cloud-client.refreshToken": "refresh-1"})
+    let expiredCalls = 0
+
+    const http: NonNullable<CloudClientTransports["http"]> = async (input) => {
+      const url = String(input)
+      if (url.endsWith("/api/client/auth/refresh")) {
+        return new Response("upstream unavailable", {status: 503})
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }
+
+    const cloud = new CloudClient(
+      config({
+        endpoints: {core: "https://core.example.test", runtime: "https://runtime.example.test"},
+        auth: {
+          core: {subjectToken: "one-shot-subject", subjectTokenType: "oem-jwt"},
+          runtime: {getToken: async () => "runtime-token"},
+        },
+        storage,
+        http,
+      }),
+    )
+    cloud.auth.onExpired(() => {
+      expiredCalls += 1
+    })
+
+    const failure = await cloud.auth.getCoreToken().catch((err: unknown) => err)
+    expect(await storage.get("mentra.cloud-client.refreshToken")).toBe("refresh-1")
+    expect(expiredCalls).toBe(0)
+    expect(failure).toBeInstanceOf(HttpError)
+    expect((failure as HttpError).status).toBe(503)
+  })
+
+  test("still clears the refresh token and notifies the host on a definite rejection", async () => {
+    const storage = memoryStorage({"mentra.cloud-client.refreshToken": "refresh-1"})
+    let expiredCalls = 0
+
+    const http: NonNullable<CloudClientTransports["http"]> = async (input) => {
+      const url = String(input)
+      if (url.endsWith("/api/client/auth/refresh")) {
+        return new Response(JSON.stringify({error: "invalid_grant"}), {status: 400})
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }
+
+    const cloud = new CloudClient(
+      config({
+        endpoints: {core: "https://core.example.test", runtime: "https://runtime.example.test"},
+        auth: {
+          core: {subjectToken: "one-shot-subject", subjectTokenType: "oem-jwt"},
+          runtime: {getToken: async () => "runtime-token"},
+        },
+        storage,
+        http,
+      }),
+    )
+    cloud.auth.onExpired(() => {
+      expiredCalls += 1
+    })
+
+    await expect(cloud.auth.getCoreToken()).rejects.toBeInstanceOf(AuthExpiredError)
+    expect(expiredCalls).toBe(1)
+    expect(await storage.get("mentra.cloud-client.refreshToken")).toBeNull()
+  })
+})
+
 function config(
   overrides: Pick<CloudClientConfig, "endpoints" | "auth" | "timers"> & {
     storage?: CloudClientTransports["storage"]
