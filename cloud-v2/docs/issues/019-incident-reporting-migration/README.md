@@ -173,6 +173,11 @@ the existing report's current status, and adds `deduplicated: true` on that path
 only. A deduplicated submission writes nothing and sends no Slack notification.
 Concurrent submissions converge on one report: a unique partial index on
 `{mentraUserId, incidentKey}` decides the race, and the loser reads the winner.
+A keyed creation is acknowledged only after a majority-journaled write, like a
+correlated one, and the dedupe lookup reads from the primary at majority read
+concern, so a retry never confirms a report that could still roll back. If the
+winner is not majority-visible within the 10-second write timeout, the loser
+returns `503` (`error: "temporarily_unavailable"`) and the device retries.
 The same key from another account creates that account's own report. Without a
 key, submission is unchanged: a new `rep_<ulid>` every time, the same response,
 and the same Slack timing. Reports without a key are not in the index.
@@ -180,10 +185,13 @@ and the same Slack timing. Reports without a key are not in the index.
 A JSON log upload to `POST /api/client/reports/:reportId/artifacts` accepts an
 optional `retryKey` with the same pattern. With it, Core uses the SHA-256-bound
 retry path that server diagnostic uploads already use: the artifact ID derives
-from the report and key, and the first stored bytes bind it. Repeating the key
-with identical entries returns the same `{stored: 1, receipt: {artifactId,
-sha256, sizeBytes}}` without storing anything new; different entries under the
-same key return `409` (`error: "conflict"`). The first accepted keyed upload for
+from the report and key, and the first stored bytes and artifact `source` bind
+it. Repeating the key with identical entries and source returns the same
+`{stored: 1, receipt: {artifactId, sha256, sizeBytes}}` without storing anything
+new; different entries or a different source under the same key return `409`
+(`error: "conflict"`) before any metadata or receipt changes. The reservation is
+read at majority from the primary; one not yet committed within the write
+timeout returns `503`. The first accepted keyed upload for
 a collection source marks that source `received`. Uploads without `retryKey`
 keep the existing behavior and store a new artifact on every call.
 
