@@ -59,6 +59,14 @@ Ed25519 JWT, signed with a **separate miniapp-token key**. Claims:
 only ever valid against that miniapp's developer backend, which verifies it via
 JWKS. This is the only token a miniapp ever holds.
 
+Optional `email` + `email_verified: true`, for every miniapp audience, when Core
+can resolve the user's verified Mentra account email from the account directory
+(first-party `tenantId: "mentra"` users only). Both are omitted for OEM users,
+unverified addresses, deployments without an account directory, or a failed
+lookup; the lookup never blocks issuance. Core never takes the email from the
+request. `sub` stays the stable key: backends should store data against it and
+treat the email as a mutable attribute.
+
 ## Endpoints
 
 ### `POST /api/client/auth/exchange`

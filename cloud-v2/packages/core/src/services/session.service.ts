@@ -421,6 +421,10 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
  * access token plus the requested packageName is sufficient, and the on-device
  * Runtime enforces that a bundle can only request its own packageName.
  *
+ * `email` is the caller-resolved verified account email. When present it is
+ * stamped as `email` + `email_verified: true` for every miniapp audience; when
+ * absent (OEM users, unverified or unavailable) both claims are omitted.
+ *
  * TTL defaults to 1h and is env-overridable via MENTRA_MINIAPP_TOKEN_TTL_SEC
  * so tests can shorten it. Returns the token and its absolute expiry as Unix
  * seconds (what the client caches against).
@@ -429,12 +433,16 @@ export async function issueMiniappToken(args: {
   mentraUserId: string
   tenantId: string
   packageName: string
+  email?: string | null
 }): Promise<{token: string; expiresAt: number}> {
   const {privateKey} = await getMiniappKeys()
   const ttlSec = miniappTokenTtlSec()
   const expiresAt = Math.floor(Date.now() / 1000) + ttlSec
 
-  const token = await new jose.SignJWT({tenantId: args.tenantId})
+  const token = await new jose.SignJWT({
+    tenantId: args.tenantId,
+    ...(args.email ? {email: args.email, email_verified: true} : {}),
+  })
     // The `kid` points the developer backend at the miniapp-token public key.
     .setProtectedHeader({alg: MENTRA_ALG, kid: MINIAPP_TOKEN_KID})
     .setIssuer(coreIssuer())
