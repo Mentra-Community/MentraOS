@@ -29,6 +29,13 @@ public final class AeStateMachine {
     /** exposure×ISO of the previous converged frame; 0 = none / HAL not reporting. */
     private volatile long lastTotalLight;
 
+    /**
+     * Whether the last shot fired at FLASH_REQUIRED and every repeating frame since then also
+     * reported it, i.e. the scene has stayed at the exposure limit since the last shot. Any other
+     * AE state (the light changed, AE is adjusting) clears it until the next shot fires.
+     */
+    private volatile boolean atExposureLimitSinceLastShot;
+
     public boolean waitingForAeConvergence() {
         return waitingForAeConvergence;
     }
@@ -121,6 +128,23 @@ public final class AeStateMachine {
     public void clearWaitFlags() {
         waitingForAeConvergence = false;
         aeLockRequested = false;
+    }
+
+    /** Call when a wait ends in a capture: arms the fast path only if that shot was at the limit. */
+    public void noteShotFired(Integer aeState) {
+        atExposureLimitSinceLastShot =
+                aeState != null && aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED;
+    }
+
+    /** Record the HAL AE state of every repeating frame, including frames between shots. */
+    public void noteHalAeState(Integer aeState) {
+        if (aeState != null && aeState != CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED) {
+            atExposureLimitSinceLastShot = false;
+        }
+    }
+
+    public boolean atExposureLimitSinceLastShot() {
+        return atExposureLimitSinceLastShot;
     }
 
     /**
@@ -232,6 +256,22 @@ public final class AeStateMachine {
             return AeRepeatCaptureDecision.REQUEST_AE_LOCK;
         }
         return AeRepeatCaptureDecision.CONTINUE_WAITING_FOR_CONVERGENCE;
+    }
+
+    /**
+     * AE state the wait should act on. In AE_MODE_ON, FLASH_REQUIRED means "converged but too
+     * dark without flash": exposure is at its limit. Mentra Live has no flash, so when a capture
+     * reuses a camera that is already streaming, treat it as CONVERGED instead of waiting out
+     * {@link #AE_WAIT_MAX_NS}. A cold open or warm-up keeps waiting: in the dark, stills fired
+     * before ~1.5 s come out about twice as noisy, even at the same exposure and ISO.
+     */
+    public static Integer aeStateForWait(Integer aeState, boolean reusesRunningCamera) {
+        if (reusesRunningCamera
+                && aeState != null
+                && aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED) {
+            return CaptureResult.CONTROL_AE_STATE_CONVERGED;
+        }
+        return aeState;
     }
 
     /** Human-readable AE state for logcat (handles null). */

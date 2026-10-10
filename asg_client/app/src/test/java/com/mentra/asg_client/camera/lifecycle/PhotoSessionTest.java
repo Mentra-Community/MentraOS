@@ -280,6 +280,23 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void reusesRunningCamera_onlyForWarmReuseDispatch_notDuringWarmUp() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        PhotoSession session = new PhotoSession(hooks);
+
+        assertThat(session.reusesRunningCamera()).isFalse();
+
+        setBooleanField(session, "mCaptureDispatchedAsWarmReuse", true);
+        assertThat(session.reusesRunningCamera()).isTrue();
+
+        // A later warm-up that opens the camera must not inherit an earlier photo's reuse flag.
+        when(hooks.coordinator().isCameraKeptAlive()).thenReturn(false);
+        session.setupWarmUp(
+                "large", null, PhotoCaptureSettings.EMPTY, 30_000, () -> {}, error -> {});
+        assertThat(session.reusesRunningCamera()).isFalse();
+    }
+
+    @Test
     public void delayedExposureSettle_fromReplacedRequest_isIgnored() throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
         PhotoSession session = new PhotoSession(hooks);

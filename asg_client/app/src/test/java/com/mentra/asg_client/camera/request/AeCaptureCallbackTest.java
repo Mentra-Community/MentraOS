@@ -50,6 +50,157 @@ public class AeCaptureCallbackTest {
     }
 
     @Test
+    public void onCaptureCompleted_flashRequiredOnRunningCamera_capturesAfterStableFrames() {
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        hooks.reusesRunningCamera = true;
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult result = mock(TotalCaptureResult.class);
+        // Previous shot fired in the same dark scene.
+        stateMachine.noteShotFired(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        stateMachine.beginWaitingForAe();
+        when(result.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        when(result.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
+        when(result.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
+
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED - 1; i++) {
+            callback.onCaptureCompleted(session, request, result);
+            assertThat(hooks.captureCount).isZero();
+        }
+        callback.onCaptureCompleted(session, request, result);
+
+        assertThat(stateMachine.waitingForAeConvergence()).isFalse();
+        assertThat(hooks.captureCount).isEqualTo(1);
+    }
+
+    @Test
+    public void onCaptureCompleted_lightChangedSinceLastShot_keepsWaiting() {
+        // Running camera, but a frame between shots was CONVERGED (the light just went off): the
+        // fast path stays off for this wait even though every frame in the wait is FLASH_REQUIRED.
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        hooks.reusesRunningCamera = true;
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult bright = mock(TotalCaptureResult.class);
+        when(bright.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+        TotalCaptureResult dark = mock(TotalCaptureResult.class);
+        when(dark.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        when(dark.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
+        when(dark.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
+        stateMachine.noteShotFired(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        callback.onCaptureCompleted(session, request, bright); // idle preview, light still on
+
+        stateMachine.beginWaitingForAe();
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED + 2; i++) {
+            callback.onCaptureCompleted(session, request, dark);
+        }
+
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        assertThat(hooks.captureCount).isZero();
+    }
+
+    @Test
+    public void onCaptureCompleted_brightShotThenOnlyDarkFrames_keepsWaiting() {
+        // The previous shot fired CONVERGED (bright); the light was already off by the time preview
+        // resumed, so no bright frame follows it. The next dark shot must not take the fast path.
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        hooks.reusesRunningCamera = true;
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult bright = mock(TotalCaptureResult.class);
+        when(bright.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+        when(bright.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(400);
+        when(bright.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(25_000_000L);
+        TotalCaptureResult dark = mock(TotalCaptureResult.class);
+        when(dark.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        when(dark.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
+        when(dark.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
+
+        stateMachine.beginWaitingForAe();
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED; i++) {
+            callback.onCaptureCompleted(session, request, bright);
+        }
+        assertThat(hooks.captureCount).isEqualTo(1);
+        stateMachine.clearWaitFlags(); // preview restore after the still
+
+        stateMachine.beginWaitingForAe();
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED + 2; i++) {
+            callback.onCaptureCompleted(session, request, dark);
+        }
+
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        assertThat(hooks.captureCount).isEqualTo(1);
+    }
+
+    @Test
+    public void onCaptureCompleted_flashRequiredDuringWarmUp_keepsWaiting() {
+        // A warm-up's own AE wait has no cold settle floor but is often a fresh open: it must not
+        // report ready early in the dark, or the next photo fires before the ISP has settled.
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult result = mock(TotalCaptureResult.class);
+        stateMachine.beginWaitingForAe();
+        when(result.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        when(result.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
+        when(result.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
+
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED + 2; i++) {
+            callback.onCaptureCompleted(session, request, result);
+        }
+
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        assertThat(hooks.captureCount).isZero();
+    }
+
+    @Test
+    public void onCaptureCompleted_flashRequiredOnColdOpen_keepsWaitingUntilTimeout()
+            throws Exception {
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        hooks.minimumExposureStabilizationDelayMs =
+                AsgConstants.COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS;
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult result = mock(TotalCaptureResult.class);
+        stateMachine.beginWaitingForAe();
+        when(result.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        when(result.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(3888);
+        when(result.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(100_000_000L);
+
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED + 2; i++) {
+            callback.onCaptureCompleted(session, request, result);
+        }
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        assertThat(hooks.captureCount).isZero();
+
+        setLongField(
+                stateMachine,
+                "aeStartTimeNs",
+                System.nanoTime() - AeStateMachine.AE_WAIT_MAX_NS - 1_000_000L);
+        callback.onCaptureCompleted(session, request, result);
+
+        assertThat(hooks.lastDelayMs).isZero();
+        assertThat(hooks.captureCount).isEqualTo(1);
+    }
+
+    @Test
     public void onCaptureCompleted_coldStart_waitsUntilHistoricalExposureSettleFloor() {
         AeStateMachine stateMachine = new AeStateMachine();
         FakeHooks hooks = new FakeHooks();
@@ -212,6 +363,7 @@ public class AeCaptureCallbackTest {
         String errorMessage;
         long lastDelayMs = -1L;
         long minimumExposureStabilizationDelayMs;
+        boolean reusesRunningCamera;
         boolean runDelayedImmediately = true;
         Runnable delayedCapture;
         int captureCount;
@@ -247,6 +399,11 @@ public class AeCaptureCallbackTest {
         @Override
         public long minimumExposureStabilizationDelayMs() {
             return minimumExposureStabilizationDelayMs;
+        }
+
+        @Override
+        public boolean reusesRunningCamera() {
+            return reusesRunningCamera;
         }
 
         @Override

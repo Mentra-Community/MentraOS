@@ -29,6 +29,12 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
         /** Minimum time from first AE convergence to still capture for the active request. */
         long minimumExposureStabilizationDelayMs();
 
+        /**
+         * Whether this capture reuses a camera that was already streaming for an earlier photo or
+         * a finished warm-up. False for a fresh open and for a warm-up's own AE wait.
+         */
+        boolean reusesRunningCamera();
+
         void requestAeLock(CameraCaptureSession session);
 
         void capturePhoto();
@@ -74,11 +80,14 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                     + " | LockRequested: " + aeStateMachine.aeLockRequested());
         }
 
+        Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
+        // Watch frames between shots too, so a light change since the last shot is visible.
+        aeStateMachine.noteHalAeState(aeState);
+
         if (!aeStateMachine.waitingForAeConvergence()) {
             return;
         }
 
-        Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
         Integer precaptureTrigger = request.get(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER);
         Boolean zslInRequest = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
 
@@ -87,14 +96,19 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                     + precaptureTrigger + ", AE state: " + AeStateMachine.getAeStateName(aeState));
         }
 
-        aeStateMachine.noteRepeatingFrame(aeState, exposureEarly, sensEarly);
+        // Fast path only if the scene has stayed at the exposure limit since the last shot;
+        // after a light change, keep the normal wait.
+        Integer waitAeState = AeStateMachine.aeStateForWait(
+                aeState,
+                hooks.reusesRunningCamera() && aeStateMachine.atExposureLimitSinceLastShot());
+        aeStateMachine.noteRepeatingFrame(waitAeState, exposureEarly, sensEarly);
 
         long elapsedNs = aeStateMachine.elapsedNsSinceAeStart();
         AeStateMachine.AeRepeatCaptureDecision decision =
                 AeStateMachine.evaluateRepeatingRequestAeStep(
                         aeStateMachine.waitingForAeConvergence(),
                         aeStateMachine.aeLockRequested(),
-                        aeState,
+                        waitAeState,
                         elapsedNs,
                         aeStateMachine.stableConvergedFrames(),
                         aeStateMachine.nsSinceFirstConverged());
@@ -113,6 +127,7 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                         + (AeStateMachine.AE_WAIT_MAX_NS / 1_000_000) + "ms), capture delay "
                         + remainingStabilityMs + "ms");
                 aeStateMachine.clearWaitFlags();
+                aeStateMachine.noteShotFired(aeState);
                 hooks.scheduleCapturePhoto(remainingStabilityMs);
                 break;
             }
@@ -121,6 +136,7 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                 Log.i(TAG, "🔍 ✅ AE LOCKED in " + totalElapsedMs + "ms total! State: "
                         + AeStateMachine.getAeStateName(aeState) + ", capturing photo");
                 aeStateMachine.clearWaitFlags();
+                aeStateMachine.noteShotFired(aeState);
                 hooks.capturePhoto();
                 break;
             }
@@ -136,6 +152,7 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                 long minimumStabilityMs = hooks.minimumExposureStabilizationDelayMs();
                 long remainingStabilityMs = Math.max(0L, minimumStabilityMs - stabilityMs);
                 aeStateMachine.clearWaitFlags();
+                aeStateMachine.noteShotFired(aeState);
                 if (remainingStabilityMs > 0L) {
                     Log.i(TAG, "🔍 ✅ AE CONVERGED+STABLE in " + elapsedMs + "ms! State: "
                             + AeStateMachine.getAeStateName(aeState) + " (stability wait "
