@@ -19,7 +19,14 @@ import { AccountError } from "./account-error";
 export interface GotrueIdentity {
   id: string;
   email: string;
+  /** `email_confirmed_at`, falling back to `confirmed_at`. */
   emailVerified: boolean;
+  /**
+   * `email_confirmed_at` alone. `confirmed_at` can be set by confirming something
+   * other than the email (a phone number), so anything that trusts the email
+   * address itself (web sign-in, Organization Admin status) uses this.
+   */
+  emailConfirmed: boolean;
   name?: string;
   avatarUrl?: string;
 }
@@ -101,6 +108,7 @@ function identityFrom(user: any): GotrueIdentity {
     id: user.id,
     email: user.email,
     emailVerified: Boolean(user.email_confirmed_at ?? user.confirmed_at),
+    emailConfirmed: Boolean(user.email_confirmed_at),
     name: meta.full_name ?? meta.name ?? undefined,
     avatarUrl: meta.avatar_url ?? meta.picture ?? undefined,
   };
@@ -196,6 +204,40 @@ export async function findUserByEmail(email: string): Promise<GotrueIdentity | n
     if (users.length < PER_PAGE) break; // last page reached, no match
   }
   return null;
+}
+
+/**
+ * Whether the admin directory can be queried at all: both the project URL and
+ * the service-role key are set. A deployment without GoTrue (a Private Cloud)
+ * has no Mentra accounts.
+ */
+export function isGotrueAdminConfigured(): boolean {
+  return Boolean(process.env.SUPABASE_URL?.trim() && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
+}
+
+/**
+ * The account behind a Supabase user ID, for web sign-in. Null when the account
+ * does not exist (404). Unlike `getUserById`, a directory that cannot answer
+ * (any other status, a network error or a timeout) throws, so a GoTrue outage
+ * is never mistaken for an account without a confirmed email.
+ */
+export async function getAccountForSignIn(userId: string, timeoutMs = 5_000): Promise<GotrueIdentity | null> {
+  let response: { status: number; body: any };
+  try {
+    response = await gotrue(`/admin/users/${encodeURIComponent(userId)}`, {
+      method: "GET",
+      admin: true,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    if (err instanceof AccountError) throw err;
+    throw new AccountError("server_error", "account directory unavailable", 503);
+  }
+  if (response.status === 404) return null;
+  if (response.status !== 200 || typeof response.body?.id !== "string") {
+    throw new AccountError("server_error", "account directory unavailable", 503);
+  }
+  return identityFrom(response.body);
 }
 
 export async function getUserById(userId: string, signal?: AbortSignal): Promise<GotrueIdentity | null> {

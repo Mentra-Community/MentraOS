@@ -34,6 +34,15 @@ const UserSchema = new Schema(
      * set may still reach PostHog, whose retention policy governs delivered
      * data (see confirmAccountDeletion). */
     supportTelemetryDeletedAt: {type: Date, default: null},
+
+    /**
+     * Set by an account-wide revocation (logout everywhere, password change or
+     * reset, account deletion). Core refuses identity-provider tokens from a
+     * sign-in before it: for Supabase, a session whose start (the earliest
+     * `amr[].timestamp`) precedes it, even after a refresh; for other
+     * providers, a token issued (`iat`) before it.
+     */
+    webSignInsRevokedAt: {type: Date, default: null},
   },
   {timestamps: {createdAt: true, updatedAt: false}, collection: "users"},
 )

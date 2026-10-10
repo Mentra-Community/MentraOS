@@ -29,7 +29,7 @@ function givenIdentity(identity: gotrue.GotrueIdentity | null) {
 
 test("returns the verified email of a first-party account", async () => {
   givenUser({tenantId: "mentra", tenantUserId: "supabase-id"})
-  const lookup = givenIdentity({id: "supabase-id", email: "wearer@example.com", emailVerified: true})
+  const lookup = givenIdentity({id: "supabase-id", email: "wearer@example.com", emailVerified: true, emailConfirmed: true})
 
   expect(await trustedAccountEmail("mu_01TEST")).toBe("wearer@example.com")
   expect(lookup).toHaveBeenCalledWith("supabase-id", undefined)
@@ -37,21 +37,21 @@ test("returns the verified email of a first-party account", async () => {
 
 test("ignores an unverified address", async () => {
   givenUser({tenantId: "mentra", tenantUserId: "supabase-id"})
-  givenIdentity({id: "supabase-id", email: "wearer@example.com", emailVerified: false})
+  givenIdentity({id: "supabase-id", email: "wearer@example.com", emailVerified: false, emailConfirmed: false})
 
   expect(await trustedAccountEmail("mu_01TEST")).toBeNull()
 })
 
 test("never resolves an OEM subject against the Mentra directory", async () => {
   givenUser({tenantId: "acme-oem", tenantUserId: "supabase-id"})
-  const lookup = givenIdentity({id: "supabase-id", email: "someone@example.com", emailVerified: true})
+  const lookup = givenIdentity({id: "supabase-id", email: "someone@example.com", emailVerified: true, emailConfirmed: true})
 
   expect(await trustedAccountEmail("mu_01TEST")).toBeNull()
   expect(lookup).not.toHaveBeenCalled()
 })
 
 test("returns null without an account directory or a user row", async () => {
-  const lookup = givenIdentity({id: "supabase-id", email: "wearer@example.com", emailVerified: true})
+  const lookup = givenIdentity({id: "supabase-id", email: "wearer@example.com", emailVerified: true, emailConfirmed: true})
 
   givenUser(null)
   expect(await trustedAccountEmail("mu_UNKNOWN")).toBeNull()
