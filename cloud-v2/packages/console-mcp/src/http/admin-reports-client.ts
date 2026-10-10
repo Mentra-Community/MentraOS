@@ -9,7 +9,7 @@
  *
  * All routes sit behind the core adminAuth gate; requests authenticate with
  * "Authorization: Bearer <MENTRA_ADMIN_TOKEN>" (org msk_ API key allowlisted
- * via CLOUD_CORE_ADMIN_EMAILS, or a WorkOS admin access token).
+ * via CLOUD_CORE_ADMIN_EMAILS).
  */
 
 import type { ConsoleMcpConfig } from "../config";
