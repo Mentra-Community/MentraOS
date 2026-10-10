@@ -214,7 +214,7 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
       ? { message: input.feedback }
       : input.feedback
     : null;
-  await ReportModel.create({
+  const document = {
     reportId,
     mentraUserId: input.mentraUserId,
     kind: input.kind,
@@ -226,7 +226,11 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     artifacts: [],
     ...(input.kind !== 'feedback' ? {logCollection: initialReportLogCollection(new Date())} : {}),
     status,
-  });
+  };
+  // The recovery reader requires majority visibility. A correlated creation
+  // must not be acknowledged before its binding is committed at that level.
+  if (correlation) await ReportModel.create([document], {writeConcern: attachmentWriteConcern});
+  else await ReportModel.create(document);
 
   // Feedback reports are complete as submitted, so they notify here;
   // bug/automatic reports notify from markReportReady once artifact

@@ -59,9 +59,10 @@ and `POST /api/client/reports` path. With `source: mentra_automated_testing`, th
 engine requires the original validated `alert_id` and `test_run_id`, and submits
 `automationCorrelation: {alertId, testRunId}`. Core accepts this field only for
 automatic `incident_report_requested` reports and stores it with the authenticated
-report owner at creation. The typed contract lives in
-`@mentra/cloud-protocol/report-automation`; it preserves exact IDs without
-normalizing or truncating them.
+report owner at creation. Correlated creation waits for a majority-journaled
+write before acknowledgement, matching the recovery reader's majority visibility
+requirement. The typed contract lives in `@mentra/cloud-protocol/report-automation`;
+it preserves exact IDs without normalizing or truncating them.
 
 After manifest upload acknowledgements, the existing authenticated
 `POST /api/internal/framework-results/:requestId/complete` path can return
