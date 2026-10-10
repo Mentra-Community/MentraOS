@@ -75,7 +75,7 @@ describe("combined JS and native incident logs", () => {
     expect(deliverySource).toBe("phone_delivery")
     expect(deliveryEntries).toEqual([
       expect.objectContaining({
-        message: "Report combined-logs: glasses log notification unavailable (glasses_disconnected)",
+        message: "Report combined-logs: glasses log notification unavailable (no_paired_mentra_live)",
       }),
     ])
   })
