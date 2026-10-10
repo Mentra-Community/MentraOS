@@ -4,6 +4,7 @@ import android.os.Handler;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.audio.diag.AudioTraceBus;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -44,7 +45,8 @@ public final class I2sReadyGate {
 
     /** A STOP from another audio owner also retires cached readiness. */
     public static void onBridgeStopped() {
-        LINK_EPOCH.incrementAndGet();
+        int epoch = LINK_EPOCH.incrementAndGet();
+        AudioTraceBus.emit(AudioTraceBus.BRIDGE_INVALIDATED, "link_epoch", epoch);
         for (I2sReadyGate gate : PENDING.values()) {
             gate.failCurrentRequest();
         }
@@ -67,6 +69,12 @@ public final class I2sReadyGate {
         int requestId = mRequestId;
         boolean requiresAck = sSupported;
         PENDING.put(requestId, this);
+        AudioTraceBus.emit(
+                AudioTraceBus.I2S_READY_BEGIN,
+                "request_id",
+                requestId,
+                "requires_ack",
+                requiresAck);
         mTimeout =
                 () -> {
                     // Older BES builds have no readiness protocol. Keep a bounded compatibility
@@ -79,6 +87,12 @@ public final class I2sReadyGate {
                             "[I2S-READY] id="
                                     + requestId
                                     + (legacy ? " legacy fallback" : " timeout"));
+                    AudioTraceBus.emit(
+                            AudioTraceBus.I2S_READY_TIMEOUT,
+                            "request_id",
+                            requestId,
+                            "legacy",
+                            legacy);
                     complete(requestId, legacy);
                 };
         mHandler.postDelayed(
@@ -92,6 +106,16 @@ public final class I2sReadyGate {
     /** True for a pending or ready request on this exact live link. */
     public synchronized boolean isUsable() {
         return mRequestId != 0 && !Boolean.FALSE.equals(mReady) && mLinkEpoch == LINK_EPOCH.get();
+    }
+
+    /** True once the current request has been answered ready; false while still pending. */
+    public synchronized boolean isReady() {
+        return Boolean.TRUE.equals(mReady);
+    }
+
+    /** The current request ID, or 0 when none is registered. */
+    public synchronized int currentRequestId() {
+        return mRequestId;
     }
 
     /** Register one prepared player; cancellation must still be checked by its owner. */
@@ -126,6 +150,7 @@ public final class I2sReadyGate {
         PENDING.remove(requestId, this);
         mHandler.removeCallbacks(mTimeout);
         Log.i("I2sReadyGate", "[I2S-READY] id=" + requestId + " ready=" + ready);
+        AudioTraceBus.emit(AudioTraceBus.I2S_READY, "request_id", requestId, "ready", ready);
         for (Runnable[] waiter : mWaiters) dispatch(requestId, waiter[0], waiter[1]);
         mWaiters.clear();
     }

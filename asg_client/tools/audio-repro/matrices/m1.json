@@ -1,0 +1,53 @@
+{
+  "name": "m1",
+  "description": "Milestone 1: actual recording-start cue; capture off, MIC, or VOICE_COMMUNICATION; bridge-state conditions and capture transitions. Block A runs first and is repeated every session.",
+  "defaults": {
+    "anchor_timeout_ms": 8000,
+    "late_tolerance_ms": 5,
+    "max_trial_ms": 60000,
+    "inter_trial_ms": 1000
+  },
+  "settings": {
+    "pre_delay_ms": [700, 1700],
+    "block_boundary_pre_delay_ms": 4000,
+    "standby_timeout_ms": 30000,
+    "reopen_delay_ms": 100,
+    "reuse_delay_ms": 300,
+    "capture_stop_after_complete_ms": 500,
+    "end_after_close_ms": 300,
+    "bes_log_pull": true,
+    "bes_log_settle_ms": 3000
+  },
+  "blocks": [
+    {
+      "id": "A",
+      "type": "conditions",
+      "conditions": ["cold", "reopen", "reuse", "join_pending"],
+      "reps": 40
+    },
+    {
+      "id": "Arep",
+      "type": "repetition",
+      "cues": 100,
+      "chunk": 25,
+      "gap_ms": [0, 5000]
+    },
+    {
+      "id": "B",
+      "type": "capture_transitions",
+      "captures": [
+        {"source": "MIC", "rate": 44100, "ch": 1},
+        {"source": "VOICE_COMMUNICATION", "rate": 48000, "ch": 1}
+      ],
+      "transitions": {
+        "steady": [0],
+        "start_before": [0, 100, 300],
+        "start_during": [0, 100, 300],
+        "stop_during": [100, 300]
+      },
+      "bridge": ["cold", "reuse"],
+      "control_every": 4,
+      "reps": 10
+    }
+  ]
+}
