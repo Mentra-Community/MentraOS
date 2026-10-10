@@ -165,6 +165,19 @@ describe("report source collection and phone delivery diagnostics", () => {
     })
   })
 
+  it.each(["Mentra Live", "K900", "K900Plus", "K900PlusV2"])(
+    "uses canonical paired Live identity when native status reports hardware model %s",
+    async (deviceModel) => {
+      connected()
+      nativeStatus.mockResolvedValueOnce({deviceModel, connection: {state: "connected", fullyBooted: true}} as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
+      await submitAutomaticReport(input)
+      expect(send).toHaveBeenCalledWith("rep_delivery", "https://core.example")
+      expect(update).toHaveBeenCalledWith("rep_delivery", "glasses_firmware", {
+        state: "requested", reason: "local_sdk_dispatch_completed",
+      })
+    },
+  )
+
   it("checks the actual connection again after token synchronization", async () => {
     connected()
     sync.mockImplementationOnce(async () => {

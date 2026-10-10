@@ -130,7 +130,11 @@ async function notifyGlasses(reportId: string): Promise<ReportLogCollectionUpdat
       if (!isGlassesConnected(native.connection)) {
         return {state: "unavailable", reason: "glasses_disconnected"}
       }
-      if (native.deviceModel !== DeviceTypes.LIVE) {
+      // Live's deviceModel can be its hardware variant (for example K900).
+      // Pairing identity supplies the canonical product; reject Phone Mode's
+      // simulated native link without inventing a second hardware-model map.
+      if (native.deviceModel.includes(DeviceTypes.SIMULATED) ||
+        !requiredDeviceReportLogSources(projectPairingIdentity()).some((source) => source === "glasses")) {
         return {state: "unavailable", reason: "no_connected_mentra_live"}
       }
       stage = "incident_dispatch"
