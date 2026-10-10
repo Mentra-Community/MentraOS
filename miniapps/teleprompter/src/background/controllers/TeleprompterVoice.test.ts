@@ -5,6 +5,39 @@ import {TeleprompterController} from "./TeleprompterController"
 import {ScriptEngine} from "../core/ScriptEngine"
 
 describe("Japanese AI Scroll", () => {
+  test.each([false, true])("recovers a delayed Japanese transcript (final: %s)", (isFinal) => {
+    const script =
+      "今日は東京を歩いています。明日は大阪に行きます。新しい景色を見るのが楽しみです。日本の文化について話します。最後に皆さんへ感謝を伝えます。これから新しい計画を詳しく説明します。どうぞよろしくお願いします。"
+    const controller = new TeleprompterController({} as never)
+    const internal = controller as unknown as {
+      engine: ScriptEngine
+      handleTranscription: (data: TranscriptionData) => void
+    }
+    internal.engine = new ScriptEngine({numberOfLines: 2})
+    internal.engine.setScript(script)
+    let status!: PlaybackStatus
+    Object.assign(controller, {
+      state: "playing",
+      voiceActive: true,
+      render: async () => 1,
+      ui: {
+        send: (_channel: string, value: PlaybackStatus) => {
+          status = value
+        },
+      },
+    })
+    try {
+      internal.handleTranscription({text: script.slice(0, 69), isFinal} as TranscriptionData)
+      expect(status.progress).toBeGreaterThan(0)
+      expect(status.state).toBe("playing")
+      internal.handleTranscription({text: isFinal ? script.slice(69) : script, isFinal} as TranscriptionData)
+      expect(status.progress).toBe(100)
+      expect(status.state).toBe("finished")
+    } finally {
+      controller.stop()
+    }
+  })
+
   test.each([false, true])("scrolls on partial and final transcripts (final: %s)", async (isFinal) => {
     const script = "今日は東京です。明日は大阪です。"
     const sent: RenderElement[][] = []

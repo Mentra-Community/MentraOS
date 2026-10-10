@@ -4,6 +4,29 @@ import {processText} from "../../../../../mobile/modules/engine/src/utils/displa
 import {G2_PROFILE} from "../../../../../mobile/modules/engine/src/utils/display/profiles/g2"
 
 describe("Japanese voice matching", () => {
+  test("recovers delayed Japanese suffixes with strong bounded evidence", () => {
+    const script =
+      "今日は東京を歩いています。明日は大阪に行きます。新しい景色を見るのが楽しみです。日本の文化について話します。最後に皆さんへ感謝を伝えます。"
+    const engine = new ScriptEngine({numberOfLines: 2})
+    engine.setScript(script)
+    expect(normalizeWords(script).length).toBeGreaterThan(60)
+    expect(engine.matchSpoken(normalizeWords(script).slice(-6), 0)).toBe(1)
+    expect(engine.matchSpoken(normalizeWords(script).slice(-3), 0)).toBe(0)
+    // Prefer the closest equally strong phrase rather than a later repetition.
+    engine.setScript(script + script)
+    expect(engine.matchSpoken(normalizeWords(script).slice(-6), 0)).toBe((script.length - 1) / (2 * script.length))
+    // Recovery remains bounded even when the script is one whitespace word.
+    engine.setScript("あ".repeat(600) + "皆さんへ感謝を伝えます")
+    expect(engine.matchSpoken(normalizeWords("皆さんへ感謝を伝えます").slice(-6), 0)).toBe(0)
+  })
+
+  test("preserves the English forward search limit", () => {
+    const engine = new ScriptEngine({numberOfLines: 2})
+    const words = Array.from({length: 80}, (_, i) => `word${i}`)
+    engine.setScript(words.join(" "))
+    expect(engine.matchSpoken(words.slice(-6), 0)).toBe(0)
+  })
+
   test("normalizes Japanese independently of spaces and punctuation", () => {
     expect(normalizeWords("今日は、東京です。")).toEqual(normalizeWords("今日 は 東京 です"))
     expect(normalizeWords("AIで2026年のデモ")).toEqual(["ai", "で", "2026", "年", "の", "デ", "モ"])

@@ -140,6 +140,13 @@ export class ScriptEngine {
     const AHEAD = 60 // how far ahead we'll let a jump land (skipped a paragraph)
     const BACK = 4 // tolerate a touch of backward drift from interim noise
     const MAX_RUN = 6 // cap the backward-match run we score
+    const japaneseProbe = probe.some((word) =>
+      /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}]/u.test(word),
+    )
+    // A delayed Japanese update may cover far more than 60 character anchors.
+    // Bound recovery to 600 anchors and require the full six-token suffix for
+    // jumps outside the normal window; short common suffixes cannot recover.
+    const recoveryAhead = japaneseProbe ? 600 : AHEAD
 
     // Find the next speech anchor in logarithmic time, including fractional
     // positions inside Japanese source words.
@@ -151,7 +158,7 @@ export class ScriptEngine {
       else high = mid
     }
     const start = Math.max(0, low - BACK)
-    const end = Math.min(this.speechNorms.length, low + AHEAD)
+    const end = Math.min(this.speechNorms.length, low + recoveryAhead)
 
     let bestPos = -1
     let bestScore = 0
@@ -165,6 +172,7 @@ export class ScriptEngine {
         si--
         if (score >= MAX_RUN) break
       }
+      if (i >= low + AHEAD && score < MAX_RUN) continue
       if (score > bestScore) {
         bestScore = score
         bestPos = i
@@ -178,9 +186,6 @@ export class ScriptEngine {
     if (bestPos < 0) return cursor
     // Two Japanese characters can be a common suffix rather than evidence that
     // the reader reached another sentence. Require three when available.
-    const japaneseProbe = probe.some((word) =>
-      /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}]/u.test(word),
-    )
     const needed = Math.min(probe.length, japaneseProbe ? 3 : 2)
     if (bestScore < needed) return cursor
 
