@@ -1,17 +1,31 @@
 import {afterEach, beforeEach, describe, expect, test} from "bun:test"
-import {assertSupabaseApiKeys, deleteUser, signUp, supabaseApiKeyFormat, verifyPassword} from "./gotrue.client"
+import {
+  assertSupabaseApiKeys,
+  deleteUser,
+  resendVerification,
+  signUp,
+  supabaseApiKeyFormat,
+  verifyPassword,
+} from "./gotrue.client"
 
 const LEGACY_ANON = "legacy-anon-key"
 const LEGACY_SERVICE = "legacy-service-role-key"
-const KEYS = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"] as const
+const KEYS = [
+  "SUPABASE_URL",
+  "SUPABASE_ANON_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "CLOUD_CORE_ACCOUNT_EMAIL_REDIRECT_URL",
+] as const
 
 let saved: Record<string, string | undefined>
 let realFetch: typeof fetch
 let seen: Headers[]
+let urls: URL[]
 
 function respondWith(status: number, body: unknown) {
-  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     seen.push(new Headers(init?.headers))
+    urls.push(new URL(input instanceof Request ? input.url : String(input)))
     return new Response(body === undefined ? null : JSON.stringify(body), {status})
   }) as typeof fetch
 }
@@ -20,6 +34,7 @@ beforeEach(() => {
   saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]))
   realFetch = globalThis.fetch
   seen = []
+  urls = []
   process.env.SUPABASE_URL = "https://auth.example.test"
 })
 
@@ -148,5 +163,35 @@ describe("signup outcomes", () => {
   test("preserves weak-password errors", async () => {
     respondWith(422, {error_code: "weak_password", msg: "Password is too weak"})
     await expect(signUp("new@example.test", "weak")).rejects.toMatchObject({code: "weak_password"})
+  })
+})
+
+describe("account email redirect", () => {
+  const signedUp = {id: "u1", email: "a@b.co", identities: [{id: "i1"}]}
+
+  test("without the setting, sign-up keeps GoTrue's default link", async () => {
+    process.env.SUPABASE_ANON_KEY = LEGACY_ANON
+    delete process.env.CLOUD_CORE_ACCOUNT_EMAIL_REDIRECT_URL
+    respondWith(200, signedUp)
+    await signUp("a@b.co", "pw-123456")
+    expect(urls[0]!.pathname).toBe("/auth/v1/signup")
+    expect(urls[0]!.searchParams.has("redirect_to")).toBe(false)
+  })
+
+  test("sign-up sends redirect_to when it is set", async () => {
+    process.env.SUPABASE_ANON_KEY = LEGACY_ANON
+    process.env.CLOUD_CORE_ACCOUNT_EMAIL_REDIRECT_URL = "https://verified.example.test/done"
+    respondWith(200, signedUp)
+    await signUp("a@b.co", "pw-123456")
+    expect(urls[0]!.searchParams.get("redirect_to")).toBe("https://verified.example.test/done")
+  })
+
+  test("the verification resend sends the same redirect_to", async () => {
+    process.env.SUPABASE_ANON_KEY = LEGACY_ANON
+    process.env.CLOUD_CORE_ACCOUNT_EMAIL_REDIRECT_URL = "https://verified.example.test/done"
+    respondWith(200, {})
+    await resendVerification("a@b.co")
+    expect(urls[0]!.pathname).toBe("/auth/v1/resend")
+    expect(urls[0]!.searchParams.get("redirect_to")).toBe("https://verified.example.test/done")
   })
 })

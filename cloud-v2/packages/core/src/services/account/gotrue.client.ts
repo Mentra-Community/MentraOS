@@ -48,6 +48,16 @@ export function assertSupabaseApiKeys(env: Record<string, string | undefined> = 
   }
 }
 
+/**
+ * Where account emails (sign-up confirmation and its resend) send the person.
+ * Unset keeps GoTrue's default, the project's Site URL. Set it before the
+ * Site URL changes, so these links keep landing on the same page.
+ */
+function accountEmailRedirect(): Record<string, string> | undefined {
+  const url = process.env.CLOUD_CORE_ACCOUNT_EMAIL_REDIRECT_URL?.trim();
+  return url ? { redirect_to: url } : undefined;
+}
+
 function keyHeaders(key: string): Record<string, string> {
   return supabaseApiKeyFormat(key) === "legacy_jwt" ? { apikey: key, authorization: `Bearer ${key}` } : { apikey: key };
 }
@@ -138,6 +148,7 @@ export async function signUp(email: string, password: string): Promise<void> {
   const { status, body } = await gotrue("/signup", {
     method: "POST",
     body: { email, password },
+    query: accountEmailRedirect(),
   });
   if (status === 200 || status === 201) {
     // GoTrue obfuscates a confirmed duplicate as a user with no identities.
@@ -166,7 +177,7 @@ export async function signUp(email: string, password: string): Promise<void> {
 }
 
 export async function resendVerification(email: string): Promise<void> {
-  await gotrue("/resend", { method: "POST", body: { type: "signup", email } });
+  await gotrue("/resend", { method: "POST", body: { type: "signup", email }, query: accountEmailRedirect() });
   // Always uniform; ignore result.
 }
 
