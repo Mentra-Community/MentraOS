@@ -126,7 +126,7 @@ final class BesIncidentTestSupport {
 
         String lastDumpId() throws Exception {
             JSONObject command = new JSONObject(sent.get(sent.size() - 1));
-            return command.getJSONObject("B").getString("dump_id");
+            return new JSONObject(command.getString("B")).getString("dump_id");
         }
     }
 
