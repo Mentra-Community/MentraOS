@@ -67,15 +67,35 @@ export async function savePackageSigningKey(key: PackageSigningKey): Promise<'ke
   return 'file';
 }
 
+/**
+ * The OS keychain could not be read, so whether a key exists is unknown. Every
+ * caller aborts: treating this as "no key" would let `keys create` or `keys
+ * import` mint a second publisher identity for an already pinned package.
+ */
+export class PackageSigningKeyReadError extends Error {
+  constructor(
+    readonly packageName: string,
+    cause: unknown,
+  ) {
+    super(
+      `Could not read the publisher signing key for ${packageName} from the OS keychain ` +
+        `(${cause instanceof Error ? cause.message : String(cause)}). Nothing was created or changed. ` +
+        'Restore keychain access and retry, or sign with --signing-key <path>.',
+    );
+    this.name = 'PackageSigningKeyReadError';
+  }
+}
+
 export async function loadPackageSigningKey(packageName: string): Promise<PackageSigningKey | null> {
   assertPackageName(packageName);
   let keychainValue: string | null = null;
-  try {
-    if (typeof Bun !== 'undefined' && Bun.secrets) {
+  if (typeof Bun !== 'undefined' && Bun.secrets) {
+    // Only a successful lookup that returns null means the keychain has no key.
+    try {
       keychainValue = await Bun.secrets.get({ service: SIGNING_KEY_SERVICE, name: packageName });
+    } catch (error) {
+      throw new PackageSigningKeyReadError(packageName, error);
     }
-  } catch {
-    // Fall through to the secure file fallback.
   }
 
   const path = packageSigningKeyPath(packageName);

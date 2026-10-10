@@ -18,6 +18,7 @@ export {
   importPackageSigningKey,
   loadPackageSigningKey,
   missingSigningKeyError,
+  PackageSigningKeyReadError,
   packageSigningKeyPath,
   publisherKeyFingerprint,
   resolvePackageSigningKey,

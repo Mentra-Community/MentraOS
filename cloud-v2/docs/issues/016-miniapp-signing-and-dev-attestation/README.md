@@ -27,7 +27,10 @@ source, and Core mints a miniapp token for whichever package the phone runs.
 
 `@mentra/miniapp-cli` owns one Ed25519 publisher key per package. The private key
 stays on the developer machine in the OS keychain, or in a mode-`0600` file under
-`~/.mentra/cli-v2/signing-keys/` when no keychain is available.
+`~/.mentra/cli-v2/signing-keys/` when the keychain refuses the write. Only a
+successful keychain lookup that finds nothing means a package has no key; if the
+keychain can't be read, every key command aborts without creating, importing or
+replacing a key, so a second identity is never minted for a pinned package.
 
 ```txt
 mentra-miniapp keys create com.example.myminiapp

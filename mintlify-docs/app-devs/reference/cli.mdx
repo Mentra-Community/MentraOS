@@ -136,8 +136,10 @@ mentra-miniapp keys import com.example.myapp ./publisher-key.json
 ```
 
 Manages one publisher signing key per package. Keys are stored in the OS
-keychain, or in a mode-`0600` file under `~/.mentra/cli-v2/signing-keys/` when no
-keychain is available. `show` prints the key's `sha256:` fingerprint. `export`
+keychain, or in a mode-`0600` file under `~/.mentra/cli-v2/signing-keys/` when the
+keychain refuses the write. If the keychain can't be read, key commands stop
+without creating or changing a key; on machines without a keychain, such as CI,
+sign with `--signing-key`. `show` prints the key's `sha256:` fingerprint. `export`
 writes the private key to a new file; keep it secret and in a secure backup.
 
 ## `manifest`
