@@ -48,6 +48,11 @@ repository.
 | `MENTRA_MINIAPP_JWT_PUBLIC_KEY` | Public verification material | Matching Ed25519 SPKI body. |
 | `CLOUD_CORE_ISSUER` | Public | Deployment-unique HTTPS Core origin. |
 | `CLOUD_CORE_OIDC_PROVIDERS` | Public | Explicitly trusted workforce OIDC providers as JSON. |
+| `CLOUD_CORE_ADMIN_EMAILS` | Public | Organization Admins: comma-separated emails, verified by the provider (see below). |
+| `CLOUD_CORE_ADMIN_PORTAL_URL` | Public | The admin portal's HTTPS origin; Core's own origin when Core serves the portal. |
+| `CLOUD_CORE_ADMIN_STATIC_DIR` | Public | The built admin portal in the image, `/app/admin-dist`. Core serves it on its own host. |
+| `CLOUD_CORE_IDP_SIGNOUT_URL` | Public | The provider's sign-out URL, offered after an admin portal sign-out. |
+| `ENTRA_BROWSER_CLIENT_SECRET` (the name in `browser.clientSecretEnv`) | Secret | The admin portal's client secret at the provider. |
 
 Signing keys and the refresh pepper must survive upgrades. An Entra provider is
 configured explicitly:
@@ -66,7 +71,15 @@ configured explicitly:
     "directoryTenantClaim": "tid",
     "expectedDirectoryTenantId": "<tenant-id>",
     "requiredScopes": ["mentra.session"],
-    "allowedClientIds": ["<mobile-client-id>"]
+    "allowedClientIds": ["<mobile-client-id>"],
+    "verifiedEmailDomains": ["acme.example"],
+    "browser": {
+      "clientId": "<core-api-client-id>",
+      "clientSecretEnv": "ENTRA_BROWSER_CLIENT_SECRET",
+      "scopes": ["openid", "email", "profile"],
+      "emailClaim": "email",
+      "displayName": "Acme"
+    }
   }
 ]
 ```
@@ -74,6 +87,27 @@ configured explicitly:
 Core issues an opaque Mentra user id. It retains provider metadata only for host
 integrations such as proving an ACS token belongs to the same Entra employee.
 Miniapp tokens never contain the federated identity.
+
+### Admin portal sign-in
+
+Core serves the admin portal at its own origin and signs people in with the
+provider's `browser` settings: the Core API app registration as a confidential
+client (`client_secret_post`, `openid email profile`, a `nonce`). Register
+`https://<core host>/api/admin/auth/callback` as a web redirect URI of that app,
+and request the `email` optional claim in its ID token. A person signing in to
+the admin portal is the same Core user as on their phone (`oid`).
+
+An email the provider asserts is verified only in a domain on
+`verifiedEmailDomains` (exact match; list each subdomain), and never when the
+token says `email_verified: false`. An Organization Admin is a person whose
+verified email is on `CLOUD_CORE_ADMIN_EMAILS`; an allowlisted
+`api-key@<keyId>.local` keeps an organization API key working as an admin key.
+Core refuses at startup a Mentra domain, a non-canonical or duplicate domain,
+`browser` settings without `openid` or without their secret, and more than one
+provider with `browser` settings. Without `browser` settings Core still serves
+the portal, and its sign-in answers "Sign-in is not configured".
+
+See [`docs/signin.md`](../docs/signin.md) for sessions, cookies and revocation.
 
 ## Runtime modules
 
@@ -303,6 +337,11 @@ services:
       MENTRA_MINIAPP_JWT_PUBLIC_KEY: ${MENTRA_MINIAPP_JWT_PUBLIC_KEY:?required}
       CLOUD_CORE_ISSUER: https://core.workspace.example
       CLOUD_CORE_OIDC_PROVIDERS: ${CLOUD_CORE_OIDC_PROVIDERS:?required}
+      CLOUD_CORE_ADMIN_EMAILS: ${CLOUD_CORE_ADMIN_EMAILS:-}
+      CLOUD_CORE_ADMIN_PORTAL_URL: https://core.workspace.example
+      CLOUD_CORE_ADMIN_STATIC_DIR: /app/admin-dist
+      CLOUD_CORE_IDP_SIGNOUT_URL: https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/logout
+      ENTRA_BROWSER_CLIENT_SECRET: ${ENTRA_BROWSER_CLIENT_SECRET:?required}
     secrets: [mongo_password]
     depends_on: [mongo]
 
@@ -336,6 +375,7 @@ secrets:
 curl --fail https://core.workspace.example/healthz | jq
 curl --fail https://core.workspace.example/ready | jq
 curl --fail https://core.workspace.example/.well-known/jwks.json | jq
+curl --fail -o /dev/null -w '%{http_code} %{redirect_url}\n' https://core.workspace.example/api/admin/auth/login
 curl --fail https://workspace.example/healthz | jq
 curl --fail https://workspace.example/ready | jq
 curl --fail https://workspace.example/api/client/min-version | jq
