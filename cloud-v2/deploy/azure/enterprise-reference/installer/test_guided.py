@@ -375,12 +375,15 @@ class GuidedTests(unittest.TestCase):
              patch.object(setup, 'vault_get', return_value={'value': 'stored-by-create'}), \
              patch.object(setup, 'resolve_principal', return_value={'id': TENANT, 'collection': 'users'}), \
              patch.object(setup, 'update_configuration') as update, \
-             patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}) as install, \
-             patch.object(setup, 'apply_teams_policy', return_value=(True, '')) as apply:
+             patch.object(setup, 'install', side_effect=lambda *a: order.append('rollout') or {'status': 'infrastructure_verified'}) as install, \
+             patch.object(setup, 'apply_teams_policy', side_effect=lambda *a: order.append('policy') or (True, '')) as apply:
+            order = []
             self.args.teams_organizer = 'organizer@acme.example'
             result = setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
-        # Setup applies the Teams policy itself, from the saved script.
+        # Setup applies the Teams policy itself, from the saved script, once the deployment uses
+        # the new app: the script takes Teams access away from the app it replaces.
         self.assertEqual(apply.call_args.args[1], self.directory / 'teams-policy.ps1')
+        self.assertEqual(order, ['rollout', 'policy'])
         self.assertTrue(result['teamsPolicyApplied'])
         self.assertEqual(setup.read_json(self.directory / 'state.json')['teamsPolicyApplied'], SUB)
         # create_meetings_app stored the secret itself.
@@ -565,10 +568,12 @@ class GuidedTests(unittest.TestCase):
         with patch.object(setup, 'vault_get', return_value={'value': 'saved'}), patch.object(setup, 'check_graph_secret'), \
              patch.object(setup, 'update_configuration'), \
              patch.object(setup, 'meetings_consent', return_value=True), \
-             patch.object(setup, 'apply_teams_policy', return_value=(True, '')), \
+             patch.object(setup, 'apply_teams_policy', return_value=(True, '')) as apply, \
              patch.object(setup, 'install', side_effect=setup.SetupError('preflight failed')):
             with self.assertRaises(setup.SetupError):
                 setup.configure_teams(self.args, self.directory, self.config, state, interactive=False)
+        # The running deployment still uses the old app, so it keeps its Teams access.
+        apply.assert_not_called()
         # Guided setup reruns install() for any phase but infrastructure_verified.
         self.assertEqual(json.loads((self.directory / 'state.json').read_text())['phase'], 'deploying')
 

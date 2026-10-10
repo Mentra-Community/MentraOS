@@ -1889,10 +1889,16 @@ def configure_teams(args, directory, config, state, interactive=None):
     policy = teams_policy_commands(client_id, organizer, config['tenantId'], previous)
     # Kept with the setup files, for the Teams administrator who runs it.
     (directory / 'teams-policy.ps1').write_text('\n'.join(policy) + '\n')
-    # The script only ever adds this app, so a failed re-run leaves an earlier success in place.
+    rollout = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
+    # The script takes Teams access away from the app it replaces, so it runs only once the
+    # deployment uses the new app. It only ever adds this app, so a failed re-run leaves an
+    # earlier success in place.
     earlier = state.get('teamsPolicyApplied') == client_id
-    print('  Applying the Teams policy as your account...', flush=True)
-    applied, reason = apply_teams_policy(config, directory / 'teams-policy.ps1')
+    if rollout['status'] == 'infrastructure_verified':
+        print('  Applying the Teams policy as your account...', flush=True)
+        applied, reason = apply_teams_policy(config, directory / 'teams-policy.ps1')
+    else:
+        applied, reason = False, 'the deployment has not switched to this app yet'
     if applied:
         print('  Applied. Teams can take up to 30 minutes to apply it.')
     elif earlier:
@@ -1901,7 +1907,6 @@ def configure_teams(args, directory, config, state, interactive=None):
         print(f'  Not applied: {reason}.')
     applied = applied or earlier
     checkpoint(directory, state, state['phase'], teamsPolicyApplied=client_id if applied else '')
-    rollout = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
     result = {'status': 'meeting_creation_configured' if rollout['status'] == 'infrastructure_verified' else rollout['status'],
               'graphClientId': client_id, 'adminConsent': {True: 'granted', False: 'needed'}.get(consent, 'unknown'),
               'teamsPolicy': policy, 'teamsPolicyFile': str(directory / 'teams-policy.ps1'),

@@ -175,7 +175,8 @@ date. Before then, add a new client secret to the app in Entra and run
 
 Meeting creation also needs a Teams application access policy, which only Teams
 PowerShell can set. `configure-teams` writes the script to
-`mentra-state/teams-policy.ps1` and runs it as the operator: in Cloud Shell
+`mentra-state/teams-policy.ps1` and, once the rollout has moved the deployment
+to the app, runs it as the operator: in Cloud Shell
 Teams PowerShell signs in as the Cloud Shell user (`Connect-MicrosoftTeams
 -Identity`); elsewhere setup passes the account's Graph and Teams admin tokens
 from the Azure CLI (`Connect-MicrosoftTeams -AccessTokens`). When the operator
