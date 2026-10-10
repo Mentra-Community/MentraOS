@@ -78,6 +78,19 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
         XCTAssertTrue(sdk.glassesStatus.fullyBooted)
         XCTAssertFalse(observations.contains { $0.key == "fullyBooted" })
         XCTAssertEqual(sessionEvents, [false])
+
+        // A physical teardown before the next logical restart becomes ready must
+        // still run disconnect cleanup, even though readiness is already false.
+        try receive(["type": "version_info_1", "sid": "third", "build_number": "303000267"])
+        store.set("glasses", "headUp", true)
+        store.set("glasses", "voiceActivityDetectionEnabled", !BluetoothSdkDefaults.voiceActivityDetectionEnabled)
+        XCTAssertFalse(sdk.glassesStatus.fullyBooted)
+        XCTAssertTrue(sdk.glassesStatus.connected)
+        transport.cleanup()
+        XCTAssertFalse(sdk.glassesStatus.connected)
+        XCTAssertEqual(store.get("glasses", "headUp") as? Bool, false)
+        XCTAssertEqual(store.get("glasses", "voiceActivityDetectionEnabled") as? Bool,
+                       BluetoothSdkDefaults.voiceActivityDetectionEnabled)
     }
 
     func testInitialVersionChunkDoesNotStartAnExtraReadinessExchange() throws {

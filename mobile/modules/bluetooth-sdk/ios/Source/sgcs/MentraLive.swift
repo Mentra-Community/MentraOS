@@ -923,7 +923,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.isConnecting = false
 
             self.connectedPeripheral = nil
-            self.fullyBooted = false
+            self.clearPhysicalReadiness()
             self.connected = false
             self.glassesSessionId = nil // Fresh BLE session starts with no sid known
             self.streamControlVersion = 0
@@ -1615,6 +1615,16 @@ class MentraLive: NSObject, SGCManager {
     private var connected: Bool {
         get { DeviceStore.shared.get("glasses", "connected") as? Bool ?? false }
         set { DeviceStore.shared.apply("glasses", "connected", newValue) }
+    }
+
+    private func clearPhysicalReadiness() {
+        let readinessWasPending = connected && !fullyBooted
+        fullyBooted = false
+        if readinessWasPending {
+            // Logical ASG readiness already emitted false without disconnecting.
+            // The real disconnect must still perform the cleanup apply deduplicates.
+            DeviceManager.shared.handleDeviceDisconnected()
+        }
     }
 
     // Queue Management
@@ -6022,8 +6032,8 @@ class MentraLive: NSObject, SGCManager {
             centralManager?.cancelPeripheralConnection(peripheral)
         }
 
+        clearPhysicalReadiness()
         DeviceStore.shared.apply("glasses", "connected", false)
-        DeviceStore.shared.apply("glasses", "fullyBooted", false)
         DeviceStore.shared.apply("glasses", "wifiConnected", false)
         DeviceStore.shared.apply("glasses", "wifiSsid", "")
         DeviceStore.shared.apply("glasses", "wifiLocalIp", "")
