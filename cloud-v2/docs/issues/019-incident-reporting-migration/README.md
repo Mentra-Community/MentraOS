@@ -281,7 +281,9 @@ Mentra Live BES firmware crash:
   `glasses_firmware:full` (glasses Wi-Fi upload) or `glasses_firmware:relay`
   (phone BLE relay). Dump lines use entry `source: "BES_CRASH"`; the frozen
   firmware TRACE uses entry `source: "BES"`.
-- Contract: `notes/superpowers/specs/2026-10-10-os-1988-bes-crash-contract.md`.
+- An older Cloud ignores `incidentKey` and `retryKey` without error and creates a
+  new report each time, so `deduplicated` is absent from its response. Deploy this
+  Cloud change before any app or glasses build that sends the keys.
 
 Miniapp start failure:
 
