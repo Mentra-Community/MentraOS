@@ -216,8 +216,13 @@ class MentraLive : SGCManager() {
             val advertisement =
                     MentraLivePairingAdvertisementParser.parse(manufacturerData(result))
                             ?: return Triple(false, null, false)
+            result.device?.address?.let { securePairingAddresses.add(it) }
             return Triple(advertisement.pairingMode, advertisement.pairingCode, true)
         }
+
+        /** Addresses seen advertising the secure-pairing trailer; survives SGC recreation. */
+        private val securePairingAddresses: MutableSet<String> =
+                java.util.Collections.synchronizedSet(mutableSetOf())
 
         fun isMentraLiveBluetoothName(name: String?): Boolean {
             if (name.isNullOrEmpty()) {
@@ -622,6 +627,8 @@ class MentraLive : SGCManager() {
     private var pairingYieldEndRunnable: Runnable? = null
     /** After yield ends, auth/not-owner failures may clear saved glasses. */
     private var pairingYieldAwaitingReclaim = false
+    /** elapsedRealtime of the last GATT link that was not an explicit pairing attempt. */
+    private var lastAutoReconnectLinkAt: Long? = null
     /** Hold GATT teardown until the unpair write can leave the phone. */
     private var unpairFlushPending = false
     private var unpairFlushRunnable: Runnable? = null
@@ -2020,6 +2027,20 @@ class MentraLive : SGCManager() {
 
     fun isPairingYieldActive(): Boolean = pairingYieldActive
 
+    private fun isSecurePairingTarget(device: BluetoothDevice?): Boolean {
+        val flagged =
+                DeviceStore.get("bluetooth", "pending_device_secure_pairing_capable") as? Boolean
+        return flagged == true || (device?.address?.let { securePairingAddresses.contains(it) } ?: false)
+    }
+
+    /** The user is pairing glasses from the scan screen rather than reconnecting a saved owner. */
+    private fun isExplicitPairingAttempt(): Boolean {
+        val pendingName = DeviceStore.get("bluetooth", "pending_device_name") as? String ?: ""
+        val pendingAddress = DeviceStore.get("bluetooth", "pending_device_address") as? String ?: ""
+        return manualDiscoveryActive || pendingName.isNotEmpty() || pendingAddress.isNotEmpty()
+    }
+
+
     /**
      * Another phone took ownership. Stop reconnecting but keep the saved glasses so the app
      * can explain the loss and offer to pair again or unpair. Bonds and the saved identity
@@ -2314,6 +2335,9 @@ class MentraLive : SGCManager() {
                                     "LIVE: 🔌 🔗 BLE GATT link connected - validating services/characteristics..."
                             )
                             markPairingTiming("gatt_connected")
+                            lastAutoReconnectLinkAt =
+                                    if (isExplicitPairingAttempt()) null
+                                    else SystemClock.elapsedRealtime()
                             isConnecting = false
                             isConnected = true
                             connectedDevice = gatt.device
@@ -2486,14 +2510,14 @@ class MentraLive : SGCManager() {
                         // Clean up resources
                         closeGattQuietly(false)
 
-                        // Auth/not-owner after pairing yield — not a generic RF blip.
-                        // GATT 8 / 0x08 is connection timeout; a reclaim RF timeout must
-                        // not wipe the saved owner.
-                        if (pairingYieldAwaitingReclaim &&
-                                        (status == 5 ||
-                                                status == 15 ||
-                                                status == 0x05 ||
-                                                status == 0x0F)
+                        // Secure glasses reject a non-owner at connect time with HCI
+                        // Authentication Failure, whether or not this phone saw the
+                        // entering_pairing_mode notice. GATT 8 (timeout) and 19 (remote
+                        // terminated) are RF/session drops and must not wipe the saved owner.
+                        if (MentraLiveOwnerLossPolicy.shouldStandDownOnGattError(
+                                        status,
+                                        isExplicitPairingAttempt(),
+                                )
                         ) {
                             standDownAfterOwnerLoss("gatt_auth_status_$status")
                             return
@@ -4156,13 +4180,10 @@ class MentraLive : SGCManager() {
                     // Process heartbeat pong response
                     Bridge.log("LIVE: Received pong response - connection healthy")
             "entering_pairing_mode" -> {
-                val windowMs = json.optLong("window_ms", 120_000L).coerceIn(5_000L, 180_000L)
-                Bridge.log("LIVE: Glasses entering pairing mode — yield ${windowMs}ms (no forget)")
-                enterPairingYield(windowMs)
-                val body = HashMap<String, Any>()
-                body["window_ms"] = windowMs
-                body["reason"] = json.optString("reason", "user_gesture")
-                Bridge.sendTypedMessage("entering_pairing_mode", body)
+                // The glasses forget the previous owner as soon as pairing mode starts.
+                // This phone has lost them: disconnect and do not try to reconnect.
+                Bridge.log("LIVE: Glasses entering pairing mode — owner lost, no reconnect")
+                standDownAfterOwnerLoss("entering_pairing_mode")
             }
             "pairing_info" ->
                     Bridge.sendPairingInfo(
@@ -4762,8 +4783,20 @@ class MentraLive : SGCManager() {
                     Bridge.log("LIVE: ⚠️ glasses_ready: mic restore threw: " + t)
                 }
 
-                // Pairing UI / DeviceManager.handleDeviceReady gate on fullyBooted.
-                // Do not wait for CTKD here — iOS already marks ready on glasses_ready alone.
+                // Pairing UI / DeviceManager.handleDeviceReady gate on fullyBooted, and
+                // handleDeviceReady promotes the pairing target to the default device.
+                // Classic CTKD is not awaited, but secure glasses own a phone only once the
+                // BLE bond exists; the BOND_BONDED handler finishes readiness.
+                if (isExplicitPairingAttempt() &&
+                                MentraLiveOwnerLossPolicy.shouldDeferReadyForBond(
+                                        isSecurePairingTarget(connectedDevice),
+                                        connectedDevice?.bondState,
+                                )
+                ) {
+                    Bridge.log("LIVE: glasses_ready before BLE bond — waiting for bond to report ready")
+                    markPairingTiming("waiting_ble_bond", "queueSize=${sendQueue.size}")
+                    return
+                }
                 endPairingTiming(
                         "fully_connected",
                         "via=glasses_ready audioConnected=$audioConnected queueSize=${sendQueue.size}"
@@ -7296,6 +7329,22 @@ class MentraLive : SGCManager() {
                                         Bridge.log(
                                                 "LIVE: CTKD: ❌ Bonding failed or removed for device"
                                         )
+                                        val sinceReconnect =
+                                                lastAutoReconnectLinkAt?.let {
+                                                    SystemClock.elapsedRealtime() - it
+                                                }
+                                        if (MentraLiveOwnerLossPolicy.shouldStandDownOnBondRemoved(
+                                                        previousBondState,
+                                                        bondState,
+                                                        isKilled,
+                                                        unpairFlushPending,
+                                                        isExplicitPairingAttempt(),
+                                                        sinceReconnect,
+                                                )
+                                        ) {
+                                            standDownAfterOwnerLoss("bond_removed_by_glasses")
+                                            return
+                                        }
                                         markPairingTiming(
                                                 "ctkd_bond_none",
                                                 "prev=$previousBondState queueSize=${sendQueue.size}"
@@ -7311,7 +7360,19 @@ class MentraLive : SGCManager() {
                                             classicAudioConnectionTracker.clear(device.address)
                                         }
                                         audioConnected = false
-                                        if (previousBondState == BluetoothDevice.BOND_BONDING) {
+                                        if (previousBondState == BluetoothDevice.BOND_BONDING &&
+                                                        isExplicitPairingAttempt() &&
+                                                        isSecurePairingTarget(device)
+                                        ) {
+                                            // Secure glasses own a phone only through this bond.
+                                            // Re-prompting after a decline only repeats the
+                                            // system dialog; let the pairing screen offer Try again.
+                                            Bridge.log(
+                                                    "LIVE: CTKD: secure pairing bond not completed — reporting pairing failure"
+                                            )
+                                            bondingRetryCount = 0
+                                            Bridge.sendPairFailureEvent("errors:pairingCouldNotStart")
+                                        } else if (previousBondState == BluetoothDevice.BOND_BONDING) {
                                             // User cancelled or bonding failed - retry up to
                                             // MAX_BONDING_RETRIES times
                                             bondingRetryCount++
