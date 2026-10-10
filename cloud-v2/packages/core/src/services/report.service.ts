@@ -388,6 +388,23 @@ export async function referenceTestRunDiagnostics(owner: {reportId: string; ment
   return declared.length;
 }
 
+/** Bind acknowledged run evidence to the existing device report's authenticated owner.
+ * A host-provided report ID alone never authorizes an attachment. */
+export async function referenceDeviceIncidentDiagnostics(reportId: string, correlation: ReportAutomationCorrelation,
+  run: RecordedFrameworkRun) {
+  const valid = reportAutomationCorrelation(correlation);
+  if (!valid || valid.testRunId !== run.result.runId || !/^rep_[A-Za-z0-9]{1,80}$/.test(reportId))
+    throw new ReportArtifactError(409, "Device incident does not belong to this frozen run");
+  const row = await ReportModel.findOne({reportId, 'automationCorrelation.testRunId': valid.testRunId,
+    'automationCorrelation.alertId': valid.alertId}).select({reportId: 1, mentraUserId: 1, kind: 1, trigger: 1, _id: 0})
+    .read('primary').readConcern('majority').setOptions({timeoutMS: 3000}).lean();
+  const trigger = row?.trigger as {source?: unknown; reason?: unknown} | undefined;
+  if (!row || !row.mentraUserId || row.kind !== 'automatic' || trigger?.source !== REPORT_TESTING_SOURCE
+    || trigger.reason !== 'incident_report_requested')
+    throw new ReportArtifactError(409, "Device incident does not belong to this frozen run");
+  return referenceTestRunDiagnostics({reportId: row.reportId, mentraUserId: row.mentraUserId}, run);
+}
+
 /** Worker retry path through the same report/asset models and blob provider. Reserve the
  * digest before writing: a concurrent different body cannot overwrite the winning blob.
  * Interrupted uploads keep their reservation so an identical retry can finish it. */

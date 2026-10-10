@@ -16,7 +16,7 @@ import type {CandidateVerification} from '../types/candidate-verification.types'
 import type {RoutineSourceRef} from '../types/framework-version.types';
 import {readFailureScreens} from './framework-failure-screen';
 import {readRunIncident, readRunIncidentCorrelation} from './framework-run-incident';
-import {findTestRunReport, findDeviceIncidentReport} from './report.service';
+import {findTestRunReport, findDeviceIncidentReport, referenceDeviceIncidentDiagnostics} from './report.service';
 import {failedRunNeedsReport} from './failed-framework-run-report.service';
 
 export class FrameworkResultConflict extends Error {}
@@ -139,7 +139,8 @@ export class FrameworkResultService {
     private readonly acknowledgements: FrameworkUploadAcknowledgements = uploadAcknowledgements,
     private readonly incidents: Pick<FailedFrameworkRunReportService, 'complete'> = new FailedFrameworkRunReportService(),
     private readonly findIncident: typeof findTestRunReport = findTestRunReport,
-    private readonly findDeviceIncident: typeof findDeviceIncidentReport = findDeviceIncidentReport) {}
+    private readonly findDeviceIncident: typeof findDeviceIncidentReport = findDeviceIncidentReport,
+    private readonly referenceDeviceDiagnostics: typeof referenceDeviceIncidentDiagnostics = referenceDeviceIncidentDiagnostics) {}
   async ingest(input: unknown, authenticatedHostId: string) {
     const parsed = frameworkRunSchema.safeParse(input);
     // Custom checks use fixed contract descriptions; built-in messages may echo input values.
@@ -219,6 +220,8 @@ export class FrameworkResultService {
     // disposal; Core reporting owns any pending Slack intent independently.
     const incident = await this.incidents.complete(stored.payload, stored.payloadSha256);
     const deviceIncident = await this.deviceIncident(stored.payload);
+    if (deviceIncident)
+      await this.referenceDeviceDiagnostics(deviceIncident.reportId, deviceIncident.correlation, stored.payload);
     return {entityId: stored.payload.result.runId, payloadSha256: stored.payloadSha256,
       manifestSha256: requestInputDigest(stored.payload.assets), ...(incident ? {incident} : {}),
       ...(deviceIncident ? {deviceIncident} : {})};
