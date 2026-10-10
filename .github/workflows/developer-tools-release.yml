@@ -2,7 +2,7 @@ name: Release Mentra Developer Tools
 
 # Publishes developer tooling that is intentionally outside the coordinated
 # Mentra product family: @mentra/miniapp-cli, create-mentra-miniapp,
-# @mentra/auth, and @mentra/cli. The coordinated release workflow exclusively
+# @mentra/auth, @mentra/miniapp-tools, and @mentra/cli. The coordinated release workflow exclusively
 # owns @mentra/miniapp and the Engine dependency closure.
 #
 # Channel selection (see .github/scripts/npm-channel.mjs): git holds one

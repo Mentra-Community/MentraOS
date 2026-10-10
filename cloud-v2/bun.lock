@@ -80,6 +80,13 @@
         "zod": "^3.24.1",
       },
     },
+    "packages/miniapp-tools": {
+      "name": "@mentra/miniapp-tools",
+      "version": "0.1.0-dev.0",
+      "dependencies": {
+        "pino": "^9.6.0",
+      },
+    },
     "packages/protocol": {
       "name": "@mentra/cloud-protocol",
       "version": "3.3.0",
@@ -284,6 +291,8 @@
     "@mentra/cloud-v2-portal": ["@mentra/cloud-v2-portal@workspace:websites/portal"],
 
     "@mentra/console-mcp": ["@mentra/console-mcp@workspace:packages/console-mcp"],
+
+    "@mentra/miniapp-tools": ["@mentra/miniapp-tools@workspace:packages/miniapp-tools"],
 
     "@mentra/test-client": ["@mentra/test-client@workspace:test/test-client"],
 
