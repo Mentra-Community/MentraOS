@@ -43,8 +43,12 @@ export interface FakePerson {
   email?: string
   /** Supabase: the account's `email_confirmed_at` is set. Default true. */
   emailConfirmed?: boolean
-  /** Extra claims for the tokens (for example `oid`, `tid`, `email_verified`). */
+  /** Extra claims for the tokens (for example `oid`, `tid`, `email_verified`). They override the defaults. */
   claims?: Record<string, unknown>
+  /** OIDC only: claims that override the ID token's (for example `aud`, `nonce`, `iss`, `exp`). */
+  idTokenClaims?: Record<string, unknown>
+  /** OIDC only: the ID token's algorithm. Default RS256. */
+  idTokenAlg?: FakeAlg
 }
 
 export interface FakeIdpOptions {
@@ -366,7 +370,10 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
     }
 
     const claims = {sub: grant.person.sub, email: grant.person.email, ...grant.person.claims}
-    const idToken = await idp.mint({...claims, aud: client.id, iat, ...(grant.nonce ? {nonce: grant.nonce} : {})}, {alg: "RS256"})
+    const idToken = await idp.mint(
+      {...claims, aud: client.id, iat, ...(grant.nonce ? {nonce: grant.nonce} : {}), ...grant.person.idTokenClaims},
+      {alg: grant.person.idTokenAlg ?? "RS256"},
+    )
     const accessToken = await idp.mint({...claims, aud: "api://core", iat, azp: client.id}, {alg: "RS256"})
     return record(200, {access_token: accessToken, id_token: idToken, token_type: "Bearer", expires_in: ttl})
   }
