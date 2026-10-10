@@ -25,6 +25,7 @@
       "@mentra/cloud-client": ["../cloud-v2/packages/cloud-client/src/index.ts"],
       "@mentra/cloud-client/react-native": ["../cloud-v2/packages/cloud-client/react-native/index.ts"],
       "@mentra/cloud-protocol": ["../cloud-v2/packages/protocol/src/index.ts"],
+      "@mentra/cloud-protocol/*": ["../cloud-v2/packages/protocol/src/*"],
       "@mentra/cloud-runtime/protocol": ["../cloud-v2/packages/runtime/src/protocol/index.ts"],
       "@mentra/engine": ["./modules/engine/src/index.ts"],
       "@mentra/engine/*": ["./modules/engine/src/*"],

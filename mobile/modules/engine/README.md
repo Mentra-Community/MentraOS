@@ -128,6 +128,18 @@ it and continues every teardown step and the next independent test. It never re-
 the incident or changes the original test failure. Cloud and miniapp server
 collection continue independently because they do not need a live glasses connection.
 
+Automated requests (`source: "mentra_automated_testing"`) require valid `alert_id`
+and `test_run_id`. The engine sends their exact typed
+`automationCorrelation: {alertId, testRunId}` with report creation, so Core stores
+the binding before collection finishes. Existing authenticated run completion can
+return `deviceIncident: {reportId, correlation}` after reading the unique,
+hash-verified `incident-report/request.json` asset. This is a report link, even
+when the native transport lost its final receipt or collection failed; it never
+changes the original failed result or asserts successful uploads. Core refuses
+duplicate bindings across reports or accounts. No worker report-reader credential
+or repeated incident intent is needed. Older reports without this structured
+binding cannot be recovered through this path.
+
 `engine.reports.submit` creates a report and starts collection. Feedback uses this
 surface without waiting for glasses uploads. Hosts needing completion can await the
 separate storage receipt, whose failure rejects with `ReportCollectionError.collection`:

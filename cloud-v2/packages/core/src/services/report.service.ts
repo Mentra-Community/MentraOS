@@ -24,6 +24,7 @@ import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
 import { createStorageService, type StorageService } from "./storage/storage.service";
 import type { ByteRange } from "./storage/byte-range";
 import {REPORT_LOG_SOURCES, initialReportLogCollection, isReportLogSource, visibleReportLogCollection, type ReportLogCollection, type ReportLogSource} from './report-log-collection';
+import {reportAutomationCorrelation, type ReportAutomationCorrelation} from '@mentra/cloud-protocol/report-automation';
 
 const logger = createLogger("core").child({ service: "report.service" });
 const attachmentWriteConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
@@ -72,6 +73,7 @@ export type SubmitReportInput =
   | {
       mentraUserId: string;
       kind: "automatic";
+      automationCorrelation?: ReportAutomationCorrelation;
       trigger: Extract<ReportTrigger, { type: "automatic" }>;
       report: ReportDetails;
       context: ReportContext;
@@ -200,6 +202,11 @@ async function lookupUserEmail(mentraUserId: string): Promise<string | null> {
 }
 
 export async function submitReport(input: SubmitReportInput): Promise<SubmitReportResult> {
+  const rawCorrelation = 'automationCorrelation' in input ? input.automationCorrelation : undefined;
+  const correlation = rawCorrelation === undefined ? null : reportAutomationCorrelation(rawCorrelation);
+  if (rawCorrelation !== undefined && (!correlation || input.kind !== 'automatic'
+    || input.trigger.source !== REPORT_TESTING_SOURCE || input.trigger.reason !== 'incident_report_requested'))
+    throw new ReportArtifactError(409, 'Invalid automated incident correlation');
   const reportId = `rep_${ulid()}`;
   const status: ReportStatus = input.kind === "feedback" ? "ready" : "collecting";
   const feedback = "feedback" in input
@@ -215,6 +222,7 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     report: "report" in input ? input.report : null,
     feedback,
     context: input.context,
+    ...(correlation ? {automationCorrelation: correlation} : {}),
     artifacts: [],
     ...(input.kind !== 'feedback' ? {logCollection: initialReportLogCollection(new Date())} : {}),
     status,
@@ -240,6 +248,21 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
   }
 
   return { reportId, status };
+}
+
+/** Exact durable device-report link only. No collection-success inference and no
+ * choosing a winner when duplicate requests/accounts used the same binding. */
+export async function findDeviceIncidentReport(correlation: ReportAutomationCorrelation): Promise<string | null> {
+  const valid = reportAutomationCorrelation(correlation);
+  if (!valid) return null;
+  const rows = await ReportModel.find({'automationCorrelation.testRunId': valid.testRunId,
+    'automationCorrelation.alertId': valid.alertId}).select({reportId: 1, kind: 1, trigger: 1, _id: 0})
+    .limit(2).read('primary').readConcern('majority').setOptions({timeoutMS: 3000}).lean();
+  const row = rows.length === 1 ? rows[0] : undefined;
+  const trigger = row?.trigger as {source?: unknown; reason?: unknown} | undefined;
+  return row?.kind === 'automatic' && trigger?.source === REPORT_TESTING_SOURCE
+    && trigger.reason === 'incident_report_requested' && /^rep_[A-Za-z0-9]{1,80}$/.test(row.reportId)
+    ? row.reportId : null;
 }
 
 export async function addLogArtifact(input: {

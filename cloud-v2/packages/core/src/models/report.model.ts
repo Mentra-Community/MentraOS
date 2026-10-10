@@ -25,6 +25,9 @@ const LogCollectionSourceSchema = new Schema({
   leaseUntil: Date,
 }, {_id: false});
 const LogCollectionSchema = new Schema(Object.fromEntries(REPORT_LOG_SOURCES.map(source => [source, LogCollectionSourceSchema])), {_id: false});
+const AutomationCorrelationSchema = new Schema({
+  alertId: {type: String, required: true}, testRunId: {type: String, required: true},
+}, {_id: false});
 
 const ReportArtifactSchema = new Schema(
   {
@@ -57,6 +60,7 @@ const ReportSchema = new Schema(
     report: { type: Schema.Types.Mixed, default: null },
     feedback: { type: Schema.Types.Mixed, default: null },
     context: { type: Schema.Types.Mixed, required: true },
+    automationCorrelation: {type: AutomationCorrelationSchema},
     // Native completion retries own notification delivery; no separate worker or queue.
     slackDelivery: { type: Schema.Types.Mixed },
     logCollection: {type: LogCollectionSchema},
@@ -72,6 +76,9 @@ const ReportSchema = new Schema(
 );
 
 ReportSchema.index({ mentraUserId: 1, createdAt: -1 });
+// Nonunique on purpose: duplicate requests remain visible and recovery refuses
+// ambiguous bindings instead of selecting an arbitrary report or account.
+ReportSchema.index({'automationCorrelation.testRunId': 1, 'automationCorrelation.alertId': 1});
 // Admin triage lists reports newest-first across all users.
 ReportSchema.index({ createdAt: -1 });
 ReportSchema.index({ "slackDelivery.nextAttemptAt": 1 });

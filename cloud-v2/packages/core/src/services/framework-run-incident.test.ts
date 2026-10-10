@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {expect, test} from 'bun:test';
 import type {RecordedFrameworkRun} from '../types/framework-run.types';
-import {readRunIncident, recordedRunIncident} from './framework-run-incident';
+import {readRunIncident, readRunIncidentCorrelation, recordedRunIncident} from './framework-run-incident';
 
 const runId = 'original-run';
 const request = Buffer.from(JSON.stringify({schemaVersion: 1, request: {test_run_id: runId, alert_id: 'original-alert'}}));
@@ -14,6 +14,64 @@ function fixture(): RecordedFrameworkRun {
     path: `incident-report/${index ? 'result' : 'request'}.json`, mimeType: 'application/json',
     size: body.length, sha256: createHash('sha256').update(body).digest('hex')}))} as RecordedFrameworkRun;
 }
+
+test('receipt-loss recovery requires the exact unique hash-verified original automation request', async () => {
+  const original = Buffer.from(JSON.stringify({schemaVersion: 1, request: {
+    source: 'mentra_automated_testing', alert_id: 'original-alert', test_run_id: runId,
+  }}));
+  const asset = {...fixture().assets[0]!, size: original.length, sha256: createHash('sha256').update(original).digest('hex')};
+  const run = {...fixture(), assets: [asset]};
+  expect(await readRunIncidentCorrelation(run, async () => new Response(original))).toEqual({alertId: 'original-alert', testRunId: runId});
+  expect(await readRunIncidentCorrelation({...run, assets: [asset, {...asset, id: 'duplicate'}]}, async () => new Response(original))).toBeNull();
+  expect(await readRunIncidentCorrelation(run, async () => new Response(Buffer.concat([original, Buffer.from(' ')])))).toBeNull();
+  for (const change of [{schemaVersion: 2}, {request: {source: 'external_trigger', alert_id: 'original-alert', test_run_id: runId}},
+    {request: {source: 'mentra_automated_testing', alert_id: 'original-alert', test_run_id: 'unrelated-run'}},
+    {request: {source: 'mentra_automated_testing', alert_id: '../private', test_run_id: runId}}]) {
+    const body = Buffer.from(JSON.stringify({...JSON.parse(original.toString()), ...change}));
+    expect(await readRunIncidentCorrelation({...run, assets: [{...asset, size: body.length,
+      sha256: createHash('sha256').update(body).digest('hex')}]}, async () => new Response(body))).toBeNull();
+  }
+});
+
+test('existing authenticated completion recovers a filed report link after transport receipt loss without changing failed verdict', async () => {
+  const {FrameworkResultService} = await import('./framework-result.service');
+  const {requestInputDigest} = await import('./test-request.service');
+  const original = Buffer.from(JSON.stringify({schemaVersion: 1, request: {
+    source: 'mentra_automated_testing', alert_id: 'original-alert', test_run_id: runId,
+  }}));
+  const run = {...fixture(), requestId: 'accepted-request', result: {runId, setup: {status: 'passed'}, test: 'failed',
+    teardown: {ready: true}, failures: [{phase: 'test', actionId: 'original', message: 'Original failure'}]},
+    assets: [{...fixture().assets[0]!, size: original.length, sha256: createHash('sha256').update(original).digest('hex')}]} as RecordedFrameworkRun;
+  const before = JSON.stringify(run), hash = requestInputDigest(run);
+  let lookup = 0, failLookup = false, unavailableLookup = false, uploadsComplete = true;
+  const service = new FrameworkResultService({async insert() {}, async getByRequest() {
+    return {payload: run, payloadSha256: hash, uploadsComplete};
+  }, async getByRun() {return {payload: run, payloadSha256: hash, uploadsComplete};}, async getAsset() {return null;}},
+  async () => ({hostId: 'owned-host', input: {} as never}), undefined, undefined, undefined,
+  {async list() {return [];}, async complete() {throw new Error('Must not acknowledge missing uploads');}},
+  {async complete() {return undefined;}}, undefined, async correlation => {
+    lookup++; expect(correlation).toEqual({alertId: 'original-alert', testRunId: runId});
+    if (unavailableLookup) throw new Error('Optional report lookup unavailable');
+    return failLookup ? null : 'rep_ORIGINAL';
+  });
+  service.mediaByRun = async () => new Response(original);
+  expect(await service.complete('accepted-request', 'owned-host')).toMatchObject({deviceIncident: {
+    reportId: 'rep_ORIGINAL', correlation: {alertId: 'original-alert', testRunId: runId},
+  }});
+  expect(JSON.stringify(run)).toBe(before);
+  expect(run.result.test).toBe('failed');
+  failLookup = true;
+  expect(await service.complete('accepted-request', 'owned-host')).not.toHaveProperty('deviceIncident');
+  expect(lookup).toBe(2);
+  unavailableLookup = true;
+  expect(await service.complete('accepted-request', 'owned-host')).not.toHaveProperty('deviceIncident');
+  expect(lookup).toBe(3);
+  await expect(service.complete('accepted-request', 'foreign-host')).rejects.toThrow('not acknowledged');
+  expect(lookup).toBe(3);
+  uploadsComplete = false;
+  await expect(service.complete('accepted-request', 'owned-host')).rejects.toThrow('not acknowledged');
+  expect(lookup).toBe(3);
+});
 
 test('incident link requires a created report receipt bound to the original request and run', () => {
   expect(recordedRunIncident(runId, request, bytes)).toBe('rep_EXACT');

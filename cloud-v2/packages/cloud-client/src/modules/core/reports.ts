@@ -7,6 +7,7 @@
  */
 
 import type { HttpClient } from "../../http";
+import type {ReportAutomationCorrelation} from '@mentra/cloud-protocol/report-automation';
 
 const REPORTS_PATH = "/api/client/reports";
 
@@ -70,6 +71,7 @@ export type SubmitReportInput =
     }
   | {
       kind: "automatic";
+      automationCorrelation?: ReportAutomationCorrelation;
       trigger: Extract<ReportTrigger, { type: "automatic" }>;
       report: ReportDetails;
       context: ReportContext;

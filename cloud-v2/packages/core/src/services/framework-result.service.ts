@@ -15,8 +15,8 @@ import {TestAssetService, type TestAsset} from "./test-asset.service";
 import type {CandidateVerification} from '../types/candidate-verification.types';
 import type {RoutineSourceRef} from '../types/framework-version.types';
 import {readFailureScreens} from './framework-failure-screen';
-import {readRunIncident} from './framework-run-incident';
-import {findTestRunReport} from './report.service';
+import {readRunIncident, readRunIncidentCorrelation} from './framework-run-incident';
+import {findTestRunReport, findDeviceIncidentReport} from './report.service';
 import {failedRunNeedsReport} from './failed-framework-run-report.service';
 
 export class FrameworkResultConflict extends Error {}
@@ -138,7 +138,8 @@ export class FrameworkResultService {
     private readonly assets: TestAssetService = new TestAssetService(),
     private readonly acknowledgements: FrameworkUploadAcknowledgements = uploadAcknowledgements,
     private readonly incidents: Pick<FailedFrameworkRunReportService, 'complete'> = new FailedFrameworkRunReportService(),
-    private readonly findIncident: typeof findTestRunReport = findTestRunReport) {}
+    private readonly findIncident: typeof findTestRunReport = findTestRunReport,
+    private readonly findDeviceIncident: typeof findDeviceIncidentReport = findDeviceIncidentReport) {}
   async ingest(input: unknown, authenticatedHostId: string) {
     const parsed = frameworkRunSchema.safeParse(input);
     // Custom checks use fixed contract descriptions; built-in messages may echo input values.
@@ -217,8 +218,10 @@ export class FrameworkResultService {
     // Assets/verdict are already durable. Report evidence is acknowledged before
     // disposal; Core reporting owns any pending Slack intent independently.
     const incident = await this.incidents.complete(stored.payload, stored.payloadSha256);
+    const deviceIncident = await this.deviceIncident(stored.payload);
     return {entityId: stored.payload.result.runId, payloadSha256: stored.payloadSha256,
-      manifestSha256: requestInputDigest(stored.payload.assets), ...(incident ? {incident} : {})};
+      manifestSha256: requestInputDigest(stored.payload.assets), ...(incident ? {incident} : {}),
+      ...(deviceIncident ? {deviceIncident} : {})};
   }
 
   async list(scope: Record<string, string> = {}): Promise<FrameworkRunPage> {
@@ -276,13 +279,27 @@ export class FrameworkResultService {
       stored.uploadsComplete ? readFailureScreens(run, read) : [],
       failedRunNeedsReport(run) ? (async () => {
         const deviceReport = stored.uploadsComplete ? await readRunIncident(run, read) : null;
-        return deviceReport ?? await this.findIncident(run.result.runId, stored.payloadSha256);
+        const recovered = !deviceReport && stored.uploadsComplete ? await this.deviceIncident(run) : null;
+        return deviceReport ?? recovered?.reportId ?? await this.findIncident(run.result.runId, stored.payloadSha256);
       })().catch(() => null) : null,
     ]) : [[], null];
     const displayEvidence = includeFailureScreens ? {failureScreens, incidentReportId,
       incidentReportPending: failedRunNeedsReport(run) && incidentReportId === null} : {};
     return {run, definition: definition?.definition ?? null, outcome: frameworkRunOutcome(run), uploadsComplete: stored.uploadsComplete,
       evidenceStatus: frameworkEvidenceComplete(run) ? "complete" : "failed", ...displayEvidence};
+  }
+
+  /** Core reads its acknowledged request evidence using existing host completion
+   * authority. A link confirms report creation only; the frozen verdict is untouched. */
+  private async deviceIncident(run: RecordedFrameworkRun) {
+    if (!failedRunNeedsReport(run)) return null;
+    const correlation = await readRunIncidentCorrelation(run, (asset, signal) => this.mediaByRun(run.result.runId,
+      asset.id, new Request('http://localhost/frozen-incident-request', {signal})));
+    if (!correlation) return null;
+    // Optional linkage cannot turn acknowledged native publication into a new
+    // failure. An unavailable lookup means no verified link, not no report filed.
+    const reportId = await this.findDeviceIncident(correlation).catch(() => null);
+    return reportId ? {reportId, correlation} : null;
   }
 
   async media(requestId: string, assetId: string, request: Request) {

@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import type {RecordedFrameworkRun} from '../types/framework-run.types';
+import {reportAutomationCorrelation, type ReportAutomationCorrelation} from '@mentra/cloud-protocol/report-automation';
 
 type Asset = RecordedFrameworkRun['assets'][number];
 const object = (value: unknown): Record<string, unknown> | undefined =>
@@ -22,10 +23,10 @@ export function recordedRunIncident(runId: string, requestBytes: Buffer, receipt
   } catch {return null;}
 }
 
-/** Optional display lookup: two small declared blobs, one deadline; never dispatches reporting. */
-export async function readRunIncident(run: RecordedFrameworkRun,
-  read: (asset: Asset, signal: AbortSignal) => Promise<Response>): Promise<string | null> {
-  const assets = ['incident-report/request.json', 'incident-report/result.json'].map(path => {
+/** Small declared blobs, one deadline and verified original bytes. */
+async function readIncidentAssets(run: RecordedFrameworkRun, paths: string[],
+  read: (asset: Asset, signal: AbortSignal) => Promise<Response>): Promise<Buffer[] | null> {
+  const assets = paths.map(path => {
     const matches = run.assets.filter(asset => asset.path === path && ['report', 'diagnostic'].includes(asset.kind)
       && asset.mimeType === 'application/json');
     return matches.length === 1 ? matches[0] : undefined;
@@ -64,11 +65,32 @@ export async function readRunIncident(run: RecordedFrameworkRun,
       if (bytes.length !== asset!.size || createHash('sha256').update(bytes).digest('hex') !== asset!.sha256) return null;
       bodies.push(bytes); bodyReader.releaseLock(); reader = undefined; response = undefined;
     }
-    return expired ? null : recordedRunIncident(run.result.runId, bodies[0]!, bodies[1]!);
+    return expired ? null : bodies;
   } catch {return null;}
   finally {
     clearTimeout(timer);
     if (reader) {void reader.cancel().catch(() => {}); try {reader.releaseLock();} catch {}}
     else if (response) void response.body?.cancel().catch(() => {});
   }
+}
+
+/** Optional display lookup; never dispatches reporting. */
+export async function readRunIncident(run: RecordedFrameworkRun,
+  read: (asset: Asset, signal: AbortSignal) => Promise<Response>): Promise<string | null> {
+  const bodies = await readIncidentAssets(run, ['incident-report/request.json', 'incident-report/result.json'], read);
+  return bodies ? recordedRunIncident(run.result.runId, bodies[0]!, bodies[1]!) : null;
+}
+
+/** Recover only the exact durable request identity, independently of whether the
+ * native transport observed its completion. Never scans report text or sends input. */
+export async function readRunIncidentCorrelation(run: RecordedFrameworkRun,
+  read: (asset: Asset, signal: AbortSignal) => Promise<Response>): Promise<ReportAutomationCorrelation | null> {
+  const bodies = await readIncidentAssets(run, ['incident-report/request.json'], read);
+  if (!bodies) return null;
+  try {
+    const saved = object(JSON.parse(bodies[0]!.toString('utf8'))), request = object(saved?.request);
+    if (saved?.schemaVersion !== 1 || request?.source !== 'mentra_automated_testing'
+      || request.test_run_id !== run.result.runId) return null;
+    return reportAutomationCorrelation({alertId: request.alert_id, testRunId: request.test_run_id});
+  } catch {return null;}
 }

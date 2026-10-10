@@ -21,6 +21,7 @@ import {
   type ReportAttachmentInput,
 } from "../../services/report.service";
 import {REPORT_LOG_SOURCES} from '../../services/report-log-collection';
+import {reportAutomationCorrelation, type ReportAutomationCorrelation} from '@mentra/cloud-protocol/report-automation';
 
 const reportsApp = new Hono<AppEnv>();
 
@@ -73,6 +74,7 @@ const submitReportSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("automatic"),
+    automationCorrelation: z.custom<ReportAutomationCorrelation>(value => reportAutomationCorrelation(value) !== null).optional(),
     trigger: automaticReportTriggerSchema,
     report: reportDetailsSchema,
     context: recordSchema,
@@ -148,9 +150,15 @@ async function postSubmitReport(c: AppContext) {
     throw new InvalidRequest("invalid report body");
   }
 
+  const correlation = body.automationCorrelation;
+  if (correlation !== undefined && (!reportAutomationCorrelation(correlation) || parsed.data.kind !== 'automatic'
+    || parsed.data.trigger.source !== 'mentra_automated_testing'
+    || parsed.data.trigger.reason !== 'incident_report_requested')) throw new InvalidRequest('invalid automated incident correlation');
+
   const result = await submitReport({
     mentraUserId: user.mentraUserId,
     ...parsed.data,
+    ...(correlation !== undefined ? {automationCorrelation: reportAutomationCorrelation(correlation)!} : {}),
   });
   return c.json(result, 200);
 }

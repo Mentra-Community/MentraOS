@@ -46,6 +46,14 @@ function fakeHttp(calls: Array<{ method: string; path: string; body?: unknown }>
 }
 
 describe("Core reports client", () => {
+  test("passes the exact typed automation correlation through the existing submission route", async () => {
+    const calls: Array<{method: string; path: string; body?: unknown}> = [];
+    const input: SubmitReportInput = {kind: "automatic", trigger: {type: "automatic", source: "mentra_automated_testing",
+      reason: "incident_report_requested"}, report: {actualBehavior: "Original failure"}, context: {},
+      automationCorrelation: {alertId: "exact-alert", testRunId: "exact-run"}};
+    await new Reports({http: fakeHttp(calls)}).submit(input);
+    expect(calls).toEqual([{method: "POST", path: "/api/client/reports", body: input}]);
+  });
   test("reads source receipts through the bound Core API with caller cancellation", async () => {
     const signal = new AbortController().signal;
     const calls: unknown[] = [];

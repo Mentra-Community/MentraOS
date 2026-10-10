@@ -71,6 +71,13 @@ describe("reports facade automatic throttling", () => {
     expect(getRecentLogsMock).not.toHaveBeenCalled()
   })
 
+  it("passes exact automation correlation into the report creation call", async () => {
+    submitMock.mockResolvedValueOnce({reportId: "rep_correlated", status: "collecting"})
+    const automationCorrelation = {alertId: "exact-alert", testRunId: "exact-run"}
+    await submitAutomaticReport({...automaticInput(`correlation-${Date.now()}`), automationCorrelation})
+    expect(submitMock).toHaveBeenCalledWith(expect.objectContaining({kind: "automatic", automationCorrelation}))
+  })
+
   it("does not throttle a later automatic report after Cloud V2 submit fails", async () => {
     const key = `failure-retry-${Date.now()}`
     submitMock
