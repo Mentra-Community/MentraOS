@@ -76,7 +76,7 @@ export function isDeployedEnvironment(): boolean {
   return DEPLOYED_ENVIRONMENTS.has((process.env.CLOUD_CORE_ENVIRONMENT ?? "").trim().toLowerCase())
 }
 
-// Each variable is read as `process.env.NAME` so the production config
+// Each variable is read as a literal process.env property so the production config
 // contract check (.github/scripts/validate-production-cloud-config.mjs) sees it.
 function clean(value: string | undefined): string {
   return (value ?? "").trim()

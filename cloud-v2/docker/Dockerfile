@@ -47,6 +47,10 @@ COPY cloud-v2/ ./
 # Typecheck as a build-time gate so we don't deploy broken type code.
 RUN bun run typecheck
 
+# The admin portal's static build. A Mentra Private Cloud serves it from Core
+# itself (CLOUD_CORE_ADMIN_STATIC_DIR=/app/admin-dist); hosted Core does not use it.
+RUN bun run build:admin && mkdir -p /app/admin-dist && cp -R websites/admin/dist/. /app/admin-dist/
+
 # All three service ports (HTTP/WS) + audio UDP. Porter's port mapping picks
 # the right one per-service from porter.yaml.
 EXPOSE 3000 3001 3002 8000

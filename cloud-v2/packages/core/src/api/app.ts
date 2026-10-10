@@ -9,6 +9,10 @@
  *                                 miniapp-token
  *   /api/client/reports/*       — device-filed reports
  *   /api/agent/reports/*        — read-only private dev-agent access
+ *   /api/admin/auth/*, /api/portal/auth/*
+ *                               — portal sign-in (the deployment's identity provider)
+ *   everything else (GET)       — the admin portal's files, when
+ *                                 CLOUD_CORE_ADMIN_STATIC_DIR is set (Private Cloud)
  *
  * Caller convention (auth/spec.md): /api/client/* is device-called and
  * /api/oem/* is reserved for the OEM's backend. The token exchange + refresh
@@ -50,6 +54,7 @@ import accountOauth from "./account/oauth.api";
 import consoleAuth from "./console/cli-auth.api";
 import portalEnterprise from "./portal/enterprise.api";
 import wellKnown from "./well-known.api";
+import { createAdminStaticApp } from "./admin-static";
 
 const logger = createLogger("core").child({ service: "app" });
 
@@ -117,6 +122,11 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/console", consoleAuth);
   app.route("/api/portal", portalEnterprise);
   app.route("/api/admin", adminPreinstalled);
+
+  // A Private Cloud serves the admin portal from Core itself, on Core's host.
+  // Mounted last: it answers only GET/HEAD outside /api and /.well-known.
+  const adminStaticDir = process.env.CLOUD_CORE_ADMIN_STATIC_DIR?.trim();
+  if (adminStaticDir) app.route("/", createAdminStaticApp(adminStaticDir));
 
   // Global error translator.
   app.onError((err, c) => {
