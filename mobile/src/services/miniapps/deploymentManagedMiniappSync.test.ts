@@ -27,13 +27,11 @@ const mockDownload = jest.fn()
 const mockRemoteRead = jest.fn()
 const mockUnzip = jest.fn()
 const mockMove = jest.fn()
-const mockGetPreinstalledRegistry = jest.fn()
 
 jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {cleanup: jest.fn(async () => {})}}))
 jest.mock("@/services/cloudClient", () => ({
   cloudClient: {
     clearAuthSession: jest.fn(async () => {}),
-    getPreinstalledMiniappRegistry: (...args: unknown[]) => mockGetPreinstalledRegistry(...args),
   },
 }))
 jest.mock("@/utils/auth/authClient", () => ({
@@ -182,8 +180,8 @@ jest.mock("react-native-zip-archive", () => ({
 jest.mock("../../../modules/engine/src/utils/storage/zip", () => ({printDirectory: jest.fn()}))
 jest.mock("@mentra/engine-host-internal", () => ({
   appRegistry: jest.requireActual("../../../modules/engine/src/services/AppRegistry").default,
+  sha256Hex: async () => mockDigest,
 }))
-jest.mock("./preinstalledMiniappSync", () => ({sha256Hex: async () => mockDigest}))
 // Archive validation has its own real-ZIP suite. These native-I/O fixtures
 // exercise ownership, byte comparison, the version and signer rules,
 // activation rollback and cancellation.
@@ -257,7 +255,6 @@ beforeEach(async () => {
   mockRemoteRead.mockReset()
   mockUnzip.mockReset()
   mockMove.mockReset()
-  mockGetPreinstalledRegistry.mockReset()
   mockDigest = "a".repeat(64)
   mockScript = "verified call"
   mockVersion = "2.1.29"
@@ -469,39 +466,6 @@ it("rolls back only its own partially moved bundle and permits a retry", async (
   await deploymentManagedMiniappSync.sync(workspace)
   expect(registry.getInstalledVersions(pkg)).toEqual([])
   await deploymentManagedMiniappSync.sync(workspace)
-  expect(shouldHideMiniapp(pkg, version)).toBe(false)
-})
-
-it("does not let a late consumer registry download overwrite a verified workspace release", async () => {
-  await registry.uninstall(pkg, version)
-  const started = deferred()
-  const download = deferred()
-  mockDownload.mockImplementationOnce(() => {
-    started.resolve()
-    return download.promise
-  })
-  const consumerSync = jest.requireActual<typeof import("./preinstalledMiniappSync")>("./preinstalledMiniappSync")
-  mockGetPreinstalledRegistry.mockResolvedValue({
-    entries: [
-      {
-        packageName: pkg,
-        version,
-        bundleUrl: "https://consumer.example/call.zip",
-        bundleSha256: require("node:crypto").createHash("sha256").update("archive").digest("hex"),
-        channel: "dev",
-        installPolicy: "keep_updated",
-      },
-    ],
-  })
-  selectDeployment(consumer)
-  const oldSync = consumerSync.preinstalledMiniappSync.sync()
-  await started.promise
-  selectDeployment(workspace)
-  await deploymentManagedMiniappSync.sync(workspace)
-  expect(shouldHideMiniapp(pkg, version)).toBe(false)
-  download.resolve()
-  await oldSync
-  expect(registry.getReleaseIdentity(pkg, version)?.deploymentId).toBe("enterprise")
   expect(shouldHideMiniapp(pkg, version)).toBe(false)
 })
 
@@ -854,5 +818,94 @@ describe("one installer for every install source", () => {
     expect(relaunched.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
     expect(relaunched.getPublisherKeyFingerprint(pkg)).toBeNull()
     expect(packageDir.list().map((entry) => entry.name)).toEqual([version])
+  })
+})
+
+describe("staged Store installs", () => {
+  const storeIdentity = {source: "system_store" as const, storePackageName: "com.mentra.store"}
+
+  function stagedInstall(whenStaged: () => Promise<void>) {
+    return registry.installFromUrl("https://store.example/call.zip", {
+      expectedPackageName: pkg,
+      expectedVersion: mockVersion,
+      releaseIdentity: storeIdentity,
+      whenStaged,
+    })
+  }
+
+  beforeEach(() => {
+    selectDeployment(consumer)
+    // The shared setup already unpacked the bundled release once.
+    mockUnzip.mockClear()
+  })
+
+  it("unpacks before waiting and does not hold up other installs while it waits", async () => {
+    mockVersion = "2.1.30"
+    mockScript = "store update"
+    const staged = deferred()
+    const answer = deferred()
+    const install = stagedInstall(async () => {
+      staged.resolve()
+      await answer.promise
+    })
+    await staged.promise
+    expect(mockUnzip).toHaveBeenCalledTimes(1)
+    // The serialized install queue stays free while the miniapp's user decides.
+    expect((await registry.uninstall("com.example.unrelated")).is_ok()).toBe(true)
+    expect(registry.getInstalledVersions(pkg)).toEqual([version])
+    answer.resolve()
+    expect((await install).is_ok()).toBe(true)
+    expect(await registry.getActiveVersion(pkg)).toBe("2.1.30")
+    expect(new File(registry.getBundleDir(pkg, "2.1.30"), "call.js").textSync()).toBe("store update")
+    expect(registry.getReleaseIdentity(pkg, "2.1.30")).toMatchObject(storeIdentity)
+  })
+
+  it("discards the unpacked release when the wait is refused", async () => {
+    mockVersion = "2.1.30"
+    const result = await stagedInstall(async () => {
+      throw new Error("APP_RUNNING")
+    })
+    expect(result.is_error()).toBe(true)
+    expect(registry.getInstalledVersions(pkg)).toEqual([version])
+    expect(await registry.getActiveVersion(pkg)).toBe(version)
+    const cache = new Directory(Paths.cache)
+    expect(cache.list().filter((entry) => entry.name.startsWith("lma_unzip"))).toEqual([])
+  })
+
+  it("refuses a release before unpacking it when the version rule fails", async () => {
+    mockVersion = "2.1.28"
+    const whenStaged = jest.fn(async () => {})
+    const result = await stagedInstall(whenStaged)
+    expect(result.is_error()).toBe(true)
+    expect(mockUnzip).not.toHaveBeenCalled()
+    expect(whenStaged).not.toHaveBeenCalled()
+  })
+})
+
+describe("release cleanup after Store updates", () => {
+  async function installRelease(nextVersion: string) {
+    mockVersion = nextVersion
+    const result = await registry.installFromUrl("https://store.example/call.zip", {
+      expectedPackageName: pkg,
+      expectedVersion: nextVersion,
+      releaseIdentity: {source: "system_store", storePackageName: "com.mentra.store"},
+    })
+    expect(result.is_ok()).toBe(true)
+  }
+
+  it("keeps the new and previous releases, the active selection and organization-owned releases", async () => {
+    // The organization adopts the bundled 2.1.29 release.
+    await deploymentManagedMiniappSync.sync(workspace)
+    expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
+    selectDeployment(consumer)
+    await installRelease("2.1.30")
+    await installRelease("2.1.31")
+    await registry.gcReleaseVersions(pkg, ["2.1.31", "2.1.30"])
+    expect(registry.getInstalledVersions(pkg).sort()).toEqual(["2.1.29", "2.1.30", "2.1.31"])
+    await installRelease("2.1.32")
+    await registry.gcReleaseVersions(pkg, ["2.1.32", "2.1.31"])
+    expect(registry.getInstalledVersions(pkg).sort()).toEqual(["2.1.29", "2.1.31", "2.1.32"])
+    expect(registry.getReleaseIdentity(pkg, "2.1.30")).toBeNull()
+    expect(await registry.getActiveVersion(pkg)).toBe("2.1.32")
   })
 })

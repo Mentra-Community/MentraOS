@@ -635,6 +635,10 @@ const mockIslandEntries = () => {
         uninstall: jest.fn(() => Promise.resolve({is_ok: () => true})),
         saveScreenshot: jest.fn((...a) => appStatusState.saveScreenshot(...a) ?? Promise.resolve()),
         setHiddenStatus: jest.fn((...a) => appStatusState.setHiddenStatus(...a)),
+        invokeAction: jest.fn(() => Promise.resolve(null)),
+        onUpdatePrompt: jest.fn(() => () => {}),
+        onUpdateFailed: jest.fn(() => () => {}),
+        onDeferredUpdateReady: jest.fn(() => () => {}),
       },
       session: {
         status: jest.fn(() => ({status: "disconnected", audioTransport: "none"})),
@@ -908,7 +912,6 @@ const mockIslandEntries = () => {
       stopManagedStream: jest.fn(() => Promise.resolve()),
       isConnected: jest.fn(() => false),
       onConnectionChange: jest.fn(() => () => {}),
-      getPreinstalledMiniappRegistry: jest.fn(() => Promise.resolve({entries: []})),
     },
     // Bluetooth SDK passthrough — the same mock singleton @mentra/bluetooth-sdk
     // is mocked with, so emitBluetoothSdkEvent/resetBluetoothSdkMock still drive
@@ -985,7 +988,10 @@ const mockIslandEntries = () => {
     },
     configureRuntime: jest.fn(),
     configureLauncher: jest.fn(),
+    getDevAppRecords: jest.fn(() => []),
+    sha256Hex: jest.fn(() => Promise.resolve("0".repeat(64))),
     miniappLauncher: {
+      isProjectedRunning: jest.fn(() => false),
       ensureConnected: jest.fn(() => Promise.resolve(true)),
       ensureRunning: jest.fn(() => Promise.resolve(true)),
       resolveBundle: jest.fn(() => Promise.resolve(null)),

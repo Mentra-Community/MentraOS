@@ -1,11 +1,10 @@
-import {appRegistry} from "@mentra/engine-host-internal"
+import {appRegistry, sha256Hex} from "@mentra/engine-host-internal"
 import {Directory, File, Paths} from "expo-file-system"
 
 import {shouldSkipMiniappInstall} from "./miniappVisibility"
 import type {ActiveDeployment, DeploymentManagedMiniapp} from "@/services/deployment"
 import {deploymentStore} from "@/services/deployment/store"
 
-import {sha256Hex} from "./preinstalledMiniappSync"
 import {preflightMiniappZip} from "./miniappZipPreflight"
 
 const LOG_TAG = "DeploymentManagedMiniappSync"

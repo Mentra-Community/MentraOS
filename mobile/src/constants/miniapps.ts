@@ -13,6 +13,16 @@ export const navigationPackageName = "com.mentra.navigation" // "Mentra Map"
 export const mentraCallPackageName = "com.mentra.call"
 export const linkLingoPackageName = "com.mentra.link"
 
+/**
+ * Store miniapps this build ships. A Store runs only as a background updater:
+ * it is never listed or launched, and it updates the bundled miniapps assigned
+ * to it (every bundled package, for Mentra builds).
+ */
+export const BUNDLED_STORE_MINIAPP_PACKAGES = ["com.mentra.store"] as const
+
+/** Mentra Miniapp SDK versions (`sdkVersion` in miniapp.json) this Mentra App runs. */
+export const SUPPORTED_MINIAPP_SDK_RANGE = ">=0.3.0 <4.0.0"
+
 /** True when this binary is the China (com.mentra.mentra.cn) build. */
 export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
 
