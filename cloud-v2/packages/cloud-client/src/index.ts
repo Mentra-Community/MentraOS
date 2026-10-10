@@ -71,6 +71,8 @@ export type {
   ReportKind,
   ReportLogEntry,
   ReportLogCollectionUpdate,
+  ReportLogCollection,
+  ReportLogCollectionSnapshot,
   ReportLogSource,
   ReportStatus,
   ReportSystemPriority,

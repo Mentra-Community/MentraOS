@@ -23,7 +23,7 @@ import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
 import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
 import { createStorageService, type StorageService } from "./storage/storage.service";
 import type { ByteRange } from "./storage/byte-range";
-import {initialReportLogCollection, isReportLogSource, visibleReportLogCollection, type ReportLogCollection, type ReportLogSource} from './report-log-collection';
+import {REPORT_LOG_SOURCES, initialReportLogCollection, isReportLogSource, visibleReportLogCollection, type ReportLogCollection, type ReportLogSource} from './report-log-collection';
 
 const logger = createLogger("core").child({ service: "report.service" });
 const attachmentWriteConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
@@ -263,6 +263,31 @@ export async function addLogArtifact(input: {
       },
     ],
   });
+}
+
+/** Read only collection receipts for the authenticated report owner. */
+export async function getReportLogCollection(input: {mentraUserId: string; reportId: string}): Promise<{
+  reportId: string;
+  logCollection: Partial<Record<ReportLogSource, ReportLogCollection>>;
+} | null> {
+  const row = await ReportModel.findOne(
+    {reportId: input.reportId, mentraUserId: input.mentraUserId},
+    {_id: 0, reportId: 1, logCollection: 1},
+  ).lean<{reportId: string; logCollection?: Partial<Record<ReportLogSource, ReportLogCollection>> | null}>();
+  if (!row) return null;
+  const logCollection: Partial<Record<ReportLogSource, ReportLogCollection>> = {};
+  for (const source of REPORT_LOG_SOURCES) {
+    const receipt = row.logCollection?.[source];
+    if (!receipt) continue;
+    logCollection[source] = {
+      state: receipt.state, requestedAt: receipt.requestedAt, deadlineAt: receipt.deadlineAt,
+      ...(typeof receipt.reason === 'string' ? {reason: receipt.reason} : {}),
+      ...(typeof receipt.receivedAt === 'string' ? {receivedAt: receipt.receivedAt} : {}),
+      ...(typeof receipt.artifactId === 'string' ? {artifactId: receipt.artifactId} : {}),
+      ...(typeof receipt.entryCount === 'number' ? {entryCount: receipt.entryCount} : {}),
+    };
+  }
+  return {reportId: row.reportId, logCollection: visibleReportLogCollection(logCollection)};
 }
 
 /** Only actual storage acceptance marks a source received. A late device failure never erases it. */

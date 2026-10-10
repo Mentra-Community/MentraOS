@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { HttpClient } from "../../http";
 import { Reports, type SubmitReportInput } from "./reports";
+import { Core } from "./core";
 
 const bugReportInput: SubmitReportInput = {
   kind: "bug",
@@ -45,6 +46,27 @@ function fakeHttp(calls: Array<{ method: string; path: string; body?: unknown }>
 }
 
 describe("Core reports client", () => {
+  test("reads source receipts through the bound Core API with caller cancellation", async () => {
+    const signal = new AbortController().signal;
+    const calls: unknown[] = [];
+    const receipt = {state: "received" as const, requestedAt: "2026-10-09T00:00:00Z", deadlineAt: "2026-10-09T00:04:00Z", artifactId: "art_phone", entryCount: 0};
+    const http = {...fakeHttp([]), get: async <T>(path: string, opts?: unknown): Promise<T> => {
+      calls.push({path, opts});
+      return {reportId: "rep_/123", logCollection: {phone: {...receipt, context: "private"}, unrelated: {token: "private"}}, context: "private"} as T;
+    }};
+    const core = new Core({http});
+    await expect(core.reports.getLogCollection("rep_/123", signal)).resolves.toEqual({reportId: "rep_/123", logCollection: {phone: receipt}});
+    expect(calls).toEqual([{path: "/api/client/reports/rep_%2F123/log-collection", opts: {signal}}]);
+  });
+
+  test("rejects malformed source receipts and another report's response", async () => {
+    for (const snapshot of [null, {reportId: "other", logCollection: {}}, {reportId: "rep_test", logCollection: []},
+      {reportId: "rep_test", logCollection: {phone: {state: "ready"}}}]) {
+      const http = {...fakeHttp([]), get: async <T>(): Promise<T> => snapshot as T};
+      await expect(new Reports({http}).getLogCollection("rep_test")).rejects.toThrow("Invalid report collection");
+    }
+  });
+
   test("submits bug reports through the Cloud V2 reports route", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const reports = new Reports({ http: fakeHttp(calls) });

@@ -20,6 +20,9 @@ export type {
   ReportStatus,
   ReportTrigger,
   ReportSubmitResult,
+  ReportCollectionResult,
+  ReportLogCollection,
+  ReportLogSource,
   EngineSubmitReportInput,
 } from "./facades/reports"
 export type {IslandNotification, IslandNotificationKind} from "./facades/notifications"

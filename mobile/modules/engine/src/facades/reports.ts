@@ -10,6 +10,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {
   ReportAttachmentInput,
   ReportContext,
+  ReportLogCollection,
   ReportLogCollectionUpdate,
   ReportLogSource,
   ReportStatus,
@@ -26,6 +27,8 @@ export type {
   ReportAttachmentInput,
   ReportContext,
   ReportDetails,
+  ReportLogCollection,
+  ReportLogSource,
   ReportStatus,
   ReportTrigger,
 } from "@mentra/cloud-client"
@@ -53,9 +56,17 @@ export type ReportSubmitResult =
   | {status: "skipped"; reason: "throttled_within_window"}
   | {status: "failed"; error: string}
 
+export type ReportCollectionResult = {
+  reportId: string
+  state: "complete" | "timed-out" | "unavailable"
+  logCollection: Partial<Record<ReportLogSource, ReportLogCollection>>
+}
+
 const DEFAULT_AUTOMATIC_REPORT_THROTTLE_MS = 90_000
 const INCIDENT_DISPATCH_TIMEOUT_MS = 10_000
 const MAX_PHONE_DELIVERY_LOGS = 500
+const REPORT_COLLECTION_TIMEOUT_MS = 20_000
+const REPORT_COLLECTION_POLL_MS = 500
 const automaticReportThrottleRegistry = new Map<string, number>()
 
 function automaticThrottleShouldSkip(key: string, nowMs: number, windowMs: number): boolean {
@@ -258,10 +269,78 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
   return {status: "submitted", reportId, reportStatus}
 }
 
+/** Wait for selected source receipts; complete includes recorded failures and unavailability. */
+async function waitForCollection(
+  reportId: string,
+  options: {sources: ReportLogSource[]; timeoutMs?: number},
+): Promise<ReportCollectionResult> {
+  const result: ReportCollectionResult = {reportId, state: "unavailable", logCollection: {}}
+  const timeoutMs = options.timeoutMs ?? REPORT_COLLECTION_TIMEOUT_MS
+  if (
+    !cloudClientService.hasCore() ||
+    !/^rep_[A-Za-z0-9]+$/.test(reportId) ||
+    !Number.isFinite(timeoutMs) ||
+    timeoutMs <= 0
+  )
+    return result
+  const sources = [...new Set(options.sources)]
+  if (!sources.every((source) => ["phone", "glasses", "glasses_firmware", "cloud", "miniapp_server"].includes(source)))
+    return result
+  if (sources.length === 0) return {...result, state: "complete"}
+
+  const controller = new AbortController()
+  const deadlineAt = Date.now() + timeoutMs
+  let timeoutTimer: number | undefined
+  let pollTimer: number | undefined
+  const expired = new Promise<never>((_, reject) => {
+    timeoutTimer = BgTimer.setTimeout(() => {
+      controller.abort()
+      reject(new Error("Report collection wait timed out"))
+    }, timeoutMs)
+  })
+  try {
+    while (!controller.signal.aborted) {
+      const snapshot = await Promise.race([
+        cloudClientService.core.reports.getLogCollection(reportId, controller.signal),
+        expired,
+      ])
+      if (Date.now() >= deadlineAt) return {...result, state: "timed-out"}
+      if (snapshot.reportId !== reportId) return result
+      result.logCollection = snapshot.logCollection
+      const complete = sources.every((source) => {
+        const receipt = snapshot.logCollection[source]
+        if (!receipt) return false
+        if (receipt.state === "received")
+          return typeof receipt.artifactId === "string" && /^art_[A-Za-z0-9]+$/.test(receipt.artifactId)
+        return ["unavailable", "failed", "timed-out"].includes(receipt.state)
+      })
+      if (complete) return {...result, state: "complete"}
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          pollTimer = BgTimer.setTimeout(
+            resolve,
+            Math.min(REPORT_COLLECTION_POLL_MS, Math.max(0, deadlineAt - Date.now())),
+          )
+        }),
+        expired,
+      ])
+      pollTimer = undefined
+    }
+    return {...result, state: "timed-out"}
+  } catch {
+    return {...result, state: controller.signal.aborted ? "timed-out" : "unavailable"}
+  } finally {
+    if (timeoutTimer !== undefined) BgTimer.clearTimeout(timeoutTimer)
+    if (pollTimer !== undefined) BgTimer.clearTimeout(pollTimer)
+    controller.abort()
+  }
+}
+
 export const reports = {
   submit(input: EngineSubmitReportInput): Promise<ReportSubmitResult> {
     return submitReportInternal(input)
   },
+  waitForCollection,
 }
 
 export function submitAutomaticReport(input: EngineSubmitAutomaticReportInput): Promise<ReportSubmitResult> {

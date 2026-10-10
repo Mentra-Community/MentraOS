@@ -1,4 +1,4 @@
-import {submitAutomaticReport} from "../facades/reports"
+import {reports, submitAutomaticReport, type ReportCollectionResult} from "../facades/reports"
 import {
   logAutomaticReportSubmissionStatus,
   logUnexpectedAutomaticReportError,
@@ -17,6 +17,7 @@ export type IncidentReportResult = {
   incident_id?: string
   reason?: string
   error?: string
+  collection?: ReportCollectionResult
 }
 
 function readString(event: Record<string, unknown>, key: string): string | undefined {
@@ -30,6 +31,7 @@ function logIncidentResult(params: {
   failureCode: string
   scenarioName?: string
   result: AutomaticReportSubmissionStatus
+  collection?: ReportCollectionResult
 }): IncidentReportResult {
   const {alertId, testRunId, failureCode, scenarioName, result} = params
   const reportId = result.status === "filed" ? result.reportId : undefined
@@ -44,6 +46,7 @@ function logIncidentResult(params: {
     incident_id: reportId,
     reason: result.status === "skipped" ? result.reason : undefined,
     error: result.status === "failed" ? result.error : undefined,
+    ...(params.collection ? {collection: params.collection} : {}),
   }
   console.log(`INCIDENT_REPORT_RESULT ${JSON.stringify(payload)}`)
   return payload
@@ -86,8 +89,19 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
     })
 
     const result = toAutomaticReportSubmissionStatus(submitResult)
+    let collection: ReportCollectionResult | undefined
+    if (result.status === "filed") {
+      try {
+        collection = await reports.waitForCollection(result.reportId, {
+          sources: ["phone", "glasses", "glasses_firmware"],
+          timeoutMs: 20_000,
+        })
+      } catch {
+        collection = {reportId: result.reportId, state: "unavailable", logCollection: {}}
+      }
+    }
     logAutomaticReportSubmissionStatus(LOG_TAG, result, throttleKey)
-    return logIncidentResult({alertId, testRunId, failureCode, scenarioName, result})
+    return logIncidentResult({alertId, testRunId, failureCode, scenarioName, result, collection})
   } catch (error) {
     const result = logUnexpectedAutomaticReportError(LOG_TAG, error)
     return logIncidentResult({alertId, testRunId, failureCode, scenarioName, result})

@@ -23,6 +23,7 @@ import {
   type ReportAttachmentInput,
   type ReportLogEntry,
   type ReportLogCollectionUpdate,
+  type ReportLogCollectionSnapshot,
   type ReportLogSource,
   type ReportStatus,
   type SubmitReportInput,
@@ -42,6 +43,8 @@ export type {
   ReportKind,
   ReportLogEntry,
   ReportLogCollectionUpdate,
+  ReportLogCollection,
+  ReportLogCollectionSnapshot,
   ReportLogSource,
   ReportStatus,
   ReportSystemPriority,
@@ -147,6 +150,7 @@ export class Core {
     getRegistry(opts?: { environment?: string }): Promise<PreinstalledMiniappRegistry>;
   };
   readonly reports: {
+    getLogCollection(reportId: string, signal?: AbortSignal): Promise<ReportLogCollectionSnapshot>;
     submit(input: SubmitReportInput): Promise<SubmitReportResult>;
     updateLogCollection(
       reportId: string,
@@ -222,6 +226,7 @@ export class Core {
     };
     this.reports = {
       submit: reports.submit.bind(reports),
+      getLogCollection: reports.getLogCollection.bind(reports),
       updateLogCollection: reports.updateLogCollection.bind(reports),
       addLogs: reports.addLogs.bind(reports),
       addScreenshots: reports.addScreenshots.bind(reports),

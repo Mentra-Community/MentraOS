@@ -796,6 +796,9 @@ export const cloudClientService = {
 
   core: {
     reports: {
+      getLogCollection(...args: Parameters<CloudCore["reports"]["getLogCollection"]>) {
+        return getCoreClient().reports.getLogCollection(...args)
+      },
       submit(...args: Parameters<CloudCore["reports"]["submit"]>) {
         return getCoreClient().reports.submit(...args)
       },
