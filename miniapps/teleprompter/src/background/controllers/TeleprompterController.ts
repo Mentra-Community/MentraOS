@@ -760,7 +760,7 @@ export class TeleprompterController {
       // subscription actually attached (false after a no-mic fallback); when
       // idle/paused it's whether this device could voice-follow at all.
       voiceMode: this.state === "playing" ? this.voiceActive : this.settings.voiceFollow && this.hasMic,
-      wordIndex: this.cursor,
+      wordIndex: Math.floor(this.cursor),
       totalWords: total,
       topLine: this.currentTopLine,
       totalLines: this.engine.totalLines,
