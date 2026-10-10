@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- Debug-only: inject BES power/camera key events (needs MENTRA_DEBUG_KEY_INJECT firmware) -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.DebugBesKeyReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.mentra.DEBUG_BES_KEY" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>
