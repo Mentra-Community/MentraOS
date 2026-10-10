@@ -86,8 +86,9 @@ export default function SignupScreen() {
 
       // Handle duplicate signup - email already registered
       if (isDuplicateSignupError(res.error)) {
-        showAlert(translate("common:error"), translate("login:errors.emailAlreadyRegistered"), [
-          {text: translate("common:ok")},
+        showAlert(translate("login:signup.accountExistsTitle"), translate("login:signup.accountExistsMessage"), [
+          {text: translate("login:signup.editEmail"), style: "cancel", onPress: () => setStep(1)},
+          {text: translate("login:logIn"), onPress: () => replace("/auth/email-login", {email: email.trim()})},
         ])
       } else {
         showAlert(translate("common:error"), mapAuthError(res.error), [{text: translate("common:ok")}])

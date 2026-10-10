@@ -1144,6 +1144,10 @@ const en = {
       newToMentra: "New to MentraOS?",
       creatingAccount: "Creating your account…",
       edit: "Edit",
+      editEmail: "Edit email",
+      accountExistsTitle: "Account already exists",
+      accountExistsMessage:
+        "An account already exists with this email. Sign in using the method you used before, or use Forgot Password to set a password.",
     },
     verification: {
       title: "Sign Up",

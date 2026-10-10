@@ -14,6 +14,7 @@ const ERROR_CODE_MAP: Record<string, TxKeyPath> = {
   same_password: "login:errors.passwordSameAsOld",
 
   // Email errors
+  email_taken: "login:errors.emailAlreadyRegistered",
   email_exists: "login:errors.emailAlreadyRegistered",
   user_already_exists: "login:errors.emailAlreadyRegistered",
   email_not_confirmed: "login:errors.emailNotConfirmed",
@@ -41,6 +42,7 @@ const ERROR_CODE_MAP: Record<string, TxKeyPath> = {
   refresh_token_already_used: "login:errors.refreshTokenExpired",
 
   // Rate limiting
+  rate_limited: "login:errors.tooManyAttempts",
   over_request_rate_limit: "login:errors.tooManyAttempts",
   over_email_send_rate_limit: "login:errors.tooManyEmails",
   over_sms_send_rate_limit: "login:errors.tooManySms",
@@ -330,6 +332,7 @@ const AUTH_ERROR_CODES = {
  * Check if an error is a duplicate signup error
  */
 export const isDuplicateSignupError = (error: Error | string): boolean => {
+  if (typeof error === "object" && "code" in error && error.code === "email_taken") return true
   const msg = typeof error === "string" ? error : error.message
   return msg === AUTH_ERROR_CODES.DUPLICATE_SIGNUP || msg.toLowerCase().includes("duplicate_signup")
 }

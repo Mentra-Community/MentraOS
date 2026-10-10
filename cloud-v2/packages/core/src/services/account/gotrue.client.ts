@@ -131,21 +131,36 @@ export async function verifyPassword(email: string, password: string): Promise<G
   throw new AccountError("invalid_credentials", "invalid email or password", 401);
 }
 
-/** Create a user; GoTrue sends the verification email. Idempotent-ish: an
- * existing address returns a user object without a session (obfuscated by the
- * caller into the uniform "verification_sent"). */
+/** Create a user; GoTrue sends the verification email for an unverified account.
+ * Signup intentionally discloses account existence to guide returning users to
+ * sign-in, but never discloses their linked providers or account details. */
 export async function signUp(email: string, password: string): Promise<void> {
   const { status, body } = await gotrue("/signup", {
     method: "POST",
     body: { email, password },
   });
-  if (status === 200 || status === 201) return;
+  if (status === 200 || status === 201) {
+    // GoTrue obfuscates a confirmed duplicate as a user with no identities.
+    // Invited, unconfirmed users can also have no identities; preserve their
+    // verification flow. Normal new/repeated-unconfirmed signups have identities.
+    if (Array.isArray(body?.identities) && body.identities.length === 0 && !body.invited_at) {
+      throw new AccountError("email_taken", "This email is already registered. Please sign in.", 409);
+    }
+    return;
+  }
+  if (
+    (status === 400 || status === 422) &&
+    (body?.error_code === "user_already_exists" ||
+      body?.error_code === "email_exists" ||
+      (typeof body?.msg === "string" && /already registered/i.test(body.msg)))
+  ) {
+    throw new AccountError("email_taken", "This email is already registered. Please sign in.", 409);
+  }
+  if (status === 429) {
+    throw new AccountError("rate_limited", "too many attempts, try again later", 429);
+  }
   if (typeof body?.msg === "string" && /password/i.test(body.msg)) {
     throw new AccountError("weak_password", body.msg, 400);
-  }
-  if (status === 422 || status === 429) {
-    // 422 often = already registered; keep uniform to avoid enumeration.
-    return;
   }
   throw new AccountError("server_error", "signup failed", 502);
 }
