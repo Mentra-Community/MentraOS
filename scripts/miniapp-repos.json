@@ -6,5 +6,30 @@
   "livestreamer": {
     "repo": "../Livestreamer-Miniapp",
     "packScript": "pack:prod"
+  },
+  "captions": {
+    "repo": "../captions-miniapp",
+    "packageName": "com.mentra.captions",
+    "packScript": "pack:prod"
+  },
+  "maps": {
+    "repo": "../maps-miniapp",
+    "packageName": "com.mentra.navigation",
+    "packScript": "pack:prod"
+  },
+  "recorder": {
+    "repo": "../recorder-miniapp",
+    "packageName": "com.mentra.recorder",
+    "packScript": "pack:prod"
+  },
+  "teleprompter": {
+    "repo": "../teleprompter-miniapp",
+    "packageName": "com.mentra.teleprompter",
+    "packScript": "pack:prod"
+  },
+  "translation": {
+    "repo": "../translation-miniapp",
+    "packageName": "com.mentra.translation",
+    "packScript": "pack:prod"
   }
 }

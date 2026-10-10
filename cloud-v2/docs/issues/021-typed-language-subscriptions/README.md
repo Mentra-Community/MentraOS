@@ -27,8 +27,8 @@ stop entirely. Four independent defects fired, in order:
 
 ### 1. Captions miniapp: every picked language becomes en-US
 
-`miniapps/captions/src/ui/lib/languages.ts` stores bare ISO 639-1 codes
-("fr"). `miniapps/captions/src/core/languageLocale.ts` switches on English
+[Captions language list](https://github.com/Mentra-Community/captions-miniapp/blob/main/src/ui/lib/languages.ts) stores bare ISO 639-1 codes
+("fr"). [Captions locale helper](https://github.com/Mentra-Community/captions-miniapp/blob/main/src/core/languageLocale.ts) switches on English
 display names ("French") with `default: return "en-US"`. The two registries
 never agreed, so `languageToLocale("fr")` fell through to en-US. Picking ANY
 language subscribed to English transcription.
