@@ -58,6 +58,13 @@ function shouldInstall(entry: PreinstalledMiniappRegistryEntry): boolean {
   const installedVersions = appRegistry.getInstalledVersions(entry.packageName)
   if (installedVersions.includes(entry.version)) return false
   if (entry.installPolicy === "install_once") return installedVersions.length === 0
+  // The installer never downgrades; skip the download when a newer release is installed.
+  try {
+    appRegistry.assertCanInstallVersion(entry.packageName, entry.version)
+  } catch (error) {
+    console.log(`${LOG_TAG}: skipping ${entry.packageName}@${entry.version} — ${(error as Error).message}`)
+    return false
+  }
   return true
 }
 
@@ -68,6 +75,8 @@ async function installEntry(entry: PreinstalledMiniappRegistryEntry, isCurrent: 
   const zipPath = await downloadVerifiedBundle(entry)
   if (!isCurrent() || shouldHideMiniapp(entry.packageName)) return
   const result = await appRegistry.installFromLocalZip(zipPath, {
+    expectedPackageName: entry.packageName,
+    expectedVersion: entry.version,
     releaseIdentity: {
       source: "preinstalled_registry",
       bundleSha256: entry.bundleSha256.toLowerCase(),

@@ -245,6 +245,12 @@ jest.mock("expo-audio", () => ({
   })),
 }))
 
+// AppRegistry uses Expo's native stream-capable fetch in production. Jest has
+// no ExpoFetchModule native base class, so delegate test calls to Node's fetch.
+jest.mock("expo/fetch", () => ({
+  fetch: jest.fn((input, init) => globalThis.fetch(input, init)),
+}))
+
 // Mock react-native-nitro-bg-timer for non-native Jest runs
 jest.mock("react-native-nitro-bg-timer", () => ({
   BackgroundTimer: {
@@ -811,6 +817,11 @@ const mockIslandEntries = () => {
 
   // --- "@mentra/engine-host-internal": raw stores + service singletons ---
   const internal = {
+    // The phone's dev-build signer gate; tests that exercise it use the real AppRegistry.
+    assertDevBuildAllowed: jest.fn(),
+    SignedMiniappDevBuildError: jest.requireActual("./modules/engine/src/services/publisherIdentityPolicy")
+      .SignedMiniappDevBuildError,
+    installMiniappFromJsonUrl: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
     // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates)
@@ -907,6 +918,7 @@ const mockIslandEntries = () => {
     installAppStoreHooks: jest.fn(),
     buildMiniappGlobalsScript: jest.fn(() => ""),
     appRegistry: {
+      assertCanInstallVersion: jest.fn(),
       subscribe: jest.fn(() => () => {}),
       getApps: jest.fn(() => []),
       getInstalledMiniapps: jest.fn(() => Promise.resolve([])),
