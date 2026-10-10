@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.utils.IncidentUploadOkHttp;
 import com.mentra.asg_client.utils.ServerConfigUtil;
@@ -13,6 +14,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -292,6 +296,161 @@ public class BesLogManager {
       Log.e(TAG, "buildFirmwareUploadJson failed", e);
       return "{\"type\":\"logs\",\"source\":\"glasses_firmware\",\"entries\":[]}";
     }
+  }
+
+  /** TRACE budget (message bytes, newest kept) of the BLE relay copy of an incident bundle. */
+  public static final int BLE_RELAY_FIRMWARE_MAX_BYTES = AsgConstants.BES_TRACE_BLE_RELAY_MAX_BYTES;
+
+  /** Dump budget (message bytes) of the BLE relay copy; the dump is also capped at 80 KB on disk. */
+  public static final int BLE_RELAY_DUMP_MAX_BYTES = 80 * 1024;
+
+  /** Entry source of crash-dump lines in an incident artifact. */
+  public static final String INCIDENT_DUMP_SOURCE = "BES_CRASH";
+
+  /** Entry source of frozen TRACE lines in an incident artifact. */
+  public static final String INCIDENT_TRACE_SOURCE = "BES";
+
+  /** One frozen TRACE line: the store's wall time and text. */
+  public static final class IncidentTraceLine {
+    public final long wallMs;
+    public final String text;
+
+    public IncidentTraceLine(long wallMs, String text) {
+      this.wallMs = wallMs;
+      this.text = text;
+    }
+  }
+
+  /**
+   * Parses a frozen {@code trace.txt} ({@code wallMs \t generation \t positionHex \t text}, one
+   * line per row). Rows that do not parse are skipped.
+   */
+  public static List<IncidentTraceLine> parseIncidentTrace(String traceText) {
+    List<IncidentTraceLine> lines = new ArrayList<>();
+    if (traceText == null || traceText.isEmpty()) {
+      return lines;
+    }
+    for (String row : traceText.split("\n")) {
+      if (row.isEmpty()) {
+        continue;
+      }
+      String[] parts = row.split("\t", 4);
+      if (parts.length < 4) {
+        continue;
+      }
+      try {
+        lines.add(new IncidentTraceLine(Long.parseLong(parts[0].trim()), parts[3]));
+      } catch (NumberFormatException ignored) {
+        // Skip a torn row; the rest of the bundle is still evidence.
+      }
+    }
+    return lines;
+  }
+
+  /**
+   * glasses_firmware artifact body for one incident bundle: crash-dump lines first (entry source
+   * {@code BES_CRASH}), then the frozen TRACE lines (entry source {@code BES}). {@code retryKey}
+   * is part of the body so the persisted bytes are exactly what Cloud (directly or through the
+   * phone relay) sees.
+   *
+   * <p>With {@code relay}, the dump is kept first up to {@link #BLE_RELAY_DUMP_MAX_BYTES} and the
+   * newest TRACE lines up to {@link #BLE_RELAY_FIRMWARE_MAX_BYTES}; when anything is dropped the
+   * first entry's message starts with a {@code [RELAY-TRIMMED ...]} marker.
+   *
+   * @return the body, or {@code null} when there is nothing to upload
+   */
+  public static String buildIncidentFirmwareJson(
+      String dumpText,
+      long dumpTimestampMs,
+      List<IncidentTraceLine> trace,
+      boolean relay,
+      String retryKey) {
+    try {
+      List<String> dump = new ArrayList<>();
+      if (dumpText != null) {
+        for (String line : dumpText.split("\n")) {
+          if (!line.trim().isEmpty()) {
+            dump.add(line);
+          }
+        }
+      }
+      List<IncidentTraceLine> traceLines = trace != null ? trace : new ArrayList<>();
+      int dumpTotal = dump.size();
+      int traceTotal = traceLines.size();
+
+      int dumpKept = dumpTotal;
+      int traceFrom = 0;
+      if (relay) {
+        long dumpBytes = 0;
+        dumpKept = 0;
+        while (dumpKept < dumpTotal) {
+          long next = dumpBytes + utf8Length(dump.get(dumpKept));
+          if (next > BLE_RELAY_DUMP_MAX_BYTES) {
+            break;
+          }
+          dumpBytes = next;
+          dumpKept++;
+        }
+        long traceBytes = 0;
+        traceFrom = traceTotal;
+        while (traceFrom > 0) {
+          long next = traceBytes + utf8Length(traceLines.get(traceFrom - 1).text);
+          if (next > BLE_RELAY_FIRMWARE_MAX_BYTES) {
+            break;
+          }
+          traceBytes = next;
+          traceFrom--;
+        }
+      }
+      int traceKept = traceTotal - traceFrom;
+      if (dumpKept + traceKept == 0) {
+        return null;
+      }
+
+      String marker = "";
+      if (dumpKept < dumpTotal || traceKept < traceTotal) {
+        marker = "[RELAY-TRIMMED dump_lines=" + dumpKept + "/" + dumpTotal
+            + " trace_lines=" + traceKept + "/" + traceTotal + "] ";
+      }
+
+      JSONArray entries = new JSONArray();
+      for (int i = 0; i < dumpKept; i++) {
+        entries.put(incidentEntry(
+            dumpTimestampMs, "info", dump.get(i), INCIDENT_DUMP_SOURCE, entries.length() == 0 ? marker : ""));
+      }
+      for (int i = traceFrom; i < traceTotal; i++) {
+        IncidentTraceLine line = traceLines.get(i);
+        entries.put(incidentEntry(
+            line.wallMs, "debug", line.text, INCIDENT_TRACE_SOURCE, entries.length() == 0 ? marker : ""));
+      }
+
+      JSONObject body = new JSONObject();
+      body.put("type", "logs");
+      body.put("source", "glasses_firmware");
+      if (retryKey != null && !retryKey.isEmpty()) {
+        body.put("retryKey", retryKey);
+      }
+      body.put("entries", entries);
+      return body.toString();
+    } catch (Exception e) {
+      Log.e(TAG, "buildIncidentFirmwareJson failed", e);
+      return null;
+    }
+  }
+
+  private static JSONObject incidentEntry(
+      long timestamp, String level, String message, String source, String messagePrefix)
+      throws Exception {
+    JSONObject entry = new JSONObject();
+    entry.put("timestamp", timestamp);
+    entry.put("level", level);
+    entry.put("message", messagePrefix + message);
+    entry.put("source", source);
+    return entry;
+  }
+
+  private static int utf8Length(String text) {
+    return text.getBytes(StandardCharsets.UTF_8).length;
   }
 
   /**

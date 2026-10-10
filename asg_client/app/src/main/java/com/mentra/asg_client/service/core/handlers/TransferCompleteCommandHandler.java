@@ -1,6 +1,7 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import android.util.Log;
+import com.mentra.asg_client.io.bes.log.BesIncidentUploader;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import java.util.Set;
@@ -14,9 +15,16 @@ public class TransferCompleteCommandHandler implements ICommandHandler {
     private static final String TAG = "TransferCompleteHandler";
 
     private final AsgClientServiceManager serviceManager;
+    private final BesIncidentUploader incidentUploader;
 
     public TransferCompleteCommandHandler(AsgClientServiceManager serviceManager) {
+        this(serviceManager, BesIncidentUploader.shared());
+    }
+
+    TransferCompleteCommandHandler(
+            AsgClientServiceManager serviceManager, BesIncidentUploader incidentUploader) {
         this.serviceManager = serviceManager;
+        this.incidentUploader = incidentUploader;
     }
 
     @Override
@@ -53,6 +61,15 @@ public class TransferCompleteCommandHandler implements ICommandHandler {
             if (fileName.isEmpty()) {
                 Log.e(TAG, "❌ transfer_complete missing fileName");
                 return false;
+            }
+
+            // A BES incident relay file confirmed by the phone (its own POST succeeded) is the
+            // only transfer_complete that completes an incident upload. Independent of the
+            // transport forwarding below.
+            try {
+                incidentUploader.onTransferComplete(fileName, success);
+            } catch (Exception e) {
+                Log.e(TAG, "💥 Incident transfer bookkeeping failed", e);
             }
 
             // Forward to the active transport

@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.core.handlers;
 import android.content.Context;
 import android.util.Log;
 
+import com.mentra.asg_client.io.bes.log.BesIncidentUploader;
 import com.mentra.asg_client.io.bes.log.BesLivenessLog;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
@@ -42,6 +43,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>With WiFi: POSTs logcat and BES logs to the backend from the glasses (existing behavior).
  * Without WiFi: runs mh_logs to completion, then relays glasses_firmware and glasses JSON to the
  * phone via two sequential K900 BLE file transfers; the phone POSTs to the same API.
+ *
+ * <p>When the report id belongs to a persisted BES incident (OS-1988), the glasses_firmware
+ * artifact is that incident's stored bundle instead (see {@link BesIncidentUploader}); such an
+ * incident never falls back to a fresh mh_logs. Any other report id keeps the behavior above.
  */
 public class UploadIncidentLogsCommandHandler implements ICommandHandler {
 
@@ -68,17 +73,50 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
      */
     private final AsgClientServiceManager mServiceManager;
 
+    private final BesIncidentUploader mIncidentUploader;
+    private final BesIncidentUploader.HttpPoster mHttpPoster;
+
+    /** Where the glasses_firmware artifact of a report comes from. */
+    private enum FirmwareSource {
+        /** A normal user report: TRACE store or a fresh mh_logs dump. */
+        LEGACY,
+        /** A persisted BES incident that still has to be uploaded. */
+        INCIDENT,
+        /** A BES incident that is already uploaded or evicted: never fall back to mh_logs. */
+        NONE
+    }
+
     public UploadIncidentLogsCommandHandler(
             Context context,
             IConfigurationManager configurationManager,
             K900CommandHandler k900CommandHandler,
             IStateManager stateManager,
             AsgClientServiceManager serviceManager) {
+        this(
+                context,
+                configurationManager,
+                k900CommandHandler,
+                stateManager,
+                serviceManager,
+                BesIncidentUploader.shared(),
+                new OkHttpPoster());
+    }
+
+    UploadIncidentLogsCommandHandler(
+            Context context,
+            IConfigurationManager configurationManager,
+            K900CommandHandler k900CommandHandler,
+            IStateManager stateManager,
+            AsgClientServiceManager serviceManager,
+            BesIncidentUploader incidentUploader,
+            BesIncidentUploader.HttpPoster httpPoster) {
         mContext = context;
         mConfigurationManager = configurationManager;
         mK900CommandHandler = k900CommandHandler;
         mStateManager = stateManager;
         mServiceManager = serviceManager;
+        mIncidentUploader = incidentUploader;
+        mHttpPoster = httpPoster;
     }
 
     @Override
@@ -200,13 +238,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                                                         + " ("
                                                         + logs.length()
                                                         + " entries)");
-                                        if (mK900CommandHandler != null) {
-                                            mK900CommandHandler.requestBesLogs(
-                                                    incidentId,
-                                                    mContext,
-                                                    mConfigurationManager,
-                                                    apiBaseUrl);
-                                        }
+                                        onGlassesLogsUploaded(incidentId, apiBaseUrl);
                                     } else {
                                         Log.e(
                                                 TAG,
@@ -225,6 +257,105 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
             Log.e(TAG, "Error preparing glasses logs upload for incident " + incidentId, e);
             triggerBleFallback(incidentId, "http_prepare_exception");
         }
+    }
+
+    private FirmwareSource firmwareSourceFor(String reportId) {
+        JSONObject incident = mIncidentUploader.findByReportId(reportId);
+        if (incident == null) {
+            return FirmwareSource.LEGACY;
+        }
+        return BesIncidentUploader.isUploadable(incident)
+                ? FirmwareSource.INCIDENT
+                : FirmwareSource.NONE;
+    }
+
+    /** The Java logs are up over HTTP; now the glasses_firmware artifact. */
+    private void onGlassesLogsUploaded(String incidentId, String apiBaseUrl) {
+        FirmwareSource source = firmwareSourceFor(incidentId);
+        if (source == FirmwareSource.INCIDENT) {
+            new Thread(() -> uploadIncidentFirmwareOverHttp(incidentId, apiBaseUrl)).start();
+        } else if (source == FirmwareSource.LEGACY && mK900CommandHandler != null) {
+            mK900CommandHandler.requestBesLogs(
+                    incidentId, mContext, mConfigurationManager, apiBaseUrl);
+        }
+    }
+
+    /**
+     * Uploads the persisted full body of a BES incident. {@code UPLOADED} is set only on an HTTP
+     * 2xx; any other outcome leaves the incident {@code REPORTED} and falls back to the BLE relay
+     * of the (separately persisted) relay body.
+     */
+    void uploadIncidentFirmwareOverHttp(String reportId, String apiBaseUrl) {
+        JSONObject incident = mIncidentUploader.findByReportId(reportId);
+        if (!BesIncidentUploader.isUploadable(incident)) {
+            Log.w(TAG, "Report " + reportId + " has no uploadable BES incident");
+            return;
+        }
+        String incidentKey = incident.optString("incidentKey", "");
+        try {
+            String coreToken = mConfigurationManager.getCoreToken();
+            String baseUrl =
+                    (apiBaseUrl != null && !apiBaseUrl.isEmpty())
+                            ? apiBaseUrl
+                            : ServerConfigUtil.getServerBaseUrl(mContext);
+            if (coreToken == null
+                    || coreToken.isEmpty()
+                    || baseUrl == null
+                    || baseUrl.trim().isEmpty()) {
+                Log.e(TAG, "No token or base URL for BES incident upload " + incidentKey);
+            } else if (mIncidentUploader.uploadOverHttp(
+                    incidentKey,
+                    buildReportArtifactsUrl(baseUrl, reportId),
+                    coreToken,
+                    mHttpPoster)) {
+                return;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "BES incident HTTP upload failed for " + incidentKey, e);
+        }
+        Log.w(TAG, "Falling back to BLE relay for BES incident " + incidentKey);
+        relayIncidentFirmwareOnly(reportId);
+    }
+
+    /** BLE relay of the firmware body alone (the Java logs already went over HTTP). */
+    void relayIncidentFirmwareOnly(String reportId) {
+        IBluetoothManager bt =
+                mServiceManager != null ? mServiceManager.getBluetoothManager() : null;
+        if (bt == null || !bt.isConnected()) {
+            Log.e(TAG, "BLE not available — BES incident stays REPORTED for " + reportId);
+            return;
+        }
+        try {
+            waitUntilFileTransferIdle(bt, PRE_TRANSFER_CLEAR_WAIT_MS);
+            if (bt.isFileTransferInProgress()) {
+                Log.e(TAG, "File transfer still active — abort BES incident relay");
+                return;
+            }
+            relayIncidentFirmware(bt, reportId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.e(TAG, "BES incident relay interrupted for " + reportId, e);
+        } catch (Exception e) {
+            Log.e(TAG, "BES incident relay failed for " + reportId, e);
+        }
+    }
+
+    private void relayIncidentFirmware(IBluetoothManager bt, String reportId)
+            throws InterruptedException {
+        JSONObject incident = mIncidentUploader.findByReportId(reportId);
+        if (!BesIncidentUploader.isUploadable(incident)) {
+            return;
+        }
+        BesIncidentUploader.Prepared prepared =
+                mIncidentUploader.prepare(
+                        incident.optString("incidentKey", ""),
+                        BesIncidentUploader.ARTIFACT_RELAY);
+        if (prepared == null) {
+            Log.w(TAG, "No relay body for BES incident of report " + reportId);
+            return;
+        }
+        // The phone confirms with transfer_complete after its own POST; only that marks UPLOADED.
+        relayFileViaBle(bt, reportId, "glasses_firmware", 'B', prepared.bytes);
     }
 
     private void triggerBleFallback(String incidentId, String reason) {
@@ -248,6 +379,15 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
             waitUntilFileTransferIdle(bt, PRE_TRANSFER_CLEAR_WAIT_MS);
             if (bt.isFileTransferInProgress()) {
                 Log.e(TAG, "File transfer still active — abort BLE incident relay");
+                return;
+            }
+
+            FirmwareSource firmwareSource = firmwareSourceFor(incidentId);
+            if (firmwareSource != FirmwareSource.LEGACY) {
+                if (firmwareSource == FirmwareSource.INCIDENT) {
+                    relayIncidentFirmware(bt, incidentId);
+                }
+                relayGlassesLogcat(bt, incidentId);
                 return;
             }
 
@@ -280,24 +420,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
             }
 
             relayFileViaBle(bt, incidentId, "glasses_firmware", 'B', fwJson);
-
-            // A refused or failed firmware transfer must not discard independent Java logs.
-            // Only a freshly connected, idle transport can start the next file; never clear it.
-            boolean connected = bt.isConnected();
-            boolean transferActive = bt.isFileTransferInProgress();
-            if (!connected || transferActive) {
-                Log.w(
-                        TAG,
-                        "Incident BLE relay incidentId="
-                                + incidentId
-                                + " source=glasses stage=not_started connected="
-                                + connected
-                                + " transferActive="
-                                + transferActive);
-                return;
-            }
-
-            relayFileViaBle(bt, incidentId, "glasses", 'L', buildGlassesLogcatJson());
+            relayGlassesLogcat(bt, incidentId);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             Log.e(TAG, "BLE relay interrupted for incident " + incidentId, e);
@@ -306,8 +429,37 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
         }
     }
 
+    /**
+     * A refused or failed firmware transfer must not discard independent Java logs. Only a freshly
+     * connected, idle transport can start the next file; never clear it.
+     */
+    private void relayGlassesLogcat(IBluetoothManager bt, String incidentId)
+            throws Exception {
+        boolean connected = bt.isConnected();
+        boolean transferActive = bt.isFileTransferInProgress();
+        if (!connected || transferActive) {
+            Log.w(
+                    TAG,
+                    "Incident BLE relay incidentId="
+                            + incidentId
+                            + " source=glasses stage=not_started connected="
+                            + connected
+                            + " transferActive="
+                            + transferActive);
+            return;
+        }
+
+        relayFileViaBle(bt, incidentId, "glasses", 'L', buildGlassesLogcatJson());
+    }
+
     private void relayFileViaBle(
             IBluetoothManager bt, String incidentId, String source, char prefix, String json)
+            throws InterruptedException {
+        relayFileViaBle(bt, incidentId, source, prefix, json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void relayFileViaBle(
+            IBluetoothManager bt, String incidentId, String source, char prefix, byte[] payload)
             throws InterruptedException {
         File file =
                 new File(
@@ -319,7 +471,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                 throw new InterruptedException(
                         "Incident BLE relay was interrupted before transfer");
             }
-            writeUtf8File(file, json);
+            writeBytes(file, payload);
             boolean connected = bt.isConnected();
             boolean transferActive = bt.isFileTransferInProgress();
             if (!connected || transferActive) {
@@ -417,10 +569,32 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
         return trimmed + "/api/client/reports/" + reportId + "/artifacts";
     }
 
-    private static void writeUtf8File(File file, String utf8) throws IOException {
+    private static void writeBytes(File file, byte[] bytes) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
-            fos.write(utf8.getBytes(StandardCharsets.UTF_8));
+            fos.write(bytes);
             fos.flush();
+        }
+    }
+
+    /** Synchronous OkHttp POST; the status code decides whether an incident is uploaded. */
+    private static final class OkHttpPoster implements BesIncidentUploader.HttpPoster {
+        @Override
+        public int post(String url, String bearerToken, byte[] body) throws IOException {
+            OkHttpClient.Builder clientBuilder =
+                    new OkHttpClient.Builder()
+                            .connectTimeout(15, TimeUnit.SECONDS)
+                            .writeTimeout(45, TimeUnit.SECONDS)
+                            .readTimeout(60, TimeUnit.SECONDS);
+            IncidentUploadOkHttp.applyRelaxedRevocation(clientBuilder);
+            Request request =
+                    new Request.Builder()
+                            .url(url)
+                            .header("Authorization", "Bearer " + bearerToken)
+                            .post(RequestBody.create(body, JSON_MEDIA_TYPE))
+                            .build();
+            try (Response response = clientBuilder.build().newCall(request).execute()) {
+                return response.code();
+            }
         }
     }
 
