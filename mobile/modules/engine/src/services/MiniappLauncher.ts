@@ -42,6 +42,7 @@ interface LauncherDeps {
 /** Hints the host may pass from a view's props to avoid re-deriving them. */
 export interface LaunchHints {
   devUrl?: string
+  /** Retained for caller compatibility; released launches use the committed active version. */
   version?: string
   devPort?: string
 }
@@ -76,6 +77,32 @@ class MiniappLauncher {
    */
   private readonly inFlight = new Map<string, Promise<LaunchResult>>()
 
+  /** Explicit installs hold new launches of their package until they commit or roll back. */
+  private readonly installing = new Map<string, Promise<void>>()
+
+  /** Stabilize existing launches and hold new ones until an explicit install finishes. */
+  async pauseLaunches(packageName: string): Promise<() => void> {
+    const release = this.reserveInstall(packageName)
+    // Launches already resolving a bundle must settle before the installer
+    // decides whether a context needs stopping/restarting. A failed launch is also settled.
+    await this.inFlight.get(packageName)?.catch(() => {})
+    return release
+  }
+
+  private reserveInstall(packageName: string): () => void {
+    if (this.installing.has(packageName)) throw new Error(`An install is already activating ${packageName}`)
+    let resume!: () => void
+    const pending = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    this.installing.set(packageName, pending)
+    return () => {
+      if (this.installing.get(packageName) !== pending) return
+      this.installing.delete(packageName)
+      resume()
+    }
+  }
+
   /** Wire the router in. Called once from MiniappEngine construction. */
   configure(deps: LauncherDeps): void {
     this.deps = deps
@@ -101,11 +128,14 @@ class MiniappLauncher {
    * unreachable with no on-disk snapshot, missing entry, no installed version).
    */
   async resolveBundle(packageName: string, hints?: LaunchHints): Promise<ResolvedBundle | null> {
-    const devUrl = hints?.devUrl ?? this.storedDevUrl(packageName)
     const devAllowed = isDevMiniappAllowed(
       packageName,
       useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
     )
+    // Live dev code is unsigned, so it never runs under a package installed with
+    // a publisher signature; that package runs its installed bundle instead.
+    const liveDevAllowed = devAllowed && !appRegistry.getPublisherKeyFingerprint(packageName)
+    const devUrl = liveDevAllowed ? (hints?.devUrl ?? this.storedDevUrl(packageName)) : undefined
 
     const selectedSnapshot = devAllowed ? appRegistry.getSelectedDevSnapshot(packageName) : null
     if (selectedSnapshot) return this.resolveInstalledBundle(packageName, selectedSnapshot)
@@ -130,7 +160,9 @@ class MiniappLauncher {
     }
 
     // --- Released: resolve from the installed file:// snapshot. ---
-    const version = hints?.version ?? (await appRegistry.getActiveVersion(packageName))
+    // A view can retain its old version prop across an install or rollback.
+    // Resolve the committed pointer here, including after an installation wait.
+    const version = await appRegistry.getActiveVersion(packageName)
     if (!version) return null
     return this.resolveInstalledBundle(packageName, version)
   }
@@ -254,6 +286,10 @@ class MiniappLauncher {
    * {@link LocalMiniappRuntime.waitForConnect}.
    */
   async ensureRunning(packageName: string, hints?: LaunchHints): Promise<LaunchResult> {
+    // An explicit install holds launches until its files and metadata commit
+    // or roll back; the launch then resolves whichever bundle is active.
+    const installation = this.installing.get(packageName)
+    if (installation) await installation
     if (!isLocalMiniappPackageAllowed(packageName)) {
       throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
     }

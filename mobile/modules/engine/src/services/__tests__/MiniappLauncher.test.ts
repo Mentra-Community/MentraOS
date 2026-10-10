@@ -2,6 +2,7 @@
 
 import {beforeAll, beforeEach, describe, expect, test, mock} from "bun:test"
 
+import {installWithRuntimeReload} from "../../utils/storeInstallRuntime"
 import type {MentraJSRouter} from "../MentraJSRouter"
 
 // --- Mock the launcher's heavy module deps before importing it. ------------
@@ -11,13 +12,18 @@ let activeVersion = "1.0.0"
 let selectedSnapshot: string | null = null
 let superMode = false
 let storedDevUrl: string | null = null
+let publisherFingerprint: string | null = null
 let snapshotVersions: string[] = []
 
 mock.module("../AppRegistry", () => ({
   default: {
     getActiveVersion: async () => activeVersion,
+    getPublisherKeyFingerprint: () => publisherFingerprint,
     getSelectedDevSnapshot: () => selectedSnapshot,
-    getMiniappEntryPaths: (_package: string, version: string) => {snapshotVersions.push(version); return {background: "file:///bundle/bg.js", ui: "file:///bundle/ui.html"}},
+    getMiniappEntryPaths: (_package: string, version: string) => {
+      snapshotVersions.push(version)
+      return {background: `file:///bundle/${version}/bg.js`, ui: `file:///bundle/${version}/ui.html`}
+    },
     getMiniappManifest: () => ({permissions: [{type: "MICROPHONE"}], hardwareRequirements: []}),
     getReleaseIdentity: () => null,
     getLatestDevSnapshotVersion: () => null,
@@ -55,7 +61,7 @@ mock.module("expo-file-system", () => ({
       this.uri = uri
     }
     textSync() {
-      return "BG SOURCE"
+      return this.uri.includes("/2.0.0/") ? "UPDATED SOURCE" : "BG SOURCE"
     }
   },
 }))
@@ -97,6 +103,7 @@ describe("MiniappLauncher", () => {
     selectedSnapshot = null
     superMode = false
     storedDevUrl = null
+    publisherFingerprint = null
     snapshotVersions = []
     waitForConnectCalls = []
     mockRouter = buildMockRouter()
@@ -118,8 +125,8 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls[0].src).toBe("BG SOURCE")
     expect(mockRouter.spawnCalls[0].permissions).toEqual(["MICROPHONE"])
     // Hands the resolved UI entry back to the host (for the WebView mount).
-    expect(result.uiUri).toBe("file:///bundle/ui.html")
-    expect(result.uiBaseDir).toBe("file:///bundle/")
+    expect(result.uiUri).toBe("file:///bundle/1.0.0/ui.html")
+    expect(result.uiBaseDir).toBe("file:///bundle/1.0.0/")
     expect(miniappLauncher.isRunning("com.x")).toBe(true)
   })
 
@@ -134,8 +141,81 @@ describe("MiniappLauncher", () => {
     // spawn resolves — they must share one spawn, not race into a double-spawn.
     const [a, b] = await Promise.all([miniappLauncher.ensureRunning("com.x"), miniappLauncher.ensureRunning("com.x")])
     expect(mockRouter.spawnCalls.length).toBe(1)
-    expect(a.uiUri).toBe("file:///bundle/ui.html")
-    expect(b.uiUri).toBe("file:///bundle/ui.html")
+    expect(a.uiUri).toBe("file:///bundle/1.0.0/ui.html")
+    expect(b.uiUri).toBe("file:///bundle/1.0.0/ui.html")
+  })
+
+  test("runs the installed bundle instead of live dev code for a package with a publisher signature", async () => {
+    publisherFingerprint = "sha256:publisher"
+    superMode = true
+    storedDevUrl = "http://localhost:8081"
+    const originalFetch = globalThis.fetch
+    const fetched: string[] = []
+    globalThis.fetch = (async (url: string) => {
+      fetched.push(url)
+      return new Response("DEV SOURCE")
+    }) as typeof fetch
+    try {
+      const resolved = await miniappLauncher.resolveBundle("com.example.signed", {devUrl: "http://localhost:8081"})
+      expect(fetched).toEqual([])
+      expect(resolved?.devUrl).toBeNull()
+      expect(resolved?.bgSource).toBe("BG SOURCE")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test.each([false, true])("explicit installs hold launches through install/rollback (failure=%s)", async (fail) => {
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    let began!: () => void
+    const downloading = new Promise<void>((resolve) => {
+      began = resolve
+    })
+    const update = installWithRuntimeReload(miniappLauncher, "com.x", async () => {
+      began()
+      await pending
+      if (fail) throw new Error("install failed")
+      activeVersion = "2.0.0"
+    })
+    const outcome = update.catch((error) => error)
+    await downloading
+    const launch = miniappLauncher.ensureRunning("com.x", {version: "1.0.0"})
+    await Promise.resolve()
+    expect(mockRouter.spawnCalls).toHaveLength(0)
+    finish()
+    const result = await outcome
+    if (fail) expect(result.message).toBe("install failed")
+    const launched = await launch
+    expect(mockRouter.spawnCalls.map((call) => call.src)).toEqual([fail ? "BG SOURCE" : "UPDATED SOURCE"])
+    expect(launched.uiUri).toBe(`file:///bundle/${fail ? "1.0.0" : "2.0.0"}/ui.html`)
+  })
+
+  test("explicit installs wait for an already-starting context and restart the new bundle", async () => {
+    const launch = miniappLauncher.ensureRunning("com.x")
+    const update = installWithRuntimeReload(miniappLauncher, "com.x", async () => {
+      activeVersion = "2.0.0"
+    })
+    await Promise.all([launch, update])
+    expect(mockRouter.spawnCalls.map((call) => call.src)).toEqual(["BG SOURCE", "UPDATED SOURCE"])
+    expect(mockRouter.unregisterCalls).toEqual(["com.x"])
+  })
+
+  test("refuses a second explicit install of a package while one is activating", async () => {
+    const release = await miniappLauncher.pauseLaunches("com.x")
+    await expect(miniappLauncher.pauseLaunches("com.x")).rejects.toThrow("already activating")
+    release()
+    const next = await miniappLauncher.pauseLaunches("com.x")
+    next()
+  })
+
+  test("stale view props after an install cannot select an inactive bundle", async () => {
+    activeVersion = "2.0.0"
+    const result = await miniappLauncher.ensureRunning("com.x", {version: "1.0.0"})
+    expect(mockRouter.spawnCalls[0].src).toBe("UPDATED SOURCE")
+    expect(result.uiUri).toBe("file:///bundle/2.0.0/ui.html")
   })
 
   test("ensureConnected spawns then waits for the CONNECT handshake", async () => {

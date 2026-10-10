@@ -755,6 +755,37 @@ describe("MantleManager", () => {
     }
   })
 
+  it("never installs a bundled version below an installed release", async () => {
+    const consumer = createConsumerDeployment()
+    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(consumer)
+    const asset = {
+      name: "com.mentra.captions-1.0.22",
+      localUri: "file:///fixture/captions.zip",
+      downloadAsync: jest.fn(),
+    } as unknown as Asset
+    const originalVersions = appRegistry.getInstalledVersions
+    const originalCheck = appRegistry.assertCanInstallVersion
+    const originalInstall = appRegistry.installFromLocalZip
+    appRegistry.getInstalledVersions = jest.fn(() => ["1.0.30"])
+    appRegistry.assertCanInstallVersion = jest.fn(() => {
+      throw new Error("Cannot install com.mentra.captions@1.0.22: version 1.0.30 is already installed")
+    })
+    const install = jest.fn()
+    appRegistry.installFromLocalZip = install
+    const instance = mantle as unknown as {installBundledMiniapp: (asset: Asset) => Promise<void>}
+    try {
+      await instance.installBundledMiniapp(asset)
+      expect(appRegistry.assertCanInstallVersion).toHaveBeenCalledWith("com.mentra.captions", "1.0.22")
+      expect(asset.downloadAsync).not.toHaveBeenCalled()
+      expect(install).not.toHaveBeenCalled()
+    } finally {
+      active.mockRestore()
+      appRegistry.getInstalledVersions = originalVersions
+      appRegistry.assertCanInstallVersion = originalCheck
+      appRegistry.installFromLocalZip = originalInstall
+    }
+  })
+
   it.each(["ios", "android"])("restores consumer bundles after workspace cleanup on %s", async (platform) => {
     const originalPlatform = Platform.OS
     Object.defineProperty(Platform, "OS", {configurable: true, value: platform})
@@ -988,7 +1019,10 @@ describe("MantleManager", () => {
       active.mockReturnValue(consumer)
       asset.downloadAsync = jest.fn(async () => asset)
       await expect(instance.installBundledMiniapp(asset)).rejects.toThrow(failure)
-      expect(install).toHaveBeenCalledWith(asset.localUri)
+      expect(install).toHaveBeenCalledWith(asset.localUri, {
+        expectedPackageName: mentraCallPackageName,
+        expectedVersion: "2.1.18",
+      })
     } finally {
       active.mockRestore()
       appRegistry.getInstalledVersions = originalVersions
