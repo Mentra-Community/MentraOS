@@ -26,6 +26,7 @@
  * Spec: docs/issues/001-cloud-core/auth/spec.md ("Endpoints")
  */
 
+import {createLogger} from "@mentra/cloud-shared"
 import {Hono} from "hono"
 import type {ContentfulStatusCode} from "hono/utils/http-status"
 import {InvalidRequest, UnsupportedGrantType, type TokenResponse} from "../../types/oauth.types"
@@ -41,11 +42,15 @@ import {
   DeveloperSigningServiceError,
   type DevMiniappAttestation,
 } from "../../services/miniapps/developer-signing.service"
+import {trustedAccountEmail} from "../../services/account/trusted-email.service"
 import {userAuth} from "../middleware/user-auth.middleware"
 import type {AppContext, AppEnv} from "../../types/hono.types"
 
 const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
 const JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"
+const MINIAPP_EMAIL_LOOKUP_TIMEOUT_MS = 1_500
+
+const logger = createLogger("core").child({service: "client-auth.api"})
 
 const app = new Hono<AppEnv>()
 const developerSigning = new DeveloperSigningService()
@@ -132,6 +137,7 @@ async function postMiniappToken(c: AppContext) {
     mentraUserId: user.mentraUserId,
     tenantId: user.tenantId,
     packageName,
+    email: await miniappTokenEmail(user.mentraUserId),
   })
 
   return c.json({token, expiresAt})
@@ -168,6 +174,31 @@ async function postRevoke(c: AppContext) {
 }
 
 // === Helpers ===
+
+/**
+ * Verified account email for the miniapp token's optional `email` claim. The
+ * claim is best-effort: a slow or failing account lookup (user row or account
+ * directory) must never block a miniapp from authenticating, so the whole
+ * lookup races a deadline and degrades to a token without email.
+ */
+async function miniappTokenEmail(mentraUserId: string): Promise<string | null> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      reject(new Error(`account email lookup exceeded ${MINIAPP_EMAIL_LOOKUP_TIMEOUT_MS}ms`))
+    }, MINIAPP_EMAIL_LOOKUP_TIMEOUT_MS)
+  })
+  try {
+    return await Promise.race([trustedAccountEmail(mentraUserId, {signal: controller.signal}), deadline])
+  } catch (error) {
+    logger.warn({mentraUserId, error: (error as Error)?.message}, "miniapp token issued without email claim")
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 function stringField(form: Record<string, string | File | (string | File)[]>, name: string): string | null {
   const v = form[name]

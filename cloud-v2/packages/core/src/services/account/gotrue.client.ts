@@ -151,8 +151,8 @@ export async function findUserByEmail(email: string): Promise<GotrueIdentity | n
   return null;
 }
 
-export async function getUserById(userId: string): Promise<GotrueIdentity | null> {
-  const { status, body } = await gotrue(`/admin/users/${userId}`, { method: "GET", admin: true });
+export async function getUserById(userId: string, signal?: AbortSignal): Promise<GotrueIdentity | null> {
+  const { status, body } = await gotrue(`/admin/users/${userId}`, { method: "GET", admin: true, signal });
   if (status !== 200 || !body?.id) return null;
   return identityFrom(body);
 }
