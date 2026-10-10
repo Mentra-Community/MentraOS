@@ -31,6 +31,13 @@ import {channelFor, deriveVersion, publishedVersions, CHANNEL_MANIFESTS} from ".
 //     (see .github/scripts/rewrite-file-deps.mjs), so miniapp-cli publishes first.
 const PACKAGES = [
   {
+    key: "miniapp-tools",
+    name: "@mentra/miniapp-tools",
+    dir: "cloud-v2/packages/miniapp-tools",
+    installDir: "cloud-v2",
+    buildCmd: "bun run build",
+  },
+  {
     key: "miniapp-cli",
     name: "@mentra/miniapp-cli",
     dir: "sdk/miniapp-cli",

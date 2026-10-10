@@ -200,3 +200,21 @@ describe('report server log transport', () => {
     }
   });
 });
+
+test('miniapp collection requires structured identity and package, never text identity', () => {
+  const query = serverLogQuery('miniapp_server', 'dev', USER, CREATED_AT);
+  expect(query).toContain("notEmpty(JSONExtractString(raw,'packageName'))");
+  expect(query).not.toContain("JSONExtractString(raw,'userId')");
+  expect(query).not.toContain('position(');
+  const text = [
+    row({mentraUserId: USER, packageName: 'com.mentra.notes', message: 'note generated'}),
+    row({mentraUserId: USER, packageName: 'com.mentra.call', message: 'call ended'}),
+    row({mentraUserId: OTHER_USER, packageName: 'com.mentra.notes', message: USER}),
+    row({mentraUserId: USER, message: 'missing package'}),
+    row({mentraUserId: USER, packageName: '   ', message: 'invalid package'}),
+    row({userId: USER, packageName: 'com.mentra.notes', message: USER}),
+  ].join('\n');
+  const entries = parseServerLogs(text, USER, 'miniapp_server');
+  expect(entries).toHaveLength(2);
+  expect(entries.map(entry => JSON.parse(entry.message).packageName)).toEqual(['com.mentra.call', 'com.mentra.notes']);
+});

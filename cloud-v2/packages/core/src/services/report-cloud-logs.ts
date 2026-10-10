@@ -21,7 +21,10 @@ export function serverLogQuery(source: 'cloud' | 'miniapp_server', environment: 
   const start = new Date(createdAt.getTime() - 10 * 60_000).toISOString().replace('T', ' ').replace('Z', '')
   const end = new Date(createdAt.getTime() + 10_000).toISOString().replace('T', ' ').replace('Z', '')
   const identity = `unhex('${Buffer.from(userId).toString('hex')}')`
-  const where = `dt BETWEEN toDateTime64('${start}',3,'UTC') AND toDateTime64('${end}',3,'UTC') AND (JSONExtractString(raw,'mentraUserId')=${identity} OR JSONExtractString(raw,'userId')=${identity} OR position(JSONExtractString(raw,'message'),${identity})>0)`
+  const match = source === 'miniapp_server'
+    ? `JSONExtractString(raw,'mentraUserId')=${identity} AND notEmpty(JSONExtractString(raw,'packageName'))`
+    : `(JSONExtractString(raw,'mentraUserId')=${identity} OR JSONExtractString(raw,'userId')=${identity} OR position(JSONExtractString(raw,'message'),${identity})>0)`
+  const where = `dt BETWEEN toDateTime64('${start}',3,'UTC') AND toDateTime64('${end}',3,'UTC') AND ${match}`
   const reads = tables.flatMap(table => [
     `SELECT dt,raw FROM remote(t373499_${table}_logs) WHERE ${where}`,
     `SELECT dt,raw FROM s3Cluster(primary,t373499_${table}_s3) WHERE _row_type=1 AND ${where}`,
@@ -44,7 +47,7 @@ function scrub(value: unknown, depth = 0): unknown {
   ]))
   return value
 }
-export function parseServerLogs(text: string, userId: string): ReportLogEntry[] {
+export function parseServerLogs(text: string, userId: string, source: 'cloud' | 'miniapp_server' = 'cloud'): ReportLogEntry[] {
   const lines = text.split('\n').filter(Boolean)
   if (lines.length > SERVER_LOG_MAX_ENTRIES + 1) throw new ServerLogCollectionError('Server log response exceeded its entry limit')
   const entries: ReportLogEntry[] = []
@@ -53,6 +56,7 @@ export function parseServerLogs(text: string, userId: string): ReportLogEntry[] 
     const raw: unknown = JSON.parse(row.raw)
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ServerLogCollectionError('Server log response was malformed')
     const fields = raw as Record<string, unknown>
+    if (source === 'miniapp_server' && (fields.mentraUserId !== userId || typeof fields.packageName !== 'string' || !fields.packageName.trim())) continue
     // Text loggers use user=<id>; enforce a complete token, not a prefix or another user's row.
     const message = typeof fields.message === 'string' ? fields.message : ''
     const textIdentity = message.split(/[^A-Za-z0-9_]+/).includes(userId)
@@ -88,7 +92,7 @@ export async function collectServerLogs(input: {source: 'cloud' | 'miniapp_serve
         chunks.push(item.value)
       }
     } finally { await reader.cancel().catch(() => undefined) }
-    return parseServerLogs(Buffer.concat(chunks).toString('utf8'), input.mentraUserId)
+    return parseServerLogs(Buffer.concat(chunks).toString('utf8'), input.mentraUserId, input.source)
   } catch (error) {
     if (error instanceof ServerLogCollectionError) throw error
     throw new ServerLogCollectionError('Better Stack V2 log query timed out or returned invalid data')
