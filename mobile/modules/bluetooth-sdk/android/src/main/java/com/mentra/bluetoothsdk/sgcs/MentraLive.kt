@@ -4421,6 +4421,16 @@ class MentraLive : SGCManager() {
                         if (json.has("bytes_downloaded")) json.optLong("bytes_downloaded", 0) else null
                 )
             }
+            "bes_crash_detected", "bes_crash_reported_ack" ->
+                    try {
+                        Bridge.log(
+                                "LIVE: $type incidentKey=${json.optString("incidentKey")} " +
+                                        "state=${json.optString("state")} ok=${json.opt("ok")}"
+                        )
+                        Bridge.sendTypedMessage(type, jsonObjectToMap(json))
+                    } catch (e: JSONException) {
+                        Log.e(TAG, "Error converting $type to Map", e)
+                    }
             "ota_progress" -> {
                 // Legacy glasses firmware: map to unified ota_status so JS has a single path
                 // (Mantle / progress UI).
@@ -6129,6 +6139,27 @@ class MentraLive : SGCManager() {
             )
         } catch (e: JSONException) {
             throw BluetoothSdkException("incident_dispatch_failed", "Could not create the glasses incident-log request.", e)
+        }
+    }
+
+    override fun sendBesCrashReported(incidentKey: String, reportId: String) {
+        if (!isConnected || bluetoothGatt == null || txCharacteristic == null) {
+            throw BluetoothSdkException(
+                "glasses_not_connected", "Cannot report the BES crash because the glasses BLE link is not ready.",
+            )
+        }
+        val sessionGeneration = bleSessionGeneration.get()
+        try {
+            val json = JSONObject()
+            json.put("type", "bes_crash_reported")
+            json.put("incidentKey", incidentKey)
+            json.put("reportId", reportId)
+            if (!sendJson(json, true, true, sessionGeneration) || sessionGeneration != bleSessionGeneration.get()) {
+                throw BluetoothSdkException("bes_crash_dispatch_failed", "Could not queue bes_crash_reported to the glasses.")
+            }
+            Bridge.log("LIVE: Queued bes_crash_reported incidentKey=$incidentKey reportId=$reportId")
+        } catch (e: JSONException) {
+            throw BluetoothSdkException("bes_crash_dispatch_failed", "Could not create bes_crash_reported.", e)
         }
     }
 
@@ -10429,6 +10460,15 @@ class MentraLive : SGCManager() {
                 if (session.isComplete) {
                     // Transfer is complete - process successfully
                     Bridge.log("LIVE: 📦 File transfer complete: " + packetInfo.fileName)
+
+                    if (IncidentLogBleRelayNaming.isRelayFileName(packetInfo.fileName)) {
+                        // No relay registered (e.g. the app restarted mid-relay): nothing reached
+                        // Cloud, so success would make the glasses mark the incident uploaded.
+                        Log.w(TAG, "Incident log relay without a registered report: " + packetInfo.fileName)
+                        sendTransferCompleteConfirmation(packetInfo.fileName, false)
+                        activeFileTransfers.remove(packetInfo.fileName)
+                        return
+                    }
 
                     // Assemble and save the file
                     val fileData = session.assembleFile()

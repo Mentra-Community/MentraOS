@@ -1,6 +1,7 @@
 package com.mentra.bluetoothsdk.sgcs
 
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
+import com.mentra.bluetoothsdk.BluetoothSdkException
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.PhotoRequest
@@ -347,6 +348,11 @@ abstract class SGCManager {
 
     // Incident Reporting
     abstract fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null)
+
+    /** Tell the glasses Cloud recorded [reportId] for a BES crash incident (Mentra Live only). */
+    open fun sendBesCrashReported(incidentKey: String, reportId: String) {
+        throw BluetoothSdkException("unsupported_device", "BES crash reporting is not supported on $type.")
+    }
 
     // Gallery
     abstract fun queryGalleryStatus()

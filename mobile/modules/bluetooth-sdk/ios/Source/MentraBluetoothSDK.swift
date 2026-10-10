@@ -299,6 +299,8 @@ public final class MentraBluetoothSDK {
     /// instead of throwing `request_in_flight` and refusing the next join.
     private var hotspotTail: Task<HotspotStatusEvent, Error>?
     private var pendingVersionInfo: PendingVersionInfoRequest?
+    private let besCrashReports = BesCrashReportWaiters()
+    private static let besCrashReportedTimeoutMs = 10000
     private let wifiSessionCapabilities = WifiSessionCapabilities()
     private var configuredOtaVersionUrl: String?
 
@@ -1671,6 +1673,18 @@ public final class MentraBluetoothSDK {
         try DeviceManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
     }
 
+    /// Resolves on the glasses' matching `ok:true` ack; throws on `ok:false`, disconnect or timeout.
+    func sendBesCrashReported(incidentKey: String, reportId: String) async throws {
+        try requireGlassesConnected(operation: "report the BES crash")
+        try await besCrashReports.report(
+            incidentKey: incidentKey,
+            reportId: reportId,
+            timeoutMs: Self.besCrashReportedTimeoutMs
+        ) {
+            try DeviceManager.shared.sendBesCrashReported(incidentKey: incidentKey, reportId: reportId)
+        }
+    }
+
     public func invalidate() {
         resetWifiProtocolSession(sessionId: "", code: "sdk_closed")
         if let bluetoothAvailabilityListenerId {
@@ -2283,6 +2297,10 @@ public final class MentraBluetoothSDK {
         case "glasses":
             if changes["connected"] as? Bool == false {
                 resetWifiProtocolSession(sessionId: "", code: "wifi_session_disconnected")
+                besCrashReports.rejectAll(BluetoothSdkError(
+                    code: "glasses_not_connected",
+                    message: "Glasses disconnected before acknowledging bes_crash_reported."
+                ))
             }
             analytics.observeGlassesStatus(glassesStatus)
             let nextState = state
@@ -2575,6 +2593,13 @@ public final class MentraBluetoothSDK {
                 )
             }
             delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(event))
+        case "bes_crash_detected":
+            var values = data
+            values["type"] = "bes_crash_detected"
+            delegate?.mentraBluetoothSDK(self, didReceive: .besCrashDetected(BesCrashDetectedEvent(values: values)))
+        case "bes_crash_reported_ack":
+            // Request-scoped: consumed by the waiting sendBesCrashReported call, never a delegate event.
+            besCrashReports.onAck(data)
         case "settings_ack":
             let event = SettingsAckEvent(values: data)
             handleSettingsAckForRequests(event)

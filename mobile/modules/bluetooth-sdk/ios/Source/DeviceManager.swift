@@ -1526,6 +1526,13 @@ struct ViewState {
         try driver.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
     }
 
+    func sendBesCrashReported(incidentKey: String, reportId: String) throws {
+        guard let driver = sgc else {
+            throw BluetoothSdkError(code: "glasses_not_connected", message: "Cannot report the BES crash because glasses are not connected.")
+        }
+        try driver.sendBesCrashReported(incidentKey: incidentKey, reportId: reportId)
+    }
+
     func sendWifiCredentials(_ ssid: String, _ password: String) {
         Bridge.log("MAN: Sending wifi credentials: \(ssid)")
         sgc?.sendWifiCredentials(ssid, password)
