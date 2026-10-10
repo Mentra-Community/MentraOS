@@ -192,8 +192,8 @@ public class BesCrashDumpCollectorTest {
         JSONObject command = new JSONObject(rig.sender.sent.get(0));
         assertEquals("cs_log", command.getString("C"));
         assertEquals(1, command.getInt("V"));
-        assertEquals(0, command.getJSONObject("B").getInt("action"));
-        assertEquals(id, command.getJSONObject("B").getString("dump_id"));
+        assertEquals(0, new JSONObject(command.getString("B")).getInt("action"));
+        assertEquals(id, new JSONObject(command.getString("B")).getString("dump_id"));
         assertEquals(BesLogTransferLock.Owner.CRASH_CS_LOG, rig.lock.current());
         assertEquals("COLLECTING", rig.store.find(key).getString("state"));
         assertTrue(rig.stored.isEmpty());

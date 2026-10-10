@@ -481,7 +481,8 @@ public final class BesCrashDumpCollector {
             JSONObject command = new JSONObject();
             command.put("C", "cs_log");
             command.put("V", 1);
-            command.put("B", body);
+            // The BES command parser reads B as a string only.
+            command.put("B", body.toString());
             return command.toString();
         } catch (JSONException e) {
             throw new IllegalStateException(e);
