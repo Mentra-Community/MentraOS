@@ -923,7 +923,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.isConnecting = false
 
             self.connectedPeripheral = nil
-            self.fullyBooted = false
+            self.clearPhysicalReadiness()
             self.connected = false
             self.glassesSessionId = nil // Fresh BLE session starts with no sid known
             self.streamControlVersion = 0
@@ -1617,6 +1617,16 @@ class MentraLive: NSObject, SGCManager {
         set { DeviceStore.shared.apply("glasses", "connected", newValue) }
     }
 
+    private func clearPhysicalReadiness() {
+        let readinessWasPending = connected && !fullyBooted
+        fullyBooted = false
+        if readinessWasPending {
+            // Logical ASG readiness already emitted false without disconnecting.
+            // The real disconnect must still perform the cleanup apply deduplicates.
+            DeviceManager.shared.handleDeviceDisconnected()
+        }
+    }
+
     // Queue Management
     private let commandQueue = CommandQueue()
     private let bluetoothQueue = DispatchQueue(label: "MentraLiveBluetooth", qos: .userInitiated)
@@ -1744,8 +1754,8 @@ class MentraLive: NSObject, SGCManager {
         // Publish disconnect immediately for Phone A UI. didDisconnectPeripheral may lag
         // or race with cancelPeripheralConnection; do not wait on it for stand-down.
         isConnecting = false
+        clearPhysicalReadiness()
         connected = false
-        fullyBooted = false
         glassesSessionId = nil
         streamControlVersion = 0
         readinessCompletedThisBleSession = false
@@ -2523,8 +2533,8 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: Maximum reconnection attempts reached (\(MAX_RECONNECT_ATTEMPTS))")
             reconnectAttempts = 0
             updateConnectionState(ConnTypes.DISCONNECTED)
+            clearPhysicalReadiness()
             connected = false
-            fullyBooted = false
             glassesSessionId = nil
             streamControlVersion = 0
             readinessCompletedThisBleSession = false
@@ -3138,6 +3148,11 @@ class MentraLive: NSObject, SGCManager {
             if type.hasPrefix("version_info") {
                 Bridge.log("LIVE: Received \(type)")
 
+                // A new process can report its build before glasses_ready resets the
+                // wire epoch. Publish its pending readiness before those version fields
+                // can complete OTA and trigger the next request.
+                handleGlassesSessionId(json)
+
                 // Extract all fields from JSON (except "type")
                 var fields: [String: Any] = [:]
                 fields["version_info_type"] = type
@@ -3210,7 +3225,6 @@ class MentraLive: NSObject, SGCManager {
                 // running them per chunk is safe.
                 parsePeerWireCaps(json)
                 maybeSendWireHandshake()
-                handleGlassesSessionId(json)
 
                 Bridge.sendVersionInfo(fields, responseChunk: type)
             } else {
@@ -5737,7 +5751,7 @@ class MentraLive: NSObject, SGCManager {
         stopReadinessCheckLoop()
 
         readinessCheckCounter = 0
-        fullyBooted = false
+        clearPhysicalReadiness()
         connected = false
         glassesSessionId = nil
         streamControlVersion = 0
@@ -6018,8 +6032,8 @@ class MentraLive: NSObject, SGCManager {
             centralManager?.cancelPeripheralConnection(peripheral)
         }
 
+        clearPhysicalReadiness()
         DeviceStore.shared.apply("glasses", "connected", false)
-        DeviceStore.shared.apply("glasses", "fullyBooted", false)
         DeviceStore.shared.apply("glasses", "wifiConnected", false)
         DeviceStore.shared.apply("glasses", "wifiSsid", "")
         DeviceStore.shared.apply("glasses", "wifiLocalIp", "")
@@ -6156,8 +6170,8 @@ extension MentraLive {
     /// pre-sid build) or differing from the recorded one = restart; same sid = no action.
     /// A restart is a LOGICAL session reset: send phone_ready immediately (bypassing the
     /// sr_hrt heartbeat's stale-readiness suppression); the returning glasses_ready runs
-    /// the full existing remote-wire-reset flow. fullyBooted is deliberately untouched -
-    /// the physical link never dropped, so the connection UI must not flap.
+    /// the full existing remote-wire-reset flow. Keep the physical connection intact,
+    /// but mark readiness pending until that new wire epoch has been established.
     private func handleGlassesSessionId(_ json: [String: Any]) {
         guard let sid = json["sid"] as? String, !sid.isEmpty else { return }
         let previous = glassesSessionId
@@ -6172,6 +6186,9 @@ extension MentraLive {
             "LIVE: 🔁 Glasses session changed (\(previous ?? "<pre-sid build>") -> \(sid)) - " +
                 "asg restarted under a live link, re-running readiness"
         )
+        // Emit the existing connected-but-not-ready status without invoking the
+        // physical-disconnect side effects of DeviceStore.apply(fullyBooted: false).
+        DeviceStore.shared.set("glasses", "fullyBooted", false)
         sendPhoneReady(reason: "glasses session changed")
         Bridge.sendTypedMessage(
             "glasses_session_changed",
