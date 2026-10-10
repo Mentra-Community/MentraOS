@@ -177,15 +177,26 @@ async function postRevoke(c: AppContext) {
 
 /**
  * Verified account email for the miniapp token's optional `email` claim. The
- * claim is best-effort: a slow or failing account lookup must never block a
- * miniapp from authenticating, so it degrades to a token without email.
+ * claim is best-effort: a slow or failing account lookup (user row or account
+ * directory) must never block a miniapp from authenticating, so the whole
+ * lookup races a deadline and degrades to a token without email.
  */
 async function miniappTokenEmail(mentraUserId: string): Promise<string | null> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      reject(new Error(`account email lookup exceeded ${MINIAPP_EMAIL_LOOKUP_TIMEOUT_MS}ms`))
+    }, MINIAPP_EMAIL_LOOKUP_TIMEOUT_MS)
+  })
   try {
-    return await trustedAccountEmail(mentraUserId, {signal: AbortSignal.timeout(MINIAPP_EMAIL_LOOKUP_TIMEOUT_MS)})
+    return await Promise.race([trustedAccountEmail(mentraUserId, {signal: controller.signal}), deadline])
   } catch (error) {
     logger.warn({mentraUserId, error: (error as Error)?.message}, "miniapp token issued without email claim")
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 

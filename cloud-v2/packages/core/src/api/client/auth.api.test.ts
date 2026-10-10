@@ -70,6 +70,22 @@ describe("POST /miniapp-token email claims", () => {
     expect(claims.sub).toBe("mu_01TEST")
     expect("email" in claims).toBe(false)
   })
+
+  test("does not wait past the deadline for a stalled account lookup", async () => {
+    let signal: AbortSignal | undefined
+    mocks.push(
+      spyOn(trustedEmail, "trustedAccountEmail").mockImplementation((_id, options) => {
+        signal = options?.signal
+        return new Promise(() => {})
+      }),
+    )
+
+    const started = Date.now()
+    const claims = await verifiedClaims(await mint("com.mentra.call"), "com.mentra.call")
+    expect(Date.now() - started).toBeLessThan(3_000)
+    expect("email" in claims).toBe(false)
+    expect(signal?.aborted).toBe(true)
+  })
 })
 
 async function mint(packageName: string): Promise<string> {
