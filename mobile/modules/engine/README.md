@@ -110,6 +110,38 @@ disabled unless an Expo/React Native host explicitly sets
 debug `setOtaVersionUrl` surface. Pre-39 glasses retain their separate legacy
 path because those clients ignore the URL sent by the phone.
 
+## Incident reports and collection completion
+
+`submitIncidentReport(event)` is the shared Promise entrypoint for Android intent
+and Mac app incident requests. It files once, submits phone diagnostics, asks the
+connected glasses for ASG/BES logs, then waits for their Core storage receipts
+before returning the final `INCIDENT_REPORT_RESULT`. The testing framework awaits
+that receipt before ordinary teardown; it does not need report-reader credentials.
+
+The returned `collection` keeps each source's outcome and artifact ID. A collection
+state of `complete` means every requested source is terminal, including explicit
+`failed` or `unavailable` outcomes; only `received` confirms a stored artifact.
+The incident wait is bounded to 20 seconds and reports `timed-out` with the last receipts if
+uploads remain pending. It never re-files the incident or changes the original test
+failure. Cloud and miniapp server collection continue independently because they
+do not need a live glasses connection.
+
+Hosts with a different workflow can use the same typed API:
+
+```ts
+const submitted = await engine.reports.submit(report)
+if (submitted.status === "submitted") {
+  const collection = await engine.reports.waitForCollection(submitted.reportId, {
+    sources: ["phone", "glasses", "glasses_firmware"],
+    timeoutMs: 20_000,
+  })
+}
+```
+
+Bluetooth owns command delivery; Engine owns submission and collection completion;
+Core owns artifact storage and source receipts. Readiness of a report is separate
+from receipt of every log source.
+
 ## Imports
 
 Inside `mobile/modules/engine/src/`, use **relative paths** (`./services/...`,

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import { HttpError } from "./errors";
 import { createHttpClient } from "./http";
@@ -12,6 +12,235 @@ const logger = {
 };
 
 describe("createHttpClient", () => {
+  test("a pre-aborted request skips authentication and fetch for JSON and form requests", async () => {
+    const controller = new AbortController();
+    const reason = new Error("collection deadline reached");
+    controller.abort(reason);
+    let tokenCalls = 0;
+    let fetchCalls = 0;
+    const http = createHttpClient({
+      baseUrl: "https://core.test",
+      logger,
+      getToken: async () => {
+        tokenCalls += 1;
+        return "token-123";
+      },
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("{}");
+      },
+    });
+
+    const options = { signal: controller.signal };
+    await expect(http.get("/api/health", options)).rejects.toBe(reason);
+    await expect(http.postForm("/api/artifacts", new FormData(), options)).rejects.toBe(reason);
+    expect(tokenCalls).toBe(0);
+    expect(fetchCalls).toBe(0);
+  });
+
+  test("an abort during authentication prevents the subsequent fetch", async () => {
+    const controller = new AbortController();
+    const reason = new Error("collection deadline reached");
+    let resolveToken!: (token: string) => void;
+    let tokenStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      tokenStarted = resolve;
+    });
+    let fetchCalls = 0;
+    const http = createHttpClient({
+      baseUrl: "https://core.test",
+      logger,
+      getToken: () => {
+        tokenStarted();
+        return new Promise<string>((resolve) => {
+          resolveToken = resolve;
+        });
+      },
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response("{}");
+      },
+    });
+    const result = http.get("/api/health", { signal: controller.signal }).catch((error) => error);
+    await started;
+    controller.abort(reason);
+    resolveToken("token-123");
+
+    expect(await result).toBe(reason);
+    expect(fetchCalls).toBe(0);
+  });
+
+  test("passes the signal to pending fetch and never retries cancellation", async () => {
+    const controller = new AbortController();
+    const reason = new Error("collection deadline reached");
+    let fetchStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      fetchStarted = resolve;
+    });
+    let fetchCalls = 0;
+    let retryTimers = 0;
+    const http = createHttpClient({
+      baseUrl: "https://core.test",
+      logger,
+      timers: {
+        ...systemTimers,
+        setTimeout() {
+          retryTimers += 1;
+          return {};
+        },
+      },
+      fetch: (_url, init) => {
+        fetchCalls += 1;
+        expect(init?.signal).toBe(controller.signal);
+        return new Promise<Response>((_resolve, reject) => {
+          init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
+          fetchStarted();
+        });
+      },
+    });
+    const result = http.get("/api/health", { signal: controller.signal }).catch((error) => error);
+    await started;
+    controller.abort(reason);
+
+    expect(await result).toBe(reason);
+    expect(fetchCalls).toBe(1);
+    expect(retryTimers).toBe(0);
+  });
+
+  test("does not retry a transport AbortError even without an aborted signal", async () => {
+    const reason = new DOMException("request cancelled", "AbortError");
+    let fetchCalls = 0;
+    const http = createHttpClient({
+      baseUrl: "https://core.test",
+      logger,
+      fetch: async () => {
+        fetchCalls += 1;
+        throw reason;
+      },
+    });
+
+    await expect(http.get("/api/health")).rejects.toBe(reason);
+    expect(fetchCalls).toBe(1);
+  });
+
+  test("an abort during retry backoff clears its timer and listener before any further fetch", async () => {
+    const controller = new AbortController();
+    const reason = new Error("collection deadline reached");
+    const addListener = spyOn(controller.signal, "addEventListener");
+    const removeListener = spyOn(controller.signal, "removeEventListener");
+    const handle = { kind: "http-retry" };
+    const cleared: unknown[] = [];
+    let onTimer!: () => void;
+    let timerStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      timerStarted = resolve;
+    });
+    let fetchCalls = 0;
+    const http = createHttpClient({
+      baseUrl: "https://core.test",
+      logger,
+      timers: {
+        ...systemTimers,
+        setTimeout(callback, delayMs) {
+          expect(delayMs).toBe(250);
+          onTimer = callback;
+          timerStarted();
+          return handle;
+        },
+        clearTimeout(timer) {
+          cleared.push(timer);
+        },
+      },
+      fetch: async () => {
+        fetchCalls += 1;
+        throw new TypeError("connection reset");
+      },
+    });
+
+    try {
+      const result = http.get("/api/health", { signal: controller.signal }).catch((error) => error);
+      await started;
+      controller.abort(reason);
+      expect(await result).toBe(reason);
+      onTimer();
+      await Promise.resolve();
+
+      expect(fetchCalls).toBe(1);
+      expect(cleared).toEqual([handle]);
+      expect(addListener).toHaveBeenCalledTimes(1);
+      expect(removeListener).toHaveBeenCalledTimes(1);
+      expect(removeListener.mock.calls[0]?.[1]).toBe(addListener.mock.calls[0]?.[1]);
+    } finally {
+      addListener.mockRestore();
+      removeListener.mockRestore();
+    }
+  });
+
+  test("a completed retry delay removes its abort listener and preserves safe retries", async () => {
+    const controller = new AbortController();
+    const addListener = spyOn(controller.signal, "addEventListener");
+    const removeListener = spyOn(controller.signal, "removeEventListener");
+    let fetchCalls = 0;
+    const http = createHttpClient({
+      baseUrl: "https://core.test",
+      logger,
+      timers: {
+        ...systemTimers,
+        setTimeout(callback) {
+          callback();
+          return {};
+        },
+      },
+      fetch: async () => {
+        fetchCalls += 1;
+        if (fetchCalls === 1) throw new TypeError("connection reset");
+        return new Response('{"ok":true}');
+      },
+    });
+
+    try {
+      await expect(http.get("/api/health", { signal: controller.signal })).resolves.toEqual({ ok: true });
+      expect(fetchCalls).toBe(2);
+      expect(addListener).toHaveBeenCalledTimes(1);
+      expect(removeListener).toHaveBeenCalledTimes(1);
+      expect(removeListener.mock.calls[0]?.[1]).toBe(addListener.mock.calls[0]?.[1]);
+    } finally {
+      addListener.mockRestore();
+      removeListener.mockRestore();
+    }
+  });
+
+  test.each([200, 400])(
+    "an abort while reading a %i response does not return parsed data or HttpError",
+    async (status) => {
+      const controller = new AbortController();
+      const reason = new Error("collection deadline reached");
+      let resolveBody!: (body: string) => void;
+      let readingStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        readingStarted = resolve;
+      });
+      const response = new Response("", { status });
+      const readBody = () => {
+        readingStarted();
+        return new Promise<string>((resolve) => {
+          resolveBody = resolve;
+        });
+      };
+      Object.defineProperties(response, {
+        text: {value: readBody},
+        json: {value: async () => JSON.parse(await readBody())},
+      });
+      const http = createHttpClient({ baseUrl: "https://core.test", logger, fetch: async () => response });
+      const result = http.get("/api/health", { signal: controller.signal }).catch((error) => error);
+      await started;
+      controller.abort(reason);
+      resolveBody('{"ok":true}');
+
+      expect(await result).toBe(reason);
+    },
+  );
+
   test("uses the injected scheduler for retry backoff", async () => {
     const scheduledDelays: number[] = [];
     const timers: CloudClientTimers = {

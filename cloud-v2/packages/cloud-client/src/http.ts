@@ -28,10 +28,12 @@ import type { HttpTransport } from "./transports";
  * `idempotent` marks a call as safe to retry on a transient network error. GET
  * is always treated as idempotent; the full-replace PUT opts in via this flag.
  * POST is never retried by default because it may not be safe to repeat.
+ * `signal` cancels the request, including a pending retry delay.
  */
 export interface ReqOpts {
   bearer?: string;
   idempotent?: boolean;
+  signal?: AbortSignal;
 }
 
 /** The REST surface the modules consume. */
@@ -79,6 +81,21 @@ function joinUrl(baseUrl: string, path: string): string {
   return `${base}/${suffix}`;
 }
 
+function abortReason(signal: AbortSignal): unknown {
+  if (signal.reason !== undefined) return signal.reason;
+  const error = new Error("The request was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortReason(signal);
+}
+
+function isAbortError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
+}
+
 export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
   const { baseUrl, getToken, logger } = deps;
   const executeFetch = deps.fetch ?? globalThis.fetch;
@@ -90,9 +107,44 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
    * logs everywhere in this library.
    */
   async function resolveBearer(opts?: ReqOpts): Promise<string | undefined> {
+    throwIfAborted(opts?.signal);
     if (opts?.bearer) return opts.bearer;
-    if (getToken) return await getToken();
+    if (getToken) {
+      const bearer = await getToken();
+      throwIfAborted(opts?.signal);
+      return bearer;
+    }
     return undefined;
+  }
+
+  async function retryDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    await new Promise<void>((resolve, reject) => {
+      let handle: unknown;
+      let timerCreated = false;
+      let settled = false;
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        if (timerCreated) timers.clearTimeout(handle);
+        reject(abortReason(signal!));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      handle = timers.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, delayMs);
+      timerCreated = true;
+      if (signal?.aborted) {
+        // An injected scheduler can run synchronously before returning its handle.
+        if (settled) timers.clearTimeout(handle);
+        else onAbort();
+      }
+    });
+    throwIfAborted(signal);
   }
 
   /**
@@ -112,21 +164,27 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     headers: Record<string, string>;
     body: string | FormData | undefined;
     idempotent: boolean;
+    signal?: AbortSignal;
   }): Promise<Response> {
-    const { method, path, headers, body, idempotent } = args;
+    const { method, path, headers, body, idempotent, signal } = args;
     const url = joinUrl(baseUrl, path);
 
     for (let attempt = 0; attempt <= (idempotent ? MAX_RETRIES : 0); attempt++) {
+      throwIfAborted(signal);
       if (attempt > 0) {
         const backoff = RETRY_BASE_MS * 2 ** (attempt - 1);
         logger.debug("http retrying request", { method, path, attempt });
-        await new Promise<void>((resolve) => timers.setTimeout(resolve, backoff));
+        await retryDelay(backoff, signal);
       }
 
       let res: Response;
       try {
-        res = await executeFetch(url, { method, headers, body });
-      } catch {
+        throwIfAborted(signal);
+        res = await executeFetch(url, { method, headers, body, signal });
+        throwIfAborted(signal);
+      } catch (error) {
+        throwIfAborted(signal);
+        if (isAbortError(error)) throw error;
         // Transient network failure: let the loop retry.
         logger.warn("http network error", { method, path, attempt });
         continue;
@@ -134,7 +192,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
 
       if (!res.ok) {
         // Definite answer from the server: map to a typed error, no retry.
-        throw await toHttpError(res, method, path);
+        throw await toHttpError(res, method, path, signal);
       }
 
       return res;
@@ -151,6 +209,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     opts?: ReqOpts,
   ): Promise<Response> {
     const bearer = await resolveBearer(opts);
+    throwIfAborted(opts?.signal);
 
     const headers: Record<string, string> = {};
     if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
@@ -165,7 +224,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     // verbs opt in via the flag.
     const idempotent = opts?.idempotent ?? (method === "GET" || method === "DELETE" || method === "HEAD");
 
-    return await fetchWithRetry({ method, path, headers, body: payload, idempotent });
+    return await fetchWithRetry({ method, path, headers, body: payload, idempotent, signal: opts?.signal });
   }
 
   async function request<T>(
@@ -175,11 +234,12 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     opts?: ReqOpts,
   ): Promise<T> {
     const res = await requestRaw(method, path, body, opts);
-    return await parseJson<T>(res);
+    return await parseJson<T>(res, opts?.signal);
   }
 
   async function requestForm<T>(path: string, form: FormData, opts?: ReqOpts): Promise<T> {
     const bearer = await resolveBearer(opts);
+    throwIfAborted(opts?.signal);
 
     // No Content-Type here: fetch/FormData must generate the multipart
     // boundary. POST is not idempotent, so retries stay opt-in.
@@ -192,8 +252,9 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
       headers,
       body: form,
       idempotent: opts?.idempotent ?? false,
+      signal: opts?.signal,
     });
-    return await parseJson<T>(res);
+    return await parseJson<T>(res, opts?.signal);
   }
 
   /**
@@ -202,7 +263,8 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
    * parse failure here because the status is the load-bearing signal and we do
    * not want a malformed error body to mask the real status.
    */
-  async function toHttpError(res: Response, method: string, path: string): Promise<HttpError> {
+  async function toHttpError(res: Response, method: string, path: string, signal?: AbortSignal): Promise<HttpError> {
+    throwIfAborted(signal);
     let code: string | undefined;
     let detail = "";
     try {
@@ -212,12 +274,16 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
         error?: string;
         error_description?: string;
       };
+      throwIfAborted(signal);
       code = data?.code ?? data?.error;
       const message = data?.message ?? data?.error_description;
       detail = message ? `: ${message}` : "";
-    } catch {
+    } catch (error) {
+      throwIfAborted(signal);
+      if (isAbortError(error)) throw error;
       // No JSON body, or unparseable: fall back to status alone.
     }
+    throwIfAborted(signal);
     return new HttpError(`HTTP ${res.status} on ${method} ${path}${detail}`, res.status, code);
   }
 
@@ -225,10 +291,14 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
    * Parse a successful response as JSON, tolerating an empty body (a 204 or an
    * endpoint that returns nothing) by resolving to `undefined`.
    */
-  async function parseJson<T>(res: Response): Promise<T> {
+  async function parseJson<T>(res: Response, signal?: AbortSignal): Promise<T> {
+    throwIfAborted(signal);
     const text = await res.text();
+    throwIfAborted(signal);
     if (text.length === 0) return undefined as T;
-    return JSON.parse(text) as T;
+    const result = JSON.parse(text) as T;
+    throwIfAborted(signal);
+    return result;
   }
 
   return {

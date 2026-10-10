@@ -14,6 +14,7 @@ import type { AppContext, AppEnv } from "../../types/hono.types";
 import {
   addAttachmentArtifacts,
   addLogArtifact,
+  getReportLogCollection,
   markReportReady,
   submitReport,
   updateReportLogCollection,
@@ -121,6 +122,11 @@ reportsApp.use(
   }),
 );
 
+reportsApp.get('/:reportId/log-collection', userAuth, async c => {
+  const user = requireUser(c);
+  const snapshot = await getReportLogCollection({mentraUserId: user.mentraUserId, reportId: readReportId(c, 'reportId')});
+  return snapshot ? c.json(snapshot) : c.json({error: 'report not found'}, 404);
+});
 reportsApp.post("/", userAuth, postSubmitReport);
 reportsApp.post("/:reportId/artifacts", userAuth, postReportArtifacts);
 reportsApp.post("/:reportId/complete", userAuth, postReportComplete);
