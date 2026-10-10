@@ -92,6 +92,21 @@ describe('report server log parsing', () => {
     ].join('\n'), USER)).toEqual([]);
   });
 
+  test('keeps user-correlated audio feed diagnostics without admitting suffix-only or foreign rows', () => {
+    const feed = {
+      message: 'feed', module: 'audio-worker', seq: 128, payloadBytes: 120,
+      codec: 'lc3', hasDecoder: true, pcmBytes: 640, providers: 1,
+    };
+    const entries = parseServerLogs([
+      row({...feed, mentraUserId: USER}),
+      row({...feed, user: USER.slice(-6)}),
+      row({...feed, mentraUserId: OTHER_USER, user: USER.slice(-6)}),
+    ].join('\n'), USER);
+
+    expect(entries).toHaveLength(1);
+    expect(JSON.parse(entries[0]!.message)).toEqual({...feed, mentraUserId: USER});
+  });
+
   test('redacts opaque credentials in standard, camelCase and nested fields and message values', () => {
     const entries = parseServerLogs(row({
       mentraUserId: USER,
