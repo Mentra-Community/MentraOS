@@ -486,6 +486,144 @@ describe("report MP4 video artifacts", () => {
   }
 });
 
+describe("report idempotency keys", () => {
+  const INCIDENT_KEY = "ML395018B-dump-0000002a-1f2e3d4c";
+  const crashReport = (incidentKey?: string) => ({
+    kind: "automatic",
+    ...(incidentKey !== undefined ? { incidentKey } : {}),
+    trigger: { type: "automatic", source: "glasses_firmware_crash", reason: "bes_crash" },
+    report: { actualBehavior: "BES crashed", systemPriority: "critical" },
+    context: { glasses: { model: "Mentra Live" } },
+  });
+  const crashEntries = [
+    { timestamp: 1760000000000, level: "error", message: "[CRASH-CONTEXT] v=2 seq=42", source: "BES_CRASH" },
+    { timestamp: 1760000000001, level: "info", message: "trace line", source: "BES" },
+  ];
+  const submit = (body: unknown, token = accessToken) => coreApp.fetch(new Request(REPORTS_PATH, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }));
+  const uploadLogs = (reportId: string, body: unknown) => coreApp.fetch(new Request(`${REPORTS_PATH}/${reportId}/artifacts`, {
+    method: "POST",
+    headers: { ...authHeaders(), "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }));
+
+  test("returns the existing report for a repeated incident key without creating another", async () => {
+    const first = await submit(crashReport(INCIDENT_KEY));
+    expect(first.status).toBe(200);
+    const created = await first.json() as { reportId: string; status: string };
+    expect(created).toEqual({ reportId: expect.stringMatching(/^rep_/), status: "collecting" });
+
+    const second = await submit(crashReport(INCIDENT_KEY));
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({ reportId: created.reportId, status: "collecting", deduplicated: true });
+    expect(await ReportModel.countDocuments({})).toBe(1);
+    expect((await ReportModel.collection.findOne({ reportId: created.reportId }))?.incidentKey).toBe(INCIDENT_KEY);
+
+    // The existing report's current status is returned, whatever the resubmitted kind.
+    expect((await completeReport(created.reportId)).status).toBe(200);
+    const third = await submit({ kind: "feedback", incidentKey: INCIDENT_KEY, feedback: "again", context: {} });
+    expect(await third.json()).toEqual({ reportId: created.reportId, status: "ready", deduplicated: true });
+    expect(await ReportModel.countDocuments({})).toBe(1);
+  });
+
+  test("concurrent submissions with one incident key converge on a single report", async () => {
+    const responses = await Promise.all(Array.from({ length: 8 }, () => submit(crashReport(INCIDENT_KEY))));
+    const bodies = await Promise.all(responses.map(async res => {
+      expect(res.status).toBe(200);
+      return await res.json() as { reportId: string; status: string; deduplicated?: true };
+    }));
+    expect(new Set(bodies.map(body => body.reportId)).size).toBe(1);
+    expect(bodies.filter(body => body.deduplicated === undefined)).toHaveLength(1);
+    expect(bodies.filter(body => body.deduplicated === true)).toHaveLength(7);
+    expect(await ReportModel.countDocuments({})).toBe(1);
+  });
+
+  test("submissions without an incident key keep creating distinct reports with no key stored", async () => {
+    const bodies = [];
+    for (let i = 0; i < 2; i++) {
+      const res = await submit(crashReport());
+      expect(res.status).toBe(200);
+      const body = await res.json() as Record<string, unknown>;
+      expect(Object.keys(body).sort()).toEqual(["reportId", "status"]);
+      bodies.push(body);
+    }
+    expect(bodies[0]!.reportId).not.toBe(bodies[1]!.reportId);
+    const docs = await ReportModel.collection.find({}).toArray();
+    expect(docs).toHaveLength(2);
+    for (const doc of docs) expect("incidentKey" in doc).toBe(false);
+  });
+
+  test("the same incident key from another user creates a separate report", async () => {
+    const other = await exchange(mintSupabaseJwt("reports-user-2"));
+    const otherToken = ((await other.json()) as { access_token: string }).access_token;
+    const mine = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const theirs = await (await submit(crashReport(INCIDENT_KEY), otherToken)).json() as { reportId: string; deduplicated?: true };
+    expect(theirs.reportId).not.toBe(mine.reportId);
+    expect(theirs.deduplicated).toBeUndefined();
+    expect(await ReportModel.countDocuments({ incidentKey: INCIDENT_KEY })).toBe(2);
+  });
+
+  test("rejects malformed incident keys and keeps the index partial and unique", async () => {
+    for (const incidentKey of ["", "has space", "slash/key", "x".repeat(129), 42]) {
+      expect((await submit({ ...crashReport(), incidentKey })).status).toBe(400);
+    }
+    expect(await ReportModel.countDocuments({})).toBe(0);
+    const index = (await ReportModel.collection.indexes()).find(row => row.key.incidentKey === 1);
+    expect(index).toMatchObject({ key: { mentraUserId: 1, incidentKey: 1 }, unique: true,
+      partialFilterExpression: { incidentKey: { $type: "string" } } });
+  });
+
+  test("a log upload repeated with the same retry key and bytes is stored once", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:full" };
+    const first = await uploadLogs(reportId, body);
+    expect(first.status).toBe(200);
+    const receipt = await first.json() as { stored: number; receipt: { artifactId: string; sha256: string; sizeBytes: number } };
+    expect(receipt).toMatchObject({ stored: 1, receipt: { artifactId: expect.stringMatching(/^art_/) } });
+    const second = await uploadLogs(reportId, body);
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual(receipt);
+
+    const doc = await ReportModel.collection.findOne({ reportId });
+    const artifacts = (doc?.artifacts ?? []) as Array<Record<string, unknown>>;
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]).toMatchObject({ artifactId: receipt.receipt.artifactId, type: "logs", source: "glasses_firmware" });
+    expect(doc?.logCollection?.glasses_firmware).toMatchObject({ state: "received", artifactId: receipt.receipt.artifactId, entryCount: 2 });
+    const assets = await ReportAssetModel.find({ reportId }).lean();
+    expect(assets).toHaveLength(1);
+    const stored = await createStorageService().getObject(assets[0]!.storageKey);
+    expect(sha256Hex(stored)).toBe(receipt.receipt.sha256);
+    expect(JSON.parse(Buffer.from(stored).toString("utf8"))).toEqual({ entries: crashEntries });
+  });
+
+  test("different bytes under an existing retry key return 409 and store nothing new", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:relay" };
+    expect((await uploadLogs(reportId, body)).status).toBe(200);
+    const conflict = await uploadLogs(reportId, { ...body, entries: [...crashEntries, { timestamp: 2, level: "info", message: "extra" }] });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ error: "conflict" });
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(1);
+    expect(await ReportAssetModel.countDocuments({ reportId })).toBe(1);
+  });
+
+  test("log uploads without a retry key keep storing a new artifact each time", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries };
+    for (let i = 0; i < 2; i++) {
+      const res = await uploadLogs(reportId, body);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ stored: 1 });
+    }
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(2);
+    expect(await ReportAssetModel.countDocuments({ reportId })).toBe(2);
+    expect((await uploadLogs(reportId, { ...body, retryKey: "bad key" })).status).toBe(400);
+  });
+});
+
 describe("report Slack notifications", () => {
   const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
   const realFetch = globalThis.fetch;
@@ -645,6 +783,19 @@ describe("report Slack notifications", () => {
       }
     });
   }
+
+  test("a deduplicated feedback submission sends no second notification", async () => {
+    const body = JSON.stringify({ kind: "feedback", incidentKey: "feedback-once", feedback: "only once", context: {} });
+    const send = () => coreApp.fetch(new Request(REPORTS_PATH, {
+      method: "POST", headers: { ...authHeaders(), "content-type": "application/json" }, body }));
+    const first = await (await send()).json() as { reportId: string };
+    await delivered;
+    const second = await (await send()).json() as { reportId: string; deduplicated?: true };
+    expect(second).toEqual({ reportId: first.reportId, status: "ready", deduplicated: true });
+    // Give a wrongly fired notifier time to reach the mocked bot.
+    await new Promise(resolve => setTimeout(resolve, 200));
+    expect(slackCalls).toHaveLength(1);
+  });
 
   test("submits successfully with no Slack call when the bot token is unset", async () => {
     delete process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;

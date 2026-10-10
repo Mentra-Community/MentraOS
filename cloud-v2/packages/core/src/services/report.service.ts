@@ -62,7 +62,7 @@ export interface ReportDetails {
 
 export interface ReportContext extends Record<string, unknown> {}
 
-export type SubmitReportInput =
+export type SubmitReportInput = (
   | {
       mentraUserId: string;
       kind: "bug";
@@ -83,11 +83,16 @@ export type SubmitReportInput =
       kind: "feedback";
       feedback: string | Record<string, unknown>;
       context: ReportContext;
-    };
+    }) & {
+  /** Device identity of one event; repeats return the user's existing report. */
+  incidentKey?: string;
+};
 
 export interface SubmitReportResult {
   reportId: string;
   status: ReportStatus;
+  /** Present only when an existing report for the incident key was returned. */
+  deduplicated?: true;
 }
 
 export interface ReportLogEntry {
@@ -207,6 +212,11 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
   if (rawCorrelation !== undefined && (!correlation || input.kind !== 'automatic'
     || input.trigger.source !== REPORT_TESTING_SOURCE || input.trigger.reason !== 'incident_report_requested'))
     throw new ReportArtifactError(409, 'Invalid automated incident correlation');
+  const {incidentKey} = input;
+  if (incidentKey !== undefined) {
+    const existing = await findIncidentKeyReport(input.mentraUserId, incidentKey);
+    if (existing) return existing;
+  }
   const reportId = `rep_${ulid()}`;
   const status: ReportStatus = input.kind === "feedback" ? "ready" : "collecting";
   const feedback = "feedback" in input
@@ -223,14 +233,23 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     feedback,
     context: input.context,
     ...(correlation ? {automationCorrelation: correlation} : {}),
+    ...(incidentKey !== undefined ? {incidentKey} : {}),
     artifacts: [],
     ...(input.kind !== 'feedback' ? {logCollection: initialReportLogCollection(new Date())} : {}),
     status,
   };
-  // The recovery reader requires majority visibility. A correlated creation
-  // must not be acknowledged before its binding is committed at that level.
-  if (correlation) await ReportModel.create([document], {writeConcern: attachmentWriteConcern});
-  else await ReportModel.create(document);
+  try {
+    // The recovery reader requires majority visibility. A correlated creation
+    // must not be acknowledged before its binding is committed at that level.
+    if (correlation) await ReportModel.create([document], {writeConcern: attachmentWriteConcern});
+    else await ReportModel.create(document);
+  } catch (error) {
+    // A concurrent submission with the same incident key won the unique index.
+    if (incidentKey === undefined || (error as {code?: number}).code !== 11000) throw error;
+    const existing = await findIncidentKeyReport(input.mentraUserId, incidentKey);
+    if (!existing) throw error;
+    return existing;
+  }
 
   // Feedback reports are complete as submitted, so they notify here;
   // bug/automatic reports notify from markReportReady once artifact
@@ -252,6 +271,12 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
   }
 
   return { reportId, status };
+}
+
+async function findIncidentKeyReport(mentraUserId: string, incidentKey: string): Promise<SubmitReportResult | null> {
+  const row = await ReportModel.findOne({mentraUserId, incidentKey}, {_id: 0, reportId: 1, status: 1})
+    .read('primary').lean<{reportId: string; status: ReportStatus}>();
+  return row ? {reportId: row.reportId, status: row.status, deduplicated: true} : null;
 }
 
 /** Exact durable device-report link only. No collection-success inference and no
@@ -426,6 +451,16 @@ async function addRetryableLogArtifact(input: {
   const result = await ReportModel.updateOne({ reportId, mentraUserId }, { $addToSet: { artifacts: metadata } },
     { writeConcern: attachmentWriteConcern });
   if (result.matchedCount !== 1) return null;
+  if (isReportLogSource(input.source)) {
+    const receipt = `logCollection.${input.source}`;
+    // The first accepted artifact for a source owns its receipt; identical retries leave it unchanged.
+    const marked = await ReportModel.updateOne({ reportId, mentraUserId, [`${receipt}.state`]: { $ne: "received" } }, {
+      $set: { [`${receipt}.state`]: "received", [`${receipt}.receivedAt`]: new Date().toISOString(),
+        [`${receipt}.artifactId`]: artifactId, [`${receipt}.entryCount`]: input.entries.length },
+      $unset: { [`${receipt}.reason`]: "", [`${receipt}.leaseUntil`]: "" },
+    }, { writeConcern: attachmentWriteConcern });
+    if (marked.modifiedCount) logger.info({ reportId, mentraUserId, source: input.source, artifactId, sizeBytes: bytes.byteLength }, "Report log artifact received");
+  }
   return { stored: 1, receipt: { artifactId, sha256, sizeBytes: bytes.byteLength } };
 }
 

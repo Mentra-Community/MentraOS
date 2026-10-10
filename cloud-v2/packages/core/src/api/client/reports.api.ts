@@ -16,6 +16,7 @@ import {
   addLogArtifact,
   getReportLogCollection,
   markReportReady,
+  ReportArtifactError,
   submitReport,
   updateReportLogCollection,
   type ReportAttachmentInput,
@@ -65,15 +66,19 @@ const reportDetailsSchema = z.object({
   systemPriority: z.enum(["low", "medium", "high", "critical"]).optional(),
   contactEmail: z.string().email().optional(),
 }).passthrough();
+// Client-chosen idempotency keys: an incident identity on submit, an artifact identity on upload.
+const idempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
 const submitReportSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("bug"),
+    incidentKey: idempotencyKeySchema.optional(),
     trigger: reportTriggerSchema,
     report: reportDetailsSchema,
     context: recordSchema,
   }),
   z.object({
     kind: z.literal("automatic"),
+    incidentKey: idempotencyKeySchema.optional(),
     automationCorrelation: z.custom<ReportAutomationCorrelation>(value => reportAutomationCorrelation(value) !== null).optional(),
     trigger: automaticReportTriggerSchema,
     report: reportDetailsSchema,
@@ -81,6 +86,7 @@ const submitReportSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("feedback"),
+    incidentKey: idempotencyKeySchema.optional(),
     feedback: z.union([z.string(), recordSchema]),
     context: recordSchema,
   }),
@@ -89,6 +95,7 @@ const logsArtifactSchema = z.object({
   type: z.literal("logs"),
   source: nonEmptyStringSchema,
   entries: z.array(logEntrySchema),
+  retryKey: idempotencyKeySchema.optional(),
 });
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -190,12 +197,19 @@ async function postReportArtifacts(c: AppContext) {
   if (parsed.data.source === 'cloud' || parsed.data.source === 'miniapp_server') {
     throw new InvalidRequest('server log sources cannot be uploaded by a device');
   }
-  const result = await addLogArtifact({
-    mentraUserId: user.mentraUserId,
-    reportId,
-    source: parsed.data.source,
-    entries: parsed.data.entries,
-  });
+  const { retryKey } = parsed.data;
+  let result: Awaited<ReturnType<typeof addLogArtifact>>;
+  try {
+    result = await addLogArtifact({
+      mentraUserId: user.mentraUserId,
+      reportId,
+      source: parsed.data.source,
+      entries: parsed.data.entries,
+    }, retryKey !== undefined ? { key: retryKey } : undefined);
+  } catch (error) {
+    if (!(error instanceof ReportArtifactError)) throw error;
+    return c.json({ error: error.status === 409 ? "conflict" : "temporarily_unavailable", error_description: error.message }, error.status);
+  }
   if (!result) return c.json({ error: "report not found" }, 404);
   return c.json(result, 200);
 }
