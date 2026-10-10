@@ -145,14 +145,20 @@ export class TestHistoryService {
     const deadline = Date.now() + HISTORY_QUERY_BUDGET_MS;
     try {sources = await this.read(testHistoryQueries(after, query.data.limit, query.data.includeReruns, query.data.origin), deadline);}
     catch (error) {
-      if ((error as {code?: number}).code === 50) throw new TestRunError(503, "Test history query timed out. Try again.");
+      if ((error as {code?: number}).code === 50 || (error as Error).name === "MongoOperationTimeoutError") throw new TestRunError(503, "Test history query timed out. Try again.");
       throw error;
     }
     const rows = sources.flat().sort((a, b) => b.historyStartedAt.getTime() - a.historyStartedAt.getTime()
       || (a.historyKind < b.historyKind ? 1 : a.historyKind > b.historyKind ? -1 : 0)
       || (a.historyId < b.historyId ? 1 : a.historyId > b.historyId ? -1 : 0));
     const page = rows.slice(0, query.data.limit);
-    const suiteSummaries = await this.suites.summaries(page.filter(row => row.historyKind === "suite").map(row => row.historyId), deadline);
+    let suiteSummaries: Map<string, SuiteSummaryRead>;
+    try {suiteSummaries = await this.suites.summaries(page.filter(row => row.historyKind === "suite").map(row => row.historyId), deadline);}
+    catch (error) {
+      if ((error as {code?: number}).code === 50 || (error as Error).name === "MongoOperationTimeoutError")
+        throw new TestRunError(503, "Test history query timed out. Try again.");
+      throw error;
+    }
     const entries = await Promise.all(page.map(async (row): Promise<TestHistoryEntry> => {
       try {
         if (row.historyKind === "run") {

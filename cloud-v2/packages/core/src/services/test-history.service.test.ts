@@ -82,6 +82,16 @@ test("a database execution timeout is a retryable history error", async () => {
   await expect(service.list()).rejects.toMatchObject({status: 503, message: "Test history query timed out. Try again."});
 });
 
+test("driver timeouts in candidate and summary reads expose a retryable history error", async () => {
+  const timeout = () => Object.assign(new Error("private provider details"), {name: "MongoOperationTimeoutError"});
+  const candidates = new TestHistoryService(summaryReader(async () => {throw new Error("not used");}), async () => {throw timeout();});
+  const summaries = new TestHistoryService({summaries: async () => {throw timeout();}}, async () => [[], [
+    {historyKind: "suite", historyId: "suite-timeout", historyStartedAt: new Date("2026-10-09T00:00:00Z")},
+  ]]);
+  for (const service of [candidates, summaries])
+    await expect(service.list({origin: "nightly"})).rejects.toMatchObject({status: 503, message: "Test history query timed out. Try again."});
+});
+
 test("suite backfill recomputes its budget before the second database command", async () => {
   let elapsed = 0;
   const budgets: number[] = [];
