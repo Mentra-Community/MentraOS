@@ -45,3 +45,30 @@ describe('backend logger', () => {
     const {logger: normal, rows} = fixture(); normal.debug('debug'); expect(rows()).toHaveLength(0);
   });
 });
+
+test('final escaped-byte budget includes message and correlation identifiers', () => {
+  const {logger, lines} = fixture();
+  logger.forUser({mentraUserId: USER, requestId: '\0'.repeat(5000), sessionId: '\0'.repeat(5000)})
+    .info('\0'.repeat(5000), {payload: '🙂'.repeat(9000)});
+  expect(Buffer.byteLength(lines[0])).toBeLessThanOrEqual(32768);
+  expect(JSON.parse(lines[0])).toMatchObject({mentraUserId: USER, truncated: true});
+});
+
+test('public stdout adapter survives an asynchronously broken pipe without accumulating listeners', async () => {
+  const {spawn} = await import('node:child_process');
+  const source = new URL('./index.ts', import.meta.url).pathname;
+  const child = spawn(process.execPath, ['-e', `
+    const {createLogger} = await import(${JSON.stringify(source)});
+    for (let i = 0; i < 100; i++) createLogger({packageName:'com.example.test',environment:'local'}).info('ready');
+    setTimeout(() => {
+      createLogger({packageName:'com.example.test',environment:'local'}).info('after reader closes');
+      setTimeout(() => process.exit(process.stdout.listenerCount('error') === 1 ? 0 : 2), 30);
+    }, 30);
+  `], {stdio: ['ignore', 'pipe', 'pipe']});
+  child.stdout.destroy();
+  let stderr = '';
+  child.stderr.on('data', data => {stderr += data;});
+  const code = await new Promise<number | null>(resolve => child.on('close', resolve));
+  expect(code).toBe(0);
+  expect(stderr).not.toContain('Unhandled');
+});

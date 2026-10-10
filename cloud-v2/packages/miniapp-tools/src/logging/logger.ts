@@ -25,8 +25,20 @@ export function createLoggerWithOutput(options: LoggerOptions, output: (line: st
     try {
       if (Buffer.byteLength(line) > MAX_LINE_BYTES) {
         const row = JSON.parse(line) as Record<string, unknown>;
-        const retained = Object.fromEntries(Object.entries(row).filter(([key]) => RESERVED.has(key) || key === 'requestId' || key === 'sessionId'));
-        line = JSON.stringify({...retained, truncated: true}) + '\n';
+        const retained = Object.fromEntries(Object.entries(row).filter(([key]) => ['level', 'packageName', 'environment', 'version', 'mentraUserId', 'timestamp'].includes(key)));
+        retained.truncated = true;
+        // JSON escapes can cost six bytes per character. Apply the byte limit
+        // to the serialized result, not just to the source string length.
+        for (const key of ['requestId', 'sessionId', 'message']) {
+          const value = row[key];
+          if (typeof value !== 'string') continue;
+          retained[key] = value;
+          while (Buffer.byteLength(JSON.stringify(retained)) + 1 > MAX_LINE_BYTES && String(retained[key]).length > 0) {
+            retained[key] = String(retained[key]).slice(0, Math.floor(String(retained[key]).length / 2));
+          }
+        }
+        line = JSON.stringify(retained) + '\n';
+        if (Buffer.byteLength(line) > MAX_LINE_BYTES) return;
       }
       output(line);
     } catch { /* Logging never changes a business operation's outcome. */ }
