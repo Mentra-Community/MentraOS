@@ -10,7 +10,7 @@ const ENV_TABLES: Record<string, string> = {
 }
 const rowSchema = z.object({dt: z.string(), raw: z.string()})
 export class ServerLogCollectionError extends Error {
-  constructor(readonly reason: string) { super(reason) }
+  constructor(readonly reason: string, readonly transient = false) { super(reason) }
 }
 
 export function serverLogQuery(source: 'cloud' | 'miniapp_server', environment: string, userId: string, createdAt: Date): string {
@@ -88,7 +88,8 @@ export async function collectServerLogs(input: {source: 'cloud' | 'miniapp_serve
     const response = await transport(host, {method: 'POST', redirect: 'error', signal,
       headers: {'Content-Type': 'text/plain', Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`}, body: query})
     responseStarted = true
-    if (!response.ok) throw new ServerLogCollectionError(`Better Stack V2 log query failed (HTTP ${response.status})`)
+    if (!response.ok) throw new ServerLogCollectionError(`Better Stack V2 log query failed (HTTP ${response.status})`,
+      response.status === 429 || response.status >= 500)
     if (!response.body) throw new ServerLogCollectionError('Better Stack V2 log query returned no response body')
     const reader = response.body.getReader(), chunks: Uint8Array[] = []
     let size = 0
@@ -110,6 +111,6 @@ export async function collectServerLogs(input: {source: 'cloud' | 'miniapp_serve
     // credentials, request URLs, SQL, or raw log entries.
     throw new ServerLogCollectionError(timedOut
       ? responseStarted ? 'Better Stack V2 log query timed out while reading the response' : 'Better Stack V2 log query timed out before receiving a response'
-      : responseStarted ? 'Better Stack V2 log query response was interrupted' : 'Better Stack V2 log query transport failed before receiving a response')
+      : responseStarted ? 'Better Stack V2 log query response was interrupted' : 'Better Stack V2 log query transport failed before receiving a response', true)
   }
 }

@@ -1,6 +1,6 @@
 import {afterEach, beforeEach, describe, expect, spyOn, test} from 'bun:test';
 
-import {collectServerLogs, parseServerLogs, SERVER_LOG_MAX_ENTRIES, serverLogQuery} from './report-cloud-logs';
+import {collectServerLogs, parseServerLogs, SERVER_LOG_MAX_ENTRIES, serverLogQuery, ServerLogCollectionError} from './report-cloud-logs';
 
 const USER = `mu_${'A'.repeat(26)}`;
 const OTHER_USER = `mu_${'B'.repeat(26)}`;
@@ -190,6 +190,27 @@ describe('report server log transport', () => {
     await expect(collectServerLogs({source: 'cloud', mentraUserId: USER, createdAt: CREATED_AT}, transport)).rejects.toThrow('HTTP 403');
   });
 
+  test.each([429, 500, 503])('classifies HTTP %s as transient without retrying inside the query', async status => {
+    let requests = 0;
+    const transport = fakeTransport(async () => { requests++; return new Response('PRIVATE_PROVIDER_BODY', {status}); });
+    let caught: unknown;
+    try { await collectServerLogs({source: 'cloud', mentraUserId: USER, createdAt: CREATED_AT}, transport); }
+    catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(ServerLogCollectionError);
+    expect((caught as ServerLogCollectionError).transient).toBe(true);
+    expect((caught as Error).message).toBe(`Better Stack V2 log query failed (HTTP ${status})`);
+    expect(requests).toBe(1);
+  });
+
+  test.each([401, 403])('keeps HTTP %s authorization failure terminal', async status => {
+    const transport = fakeTransport(async () => new Response('PRIVATE_PROVIDER_BODY', {status}));
+    let caught: unknown;
+    try { await collectServerLogs({source: 'cloud', mentraUserId: USER, createdAt: CREATED_AT}, transport); }
+    catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(ServerLogCollectionError);
+    expect((caught as ServerLogCollectionError).transient).toBe(false);
+  });
+
   test.each([
     ['invalid json PRIVATE_QUERY_PASSWORD', 'Server log response contained invalid row JSON'],
     [JSON.stringify({dt: 123, raw: 'PRIVATE_QUERY_PASSWORD'}), 'Server log response row was malformed'],
@@ -221,6 +242,7 @@ describe('report server log transport', () => {
       try { await collectServerLogs({source: 'miniapp_server', mentraUserId: USER, createdAt: CREATED_AT}, transport); }
       catch (error) { caught = error; }
       expect(caught).toBeInstanceOf(Error);
+      expect((caught as ServerLogCollectionError).transient).toBe(true);
       expect((caught as Error).message).toBe(`Better Stack V2 log query ${reason}`);
       expect((caught as Error).message).not.toContain('PRIVATE_');
     }
