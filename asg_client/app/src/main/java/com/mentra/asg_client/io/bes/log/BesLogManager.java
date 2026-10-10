@@ -63,6 +63,7 @@ public class BesLogManager {
   private final StringBuilder mLogBuffer = new StringBuilder();
   private boolean mIsReceiving = false;
   private final AtomicBoolean mFinished = new AtomicBoolean(false);
+  private volatile Runnable mOnFinished;
 
   private final Runnable mFirstPacketTimeout;
   private final Runnable mOverallTimeout;
@@ -148,6 +149,34 @@ public class BesLogManager {
   }
 
   /**
+   * Runs once when the UART stream is over (terminator, timeout or send failure), before any
+   * upload starts: the owner uses it to release the {@link BesLogTransferLock}.
+   */
+  public void setOnFinished(Runnable onFinished) {
+    mOnFinished = onFinished;
+  }
+
+  /** Ends a session whose {@code mh_logs} request never reached the BES. */
+  public void abort() {
+    if (!mFinished.compareAndSet(false, true)) return;
+    mHandler.removeCallbacks(mFirstPacketTimeout);
+    mHandler.removeCallbacks(mOverallTimeout);
+    runOnFinished();
+  }
+
+  private void runOnFinished() {
+    Runnable onFinished = mOnFinished;
+    mOnFinished = null;
+    if (onFinished != null) {
+      try {
+        onFinished.run();
+      } catch (RuntimeException e) {
+        Log.e(TAG, "onFinished hook failed", e);
+      }
+    }
+  }
+
+  /**
    * Process one incoming {@code sr_log} packet.
    *
    * @param cur  packet sequence number; 255 signals end of stream
@@ -186,6 +215,7 @@ public class BesLogManager {
     if (!mFinished.compareAndSet(false, true)) return;
     mHandler.removeCallbacks(mFirstPacketTimeout);
     mHandler.removeCallbacks(mOverallTimeout);
+    runOnFinished();
 
     String fullLog = mLogBuffer.toString();
 

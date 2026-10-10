@@ -540,6 +540,60 @@ public class AsgConstants {
     /** Minimum spacing between stall probes, so a wedged chip cannot be polled in a tight loop. */
     public static final long BES_STALL_PROBE_MIN_SPACING_MS = 15_000;
 
+    // BES crash incidents (OS-1988): bundles under files/bes_incident, dump pulled with cs_log.
+
+    /** Directory under {@code files/} holding incident bundles and their bookkeeping files. */
+    public static final String BES_INCIDENT_DIR_NAME = "bes_incident";
+
+    /** Most TRACE bytes frozen into one incident bundle. */
+    public static final int BES_INCIDENT_TRACE_MAX_BYTES = 1024 * 1024;
+
+    /** Smallest size a budget trim leaves in an incident's TRACE. */
+    public static final int BES_INCIDENT_TRACE_TRIM_FLOOR_BYTES = 64 * 1024;
+
+    /** Most dump bytes accepted for one incident; the BES sends at most 200 packets of 400 bytes. */
+    public static final int BES_INCIDENT_DUMP_MAX_BYTES = 80 * 1024;
+
+    /** Budget for everything under {@code files/bes_incident}. */
+    public static final long BES_INCIDENT_DIR_BUDGET_BYTES = 8L * 1024 * 1024;
+
+    /** Latest evictions kept in evictions.json (the counter keeps the total). */
+    public static final int BES_INCIDENT_EVICTION_RING = 16;
+
+    /** Most incident bundles kept at once, so per-incident metadata cannot grow without bound. */
+    public static final int BES_INCIDENT_MAX_BUNDLES = 32;
+
+    /** Collected dump ids and observed-reset boot ids remembered for deduplication. */
+    public static final int BES_INCIDENT_COLLECTED_RING = 64;
+
+    /** Failed dump retrievals (persisted per incident) before the incident is dropped. */
+    public static final int BES_INCIDENT_COLLECT_MAX_ATTEMPTS = 5;
+
+    public static final long BES_INCIDENT_COLLECT_BACKOFF_BASE_MS = 2_000;
+
+    public static final long BES_INCIDENT_COLLECT_BACKOFF_MAX_MS = 60_000;
+
+    /** No cs_log header within this long after the request fails the attempt. */
+    public static final long BES_INCIDENT_COLLECT_FIRST_PACKET_TIMEOUT_MS = 3_000;
+
+    /** Silence between cs_log packets that fails the attempt. */
+    public static final long BES_INCIDENT_COLLECT_IDLE_TIMEOUT_MS = 4_000;
+
+    /** Longest one cs_log transfer may hold the UART log channel. */
+    public static final long BES_INCIDENT_COLLECT_OVERALL_TIMEOUT_MS = 15_000;
+
+    /** Spacing between tries while another owner holds the log transfer lock. */
+    public static final long BES_INCIDENT_LOCK_RETRY_MS = 2_000;
+
+    /** Lock retries (not counted as failed attempts) before one is counted. */
+    public static final int BES_INCIDENT_LOCK_MAX_DEFERRALS = 30;
+
+    /** A lock holder that never releases loses the lock after this long. */
+    public static final long BES_LOG_LOCK_MAX_HOLD_MS = 60_000;
+
+    /** How long a bug report's mh_logs waits behind a crash pull (BesLogManager's overall timeout). */
+    public static final long BES_LOG_USER_LOCK_WAIT_MS = 20_000;
+
     // BES TRACE delivery (mh_rlog / mh_rlog_ack). The BES wakes a sleeping MTK at least every
     // ten minutes; while awake the tail polls on its own. See mentra-live-bes
     // docs/uart-log-budget.md and docs/trace-log-policy.md.
