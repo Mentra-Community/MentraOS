@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.log.BesIncidentNotifier;
 import com.mentra.asg_client.io.bes.log.BesLivenessMonitor;
 import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.io.file.core.FileManager;
@@ -14,6 +15,7 @@ import com.mentra.asg_client.service.communication.interfaces.ICommunicationMana
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.core.handlers.AuthTokenCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
+import com.mentra.asg_client.service.core.handlers.BesCrashReportedCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryModeCommandHandler;
@@ -455,6 +457,13 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(
                     new TransferCompleteCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered TransferCompleteCommandHandler");
+
+            commandHandlerRegistry.registerHandler(
+                    new BesCrashReportedCommandHandler(communicationManager));
+            Log.d(TAG, "✅ Registered BesCrashReportedCommandHandler");
+
+            // bes_crash_detected leaves over the same BLE response path as the other replies.
+            BesIncidentNotifier.get().setSender(communicationManager::sendBluetoothResponse);
 
             commandHandlerRegistry.registerHandler(rgbLedCommandHandler);
             Log.d(TAG, "✅ Registered RgbLedCommandHandler");

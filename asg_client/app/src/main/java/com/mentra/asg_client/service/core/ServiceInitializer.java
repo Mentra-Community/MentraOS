@@ -3,6 +3,8 @@ package com.mentra.asg_client.service.core;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import com.mentra.asg_client.io.bes.log.BesCrashDumpCollector;
+import com.mentra.asg_client.io.bes.log.BesIncidentAccessProvider;
+import com.mentra.asg_client.io.bes.log.BesIncidentNotifier;
 import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.io.bes.log.BesTraceTransferGate;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
@@ -94,6 +96,7 @@ public final class ServiceInitializer {
         // OS-1988: opens files/bes_incident; the collector stays idle unless the BES advertises
         // wire_caps.crash_pull.
         BesCrashDumpCollector.get().attach(context);
+        BesIncidentAccessProvider.set(BesCrashDumpCollector.get().store());
         BesTraceTail.get().setTransferGate(new BesTraceTransferGate());
 
         this.streamingManager = new MediaManager(context, serviceManager);
@@ -148,6 +151,7 @@ public final class ServiceInitializer {
                         otaCommandHandler,
                         peripheralBus,
                         protocolStrategies);
+        BesCrashDumpCollector.get().setStoredListener(k -> BesIncidentNotifier.get().notifyDetected(k));
 
         this.lifecycleManager =
                 new ServiceLifecycleManager(
