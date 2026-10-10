@@ -43,6 +43,8 @@ import {
 } from "../types/oauth.types"
 import {findOrCreateUser} from "./user.service"
 import {isConfiguredOidcTenant, recordSeenJti, verifyTenantJwt} from "./oem.service"
+import {SUPABASE_ASYMMETRIC_ALGORITHMS, supabaseIssuer, supabaseJwksUrl} from "./signin/config"
+import {KeySetUnavailableError, verifyWithKeySet} from "./signin/key-sets"
 import {
   MENTRA_ALG,
   ACCESS_TOKEN_KID,
@@ -503,10 +505,12 @@ function miniappTokenTtlSec(): number {
  * Resolve a subject token to an (tenantId, tenantUserId) identity. All three accepted
  * subject tokens arrive as a JWT under the one RFC 8693 JWT token-type URN, so
  * we dispatch on the token itself:
- *   - HS* (symmetric) tokens are Mentra-internal. A Supabase session (its `iss`
- *     points at Supabase) verifies with SUPABASE_JWT_SECRET; anything else
- *     symmetric is treated as a legacy mentra-core token (MENTRA_CORE_JWT_SECRET).
- *     Both resolve to tenantId "mentra".
+ *   - A Supabase session (its `iss` points at Supabase) resolves to tenantId
+ *     "mentra". It is verified by its header `alg`: HS256 with
+ *     SUPABASE_JWT_SECRET, or RS256 / ES256 with the project's key set, so the
+ *     project can switch to asymmetric signing keys with no Core change.
+ *   - Any other HS* (symmetric) token is a legacy mentra-core token
+ *     (MENTRA_CORE_JWT_SECRET), also tenantId "mentra".
  *   - Everything else is an OEM-signed JWT, verified against that OEM's JWKS.
  */
 async function resolveSubjectIdentity(subjectToken: string): Promise<{
@@ -526,9 +530,11 @@ async function resolveSubjectIdentity(subjectToken: string): Promise<{
     throw new InvalidRequest("subject_token is not a parseable JWT")
   }
 
+  if (looksLikeSupabase(iss)) {
+    return {tenantId: MENTRA_OEM_ID, tenantUserId: await verifySupabaseSubject(subjectToken, alg)}
+  }
   if (alg.startsWith("HS")) {
-    const secretEnv = looksLikeSupabase(iss) ? "SUPABASE_JWT_SECRET" : "MENTRA_CORE_JWT_SECRET"
-    const tenantUserId = await verifyHs256Subject(subjectToken, secretEnv)
+    const tenantUserId = await verifyHs256Subject(subjectToken, "MENTRA_CORE_JWT_SECRET")
     return {tenantId: MENTRA_OEM_ID, tenantUserId}
   }
 
@@ -551,8 +557,54 @@ async function resolveSubjectIdentity(subjectToken: string): Promise<{
 function looksLikeSupabase(iss: string | undefined): boolean {
   if (!iss) return false
   if (iss.includes("supabase.")) return true
+  const configured = supabaseIssuer()
+  if (configured && iss.replace(/\/+$/, "") === configured) return true
   const supabaseUrl = process.env.SUPABASE_URL
   return !!supabaseUrl && iss.startsWith(supabaseUrl)
+}
+
+/**
+ * Verify a Supabase session token by its header `alg` and return its `sub`:
+ *   - HS256: the project's JWT secret (SUPABASE_JWT_SECRET), as Supabase signs today;
+ *   - RS256 / ES256: the project's key set (CLOUD_CORE_SUPABASE_JWKS_URL, by
+ *     default `${SUPABASE_URL}/auth/v1/.well-known/jwks.json`), with `aud`
+ *     "authenticated". An unknown `kid` refreshes the set once. Keys come only
+ *     from that set, never from URLs in the token header;
+ *   - any other `alg`: refused.
+ *
+ * Tokens Supabase issued to a web client (they carry `client_id`) are refused:
+ * a website's or the CLI's sign-in never becomes a phone session.
+ */
+async function verifySupabaseSubject(token: string, alg: string): Promise<string> {
+  let payload: jose.JWTPayload
+  if (alg === "HS256") {
+    const key = new TextEncoder().encode(requireEnv("SUPABASE_JWT_SECRET"))
+    try {
+      ;({payload} = await jose.jwtVerify(token, key, {algorithms: ["HS256"]}))
+    } catch (err) {
+      throw new InvalidGrant(`subject token verification failed: ${(err as Error).message}`)
+    }
+  } else if ((SUPABASE_ASYMMETRIC_ALGORITHMS as readonly string[]).includes(alg)) {
+    const jwksUrl = supabaseJwksUrl()
+    if (!jwksUrl) throw new InvalidGrant("asymmetric Supabase tokens are not configured")
+    try {
+      ;({payload} = await verifyWithKeySet(token, jwksUrl, {
+        algorithms: [...SUPABASE_ASYMMETRIC_ALGORITHMS],
+        audience: "authenticated",
+      }))
+    } catch (err) {
+      if (err instanceof KeySetUnavailableError) throw new OauthServerError("Supabase key set unavailable")
+      throw new InvalidGrant(`subject token verification failed: ${(err as Error).message}`)
+    }
+  } else {
+    throw new InvalidGrant(`subject token alg ${alg || "none"} is not accepted`)
+  }
+  if (payload.client_id !== undefined) {
+    throw new InvalidGrant("web sign-in tokens cannot be exchanged for a phone session")
+  }
+  const sub = typeof payload.sub === "string" ? payload.sub : ""
+  if (!sub) throw new InvalidGrant("subject token missing 'sub' claim")
+  return sub
 }
 
 /**
