@@ -1090,6 +1090,8 @@ def configure_entra(args, directory, config, state):
             argv += [flag, config[field]]
     if args.grant_admin_consent:
         argv.append('--grant-admin-consent')
+    # The helper's own progress goes to stderr, which run() keeps for error reports.
+    print('  This can take a few minutes while Microsoft Entra catches up...', flush=True)
     result = json.loads(run(argv, env=environment(config), explain=True))
     if result['tenantId'].lower() != config['tenantId'].lower():
         raise SetupError('Entra helper returned another tenant')
