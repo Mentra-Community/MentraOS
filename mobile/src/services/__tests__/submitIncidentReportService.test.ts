@@ -50,6 +50,31 @@ it("files a requested incident and awaits all paired Mentra Live device logs", a
   })
 })
 
+it("persists validated automation correlation in report creation before strict collection completes", async () => {
+  const collection = {reportId: "rep_test", state: "failed" as const, logCollection: {}}
+  jest.mocked(reports.waitForCollection).mockRejectedValueOnce(new ReportCollectionError(collection))
+  await expect(submitIncidentReport({source: "mentra_automated_testing", alert_id: "exact-alert",
+    test_run_id: "exact-run", failure_code: "original_failure"})).rejects.toMatchObject({
+    result: {status: "failed", report_id: "rep_test", collection},
+  })
+  expect(submitAutomaticReport).toHaveBeenCalledWith(expect.objectContaining({
+    automationCorrelation: {alertId: "exact-alert", testRunId: "exact-run"},
+  }))
+  expect(submitAutomaticReport).toHaveBeenCalledTimes(1)
+})
+
+it.each([undefined, " ", "r".repeat(161)])("rejects an invalid automation run ID before submission: %s", async test_run_id => {
+  await expect(submitIncidentReport({source: "mentra_automated_testing", alert_id: "exact-alert",
+    test_run_id, failure_code: "original_failure"})).rejects.toBeInstanceOf(IncidentReportError)
+  expect(submitAutomaticReport).not.toHaveBeenCalled()
+})
+
+it.each([undefined, "bad/id", "a".repeat(161)])("requires the original valid automation alert ID: %s", async alert_id => {
+  await expect(submitIncidentReport({source: "mentra_automated_testing", alert_id,
+    test_run_id: "exact-run", failure_code: "original_failure"})).rejects.toBeInstanceOf(IncidentReportError)
+  expect(submitAutomaticReport).not.toHaveBeenCalled()
+})
+
 it.each([
   {kind: "none"} as const,
   {kind: "pending", model: "Mentra Live"} as const,

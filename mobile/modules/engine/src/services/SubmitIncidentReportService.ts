@@ -1,3 +1,5 @@
+import {reportAutomationCorrelation} from "@mentra/cloud-protocol/report-automation"
+
 import {ReportCollectionError, reports, submitAutomaticReport, type ReportCollectionResult} from "../facades/reports"
 import {useSettingsStore} from "../stores/settings"
 import {DeviceTypes} from "../types"
@@ -70,7 +72,7 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
   const source = readString(event, "source") ?? "external_trigger"
   const testRunId = readString(event, "test_run_id")
   const scenarioName = readString(event, "scenario_name")
-  const alertId = readString(event, "alert_id") ?? testRunId
+  const alertId = readString(event, "alert_id") ?? (source === "mentra_automated_testing" ? undefined : testRunId)
   const dashboardUrl = readString(event, "dashboard_url")
   const expectedBehavior =
     readString(event, "expected_behavior") ??
@@ -84,6 +86,11 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
   try {
     if (!rawEvent || typeof rawEvent !== "object" || Array.isArray(rawEvent))
       throw new Error("Incident report request must be an object")
+    const automationCorrelation = source === "mentra_automated_testing"
+      ? reportAutomationCorrelation({alertId, testRunId})
+      : null
+    if (source === "mentra_automated_testing" && !automationCorrelation)
+      throw new Error("Automated incident request requires valid alert_id and test_run_id")
     const loaded = await useSettingsStore.getState().loadAllSettings()
     if (loaded.is_error()) throw loaded.error
     // A paired device remains required if it disconnects while collecting. A
@@ -96,6 +103,7 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
     const actualBehavior = JSON.stringify({failureCode, failureMessage, testRunId, scenarioName, event}, null, 2)
     const submitResult = await submitAutomaticReport({
       kind: "automatic",
+      ...(automationCorrelation ? {automationCorrelation} : {}),
       trigger: {
         type: "automatic",
         source,

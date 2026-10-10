@@ -204,6 +204,7 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
             })
           : await cloudClientService.core.reports.submit({
               kind: "automatic",
+              ...(input.automationCorrelation ? {automationCorrelation: input.automationCorrelation} : {}),
               trigger: input.trigger,
               report: input.report,
               context,

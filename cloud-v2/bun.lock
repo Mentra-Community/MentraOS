@@ -70,6 +70,7 @@
       "name": "@mentra/cloud-core",
       "version": "0.0.0",
       "dependencies": {
+        "@mentra/cloud-protocol": "workspace:*",
         "@mentra/cloud-shared": "workspace:*",
         "@workos-inc/node": "^10.3.0",
         "fflate": "0.8.2",

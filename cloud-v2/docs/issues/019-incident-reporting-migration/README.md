@@ -52,6 +52,42 @@ There is deliberately no `/api/incidents` compatibility mount in Cloud V2.
 Glasses logs are report artifacts and use the same artifact endpoint as phone
 logs and screenshots.
 
+## Automated device report correlation
+
+An automated incident uses the existing `submitIncidentReport` engine Promise
+and `POST /api/client/reports` path. With `source: mentra_automated_testing`, the
+engine requires the original validated `alert_id` and `test_run_id`, and submits
+`automationCorrelation: {alertId, testRunId}`. Core accepts this field only for
+automatic `incident_report_requested` reports and stores it with the authenticated
+report owner at creation. Correlated creation waits for a majority-journaled
+write before acknowledgement, matching the recovery reader's majority visibility
+requirement. The typed contract lives in `@mentra/cloud-protocol/report-automation`;
+it preserves exact IDs without normalizing or truncating them.
+
+After manifest upload acknowledgements, the existing authenticated
+`POST /api/internal/framework-results/:requestId/complete` path can return
+`deviceIncident: {reportId, correlation}`. Core reads only the run's unique
+declared `incident-report/request.json` asset, checks its byte length and SHA-256,
+validates its version/source and exact run identity, then uses the indexed
+structured binding. The file read and database lookup each have a three-second
+bound. Exactly one matching device report is required; duplicate bindings,
+including another account's collision, return no link. The existing Admin detail
+path uses the same reconciliation when its native result receipt has no report ID.
+Unavailable lookup returns no link and does not fail already acknowledged native
+publication; absence of a link does not prove no report was filed.
+
+`deviceIncident` confirms report creation only. It does not claim successful
+phone, glasses, firmware or server log collection, rewrite the frozen run or its
+transport failure, or replace the separately retained server diagnostic report.
+Strict collection failure still rejects the engine Promise with
+`IncidentReportError.result`, retaining the partial `report_id` and collection
+receipts. Target loss still forbids further native UI reads and dismissal.
+
+Recovery neither issues a second incident intent nor grants report-reader
+credentials to workers. It adds no queue or retry system. Reports made before
+this structured binding cannot be recovered by inspecting description JSON or
+by matching recent reports; no historic fallback or report migration is provided.
+
 ## Log collection and missing sources
 
 Bug and automatic reports declare `phone`, `glasses`, `glasses_firmware`,
