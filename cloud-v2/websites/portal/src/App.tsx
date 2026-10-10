@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import mentraLogo from "./assets/mentra-logo.svg";
+import { SignedOutScreen } from "./components/signed-out";
+import { loginHref, signOutOfEnterprisePortal } from "./lib/session";
 
 type EnterpriseOrg = {
   id: string;
@@ -31,10 +33,9 @@ type TrustedIssuer = {
 type JwksValidation = { reachable: boolean; keyCount: number; algorithms: string[]; error?: string };
 
 type PortalUser = {
+  /** The Core user ID. */
   id: string;
-  email: string;
-  firstName?: string | null;
-  lastName?: string | null;
+  email: string | null;
 };
 
 const queryClient = new QueryClient({
@@ -71,6 +72,7 @@ function PortalPage() {
   const qc = useQueryClient();
   const [page, setPage] = useState<PortalPageKey>("overview");
   const [signingOut, setSigningOut] = useState(false);
+  const [signedOut, setSignedOut] = useState<{ signOutUrl: string | null } | null>(null);
   const me = useQuery({
     queryKey: ["portal-me"],
     queryFn: () => api<{ authenticated: true; user: PortalUser; onboardingRequired: boolean; org: EnterpriseOrg | null }>("/api/portal/me"),
@@ -82,22 +84,19 @@ function PortalPage() {
     enabled: Boolean(me.data?.org),
   });
 
+  if (signedOut) return <SignedOutScreen signOutUrl={signedOut.signOutUrl} />;
   if (me.isLoading) return <Splash label="Checking enterprise session" />;
   if (me.isError) return <LoginGate />;
 
   const org = me.data?.org ?? issuers.data?.org ?? null;
-  const displayName =
-    [me.data?.user.firstName, me.data?.user.lastName].filter(Boolean).join(" ") || me.data?.user.email || "Enterprise user";
+  const displayName = me.data?.user.email || "Enterprise user";
   const approved = org?.status === "active";
 
   async function signOut() {
     setSigningOut(true);
-    try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; reload still drops us at the login gate
-    }
-    window.location.reload();
+    const result = await signOutOfEnterprisePortal();
+    qc.clear();
+    setSignedOut(result);
   }
 
   // Onboarding (no org) and pending approval are focused, nav-free states —
@@ -288,7 +287,7 @@ function EnterpriseAccess({ org }: { org: EnterpriseOrg }) {
     <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
       <div className="border-b border-[#eceeeb] p-5">
         <h2 className="text-xl font-bold">Enterprise access</h2>
-        <p className="mt-1 text-sm text-[#68746d]">Members and invite management will live here once WorkOS org membership is connected.</p>
+        <p className="mt-1 text-sm text-[#68746d]">Members and invitations are managed here.</p>
       </div>
       <div className="p-5">
         <div className="rounded-[18px] bg-[#f5f7f4] p-5">
@@ -631,8 +630,8 @@ function ReferencePanel({ org }: { org: EnterpriseOrg | null }) {
   );
 }
 
-function LoginGate() {
-  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(`${window.location.origin}/`)}`;
+export function LoginGate() {
+  const loginUrl = loginHref();
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8f6_100%)] px-5 py-10 text-[#14141a]">
@@ -666,7 +665,7 @@ function LoginGate() {
               className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
               href={loginUrl}
             >
-              Continue with Mentra login
+              Sign in
             </a>
 
             <div className="h-5" />
@@ -744,13 +743,13 @@ async function api<T>(path: string, init?: { method?: string; body?: unknown }):
   return await response.json() as T;
 }
 
-function suggestedOrgName(email: string): string {
-  const domain = email.split("@")[1]?.split(".")[0];
+function suggestedOrgName(email: string | null): string {
+  const domain = email?.split("@")[1]?.split(".")[0];
   return domain ? `${domain[0].toUpperCase()}${domain.slice(1)} Enterprise` : "Acme Enterprise";
 }
 
-function suggestedTenantId(email: string): string {
-  return (email.split("@")[1]?.split(".")[0] ?? "acme").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+function suggestedTenantId(email: string | null): string {
+  return (email?.split("@")[1]?.split(".")[0] ?? "acme").toLowerCase().replace(/[^a-z0-9_-]/g, "");
 }
 
 export default App;
