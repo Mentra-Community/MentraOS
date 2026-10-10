@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
+import com.mentra.asg_client.io.bes.log.BesTraceTail;
 import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 
@@ -14,6 +15,11 @@ import com.mentra.asg_client.service.core.processors.CommandProcessor;
  * Usage:
  *   adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE --ez enabled false
  *   adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE --ez enabled true
+ *
+ * Persistence cost (OS-1988): the store logs one [ASG-BES-STORE] aggregate line per minute at
+ * most. Dump the totals on demand, and optionally change the group commit for an A/B run:
+ *   adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE --ez dump_store true
+ *   adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE --ei group_batches 4 --el group_ms 250
  */
 public class DebugBesTraceReceiver extends BroadcastReceiver {
     private static final String TAG = "DebugBesTraceReceiver";
@@ -22,6 +28,22 @@ public class DebugBesTraceReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (intent == null || !ACTION_DEBUG_BES_TRACE.equals(intent.getAction())) {
+            return;
+        }
+
+        boolean persistenceOnly = false;
+        if (intent.hasExtra("group_batches")) {
+            persistenceOnly = true;
+            int batches = intent.getIntExtra("group_batches", 1);
+            long ms = intent.getLongExtra("group_ms", 250);
+            BesTraceTail.get().setGroupCommit(batches, ms);
+            Log.i(TAG, "BES trace group commit max_batches=" + batches + " max_ms=" + ms);
+        }
+        if (intent.getBooleanExtra("dump_store", false)) {
+            BesTraceTail.get().dumpStoreStats();
+            return;
+        }
+        if (persistenceOnly && !intent.hasExtra("enabled")) {
             return;
         }
 

@@ -26,11 +26,14 @@ public final class BesTraceSession {
     private static final long MIN_RATE_SPAN_MS = 60_000;
     private static final int FULL_READ_BYTES = 300;
     private static final Pattern PREFIX = Pattern.compile("^\\s*(\\d{1,10})/");
+    private static final Pattern BID = Pattern.compile("[0-9a-f]{16}");
 
     /** What one reply produced. */
     public static final class Reply {
         public final boolean valid;
         public final String error;
+        /** BES boot id of the reply, or null for firmware that does not send one. */
+        public final String bid;
         public final long generation;
         public final long start;
         public final long end;
@@ -43,14 +46,16 @@ public final class BesTraceSession {
         Reply(String error) {
             this.valid = false;
             this.error = error;
+            this.bid = null;
             this.generation = this.start = this.end = this.commit = this.lost = this.ackPosition = 0;
             this.lines = new ArrayList<>();
         }
 
-        Reply(long generation, long start, long end, long commit, long lost, long ackPosition,
-              List<BesTraceStore.Line> lines) {
+        Reply(String bid, long generation, long start, long end, long commit, long lost,
+              long ackPosition, List<BesTraceStore.Line> lines) {
             this.valid = true;
             this.error = null;
+            this.bid = bid;
             this.generation = generation;
             this.start = start;
             this.end = end;
@@ -66,9 +71,16 @@ public final class BesTraceSession {
         }
     }
 
+    /** The read cursor: where the next mh_rlog asks from. */
     private boolean mHaveCursor;
+    private String mBid;
     private long mGeneration;
     private long mPosition;
+    /** The durable cursor: what is synced and saved, and so what may be acknowledged. */
+    private boolean mDurableHave;
+    private String mDurableBid;
+    private long mDurableGeneration;
+    private long mDurablePosition;
     private long mRateT0 = -1;
     private long mRateTp0;
     private double mPrefixRate = DEFAULT_PREFIX_RATE;
@@ -78,18 +90,44 @@ public final class BesTraceSession {
     public BesTraceSession(BesTraceStore.Cursor cursor) {
         if (cursor != null) {
             mHaveCursor = true;
+            mBid = cursor.bid;
             mGeneration = cursor.generation;
             mPosition = cursor.position;
+            markDurable();
         }
     }
 
-    /** mh_rlog body. Generation 0 asks the BES to resume from its own commit. */
+    /**
+     * mh_rlog body. Generation 0 asks the BES to resume from its own commit. The boot id is sent
+     * when known: a BES that has rebooted since replies from its oldest retained byte.
+     */
     public String requestBody() {
-        return cursorBody(mHaveCursor ? mGeneration : 0, mPosition);
+        return cursorBody(mBid, mHaveCursor ? mGeneration : 0, mPosition);
     }
 
     public static String cursorBody(long generation, long position) {
-        return "{\"g\":" + generation + ",\"p\":\"" + String.format(Locale.US, "%016x", position) + "\"}";
+        return cursorBody(null, generation, position);
+    }
+
+    /** mh_rlog / mh_rlog_ack body; {@code bid} is omitted for firmware that has none. */
+    public static String cursorBody(String bid, long generation, long position) {
+        return "{\"g\":" + generation + ",\"p\":\"" + String.format(Locale.US, "%016x", position)
+                + "\"" + (bid != null ? ",\"bid\":\"" + bid + "\"" : "") + "}";
+    }
+
+    /** The boot id in an hm_rlog / hm_rlog_ack / hm_rlog_ready / hm_rlog_sub body, or null. */
+    public static String parseBid(JSONObject body) {
+        if (body == null) {
+            return null;
+        }
+        String bid = body.optString("bid", null);
+        return bid != null && BID.matcher(bid).matches() && !bid.equals("0000000000000000")
+                ? bid : null;
+    }
+
+    /** The BES boot the read cursor belongs to, or null (old firmware, or no reply seen yet). */
+    public String bid() {
+        return mBid;
     }
 
     public boolean hasCursor() {
@@ -117,6 +155,7 @@ public final class BesTraceSession {
             return new Reply(body.optString("error", "error"));
         }
         long generation = body.optLong("g", 0);
+        String bid = parseBid(body);
         Long start = hex(body.optString("p", null));
         Long end = hex(body.optString("e", null));
         Long commit = hex(body.optString("c", null));
@@ -132,13 +171,29 @@ public final class BesTraceSession {
         updateRate(t, tp);
 
         List<BesTraceStore.Line> lines = new ArrayList<>();
-        if (mHaveCursor && generation != mGeneration) {
-            lines.add(new BesTraceStore.Line(receivedWallMs, generation, start, String.format(
-                    Locale.US, "[ASG-BES-REBOOT] generation %d -> %d", mGeneration, generation)));
+        if (mHaveCursor) {
+            String reboot = null;
+            if (bid != null && mBid != null) {
+                if (!bid.equals(mBid)) {
+                    reboot = String.format(Locale.US, "[ASG-BES-REBOOT] old_bid=%s new_bid=%s",
+                            mBid, bid);
+                }
+            } else if (bid != null) {
+                // Cursor from before the firmware had boot ids: a changed generation still is a boot.
+                if (generation != mGeneration) {
+                    reboot = String.format(Locale.US, "[ASG-BES-REBOOT] old_bid=none new_bid=%s", bid);
+                }
+            } else if (generation != mGeneration) {
+                reboot = String.format(Locale.US, "[ASG-BES-REBOOT] generation %d -> %d",
+                        mGeneration, generation);
+            }
+            if (reboot != null) {
+                lines.add(new BesTraceStore.Line(receivedWallMs, generation, start, reboot, bid));
+            }
         }
         if (lost > 0) {
             lines.add(new BesTraceStore.Line(receivedWallMs, generation, start, String.format(
-                    Locale.US, "[ASG-BES-GAP] lost=%d bytes before position %x", lost, start)));
+                    Locale.US, "[ASG-BES-GAP] lost=%d bytes before position %x", lost, start), bid));
         }
 
         byte[] raw = data.getBytes(StandardCharsets.UTF_8);
@@ -159,19 +214,67 @@ public final class BesTraceSession {
                     .replace("\r", "");
             if (!text.trim().isEmpty()) {
                 previousWall = wallTime(text, tp, receivedWallMs, previousWall);
-                lines.add(new BesTraceStore.Line(previousWall, generation, position, text));
+                lines.add(new BesTraceStore.Line(previousWall, generation, position, text, bid));
             }
             position = start + i + 1;
             lineStart = i + 1;
         }
-        return new Reply(generation, start, end, commit, lost, start + consumed, lines);
+        return new Reply(bid, generation, start, end, commit, lost, start + consumed, lines);
     }
 
-    /** Record that everything before {@code position} is persisted. */
+    /** Record that everything before {@code position} is persisted (old firmware, no boot id). */
     public void commit(long generation, long position) {
+        commit(null, generation, position);
+    }
+
+    /** Record that everything before {@code position} of boot {@code bid} is persisted. */
+    public void commit(String bid, long generation, long position) {
+        advance(bid, generation, position);
+        markDurable();
+    }
+
+    /**
+     * Move the read cursor past lines that were appended but not yet synced. The next request
+     * continues from here; nothing may be acknowledged until {@link #markDurable}.
+     */
+    public void advance(String bid, long generation, long position) {
         mHaveCursor = true;
+        mBid = bid;
         mGeneration = generation;
         mPosition = position;
+    }
+
+    /** The read cursor is synced and saved: it may be acknowledged. */
+    public void markDurable() {
+        mDurableHave = mHaveCursor;
+        mDurableBid = mBid;
+        mDurableGeneration = mGeneration;
+        mDurablePosition = mPosition;
+    }
+
+    /** Persisting failed: the next request re-reads from the last durable cursor. */
+    public void rollbackToDurable() {
+        mHaveCursor = mDurableHave;
+        mBid = mDurableBid;
+        mGeneration = mDurableGeneration;
+        mPosition = mDurablePosition;
+    }
+
+    /** True when the read cursor is ahead of the durable cursor. */
+    public boolean hasUndurableAdvance() {
+        return mHaveCursor && (!mDurableHave || mPosition != mDurablePosition
+                || mGeneration != mDurableGeneration
+                || (mBid == null ? mDurableBid != null : !mBid.equals(mDurableBid)));
+    }
+
+    /** The durable cursor for saving and acknowledging (read cursor when nothing is pending). */
+    public BesTraceStore.Cursor durableCursor() {
+        return new BesTraceStore.Cursor(mDurableBid, mDurableGeneration, mDurablePosition);
+    }
+
+    /** The read cursor, the one that becomes durable at the next commit. */
+    public BesTraceStore.Cursor readCursor() {
+        return new BesTraceStore.Cursor(mBid, mGeneration, mPosition);
     }
 
     private void updateRate(long t, long tp) {

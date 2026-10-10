@@ -577,6 +577,27 @@ public class AsgConstants {
     /** The BLE incident relay carries only the newest part of the store. */
     public static final int BES_TRACE_BLE_RELAY_MAX_BYTES = 32 * 1024;
 
+    // OS-1988 asg-store: TRACE store persistence cost, subscription and transfer gate.
+
+    /** At most one [ASG-BES-STORE] persistence aggregate line per this interval. */
+    public static final long BES_TRACE_STORE_STATS_INTERVAL_MS = 60_000;
+
+    /**
+     * Advancing batches that may share one log sync + cursor save. 1 keeps the original one
+     * durable commit per batch; raise only after the hardware measurement justifies it. The
+     * acknowledgement to the BES is always sent after the commit, never before.
+     */
+    public static final int BES_TRACE_GROUP_COMMIT_MAX_BATCHES = 1;
+
+    /** Longest an unsynced batch may wait before the group commit is forced. */
+    public static final long BES_TRACE_GROUP_COMMIT_MAX_MS = 250;
+
+    /** Wait for the shared BES log transfer gate before one TRACE read window. */
+    public static final long BES_TRACE_GATE_TIMEOUT_MS = 50;
+
+    /** Re-send mh_rlog_sub {on:1} when no hm_rlog_sub arrived within this time. */
+    public static final long BES_TRACE_SUB_RETRY_MS = 5_000;
+
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
 
