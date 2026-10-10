@@ -49,8 +49,17 @@ export function parseServerLogs(text: string, userId: string): ReportLogEntry[] 
   if (lines.length > SERVER_LOG_MAX_ENTRIES + 1) throw new ServerLogCollectionError('Server log response exceeded its entry limit')
   const entries: ReportLogEntry[] = []
   for (const line of lines) {
-    const row = rowSchema.parse(JSON.parse(line))
-    const raw: unknown = JSON.parse(row.raw)
+    let decodedRow: unknown
+    try { decodedRow = JSON.parse(line) } catch {
+      throw new ServerLogCollectionError('Server log response contained invalid row JSON')
+    }
+    const validatedRow = rowSchema.safeParse(decodedRow)
+    if (!validatedRow.success) throw new ServerLogCollectionError('Server log response row was malformed')
+    const row = validatedRow.data
+    let raw: unknown
+    try { raw = JSON.parse(row.raw) } catch {
+      throw new ServerLogCollectionError('Server log entry contained invalid JSON')
+    }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ServerLogCollectionError('Server log response was malformed')
     const fields = raw as Record<string, unknown>
     // Text loggers use user=<id>; enforce a complete token, not a prefix or another user's row.
@@ -73,10 +82,14 @@ export async function collectServerLogs(input: {source: 'cloud' | 'miniapp_serve
   if (!username || !password) throw new ServerLogCollectionError('Better Stack V2 query credentials are not configured')
   const host = process.env.BETTERSTACK_V2_HOST ?? 'https://eu-central-1a-connect.betterstackdata.com'
   const query = serverLogQuery(input.source, process.env.CLOUD_CORE_ENVIRONMENT ?? '', input.mentraUserId, input.createdAt)
+  const signal = AbortSignal.timeout(15_000)
+  let responseStarted = false
   try {
-    const response = await transport(host, {method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
+    const response = await transport(host, {method: 'POST', redirect: 'error', signal,
       headers: {'Content-Type': 'text/plain', Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`}, body: query})
-    if (!response.ok || !response.body) throw new ServerLogCollectionError(`Better Stack V2 log query failed (HTTP ${response.status})`)
+    responseStarted = true
+    if (!response.ok) throw new ServerLogCollectionError(`Better Stack V2 log query failed (HTTP ${response.status})`)
+    if (!response.body) throw new ServerLogCollectionError('Better Stack V2 log query returned no response body')
     const reader = response.body.getReader(), chunks: Uint8Array[] = []
     let size = 0
     try {
@@ -91,6 +104,12 @@ export async function collectServerLogs(input: {source: 'cloud' | 'miniapp_serve
     return parseServerLogs(Buffer.concat(chunks).toString('utf8'), input.mentraUserId)
   } catch (error) {
     if (error instanceof ServerLogCollectionError) throw error
-    throw new ServerLogCollectionError('Better Stack V2 log query timed out or returned invalid data')
+    const timedOut = (signal.aborted && signal.reason instanceof Error && signal.reason.name === 'TimeoutError')
+      || (error instanceof Error && error.name === 'TimeoutError')
+    // Only fixed categories escape to the report. Provider errors may contain
+    // credentials, request URLs, SQL, or raw log entries.
+    throw new ServerLogCollectionError(timedOut
+      ? responseStarted ? 'Better Stack V2 log query timed out while reading the response' : 'Better Stack V2 log query timed out before receiving a response'
+      : responseStarted ? 'Better Stack V2 log query response was interrupted' : 'Better Stack V2 log query transport failed before receiving a response')
   }
 }

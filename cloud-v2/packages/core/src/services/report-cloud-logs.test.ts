@@ -1,4 +1,4 @@
-import {afterEach, beforeEach, describe, expect, test} from 'bun:test';
+import {afterEach, beforeEach, describe, expect, spyOn, test} from 'bun:test';
 
 import {collectServerLogs, parseServerLogs, SERVER_LOG_MAX_ENTRIES, serverLogQuery} from './report-cloud-logs';
 
@@ -190,13 +190,51 @@ describe('report server log transport', () => {
     await expect(collectServerLogs({source: 'cloud', mentraUserId: USER, createdAt: CREATED_AT}, transport)).rejects.toThrow('HTTP 403');
   });
 
-  test('sanitizes network and malformed body errors without querying another source or retrying', async () => {
-    for (const transport of [
-      fakeTransport(async () => { throw new Error('PRIVATE_QUERY_PASSWORD'); }),
-      fakeTransport(async () => new Response('invalid json')),
-      fakeTransport(async () => new Response(null, {status: 200})),
-    ]) {
-      await expect(collectServerLogs({source: 'miniapp_server', mentraUserId: USER, createdAt: CREATED_AT}, transport)).rejects.toThrow(/query (?:failed|timed out)/);
+  test.each([
+    ['invalid json PRIVATE_QUERY_PASSWORD', 'Server log response contained invalid row JSON'],
+    [JSON.stringify({dt: 123, raw: 'PRIVATE_QUERY_PASSWORD'}), 'Server log response row was malformed'],
+    [JSON.stringify({dt: '2026-10-09 16:29:59.123', raw: 'PRIVATE_QUERY_PASSWORD'}), 'Server log entry contained invalid JSON'],
+    [null, 'Better Stack V2 log query returned no response body'],
+  ])('reports a sanitized data failure without exposing the provider response', async (body, reason) => {
+    let requests = 0;
+    const transport = fakeTransport(async () => { requests++; return new Response(body); });
+    await expect(collectServerLogs({source: 'cloud', mentraUserId: USER, createdAt: CREATED_AT}, transport)).rejects.toThrow(reason);
+    expect(requests).toBe(1);
+  });
+
+  test.each([
+    ['TimeoutError', 'timed out before receiving a response', 'timed out while reading the response'],
+    ['TypeError', 'transport failed before receiving a response', 'response was interrupted'],
+  ])('distinguishes %s during transport and response reading without leaking its message or retrying', async (name, requestReason, responseReason) => {
+    const failure = new Error('PRIVATE_QUERY_PASSWORD https://private-provider.invalid PRIVATE_LOG_ENTRY');
+    failure.name = name;
+    let requests = 0;
+    const beforeResponse = fakeTransport(async () => { requests++; throw failure; });
+    const interruptedResponse = fakeTransport(async () => {
+      requests++;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.error(failure); },
+      }));
+    });
+    for (const [transport, reason] of [[beforeResponse, requestReason], [interruptedResponse, responseReason]] as const) {
+      let caught: unknown;
+      try { await collectServerLogs({source: 'miniapp_server', mentraUserId: USER, createdAt: CREATED_AT}, transport); }
+      catch (error) { caught = error; }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toBe(`Better Stack V2 log query ${reason}`);
+      expect((caught as Error).message).not.toContain('PRIVATE_');
     }
+    expect(requests).toBe(2);
+  });
+
+  test('uses the timeout signal reason when the transport reports a generic abort', async () => {
+    const timeout = spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
+      expect(milliseconds).toBe(15_000);
+      return AbortSignal.abort(new DOMException('PRIVATE_TIMEOUT_DETAILS', 'TimeoutError'));
+    });
+    try {
+      const transport = fakeTransport(async () => { throw new DOMException('PRIVATE_ABORT_DETAILS', 'AbortError'); });
+      await expect(collectServerLogs({source: 'cloud', mentraUserId: USER, createdAt: CREATED_AT}, transport)).rejects.toThrow('timed out before receiving a response');
+    } finally { timeout.mockRestore(); }
   });
 });
