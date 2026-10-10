@@ -98,7 +98,12 @@ class AudioSessionMonitor {
     /// This avoids switching A2DP music playback to HFP microphone mode
     static func isDevicePaired(devicePattern: String) -> Bool {
         let session = AVAudioSession.sharedInstance()
-        let activeTarget = isAudioDeviceConnected(devicePattern: devicePattern)
+        let outputs = session.currentRoute.outputs
+        let route = BluetoothAudioRoute.observe(
+            outputs: outputs.map { (name: $0.portName, portType: $0.portType.rawValue) },
+            target: devicePattern, isIOSAppOnMac: ProcessInfo.processInfo.isiOSAppOnMac
+        )
+        let activeTarget = route.matchingOutputCount > 0
         let availableInputs = session.availableInputs
         let bluetoothInput = availableInputs?.first { input in
             input.portType == .bluetoothHFP
@@ -108,7 +113,7 @@ class AudioSessionMonitor {
         // NSLog messages redact the native route checks in retained Mac logs.
         // Keep categorical evidence at notice level without exposing names or
         // selecting an input, activating the session, or changing audio routing.
-        readinessLog.notice("Pair audio: iosOnMac=\(ProcessInfo.processInfo.isiOSAppOnMac, privacy: .public) targetPresent=\(!devicePattern.isEmpty, privacy: .public) category=\(session.category.rawValue, privacy: .public) outputs=\(session.currentRoute.outputs.count, privacy: .public) inputs=\(availableInputs?.count ?? -1, privacy: .public) activeTarget=\(activeTarget, privacy: .public) hfpTarget=\(bluetoothInput != nil, privacy: .public)")
+        readinessLog.notice("Pair audio: iosOnMac=\(ProcessInfo.processInfo.isiOSAppOnMac, privacy: .public) targetPresent=\(!devicePattern.isEmpty, privacy: .public) category=\(session.category.rawValue, privacy: .public) outputs=\(outputs.count, privacy: .public) bluetoothOutputs=\(route.bluetoothOutputCount, privacy: .public) targetNameOutputs=\(route.targetNameOutputCount, privacy: .public) inputs=\(availableInputs?.count ?? -1, privacy: .public) activeTarget=\(activeTarget, privacy: .public) hfpTarget=\(bluetoothInput != nil, privacy: .public)")
 
         // Check if already active (using A2DP for music or HFP for calls)
         if activeTarget {
@@ -299,8 +304,31 @@ class AudioSessionMonitor {
 /// AVAudioSession preserves the route name on iOS-on-Mac but reports the
 /// CoreAudio transport "Bluetooth" instead of iPhone's profile-specific port.
 enum BluetoothAudioRoute {
+    struct Observation: Equatable {
+        let bluetoothOutputCount: Int
+        let targetNameOutputCount: Int
+        let matchingOutputCount: Int
+    }
+
+    static func observe(outputs: [(name: String, portType: String)], target: String, isIOSAppOnMac: Bool) -> Observation {
+        Observation(
+            bluetoothOutputCount: outputs.filter { isBluetoothTransport($0.portType, isIOSAppOnMac: isIOSAppOnMac) }.count,
+            targetNameOutputCount: outputs.filter { matchesName($0.name, target: target) }.count,
+            matchingOutputCount: outputs.filter {
+                matches(name: $0.name, portType: $0.portType, target: target, isIOSAppOnMac: isIOSAppOnMac)
+            }.count
+        )
+    }
+
     static func matches(name: String, portType: String, target: String, isIOSAppOnMac: Bool) -> Bool {
-        guard !target.isEmpty, name.localizedCaseInsensitiveContains(target) else { return false }
+        matchesName(name, target: target) && isBluetoothTransport(portType, isIOSAppOnMac: isIOSAppOnMac)
+    }
+
+    private static func matchesName(_ name: String, target: String) -> Bool {
+        !target.isEmpty && name.localizedCaseInsensitiveContains(target)
+    }
+
+    private static func isBluetoothTransport(_ portType: String, isIOSAppOnMac: Bool) -> Bool {
         return portType == "BluetoothHFP" || portType == "BluetoothA2DPOutput"
             || (isIOSAppOnMac && portType == "Bluetooth")
     }
