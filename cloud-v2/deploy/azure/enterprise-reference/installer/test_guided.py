@@ -624,17 +624,26 @@ class GuidedTests(unittest.TestCase):
 
     def test_teams_policy_is_applied_with_the_signed_in_account(self):
         which, run, sub, ran = self.fake_pwsh('MENTRA_TEAMS_POLICY_APPLIED Teams can take up to 30 minutes to apply it.\n')
-        with which, run, sub:
+        with which, run, sub, patch.dict(setup.os.environ, {}, clear=False) as env:
+            env.pop('ACC_CLOUD', None)
             applied, reason = setup.apply_teams_policy(self.config, self.directory / 'teams-policy.ps1')
         self.assertEqual((applied, reason), (True, ''))
         argv, env = ran[0]
         self.assertEqual(argv[-1], str(self.directory / 'teams-policy.ps1'))
         self.assertEqual((env['MENTRA_GRAPH_TOKEN'], env['MENTRA_TEAMS_TOKEN']), ('graph-token', 'teams-token'))
 
+    def test_teams_policy_in_cloud_shell_signs_in_as_the_user(self):
+        which, run, sub, ran = self.fake_pwsh('MENTRA_TEAMS_POLICY_APPLIED\n')
+        with which, run as tokens, sub, patch.dict(setup.os.environ, {'ACC_CLOUD': 'PROD'}):
+            self.assertEqual(setup.apply_teams_policy(self.config, self.directory / 'teams-policy.ps1'), (True, ''))
+        tokens.assert_not_called()
+        self.assertNotIn('MENTRA_GRAPH_TOKEN', ran[0][1])
+        self.assertIn('elseif ($env:ACC_CLOUD) { Connect-MicrosoftTeams -Identity', '\n'.join(setup.teams_policy_commands(SUB, '', TENANT)))
+
     def test_teams_policy_stops_for_another_apps_policy_or_missing_powershell(self):
         which, run, sub, _ = self.fake_pwsh('MENTRA_TEAMS_POLICY_CONFLICT This tenant already has Teams application '
                                             'access policies: Tag:Other.\n', returncode=3)
-        with which, run, sub:
+        with which, run, sub, patch.dict(setup.os.environ, {'ACC_CLOUD': 'PROD'}):
             applied, reason = setup.apply_teams_policy(self.config, self.directory / 'teams-policy.ps1')
         self.assertFalse(applied)
         self.assertIn('Tag:Other', reason)

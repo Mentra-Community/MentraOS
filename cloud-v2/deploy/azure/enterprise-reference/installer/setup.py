@@ -1756,7 +1756,9 @@ def teams_policy_commands(client_id, organizer_id, tenant_id, previous_client_id
                 '# Loading the module can report that PowerShell remoting is unavailable; that is harmless here.',
                 'Import-Module MicrosoftTeams -ErrorAction SilentlyContinue',
                 "$ErrorActionPreference = 'Stop'",
+                '# Setup passes tokens outside Cloud Shell; Cloud Shell signs in as you; elsewhere, a device code.',
                 'if ($env:MENTRA_GRAPH_TOKEN) { Connect-MicrosoftTeams -AccessTokens @($env:MENTRA_GRAPH_TOKEN, $env:MENTRA_TEAMS_TOKEN) | Out-Null }',
+                'elseif ($env:ACC_CLOUD) { Connect-MicrosoftTeams -Identity | Out-Null }',
                 f'else {{ Connect-MicrosoftTeams -TenantId {tenant_id} -UseDeviceAuthentication | Out-Null }}',
                 f"$app = '{client_id}'",
                 '# Teams reports a missing policy as an error.',
@@ -1790,7 +1792,10 @@ def apply_teams_policy(config, script):
     if not pwsh:
         return False, 'PowerShell is not installed here'
     tokens = {}
-    for name, resource in (('MENTRA_GRAPH_TOKEN', 'https://graph.microsoft.com'), ('MENTRA_TEAMS_TOKEN', TEAMS_ADMIN_API)):
+    # Cloud Shell signs Teams PowerShell in as the user (-Identity). Its Graph tokens carry an
+    # audience Teams PowerShell rejects, so tokens are only passed elsewhere.
+    for name, resource in () if os.environ.get('ACC_CLOUD') else (('MENTRA_GRAPH_TOKEN', 'https://graph.microsoft.com'),
+                                                                  ('MENTRA_TEAMS_TOKEN', TEAMS_ADMIN_API)):
         try:
             tokens[name] = json.loads(run(['az', 'account', 'get-access-token', '--tenant', config['tenantId'],
                                            '--resource', resource, '--output', 'json']))['accessToken']

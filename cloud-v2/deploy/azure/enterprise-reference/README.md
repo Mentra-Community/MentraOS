@@ -122,8 +122,9 @@ Administrator or Privileged Role Administrator (otherwise it prints the app's
 API permissions page). It writes the client secret straight to Key Vault as
 `teams-graph-client-secret-<client ID>` (one secret per app, so a new app's ID
 and secret take effect together), records `teamsGraphClientId` and `teamsGraphOrganizerId`, rolls the change out,
-and prints the Teams PowerShell access-policy commands with the IDs filled in,
-also saving them to `mentra-state/teams-policy.ps1`. The secret it creates
+and applies the Teams application access policy itself when the operator is a
+Teams administrator, saving the script to `mentra-state/teams-policy.ps1` for a
+Teams administrator to run when it can't. The secret it creates
 expires after 2 years; renew it with `setup.sh configure-teams --teams-secret-stdin`
 (or the hidden prompt of `setup.sh configure-teams`).
 See [Graph consent and Teams access policy](./entra-setup.md#meeting-creation).
