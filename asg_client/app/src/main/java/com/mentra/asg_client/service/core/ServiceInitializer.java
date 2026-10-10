@@ -19,6 +19,7 @@ import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.core.handlers.subscribers.BatteryEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.BesOtaAuthEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.BesVersionEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.MtkPingEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.BtMacEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.ButtonEventSubscriber;
 import com.mentra.asg_client.service.core.handlers.subscribers.FactoryResetEventSubscriber;
@@ -109,6 +110,7 @@ public final class ServiceInitializer {
         peripheralBus.subscribe(
                 new BatteryEventSubscriber(hardwareManager, stateManager, serviceManager));
         peripheralBus.subscribe(new PairingAudioEventSubscriber(context, hardwareManager));
+        peripheralBus.subscribe(new MtkPingEventSubscriber(serviceManager));
         peripheralBus.subscribe(
                 new ButtonEventSubscriber(
                         serviceManager,
