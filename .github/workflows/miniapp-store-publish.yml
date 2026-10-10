@@ -107,7 +107,26 @@ jobs:
         with:
           name: miniapp-${{ matrix.miniapp }}-${{ github.sha }}
           path: miniapps/${{ matrix.miniapp }}/build
+      - name: Check whether the Store already has this version
+        id: store
+        env:
+          STORE_URL: https://store.dev.us-west-2.mentraglass.com
+          MANIFEST: miniapps/${{ matrix.miniapp }}/miniapp.json
+        run: |
+          package=$(jq -r .packageName "$MANIFEST")
+          version=$(jq -r .version "$MANIFEST")
+          # The public catalog needs no key. A private or unlisted package isn't
+          # there, so it goes on to the authenticated check in the action.
+          current=$(curl -fsS --max-time 30 "$STORE_URL/api/store/apps/$package" \
+            | jq -r '.app.release | select(.track == "stable") | .version' 2>/dev/null || true)
+          if [[ "$current" == "$version" ]]; then
+            echo "The Store already has $package@$version; nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Require the publishing key
+        if: steps.store.outputs.publish == 'true'
         env:
           HAS_KEY: ${{ secrets[matrix.key] != '' }}
         run: |
@@ -116,6 +135,7 @@ jobs:
             exit 1
           fi
       - uses: ./.github/actions/publish-miniapp
+        if: steps.store.outputs.publish == 'true'
         with:
           operation: publish
           directory: miniapps/${{ matrix.miniapp }}
