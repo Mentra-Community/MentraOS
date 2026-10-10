@@ -1,8 +1,8 @@
 import {afterEach, beforeEach, describe, expect, test} from "bun:test"
 import {assertSupabaseApiKeys, deleteUser, supabaseApiKeyFormat, verifyPassword} from "./gotrue.client"
 
-const LEGACY_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.c2lnbmF0dXJl"
-const LEGACY_SERVICE = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2lnbmF0dXJl"
+const LEGACY_ANON = "legacy-anon-key"
+const LEGACY_SERVICE = "legacy-service-role-key"
 const KEYS = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"] as const
 
 let saved: Record<string, string | undefined>
