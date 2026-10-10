@@ -151,6 +151,8 @@ Record and approve these values before deployment:
   setup derives the data location from the region);
 - workspace hostname (a subdomain) and DNS ownership;
 - Entra tenant, Core API client id, and Mobile application client id;
+- the email domains your Entra directory issues and the Organization Admins
+  who sign in to the admin portal;
 - the Android/iOS Mentra App distribution channels and matching redirect URIs;
 - employee/group assignment, administrator consent, MFA, and Conditional Access;
 - persistent Mongo, refresh pepper, access/Runtime signing key, miniapp signing
@@ -168,9 +170,10 @@ allowlist, version policy, and telemetry. The reference logo and same-origin
 legal files are image assets; replace them in a customer-derived image or place
 equivalent routes behind the customer workspace ingress.
 
-Signing keys, the refresh pepper, the administrator key and the optional Graph
-client secret live in the deployment's purge-protected Key Vault. Setup creates
-the keys there once; nothing secret is stored in the setup folder. Deleted
+Signing keys, the refresh pepper, the admin portal client secret, the
+administrator key and the optional Graph client secret live in the deployment's
+purge-protected Key Vault. Setup creates the keys there once; nothing secret is
+stored in the setup folder. Deleted
 secrets stay recoverable for 90 days and cannot be purged.
 
 - Replacing a signing key or the refresh pepper is a deliberate rotation that
@@ -178,6 +181,26 @@ secrets stay recoverable for 90 days and cannot be purged.
 - The administrator key is rotated with Mentra support (see
   [reports](#reports-and-durable-attachments)); never store a new
   `mentra-admin-key` value by hand.
+- The admin portal client secret, `entra-browser-client-secret`, is a client
+  secret of the Core API app, used when `adminPortalSignIn` is on. Setup creates
+  it when Key Vault has none and then turns that setting on. It
+  expires after 2 years, and the setup summary prints the date. Before then,
+  add a new one to the Core app and store it as a new version, without printing
+  it:
+
+  ```bash
+  az ad app credential reset --id <core-api-client-id> --append --display-name "Mentra admin portal" \
+    --years 2 --query password --output tsv | tr -d '\r\n' |
+    az keyvault secret set --vault-name <key-vault> --name entra-browser-client-secret \
+      --file /dev/stdin --encoding utf-8 --output none
+  ```
+
+  Container Apps picks up the new version within about 30 minutes. Then
+  restart Core's revision (`az containerapp revision restart --name <core-app>
+  --resource-group <rg> --revision <latest revision>`), check that admin portal
+  sign-in works, and delete the old client secret from the Core app in Entra
+  (**Certificates & secrets**). Never delete the Key Vault secret itself: purge
+  protection keeps its name reserved for 90 days.
 - The Graph client secret that setup creates expires after 2 years; setup
   prints the date. Add a new client secret to the meetings app in Entra and run
   `setup.sh configure-teams`, which asks for it (hidden), or pipe it in with

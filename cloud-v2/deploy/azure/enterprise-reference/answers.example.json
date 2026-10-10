@@ -5,5 +5,6 @@
   "deploymentId": "acme-mentra",
   "location": "westus2",
   "workspaceHostname": "mentra.acme.example",
+  "verifiedEmailDomains": ["acme.example"],
   "resourceTags": {}
 }

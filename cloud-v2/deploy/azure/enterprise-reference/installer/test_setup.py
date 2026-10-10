@@ -27,6 +27,14 @@ class InstallerTests(unittest.TestCase):
         self.addCleanup(openssl.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        # Tests never reach Azure: an az call that a test forgot to replace fails here.
+        guard = Path(self.temp.name) / 'no-azure'
+        guard.mkdir()
+        (guard / 'az').write_text('#!/bin/sh\necho "Tests never call Azure: az $*" >&2\nexit 97\n')
+        (guard / 'az').chmod(0o755)
+        no_azure = patch.dict(os.environ, {'PATH': f"{guard}:{os.environ['PATH']}"})
+        no_azure.start()
+        self.addCleanup(no_azure.stop)
         self.directory = Path(self.temp.name) / 'state'
         self.directory.mkdir(mode=0o700)
         self.args = argparse.Namespace(json=True, config=None, dns_ready=False, grant_admin_consent=False)
@@ -169,8 +177,8 @@ class InstallerTests(unittest.TestCase):
 
     def test_generated_global_names_differ_for_same_deployment_name(self):
         args = argparse.Namespace(config=str(self.directory / 'answers.json'), json=True)
-        setup.write_json(args.config, dict(subscriptionId=SUB, tenantId=TENANT,
-                         deploymentId='acme-mentra', displayName='ACME', location='westus2', workspaceHostname=''))
+        setup.write_json(args.config, dict(subscriptionId=SUB, tenantId=TENANT, deploymentId='acme-mentra', displayName='ACME',
+                         location='westus2', workspaceHostname='', verifiedEmailDomains=['acme.example']))
         names = []
         for name in ('one', 'two'):
             directory = self.directory / name
@@ -184,6 +192,34 @@ class InstallerTests(unittest.TestCase):
             self.assertRegex(value['keyVaultName'], r'^kv[a-z0-9]{3,22}$')
         for index in range(3):
             self.assertNotEqual(names[0][index], names[1][index])
+
+    def test_email_domains_are_refused_by_name_until_canonical(self):
+        cases = (('Acme.com', 'lowercase: acme.com'), ('acme.com.', 'ends with a dot'),
+                 ('acme', 'not an email domain'), ('acme..com', 'not an email domain'),
+                 ('-acme.com', 'not an email domain'), ('acme_corp.com', 'not an email domain'),
+                 ('@acme.com', 'not an email domain'), ('https://acme.com', 'not an email domain'),
+                 ('a' * 64 + '.com', 'not an email domain'), ('.'.join(['a' * 60] * 5) + '.com', 'not an email domain'),
+                 ('acme.com,acme.com', 'listed twice'), ('mentra.glass', 'Mentra domain'),
+                 ('mentraglass.com', 'Mentra domain'), ('eu.mentra.glass', 'Mentra domain'),
+                 ('acme.com, corp.mentraglass.com', 'Mentra domain'))
+        for value, reason in cases:
+            bad = value.split(',')[-1].strip()
+            with self.subTest(value=value), self.assertRaises(setup.SetupError) as error:
+                setup.email_domains(value)
+            # The message names the value it refuses.
+            self.assertIn(reason, str(error.exception))
+            self.assertIn(f'"{bad}"', str(error.exception))
+        for value in ('', [], ' , '):
+            with self.subTest(value=value), self.assertRaisesRegex(setup.SetupError, 'at least one'):
+                setup.email_domains(value)
+        for value in ([42], {'acme.com': True}, 'acme.com'.encode()):
+            with self.subTest(value=value), self.assertRaisesRegex(setup.SetupError, 'list of domain names'):
+                setup.email_domains(value)
+
+    def test_valid_email_domains_keep_their_order(self):
+        self.assertEqual(setup.email_domains('acme.com, us.acme.com acme.co.uk'), ['acme.com', 'us.acme.com', 'acme.co.uk'])
+        self.assertEqual(setup.email_domains([' acme.com ', 'xn--bcher-kva.example', 'notmentra.glass', 'a-1.b2.io']),
+                         ['acme.com', 'xn--bcher-kva.example', 'notmentra.glass', 'a-1.b2.io'])
 
     def test_interrupted_identity_update_recovers_without_new_registrations(self):
         self.config['displayName'] = 'Example'
@@ -285,14 +321,17 @@ class InstallerTests(unittest.TestCase):
             calls.append(argv)
             return ''
         with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
-             patch.object(setup, 'run', side_effect=run), \
+             patch.object(setup, 'run', side_effect=run), patch.object(setup, 'ensure_portal_secret'), \
              patch.object(setup, 'deploy', side_effect=setup.SetupError('interrupted')):
             with self.assertRaisesRegex(setup.SetupError, 'interrupted'):
                 setup.install(self.args, self.directory, self.config, self.state)
         with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
              patch.object(setup, 'run', side_effect=run), patch.object(setup, 'deploy'), \
+             patch.object(setup, 'ensure_portal_secret') as portal_secret, \
              patch.object(setup, 'verify', return_value={'status': 'infrastructure_verified'}):
             self.assertEqual(setup.install(self.args, self.directory, self.config, self.state)['status'], 'infrastructure_verified')
+        # The admin portal's client secret is in Key Vault before Core is deployed to read it.
+        portal_secret.assert_called_once_with(self.directory, self.config, self.state)
         validate = [argv for argv in calls if '--validate-only' in argv]
         self.assertEqual(len(validate), 2)
         self.assertEqual(validate[0][-1], str(self.directory / 'deployment.config.json'))

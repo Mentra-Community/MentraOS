@@ -10,7 +10,7 @@ param cloudImage string
 @description('Existing Azure Container Registry created by bootstrap.bicep.')
 param registryName string
 
-@description('Existing Key Vault created by bootstrap.bicep. It holds refresh-token-pepper, the mentra- and miniapp- JWT key pairs and, when Graph meeting creation is enabled, teams-graph-client-secret-<teamsGraphClientId>.')
+@description('Existing Key Vault created by bootstrap.bicep. It holds refresh-token-pepper, the mentra- and miniapp- JWT key pairs, entra-browser-client-secret (the Core API app\'s client secret for admin portal sign-in) and, when Graph meeting creation is enabled, teams-graph-client-secret-<teamsGraphClientId>.')
 param keyVaultName string
 
 param tenantId string
@@ -19,6 +19,12 @@ param mobileClientId string
 
 @description('Comma-separated administrator emails for existing Core admin authorization. For an org API key, allowlist api-key@<keyId>.local. This is not a bearer credential.')
 param coreAdminEmails string = ''
+
+@description('Email domains the customer\'s Entra directory issues, each subdomain listed separately: lowercase, no trailing dot, no Mentra domain. Core treats an Entra email as verified only in these domains.')
+param verifiedEmailDomains array = []
+
+@description('Admin portal sign-in with the customer\'s Entra directory. Requires the Key Vault secret entra-browser-client-secret, the Core API app\'s client secret, granted to Core by access.bicep with the same setting. When false, Core serves the admin portal but its sign-in is not configured.')
+param adminPortalSignIn bool = false
 
 @description('Durable Core attachment storage account. The default is stable for this resource group.')
 param reportStorageAccountName string = 'mentra${uniqueString(subscription().id, resourceGroup().id)}'
@@ -202,6 +208,34 @@ var generatedRuntimeHostname = '${runtimeName}.${environment.properties.defaultD
 var generatedCoreHostname = '${coreName}.${environment.properties.defaultDomain}'
 var workspaceOrigin = 'https://${empty(workspaceHostname) ? generatedRuntimeHostname : workspaceHostname}'
 var coreOrigin = 'https://${generatedCoreHostname}'
+// The workforce directory. The Mentra App signs in through the Mobile client;
+// the admin portal, served by Core on its own host, signs in through the Core
+// API app itself, so both tokens carry the same audience and the same oid.
+var oidcProviders = [
+  union({
+    id: 'workforce'
+    protocol: 'oidc'
+    providerKind: 'microsoft-entra'
+    tenantId: deploymentId
+    issuer: '${loginEndpoint}${tenantId}/v2.0'
+    jwksUrl: '${loginEndpoint}${tenantId}/discovery/v2.0/keys'
+    audience: coreApiClientId
+    subjectClaim: 'oid'
+    directoryTenantClaim: 'tid'
+    expectedDirectoryTenantId: tenantId
+    requiredScopes: ['mentra.session']
+    allowedClientIds: [mobileClientId]
+    verifiedEmailDomains: verifiedEmailDomains
+  }, adminPortalSignIn ? {
+    browser: {
+      clientId: coreApiClientId
+      clientSecretEnv: 'ENTRA_BROWSER_CLIENT_SECRET'
+      scopes: ['openid', 'email', 'profile']
+      emailClaim: 'email'
+      displayName: displayName
+    }
+  } : {})
+]
 var mongoConnectionString = replace(mongo.listConnectionStrings().connectionStrings[0].connectionString, '/?', '/mentra-private?')
 var resolvedManagedMiniapps = map(managedMiniapps, app => {
       packageName: app.packageName
@@ -291,14 +325,16 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
           identity: coreIdentity.id
         }
       ]
-      secrets: [
+      secrets: concat([
         { name: 'mongo-url', value: mongoConnectionString }
         { name: 'refresh-token-pepper', keyVaultUrl: '${vaultUri}secrets/refresh-token-pepper', identity: coreIdentity.id }
         { name: 'mentra-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-private-key', identity: coreIdentity.id }
         { name: 'mentra-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-public-key', identity: coreIdentity.id }
         { name: 'miniapp-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-private-key', identity: coreIdentity.id }
         { name: 'miniapp-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-public-key', identity: coreIdentity.id }
-      ]
+      ], adminPortalSignIn ? [
+        { name: 'entra-browser-client-secret', keyVaultUrl: '${vaultUri}secrets/entra-browser-client-secret', identity: coreIdentity.id }
+      ] : [])
     }
     template: {
       containers: [
@@ -306,7 +342,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'core'
           image: cloudImage
           command: ['bun', 'packages/core/src/index.ts']
-          env: [
+          env: concat([
             { name: 'PORT', value: '3000' }
             { name: 'MONGO_URL', secretRef: 'mongo-url' }
             { name: 'REFRESH_TOKEN_PEPPER', secretRef: 'refresh-token-pepper' }
@@ -318,13 +354,17 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'CLOUD_CORE_ADMIN_EMAILS', value: coreAdminEmails }
             { name: 'CLOUD_STORAGE_PROVIDER', value: 'local' }
             { name: 'CLOUD_STORAGE_LOCAL_DIR', value: '/mnt/core-attachments' }
-            {
-              name: 'CLOUD_CORE_OIDC_PROVIDERS'
-              value: '[{"id":"workforce","protocol":"oidc","providerKind":"microsoft-entra","tenantId":"${deploymentId}","issuer":"${loginEndpoint}${tenantId}/v2.0","jwksUrl":"${loginEndpoint}${tenantId}/discovery/v2.0/keys","audience":"${coreApiClientId}","subjectClaim":"oid","directoryTenantClaim":"tid","expectedDirectoryTenantId":"${tenantId}","requiredScopes":["mentra.session"],"allowedClientIds":["${mobileClientId}"]}]'
-            }
+            { name: 'CLOUD_CORE_OIDC_PROVIDERS', value: string(oidcProviders) }
+            // The admin portal is the image's built portal, served by Core on
+            // Core's host; Entra redirects to <portal>/api/admin/auth/callback.
+            { name: 'CLOUD_CORE_ADMIN_PORTAL_URL', value: coreOrigin }
+            { name: 'CLOUD_CORE_ADMIN_STATIC_DIR', value: '/app/admin-dist' }
+            { name: 'CLOUD_CORE_IDP_SIGNOUT_URL', value: '${loginEndpoint}${tenantId}/oauth2/v2.0/logout' }
             { name: 'LOG_STDOUT_JSON', value: 'true' }
             { name: 'SERVICE_NAME', value: 'core-enterprise-reference' }
-          ]
+          ], adminPortalSignIn ? [
+            { name: 'ENTRA_BROWSER_CLIENT_SECRET', secretRef: 'entra-browser-client-secret' }
+          ] : [])
           resources: { cpu: json('0.5'), memory: '1Gi' }
           volumeMounts: [{ volumeName: 'core-attachments', mountPath: '/mnt/core-attachments' }]
           probes: [

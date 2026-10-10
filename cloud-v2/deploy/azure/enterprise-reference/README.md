@@ -83,12 +83,17 @@ independent push trigger, so it cannot drift from the coordinated `dev` release.
 The `ghcr.io/mentra-community/mentra-cloud` package is public, so customer registries import
 releases anonymously; no registry credential is needed.
 
-Signing keys, the refresh pepper and the Graph client secret live in the
+Signing keys, the refresh pepper, the Graph client secret and, with admin
+portal sign-in on, its client secret (`entra-browser-client-secret`) live in the
 stack's Key Vault (`kv-mentra-enterprise-ref`), which `bootstrap.bicep` created
 once with Owner rights, together with `access.bicep`'s per-secret grants. Each
 Container App reads only its own secrets with its own identity, so the
 Contributor-only CI deployment passes just the vault name. Customer
 deployments get their own vault the same way.
+
+Core also serves the admin portal on its own host. With `adminPortalSignIn` on,
+Organization Admins sign in there with their Entra account; guided setup turns
+it on. See [admin portal sign-in](./entra-setup.md#admin-portal-sign-in).
 
 ## Customer-shaped deployment
 
@@ -105,7 +110,9 @@ cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh /secure/path/mentra
 ```
 
 It creates the resource group, runs `bootstrap.bicep` (registry, identities, Key
-Vault, role assignments), creates the signing keys in Key Vault once, applies
+Vault, role assignments), creates the signing keys in Key Vault once, checks
+that Key Vault holds the admin portal client secret when `adminPortalSignIn` is
+on ([entra-setup.md](./entra-setup.md#admin-portal-sign-in)), applies
 `access.bicep`'s per-secret grants, imports and verifies the digest, deploys
 Core and Runtime, runs the smoke test, and prints the deployment outputs. A
 rerun waits for a still-running deployment of the same name and recovers a Key

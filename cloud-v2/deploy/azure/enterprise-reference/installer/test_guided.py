@@ -4,6 +4,7 @@ import contextlib
 import io
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -30,6 +31,14 @@ class GuidedTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        # Tests never reach Azure: an az call that a test forgot to replace fails here.
+        guard = Path(self.temp.name) / 'no-azure'
+        guard.mkdir()
+        (guard / 'az').write_text('#!/bin/sh\necho "Tests never call Azure: az $*" >&2\nexit 97\n')
+        (guard / 'az').chmod(0o755)
+        no_azure = patch.dict(os.environ, {'PATH': f"{guard}:{os.environ['PATH']}"})
+        no_azure.start()
+        self.addCleanup(no_azure.stop)
         self.home = Path(self.temp.name) / 'mentra-install'
         self.directory = self.home / 'mentra-state'
         self.directory.mkdir(parents=True, mode=0o700)
@@ -76,6 +85,7 @@ class GuidedTests(unittest.TestCase):
              patch.object(setup, 'preview', record('preview', {'create': ['Key Vault kv'], 'change': [], 'unchanged': 0})), \
              patch.object(setup, 'run', record('run', '')), \
              patch.object(setup, 'install', record('install', {'status': phase_after_install}, installed)), \
+             patch.object(setup, 'admin_portal', record('portal', [])), \
              patch.object(setup, 'bootstrap_admin', record('admin', {'status': 'admin_key_ready'})), \
              patch.object(setup, 'upgrade_command', record('upgrade', {'status': 'upgraded'})):
             yield calls
@@ -84,7 +94,7 @@ class GuidedTests(unittest.TestCase):
         self.write_state('identity_configured')
         with self.steps() as calls:
             result = setup.guided(self.args, self.directory)
-        self.assertEqual(calls, ['providers', 'preflight', 'group', 'preview', 'handoffs', 'install', 'admin'])
+        self.assertEqual(calls, ['providers', 'preflight', 'group', 'preview', 'handoffs', 'install', 'portal', 'admin'])
         self.assertEqual(result['workspace'], 'https://acme.example')
 
     def test_rerun_after_install_only_checks_and_reports(self):
@@ -156,6 +166,12 @@ class GuidedTests(unittest.TestCase):
     def test_the_entra_handoff_quotes_company_names_for_the_shell(self):
         handoff = setup.entra_handoff(dict(self.config, displayName='ACME "$(rm -rf ~)"'), {'owner': 'owner'})['action']
         self.assertIn("--core-name 'ACME \"$(rm -rf ~)\" Mentra Core (acme-mentra)'", handoff)
+        self.assertNotIn('--core-owner', handoff)
+
+    def test_the_entra_handoff_makes_the_operator_an_owner_of_core(self):
+        # So the operator can later add Core's admin portal client secret without an Entra role.
+        handoff = setup.entra_handoff(self.config, {'owner': 'owner'}, operator=TENANT)['action']
+        self.assertIn(f'--installer-owner owner --core-owner {TENANT} --grant-admin-consent', handoff)
 
     def test_an_upgrade_without_a_preview_does_not_continue(self):
         old, new, hashes = self.upgrade_packages('3.3.0-dev.1', '3.3.0-dev.2')
@@ -341,6 +357,7 @@ class GuidedTests(unittest.TestCase):
              patch.object(setup, 'preview', return_value={'create': [], 'change': ['Container App ca: new software image'], 'unchanged': 9}), \
              patch.object(setup, 'select_upgrade', side_effect=select), \
              patch.object(setup, 'load', side_effect=lambda d: (self.config, setup.read_json(d / 'state.json'), RELEASE)), \
+             patch.object(setup, 'admin_portal', return_value=[]) as portal, \
              patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}) as install:
             with self.assertRaisesRegex(setup.SetupError, 'after backing up'):
                 setup.upgrade_command(self.args, self.directory, interactive=False)
@@ -349,6 +366,7 @@ class GuidedTests(unittest.TestCase):
             result = setup.upgrade_command(self.args, self.directory, interactive=False)
         self.assertEqual(selected, [old.resolve()])
         install.assert_called_once()
+        portal.assert_called_once()
         self.assertEqual(result['status'], 'upgraded')
         self.assertEqual(setup.os.readlink(self.home / 'mentra-private-cloud'), 'packages/3.3.0-dev.2/mentra-private-cloud')
 
@@ -544,9 +562,10 @@ class GuidedTests(unittest.TestCase):
         # Guided setup reruns install() for any phase but infrastructure_verified.
         self.assertEqual(json.loads((self.directory / 'state.json').read_text())['phase'], 'deploying')
 
-    def test_teams_settings_are_the_only_new_post_install_changes(self):
+    def test_teams_settings_email_domains_and_portal_sign_in_are_the_only_post_install_changes(self):
         self.assertEqual(setup.UPDATABLE_KEYS, {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId',
-                                                'teamsGraphClientId', 'teamsGraphOrganizerId'})
+                                                'teamsGraphClientId', 'teamsGraphOrganizerId', 'verifiedEmailDomains',
+                                                'adminPortalSignIn'})
         self.assertTrue(setup.UPDATABLE_KEYS.isdisjoint(setup.BINDING_KEYS))
 
     def test_entra_handoffs_link_consent_and_assignment_when_not_admin(self):
@@ -605,6 +624,253 @@ class GuidedTests(unittest.TestCase):
         self.assertIn('HTTP 503', reasons['Night Shift'])
         self.assertEqual(posted, ['alice-id', 'existing', 'mail-only', 'flaky'])
 
+    def portal_graph(self, existing_secret=False, refuse=None):
+        calls = []
+        def graph(config, method, path, body=None, missing_ok=False):
+            path = urllib_unquote(path)
+            calls.append((method, path.split('?')[0]))
+            if refuse and path.endswith(refuse):
+                raise setup.GraphError(403)
+            if method == 'GET' and path.startswith('applications?') and f"appId eq '{SUB}'" in path:
+                return {'value': [{'id': 'core-object'}]}
+            if method == 'POST' and path.endswith('/addPassword'):
+                calls.append(('label', body['passwordCredential']['displayName']))
+                return {'secretText': GRAPH_REPLY_TEXT, 'keyId': 'key-1'}
+            if method == 'POST' and path.endswith('/removePassword'):
+                calls.append(('removed', body['keyId']))
+            return {'value': []}
+        return graph, calls
+
+    def test_the_admin_portal_secret_goes_to_key_vault_before_core_is_deployed(self):
+        state = self.write_state('identity_configured')
+        graph, calls = self.portal_graph()
+        found = setup.subprocess.CompletedProcess([], 0, '', '')
+        with patch.object(setup, 'graph', side_effect=graph), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup.subprocess, 'run', return_value=found), patch.object(setup, 'grant_vault_access') as grant, \
+             patch.object(setup, 'vault_set') as vault_set, contextlib.redirect_stdout(io.StringIO()) as out:
+            setup.ensure_portal_secret(self.directory, self.config, state)
+        grant.assert_not_called()
+        # The Core API app (client ID SUB here) gets the secret; Key Vault gets its value at once.
+        self.assertIn(('POST', 'applications/core-object/addPassword'), calls)
+        self.assertTrue(next(c[1] for c in calls if c[0] == 'label').startswith('Mentra admin portal '))
+        vault_set.assert_called_once_with(self.config, 'entra-browser-client-secret', GRAPH_REPLY_TEXT)
+        saved = (self.directory / 'state.json').read_text()
+        self.assertNotIn(GRAPH_REPLY_TEXT, saved + out.getvalue())
+        self.assertRegex(json.loads(saved)['adminPortal']['secretExpires'], r'^\d{4}-\d\d-\d\dT')
+        # With its secret stored, Core is deployed with admin portal sign-in on.
+        self.assertIs(setup.read_json(self.directory / 'deployment.config.json')['adminPortalSignIn'], True)
+        self.assertIs(self.config['adminPortalSignIn'], True)
+
+    def test_a_stored_admin_portal_secret_is_kept(self):
+        state = self.write_state('infrastructure_verified')
+        graph, calls = self.portal_graph()
+        found = setup.subprocess.CompletedProcess([], 0, '', '')
+        with patch.object(setup, 'graph', side_effect=graph), patch.object(setup, 'vault_get', return_value={'value': 'stored'}), \
+             patch.object(setup.subprocess, 'run', return_value=found), patch.object(setup, 'vault_set') as vault_set:
+            setup.ensure_portal_secret(self.directory, self.config, state)
+        self.assertEqual(calls, [])
+        vault_set.assert_not_called()
+        # A secret stored earlier also turns sign-in on, once.
+        self.assertIs(setup.read_json(self.directory / 'deployment.config.json')['adminPortalSignIn'], True)
+        with patch.object(setup.subprocess, 'run', return_value=found), patch.object(setup, 'vault_get', return_value={'value': 'stored'}), \
+             patch.object(setup, 'update_configuration') as update:
+            setup.ensure_portal_secret(self.directory, self.config, state)
+        update.assert_not_called()
+
+    def test_a_first_install_creates_the_key_vault_before_the_portal_secret(self):
+        state = self.write_state('identity_configured')
+        order = []
+        missing = setup.subprocess.CompletedProcess([], 3, '', '')
+        with patch.object(setup.subprocess, 'run', return_value=missing) as run, \
+             patch.object(setup, 'grant_vault_access', side_effect=lambda c: order.append('vault')), \
+             patch.object(setup, 'vault_get', side_effect=lambda c, n: order.append(n) or {'value': 'stored'}):
+            setup.ensure_portal_secret(self.directory, self.config, state)
+        self.assertEqual(order, ['vault', 'entra-browser-client-secret'])
+        self.assertEqual(run.call_args.args[0][:3], ['az', 'keyvault', 'show'])
+
+    def test_an_operator_who_cannot_add_the_portal_secret_is_told_who_can(self):
+        state = self.write_state('identity_configured')
+        graph, calls = self.portal_graph(refuse='/addPassword')
+        found = setup.subprocess.CompletedProcess([], 0, '', '')
+        with patch.object(setup, 'graph', side_effect=graph), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup.subprocess, 'run', return_value=found), patch.object(setup, 'vault_set') as vault_set, \
+             patch.object(setup, 'operator_object_id', return_value=TENANT), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(setup.SetupError, f'az ad app owner add --id {SUB} --owner-object-id {TENANT}'):
+                setup.ensure_portal_secret(self.directory, self.config, state)
+        vault_set.assert_not_called()
+        self.assertNotIn('adminPortal', setup.read_json(self.directory / 'state.json'))
+        self.assertNotIn('adminPortalSignIn', setup.read_json(self.directory / 'deployment.config.json'))
+
+    def test_a_portal_secret_that_cannot_be_stored_is_removed(self):
+        state = self.write_state('identity_configured')
+        graph, calls = self.portal_graph()
+        found = setup.subprocess.CompletedProcess([], 0, '', '')
+        with patch.object(setup, 'graph', side_effect=graph), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup.subprocess, 'run', return_value=found), contextlib.redirect_stdout(io.StringIO()), \
+             patch.object(setup, 'vault_set', side_effect=setup.SetupError('Key Vault refused')):
+            with self.assertRaisesRegex(setup.SetupError, 'Key Vault refused'):
+                setup.ensure_portal_secret(self.directory, self.config, state)
+        self.assertIn(('removed', 'key-1'), calls)
+
+    def core_registration(self, redirect=True, claim=True, scopes=('openid', 'email', 'profile')):
+        ids = {'openid': 'id-openid', 'email': 'id-email', 'profile': 'id-profile', 'offline_access': 'id-offline'}
+        app = {'id': 'core-object',
+               'web': {'redirectUris': ['https://core.example/api/admin/auth/callback'] if redirect else []},
+               'optionalClaims': {'idToken': [{'name': 'email'}] if claim else []},
+               'requiredResourceAccess': [{'resourceAppId': setup.GRAPH_APP_ID,
+                                           'resourceAccess': [{'id': ids[s], 'type': 'Scope'} for s in scopes]}],
+               'passwordCredentials': [{'displayName': 'Mentra admin portal 1a2b3c4d', 'endDateTime': '2028-10-10T00:00:00Z'},
+                                       {'displayName': 'Mentra admin portal 5e6f7a8b', 'endDateTime': '2029-01-01T00:00:00Z'},
+                                       {'displayName': 'someone else', 'endDateTime': '2030-01-01T00:00:00Z'}]}
+        graph_sp = {'id': 'graph-sp', 'oauth2PermissionScopes': [{'value': v, 'id': i} for v, i in ids.items()]}
+        def graph(config, method, path, body=None, missing_ok=False):
+            path = urllib_unquote(path)
+            if path.startswith('applications?'):
+                return {'value': [app]}
+            if path.startswith('servicePrincipals?') and setup.GRAPH_APP_ID in path:
+                return {'value': [graph_sp]}
+            self.fail(f'Unexpected Graph request {method} {path}')
+        return graph
+
+    def test_admin_portal_waits_for_cores_address_and_sign_in(self):
+        self.config['adminPortalSignIn'] = True
+        for state in (self.write_state('awaiting_dns'),
+                      dict(self.write_state('infrastructure_verified', outputs={'coreOrigin': 'https://core.example'}))):
+            with self.subTest(phase=state['phase']):
+                if state['phase'] == 'infrastructure_verified':
+                    # Sign-in off: Core serves the portal without it, so nothing is registered.
+                    self.config['adminPortalSignIn'] = False
+                with patch.object(setup, 'graph') as graph, patch.object(setup, 'run') as run:
+                    self.assertEqual(setup.admin_portal(self.directory, self.config, state), [])
+                graph.assert_not_called()
+                run.assert_not_called()
+
+    def test_a_configured_admin_portal_is_only_read(self):
+        self.config['adminPortalSignIn'] = True
+        state = self.write_state('infrastructure_verified', outputs={'coreOrigin': 'https://core.example'})
+        with patch.object(setup, 'graph', side_effect=self.core_registration()), patch.object(setup, 'run') as run:
+            self.assertEqual(setup.admin_portal(self.directory, self.config, state), [])
+        run.assert_not_called()
+        # The latest of setup's client secrets is the one to renew.
+        self.assertEqual(setup.read_json(self.directory / 'state.json')['adminPortal'],
+                         {'url': 'https://core.example/', 'secretExpires': '2029-01-01T00:00:00Z'})
+
+    def test_admin_portal_registers_cores_redirect_and_sign_in_settings(self):
+        self.config['adminPortalSignIn'] = True
+        for missing in (dict(redirect=False), dict(claim=False), dict(scopes=('openid', 'profile'))):
+            with self.subTest(missing=missing):
+                state = self.write_state('infrastructure_verified', outputs={'coreOrigin': 'https://core.example'})
+                with patch.object(setup, 'graph', side_effect=self.core_registration(**missing)), \
+                     patch.object(setup, 'run', return_value='{}') as run:
+                    self.assertEqual(setup.admin_portal(self.directory, self.config, state), [])
+                argv = run.call_args.args[0]
+                self.assertTrue(argv[1].endswith('scripts/configure-entra.sh'))
+                self.assertEqual(argv[2:], ['--admin-portal-only', '--core-client-id', SUB, '--admin-portal-url',
+                                            'https://core.example'])
+
+    def test_admin_portal_hands_off_when_the_operator_cannot_change_core(self):
+        self.config['adminPortalSignIn'] = True
+        state = self.write_state('infrastructure_verified', outputs={'coreOrigin': 'https://core.example'})
+        with patch.object(setup, 'graph', side_effect=setup.GraphError(403)), \
+             patch.object(setup, 'run', side_effect=setup.SetupError('Insufficient privileges')), \
+             contextlib.redirect_stdout(io.StringIO()):
+            handoffs = setup.admin_portal(self.directory, self.config, state)
+        self.assertEqual(handoffs[0]['step'], 'Admin portal sign-in')
+        self.assertIn(f'configure-entra.sh --admin-portal-only --core-client-id {SUB} '
+                      '--admin-portal-url https://core.example --grant-admin-consent', handoffs[0]['action'])
+        self.assertNotIn('adminPortal', setup.read_json(self.directory / 'state.json'))
+
+    def test_admin_consent_covers_the_core_apps_sign_in_scopes(self):
+        def graph_with(core_scope):
+            def graph(config, method, path, body=None, missing_ok=False):
+                path = urllib_unquote(path)
+                if path.startswith('servicePrincipals?'):
+                    return {'value': [{'id': 'mobile-sp' if f"'{TENANT}'" in path else 'core-sp'}]}
+                if path == 'servicePrincipals/mobile-sp/oauth2PermissionGrants':
+                    return {'value': [{'consentType': 'AllPrincipals', 'scope': 'mentra.session Teams.ManageCalls Teams.ManageChats'}]}
+                if path == 'servicePrincipals/core-sp/oauth2PermissionGrants':
+                    return {'value': [{'consentType': 'AllPrincipals', 'scope': core_scope}]}
+                return {'value': [{'id': 'assignment'}]}
+            return graph
+        for core_scope, consent in (('openid email profile', True), ('openid profile', False), ('', False)):
+            with self.subTest(core_scope=core_scope), patch.object(setup, 'graph', side_effect=graph_with(core_scope)):
+                self.assertIs(setup.mobile_access(self.config)['consent'], consent)
+        with patch.object(setup, 'run') as run:
+            setup.grant_admin_consent(self.config)
+        self.assertEqual(run.call_args.args[0][2:], ['--consent-only', '--mobile-client-id', TENANT, '--core-client-id', SUB])
+        with patch.object(setup, 'mobile_access', return_value={'servicePrincipalId': 'sp-id', 'consent': False, 'assigned': True}), \
+             patch.object(setup, 'grant_admin_consent', side_effect=setup.SetupError('not an admin')):
+            handoffs = setup.entra_handoffs(self.args, self.config, interactive=False)
+        self.assertIn(setup.permissions_page(SUB), handoffs[0]['action'])
+
+    def test_new_email_domains_are_rolled_out_to_a_running_deployment(self):
+        state = self.write_state('infrastructure_verified')
+        state = dict(state, configHash=setup.digest(self.directory / 'deployment.config.json'))
+        setup.write_json(self.directory / 'state.json', state)
+        self.args.email_domains = 'acme.example, us.acme.example'
+        self.assertTrue(setup.update_email_domains(self.args, self.directory, self.config, state, interactive=False))
+        config = setup.read_json(self.directory / 'deployment.config.json')
+        saved = setup.read_json(self.directory / 'state.json')
+        self.assertEqual(config['verifiedEmailDomains'], ['acme.example', 'us.acme.example'])
+        # Guided setup runs install for any phase but infrastructure_verified.
+        self.assertEqual(saved['phase'], 'deploying')
+        self.assertEqual(saved['configHash'], setup.digest(self.directory / 'deployment.config.json'))
+        # The same domains again change nothing.
+        self.assertFalse(setup.update_email_domains(self.args, self.directory, config, saved, interactive=False))
+        self.args.email_domains = 'mentra.glass'
+        with self.assertRaisesRegex(setup.SetupError, '"mentra.glass" is a Mentra domain'):
+            setup.update_email_domains(self.args, self.directory, config, saved, interactive=False)
+
+    def test_a_deployment_without_email_domains_is_asked_for_them(self):
+        state = self.write_state('infrastructure_verified')
+        self.args.email_domains = None
+        self.assertFalse(setup.update_email_domains(self.args, self.directory, self.config, state, interactive=False))
+        with patch.object(setup, 'signed_in_account', return_value={'user': {'name': 'it@acme.example'}}), \
+             patch('builtins.input', side_effect=['Acme.example', '']) as ask, contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertTrue(setup.update_email_domains(self.args, self.directory, self.config, state, interactive=True))
+        # The refused answer is named, and the signed-in administrator's domain is the suggestion.
+        self.assertIn('"Acme.example" must be lowercase', out.getvalue())
+        self.assertIn('[acme.example]', ask.call_args.args[0])
+        self.assertEqual(setup.read_json(self.directory / 'deployment.config.json')['verifiedEmailDomains'], ['acme.example'])
+
+    def test_email_domain_suggestions_skip_guests_and_mentra(self):
+        for name, expected in (('it@Acme.example', 'acme.example'), ('alex_gmail.com#EXT#@acme.onmicrosoft.com', ''),
+                               ('alex@mentra.glass', ''), ('11111111-2222-3333-4444-555555555555', ''), ('', '')):
+            with self.subTest(name=name):
+                self.assertEqual(setup.suggested_email_domain({'user': {'name': name}}), expected)
+
+    def test_the_summary_shows_the_admin_portal_and_missing_email_domains(self):
+        # A deployment from before admin portal sign-in has no email domains.
+        self.config['adminPortalSignIn'] = True
+        self.write_state('infrastructure_verified', outputs={'workspaceOrigin': 'https://acme.example', 'coreOrigin': 'https://core.example'},
+                         adminPortal={'url': 'https://core.example/', 'secretExpires': '2028-10-10T00:00:00Z'})
+        with contextlib.redirect_stdout(io.StringIO()) as out, patch.object(setup, 'meetings_consent', return_value=True):
+            setup.finish(self.directory, {})
+        self.assertIn('Admin portal: https://core.example/', out.getvalue())
+        self.assertIn('client secret expires 2028-10-10', out.getvalue())
+        self.assertIn('Still to do - Admin portal sign-in', out.getvalue())
+        self.assertIn('--email-domains', out.getvalue())
+        self.config.update(verifiedEmailDomains=['acme.example'], adminPortalSignIn=False)
+        setup.write_json(self.directory / 'deployment.config.json', self.config)
+        with contextlib.redirect_stdout(io.StringIO()) as out, patch.object(setup, 'meetings_consent', return_value=True):
+            setup.finish(self.directory, {})
+        self.assertNotIn('--email-domains', out.getvalue())
+        self.assertNotIn('Admin portal:', out.getvalue())
+
+    def test_unattended_init_requires_email_domains(self):
+        answers = dict(subscriptionId=SUB, tenantId=TENANT, displayName='ACME', deploymentId='acme-mentra')
+        path = self.directory / 'answers.json'
+        setup.write_json(path, answers)
+        args = argparse.Namespace(config=str(path), json=False, backup_confirmed=False)
+        with patch.object(setup.sys.stdin, 'isatty', return_value=False), \
+             patch.object(setup, 'check_release', return_value=RELEASE), patch.object(setup, 'digest', return_value='this-release'):
+            with self.assertRaisesRegex(setup.SetupError, 'verifiedEmailDomains is required'):
+                setup.init(args, self.directory / 'fresh')
+        with self.assertRaisesRegex(setup.SetupError, '"Acme.example" must be lowercase'):
+            self.init_with(dict(answers, verifiedEmailDomains=['Acme.example']), where='refused')
+        config, _ = self.init_with(dict(answers, verifiedEmailDomains=['acme.example', 'us.acme.example']), where='given')
+        self.assertEqual(config['verifiedEmailDomains'], ['acme.example', 'us.acme.example'])
+
     def test_teams_policy_commands_target_the_tenant_and_keep_other_apps(self):
         commands = setup.teams_policy_commands(SUB, TENANT, TENANT, previous_client_id='99999999-9999-9999-9999-999999999999')
         text = '\n'.join(commands)
@@ -656,7 +922,7 @@ class GuidedTests(unittest.TestCase):
         verify.assert_called_once()
 
     def test_tenant_suggestion_follows_the_chosen_subscription(self):
-        answers = iter(['33333333-3333-3333-3333-333333333333', '', 'ACME', '', '', ''])
+        answers = iter(['33333333-3333-3333-3333-333333333333', '', 'ACME', '', '', '', 'acme.example'])
         prompts = []
         def ask(label):
             prompts.append(label)
@@ -674,10 +940,11 @@ class GuidedTests(unittest.TestCase):
         self.assertIn('[44444444-4444-4444-4444-444444444444]', prompts[1])
         self.assertEqual((config['subscriptionId'], config['tenantId']), ('33333333-3333-3333-3333-333333333333', '44444444-4444-4444-4444-444444444444'))
         self.assertEqual(config['deploymentId'], 'acme-mentra')
+        self.assertEqual(config['verifiedEmailDomains'], ['acme.example'])
 
     def init_with(self, answers, earlier=None, where='fresh'):
         path = self.directory / 'answers.json'
-        setup.write_json(path, answers)
+        setup.write_json(path, dict({'verifiedEmailDomains': ['acme.example']}, **answers))
         args = argparse.Namespace(config=str(path), json=False, backup_confirmed=False)
         with patch.object(setup.sys.stdin, 'isatty', return_value=False), \
              patch.object(setup, 'check_release', return_value=RELEASE), patch.object(setup, 'digest', return_value='this-release'), \
@@ -707,7 +974,8 @@ class GuidedTests(unittest.TestCase):
         owner = '22222222-2222-2222-2222-222222222222'
         earlier = {'owner': owner, 'release': RELEASE['releaseTag'], 'group': 'rg-acme-mentra',
                    'settings': {'displayName': 'ACME Corp', 'coreApiClientId': SUB, 'mobileClientId': TENANT,
-                                'workspaceHostname': 'mentra.acme.example', 'teamsGraphClientId': SUB}}
+                                'workspaceHostname': 'mentra.acme.example', 'teamsGraphClientId': SUB,
+                                'adminPortalSignIn': True}}
         config, state = self.init_with(dict(subscriptionId=SUB, tenantId=TENANT, displayName='Acme', deploymentId='acme-mentra',
                                             workspaceHostname='mentra.acme.example'), earlier)
         # Same owner, so the same derived names and the earlier Entra apps and resource group.
@@ -716,6 +984,7 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(config['resourceTags']['mentraInstallerOwner'], owner)
         # Settings come from Azure's record of the last deployment, not the retyped answers.
         self.assertEqual((config['displayName'], config['coreApiClientId'], config['teamsGraphClientId']), ('ACME Corp', SUB, SUB))
+        self.assertIs(config['adminPortalSignIn'], True)
         # The live custom address stays bound through the next rollout.
         self.assertTrue(state['domainVerified'])
 
