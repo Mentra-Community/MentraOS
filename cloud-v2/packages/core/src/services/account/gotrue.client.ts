@@ -14,6 +14,7 @@
  * not JWTs, so they travel only in the `apikey` header; a legacy key also goes
  * in `Authorization: Bearer`, as GoTrue has always accepted it.
  */
+import * as jose from "jose";
 import { AccountError } from "./account-error";
 
 export interface GotrueIdentity {
@@ -333,4 +334,46 @@ export async function exchangeOAuthCode(code: string, codeVerifier: string): Pro
   });
   if (status === 200 && body?.user) return identityFrom(body.user);
   throw new AccountError("invalid_grant", "oauth code exchange failed", 400);
+}
+
+const GLOBAL_SIGN_OUT_TOKEN_TTL_SEC = 60;
+
+/**
+ * End every Supabase session of one person: the sign-in page's, every
+ * website's and the CLI's. Refresh then fails, and the sign-in page asks for
+ * credentials again.
+ *
+ * Supabase has no admin call that ends a person's sessions by user ID, so Core
+ * signs a 60-second token for the person with the project's HS256 JWT secret
+ * (`SUPABASE_JWT_SECRET`) and calls `POST /auth/v1/logout?scope=global` with
+ * it and the secret key. The token carries no `session_id`, which GoTrue
+ * treats as a sign-out of every session. This works only while Supabase still
+ * trusts the legacy HS256 secret.
+ */
+export async function signOutAllSessions(supabaseUserId: string, timeoutMs = 5_000): Promise<void> {
+  const secret = process.env.SUPABASE_JWT_SECRET?.trim();
+  if (!secret) throw new AccountError("server_error", "SUPABASE_JWT_SECRET not configured", 500);
+  const issuer = process.env.CLOUD_CORE_SUPABASE_ISSUER?.trim().replace(/\/+$/, "") || `${baseUrl()}/auth/v1`;
+  const iat = Math.floor(Date.now() / 1000);
+  const token = await new jose.SignJWT({ role: "authenticated" })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(supabaseUserId)
+    .setAudience("authenticated")
+    .setIssuer(issuer)
+    .setIssuedAt(iat)
+    .setExpirationTime(iat + GLOBAL_SIGN_OUT_TOKEN_TTL_SEC)
+    .sign(new TextEncoder().encode(secret));
+  let status: number;
+  try {
+    const res = await fetch(`${baseUrl()}/auth/v1/logout?scope=global`, {
+      method: "POST",
+      headers: { apikey: serviceKey(), authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    status = res.status;
+    await res.body?.cancel();
+  } catch {
+    throw new AccountError("server_error", "Supabase sign-out failed", 502);
+  }
+  if (status !== 204) throw new AccountError("server_error", `Supabase sign-out failed with HTTP ${status}`, 502);
 }

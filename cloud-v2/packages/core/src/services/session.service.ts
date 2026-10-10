@@ -31,6 +31,7 @@ import {
   type FederatedIdentity,
 } from "@mentra/cloud-shared"
 import {RefreshTokenModel} from "../models/refresh-token.model"
+import {UserModel} from "../models/user.model"
 import {RevokedJtiModel} from "../models/revoked-jti.model"
 import {OemModel} from "../models/oem.model"
 import {EnterpriseOrgModel} from "../models/enterprise-org.model"
@@ -45,6 +46,8 @@ import {findOrCreateUser} from "./user.service"
 import {isConfiguredOidcTenant, recordSeenJti, verifyTenantJwt} from "./oem.service"
 import {SUPABASE_ASYMMETRIC_ALGORITHMS, supabaseIssuer, supabaseJwksUrl} from "./signin/config"
 import {KeySetUnavailableError, verifyWithKeySet} from "./signin/key-sets"
+import {revokePortalSessionsForUser} from "./signin/browser-session.service"
+import {endIdentityProviderSessions} from "./signin/idp-revocation"
 import {
   MENTRA_ALG,
   ACCESS_TOKEN_KID,
@@ -359,19 +362,33 @@ export async function revokeAllForOem(tenantId: string): Promise<{deletedSession
 }
 
 /**
- * Revoke every refresh token for one user (logout-everywhere, and the
- * "password change/reset revokes other sessions" requirement). `exceptSessionId`
- * keeps the current session alive (e.g. logout-everywhere from the active app
- * without kicking itself). Deleting the refresh token means the session cannot
- * re-up; the access token dies at its natural expiry.
+ * Account-wide revocation (logout-everywhere, password change or reset,
+ * account deletion):
+ *  1. sets the person's `webSignInsRevokedAt`, so Core refuses their
+ *     identity-provider tokens from earlier sign-ins, including ones refreshed
+ *     later (the Store's next request for them fails);
+ *  2. revokes every phone refresh token. `exceptSessionId` keeps the current
+ *     phone session alive (e.g. logout-everywhere from the active app without
+ *     kicking itself). The access token dies at its natural expiry;
+ *  3. ends their portal sessions;
+ *  4. on hosted Core, ends every Supabase session of the person (best effort,
+ *     never blocking: see endIdentityProviderSessions).
+ * Step 1 comes first so the web side is closed before anything else runs.
  */
 export async function revokeAllSessionsForUser(args: {
   mentraUserId: string
   exceptSessionId?: string
 }): Promise<{deletedSessions: number}> {
+  const user = await UserModel.findOneAndUpdate(
+    {mentraUserId: args.mentraUserId},
+    {$set: {webSignInsRevokedAt: new Date()}},
+    {new: true},
+  ).lean()
   const filter: Record<string, unknown> = {mentraUserId: args.mentraUserId}
   if (args.exceptSessionId) filter.sessionId = {$ne: args.exceptSessionId}
   const result = await RefreshTokenModel.deleteMany(filter)
+  await revokePortalSessionsForUser(args.mentraUserId, "account_revocation")
+  if (user) await endIdentityProviderSessions(user)
   return {deletedSessions: result.deletedCount ?? 0}
 }
 

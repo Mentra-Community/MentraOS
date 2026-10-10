@@ -43,6 +43,8 @@ export interface FakePerson {
   email?: string
   /** Supabase: the account's `email_confirmed_at` is set. Default true. */
   emailConfirmed?: boolean
+  /** Supabase: the account password, for GoTrue's password grant. */
+  password?: string
   /** Extra claims for the tokens (for example `oid`, `tid`, `email_verified`). They override the defaults. */
   claims?: Record<string, unknown>
   /** OIDC only: claims that override the ID token's (for example `aud`, `nonce`, `iss`, `exp`). */
@@ -76,6 +78,8 @@ export interface LogoutRecord {
   sessionId: string | null
   apikey: string | null
   status: number
+  /** The verified bearer's claims. */
+  claims: Record<string, unknown> | null
 }
 
 export interface FakeSession {
@@ -101,6 +105,8 @@ export interface FakeIdp {
   registerUser(person: FakePerson): void
   /** Complete an authorization request as the signed-in `person`; returns the client's callback URL. */
   approve(authorizeUrl: URL | string, person: FakePerson, opts?: {sessionStartedAt?: number}): Promise<URL>
+  /** Record a live session for `sub` (for example the sign-in page's own), started at `startedAt` (seconds). */
+  startSession(sub: string, clientId: string | null, startedAt?: number): FakeSession
   /** Answer a request for this provider, or null when it is not one of its URLs. */
   handle(request: Request): Promise<Response | null>
   /** Uninstall the fetch interceptor (installFakeIdp) or stop the server (startFakeIdpServer). */
@@ -246,6 +252,12 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
       return callback
     },
 
+    startSession(sub, clientId, startedAt) {
+      const session: FakeSession = {sessionId: randomUUID(), sub, clientId, startedAt: startedAt ?? nowSec(), endedAt: null}
+      idp.sessions.set(session.sessionId, session)
+      return session
+    },
+
     async handle(request) {
       const url = new URL(request.url)
       const href = url.origin + url.pathname
@@ -276,13 +288,36 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
           id_token_signing_alg_values_supported: ["RS256", "ES256"],
         })
       }
-      if (request.method === "POST" && /\/(oauth\/)?token$/.test(url.pathname) && ownsIssuer) {
+      if (request.method === "POST" && ownsIssuer && url.pathname.endsWith(kind === "supabase" ? "/oauth/token" : "/token")) {
         return tokenEndpoint(request)
       }
       if (request.method === "POST" && url.pathname.endsWith("/logout")) {
         return logout(request, url)
       }
+      if (request.method === "POST" && url.pathname.endsWith("/auth/v1/token") && url.searchParams.get("grant_type") === "password") {
+        const body = (await request.json()) as {email?: string; password?: string}
+        const person = [...users.values()].find(user => user.email === body.email && user.password === body.password)
+        if (!person) return json({error: "invalid_grant", error_description: "Invalid login credentials"}, 400)
+        return json({
+          access_token: "gotrue-password-grant",
+          user: {id: person.sub, email: person.email, email_confirmed_at: person.emailConfirmed === false ? null : "2026-01-01T00:00:00Z"},
+        })
+      }
       const adminUser = url.pathname.match(/\/admin\/users\/([^/]+)$/)
+      if ((request.method === "PUT" || request.method === "DELETE") && adminUser) {
+        const id = decodeURIComponent(adminUser[1]!)
+        const person = users.get(id)
+        if (!person) return json({code: 404, msg: "User not found"}, 404)
+        // GoTrue ends every session of the person on an admin password change and on deletion.
+        for (const session of idp.sessions.values()) if (session.sub === id && session.endedAt === null) session.endedAt = Date.now()
+        if (request.method === "DELETE") {
+          users.delete(id)
+          return json({})
+        }
+        const body = (await request.json()) as {password?: string}
+        if (body.password) users.set(id, {...person, password: body.password})
+        return json({id, email: person.email ?? null, email_confirmed_at: "2026-01-01T00:00:00Z"})
+      }
       if (request.method === "GET" && adminUser) {
         const id = decodeURIComponent(adminUser[1]!)
         idp.userLookups.push(id)
@@ -382,8 +417,9 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
     const scope = url.searchParams.get("scope") ?? "global"
     const apikey = request.headers.get("apikey")
     const bearer = request.headers.get("authorization")?.replace(/^Bearer /, "") ?? ""
+    let verifiedClaims: Record<string, unknown> | null = null
     const record = (status: number, sub: string | null, sessionId: string | null) => {
-      idp.logoutCalls.push({scope, sub, sessionId, apikey, status})
+      idp.logoutCalls.push({scope, sub, sessionId, apikey, status, claims: verifiedClaims})
       return status === 204 ? new Response(null, {status}) : json({error: "logout_failed"}, status)
     }
     if (idp.failLogout) return record(500, null, null)
@@ -394,6 +430,7 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
     } catch {
       return record(401, null, null)
     }
+    verifiedClaims = payload as Record<string, unknown>
     const sub = typeof payload.sub === "string" ? payload.sub : null
     const sessionId = typeof payload.session_id === "string" ? payload.session_id : null
     const now = Date.now()
