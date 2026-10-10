@@ -37,64 +37,12 @@ import android.util.Base64
 object JSCPolyfillBridge {
     private const val TAG = "MentraJS.PolyfillBridge"
 
-    private val httpClient: OkHttpClient by lazy {
+    internal val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .callTimeout(120, TimeUnit.SECONDS)
             .build()
-    }
-
-    data class HttpResult(
-        val status: Int,
-        val statusText: String,
-        val headers: Map<String, String>,
-        val body: String,
-    )
-
-    /**
-     * Shared OkHttp path for host cloud-client requests. Asynchronous because Expo runs every
-     * module's AsyncFunction on one shared thread: a blocking call here stalls miniapp delivery
-     * and every other native module for the length of the request, up to [callTimeout].
-     */
-    fun enqueueHttp(
-        method: String,
-        url: String,
-        headers: Map<String, String>,
-        bodyString: String?,
-        onResult: (HttpResult) -> Unit,
-        onError: (Throwable) -> Unit,
-    ) {
-        val request = try {
-            buildHttpRequest(method, url, headers, bodyString)
-        } catch (e: Throwable) {
-            onError(e)
-            return
-        }
-        httpClient.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) = onError(e)
-
-            override fun onResponse(call: Call, response: Response) {
-                try {
-                    response.use { r ->
-                        val responseHeaders = mutableMapOf<String, String>()
-                        for (name in r.headers.names()) {
-                            responseHeaders[name.lowercase()] = r.headers.values(name).joinToString(", ")
-                        }
-                        onResult(
-                            HttpResult(
-                                status = r.code,
-                                statusText = r.message,
-                                headers = responseHeaders,
-                                body = r.body?.string() ?: "",
-                            )
-                        )
-                    }
-                } catch (e: Throwable) {
-                    onError(e)
-                }
-            }
-        })
     }
 
     /** Keep host HTTP and miniapp fetch body semantics identical, including empty POSTs. */

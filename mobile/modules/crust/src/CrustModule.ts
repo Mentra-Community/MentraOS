@@ -11,11 +11,13 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   /** Android: copy the displayed view's window pixels to a temporary JPEG URI. */
   captureMiniappPreview(viewTag: number): Promise<string>
   nativeHttpRequest(
+    requestId: string,
     method: string,
     url: string,
     headers: Record<string, string>,
     body?: string | null,
   ): Promise<{status: number; statusText: string; headers: Record<string, string>; body: string}>
+  cancelNativeHttpRequest(requestId: string): Promise<void>
   showAVRoutePicker(tintColor?: string | null): void
 
   /**

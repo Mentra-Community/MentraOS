@@ -22,6 +22,7 @@ import com.mentra.crust.preview.PixelCopyPreview
 import com.mentra.crust.jsc.JSCRuntime
 import com.mentra.crust.jsc.InstalledMiniappManifest
 import com.mentra.crust.jsc.JSCPolyfillBridge
+import com.mentra.crust.http.NativeHttpRequests
 
 class CrustModule : Module() {
   companion object {
@@ -99,6 +100,7 @@ class CrustModule : Module() {
           )
   private var notificationEventReceiver: BroadcastReceiver? = null
   private var notificationBridgeContext: android.content.Context? = null
+  private val nativeHttpRequests = NativeHttpRequests(JSCPolyfillBridge.httpClient)
 
   private fun registerNotificationBridgeIfPossible(): Boolean {
     if (notificationEventReceiver != null) return true
@@ -169,6 +171,7 @@ class CrustModule : Module() {
       notificationEventReceiver = null
       notificationBridgeContext = null
       eventEmitter = null
+      nativeHttpRequests.cancelAll()
       mentraJsQueue.cancel()
       mentraJsExecutor.shutdown()
     }
@@ -187,12 +190,16 @@ class CrustModule : Module() {
     }
 
     AsyncFunction("nativeHttpRequest") {
-      method: String, url: String, headers: Map<String, String>, body: String?, promise: expo.modules.kotlin.Promise ->
-      JSCPolyfillBridge.enqueueHttp(
-        method,
-        url,
-        headers,
-        body,
+      requestId: String, method: String, url: String, headers: Map<String, String>, body: String?, promise: expo.modules.kotlin.Promise ->
+      val request = try {
+        JSCPolyfillBridge.buildHttpRequest(method, url, headers, body)
+      } catch (error: Throwable) {
+        promise.reject("E_NATIVE_HTTP", error.message ?: "Native HTTP request failed", error)
+        return@AsyncFunction
+      }
+      nativeHttpRequests.enqueue(
+        requestId,
+        request,
         onResult = { result ->
           promise.resolve(
             mapOf(
@@ -205,6 +212,11 @@ class CrustModule : Module() {
         },
         onError = { error -> promise.reject("E_NATIVE_HTTP", error.message ?: "Native HTTP request failed", error) },
       )
+    }
+
+    // Same serial Expo queue as nativeHttpRequest: cancellation cannot precede registration.
+    AsyncFunction("cancelNativeHttpRequest") { requestId: String ->
+      nativeHttpRequests.cancel(requestId)
     }
 
     Function("showAVRoutePicker") { _: String? ->

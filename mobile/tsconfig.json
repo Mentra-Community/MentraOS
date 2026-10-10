@@ -21,6 +21,7 @@
       "@assets/*": ["./assets/*"],
       "@plugins/*": ["./plugins/*"],
       "@mentra/bluetooth-sdk-internal": ["./modules/bluetooth-sdk/src/_internal"],
+      "@mentra/crust": ["./modules/crust/src/index.ts"],
       "@mentra/cloud-client": ["../cloud-v2/packages/cloud-client/src/index.ts"],
       "@mentra/cloud-client/react-native": ["../cloud-v2/packages/cloud-client/react-native/index.ts"],
       "@mentra/cloud-protocol": ["../cloud-v2/packages/protocol/src/index.ts"],
