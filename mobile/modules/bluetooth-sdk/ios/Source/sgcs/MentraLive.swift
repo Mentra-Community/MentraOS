@@ -1754,8 +1754,8 @@ class MentraLive: NSObject, SGCManager {
         // Publish disconnect immediately for Phone A UI. didDisconnectPeripheral may lag
         // or race with cancelPeripheralConnection; do not wait on it for stand-down.
         isConnecting = false
+        clearPhysicalReadiness()
         connected = false
-        fullyBooted = false
         glassesSessionId = nil
         streamControlVersion = 0
         readinessCompletedThisBleSession = false
@@ -2533,8 +2533,8 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: Maximum reconnection attempts reached (\(MAX_RECONNECT_ATTEMPTS))")
             reconnectAttempts = 0
             updateConnectionState(ConnTypes.DISCONNECTED)
+            clearPhysicalReadiness()
             connected = false
-            fullyBooted = false
             glassesSessionId = nil
             streamControlVersion = 0
             readinessCompletedThisBleSession = false
@@ -5751,7 +5751,7 @@ class MentraLive: NSObject, SGCManager {
         stopReadinessCheckLoop()
 
         readinessCheckCounter = 0
-        fullyBooted = false
+        clearPhysicalReadiness()
         connected = false
         glassesSessionId = nil
         streamControlVersion = 0

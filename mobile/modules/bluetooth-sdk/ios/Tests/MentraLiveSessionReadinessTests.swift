@@ -93,6 +93,56 @@ final class MentraLiveSessionReadinessTests: XCTestCase {
                        BluetoothSdkDefaults.voiceActivityDetectionEnabled)
     }
 
+    func testPairingYieldDuringPendingReadinessCleansUpAndReclaimsAfterItsWindow() async throws {
+        let store = DeviceStore.shared.store
+        let saved = ["bluetooth", "glasses"].map { ($0, store.getCategory($0)) }
+        let previous = DeviceManager.shared.sgc
+        let transport = SessionReadinessTransport()
+        let sdk = MentraBluetoothSDK()
+        DeviceManager.shared.sgc = transport
+        defer {
+            sdk.invalidate()
+            transport.cleanup()
+            DeviceManager.shared.sgc = previous
+            for (category, values) in saved {
+                for key in store.getCategory(category).keys where values[key] == nil {
+                    store.remove(category, key)
+                }
+                for (key, value) in values { store.set(category, key, value) }
+            }
+        }
+
+        func receive(_ value: [String: Any]) throws {
+            try transport.processReceivedData(JSONSerialization.data(withJSONObject: value))
+        }
+        try receive(["type": "glasses_ready", "sid": "original"])
+        try receive(["type": "version_info_1", "sid": "replacement", "build_number": "302010070"])
+        XCTAssertTrue(sdk.glassesStatus.connected)
+        XCTAssertFalse(sdk.glassesStatus.fullyBooted)
+        store.set("glasses", "headUp", true)
+        store.set("glasses", "voiceActivityDetectionEnabled", !BluetoothSdkDefaults.voiceActivityDetectionEnabled)
+
+        try receive(["type": "entering_pairing_mode", "window_ms": 5000])
+        XCTAssertTrue(transport.isPairingYieldActive())
+        XCTAssertFalse(sdk.glassesStatus.connected)
+        XCTAssertFalse(sdk.glassesStatus.fullyBooted)
+        XCTAssertEqual(store.get("glasses", "headUp") as? Bool, false)
+        XCTAssertEqual(store.get("glasses", "voiceActivityDetectionEnabled") as? Bool,
+                       BluetoothSdkDefaults.voiceActivityDetectionEnabled)
+
+        // Readiness queued on the relinquished GATT must not close the yield.
+        try receive(["type": "glasses_ready", "sid": "replacement"])
+        XCTAssertTrue(transport.isPairingYieldActive())
+        XCTAssertFalse(sdk.glassesStatus.fullyBooted)
+
+        // Let the existing minimum yield expire, then accept a fresh readiness.
+        try await Task.sleep(nanoseconds: 5_100_000_000)
+        XCTAssertFalse(transport.isPairingYieldActive())
+        try receive(["type": "glasses_ready", "sid": "reclaimed"])
+        XCTAssertTrue(sdk.glassesStatus.connected)
+        XCTAssertTrue(sdk.glassesStatus.fullyBooted)
+    }
+
     func testInitialVersionChunkDoesNotStartAnExtraReadinessExchange() throws {
         let store = DeviceStore.shared.store
         let saved = store.getCategory("glasses")
