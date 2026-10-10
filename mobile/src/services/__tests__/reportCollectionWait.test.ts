@@ -75,6 +75,20 @@ it("holds completion for delayed glasses and BES receipts while ignoring server 
   expect(jest.getTimerCount()).toBe(0)
 })
 
+it("accepts receipt timestamps with or without fractional seconds from the Core client", async () => {
+  read.mockResolvedValue(
+    snapshot({
+      phone: {
+        ...received("art_phone"),
+        requestedAt: "2026-10-09T00:00:00Z",
+        deadlineAt: "2026-10-09T00:00:20.0Z",
+        receivedAt: "2026-10-09T00:00:01.12Z",
+      },
+    }),
+  )
+  await expect(reports.waitForCollection("rep_test", {sources: ["phone"]})).resolves.toMatchObject({state: "complete"})
+})
+
 it.each(["unavailable", "failed", "timed-out"] as const)(
   "rejects a terminal %s source while preserving actual receipts",
   async (state) => {

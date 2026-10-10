@@ -5,7 +5,7 @@ type Asset = RecordedFrameworkRun['assets'][number];
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
-/** The filed app receipt must belong to this run's exact frozen request. */
+/** A created app report, including partial collection failure, must belong to this run's exact request. */
 export function recordedRunIncident(runId: string, requestBytes: Buffer, receiptBytes: Buffer): string | null {
   try {
     const requestFile = object(JSON.parse(requestBytes.toString('utf8')));
@@ -13,7 +13,7 @@ export function recordedRunIncident(runId: string, requestBytes: Buffer, receipt
     const receipt = object(JSON.parse(receiptBytes.toString('utf8')));
     if (requestFile?.schemaVersion !== 1 || receipt?.schemaVersion !== 1 || request?.test_run_id !== runId
       || receipt.test_run_id !== runId || typeof request.alert_id !== 'string' || !request.alert_id
-      || receipt.alert_id !== request.alert_id || receipt.status !== 'filed'
+      || receipt.alert_id !== request.alert_id || !['filed', 'failed'].includes(String(receipt.status))
       || receipt.requestFile !== 'incident-report/request.json'
       || receipt.requestSha256 !== createHash('sha256').update(requestBytes).digest('hex')
       || typeof receipt.report_id !== 'string' || !/^rep_[A-Za-z0-9]{1,80}$/.test(receipt.report_id)

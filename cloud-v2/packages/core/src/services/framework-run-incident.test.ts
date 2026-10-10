@@ -15,15 +15,24 @@ function fixture(): RecordedFrameworkRun {
     size: body.length, sha256: createHash('sha256').update(body).digest('hex')}))} as RecordedFrameworkRun;
 }
 
-test('incident link requires a filed receipt bound to the original request and run', () => {
+test('incident link requires a created report receipt bound to the original request and run', () => {
   expect(recordedRunIncident(runId, request, bytes)).toBe('rep_EXACT');
-  for (const changed of [{status: 'failed'}, {test_run_id: 'other-run'}, {alert_id: 'other-alert'},
+  expect(recordedRunIncident(runId, request, Buffer.from(JSON.stringify({...receipt, status: 'failed'})))).toBe('rep_EXACT');
+  for (const changed of [{status: 'skipped'}, {status: 'failed', report_id: undefined}, {test_run_id: 'other-run'}, {alert_id: 'other-alert'},
     {requestSha256: 'f'.repeat(64)}, {incident_id: 'rep_OTHER'}, {report_id: '../foreign'}, {schemaVersion: 2},
     {requestFile: 'other/request.json'}])
     expect(recordedRunIncident(runId, request, Buffer.from(JSON.stringify({...receipt, ...changed})))).toBeNull();
   expect(recordedRunIncident('other-run', request, bytes)).toBeNull();
   expect(recordedRunIncident(runId, Buffer.concat([request, Buffer.from(' ')]), bytes)).toBeNull();
   expect(recordedRunIncident(runId, request, Buffer.from('not json'))).toBeNull();
+});
+
+test('partial log collection failure retains its verified incident link through the declared asset reader', async () => {
+  const failed = Buffer.from(JSON.stringify({...receipt, status: 'failed',
+    collection: {reportId: receipt.report_id, state: 'failed', logCollection: {}}}));
+  const run = fixture();
+  run.assets[1] = {...run.assets[1]!, size: failed.length, sha256: createHash('sha256').update(failed).digest('hex')};
+  expect(await readRunIncident(run, async asset => new Response(asset.id === '0' ? request : failed))).toBe('rep_EXACT');
 });
 
 test('receipt lookup reads only unique declared blobs and verifies their exact bytes', async () => {

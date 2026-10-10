@@ -279,9 +279,9 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
 
 const collectionTimestamp = (value: unknown): value is string =>
   typeof value === "string" &&
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) &&
   Number.isFinite(Date.parse(value)) &&
-  new Date(value).toISOString() === value
+  new Date(value).toISOString().slice(0, 19) === value.slice(0, 19)
 
 /** Resolve only when every selected source has a stored artifact; failures reject with partial receipts. */
 async function waitForCollection(
