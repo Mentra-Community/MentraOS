@@ -824,7 +824,7 @@ async function processBatch(
       if (seq % 128 === 0) {
         logger.info(
           {
-            user: mentraUserId.slice(-6),
+            mentraUserId,
             seq,
             payloadBytes: payloadLen,
             codec,

@@ -60,18 +60,16 @@ import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployme
 
 /**
  * Parse `<packageName>-<version>` out of a bundled miniapp asset name like
- * `com.mentra.navigation-1.0.2.zip`. Splits on the last hyphen so dotted
- * package names (which contain no hyphens) stay intact. Returns null if the
- * name doesn't match the expected shape.
+ * `com.mentra.navigation-1.0.2.zip`. The version is the trailing semantic
+ * version, so hyphenated package names and prerelease versions stay intact.
+ * Returns null if the name doesn't match the expected shape.
  */
 function parseBundledMiniappName(name: string): {packageName: string; version: string} | null {
+  // expo-asset names omit the extension; tests and older callers may include it.
   const base = name.replace(/\.zip$/i, "")
-  const lastHyphen = base.lastIndexOf("-")
-  if (lastHyphen <= 0 || lastHyphen === base.length - 1) return null
-  return {
-    packageName: base.slice(0, lastHyphen),
-    version: base.slice(lastHyphen + 1),
-  }
+  const match = /^(.+)-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/.exec(base)
+  if (!match) return null
+  return {packageName: match[1], version: match[2]}
 }
 
 // The background phone-location task + its tier control moved into island
@@ -819,6 +817,14 @@ class MantleManager {
     // Bundled consumer assets excluded by the workspace are expected skips.
     if (approved !== null && !approved.includes(packageName)) return
     if (shouldHideMiniapp(packageName) || appRegistry.getInstalledVersions(packageName).includes(version)) return
+    // Bundling never downgrades: a newer installed release (a QR or managed
+    // install) stays selected. The installer enforces the same rule again.
+    try {
+      appRegistry.assertCanInstallVersion(packageName, version)
+    } catch (error) {
+      console.log(`MANTLE: skipping bundled ${packageName}@${version}: ${(error as Error).message}`)
+      return
+    }
     if (packageName === "com.mentra.example" && !engine.settings.get(SETTINGS.super_mode.key)) return
 
     await asset.downloadAsync()
@@ -830,7 +836,12 @@ class MantleManager {
     )
       return
     if (!asset.localUri) throw new Error(`Bundled ${packageName} has no local URI`)
-    const result = await appRegistry.installFromLocalZip(asset.localUri)
+    // The same installer as every other source: the ZIP must be the package
+    // and version its asset name declares, and it obeys the signer rule.
+    const result = await appRegistry.installFromLocalZip(asset.localUri, {
+      expectedPackageName: packageName,
+      expectedVersion: version,
+    })
     if (result.is_error()) throw result.error
     console.log(`MANTLE: installed bundled miniapp ${result.value.packageName}@${result.value.version}`)
   }
