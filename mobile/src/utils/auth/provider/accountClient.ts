@@ -63,7 +63,7 @@ function saveCachedProfile(user: MentraAuthUser): void {
 
 function core(path: string): string {
   if (deploymentStore.getActive().kind === "workspace") {
-    throw new Error("Mentra account services are unavailable in an organization workspace")
+    throw new Error("Mentra account services are unavailable in an organization")
   }
   return `${resolvedEndpoints().core.replace(/\/+$/, "")}${path}`
 }
