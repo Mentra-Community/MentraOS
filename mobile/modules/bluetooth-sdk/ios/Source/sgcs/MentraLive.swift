@@ -3065,6 +3065,11 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
             Bridge.sendOtaStartAck()
 
+        case "bes_crash_detected", "bes_crash_reported_ack":
+            let ok = json["ok"].map { "\($0)" } ?? "-"
+            Bridge.log("LIVE: \(type) incidentKey=\(json["incidentKey"] as? String ?? "") state=\(json["state"] as? String ?? "-") ok=\(ok)")
+            Bridge.sendTypedMessage(type, body: json)
+
         case "ota_status":
             // Short keys (sid/ts/cs/st/sq/sp/op/err) are used by new firmware to keep BLE payload small.
             // Verbose keys (session_id/total_steps/…) are the fallback for older firmware.
@@ -3768,6 +3773,23 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: Queued incidentId to glasses for log upload: \(incidentId) (BLE relay \(bKey), \(lKey))")
     }
 
+    func sendBesCrashReported(incidentKey: String, reportId: String) throws {
+        guard incidentLogTransportReady else {
+            throw BluetoothSdkError(code: "glasses_not_connected", message: "Cannot report the BES crash because the glasses BLE link is not ready.")
+        }
+        guard sendJson(["type": "bes_crash_reported", "incidentKey": incidentKey, "reportId": reportId],
+                       wakeUp: true, requireAck: true, bridgeLogging: true)
+        else {
+            throw BluetoothSdkError(code: "bes_crash_dispatch_failed", message: "Could not queue bes_crash_reported to the glasses.")
+        }
+        Bridge.log("LIVE: Queued bes_crash_reported incidentKey=\(incidentKey) reportId=\(reportId)")
+    }
+
+    static func isIncidentRelayFileName(_ fileName: String) -> Bool {
+        guard fileName.count == 16, let first = fileName.first, first == "B" || first == "L" else { return false }
+        return fileName.dropFirst().allSatisfy { ("a" ... "z").contains($0) || ("0" ... "9").contains($0) || $0 == "_" }
+    }
+
     private static func incidentBleFileBase(incidentId: String, prefix: Character) -> String {
         var compact = incidentId.replacingOccurrences(of: "-", with: "").lowercased()
         if compact.count < 15 {
@@ -4425,6 +4447,15 @@ class MentraLive: NSObject, SGCManager {
 
                 if sess.isComplete {
                     Bridge.log("LIVE: 📦 File transfer complete: \(packetInfo.fileName)")
+
+                    if Self.isIncidentRelayFileName(packetInfo.fileName) {
+                        // No relay registered (e.g. the app restarted mid-relay): nothing reached
+                        // Cloud, so success would make the glasses mark the incident uploaded.
+                        Bridge.log("LIVE: Incident log relay without a registered report: \(packetInfo.fileName)")
+                        sendTransferCompleteConfirmation(fileName: packetInfo.fileName, success: false)
+                        activeFileTransfers.removeValue(forKey: packetInfo.fileName)
+                        return
+                    }
 
                     if let fileData = sess.assembleFile() {
                         saveReceivedFile(

@@ -271,6 +271,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("ota_status", event.values)
                 }
 
+                override fun onBesCrashDetected(event: BesCrashDetectedEvent) {
+                    sendEvent("bes_crash_detected", event.toEventMap())
+                }
+
                 override fun onSettingsAck(event: SettingsAckEvent) {
                     sendEvent("settings_ack", event.values)
                 }
@@ -400,6 +404,7 @@ class BluetoothSdkModule : Module() {
             "ota_start_ack",
             "ota_status",
             "ar99_ota_status",
+            "bes_crash_detected",
             // Nex / BLE debug (NexEventUtils —Bridge.sendTypedMessage)
             "send_command_to_ble",
             "receive_command_from_ble",
@@ -618,6 +623,10 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("sendIncidentId") { incidentId: String, apiBaseUrl: String? ->
             requireSdk().sendIncidentId(incidentId, apiBaseUrl)
+        }
+
+        SdkCoroutineFunction("sendBesCrashReported") { incidentKey: String, reportId: String ->
+            requireSdk().sendBesCrashReported(incidentKey, reportId)
         }
 
         // MARK: - Native Notification Centre

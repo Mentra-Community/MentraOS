@@ -1106,6 +1106,54 @@ export type OtaStatusEvent = {
 
 export type OtaQueryResult = OtaStatusEvent
 
+/** Lifecycle of a BES crash incident bundle on Mentra Live glasses. */
+export type BesCrashIncidentState = "COLLECTING" | "STORED" | "REPORTED" | "UPLOADED" | "EVICTED"
+
+/** One incident bundle the glasses dropped to stay within their storage budget. */
+export type BesCrashEviction = {
+  incidentKey: string
+  reason: string
+  bytes: number
+  ms: number
+}
+
+/**
+ * Glasses-side summary of a BES crash incident. Fields the glasses could not
+ * determine (for example `dumpId` of a reset without a dump) may be absent or null.
+ */
+export type BesCrashSummary = {
+  attribution: "match" | "older" | "unknown"
+  dumpId?: string | null
+  bootId?: string | null
+  resetHw?: number | null
+  resetSw?: number | null
+  crashUnixMs?: number | null
+  coveredFromMs?: number | null
+  coveredToMs?: number | null
+  traceGaps: number
+  truncated: boolean
+  torn: boolean
+  tailCaptured: boolean
+  dumpGap: boolean
+  evictedCount: number
+  recentEvictions: BesCrashEviction[]
+}
+
+/**
+ * Mentra Live stored a BES crash or unexpected-reset incident. Sent when the
+ * incident becomes `STORED`, and again on every reconnect while it is `STORED`
+ * or `REPORTED`, so handlers must be idempotent per `incidentKey`.
+ */
+export type BesCrashDetectedEvent = {
+  type: "bes_crash_detected"
+  incidentKey: string
+  reason: "bes_crash" | "bes_unexpected_reset"
+  state: BesCrashIncidentState
+  /** Cloud report already recorded for this incident, or null before one is reported. */
+  reportId: string | null
+  summary: BesCrashSummary
+}
+
 /** Nex BLE protobuf trace (NexEventUtils); payload matches native Map keys. */
 export type BleCommandTraceEvent = {
   command: string
@@ -1185,6 +1233,7 @@ export type BluetoothSdkModuleEvents = {
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
   ar99_ota_status: (event: Ar99OtaStatusEvent) => void
+  bes_crash_detected: (event: BesCrashDetectedEvent) => void
   version_info: (event: VersionInfoEvent) => void
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
@@ -1347,6 +1396,8 @@ export type BluetoothSdkEventMap = {
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   ar99_ota_status: Ar99OtaStatusEvent
+  /** Mentra Live stored a BES crash incident for the phone to report. */
+  bes_crash_detected: BesCrashDetectedEvent
   version_info: VersionInfoEvent
   extraction_progress: ExtractionProgressEvent
 }
