@@ -2,6 +2,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 
 import {reports, submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
 import {cloudClientService} from "../../../modules/engine/src/services/CloudClientService"
+import {projectPairingIdentity} from "../../../modules/engine/src/services/PairingIdentity"
 import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import {logBuffer} from "../../../modules/engine/src/utils/devLogging"
 
@@ -24,6 +25,8 @@ jest.mock("../../../modules/engine/src/services/CloudClientService", () => ({
 jest.mock("../../../modules/engine/src/utils/diagnosticContext", () => ({
   collectDiagnosticContext: async () => ({}),
 }))
+
+jest.mock("../../../modules/engine/src/services/PairingIdentity", () => ({projectPairingIdentity: jest.fn()}))
 
 jest.mock("../../../modules/engine/src/utils/timers", () => ({
   BgTimer: {
@@ -56,7 +59,13 @@ describe("report source collection and phone delivery diagnostics", () => {
     update.mockResolvedValue(undefined)
     sync.mockResolvedValue("unused-token")
     send.mockResolvedValue(undefined)
-    nativeStatus.mockResolvedValue({connection: {state: "connected", fullyBooted: true}} as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
+    jest
+      .mocked(projectPairingIdentity)
+      .mockReturnValue({kind: "paired", model: "Mentra Live", name: "Mentra_Live_test"})
+    nativeStatus.mockResolvedValue({
+      deviceModel: "Mentra Live",
+      connection: {state: "connected", fullyBooted: true},
+    } as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
   })
 
   afterEach(() => jest.useRealTimers())
@@ -103,6 +112,59 @@ describe("report source collection and phone delivery diagnostics", () => {
     ])
   })
 
+  it.each([
+    {kind: "none"} as const,
+    {kind: "pending", model: "Mentra Live"} as const,
+    {kind: "paired", model: "Simulated Glasses", name: "Simulated Glasses"} as const,
+    {kind: "paired", model: "Even Realities G1", name: "G1"} as const,
+  ])("does not request physical device logs for non-Live pairing: %j", async (identity) => {
+    connected()
+    useGlassesStore.getState().setGlassesInfo({deviceModel: "Simulated Glasses"})
+    jest.mocked(projectPairingIdentity).mockReturnValue(identity)
+
+    await expect(submitAutomaticReport(input)).resolves.toMatchObject({status: "submitted"})
+
+    expect(sync).not.toHaveBeenCalled()
+    expect(nativeStatus).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(update.mock.calls.map(([, source, outcome]) => [source, outcome])).toEqual([
+      ["glasses", {state: "unavailable", reason: "no_paired_mentra_live"}],
+      ["glasses_firmware", {state: "unavailable", reason: "no_paired_mentra_live"}],
+    ])
+    expect(addLogs.mock.calls[0][1]).toBe("phone")
+  })
+
+  it("does not dispatch if paired glasses switch to Phone Mode during token sync", async () => {
+    connected()
+    sync.mockImplementationOnce(async () => {
+      jest
+        .mocked(projectPairingIdentity)
+        .mockReturnValue({kind: "paired", model: "Simulated Glasses", name: "Simulated Glasses"})
+      return "unused-token"
+    })
+    await submitAutomaticReport(input)
+    expect(nativeStatus).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith("rep_delivery", "glasses", {
+      state: "unavailable",
+      reason: "no_paired_mentra_live",
+    })
+  })
+
+  it("does not dispatch when the native connected device is simulated despite stale pairing identity", async () => {
+    connected()
+    nativeStatus.mockResolvedValueOnce({
+      deviceModel: "Simulated Glasses",
+      connection: {state: "connected", fullyBooted: true},
+    } as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
+    await submitAutomaticReport(input)
+    expect(send).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith("rep_delivery", "glasses_firmware", {
+      state: "unavailable",
+      reason: "no_connected_mentra_live",
+    })
+  })
+
   it("checks the actual connection again after token synchronization", async () => {
     connected()
     sync.mockImplementationOnce(async () => {
@@ -140,7 +202,9 @@ describe("report source collection and phone delivery diagnostics", () => {
 
   it("does not send when the cached engine says connected but the native link is disconnected", async () => {
     connected()
-    nativeStatus.mockResolvedValueOnce({connection: {state: "disconnected"}} as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
+    nativeStatus.mockResolvedValueOnce({connection: {state: "disconnected"}} as Awaited<
+      ReturnType<typeof BluetoothSdk.getGlassesStatus>
+    >)
 
     await submitAutomaticReport(input)
 
@@ -148,7 +212,8 @@ describe("report source collection and phone delivery diagnostics", () => {
     expect(nativeStatus).toHaveBeenCalledTimes(1)
     expect(send).not.toHaveBeenCalled()
     expect(update).toHaveBeenCalledWith("rep_delivery", "glasses_firmware", {
-      state: "unavailable", reason: "glasses_disconnected",
+      state: "unavailable",
+      reason: "glasses_disconnected",
     })
   })
 
@@ -156,17 +221,25 @@ describe("report source collection and phone delivery diagnostics", () => {
     jest.useFakeTimers()
     connected()
     let finishRead!: (status: Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>) => void
-    nativeStatus.mockImplementationOnce(() => new Promise(resolve => {finishRead = resolve}))
+    nativeStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRead = resolve
+        }),
+    )
 
     const pending = submitAutomaticReport(input)
     await jest.advanceTimersByTimeAsync(10_000)
     await pending
-    finishRead({connection: {state: "connected", fullyBooted: true}} as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
+    finishRead({connection: {state: "connected", fullyBooted: true}} as Awaited<
+      ReturnType<typeof BluetoothSdk.getGlassesStatus>
+    >)
     await Promise.resolve()
 
     expect(send).not.toHaveBeenCalled()
     expect(update).toHaveBeenCalledWith("rep_delivery", "glasses", {
-      state: "failed", reason: "incident_dispatch_timeout",
+      state: "failed",
+      reason: "incident_dispatch_timeout",
     })
     expect(jest.getTimerCount()).toBe(0)
   })
@@ -256,9 +329,11 @@ describe("report source collection and phone delivery diagnostics", () => {
 
     const entries = addLogs.mock.calls[1][2]
     expect(entries).toHaveLength(500)
-    expect(entries).toContainEqual(expect.objectContaining({
-      message: "Report rep_delivery: glasses log notification requested (local_sdk_dispatch_completed)",
-    }))
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        message: "Report rep_delivery: glasses log notification requested (local_sdk_dispatch_completed)",
+      }),
+    )
     expect(entries.at(-1)?.message).toBe("Report rep_delivery: phone delivery logs omitted 102 earlier entries")
   })
 
