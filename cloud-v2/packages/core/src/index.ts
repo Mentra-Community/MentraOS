@@ -29,6 +29,7 @@ import {NightlyRoutineService} from "./services/nightly-routine.service"
 import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
 import {ReportServerLogCollectionService} from './services/report-server-log-collection.service'
 import {assertSupabaseApiKeys} from "./services/account/gotrue.client"
+import {assertSigninConfiguration} from "./services/signin/config"
 
 const logger = createLogger("core")
 
@@ -54,11 +55,14 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   await connectMongo(mongoUrl)
   try {
     await runStartupMigrations()
+    // Refuse sign-in configuration that is incomplete or would let one source
+    // vouch for another's people. With none of it set, Core starts as before.
+    await assertSigninConfiguration()
   } catch (error) {
     // Disconnect best-effort: a secondary disconnect failure must not mask the
-    // original migration error, which is what we rethrow.
+    // original startup error, which is what we rethrow.
     await disconnectMongo().catch((disconnectError) => {
-      logger.warn({disconnectError}, "failed to disconnect mongo after migration failure")
+      logger.warn({disconnectError}, "failed to disconnect mongo after startup failure")
     })
     throw error
   }
