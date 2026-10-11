@@ -19,7 +19,7 @@ import type {OrganizationCapability} from "@mentra/workspace-contract"
 import {Hono} from "hono"
 import {findAccountByEmail, isGotrueAdminConfigured} from "../../services/account/gotrue.client"
 import {MENTRA_TENANT_ID} from "../../services/signin/config"
-import {findOrCreateUser, getUser} from "../../services/user.service"
+import {findOrCreateUser} from "../../services/user.service"
 import {organizationView} from "../../services/workspaces/authorization.service"
 import {
   createOperatorKey,
@@ -71,8 +71,11 @@ export function createOrganizationApi(): Hono<AppEnv> {
     async (c) => {
       const body = await readJsonObject(c)
       const mentraUserId =
-        body.email !== undefined ? await userIdForEmail(requiredString(body, "email")) : await knownUserId(body)
+        body.email !== undefined
+          ? await userIdForEmail(requiredString(body, "email"))
+          : requiredString(body, "mentraUserId").trim()
       // Owning a workspace needs a person to own it; a typo must not mint a membership nobody can ever use.
+      // `recoverOwnership` also refuses an id that names no user, or a deleted account's tombstone.
       if (!mentraUserId) return c.json({error: "user_not_found", error_description: "no such person"}, 404)
       return c.json(await recoverOwnership(userActor(c), c.req.param("workspaceId"), mentraUserId))
     },
@@ -121,12 +124,6 @@ export function createOrganizationApi(): Hono<AppEnv> {
   )
 
   return app
-}
-
-/** The `mentraUserId` in the body, when it names a Core user. */
-async function knownUserId(body: Record<string, unknown>): Promise<string | null> {
-  const mentraUserId = requiredString(body, "mentraUserId").trim()
-  return (await getUser(mentraUserId)) ? mentraUserId : null
 }
 
 /** The Core user of the Mentra account whose confirmed email this is (created on first use), or null. */

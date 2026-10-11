@@ -47,6 +47,7 @@ import {
   leaveWorkspace,
   listWorkspacesForUser,
   recoverOwnership,
+  WorkspaceError,
   type Actor,
 } from "../packages/core/src/services/workspaces/workspace.service"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
@@ -284,7 +285,14 @@ describe("confirmAccountDeletion", () => {
 
     expect((await getWorkspace(s.solo.workspaceId))!.status).toBe("active")
     expect(await countActiveOwners(s.solo.workspaceId)).toBe(0)
-    await recoverOwnership({kind: "system"}, s.solo.workspaceId, "mu_new_owner")
+    // The deleted account's tombstone cannot be made an owner again: nobody could sign in as it.
+    const refused = await recoverOwnership({kind: "system"}, s.solo.workspaceId, s.mentraUserId).catch(err => err)
+    expect(refused).toBeInstanceOf(WorkspaceError)
+    expect({code: refused.code, status: refused.status}).toEqual({code: "user_not_found", status: 404})
+    expect(await countActiveOwners(s.solo.workspaceId)).toBe(0)
+
+    const {mentraUserId: heir} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-heir"})
+    await recoverOwnership({kind: "system"}, s.solo.workspaceId, heir)
     expect(await countActiveOwners(s.solo.workspaceId)).toBe(1)
   })
 

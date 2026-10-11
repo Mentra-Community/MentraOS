@@ -163,9 +163,14 @@ export async function requestAccountDeletion(email: string, tenantUserId: string
 
 export async function confirmAccountDeletion(mentraUserId: string, tenantUserId: string, code: string): Promise<void> {
   await otc.consumeCode({code, purpose: "account_deletion", expectSubject: tenantUserId})
-  // Order: kill V2 sessions, end workspace memberships, remove the operational
-  // support profile/outbox, then delete the Supabase user. Everything
-  // human-identifying (email, password, name) lives in GoTrue and dies here.
+  // Order: kill V2 sessions, set the deletion tombstone, end workspace
+  // memberships, remove the operational support profile/outbox, then delete the
+  // Supabase user. Everything human-identifying (email, password, name) lives in
+  // GoTrue and dies here.
+  //
+  // The tombstone comes before the workspace cleanup, so from then on ownership
+  // recovery and invitations sent as an Organization Admin treat the account as
+  // deleted and nothing can hand it workspace access again behind the cleanup.
   //
   // Workspace access ends before the GoTrue user goes: the memberships and the
   // credentials they created end in one transaction. Should anything after it
@@ -181,12 +186,12 @@ export async function confirmAccountDeletion(mentraUserId: string, tenantUserId:
   // Cloud V1 is a different system with its own database; its data lifecycle
   // is not a cloud-v2 concern and no code here talks to it.
   await revokeAllSessionsForUser({mentraUserId})
-  await removeDeletedUserFromWorkspaces(mentraUserId)
   // Set the tombstone before removing the profile so no new support write can
   // recreate it. A PostHog capture already in flight when the tombstone lands
   // may still deliver; delivered analytics data is governed by that project's
   // retention/deletion policy.
   await UserModel.updateOne({mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+  await removeDeletedUserFromWorkspaces(mentraUserId)
   await SupportProfileModel.deleteOne({mentraUserId})
   await gotrue.deleteUser(tenantUserId)
 }

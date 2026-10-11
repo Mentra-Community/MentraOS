@@ -38,7 +38,8 @@ They hold every organization capability (`organization.workspaces.administer`,
 `organization.credentials.manage`, `organization.incidents.read`,
 `organization.supportProfiles.read`, `organization.testing.read`,
 `organization.testing.manage`) and act as Owner in every workspace, which is how
-they recover a workspace whose Owners are gone.
+they recover a workspace whose Owners are gone. Recovery names an existing
+account; a deleted account is refused (`404 user_not_found`).
 
 ## Creating and joining
 

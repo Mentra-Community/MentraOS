@@ -19,6 +19,7 @@ import type {Model} from "mongoose"
 
 import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -52,6 +53,7 @@ import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {membershipRow} from "./support/membership-row"
 
 const MODELS: Model<any>[] = [
+  UserModel,
   WorkspaceModel,
   WorkspaceMembershipModel,
   WorkspaceInvitationModel,
@@ -700,8 +702,16 @@ describe("leaveWorkspace", () => {
   })
 })
 
+/** Core users rows, as signing in creates them: ownership recovery names an existing account. */
+async function accounts(...mentraUserIds: string[]) {
+  await UserModel.insertMany(
+    mentraUserIds.map(mentraUserId => ({mentraUserId, tenantId: "mentra", tenantUserId: `sb-${mentraUserId}`})),
+  )
+}
+
 describe("recoverOwnership", () => {
   test("organization admin recovers ownership of a workspace whose owners all left", async () => {
+    await accounts("mu_new_owner")
     const ws = await newWorkspace()
     await addMember(ws, "mu_owner2", "owner")
     await leaveWorkspace(user("mu_owner"), ws)
@@ -734,6 +744,7 @@ describe("recoverOwnership", () => {
   })
 
   test("an existing member is promoted to owner in place, with the promotion appended to their history", async () => {
+    await accounts("mu_member")
     const ws = await newWorkspace()
     const memberId = await addMember(ws, "mu_member", "member")
 
@@ -755,6 +766,7 @@ describe("recoverOwnership", () => {
   })
 
   test("someone who is already an owner is left alone", async () => {
+    await accounts("mu_owner")
     const ws = await newWorkspace()
 
     const summary = await recoverOwnership(orgAdmin, ws, "mu_owner")
@@ -765,6 +777,7 @@ describe("recoverOwnership", () => {
   })
 
   test("a person whose earlier membership ended gets a new generation, not the old row back", async () => {
+    await accounts("mu_back")
     const ws = await newWorkspace()
     const oldId = await addMember(ws, "mu_back", "admin")
     await removeMember(user("mu_owner"), ws, oldId, 0)
@@ -782,6 +795,7 @@ describe("recoverOwnership", () => {
   })
 
   test("concurrent recoveries for one person create one membership", async () => {
+    await accounts("mu_target")
     const ws = await newWorkspace()
 
     const results = await Promise.allSettled([
@@ -810,6 +824,22 @@ describe("recoverOwnership", () => {
     await expectError(() => recoverOwnership(orgAdmin, "ws_missing", "mu_x"), "not_found", 404)
     expect(await getActiveMembership(ws, "mu_x")).toBeNull()
     expect(await revisionOf(ws)).toBe(0)
+  })
+
+  test("an id that names no account, or a deleted account's tombstone, is user_not_found and changes nothing", async () => {
+    const ws = await newWorkspace()
+    await accounts("mu_deleted")
+    // Account deletion keeps the users row as a tombstone.
+    await UserModel.updateOne({mentraUserId: "mu_deleted"}, {$set: {supportTelemetryDeletedAt: new Date()}})
+    const before = await revisionOf(ws)
+
+    for (const target of ["mu_nobody", "mu_deleted"]) {
+      await expectError(() => recoverOwnership(orgAdmin, ws, target), "user_not_found", 404)
+      await expectError(() => recoverOwnership(system, ws, target), "user_not_found", 404)
+      expect(await getActiveMembership(ws, target)).toBeNull()
+    }
+    expect(await revisionOf(ws)).toBe(before)
+    expect(await WorkspaceAuditEventModel.countDocuments({action: "membership.ownership_recovered"})).toBe(0)
   })
 })
 
@@ -1225,6 +1255,7 @@ describe("audit", () => {
     await changeRole(user("mu_owner"), ws, memberId, "developer", 0)
     await renameWorkspace(user("mu_owner"), ws, "Acme Two", 1)
     await removeMember(user("mu_owner"), ws, memberId, 2)
+    await accounts("mu_recovered")
     await recoverOwnership(orgAdmin, ws, "mu_recovered")
     const leaverId = await addMember(ws, "mu_leaver", "developer")
     await seedCredential(ws, leaverId)

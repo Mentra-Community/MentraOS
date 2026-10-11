@@ -38,6 +38,7 @@ import type {ClientSession} from "mongoose"
 import {ulid} from "ulid"
 import {withTransaction} from "../../connections/mongo.connection"
 import {AccessCredentialModel} from "../../models/access-credential.model"
+import {UserModel} from "../../models/user.model"
 import {WorkspaceInvitationModel} from "../../models/workspace-invitation.model"
 import {
   WorkspaceMembershipModel,
@@ -366,7 +367,10 @@ export async function leaveWorkspace(actor: Actor & {kind: "user"}, workspaceId:
 /**
  * Give `targetMentraUserId` the owner role, creating the membership if they
  * have none. Organization Admins (and the system) only: this is how a workspace
- * whose owners are all gone gets an owner again.
+ * whose owners are all gone gets an owner again. The target must be a Core user
+ * whose account is not deleted (`user_not_found` otherwise): a deleted account
+ * keeps its users row as a tombstone, and an owner nobody can sign in as would
+ * still count for the last-owner guard.
  */
 export async function recoverOwnership(
   actor: Actor,
@@ -380,6 +384,9 @@ export async function recoverOwnership(
   const target = targetMentraUserId.trim()
   return withTransaction(async session => {
     const workspace = await loadActiveWorkspace(session, workspaceId)
+    if (!(await UserModel.exists({mentraUserId: target, supportTelemetryDeletedAt: null}).session(session))) {
+      fail("user_not_found", "no such person")
+    }
     const existing = await WorkspaceMembershipModel.findOne({workspaceId, mentraUserId: target, status: "active"})
       .session(session)
       .lean<MembershipRow>()

@@ -1567,6 +1567,23 @@ describe("ownership recovery", () => {
     })
   })
 
+  test("a deleted account's tombstone is user_not_found, by id or by email, and becomes no owner", async () => {
+    const ws = await newWorkspace()
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const gone = await person("gone")
+    const url = `/api/organization/workspaces/${ws.workspaceId}/owners`
+    // Account deletion keeps the users row as a tombstone, set before the account directory deletes the account.
+    await UserModel.updateOne({mentraUserId: gone.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+    const revision = await revisionOf(ws.workspaceId, ws.owner)
+
+    for (const body of [{mentraUserId: gone.mentraUserId}, {email: gone.email}]) {
+      const reply = await call("POST", url, {as: admin, body})
+      expect({body, status: reply.status, error: reply.json.error}).toEqual({body, status: 404, error: "user_not_found"})
+    }
+    expect(await WorkspaceMembershipModel.countDocuments({workspaceId: ws.workspaceId, mentraUserId: gone.mentraUserId})).toBe(0)
+    expect(await revisionOf(ws.workspaceId, ws.owner)).toBe(revision)
+  })
+
   test("an existing member is promoted in place, and an existing owner is left as is", async () => {
     const ws = await newWorkspace()
     const admin = await person("org-admin", {email: ADMIN_EMAIL})
