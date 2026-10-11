@@ -174,7 +174,7 @@ for (const channel of ["beta", "dev"]) {
     assert.equal(manifest.cloud.environment, channel === "dev" ? "dev" : "staging")
     assert.equal(manifest.privateDeployment, undefined)
     if (channel === "dev") {
-      const workspaceOrigin = "https://mentra.acmeworkspace.com"
+      const workspaceOrigin = "https://demo.acmeworkspace.com"
       const coreHostname = "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
       const coreOrigin = `https://${coreHostname}`
       const privateDeployment = createPrivateDeploymentRecord({

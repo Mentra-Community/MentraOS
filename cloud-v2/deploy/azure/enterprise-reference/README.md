@@ -51,12 +51,12 @@ Feedback also opens the same form.
 - Mobile public client: `95ad08c2-7837-4ddf-933c-1fce3d6d2799`
 - Core API: `20424d9e-4b99-44e8-82c9-0ad06f08a8db`
 - Core scope: `api://20424d9e-4b99-44e8-82c9-0ad06f08a8db/mentra.session`
-- Workspace: `https://mentra.acmeworkspace.com`
+- Workspace: `https://demo.acmeworkspace.com`
 
-The demo workspace is branded **Acme Industries**. The original
-`https://enterprisedev.mentraglass.com` remains an HTTPS alias for existing
-installs. Both addresses serve the same deployment, with discovery URLs matching
-the address used to enroll. The deployment ID, Core origin, Entra tenant, and existing sessions
+The demo workspace is branded **Acme Industries**. The earlier
+`https://mentra.acmeworkspace.com` and `https://enterprisedev.mentraglass.com`
+remain HTTPS aliases for existing installs. All three addresses serve the same
+deployment, with discovery URLs matching the address used to enroll. The deployment ID, Core origin, Entra tenant, and existing sessions
 are preserved. `acmeworkspace.com` is also verified as an Entra sign-in domain;
 demo employee accounts still require their own assignment and Teams license.
 
@@ -182,14 +182,20 @@ separately in `services.coreUrl`.
 
 When migrating an existing hostname, set `workspaceCertificateName` to a new
 managed-certificate resource name; Azure certificates cannot change their subject
-in place. To keep existing clients working, include the old binding in
-`additionalWorkspaceDomains`, for example:
+in place. Azure issues it only for a hostname already on an app in the
+environment, so add the new hostname to Runtime first (`az containerapp hostname
+add`; the reference CI deployment does this itself). To keep existing clients
+working, include the old binding in `additionalWorkspaceDomains`, for example:
 
 ```json
 {
-  "workspaceHostname": "mentra.acmeworkspace.com",
-  "workspaceCertificateName": "ca-mentra-enterprise-reference-acme-workspace",
+  "workspaceHostname": "demo.acmeworkspace.com",
+  "workspaceCertificateName": "ca-mentra-enterprise-reference-acme-demo",
   "additionalWorkspaceDomains": [
+    {
+      "hostname": "mentra.acmeworkspace.com",
+      "certificateName": "ca-mentra-enterprise-reference-acme-workspace"
+    },
     {
       "hostname": "enterprisedev.mentraglass.com",
       "certificateName": "ca-mentra-enterprise-reference-workspace"
@@ -226,7 +232,7 @@ Treat this as a documented tradeoff, not a production network posture; see
 ## Smoke test
 
 ```bash
-export MENTRA_WORKSPACE=https://mentra.acmeworkspace.com
+export MENTRA_WORKSPACE=https://demo.acmeworkspace.com
 cloud-v2/deploy/azure/enterprise-reference/scripts/smoke-test.sh "$MENTRA_WORKSPACE"
 ```
 
