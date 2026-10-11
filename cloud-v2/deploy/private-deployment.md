@@ -167,8 +167,8 @@ restore, credentials, or meeting creation. Existing consumer token pass-through
 and Call backend routes remain supported; consumer joins still require the
 miniapp-supplied credential. Older clients need no backend change.
 A Mentra App native build containing Teams-user agent support is required for
-employee identity. Install the matching managed miniapp ZIP and re-select the
-workspace to refresh the cached manifest. The new Call bundle requires host
+employee identity. Install the matching managed miniapp ZIP; phones pick it up
+when the Mentra App relaunches. The new Call bundle requires host
 meeting-policy discovery even when the host version is otherwise compatible.
 Hosts without that API show an update message and cannot enable public-backend
 access. Existing installed Call bundles and legacy token joins are unchanged.
