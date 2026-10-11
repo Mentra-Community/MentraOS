@@ -22,7 +22,8 @@ function NativeSelect({
     >
       <select
         className={cn(
-          "w-full min-w-0 cursor-pointer appearance-none rounded-full border border-border bg-surface pr-10 pl-[18px] text-base text-foreground transition-[border-color,background-color] hover:bg-hover disabled:cursor-not-allowed disabled:hover:bg-surface aria-invalid:border-destructive",
+          // No min-w-0: a table column must not squeeze the select below its longest option.
+          "w-full cursor-pointer appearance-none rounded-full border border-border bg-surface pr-10 pl-[18px] text-base text-foreground transition-[border-color,background-color] hover:bg-hover disabled:cursor-not-allowed disabled:hover:bg-surface aria-invalid:border-destructive",
           compact ? "h-9 pr-9 pl-4 text-[15px]" : "h-11",
         )}
         {...props}

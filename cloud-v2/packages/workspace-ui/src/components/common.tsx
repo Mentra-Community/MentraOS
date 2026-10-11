@@ -249,8 +249,12 @@ export function ConfirmButton({
     );
   }
   return (
-    <span role="group" aria-label={ariaLabel} className="inline-flex flex-wrap items-center justify-end gap-2">
-      <span className="text-sm">{prompt}</span>
+    <span
+      role="group"
+      aria-label={ariaLabel}
+      className={cn("inline-flex flex-wrap items-center justify-end gap-2", !outline && "max-w-[19rem]")}
+    >
+      <span className={cn("text-sm", !outline && "basis-full text-right")}>{prompt}</span>
       <Button
         type="button"
         variant="destructive"

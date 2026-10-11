@@ -54,6 +54,8 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `InvitationAcceptView` (`token`, `onAccepted(workspaceId)`, `onDismiss?`) | What an invitation link opens |
 | `SecretDialog` (`name`, `token`, `onDone`) | The show-once dialog for a new credential, for other screens that mint one (the admin portal's operator keys) |
 | `ConfirmButton` (`label`, `ariaLabel`, `prompt`, `confirmLabel`, `onConfirm`) | A destructive action behind an inline confirm step |
+| `Button`, `buttonVariants`, `Input`, `Label`, `NativeSelect` | Mentra's controls, for a host's own screens: one pill button system (`default`, `secondary`, `destructive-secondary`, `destructive`, `ghost`, `link`), pill inputs, and native selects drawn to match |
+| `Avatar`, `WorkspaceAvatar`, `Count`, `Spinner` | A person's initials, a workspace's letter tile, a count beside a heading, the loading spinner |
 | `expiryFromDateInput` | The end of a `<input type="date">` day as an ISO string, or null |
 | `effectiveRole`, `assignableRoles`, `can`, `ROLE_LABELS`, `ROLE_DESCRIPTIONS` | The capability helpers the panels use, and a one-line description of each role |
 | `workspaceListQuery`, `workspaceDetailQuery`, `invitationPreviewQuery`, `workspaceKeys` | Query options and keys, for a host that shows the same data (a workspace switcher) |
@@ -93,19 +95,31 @@ screens a second React (and every hook a null dispatcher). Each site's
 
 ## Styling
 
-The components are styled with Tailwind v4 utility classes and use the shadcn-style
-theme tokens (`background`, `foreground`, `card`, `primary`, `secondary`, `muted`,
-`accent`, `destructive`, `border`, `input`, `ring`). Tailwind only generates
-the classes it finds, so the consuming app must scan this package's sources. In the
-stylesheet that imports Tailwind, add:
+The screens look like Mentra's sign-in page (`websites/account`): Red Hat Display, black and
+grey pill buttons, pill inputs and selects, bordered 24px cards on a plain background,
+the green focus ring, and amber and green notices. The tokens are defined once, in
+`styles/mentra.css` (exported as `@mentra/workspace-ui/mentra.css`): the sign-in page's
+palette as `--mentra-*` variables, mapped onto the shadcn theme names the components use
+(`background`, `foreground`, `primary`, `secondary`, `muted`, `destructive`, `border`,
+`ring`, …) plus brand names (`surface`, `hover`, `brand`, `info`, `error`), the card, menu
+and notice radii, the dialog and menu shadows, the font and the focus ring.
+
+The components are Tailwind v4 utility classes. In the stylesheet that imports Tailwind,
+import the tokens and scan this package's sources (Tailwind only generates the classes it
+finds):
 
 ```css
+@import "tailwindcss";
+@import "@mentra/workspace-ui/mentra.css";
 @source "../node_modules/@mentra/workspace-ui/src";
 ```
 
-The path is relative to that stylesheet (this one is for a stylesheet in `src/`, next to
-`node_modules/`). The consumer provides the theme tokens, as the portals'
-`styles/globals.css` do.
+The `@source` path is relative to that stylesheet (this one is for a stylesheet in
+`src/`, next to `node_modules/`). The tokens load Red Hat Display from `/fonts`, so the
+site serves the sign-in page's `public/fonts` (with its `OFL.txt`), keeps those URLs out
+of the bundle (`external: ["/fonts/*"]` in `Bun.build`) and preloads both weights, as the
+workspace portal's and the admin portal's `build.ts` do. Nothing is loaded from another
+origin.
 
 ## Develop
 
@@ -115,7 +129,7 @@ bun test packages/workspace-ui   # API client and panels (server-rendered with s
 bun run typecheck                # tsc -b, which includes this package
 ```
 
-`src/ui/` holds copies of the portals' `button`, `card`, `input` and `label`
-primitives (the Store cannot import the portals' own), plus a `native-select`. The panels
-use a native select because its options are real markup on the server and use each
+`src/ui/` holds the controls (`button`, `card`, `dialog`, `input`, `label`,
+`native-select`); the workspace portal uses them for its own screens too. The panels use
+a native select because its options are real markup on the server and use each
 platform's own picker.
