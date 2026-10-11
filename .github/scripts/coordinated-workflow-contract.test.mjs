@@ -423,7 +423,9 @@ test("Private Deployment remains release-matched without gating the dev release"
   // Earlier addresses stay bound for phones that enrolled with them.
   assert.match(privateDeployment, /additionalWorkspaceDomains:\{value:\[\{hostname:"mentra\.acmeworkspace\.com",certificateName:"ca-mentra-enterprise-reference-acme-workspace"\},\{hostname:"enterprisedev\.mentraglass\.com",certificateName:"ca-mentra-enterprise-reference-workspace"\}\]\}/)
   // Azure issues a managed certificate only for a hostname already on an app.
-  assert.ok(privateDeployment.indexOf("az containerapp hostname add") < privateDeployment.indexOf("az deployment group create"))
+  const attachHostname = privateDeployment.indexOf("az containerapp hostname add")
+  assert.ok(attachHostname >= 0)
+  assert.ok(attachHostname < privateDeployment.indexOf("az deployment group create"))
   assert.match(privateDeployment, /displayName:\{value:\$reference\[0\]\.displayName\}/)
   assert.match(privateDeployment, /az acr manifest show-metadata/)
   assert.match(privateDeployment, /latestReadyRevisionName/)
