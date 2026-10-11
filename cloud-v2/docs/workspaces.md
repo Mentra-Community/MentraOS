@@ -64,9 +64,13 @@ account; a deleted account is refused (`404 user_not_found`).
   invitations at once, without asking any other service. Miniapps it publishes
   in the Mentra Miniapp Store stay published until a Store operator assigns
   them to another workspace.
-- Deleting a Mentra account ends that person's memberships, revokes the keys
-  (both kinds) and pending invitations they created, and clears their email from
-  their membership rows. Audit events keep the email they recorded.
+- Deleting a Mentra account ends that person's memberships and revokes the
+  keys (both kinds) and pending invitations they created. It then clears their
+  identity from the rows that stay as history: the email on their membership
+  rows, the creator's email and user id on their keys, their address on keys a
+  service issued at their request, and the inviter's email and user id on their
+  invitations. Membership rows keep the opaque user id their history is keyed
+  by, and audit events keep what they recorded.
 
 ## Keys
 

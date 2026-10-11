@@ -10,8 +10,14 @@
  *  - revokes every other pending invitation the user sent, such as one sent as
  *    an Organization Admin (`invitation.revoked`, reason `inviter_account_deleted`).
  * Then the operator keys the person created are revoked (a deleted account is no
- * Organization Admin), and the email copied onto their membership rows for
- * display is cleared.
+ * Organization Admin), and the person's identity is cleared from what stays as
+ * history: the email copied onto their membership rows, the creator's email and
+ * user id on every credential they created, their address on keys a service
+ * issued at their request, and the inviter's email and user id on every
+ * invitation they sent. Nothing needs those after the deletion: the
+ * credentials and invitations are revoked, and who did what stays in the audit
+ * trail. Membership rows keep the opaque `mentraUserId`, which is what their
+ * history is keyed by.
  *
  * Account deletion is never refused for a workspace's sake. A workspace whose
  * last owner this was is left without one, and an Organization Admin recovers it
@@ -33,8 +39,8 @@ import {auditActor, endMembership, isId, type Actor, type MembershipRow} from ".
 
 /**
  * End the deleted user's workspace memberships and revoke the invitations they sent (in one
- * transaction), revoke the operator keys they created and clear their email from their membership
- * rows. Safe to run again: a second run finds nothing left to end or revoke.
+ * transaction), revoke the operator keys they created and clear their identity from the rows that
+ * stay. Safe to run again: a second run finds nothing left to end or revoke.
  */
 export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Promise<{
   endedMembershipIds: string[]
@@ -63,8 +69,48 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
   }).lean<AccessCredentialRow[]>()
   for (const key of operatorKeys) await markRevoked(null, key, auditActor(actor))
 
+  // Everything the person created or sent is revoked by now, so their identity can go. Clearing it
+  // never makes anything valid again: a workspace key stands on its ended membership, and an operator
+  // key with no creator email is on no allowlist. A key a service issued at the person's request
+  // (a Store package key) stays the workspace's, but loses the address it recorded for them.
+  const addresses = await recordedAddresses(mentraUserId)
+  await AccessCredentialModel.updateMany(
+    {createdByMentraUserId: mentraUserId},
+    {$set: {createdByMentraUserId: null, createdByEmail: null}},
+  )
+  if (addresses.length > 0) {
+    await AccessCredentialModel.updateMany(
+      {issuedByService: {$ne: null}, createdByEmail: {$in: addresses}},
+      {$set: {createdByEmail: null}},
+    )
+  }
+  await WorkspaceInvitationModel.updateMany(
+    {invitedByMentraUserId: mentraUserId},
+    {$set: {invitedByMentraUserId: null, invitedByEmail: null}},
+  )
   await WorkspaceMembershipModel.updateMany({mentraUserId, email: {$ne: null}}, {$set: {email: null}})
   return {endedMembershipIds, revokedInvitationIds, revokedOperatorKeyIds: operatorKeys.map(key => key.credentialId)}
+}
+
+/**
+ * The email addresses Core recorded for the person: copied onto their membership rows, and on the
+ * credentials they created. Each as recorded and lowercased, for exact matching.
+ */
+async function recordedAddresses(mentraUserId: string): Promise<string[]> {
+  const [memberships, credentials] = await Promise.all([
+    WorkspaceMembershipModel.find({mentraUserId, email: {$ne: null}}).select({email: 1}).lean(),
+    AccessCredentialModel.find({createdByMentraUserId: mentraUserId, createdByEmail: {$ne: null}})
+      .select({createdByEmail: 1})
+      .lean(),
+  ])
+  const addresses = new Set<string>()
+  for (const recorded of [...memberships.map(row => row.email), ...credentials.map(row => row.createdByEmail)]) {
+    const address = recorded?.trim()
+    if (!address) continue
+    addresses.add(address)
+    addresses.add(address.toLowerCase())
+  }
+  return [...addresses]
 }
 
 /** End every active membership of the user, inside the caller's transaction. */

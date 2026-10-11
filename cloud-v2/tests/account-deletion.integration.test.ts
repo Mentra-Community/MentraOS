@@ -4,8 +4,9 @@
  *
  * Deleting an account ends every workspace membership the person holds, revokes the keys those
  * memberships created and every invitation the person sent, in one transaction, before the account
- * itself is deleted. Nothing else about workspaces changes: other people's memberships and keys,
- * service keys, and invitations addressed to the person stay.
+ * itself is deleted; then their operator keys are revoked and their identity is cleared from the rows
+ * that stay. Nothing else about workspaces changes: other people's memberships and keys, service keys,
+ * and invitations addressed to the person stay.
  *
  * Real rows on a local replica set: users, one-time codes, memberships, credentials, invitations and
  * audit events. The account directory (GoTrue's admin API, where the account is deleted) is a fake
@@ -351,7 +352,7 @@ describe("confirmAccountDeletion", () => {
     await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
 
     const row = (await WorkspaceInvitationModel.findOne({invitationId: sent.invitationId}).lean())!
-    expect(row.status).toBe("revoked")
+    expect(row).toMatchObject({status: "revoked", invitedByMentraUserId: null, invitedByEmail: null})
     const revocation = await WorkspaceAuditEventModel.findOne({
       action: "invitation.revoked",
       "target.invitationId": sent.invitationId,
@@ -370,6 +371,47 @@ describe("confirmAccountDeletion", () => {
     // The membership-sent invitation and the one to the person's own address behave as before.
     expect((await WorkspaceInvitationModel.findOne({invitationId: s.sentInvitationId}).lean())!.status).toBe("revoked")
     expect((await WorkspaceInvitationModel.findOne({invitationId: s.receivedInvitationId}).lean())!.status).toBe("pending")
+  })
+
+  test("the person's identity is cleared from every credential they created or had a service issue", async () => {
+    const s = await scenario()
+    const operatorKey = await createOperatorKey(
+      {kind: "user", mentraUserId: s.mentraUserId, email: OPS_ADMIN_EMAIL, emailVerified: true, isOrganizationAdmin: true},
+      {name: "Incident fetcher", scopes: ["organization.incidents.read"]},
+    )
+    const mine = [s.teamKey, s.soloKey, operatorKey].map(key => key.credential.credentialId)
+    expect(
+      await AccessCredentialModel.countDocuments({credentialId: {$in: mine}, createdByMentraUserId: s.mentraUserId}),
+    ).toBe(3)
+
+    await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
+
+    for (const credentialId of mine) {
+      const row = (await AccessCredentialModel.findOne({credentialId}).lean())!
+      expect({credentialId, revoked: row.revokedAt instanceof Date, by: row.createdByMentraUserId, email: row.createdByEmail}).toEqual({
+        credentialId,
+        revoked: true,
+        by: null,
+        email: null,
+      })
+    }
+    // The Store's key stays the workspace's and keeps working, without the person's address.
+    const storeKey = (await AccessCredentialModel.findOne({credentialId: s.storeKey.credential.credentialId}).lean())!
+    expect({revokedAt: storeKey.revokedAt, email: storeKey.createdByEmail, service: storeKey.issuedByService}).toEqual({
+      revokedAt: null,
+      email: null,
+      service: "store",
+    })
+    expect(await validateCredentialToken(s.storeKey.token)).toMatchObject({credentialId: s.storeKey.credential.credentialId})
+    // Another member's key keeps its creator.
+    expect(await AccessCredentialModel.findOne({credentialId: s.othersKey.credential.credentialId}).lean()).toMatchObject({
+      createdByMentraUserId: "mu_other",
+      createdByEmail: "mu_other@example.test",
+    })
+    // No credential row holds the person's address any more; the audit trail keeps what it recorded.
+    const rows = await AccessCredentialModel.find({}).lean()
+    expect(JSON.stringify(rows)).not.toContain(s.email)
+    expect(JSON.stringify(rows)).not.toContain(s.mentraUserId)
   })
 
   test("the person's operator keys are revoked and their email is cleared from their membership rows", async () => {

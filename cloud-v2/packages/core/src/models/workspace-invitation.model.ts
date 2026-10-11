@@ -12,7 +12,8 @@
  *    Admin by the verified email `invitedByEmail`;
  *  - `system`: Core itself.
  * `invitedByMentraUserId` is the person who sent it, for both kinds a person can
- * send; account deletion revokes their pending invitations by it.
+ * send; account deletion revokes their pending invitations by it, then clears it
+ * and `invitedByEmail`.
  */
 
 import {WORKSPACE_ROLES} from "@mentra/workspace-contract"
