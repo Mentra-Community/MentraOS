@@ -13,6 +13,15 @@ for the workspace hostname, and the served deployment manifest. The Runtime
 profile does not start Redis, UDP, cloud audio, camera, Cloudflare, speech,
 maps, Store, or reporting dependencies.
 
+The Acme demo deployment differs in one way, for the Enterprise Demo miniapp it
+adds from [demo-miniapps.json](./demo-miniapps.json). With `cloudSpeechAndPhotos`
+on, Runtime also runs speech-to-text (Soniox), text-to-speech (ElevenLabs) and
+glasses photos, stored on the replica, with a Redis sidecar. Speech and questions
+then leave the stack for Soniox, ElevenLabs and the miniapp's hosted backend. The
+installer doesn't offer this. Its keys are the `soniox-api-key` and
+`elevenlabs-api-key` secrets in the stack's Key Vault, which an Owner stored and
+granted to Runtime once, as for the Graph client secret below.
+
 Core's report API is available independently of Runtime and consumer telemetry.
 See [report setup and retrieval](operations.md#reports-and-durable-attachments)
 for existing admin org API-key authorization and the attachment-storage lifecycle.

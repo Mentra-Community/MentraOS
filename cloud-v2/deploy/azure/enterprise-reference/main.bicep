@@ -72,6 +72,11 @@ param managedMiniappDirectory string = '/app/cloud-v2/deploy/azure/enterprise-re
 param allowedGlassesModels array = ['mentra-live']
 param telemetryEnabled bool = false
 
+@description('Reference demo only, not offered by the installer: Runtime also runs cloud speech-to-text (Soniox), text-to-speech (ElevenLabs) and glasses photos, with Redis as a sidecar. The Key Vault secrets soniox-api-key and elevenlabs-api-key, and the Runtime identity\'s read access to them, are set up by hand.')
+param cloudSpeechAndPhotos bool = false
+@description('Digest-pinned Redis image in this deployment\'s registry, for cloudSpeechAndPhotos.')
+param redisImage string = ''
+
 @description('Organization privacy-policy URL. Empty serves the image-bundled same-origin document.')
 param privacyPolicyUrl string = ''
 @description('Organization terms URL. Empty serves the image-bundled same-origin document.')
@@ -290,11 +295,13 @@ var deploymentManifest = {
     configuration: miniappConfiguration
   }
   glasses: { allowedModelsOverride: allowedGlassesModels }
+  // Runtime requires these to match its services: realtime-audio turns on the
+  // realtime session and cloud speech, and camera turns on managed streams.
   features: {
-    runtimeRealtimeSession: false
-    managedStreams: false
+    runtimeRealtimeSession: cloudSpeechAndPhotos
+    managedStreams: cloudSpeechAndPhotos
     nativeMeetings: true
-    cloudSpeech: false
+    cloudSpeech: cloudSpeechAndPhotos
     onDeviceSpeech: false
     navigation: false
   }
@@ -386,6 +393,26 @@ var additionalWorkspaceBindings = [for domain in additionalWorkspaceDomains: {
   certificateId: resourceId('Microsoft.App/managedEnvironments/managedCertificates', environmentName, domain.certificateName)
 }]
 var workspaceAliasOrigins = [for domain in additionalWorkspaceDomains: 'https://${domain.hostname}']
+var speechAndPhotosEnv = cloudSpeechAndPhotos ? [
+  { name: 'SONIOX_API_KEY', secretRef: 'soniox-api-key' }
+  { name: 'ELEVENLABS_API_KEY', secretRef: 'elevenlabs-api-key' }
+  { name: 'AUDIO_PROVIDER', value: 'soniox' }
+  // Photos are stored on the replica and served from /api/camera/blob.
+  { name: 'STORAGE_PROVIDER', value: 'local' }
+  { name: 'REDIS_URL', value: 'redis://127.0.0.1:6379' }
+  // Container Apps ingress carries no UDP, so the phone streams audio over the realtime WebSocket.
+  { name: 'AUDIO_UDP_AUTO_DETECT_LAN', value: 'false' }
+  { name: 'AUDIO_WORKERS', value: '1' }
+] : []
+var redisSidecar = cloudSpeechAndPhotos ? [
+  {
+    name: 'redis'
+    image: redisImage
+    // Sessions, audio and pending photos are transient; a failed snapshot must not stop writes.
+    args: ['--appendonly', 'no', '--stop-writes-on-bgsave-error', 'no']
+    resources: { cpu: json('0.25'), memory: '0.5Gi' }
+  }
+] : []
 
 resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
   name: runtimeName
@@ -424,17 +451,20 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
         { name: 'acs-connection-string', value: communication.listKeys().primaryConnectionString }
       ], empty(teamsGraphClientId) ? [] : [
         { name: 'teams-graph-client-secret', keyVaultUrl: '${vaultUri}secrets/teams-graph-client-secret-${teamsGraphClientId}', identity: runtimeIdentity.id }
-      ])
+      ], cloudSpeechAndPhotos ? [
+        { name: 'soniox-api-key', keyVaultUrl: '${vaultUri}secrets/soniox-api-key', identity: runtimeIdentity.id }
+        { name: 'elevenlabs-api-key', keyVaultUrl: '${vaultUri}secrets/elevenlabs-api-key', identity: runtimeIdentity.id }
+      ] : [])
     }
     template: {
-      containers: [
+      containers: concat([
         {
           name: 'runtime'
           image: cloudImage
           command: ['bun', 'packages/runtime/src/index.ts']
-          env: [
+          env: concat([
             { name: 'PORT', value: '3001' }
-            { name: 'RUNTIME_SERVICES', value: 'meetings' }
+            { name: 'RUNTIME_SERVICES', value: cloudSpeechAndPhotos ? 'meetings,realtime-audio,tts,camera' : 'meetings' }
             { name: 'MEETING_PROVIDERS', value: 'acs-teams' }
             { name: 'CLOUD_CLIENT_MIN_VERSION', value: clientMinVersion }
             { name: 'CLOUD_CLIENT_RECOMMENDED_VERSION', value: effectiveClientRecommendedVersion }
@@ -471,14 +501,15 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             union({ name: 'TEAMS_GRAPH_CLIENT_SECRET' }, empty(teamsGraphClientId) ? { value: '' } : { secretRef: 'teams-graph-client-secret' })
             { name: 'LOG_STDOUT_JSON', value: 'true' }
             { name: 'SERVICE_NAME', value: 'runtime-enterprise-reference' }
-          ]
-          resources: { cpu: json('0.5'), memory: '1Gi' }
+          ], speechAndPhotosEnv)
+          // With the Redis sidecar the app totals 1 CPU and 2 GiB, a valid Container Apps size.
+          resources: cloudSpeechAndPhotos ? { cpu: json('0.75'), memory: '1.5Gi' } : { cpu: json('0.5'), memory: '1Gi' }
           probes: [
             { type: 'Liveness', httpGet: { path: '/healthz', port: 3001 }, initialDelaySeconds: 10, periodSeconds: 10 }
             { type: 'Readiness', httpGet: { path: '/ready', port: 3001 }, initialDelaySeconds: 5, periodSeconds: 5 }
           ]
         }
-      ]
+      ], redisSidecar)
       scale: { minReplicas: 1, maxReplicas: 1 }
     }
   }
