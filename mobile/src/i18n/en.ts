@@ -898,7 +898,6 @@ const en = {
     chooseFromLibrary: "Choose from Library",
     androidBlur: "Blur effects",
     androidInnerShadow: "Inner shadow",
-    enableLandscape: "Enable landscape",
   },
   debugSettings: {
     showNotifyIos: "Show Notify (experimental)",
