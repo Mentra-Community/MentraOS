@@ -1,6 +1,6 @@
 import {storage} from "@/utils/storage/storage"
 
-import type {ActiveDeployment, DeploymentCandidate, WorkspaceDeployment} from "./types"
+import type {ActiveDeployment, DeploymentCandidate, DeploymentManifest, WorkspaceDeployment} from "./types"
 import {withClearedDeploymentDebugOverrides} from "./debugOverrides"
 import {createConsumerDeployment} from "./officialManifest"
 import {deploymentManifestSchema} from "./schema"
@@ -117,6 +117,28 @@ export class DeploymentStore {
     this.setActive(createConsumerDeployment(), false)
   }
 
+  /**
+   * Adopt the workspace's current manifest for the selection it was fetched for.
+   *
+   * Only a manifest with the same deployment, Core and sign-in configuration is
+   * adopted; those identify the stored session. `activate: false` saves it for
+   * the next launch without replacing the deployment this session runs on.
+   */
+  adoptRefreshedManifest(
+    expected: WorkspaceDeployment,
+    manifest: DeploymentManifest,
+    {activate}: {activate: boolean},
+  ): RefreshedManifestOutcome {
+    if (this.active !== expected) return "superseded"
+    if (sameJson(expected.manifest, manifest)) return "unchanged"
+    if (!keepsWorkspaceSession(expected.manifest, manifest)) return "sign-in-changed"
+    const refreshed: WorkspaceDeployment = {...expected, manifest}
+    this.persistence.save(refreshed)
+    if (!activate) return "saved-for-next-launch"
+    this.setActive(refreshed)
+    return "updated"
+  }
+
   subscribe(listener: (deployment: ActiveDeployment, resolved: boolean) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -127,6 +149,46 @@ export class DeploymentStore {
     this.resolved = resolved
     for (const listener of this.listeners) listener(deployment, resolved)
   }
+}
+
+export type RefreshedManifestOutcome =
+  | "updated"
+  | "saved-for-next-launch"
+  | "unchanged"
+  | "sign-in-changed"
+  | "superseded"
+
+/** The stored Entra account and Cloud session belong to these fields. */
+function keepsWorkspaceSession(current: DeploymentManifest, next: DeploymentManifest): boolean {
+  return (
+    current.deploymentId === next.deploymentId &&
+    current.services.coreUrl === next.services.coreUrl &&
+    sameJson(current.auth, next.auth)
+  )
+}
+
+/** Structural equality for schema-parsed manifest values, independent of key order. */
+function sameJson(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => sameJson(value, right[index]))
+    )
+  }
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false
+  const leftKeys = Object.keys(left)
+  const rightRecord = right as Record<string, unknown>
+  return (
+    leftKeys.length === Object.keys(right).length &&
+    leftKeys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+        sameJson((left as Record<string, unknown>)[key], rightRecord[key]),
+    )
+  )
 }
 
 function restoreDeploymentSelection(value: unknown): PersistedDeploymentSelection | null {

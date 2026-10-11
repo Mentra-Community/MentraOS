@@ -419,6 +419,11 @@ class MantleManager {
     })
   }
 
+  /** True once Engine is being or has been configured from the active deployment. */
+  public isInitialized(): boolean {
+    return this.initialized || this.initialization !== null
+  }
+
   public async waitForMiniapps(): Promise<void> {
     await this.miniappInitialization
   }

@@ -1,5 +1,6 @@
 import {DeploymentResolutionError, normalizeWorkspaceOrigin, resolveDeploymentCandidate} from "./resolver"
 import {DeploymentStore, type DeploymentStorage} from "./store"
+import {refreshWorkspaceManifest} from "./refresh"
 import type {ActiveDeployment, DeploymentManifest, WorkspaceDeployment} from "./types"
 import {MicrosoftEntraDeploymentAuthProvider} from "./auth/MicrosoftEntraDeploymentAuthProvider"
 
@@ -581,5 +582,151 @@ describe("MicrosoftEntraDeploymentAuthProvider", () => {
       "Native meetings are disabled by this deployment",
     )
     expect(acquireToken).not.toHaveBeenCalled()
+  })
+})
+
+describe("workspace manifest refresh", () => {
+  const enterprise = {
+    packageName: "com.mentra.enterprise",
+    version: "0.1.11",
+    bundleUrl: `${WORKSPACE}/miniapps/com.mentra.enterprise-0.1.11.zip`,
+    sha256: "a".repeat(64),
+  }
+  const withEnterprise = () => manifest({miniapps: {managed: [enterprise], configuration: {}}})
+
+  class CountingStorage extends MemoryDeploymentStorage {
+    saves = 0
+    failSaves = false
+    override save(value: ActiveDeployment): void {
+      if (this.failSaves) throw new Error("storage unavailable")
+      this.saves += 1
+      super.save(value)
+    }
+  }
+
+  async function signedIn() {
+    const persistence = new CountingStorage()
+    const store = new DeploymentStore(persistence)
+    const deployment = await store.activate({
+      workspaceOrigin: WORKSPACE,
+      manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
+      manifest: manifest(),
+    })
+    persistence.saves = 0
+    return {persistence, store, deployment}
+  }
+
+  const candidate = (next: DeploymentManifest) => ({
+    workspaceOrigin: WORKSPACE,
+    manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
+    manifest: next,
+  })
+
+  it("applies a new managed miniapp at launch without a new sign-in", async () => {
+    const {persistence, store, deployment} = await signedIn()
+    const seen: ActiveDeployment[] = []
+    store.subscribe((next) => seen.push(next))
+    const resolve = jest.fn(async () => candidate(withEnterprise()))
+
+    await expect(refreshWorkspaceManifest({canApplyNow: () => true, store, resolve})).resolves.toBe("updated")
+
+    expect(resolve).toHaveBeenCalledWith(WORKSPACE)
+    expect(store.getActive()).toMatchObject({kind: "workspace", activatedAt: deployment.activatedAt})
+    expect(store.getActive().manifest.miniapps.managed).toEqual([enterprise])
+    expect(seen).toHaveLength(1)
+    expect(new DeploymentStore(persistence).getActive().manifest.miniapps.managed).toEqual([enterprise])
+  })
+
+  it("saves the manifest for the next launch once Engine has started", async () => {
+    const {persistence, store, deployment} = await signedIn()
+    const outcome = await refreshWorkspaceManifest({
+      canApplyNow: () => false,
+      store,
+      resolve: async () => candidate(withEnterprise()),
+    })
+    expect(outcome).toBe("saved-for-next-launch")
+    // This session keeps running on the deployment Engine was configured from.
+    expect(store.getActive()).toBe(deployment)
+    expect(new DeploymentStore(persistence).getActive().manifest.miniapps.managed).toEqual([enterprise])
+  })
+
+  it("leaves an unchanged manifest alone, whatever its key order", async () => {
+    const {persistence, store, deployment} = await signedIn()
+    const copy = JSON.parse(JSON.stringify(deployment.manifest)) as Record<string, unknown>
+    const same = Object.fromEntries(Object.entries(copy).reverse()) as unknown as DeploymentManifest
+    const outcome = await refreshWorkspaceManifest({
+      canApplyNow: () => true,
+      store,
+      resolve: async () => candidate(same),
+    })
+    expect(outcome).toBe("unchanged")
+    expect(store.getActive()).toBe(deployment)
+    expect(persistence.saves).toBe(0)
+  })
+
+  it.each([
+    ["deployment", {deploymentId: "another-deployment"}],
+    ["Core", {services: {coreUrl: "https://core.enterprise.example", runtimeUrl: WORKSPACE}}],
+    [
+      "sign-in app",
+      {
+        auth: {
+          ...(manifest().auth as Extract<DeploymentManifest["auth"], {mode: "microsoft-entra"}>),
+          clientId: "00000000-0000-4000-8000-000000000000",
+        },
+      },
+    ],
+  ])("keeps the saved manifest when the %s changes, since the session belongs to it", async (_, change) => {
+    const {persistence, store, deployment} = await signedIn()
+    const outcome = await refreshWorkspaceManifest({
+      canApplyNow: () => true,
+      store,
+      resolve: async () => candidate({...withEnterprise(), ...change}),
+    })
+    expect(outcome).toBe("sign-in-changed")
+    expect(store.getActive()).toBe(deployment)
+    expect(persistence.saves).toBe(0)
+  })
+
+  it("starts with the saved manifest when the workspace can't be reached or storage fails", async () => {
+    const {persistence, store, deployment} = await signedIn()
+    const unreachable = async () => {
+      throw new DeploymentResolutionError("Workspace manifest request failed.", "network")
+    }
+    await expect(refreshWorkspaceManifest({canApplyNow: () => true, store, resolve: unreachable})).resolves.toBe(
+      "unavailable",
+    )
+    persistence.failSaves = true
+    await expect(
+      refreshWorkspaceManifest({canApplyNow: () => true, store, resolve: async () => candidate(withEnterprise())}),
+    ).resolves.toBe("unavailable")
+    expect(store.getActive()).toBe(deployment)
+  })
+
+  it("saves a slow manifest for the next launch instead of holding up this one", async () => {
+    const {persistence, store, deployment} = await signedIn()
+    let respond: (value: ReturnType<typeof candidate>) => void = () => {}
+    const slow = new Promise<ReturnType<typeof candidate>>((done) => (respond = done))
+    const outcome = await refreshWorkspaceManifest({canApplyNow: () => true, store, resolve: () => slow, waitMs: 1})
+    expect(outcome).toBe("finishing-in-background")
+    respond(candidate(withEnterprise()))
+    await slow
+    await new Promise((done) => setTimeout(done, 0))
+    expect(store.getActive()).toBe(deployment)
+    expect(new DeploymentStore(persistence).getActive().manifest.miniapps.managed).toEqual([enterprise])
+  })
+
+  it("ignores a refresh for a selection the user has since left", async () => {
+    const {store, deployment} = await signedIn()
+    await store.returnToMentra()
+    expect(store.adoptRefreshedManifest(deployment, withEnterprise(), {activate: true})).toBe("superseded")
+    expect(store.getActive().kind).toBe("consumer")
+  })
+
+  it("does nothing for Mentra's own deployment", async () => {
+    const store = new DeploymentStore(new MemoryDeploymentStorage())
+    const resolve = jest.fn()
+    await expect(refreshWorkspaceManifest({canApplyNow: () => true, store, resolve})).resolves.toBe("not-workspace")
+    expect(resolve).not.toHaveBeenCalled()
   })
 })

@@ -12,6 +12,21 @@ Every active deployment has a schema-v1 `DeploymentManifest`:
   Consumer environment variables do not change these defaults. The cached source
   manifest remains unchanged when debugging.
 
+## Workspace manifest refresh
+
+Each launch re-reads the selected workspace's manifest (`refresh.ts`) beside the
+boot version check, so miniapps and features an administrator adds reach the
+phone without a new sign-in. Engine reads the manifest once, when it starts:
+
+- A manifest that arrives within 3 seconds, before Engine starts, applies to this
+  launch.
+- A later one, or one fetched after background recovery already started Engine,
+  is saved for the next launch.
+- The stored Entra account and Cloud session belong to the deployment ID, Core
+  and `auth`. A manifest that changes any of these is not adopted; the person
+  selects the workspace again.
+- A failed or invalid fetch keeps the saved manifest.
+
 `debugOverrides.ts` resolves the selected manifest with the active Core/Runtime
 overrides. `cloudClient.ts` adapts that effective manifest for the engine. Login's
 Core requests, boot's Runtime version check, Debug Settings, startup, and manual
