@@ -171,7 +171,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     },
     ios: {
       icon: variant.icon,
-      supportsTablet: false,
+      supportsTablet: true,
       requireFullScreen: true,
       buildNumber: String(buildNumber),
       bundleIdentifier: iosBundleId,
@@ -239,6 +239,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "UIInterfaceOrientationPortrait",
           "UIInterfaceOrientationPortraitUpsideDown",
         ],
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight",
+        ],
         BGTaskSchedulerPermittedIdentifiers: ["com.mentra.background-timer"],
         // Mapbox Navigation SDK v3 (iOS) reads its public access token from
         // Info.plist under `MBXAccessToken` at boot. Replaces the old
@@ -264,7 +270,6 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     },
     plugins: [
       // our custom plugins:
-      "./plugins/remove-ipad-orientations.js",
       // Crust owns the Android dependencies and iOS Mapbox SPM/build-order setup.
       "@mentra/crust",
       "@mentra/acs-meeting",
