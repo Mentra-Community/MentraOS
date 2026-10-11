@@ -76,6 +76,8 @@ export function PortalShell({
           canCreate={portal.creation.allowed}
           createNotice={creationNotice(portal.creation)}
           onCreate={() => setCreating(true)}
+          listFailed={list.isError}
+          onRetry={() => void list.refetch()}
         />
       }
       nav={nav}

@@ -249,6 +249,20 @@ describe("the workspace switcher", () => {
     expect(markup).toContain("created by its administrators");
   });
 
+  test("while the list loads, the menu says so", () => {
+    const markup = open({ workspaces: undefined });
+    expect(markup).toContain("Loading…");
+    expect(markup).not.toContain("Retry");
+  });
+
+  test("when the list cannot be loaded, the menu says so and offers a retry instead of loading forever", () => {
+    const markup = open({ workspaces: undefined, listFailed: true, onRetry: () => {} });
+    expect(markup).toContain("load your workspaces");
+    expect(markup).toContain("Retry");
+    expect(markup).not.toContain("Loading…");
+    expect(markup).toContain("Create workspace");
+  });
+
   test("closed, it shows only the current workspace and your role", () => {
     const markup = open({ defaultOpen: false });
     expect(markup).toContain("Acme Field Team");

@@ -33,12 +33,17 @@ export function WorkspaceSwitcher({
   canCreate,
   createNotice,
   onCreate,
+  listFailed = false,
+  onRetry,
   defaultOpen = false,
 }: {
   /** Null on pages that are not about one workspace (not found, enterprise). */
   current: SwitcherWorkspace | null;
-  /** Undefined while the list loads. */
+  /** Undefined while the list loads, or when it could not be loaded (see `listFailed`). */
   workspaces: readonly SwitcherWorkspace[] | undefined;
+  /** The list could not be loaded; the menu offers a retry instead of waiting. */
+  listFailed?: boolean;
+  onRetry?(): void;
   invitations: readonly SwitcherInvitation[];
   canCreate: boolean;
   /** Why creating is not offered, shown in its place. */
@@ -131,7 +136,21 @@ export function WorkspaceSwitcher({
           className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 max-h-[min(70vh,520px)] overflow-y-auto rounded-[14px] border border-[#e0e4de] bg-white p-1.5 shadow-[0_16px_40px_-12px_rgba(20,21,27,0.28)]"
         >
           <MenuLabel>Workspaces</MenuLabel>
-          {workspaces === undefined ? (
+          {workspaces === undefined && listFailed ? (
+            <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-sm text-[#8a8d95]" role="alert">
+              <span>Couldn&apos;t load your workspaces.</span>
+              {onRetry ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={onRetry}
+                  className="rounded-[8px] px-2 py-1 font-medium text-[#14151b] outline-none hover:bg-[#f3f4f2] focus-visible:bg-[#f3f4f2]"
+                >
+                  Retry
+                </button>
+              ) : null}
+            </div>
+          ) : workspaces === undefined ? (
             <div className="px-2 py-1.5 text-sm text-[#8a8d95]">Loading…</div>
           ) : others.length === 0 ? (
             <div className="px-2 py-1.5 text-sm text-[#8a8d95]">You are not in any workspace yet.</div>
