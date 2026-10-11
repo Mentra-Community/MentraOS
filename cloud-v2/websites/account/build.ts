@@ -9,7 +9,7 @@
  * All three may be unset (CI builds without configuration). The site then
  * shows "Sign-in is not configured." on every route.
  */
-import { cp, rm, writeFile } from "node:fs/promises";
+import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildHeadersFile, supabaseOrigin } from "./src/lib/headers";
 
@@ -17,6 +17,9 @@ export { buildHeadersFile } from "./src/lib/headers";
 
 const root = import.meta.dir;
 const outdir = path.join(root, "dist");
+
+/** Red Hat Display weights in public/fonts, preloaded so the first render uses them. */
+const FONTS = ["/fonts/RedHatDisplay-Regular.ttf", "/fonts/RedHatDisplay-SemiBold.ttf"];
 
 const config = {
   SUPABASE_URL: (process.env.SUPABASE_URL ?? "").trim(),
@@ -40,6 +43,9 @@ async function build() {
     minify: true,
     target: "browser",
     sourcemap: "linked",
+    // The self-hosted fonts are copied from public/fonts. Bun would otherwise
+    // inline them as data: URLs, which the CSP does not allow.
+    external: ["/fonts/*"],
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
       "process.env.SUPABASE_URL": JSON.stringify(config.SUPABASE_URL),
@@ -53,6 +59,11 @@ async function build() {
   }
 
   await cp(path.join(root, "public"), outdir, { recursive: true, force: true });
+  const htmlPath = path.join(outdir, "index.html");
+  const html = await readFile(htmlPath, "utf8");
+  if (!html.includes("</head>")) throw new Error("dist/index.html has no </head> for the font preloads.");
+  const preloads = FONTS.map((href) => `<link rel="preload" href="${href}" as="font" type="font/ttf" crossorigin>`);
+  await writeFile(htmlPath, html.replace("</head>", `${preloads.join("")}</head>`));
   await writeFile(path.join(outdir, "_headers"), buildHeadersFile(config.SUPABASE_URL));
   console.log(` dist/_headers  connect-src 'self' ${origin}`);
 }
