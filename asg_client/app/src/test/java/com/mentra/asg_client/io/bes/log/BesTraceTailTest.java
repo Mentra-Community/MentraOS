@@ -605,4 +605,72 @@ public class BesTraceTailTest {
         assertTrue(dump, dump.contains("batches=1"));
         assertTrue(dump, dump.contains("cursor_saves=1"));
     }
+
+    // ---- trace.txt wall-time order (OS-1988) -------------------------------------------------
+
+    private static JSONObject lossy(String bid, long g, long p, long lost, long tp, String text)
+            throws Exception {
+        return bidData(bid, g, p, p + 100000, text)
+                .put("l", String.format(Locale.US, "%016x", lost)).put("t", tp).put("tp", tp);
+    }
+
+    @Test
+    public void frozenTraceStaysInTimeOrderAcrossGapRebootAndReplay() throws Exception {
+        mTail.setSupported(true);
+        idle();
+        mTail.onUartPayload(frame("hm_rlog_ready", new JSONObject().put("g", 1).put("bid", BID_A)));
+        idle();
+        mTail.onUartPayload(frame("hm_rlog", lossy(BID_A, 1, 0, 0, 100000,
+                "     99000/I/NONE  /  1 | first\n     99500/I/NONE  /  1 | second\n")));
+        idle();
+        long gapStart = 0x5277;
+        // The hardware shape: lines were lost, the batch starts with the cut tail of a line and
+        // carries prefixes far older than the arrival time.
+        JSONObject gapBody = lossy(BID_A, 1, gapStart, 140, 100000,
+                "/D/OTA   /  1 | app_flash_get_dev_id_by_addr(info.startAddr):0\n"
+                        + "      6853/I/NONE  /  1 | app_flash_register_module mod:3\n"
+                        + "      6900/D/OTA   /  1 | _register_bootinfo_user\n");
+        mTail.onUartPayload(frame("hm_rlog", gapBody));
+        idle();
+        mTail.onUartPayload(frame("hm_rlog_ready", new JSONObject().put("g", 1).put("bid", BID_A)));
+        idle();
+        // A retry of the same batch (the ack was lost): the duplicate filter drops it.
+        mTail.onUartPayload(frame("hm_rlog", gapBody));
+        idle();
+        // The BES rebooted: another boot id, and its first lines are young again.
+        mTail.onUartPayload(frame("hm_rlog", lossy(BID_B, 1, 0, 0, 4000,
+                "       200/I/NONE  /  1 | boot a\n       300/I/NONE  /  1 | boot b\n")));
+        idle();
+        mTail.onUartPayload(frame("hm_rlog", lossy(BID_B, 1, 0x80, 90, 4100,
+                "      3900/I/NONE  /  1 | after second gap\n")));
+        idle();
+
+        List<BesTraceStore.Line> stored = mTail.store().readSince(Long.MAX_VALUE / 4);
+        int gaps = 0;
+        int reboots = 0;
+        long previous = -1;
+        for (BesTraceStore.Line line : stored) {
+            assertTrue(line.text + " at " + line.wallMs + " after " + previous,
+                    line.wallMs >= previous);
+            previous = line.wallMs;
+            if (line.text.startsWith("[ASG-BES-GAP]")) gaps++;
+            if (line.text.startsWith("[ASG-BES-REBOOT]")) reboots++;
+        }
+        assertEquals(2, gaps);
+        assertEquals(1, reboots);
+
+        File dest = new File(ApplicationProvider.getApplicationContext().getFilesDir(),
+                "frozen_trace.txt");
+        BesTraceStore.Frozen frozen = mTail.store().freeze(dest, 0, Long.MAX_VALUE, 1 << 20);
+        assertEquals(2, frozen.gaps);
+        long last = -1;
+        int rows = 0;
+        for (String row : java.nio.file.Files.readAllLines(dest.toPath())) {
+            long wall = Long.parseLong(row.split("\t", 4)[0]);
+            assertTrue("frozen row " + row, wall >= last);
+            last = wall;
+            rows++;
+        }
+        assertEquals(frozen.lines, rows);
+    }
 }

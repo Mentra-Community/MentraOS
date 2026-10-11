@@ -343,6 +343,21 @@ public final class BesTraceStore {
         return out;
     }
 
+    /** Wall time of the newest stored row, or 0 when the store is empty. */
+    public synchronized long lastWallMs() {
+        File[] files = segments();
+        for (int s = files.length - 1; s >= 0; s--) {
+            List<String> rows = readRows(files[s]);
+            for (int i = rows.size() - 1; i >= 0; i--) {
+                Line line = parse(rows.get(i));
+                if (line != null) {
+                    return line.wallMs;
+                }
+            }
+        }
+        return 0;
+    }
+
     /** The newest lines whose text fits in {@code maxBytes}, oldest first. */
     public synchronized List<Line> readNewest(long windowMs, int maxBytes) {
         List<Line> all = readSince(windowMs);
