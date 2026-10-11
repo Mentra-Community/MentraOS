@@ -238,7 +238,8 @@ from the manifest removes that deployment-owned install. Unrelated local and
 SYSTEM installs are never adopted or deleted.
 
 The Mentra App resolves the remote manifest when the workspace is selected and
-re-reads it each time the app opens, so a changed managed list installs then.
+re-reads it each time the app opens and every 15 minutes while it runs, so a
+changed managed list installs then.
 An open miniapp asks the employee before it updates, and a removed one goes when
 it closes.
 Runtime minimum-version policy remains live and independent.

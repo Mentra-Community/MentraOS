@@ -10,6 +10,7 @@ import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
+import {workspaceManifestScheduler} from "@/services/deployment/workspaceManifestScheduler"
 import {BUNDLED_MINIAPPS, BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
 import {
   BUNDLED_STORE_MINIAPP_PACKAGES,
@@ -714,6 +715,7 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
     storeUpdateScheduler.stop()
+    workspaceManifestScheduler.stop()
     this.activePhoneNotificationId = null
 
     // Spoken notifications: a queued summary would otherwise synthesize and play
@@ -1127,6 +1129,14 @@ class MantleManager {
         )
       }),
     })
+    // Keep checking the workspace's manifest while the app runs, like Store updates.
+    const deployment = deploymentStore.getActive()
+    if (deployment.kind === "workspace") {
+      void workspaceManifestScheduler.start(deployment.workspaceOrigin, {
+        isRunning: () => this.isInitialized(),
+        reconcile: () => this.applyDeploymentUpdate(),
+      })
+    }
     this.subs.push({
       remove: engine.settings.onChanged(SETTINGS.native_notifications_enabled.key, () => {
         this.stopPhoneNotificationPresentation()
