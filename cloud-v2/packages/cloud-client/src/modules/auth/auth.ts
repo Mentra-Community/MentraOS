@@ -93,6 +93,8 @@ const EXPIRY_MARGIN_SECONDS = 60
 const REVOKE_ATTEMPTS = 3
 /** Base backoff between revoke attempts in milliseconds; doubles per attempt. */
 const REVOKE_RETRY_BASE_MS = 250
+/** Whole remote logout operation, including refresh and retries. */
+const REVOKE_TIMEOUT_MS = 10_000
 
 /** The cloud's token endpoints, relative to the core base URL. */
 const EXCHANGE_PATH = "/api/client/auth/exchange"
@@ -312,31 +314,43 @@ export class Auth implements AuthModule {
   }
 
   async clearSession(): Promise<void> {
+    const current = this.store.current()
+    // Capture the saved refresh token before deleting it, but never reacquire
+    // credentials through the upstream provider during logout.
+    const refreshSnapshot = this.store.refreshToken()
     this.sessionGeneration += 1
     this.sessionCleared = true
-    let revokeError: unknown
+    this.runtimeToken = null
+    this.miniappCache.clear()
+    this.expiredFired = false
+    // Start local deletion in the same synchronous prefix as invalidation;
+    // only local storage work may precede it, never a network operation.
+    const localClear = this.store.clear()
+    const [refreshToken] = await Promise.all([refreshSnapshot, localClear])
+    const controller = new AbortController()
+    let timeout: unknown
     try {
-      await this.revokeCoreSession()
-    } catch (err) {
-      revokeError = err
+      await Promise.race([
+        this.revokeCoreSession(current, refreshToken, controller.signal),
+        new Promise<never>((_, reject) => {
+          timeout = this.timers.setTimeout(() => {
+            controller.abort()
+            reject(new Error("Core session revocation timed out"))
+          }, REVOKE_TIMEOUT_MS)
+        }),
+      ])
+    } catch (error) {
       this.logger.warn("Core session revocation failed during local logout", {
-        error: (err as Error)?.message,
+        error: (error as Error)?.message,
       })
+      throw new SessionRevocationError("Core session revocation failed; local credentials were cleared", {cause: error})
     } finally {
-      await this.store.clear()
-      this.runtimeToken = null
-      this.miniappCache.clear()
-      this.expiredFired = false
-    }
-    if (revokeError) {
-      throw new SessionRevocationError("Core session revocation failed; local credentials were cleared", {
-        cause: revokeError,
-      })
+      this.timers.clearTimeout(timeout)
     }
   }
 
   /**
-   * Revoke the Core session server-side before local credentials are dropped.
+   * Revoke the captured Core session after local credentials are dropped.
    *
    * Core verifies the presented access token with no clock tolerance, so a
    * cached token inside the usual expiry margin is refreshed first rather than
@@ -345,23 +359,26 @@ export class Auth implements AuthModule {
    * not. Any failure propagates so the caller can tell revocation did not
    * complete.
    */
-  private async revokeCoreSession(): Promise<void> {
+  private async revokeCoreSession(
+    current: ReturnType<TokenStore["current"]>,
+    refreshToken: string | null,
+    signal: AbortSignal,
+  ): Promise<void> {
     if (!this.coreConfig || !this.http) return
-    const current = this.store.current()
-    const refreshToken = await this.store.refreshToken()
     let accessToken: string | null = null
     if (current && !this.isExpiring(current.exp)) {
       accessToken = current.accessToken
     } else if (refreshToken) {
       const body = new URLSearchParams({grant_type: "refresh_token", refresh_token: refreshToken})
-      const tokens = await this.postForm(REFRESH_PATH, body, "logout refresh")
+      const tokens = await this.postForm(REFRESH_PATH, body, "logout refresh", signal)
       accessToken = tokens.access_token
     }
     if (!accessToken) return
 
     for (let attempt = 0; ; attempt++) {
+      if (signal.aborted) throw new Error("Core session revocation timed out")
       try {
-        await this.http.post(REVOKE_PATH, {}, {bearer: accessToken})
+        await this.http.post(REVOKE_PATH, {}, {bearer: accessToken, signal})
         return
       } catch (err) {
         if (attempt + 1 >= REVOKE_ATTEMPTS || !isRetryableRevokeError(err)) throw err
@@ -597,13 +614,20 @@ export class Auth implements AuthModule {
    * subject/refresh token in the body, not as a Bearer header. We never log the
    * body: it carries a token.
    */
-  private async postForm(path: string, body: URLSearchParams, label: string): Promise<TokenResponse> {
+  private async postForm(
+    path: string,
+    body: URLSearchParams,
+    label: string,
+    signal?: AbortSignal,
+  ): Promise<TokenResponse> {
     const url = this.joinUrl(path)
     const res = await this.httpTransport(url, {
       method: "POST",
       headers: {"Content-Type": "application/x-www-form-urlencoded"},
       body: body.toString(),
+      ...(signal ? {signal} : {}),
     })
+    if (signal?.aborted) throw new Error("Core session revocation timed out")
 
     if (!res.ok) {
       // The body may carry an RFC `{ error, error_description }`, but we keep the
