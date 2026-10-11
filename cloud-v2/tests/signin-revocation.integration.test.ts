@@ -33,11 +33,11 @@ import {SupportProfileModel} from "../packages/core/src/models/support-profile.m
 import {UserModel} from "../packages/core/src/models/user.model"
 import {confirmAccountDeletion, login, otc, resetPassword} from "../packages/core/src/services/account/account.service"
 import {refreshSession, revokeAllSessionsForUser} from "../packages/core/src/services/session.service"
-import {resetSigningKeyCache} from "../packages/core/src/services/signing-keys.service"
 import {createPortalSession} from "../packages/core/src/services/signin/browser-session.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
+import {resetCoreKeyCaches} from "./support/key-caches"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {
   ADMIN_COOKIE,
@@ -99,7 +99,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   restoreEnv = applyEnv({...HOSTED_ENV, ...KEY_ENV})
-  resetSigningKeyCache()
+  resetCoreKeyCaches()
   resetIdpTokenCaches()
   assertConnectedTo(databaseUrl, UserModel.db.name)
   await Promise.all(MODELS.map(model => model.deleteMany({})))
@@ -117,6 +117,7 @@ beforeEach(async () => {
 afterEach(() => {
   idp.restore()
   restoreEnv()
+  resetCoreKeyCaches()
 })
 
 /** A person signed in before the revocation: a portal session, a Console token, and live Supabase sessions. */

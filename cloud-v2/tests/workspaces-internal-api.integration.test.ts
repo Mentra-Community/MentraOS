@@ -37,7 +37,8 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
-import {createSession, resetSigningKeyCache} from "../packages/core/src/services/session.service"
+import {createSession} from "../packages/core/src/services/session.service"
+import {resetCoreKeyCaches} from "./support/key-caches"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {createWorkspaceCredential, revokeCredential} from "../packages/core/src/services/workspaces/credential.service"
@@ -162,7 +163,7 @@ const pemBody = (pem: string) => pem.replace(/-----[A-Z ]+-----/g, "").replace(/
 
 /**
  * Run `use` with a real phone session for `sub`: Core's own token exchange of a Supabase session token,
- * signed with a key generated for this test. The signing key cache is reset on the way in and out.
+ * signed with a key generated for this test. Core's key caches are reset on the way in and out.
  */
 async function withPhoneCoreToken<T>(sub: string, use: (token: string) => Promise<T>): Promise<T> {
   const {privateKey, publicKey} = generateKeyPairSync("ed25519")
@@ -171,7 +172,7 @@ async function withPhoneCoreToken<T>(sub: string, use: (token: string) => Promis
     MENTRA_JWT_PUBLIC_KEY: pemBody(publicKey.export({type: "spki", format: "pem"}).toString()),
     REFRESH_TOKEN_PEPPER: "internal-api-test-pepper",
   })
-  resetSigningKeyCache()
+  resetCoreKeyCaches()
   try {
     // A phone's Supabase session token: no `client_id`, so it may be exchanged for a phone session.
     const subjectToken = await idp.mint({sub, aud: "authenticated", role: "authenticated"})
@@ -182,7 +183,7 @@ async function withPhoneCoreToken<T>(sub: string, use: (token: string) => Promis
     return await use(token)
   } finally {
     restore()
-    resetSigningKeyCache()
+    resetCoreKeyCaches()
   }
 }
 
