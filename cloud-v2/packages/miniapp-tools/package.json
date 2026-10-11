@@ -1,0 +1,41 @@
+{
+  "name": "@mentra/miniapp-tools",
+  "version": "0.1.0-dev.0",
+  "description": "Backend tools for Mentra miniapps.",
+  "type": "module",
+  "exports": {
+    "./logging": {
+      "types": "./dist/logging/index.d.ts",
+      "default": "./dist/logging/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "dev"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "pino": "^9.6.0"
+  },
+  "keywords": [
+    "mentra",
+    "miniapp",
+    "logging"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "cloud-v2/packages/miniapp-tools"
+  },
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/cloud-v2/packages/miniapp-tools#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  }
+}

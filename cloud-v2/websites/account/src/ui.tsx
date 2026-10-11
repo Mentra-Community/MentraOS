@@ -1,4 +1,5 @@
 import { Component, type ChangeEvent, type ReactNode } from "react";
+import { MentraLogo } from "./brand";
 import type { EmailLinkLanding } from "./lib/email-link";
 import { MESSAGES } from "./lib/messages";
 
@@ -6,7 +7,7 @@ export function Page({ title, children }: { title: string; children?: ReactNode 
   return (
     <main className="page">
       <div className="card">
-        <p className="wordmark">Mentra</p>
+        <MentraLogo />
         <h1>{title}</h1>
         {children}
       </div>
@@ -75,7 +76,8 @@ export function NotFound() {
 export function Loading({ label }: { label: string }) {
   return (
     <Page title="Mentra account">
-      <p className="muted" role="status">
+      <p className="loading" role="status">
+        <span className="spinner" aria-hidden="true" />
         {label}
       </p>
     </Page>

@@ -362,7 +362,8 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-[#747780]">
         <span>{new Date(run.startedAt).toLocaleString()} · {runDuration(run.startedAt, run.finishedAt) ?? "Duration unknown"}</span>
         <span>{run.hostId} / {run.laneId} · {run.platform === "ios-on-mac" ? "iOS on Mac" : run.platform}</span>
-        <span>Setup {elapsedDuration(run.result.timing.setupMs)} · Test {elapsedDuration(run.result.timing.testMs)} · Teardown {elapsedDuration(run.result.timing.teardownMs)}</span>
+        <span>Setup {elapsedDuration(run.result.timing.setupMs)} · Test {elapsedDuration(run.result.timing.testMs)} · Teardown {elapsedDuration(run.result.timing.teardownMs)}
+          {run.result.timing.diagnosticsMs !== undefined && ` · Diagnostics ${elapsedDuration(run.result.timing.diagnosticsMs)}`}</span>
       </div>
       <p className="mt-3 text-sm">Execution: {outcome === "pass" ? "Passed" : outcome.replaceAll("-", " ")}</p>
       <p className="mt-3 text-sm"><BuildIdentity build={run.build} /></p>
@@ -438,9 +439,14 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       </div>
     </section>
     </div>
-    <LifecyclePanel phase="teardown" actions={run.result.teardown.actions} status={run.result.teardown.ready ? "passed" : "failed"}
+    <LifecyclePanel phase="teardown" actions={run.result.teardown.actions} status={!run.result.teardown.ready
+      || run.result.failures.some(failure => failure.phase === 'teardown') ? "failed" : "passed"}
       durationMs={run.result.timing.teardownMs} sources={run.result.stepSources?.teardown} failures={run.result.failures.filter(failure => failure.phase === "teardown")}
-      unavailable={run.result.teardown.unavailableResources} />
+      unavailable={run.result.teardown.unavailableResources} ready={run.result.teardown.ready} />
+    {!!run.result.diagnostics?.length && run.result.timing.diagnosticsMs !== undefined && <LifecyclePanel phase="diagnostics"
+      actions={run.result.diagnostics} status={run.result.diagnostics.some(action => action.status === 'failed') ? 'failed'
+        : run.result.diagnostics.some(action => action.status === 'cancelled') ? 'cancelled' : 'passed'}
+      durationMs={run.result.timing.diagnosticsMs} failures={[]} />}
     <section id="run-phase-evidence" tabIndex={-1} className={PANEL}><h3 className="font-semibold">Evidence</h3>
       {run.result.failures.filter(failure => failure.phase === "evidence").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}
       <ul className="mt-3 space-y-2">{run.assets.map(asset => <li key={asset.id}>{uploadsComplete ? <a className={TESTING_LINK} href={assetHref(asset.id)}>{asset.path}</a> : asset.path} · {asset.kind}</li>)}</ul>
@@ -450,8 +456,8 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
 }
 
 type LifecycleAction = NonNullable<FrameworkRun["result"]["setup"]["actions"]>[number];
-function LifecyclePanel({phase, actions, status, actionId, durationMs, failures, sources, unavailable = []}: {
-  phase: "setup" | "teardown";
+function LifecyclePanel({phase, actions, status, actionId, durationMs, failures, sources, unavailable = [], ready}: {
+  phase: "setup" | "teardown" | "diagnostics";
   actions?: LifecycleAction[];
   sources?: NonNullable<FrameworkRun["result"]["stepSources"]>["setup"];
   status: "passed" | "failed" | "cancelled";
@@ -459,8 +465,9 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
   durationMs: number;
   failures: FrameworkRun["result"]["failures"];
   unavailable?: FrameworkRun["result"]["teardown"]["unavailableResources"];
+  ready?: boolean;
 }) {
-  const title = phase === "setup" ? "Setup" : "Teardown";
+  const title = phase === "setup" ? "Setup" : phase === 'teardown' ? "Teardown" : 'Diagnostics';
   const stageLabels: Record<NonNullable<LifecycleAction["stage"]>, string> = {
     validation: "Validate inputs", "before-entry": "Before entry", entry: "Establish entry",
     "after-entry": "After entry", recording: phase === "setup" ? "Start recording" : "Finish recording",
@@ -491,11 +498,12 @@ function LifecyclePanel({phase, actions, status, actionId, durationMs, failures,
   </li>)}</ol>;
   return <section id={`run-phase-${phase}`} tabIndex={-1} aria-label={`${title} details`} className={PANEL}>
     <h3 className="font-semibold">{title} <StepStatus status={status} /> · {elapsedDuration(durationMs)}</h3>
+    {ready !== undefined && <p className="mt-2 text-sm">Resources {ready ? 'ready' : 'awaiting cleanup'}</p>}
     {actionId && <p className="mt-2 text-sm">Stopped at: {actionId}</p>}
     {actions === undefined ? <p className="mt-2 text-sm text-[#68746d]">{title} action details were not recorded for this run.</p>
       : !actions.length ? <p className="mt-2 text-sm text-[#68746d]">No {phase} actions recorded.</p>
-      : groups.map(group => <details key={group.start} className="mt-4" open={group.start <= lastFailure} aria-label={`${title}: ${group.stage ? stageLabels[group.stage] : "Stage not recorded"}`}>
-        <summary className="cursor-pointer text-sm font-semibold">{group.stage ? stageLabels[group.stage] : "Stage not recorded"} · {group.actions.length} {group.actions.length === 1 ? "action" : "actions"}</summary>
+      : groups.map(group => <details key={group.start} className="mt-4" open={phase === 'diagnostics' || group.start <= lastFailure} aria-label={`${title}: ${group.stage ? stageLabels[group.stage] : phase === 'diagnostics' ? 'Diagnostic actions' : "Stage not recorded"}`}>
+        <summary className="cursor-pointer text-sm font-semibold">{group.stage ? stageLabels[group.stage] : phase === 'diagnostics' ? 'Diagnostic actions' : "Stage not recorded"} · {group.actions.length} {group.actions.length === 1 ? "action" : "actions"}</summary>
         {actionList(group.actions, group.start)}
       </details>)}
     {failures.map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}

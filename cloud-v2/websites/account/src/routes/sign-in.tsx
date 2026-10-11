@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { AppleIcon, GoogleIcon } from "../brand";
 import { signInWithEmail, startSocialSignIn } from "../lib/account-actions";
 import { resetPath, signUpPath } from "../lib/links";
 import type { AccountAuthClient, SocialProvider } from "../lib/supabase";
@@ -67,9 +68,11 @@ export function SignInView({ auth, origin, authorizationId, onSignedIn }: SignIn
       <p className="divider">or</p>
       <div className="stack">
         <button className="button button-secondary" type="button" disabled={busy} onClick={() => continueWith("google")}>
+          <GoogleIcon />
           Continue with Google
         </button>
         <button className="button button-secondary" type="button" disabled={busy} onClick={() => continueWith("apple")}>
+          <AppleIcon />
           Continue with Apple
         </button>
       </div>
