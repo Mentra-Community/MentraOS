@@ -217,9 +217,9 @@ reordering rows just because RSSI metadata arrives later.
 
 ## Mentra SDK Usage Analytics
 
-The SDK sends three usage events to Mentra's PostHog project by default so
-Mentra can understand SDK adoption, successful glasses connections, and
-enterprise device deployments:
+The SDK sends usage events to Mentra's PostHog project by default so Mentra
+can understand SDK adoption, glasses connections, enterprise device
+deployments, and how Mentra Live features are used:
 
 - `bluetooth_sdk_started`: sent once per app runtime after the native SDK starts.
 - `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
@@ -228,6 +228,47 @@ enterprise device deployments:
 The connected event waits for the glasses model when the model is not known at
 the moment the connection flag flips; if the connection ends first it is sent
 without a model and with `glasses_model_unresolved=true`.
+
+Each usage occurrence below is one event, sent when it happens:
+
+- `bluetooth_sdk_glasses_disconnected`: a connection reported as connected
+  ended. Carries `session_duration_ms`, `disconnect_reason` (`user_disconnect`,
+  `forget`, `cancel`, `bluetooth_off`, `link_lost`, or `unknown`), and the
+  battery levels seen during the connection. A connection already up when the
+  SDK started is not reported.
+- `bluetooth_sdk_photo_taken`: a `requestPhoto` call settled, or a photo taken
+  with the glasses button failed (successful button photos never reach the
+  phone). Carries `trigger` (`api` / `button`), `success`, `error_code`,
+  `latency_ms`, the requested size, mode, compression, gallery save and
+  transfer method, and `file_size_bytes` when the response carries it.
+- `bluetooth_sdk_video_recorded`: an app- or button-started recording stopped
+  or failed. Carries `trigger`, `success`, `error_code`, `duration_ms` (phone
+  clock, start to stop status), the requested resolution and frame rate,
+  gallery save, maximum duration, and `stopped_by_app`.
+- `bluetooth_sdk_button_pressed`: `button_id`, `press_type`, and
+  `gallery_mode_enabled`.
+- `bluetooth_sdk_stream_started` / `bluetooth_sdk_stream_ended`: a
+  `startStream` call settled, and that stream later ended. `protocol` comes
+  from the URL scheme only (`rtmp`, `srt`, `whip`, or `unknown`). The start
+  carries the requested video settings, `capture_audio`, `glasses_network`, and
+  `latency_ms`; the end carries `duration_ms`, `end_state`, `stopped_by_app`,
+  `reconnect_attempts`, `error_code`, and the last bitrate, frame rate, dropped
+  frames, and temperature when the stream reported statistics.
+- `bluetooth_sdk_mic_session`: the active microphone turned off or changed.
+  Carries `duration_ms`, `mic_source`, and `local_transcription`.
+- `bluetooth_sdk_wifi_setup` / `bluetooth_sdk_hotspot_started`:
+  `sendWifiCredentials` or `setHotspotState(true)` settled, with `success`,
+  `error_code`, and `latency_ms`.
+- `bluetooth_sdk_ota_finished`: a glasses software update completed or failed,
+  with the failed step and error, `total_steps`, `duration_ms`, and the
+  glasses versions it started from.
+- `bluetooth_sdk_request_failed`: a glasses command timed out
+  (`error_code=request_timeout`), named by `operation`. At most 100 per SDK
+  start.
+
+These usage events also carry the connected glasses' `glasses_model`,
+`glasses_device_id` and `glasses_build_number` when known. A recording or
+stream whose end never reaches the running app produces only its start.
 
 Analytics delivery never blocks Bluetooth SDK behavior: events are submitted
 asynchronously off the caller thread. An upload that fails (no network, non-2xx)
@@ -281,10 +322,30 @@ write token, not a private PostHog personal API key. Apps do not configure the
 analytics destination; these SDK usage events are always sent to Mentra's
 PostHog project unless analytics are disabled.
 
+### Update check
+
+Separately from analytics, the SDK checks for a newer SDK release every time it
+starts, whether or not analytics are disabled. The check is one HTTPS request
+(4-second timeout, no retry) to
+`https://core.mentraglass.com/api/client/bluetooth-sdk/update-check` carrying
+`install_id` (the same anonymous install id analytics uses), `app_identifier`,
+`app_version`, `app_build`, `app_build_type`, `app_install_source`,
+`app_environment`, `sdk_version`, `sdk_platform`, `sdk_surface`,
+`os_platform`, and `os_version`. Mentra records each check. The SDK compares
+itself with the latest release on its own channel (stable, beta, or dev).
+
+When a newer release exists, the SDK prints a banner with the update command to
+the developer console: Logcat (`MentraBluetoothSDK` tag) on Android, the Xcode
+console on iOS, and `console.warn` in React Native, which shows as a LogBox
+warning in debug builds. The banner repeats every 15 minutes while the SDK
+instance lives. Nothing is shown in app UI. A network that blocks
+`core.mentraglass.com` loses only the banner; SDK behavior is unchanged.
+
 Captured properties include `event_source`, `sdk_platform`, `sdk_surface`,
 `sdk_version`, `app_identifier` (the Android package or iOS bundle identifier),
 the platform-specific `app_package` or `app_bundle_identifier`, OS
-platform/version, and `event_kind`. Every event also carries host build facts:
+platform/version, `phone_manufacturer`, `phone_model`, `locale`, `timezone`,
+and `event_kind`. Every event also carries host build facts:
 `app_version`, `app_build`, `app_build_type` (`debug` / `release`),
 `app_install_source` (`play_store`, `app_store`, `testflight`, `adhoc_or_dev`,
 `simulator`, `sideload`, a named third-party store, `other_store`, or `unknown`
@@ -308,8 +369,9 @@ decode it from the glasses' BLE advertisement / manufacturer data.
 
 Apart from that glasses serial, the SDK does not upload BLE MAC addresses,
 CoreBluetooth identifiers, the host phone's Android device serial, Bluetooth
-device names, user ids, tokens, Wi-Fi credentials, microphone data, photos, or
-transcripts. PostHog receives a locally generated anonymous SDK install id as
+device names, user ids, tokens, Wi-Fi names or credentials, stream, webhook or
+upload URLs, location, microphone data, photos, videos, or transcripts. Error
+details have URLs removed before they are sent. PostHog receives a locally generated anonymous SDK install id as
 `distinct_id`, and events include `$process_person_profile: false`.
 
 ## React Hooks

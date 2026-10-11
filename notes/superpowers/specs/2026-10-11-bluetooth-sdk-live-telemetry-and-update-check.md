@@ -18,9 +18,10 @@ Mentra needs to know, per customer app:
 The customer is identified by `app_identifier` (Android package name, iOS
 bundle identifier), which every SDK event already carries.
 
-Scope is Mentra Live. Camera, stream, Wi-Fi, hotspot and OTA events only occur
-on Live. Connection and mic events fire for whichever glasses are connected and
-carry `glasses_model`. No display telemetry is added.
+Scope is Mentra Live and the SDK only; the glasses software is unchanged.
+Camera, stream, Wi-Fi, hotspot and OTA events only occur on Live. Connection,
+mic and button events fire for whichever glasses are connected and carry
+`glasses_model`. No display telemetry is added.
 
 ## Two channels
 
@@ -77,9 +78,9 @@ in app UI and adds no listener callback.
 
 - Android: `Log.w` under the SDK log tag.
 - iOS: `NSLog`.
-- React Native: native emits a `sdkUpdateNotice` event, and
-  `src/_private/BluetoothSdkModule.ts` calls `console.warn` with the banner
-  next to `installNativeLogConsole`. In debug builds this shows as a LogBox
+- React Native: native delivers the banner as the raw event
+  `sdk_update_notice`, and `src/_private/nativeLogConsole.ts` turns it into
+  `console.warn` alongside the native log console. In debug builds this shows as a LogBox
   warning, which only developers see.
 
 The banner names the installed and latest versions and the update command for
@@ -171,16 +172,17 @@ Each event is one occurrence. Nothing is aggregated on the device.
 
 | Event | Emitted when | Properties |
 | --- | --- | --- |
-| `bluetooth_sdk_photo_taken` | An API `requestPhoto` settles, a button photo is reported by the glasses, or a button photo fails (`photo_response` with `requestId: "local"`) | `trigger` (`api` / `button`), `success`, `error_code`, `latency_ms` (API only), `photo_size`, `photo_mode`, `compress`, `save_to_gallery`, `transfer_path` (`webhook` / `ble` / `gallery`), `file_size_bytes` |
-| `bluetooth_sdk_video_recorded` | A recording ends (`recording_stopped`) or fails to start (failure `video_recording_status`) | `trigger` (`api` / `button`), `success`, `error_code`, `duration_ms`, `width`, `height`, `fps`, `save_to_gallery`, `max_duration_minutes`, `stop_reason`, `file_size_bytes` |
+| `bluetooth_sdk_photo_taken` | An API `requestPhoto` settles, or a button photo fails on the glasses (`photo_response` with `requestId: "local"`) | `trigger` (`api` / `button`), `success`, `error_code`, `latency_ms` (API only), `photo_size`, `photo_mode`, `compress`, `save_to_gallery`, `transfer_method`, `file_size_bytes` (when the response carries it) |
+| `bluetooth_sdk_video_recorded` | A recording ends (`recording_stopped`) or fails (failure `video_recording_status`) | `trigger` (`api` / `button`), `success`, `error_code`, `duration_ms`, `width`, `height`, `fps` (API overrides only), `save_to_gallery`, `max_duration_minutes`, `stopped_by_app` |
+| `bluetooth_sdk_button_pressed` | The glasses report a button press | `button_id`, `press_type`, `gallery_mode_enabled` |
 | `bluetooth_sdk_stream_started` | `startStream` resolves or rejects | `success`, `error_code`, `protocol` (`rtmp` / `srt` / `whip` / `unknown`), `width`, `height`, `fps`, `bitrate`, `capture_audio`, `glasses_network` (`wifi` / `hotspot`), `latency_ms` |
 | `bluetooth_sdk_stream_ended` | The terminal `stream_status` for that stream | `protocol`, `duration_ms`, `end_state` (`stopped` / `reconnect_failed` / `error`), `stopped_by_app`, `reconnect_attempts`, `error_code`, plus the last `bitrate`, `fps`, `dropped_frames` and `temperature_c` when the stream reported stats |
-| `bluetooth_sdk_glasses_disconnected` | A connection that emitted `bluetooth_sdk_glasses_connected` ends | `session_duration_ms`, `disconnect_reason` (`user_disconnect` / `forget` / `cancel` / `link_lost` / `owner_lost` / `bluetooth_off` / `unknown`), `battery_level_at_connect`, `battery_level_at_disconnect`, `charging` |
-| `bluetooth_sdk_mic_session` | The active mic turns off after being on | `duration_ms`, `mic_source` (`glasses` / `phone`), `local_transcription`, `transcription_language` |
+| `bluetooth_sdk_glasses_disconnected` | A connection that emitted `bluetooth_sdk_glasses_connected` ends | `session_duration_ms`, `disconnect_reason` (`user_disconnect` / `forget` / `cancel` / `bluetooth_off` / `link_lost`), `battery_level_at_connect`, `battery_level_at_disconnect`, `charging` |
+| `bluetooth_sdk_mic_session` | The active mic turns off or changes source | `duration_ms`, `mic_source` (`glasses` / `phone` / `bluetooth` / `bluetoothClassic`), `local_transcription` |
 | `bluetooth_sdk_wifi_setup` | `sendWifiCredentials` settles | `success`, `error_code`, `latency_ms` |
 | `bluetooth_sdk_hotspot_started` | `setHotspotState(true)` settles | `success`, `error_code`, `latency_ms` |
 | `bluetooth_sdk_ota_finished` | `ota_status` reaches `complete` or `failed` | `success`, `failed_step_type`, `error_message`, `total_steps`, `duration_ms`, `from_build_number`, `from_bes_firmware_version`, `from_mtk_firmware_version` |
-| `bluetooth_sdk_request_failed` | An awaited glasses command rejects with `request_timeout`, `glasses_not_connected` or `request_in_flight` | `operation`, `error_code`. At most 100 per SDK instance, so a failure loop cannot run up PostHog cost. |
+| `bluetooth_sdk_request_failed` | An awaited glasses command times out (the one place every command's wait ends) | `operation` (the command without request ids), `error_code` (`request_timeout`). At most 100 per SDK instance, so a failure loop cannot run up PostHog cost. |
 
 ### Sources
 
@@ -192,23 +194,31 @@ Each event is one occurrence. Nothing is aggregated on the device.
 - **Connections** are observed through the existing glasses-status
   observation.
 
-A new pure tracker, `BluetoothSdkUsageTracker`, with one Android and one iOS
-implementation, holds the per-occurrence state:
+Connection sessions live in the existing `BluetoothSdkAnalyticsTracker`, which
+already sees every connected/disconnected transition. It records the connect
+time and the battery levels seen during the connection. `disconnect`, `forget`
+and `cancelConnectionAttempt` set a pending reason before the state flips. A
+transition without one is `bluetooth_off` when the phone's Bluetooth is off,
+otherwise `link_lost`. A connection that was already up when the SDK started is
+not reported as ending.
 
-- open recordings by request ID;
-- the open stream: start time, configuration, reconnect count, last stats,
-  whether `stopStream` was called;
-- connection start time and starting battery level;
-- the pending disconnect reason, set by `disconnect`, `forget`,
-  `cancelConnectionAttempt`, owner loss and Bluetooth power-off before the
-  state flips;
-- mic start time and source.
+A new pure tracker, `BluetoothSdkUsageTracker`, with one Android and one iOS
+implementation, holds the rest of the per-occurrence state:
+
+- open recordings by request ID, with the API parameters and whether the app
+  stopped them;
+- the open stream: start time, protocol, highest reconnect attempt, last
+  stats, and whether `stopStream` was called;
+- the active mic source, its start time and whether local transcription ran;
+- OTA sessions by session ID, with their start time and starting versions;
+- the request-timeout count.
 
 It returns `AnalyticsEvent`s exactly like `BluetoothSdkAnalyticsTracker` and
-owns no threads or I/O.
+owns no threads or I/O. Command outcomes and latency are measured around the
+facade call; a caller cancelling the call is not reported.
 
 Durations are measured on the phone's clock, from the start status to the end
-status. When the glasses report their own value, the glasses value wins.
+status.
 
 A stream or recording whose end never arrives in this process (for example,
 the app was killed) produces only its start event.
@@ -218,23 +228,6 @@ the app was killed) produces only its start event.
 
 `error_message` and any free-text error detail are cut to 200 characters,
 with URLs removed.
-
-### Glasses-side additions (`asg_client`)
-
-The glasses already know these facts but do not send them. Each change is an
-additive field or a new message type; older SDKs ignore it.
-
-- **`video_recording_status` with `status: "recording_stopped"`** gains
-  `durationMs`, `fileSizeBytes`, `width`, `height`, `fps` and `stopReason`.
-  `stopReason` is one of `user_requested`, `low_battery`, `max_duration` or
-  `error`, and comes from `MediaCaptureService`'s existing stop reason.
-- **New message `local_media_captured`**, sent after a successful
-  button-initiated photo, with `mediaType: "photo"`, `fileSizeBytes` and
-  `timestamp`. Failed button photos keep using `photo_response` with
-  `requestId: "local"`.
-
-Glasses that have not taken the matching ASG update report button videos
-without these fields and don't report successful button photos.
 
 ### Never collected
 
@@ -274,14 +267,12 @@ The analytics flag is described as controlling usage telemetry.
   - Dist-tag caching and stale fallback.
   - Status for each channel and the minimum-version tier.
   - The PostHog capture payload, using mocked `fetch`.
-- **React Native (Jest):** `sdkUpdateNotice` produces `console.warn`.
-- **Device:** a Mentra Live run covering an API photo, a button photo, a video
-  recording, a stream start and stop, and a disconnect. Each expected event is
+- **React Native (Jest):** `sdk_update_notice` produces one `console.warn`.
+- **Device:** a Mentra Live run covering an API photo, a camera button press, a
+  video recording, a stream start and stop, and a disconnect. Each expected event is
   confirmed in PostHog.
 
 ## Rollout prerequisites
 
 - `BLUETOOTH_SDK_MIN_SUPPORTED_VERSION` is added to the shared Core Doppler
   config, initially empty.
-- The `asg_client` additions ship with the next coordinated release. Button
-  photo counts appear as glasses update.
