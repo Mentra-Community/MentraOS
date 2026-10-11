@@ -100,8 +100,10 @@ the admin portal is the same Core user as on their phone (`oid`).
 An email the provider asserts is verified only in a domain on
 `verifiedEmailDomains` (exact match; list each subdomain), and never when the
 token says `email_verified: false`. An Organization Admin is a person whose
-verified email is on `CLOUD_CORE_ADMIN_EMAILS`; an allowlisted
-`api-key@<keyId>.local` keeps an organization API key working as an admin key.
+verified email is on `CLOUD_CORE_ADMIN_EMAILS`. Tools use operator keys
+(`mak_...`); an allowlisted `api-key@<keyId>.local` admin key made before
+operator keys becomes one at Core's startup and keeps its token (see
+[`docs/workspaces.md`](../docs/workspaces.md)).
 Core refuses at startup a Mentra domain, a non-canonical or duplicate domain,
 `browser` settings without `openid` or without their secret, and more than one
 provider with `browser` settings. Without `browser` settings Core still serves
