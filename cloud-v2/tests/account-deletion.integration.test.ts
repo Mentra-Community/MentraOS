@@ -2,9 +2,10 @@
  * @fileoverview What deleting a Mentra account does to workspaces (`confirmAccountDeletion` and
  * `removeDeletedUserFromWorkspaces`).
  *
- * Deleting an account ends every workspace membership the person holds and revokes the keys those
- * memberships created, in one transaction, before the account itself is deleted. Nothing else about
- * workspaces changes: other people's memberships and keys, service keys, and invitations stay.
+ * Deleting an account ends every workspace membership the person holds, revokes the keys those
+ * memberships created and every invitation the person sent, in one transaction, before the account
+ * itself is deleted. Nothing else about workspaces changes: other people's memberships and keys,
+ * service keys, and invitations addressed to the person stay.
  *
  * Real rows on a local replica set: users, one-time codes, memberships, credentials, invitations and
  * audit events. The account directory (GoTrue's admin API, where the account is deleted) is a fake
@@ -40,6 +41,11 @@ import {
   mintServiceCredential,
   validateCredentialToken,
 } from "../packages/core/src/services/workspaces/credential.service"
+import {
+  acceptInvitation,
+  createInvitation,
+  peekInvitation,
+} from "../packages/core/src/services/workspaces/invitation.service"
 import {
   countActiveOwners,
   createWorkspace,
@@ -95,7 +101,8 @@ async function addMember(workspaceId: string, fields: Record<string, unknown> & 
   return membershipId
 }
 
-async function invite(workspaceId: string, email: string, invitedByMembershipId: string | null) {
+/** A pending invitation sent by a member (`by`), or by the system. */
+async function invite(workspaceId: string, email: string, by: {membershipId: string; mentraUserId: string} | "system") {
   const invitationId = `winv_${counter++}`
   await WorkspaceInvitationModel.create({
     invitationId,
@@ -104,11 +111,16 @@ async function invite(workspaceId: string, email: string, invitedByMembershipId:
     role: "developer",
     tokenHash: `hash_${counter++}`,
     status: "pending",
-    invitedByMembershipId,
+    ...(by === "system"
+      ? {invitedByAuthority: "system"}
+      : {invitedByAuthority: "membership", invitedByMembershipId: by.membershipId, invitedByMentraUserId: by.mentraUserId}),
     expiresAt: new Date(Date.now() + 60 * 60 * 1000),
   })
   return invitationId
 }
+
+const OPS_ADMIN_EMAIL = "ops-admin@example.test"
+const INVITE_URL_PREFIX = "https://core.example.test/invite/"
 
 /** Whether the fake account directory still has the account. */
 async function accountExists(tenantUserId: string): Promise<boolean> {
@@ -143,10 +155,13 @@ async function scenario() {
   const solo = await createWorkspace(self, {name: "Solo"})
   const soloMembershipId = (await WorkspaceMembershipModel.findOne({workspaceId: solo.workspaceId}).lean())!.membershipId
   const soloKey = await createWorkspaceCredential(self, solo.workspaceId, {name: "Solo CI"})
-  const sentInvitationId = await invite(solo.workspaceId, "invitee@example.test", soloMembershipId)
+  const sentInvitationId = await invite(solo.workspaceId, "invitee@example.test", {
+    membershipId: soloMembershipId,
+    mentraUserId,
+  })
 
   const elsewhere = await createWorkspace(actor("mu_elsewhere_owner"), {name: "Elsewhere"})
-  const receivedInvitationId = await invite(elsewhere.workspaceId, email, null)
+  const receivedInvitationId = await invite(elsewhere.workspaceId, email, "system")
 
   return {
     mentraUserId,
@@ -193,9 +208,13 @@ afterAll(async () => {
 beforeEach(async () => {
   restoreEnv = applyEnv({
     ...HOSTED_ENV,
+    CLOUD_CORE_ADMIN_EMAILS: OPS_ADMIN_EMAIL,
+    CLOUD_CORE_ADMIN_EMAIL_DOMAINS: undefined,
     CLOUD_CORE_CREDENTIAL_ENVIRONMENTS: "test",
     CLOUD_CORE_ENVIRONMENT: "test",
     CLOUD_CORE_WORKSPACE_CREATION: undefined,
+    CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE: `${INVITE_URL_PREFIX}{token}`,
+    RESEND_API_KEY: undefined,
   })
   assertConnectedTo(databaseUrl, WorkspaceModel.db.name)
   await Promise.all(MODELS.map(model => model.deleteMany({})))
@@ -309,6 +328,50 @@ describe("confirmAccountDeletion", () => {
     ])
   })
 
+  test("invitations the user sent as an Organization Admin are revoked too, and stop working at once", async () => {
+    const s = await scenario()
+    const asOrganizationAdmin: Actor & {kind: "user"} = {
+      kind: "user",
+      mentraUserId: s.mentraUserId,
+      email: OPS_ADMIN_EMAIL,
+      emailVerified: true,
+      isOrganizationAdmin: true,
+    }
+    // Not a member of "Elsewhere": the invitation rests on the organization's authority alone.
+    const sent = await createInvitation(asOrganizationAdmin, s.elsewhere.workspaceId, {email: "heir@example.test", role: "owner"})
+    const token = sent.inviteUrl.slice(INVITE_URL_PREFIX.length)
+    expect(await WorkspaceInvitationModel.findOne({invitationId: sent.invitationId}).lean()).toMatchObject({
+      invitedByAuthority: "organization_admin",
+      invitedByMembershipId: null,
+      invitedByMentraUserId: s.mentraUserId,
+      invitedByEmail: OPS_ADMIN_EMAIL,
+    })
+    expect(await peekInvitation(token)).not.toBeNull()
+
+    await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
+
+    const row = (await WorkspaceInvitationModel.findOne({invitationId: sent.invitationId}).lean())!
+    expect(row.status).toBe("revoked")
+    const revocation = await WorkspaceAuditEventModel.findOne({
+      action: "invitation.revoked",
+      "target.invitationId": sent.invitationId,
+    }).lean()
+    expect(revocation).toMatchObject({
+      workspaceId: s.elsewhere.workspaceId,
+      actor: {kind: "user", mentraUserId: s.mentraUserId},
+      after: {status: "revoked", reason: "inviter_account_deleted"},
+    })
+    expect(await peekInvitation(token)).toBeNull()
+    const refused = await acceptInvitation(
+      {kind: "user", mentraUserId: "mu_heir", email: "heir@example.test", emailVerified: true, isOrganizationAdmin: false},
+      token,
+    ).catch(err => err)
+    expect({code: refused.code, status: refused.status}).toEqual({code: "invitation_not_found", status: 404})
+    // The membership-sent invitation and the one to the person's own address behave as before.
+    expect((await WorkspaceInvitationModel.findOne({invitationId: s.sentInvitationId}).lean())!.status).toBe("revoked")
+    expect((await WorkspaceInvitationModel.findOne({invitationId: s.receivedInvitationId}).lean())!.status).toBe("pending")
+  })
+
   test("the person's operator keys are revoked and their email is cleared from their membership rows", async () => {
     const s = await scenario()
     const operatorKey = await createOperatorKey(
@@ -379,7 +442,11 @@ describe("removeDeletedUserFromWorkspaces", () => {
     const eventsAfterFirst = await WorkspaceAuditEventModel.countDocuments({})
     const revisions = await Promise.all([s.team, s.solo].map(async w => (await getWorkspace(w.workspaceId))!))
 
-    expect(await removeDeletedUserFromWorkspaces(s.mentraUserId)).toEqual({endedMembershipIds: [], revokedOperatorKeyIds: []})
+    expect(await removeDeletedUserFromWorkspaces(s.mentraUserId)).toEqual({
+      endedMembershipIds: [],
+      revokedInvitationIds: [],
+      revokedOperatorKeyIds: [],
+    })
 
     expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(eventsAfterFirst)
     for (const previous of revisions) {
@@ -400,7 +467,7 @@ describe("removeDeletedUserFromWorkspaces", () => {
       for (const mentraUserId of [lonely, former, "mu_never_seen"]) {
         expect({mentraUserId, result: await removeDeletedUserFromWorkspaces(mentraUserId)}).toEqual({
           mentraUserId,
-          result: {endedMembershipIds: [], revokedOperatorKeyIds: []},
+          result: {endedMembershipIds: [], revokedInvitationIds: [], revokedOperatorKeyIds: []},
         })
       }
       expect(startSession).not.toHaveBeenCalled()
@@ -408,7 +475,11 @@ describe("removeDeletedUserFromWorkspaces", () => {
       // Someone with a membership does go through a transaction.
       const {mentraUserId: member} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-member"})
       const membershipId = await addMember(team.workspaceId, {mentraUserId: member, role: "member"})
-      expect(await removeDeletedUserFromWorkspaces(member)).toEqual({endedMembershipIds: [membershipId], revokedOperatorKeyIds: []})
+      expect(await removeDeletedUserFromWorkspaces(member)).toEqual({
+        endedMembershipIds: [membershipId],
+        revokedInvitationIds: [],
+        revokedOperatorKeyIds: [],
+      })
       expect(startSession).toHaveBeenCalledTimes(1)
     } finally {
       startSession.mockRestore()
@@ -424,7 +495,11 @@ describe("removeDeletedUserFromWorkspaces", () => {
     const membershipId = await addMember(gone.workspaceId, {mentraUserId, role: "developer"})
     await WorkspaceModel.updateOne({workspaceId: gone.workspaceId}, {$set: {status: "deleted", deletedAt: new Date()}})
 
-    expect(await removeDeletedUserFromWorkspaces(mentraUserId)).toEqual({endedMembershipIds: [membershipId], revokedOperatorKeyIds: []})
+    expect(await removeDeletedUserFromWorkspaces(mentraUserId)).toEqual({
+      endedMembershipIds: [membershipId],
+      revokedInvitationIds: [],
+      revokedOperatorKeyIds: [],
+    })
 
     expect(await WorkspaceMembershipModel.findOne({membershipId}).lean()).toMatchObject({
       status: "ended",

@@ -485,6 +485,7 @@ describe("workspace models (local replica set)", () => {
       email: "Dev@Example.com",
       role: "developer",
       tokenHash: "hash",
+      invitedByAuthority: "system",
       expiresAt: new Date(Date.now() + 60_000),
       ...overrides,
     })
@@ -494,11 +495,29 @@ describe("workspace models (local replica set)", () => {
       expect(row.email).toBe("dev@example.com")
       expect(row.status).toBe("pending")
       expect(row.invitedByMembershipId).toBeNull()
+      expect(row.invitedByMentraUserId).toBeNull()
+      expect(row.invitedByEmail).toBeNull()
       expect(row.acceptedMembershipId).toBeNull()
       const invalid = await thrown(() =>
         WorkspaceInvitationModel.create(invitation({email: "x@example.com", role: "root"})),
       )
       expect(invalid.name).toBe("ValidationError")
+    })
+
+    test("requires the inviter's authority: membership, organization_admin or system", async () => {
+      for (const invitedByAuthority of ["membership", "organization_admin", "system"]) {
+        await WorkspaceInvitationModel.create(invitation({email: `${invitedByAuthority}@example.com`, invitedByAuthority}))
+      }
+      for (const invitedByAuthority of [undefined, "service"]) {
+        const invalid = await thrown(() =>
+          WorkspaceInvitationModel.create(invitation({email: `bad-${invitedByAuthority}@example.com`, invitedByAuthority})),
+        )
+        expect({invitedByAuthority, name: invalid.name, path: Object.keys(invalid.errors ?? {})}).toEqual({
+          invitedByAuthority,
+          name: "ValidationError",
+          path: ["invitedByAuthority"],
+        })
+      }
     })
 
     test("allows one pending invitation per workspace and email", async () => {

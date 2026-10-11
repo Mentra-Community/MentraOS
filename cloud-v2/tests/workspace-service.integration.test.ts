@@ -902,6 +902,7 @@ describe("deleteWorkspace", () => {
         role: "member",
         tokenHash: "b".repeat(64),
         status,
+        invitedByAuthority: "system",
         expiresAt: new Date(Date.now() + 86_400_000),
       })
     await invite("winv_pending", "p@example.test", "pending")

@@ -52,11 +52,14 @@ account; a deleted account is refused (`404 user_not_found`).
   the workspace portal, signs in with that verified email, and accepts.
   Accepting adds the membership without touching others. A newer invitation to
   the same address replaces the pending one.
-- An invitation is only as good as its inviter: it is revoked when the
-  inviter's membership ends, and refused at acceptance once the inviter's role
-  no longer grants the invited role. A person may send 100 invitations an hour,
-  and a workspace hold 200 pending ones; replacing the pending invitation to an
-  address does not count against that.
+- An invitation is only as good as its inviter, and records the authority it
+  was sent with. Sent on a membership whose role grants it, it is revoked when
+  that membership ends and refused at acceptance once the role no longer grants
+  the invited role. Sent by an Organization Admin on the organization's
+  authority, it is refused while the inviter's email is off the admin allowlist,
+  and revoked when their account is deleted. A person may send 100 invitations
+  an hour, and a workspace hold 200 pending ones; replacing the pending
+  invitation to an address does not count against that.
 - Deleting a workspace ends its memberships and revokes its keys and
   invitations at once, without asking any other service. Miniapps it publishes
   in the Mentra Miniapp Store stay published until a Store operator assigns

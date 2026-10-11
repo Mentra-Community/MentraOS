@@ -18,6 +18,12 @@
  * Expiry is evaluated when an invitation is read (`expiresAt` against now);
  * nothing flips a stored status when time passes, and peeking never writes.
  *
+ * An invitation is only as good as the authority it was sent with, recorded on
+ * it (`invitedByAuthority`) and checked again when it is peeked at or accepted:
+ * the inviter's membership must still grant the role, or the inviter must still
+ * be an Organization Admin whose account is not deleted. Ending the inviter's
+ * membership, or deleting their account, also revokes what they sent.
+ *
  * The email is sent after the transaction commits, never inside the retried
  * callback, and a failed send never fails the invitation: the caller also gets
  * the link back.
@@ -30,9 +36,15 @@ import {canChangeRole, type WorkspaceRole} from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
 import {ulid} from "ulid"
 import {withTransaction} from "../../connections/mongo.connection"
-import {WorkspaceInvitationModel, type WorkspaceInvitationRow} from "../../models/workspace-invitation.model"
+import {UserModel} from "../../models/user.model"
+import {
+  WorkspaceInvitationModel,
+  type InviterAuthority,
+  type WorkspaceInvitationRow,
+} from "../../models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel} from "../../models/workspace.model"
+import {isOrganizationAdminEmail} from "../admin-email-policy"
 import {sendEmail} from "../email/email.service"
 import {consumeRateLimit} from "../signin/rate-limit.service"
 import {recordWorkspaceEvent} from "./audit.service"
@@ -84,7 +96,8 @@ export interface InvitationRow {
  * otherwise). A pending invitation to the same address is revoked (superseded), so
  * only the newest link works. A person may send at most 100 invitations an hour
  * and a workspace hold at most 200 pending ones (`rate_limited`); replacing the
- * pending invitation to an address does not count against that. `inviteUrl` is
+ * pending invitation to an address does not count against that. The invitation
+ * records the authority it is sent with (`inviterOf`). `inviteUrl` is
  * built from `inviteUrlTemplate()`; a missing or unusable template is
  * `invitations_unavailable` (503), before anything is written.
  * The template is checked only once the workspace exists and the actor may
@@ -131,6 +144,7 @@ export async function createInvitation(
       fail("rate_limited", "this workspace has too many pending invitations; revoke some before inviting more")
     }
 
+    const inviter = await inviterOf(session, actor, workspaceId, role)
     const invitationId = `winv_${ulid()}`
     const superseded = await WorkspaceInvitationModel.findOneAndUpdate(
       {workspaceId, email, status: "pending"},
@@ -146,7 +160,7 @@ export async function createInvitation(
           role,
           tokenHash,
           status: "pending",
-          invitedByMembershipId: await actorMembershipId(session, actor, workspaceId, role),
+          ...inviter,
           expiresAt,
         },
       ],
@@ -238,7 +252,8 @@ export async function revokeInvitation(actor: Actor, workspaceId: string, invita
 /**
  * What an invitation link is for, so the page can say who is being invited to
  * what before asking them to sign in. Null for an unknown, expired, used or
- * revoked token, and when the workspace is gone. Read-only.
+ * revoked token, when the workspace is gone, and when the inviter's authority no
+ * longer grants the role. Read-only.
  */
 export async function peekInvitation(
   token: string,
@@ -255,6 +270,7 @@ export async function peekInvitation(
     .select({name: 1})
     .lean()
   if (!workspace) return null
+  if (!(await inviterStillAuthorizes(null, invitation))) return null
   return {workspaceName: workspace.name, email: invitation.email, role: invitation.role as WorkspaceRole}
 }
 
@@ -264,7 +280,8 @@ export async function peekInvitation(
  * The actor's email must be verified and equal the invited address (case and
  * surrounding whitespace aside), otherwise `email_mismatch`. Order of refusals:
  * unknown, used or revoked token (`invitation_not_found`), expired
- * (`invitation_expired`), wrong or unverified email (`email_mismatch`), already
+ * (`invitation_expired`), an inviter whose authority no longer grants the role
+ * (`invitation_not_found`), wrong or unverified email (`email_mismatch`), already
  * an active member (`already_member`; the invitation stays pending). One
  * transaction claims the invitation, inserts the membership under a new
  * `membershipId`, bumps `authorizationRevision` and records the audit events,
@@ -288,18 +305,8 @@ export async function acceptInvitation(
 
     if (invitation.expiresAt.getTime() <= Date.now()) fail("invitation_expired", "this invitation has expired")
     // The invitation is only as good as its inviter's standing today.
-    if (invitation.invitedByMembershipId) {
-      const inviter = await WorkspaceMembershipModel.findOne({
-        membershipId: invitation.invitedByMembershipId,
-        workspaceId: invitation.workspaceId,
-        status: "active",
-      })
-        .select({role: 1})
-        .session(session)
-        .lean()
-      if (!inviter || !canChangeRole(inviter.role as WorkspaceRole, null, invitation.role as WorkspaceRole)) {
-        fail("invitation_not_found", "this invitation is no longer valid; ask for a new one")
-      }
+    if (!(await inviterStillAuthorizes(session, invitation))) {
+      fail("invitation_not_found", "this invitation is no longer valid; ask for a new one")
     }
     if (actor.emailVerified !== true || normalizeAddress(actor.email) !== invitation.email) {
       fail("email_mismatch", "sign in with the verified email address this invitation was sent to")
@@ -360,21 +367,70 @@ export async function acceptInvitation(
   })
 }
 
+/**
+ * Revoke, inside the caller's transaction, every pending invitation `mentraUserId` sent, whatever
+ * authority it was sent with, and record each as revoked by `actor` with `reason`. Returns the ids
+ * it revoked. Account deletion uses it.
+ */
+export async function revokeInvitationsSentBy(
+  session: ClientSession,
+  mentraUserId: string,
+  actor: Actor,
+  reason: string,
+): Promise<string[]> {
+  if (!isId(mentraUserId)) return []
+  const invitations = await WorkspaceInvitationModel.find({invitedByMentraUserId: mentraUserId, status: "pending"})
+    .sort({_id: 1})
+    .session(session)
+    .lean<WorkspaceInvitationRow[]>()
+  const revoked: string[] = []
+  for (const invitation of invitations) {
+    const result = await WorkspaceInvitationModel.updateOne(
+      {invitationId: invitation.invitationId, status: "pending"},
+      {$set: {status: "revoked"}},
+      {session},
+    )
+    if (result.modifiedCount !== 1) continue
+    await recordWorkspaceEvent(session, {
+      workspaceId: invitation.workspaceId,
+      action: "invitation.revoked",
+      actor: auditActor(actor),
+      target: {invitationId: invitation.invitationId},
+      before: {status: "pending", role: invitation.role},
+      after: {status: "revoked", reason},
+    })
+    revoked.push(invitation.invitationId)
+  }
+  return revoked
+}
+
 // --- Helpers ---------------------------------------------------------------
 
+/** Who sent an invitation, and on what authority: the fields an invitation records about its inviter. */
+interface Inviter {
+  invitedByAuthority: InviterAuthority
+  invitedByMembershipId: string | null
+  invitedByMentraUserId: string | null
+  invitedByEmail: string | null
+}
+
 /**
- * The membership whose role grants this invitation, or null when the authority comes from elsewhere
- * (an Organization Admin, or the system). An invitation recorded against a membership is valid only
- * while that membership could still send it: it is revoked when the membership ends, and refused at
- * acceptance once the membership's role no longer grants the invited role.
+ * The authority `actor` invites `role` with. A membership whose role grants it comes first: such an
+ * invitation stays valid while that membership could still send it. Otherwise an Organization Admin
+ * invites on the organization's authority, recorded with the verified email that made them one; such
+ * an invitation stays valid while that email is on the admin allowlist and the account exists. The
+ * system needs neither. The caller has already checked that the actor may invite this role.
  */
-async function actorMembershipId(
+async function inviterOf(
   session: ClientSession,
   actor: Actor,
   workspaceId: string,
   role: WorkspaceRole,
-): Promise<string | null> {
-  if (actor.kind !== "user" || !isId(actor.mentraUserId)) return null
+): Promise<Inviter> {
+  if (actor.kind === "system") {
+    return {invitedByAuthority: "system", invitedByMembershipId: null, invitedByMentraUserId: null, invitedByEmail: null}
+  }
+  if (actor.kind !== "user" || !isId(actor.mentraUserId)) fail("forbidden", "only a person can send an invitation")
   const membership = await WorkspaceMembershipModel.findOne({
     workspaceId,
     mentraUserId: actor.mentraUserId,
@@ -383,8 +439,60 @@ async function actorMembershipId(
     .select({membershipId: 1, role: 1})
     .session(session)
     .lean()
-  if (!membership || !canChangeRole(membership.role as WorkspaceRole, null, role)) return null
-  return membership.membershipId
+  if (membership && canChangeRole(membership.role as WorkspaceRole, null, role)) {
+    return {
+      invitedByAuthority: "membership",
+      invitedByMembershipId: membership.membershipId,
+      invitedByMentraUserId: actor.mentraUserId,
+      invitedByEmail: null,
+    }
+  }
+  const email = normalizeAddress(actor.email)
+  if (!actor.isOrganizationAdmin || !isOrganizationAdminEmail({email: email || null, verified: actor.emailVerified === true})) {
+    fail("forbidden", `you cannot invite a ${role}`)
+  }
+  return {
+    invitedByAuthority: "organization_admin",
+    invitedByMembershipId: null,
+    invitedByMentraUserId: actor.mentraUserId,
+    invitedByEmail: email,
+  }
+}
+
+/** Whether the authority an invitation was sent with still grants its role. */
+async function inviterStillAuthorizes(
+  session: ClientSession | null,
+  invitation: WorkspaceInvitationRow,
+): Promise<boolean> {
+  const role = invitation.role as WorkspaceRole
+  switch (invitation.invitedByAuthority) {
+    case "membership": {
+      if (!isId(invitation.invitedByMembershipId)) return false
+      const inviter = await WorkspaceMembershipModel.findOne({
+        membershipId: invitation.invitedByMembershipId,
+        workspaceId: invitation.workspaceId,
+        status: "active",
+      })
+        .select({role: 1})
+        .session(session)
+        .lean()
+      return !!inviter && canChangeRole(inviter.role as WorkspaceRole, null, role)
+    }
+    case "organization_admin": {
+      if (!isId(invitation.invitedByMentraUserId)) return false
+      if (!isOrganizationAdminEmail({email: invitation.invitedByEmail ?? null, verified: true})) return false
+      // A deleted account keeps its users row as a tombstone; it authorizes nothing.
+      const account = await UserModel.exists({
+        mentraUserId: invitation.invitedByMentraUserId,
+        supportTelemetryDeletedAt: null,
+      }).session(session)
+      return account !== null
+    }
+    case "system":
+      return true
+    default:
+      return false
+  }
 }
 
 function normalizeAddress(email: unknown): string {

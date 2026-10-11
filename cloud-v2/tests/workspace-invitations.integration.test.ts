@@ -126,6 +126,11 @@ async function newWorkspace(name = "Acme") {
   return summary.workspaceId
 }
 
+/** A Core users row for `mentraUserId`, as signing in creates one. */
+async function account(mentraUserId: string) {
+  await UserModel.create({mentraUserId, tenantId: "mentra", tenantUserId: `sb-${mentraUserId}`})
+}
+
 async function revisionOf(workspaceId: string): Promise<number> {
   const row = await getWorkspace(workspaceId)
   if (!row) throw new Error(`no workspace ${workspaceId}`)
@@ -169,6 +174,8 @@ async function expire(invitationId: string) {
 }
 
 const ENV_KEYS = [
+  "CLOUD_CORE_ADMIN_EMAILS",
+  "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
   "CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE",
   "CLOUD_CORE_ENTERPRISE_PORTAL_URL",
   "RESEND_API_KEY",
@@ -207,8 +214,12 @@ beforeEach(async () => {
   assertConnectedTo(databaseUrl, WorkspaceModel.db.name)
   await Promise.all([...MODELS, UserModel].map(model => model.deleteMany({})))
   process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE = URL_TEMPLATE
+  // `orgAdmin` is an Organization Admin by this allowlist, and has an account.
+  process.env.CLOUD_CORE_ADMIN_EMAILS = orgAdmin.email!
+  delete process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS
   delete process.env.CLOUD_CORE_ENTERPRISE_PORTAL_URL
   delete process.env.RESEND_API_KEY
+  await account(orgAdmin.mentraUserId)
 })
 
 describe("createInvitation", () => {
@@ -235,7 +246,10 @@ describe("createInvitation", () => {
       email: "dev@example.test",
       role: "developer",
       status: "pending",
+      invitedByAuthority: "membership",
       invitedByMembershipId: adminMembership,
+      invitedByMentraUserId: "mu_admin",
+      invitedByEmail: null,
       tokenHash: sha256(token),
       acceptedMembershipId: null,
     })
@@ -302,9 +316,19 @@ describe("createInvitation", () => {
     await createInvitation(orgAdmin, ws, {email: "o@example.test", role: "owner"})
     await createInvitation(system, ws, {email: "o2@example.test", role: "admin"})
     expect(await WorkspaceInvitationModel.countDocuments({status: "pending"})).toBe(5)
-    // Organization admins and the system hold no membership of their own.
-    const byOrgAdmin = await WorkspaceInvitationModel.findOne({email: "o@example.test"}).lean()
-    expect(byOrgAdmin!.invitedByMembershipId).toBeNull()
+    // Organization admins and the system hold no membership of their own; each invitation records its authority.
+    expect(await WorkspaceInvitationModel.findOne({email: "o@example.test"}).lean()).toMatchObject({
+      invitedByAuthority: "organization_admin",
+      invitedByMembershipId: null,
+      invitedByMentraUserId: orgAdmin.mentraUserId,
+      invitedByEmail: orgAdmin.email,
+    })
+    expect(await WorkspaceInvitationModel.findOne({email: "o2@example.test"}).lean()).toMatchObject({
+      invitedByAuthority: "system",
+      invitedByMembershipId: null,
+      invitedByMentraUserId: null,
+      invitedByEmail: null,
+    })
   })
 
   test("an inviter whose own email is unverified is 403 email_unverified, and nothing is written", async () => {
@@ -607,10 +631,78 @@ describe("an invitation carries its inviter's authority", () => {
     // A plain member who is also an Organization Admin invites an owner on the strength of the latter.
     await addMember(ws, orgAdmin.mentraUserId, "member")
     const created = await createInvitation(orgAdmin, ws, {email: "heir@example.test", role: "owner"})
-    expect((await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!.invitedByMembershipId).toBeNull()
+    expect(await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean()).toMatchObject({
+      invitedByAuthority: "organization_admin",
+      invitedByMembershipId: null,
+    })
 
     await acceptInvitation(user("mu_heir", {email: "heir@example.test"}), tokenOf(created.inviteUrl))
     expect((await getActiveMembership(ws, "mu_heir"))?.role).toBe("owner")
+  })
+
+  test("an Organization Admin whose own membership grants the role invites on that membership", async () => {
+    const ws = await newWorkspace()
+    const membershipId = await addMember(ws, orgAdmin.mentraUserId, "owner")
+    const created = await createInvitation(orgAdmin, ws, {email: "heir@example.test", role: "owner"})
+    expect(await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean()).toMatchObject({
+      invitedByAuthority: "membership",
+      invitedByMembershipId: membershipId,
+      invitedByMentraUserId: orgAdmin.mentraUserId,
+      invitedByEmail: null,
+    })
+    // Leaving the allowlist does not matter to an invitation the membership sent.
+    process.env.CLOUD_CORE_ADMIN_EMAILS = "someone-else@example.test"
+    await acceptInvitation(user("mu_heir", {email: "heir@example.test"}), tokenOf(created.inviteUrl))
+    expect((await getActiveMembership(ws, "mu_heir"))?.role).toBe("owner")
+  })
+
+  test("an Organization Admin's invitation stops working when they leave the admin allowlist, and works again if they return", async () => {
+    const ws = await newWorkspace()
+    const created = await createInvitation(orgAdmin, ws, {email: "heir@example.test", role: "owner"})
+    const token = tokenOf(created.inviteUrl)
+    const heir = user("mu_heir", {email: "heir@example.test"})
+
+    process.env.CLOUD_CORE_ADMIN_EMAILS = "someone-else@example.test"
+    expect(await peekInvitation(token)).toBeNull()
+    await expectError(() => acceptInvitation(heir, token), "invitation_not_found", 404)
+    expect(await getActiveMembership(ws, "mu_heir")).toBeNull()
+    // Nothing was revoked: the allowlist decides, as it does for operator keys.
+    expect((await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!.status).toBe("pending")
+
+    // A listed domain counts as well.
+    process.env.CLOUD_CORE_ADMIN_EMAIL_DOMAINS = "example.test"
+    expect(await peekInvitation(token)).not.toBeNull()
+    await acceptInvitation(heir, token)
+    expect((await getActiveMembership(ws, "mu_heir"))?.role).toBe("owner")
+  })
+
+  test("an Organization Admin's invitation stops working once their account is deleted or gone", async () => {
+    const ws = await newWorkspace()
+    const created = await createInvitation(orgAdmin, ws, {email: "heir@example.test", role: "owner"})
+    const token = tokenOf(created.inviteUrl)
+    const heir = user("mu_heir", {email: "heir@example.test"})
+
+    // Account deletion sets the tombstone before anything else about workspaces happens.
+    await UserModel.updateOne({mentraUserId: orgAdmin.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+    expect(await peekInvitation(token)).toBeNull()
+    await expectError(() => acceptInvitation(heir, token), "invitation_not_found", 404)
+
+    await UserModel.deleteOne({mentraUserId: orgAdmin.mentraUserId})
+    await expectError(() => acceptInvitation(heir, token), "invitation_not_found", 404)
+    expect(await getActiveMembership(ws, "mu_heir")).toBeNull()
+  })
+
+  test("an Organization Admin whose email does not make them one cannot invite on the organization's authority", async () => {
+    const ws = await newWorkspace()
+    // A principal flagged as an Organization Admin, but by an address the allowlist does not hold: an
+    // invitation recorded with it could never be accepted, so none is sent.
+    const mislabelled = user("mu_mislabelled", {isOrganizationAdmin: true})
+    await expectError(
+      () => createInvitation(mislabelled, ws, {email: "heir@example.test", role: "owner"}),
+      "forbidden",
+      403,
+    )
+    expect(await WorkspaceInvitationModel.countDocuments({email: "heir@example.test"})).toBe(0)
   })
 })
 
@@ -641,6 +733,7 @@ describe("invitation limits", () => {
         role: "member",
         tokenHash: sha256(`seed-${i}`),
         status: "pending",
+        invitedByAuthority: "system",
         expiresAt,
       })),
     )
@@ -664,6 +757,7 @@ describe("invitation limits", () => {
         role: "member",
         tokenHash: sha256(`seed-${i}`),
         status: "pending",
+        invitedByAuthority: "system",
         expiresAt,
       })),
     )
