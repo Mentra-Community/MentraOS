@@ -1951,23 +1951,81 @@ def meetings_consent(config, client_id):
         return None
 
 
+TEAMS_ADMIN_API = '48ac35b8-9aa8-4d74-927d-1f4a14a0b239'  # Skype and Teams Tenant Admin API
+
+
 def teams_policy_commands(client_id, organizer_id, tenant_id, previous_client_id=''):
+    """A Teams administrator's PowerShell for meeting creation, safe to run more than once.
+
+    Setup runs it with the signed-in account's tokens; anyone else runs it in
+    Cloud Shell's PowerShell and signs in with a device code.
+    """
     add = f"Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Add='{client_id}'}}"
-    commands = ['Install-Module MicrosoftTeams -Scope CurrentUser -Force   # first time only',
-                f'Connect-MicrosoftTeams -TenantId {tenant_id} -UseDeviceAuthentication',
-                '# Create the MentraMeetings policy, or add this app to it:',
-                f'if (Get-CsApplicationAccessPolicy -Identity MentraMeetings -ErrorAction SilentlyContinue) '
-                f'{{ {add} }} else {{ New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id} }}']
+    commands = ['# Lets the Mentra meetings app create Teams meetings for your employees. Run it once as a Teams administrator.',
+                'if (-not (Get-Module -ListAvailable MicrosoftTeams)) { Install-Module MicrosoftTeams -Scope CurrentUser -Force }',
+                '# Loading the module can report that PowerShell remoting is unavailable; that is harmless here.',
+                'Import-Module MicrosoftTeams -ErrorAction SilentlyContinue',
+                "$ErrorActionPreference = 'Stop'",
+                '# Setup passes tokens outside Cloud Shell; Cloud Shell signs in as you; elsewhere, a device code.',
+                'if ($env:MENTRA_GRAPH_TOKEN) { Connect-MicrosoftTeams -AccessTokens @($env:MENTRA_GRAPH_TOKEN, $env:MENTRA_TEAMS_TOKEN) | Out-Null }',
+                'elseif ($env:ACC_CLOUD) { Connect-MicrosoftTeams -Identity | Out-Null }',
+                f'else {{ Connect-MicrosoftTeams -TenantId {tenant_id} -UseDeviceAuthentication | Out-Null }}',
+                f"$app = '{client_id}'",
+                '# Teams reports a missing policy as an error.',
+                '$existing = try { Get-CsApplicationAccessPolicy -Identity MentraMeetings } catch { $null }',
+                '# Granting to everyone copies MentraMeetings into Global, so Mentra\'s own apps never count as another policy.',
+                f"$mentra = @($app, '{previous_client_id}') + @($existing.AppIds)",
+                '# The policy is granted to everyone, so never take the place of another app\'s policy.',
+                "$others = @(Get-CsApplicationAccessPolicy | Where-Object { $_.Identity -ne 'Tag:MentraMeetings' -and @($_.AppIds | Where-Object { $_ -notin $mentra }).Count })",
+                'if ($others) {',
+                '  Write-Output "MENTRA_TEAMS_POLICY_CONFLICT This tenant already has Teams application access policies: $(($others.Identity) -join \', \')."',
+                '  Write-Output "Add the meetings app to the one your employees use: Set-CsApplicationAccessPolicy -Identity <policy> -AppIds @{Add=\'$app\'}"',
+                '  exit 3',
+                '}',
+                '# Teams refuses to add an app that is already there, so re-runs only add what is missing.',
+                f"if (-not $existing) {{ New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id} }} "
+                f"elseif ($existing.AppIds -notcontains $app) {{ {add} }}"]
     if previous_client_id and previous_client_id != client_id:
-        commands.append(f"Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Remove='{previous_client_id}'}}"
+        commands.append(f"if ($existing.AppIds -contains '{previous_client_id}') "
+                        f"{{ Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Remove='{previous_client_id}'}} }}"
                         '   # the Graph app it replaces')
-    commands += ['# Let employees create meetings as themselves. This replaces any policy already granted to everyone;',
-                 '# if your tenant has one, add the app to that policy instead (Set-CsApplicationAccessPolicy with @{Add=...}).',
-                 'Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global']
+    commands.append('Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global')
     if organizer_id:
         commands.append(f'Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Identity {organizer_id}')
-    commands.append('# Policy changes can take up to 30 minutes to apply.')
+    commands.append("Write-Output 'MENTRA_TEAMS_POLICY_APPLIED Teams can take up to 30 minutes to apply it.'")
     return commands
+
+
+def apply_teams_policy(config, script):
+    """Run the Teams script as the signed-in account. Returns (applied, reason it wasn't)."""
+    pwsh = shutil.which('pwsh')
+    if not pwsh:
+        return False, 'PowerShell is not installed here'
+    tokens = {}
+    # Cloud Shell signs Teams PowerShell in as the user (-Identity). Its Graph tokens carry an
+    # audience Teams PowerShell rejects, so tokens are only passed elsewhere.
+    for name, resource in () if os.environ.get('ACC_CLOUD') else (('MENTRA_GRAPH_TOKEN', 'https://graph.microsoft.com'),
+                                                                  ('MENTRA_TEAMS_TOKEN', TEAMS_ADMIN_API)):
+        try:
+            tokens[name] = json.loads(run(['az', 'account', 'get-access-token', '--tenant', config['tenantId'],
+                                           '--resource', resource, '--output', 'json']))['accessToken']
+        except (SetupError, ValueError, KeyError):
+            return False, 'your account could not get a Teams administrator sign-in'
+    try:
+        result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-File', str(script)], env=dict(os.environ, **tokens),
+                                text=True, capture_output=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        return False, 'Teams PowerShell did not finish within 15 minutes'
+    output = re.sub(r'\x1b\[[0-9;]*m', '', (result.stdout or '') + '\n' + (result.stderr or ''))
+    if result.returncode == 0 and 'MENTRA_TEAMS_POLICY_APPLIED' in output:
+        return True, ''
+    conflict = next((line for line in output.splitlines() if 'MENTRA_TEAMS_POLICY_CONFLICT' in line), '')
+    if conflict:
+        return False, conflict.split('MENTRA_TEAMS_POLICY_CONFLICT', 1)[1].strip()
+    if re.search(r'(?i)access denied|forbidden|unauthori[sz]ed|not have (the )?permission|AADSTS', output):
+        return False, 'your account is not a Teams administrator here (guest accounts are refused)'
+    return False, 'Teams PowerShell failed: ' + (next((l.strip() for l in reversed(output.splitlines()) if l.strip()), '') or
+                                                 f'exit {result.returncode}')[:300]
 
 
 def permissions_page(app_id):
@@ -2042,9 +2100,27 @@ def configure_teams(args, directory, config, state, interactive=None):
     # Kept with the setup files, for the Teams administrator who runs it.
     (directory / 'teams-policy.ps1').write_text('\n'.join(policy) + '\n')
     rollout = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
+    # The script takes Teams access away from the app it replaces, so it runs only once the
+    # deployment uses the new app. It only ever adds this app, so a failed re-run leaves an
+    # earlier success in place.
+    earlier = state.get('teamsPolicyApplied') == client_id
+    if rollout['status'] == 'infrastructure_verified':
+        print('  Applying the Teams policy as your account...', flush=True)
+        applied, reason = apply_teams_policy(config, directory / 'teams-policy.ps1')
+    else:
+        applied, reason = False, 'the deployment has not switched to this app yet'
+    if applied:
+        print('  Applied. Teams can take up to 30 minutes to apply it.')
+    elif earlier:
+        print(f'  Not applied again ({reason}); the policy applied earlier still covers this app.')
+    else:
+        print(f'  Not applied: {reason}.')
+    applied = applied or earlier
+    checkpoint(directory, state, state['phase'], teamsPolicyApplied=client_id if applied else '')
     result = {'status': 'meeting_creation_configured' if rollout['status'] == 'infrastructure_verified' else rollout['status'],
               'graphClientId': client_id, 'adminConsent': {True: 'granted', False: 'needed'}.get(consent, 'unknown'),
-              'teamsPolicy': policy, 'teamsPolicyFile': str(directory / 'teams-policy.ps1')}
+              'teamsPolicy': policy, 'teamsPolicyFile': str(directory / 'teams-policy.ps1'),
+              'teamsPolicyApplied': applied, 'teamsPolicyReason': reason}
     if not consent:
         result['consentLink'] = permissions_page(client_id)
     if expires:
@@ -2247,10 +2323,12 @@ def print_teams(teams):
     if teams.get('consentLink'):
         print('A Global Administrator or Privileged Role Administrator grants its Microsoft Graph permission here '
               '(select "Grant admin consent"): ' + teams['consentLink'])
-    print('A Teams administrator runs these once in Cloud Shell (Switch to PowerShell); they are also saved in '
-          + teams.get('teamsPolicyFile', 'teams-policy.ps1') + ':')
-    for line in teams['teamsPolicy']:
-        print('  ' + line)
+    if teams.get('teamsPolicyApplied'):
+        print('The Teams policy is applied; meeting creation works within about 30 minutes.')
+        return
+    path = teams.get('teamsPolicyFile', 'teams-policy.ps1')
+    print(f'Still to do - Teams policy: a Teams administrator runs {path} once, in Cloud Shell after choosing '
+          f'Switch to PowerShell: & {path}  (send them the file if they use their own Cloud Shell).')
 
 
 def finish(directory, result):
@@ -2280,8 +2358,9 @@ def finish(directory, result):
             if meetings_consent(config, config['teamsGraphClientId']) is False:
                 print('Still to do - Graph permission for meeting creation (Global Administrator or Privileged Role '
                       'Administrator, select "Grant admin consent"): ' + permissions_page(config['teamsGraphClientId']))
-            if (directory / 'teams-policy.ps1').exists():
-                print(f"Teams policy commands for meeting creation are saved in {directory / 'teams-policy.ps1'}.")
+            if (directory / 'teams-policy.ps1').exists() and state.get('teamsPolicyApplied') != config['teamsGraphClientId']:
+                print(f"Still to do - Teams policy: a Teams administrator runs {directory / 'teams-policy.ps1'} once "
+                      '(Cloud Shell, Switch to PowerShell), or run configure-teams again as one.')
     for handoff in state.get('handoffs') or []:
         print(f"Still to do - {handoff['step']}: {handoff['action']}")
     if not config.get('verifiedEmailDomains'):

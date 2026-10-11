@@ -110,7 +110,7 @@ jobs:
       - name: Check whether the Store already has this version
         id: store
         env:
-          STORE_URL: https://store.dev.us-west-2.mentraglass.com
+          STORE_URL: https://api.apps.mentraglass.com
           MANIFEST: miniapps/${{ matrix.miniapp }}/miniapp.json
         run: |
           package=$(jq -r .packageName "$MANIFEST")

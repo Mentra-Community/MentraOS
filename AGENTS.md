@@ -160,6 +160,14 @@ For a failing nightly device suite, use
 members running, diagnose failures as they arrive, and choose targeted manual runs
 or held authoring for verification after the suite finishes.
 
+## GitHub Actions runners
+
+When adding or editing GitHub Actions workflows, use the
+[`configure-workflow-runners` skill](.agents/skills/configure-workflow-runners/SKILL.md).
+Use Blacksmith for Linux jobs and the existing office Mac mini self-hosted runner
+for macOS jobs. Do not add GitHub-hosted Linux runners unless the user explicitly
+requests an exception. Apply this to reusable workflows and runner matrices too.
+
 ## Commit & Pull Request Guidelines
 
 Write imperative, present-tense commit subjects (e.g., "Add BLE retry delay") and keep scope focused. Reference issue IDs or Slack threads in the body when applicable. Before opening a PR, run relevant `bun run test` suites and platform builds, attach log excerpts for hardware-dependent steps, and call out configuration updates. PR descriptions should outline scope, test evidence, and screenshots or screen recordings for UI-impacting changes.

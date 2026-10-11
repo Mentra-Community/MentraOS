@@ -270,27 +270,24 @@ date. Before then, add a new client secret to the app in Entra and run
 `setup.sh configure-teams` (it asks for the secret, hidden) or
 `setup.sh configure-teams --teams-secret-stdin`.
 
-A Teams administrator then authorizes organizers in Microsoft Teams PowerShell,
-for example in Cloud Shell (Switch to PowerShell). `configure-teams` prints these
-with the IDs filled in and saves them to `mentra-state/teams-policy.ps1`:
+Meeting creation also needs a Teams application access policy, which only Teams
+PowerShell can set. `configure-teams` writes the script to
+`mentra-state/teams-policy.ps1` and, once the rollout has moved the deployment
+to the app, runs it as the operator: in Cloud Shell
+Teams PowerShell signs in as the Cloud Shell user (`Connect-MicrosoftTeams
+-Identity`); elsewhere setup passes the account's Graph and Teams admin tokens
+from the Azure CLI (`Connect-MicrosoftTeams -AccessTokens`). When the operator
+isn't a Teams administrator, setup prints a **Still to do** line, and a Teams
+administrator runs the same file once in Cloud Shell (Switch to PowerShell) with
+`& ./teams-policy.ps1`; outside Cloud Shell it signs in with a device code.
 
-```powershell
-Install-Module MicrosoftTeams -Scope CurrentUser -Force   # first time only
-Connect-MicrosoftTeams -TenantId <tenant-id> -UseDeviceAuthentication
-# Create the MentraMeetings policy, or add this app to it:
-if (Get-CsApplicationAccessPolicy -Identity MentraMeetings -ErrorAction SilentlyContinue) { Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{Add='<graph-client-id>'} } else { New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds <graph-client-id> }
-Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{Remove='<previous-graph-client-id>'}   # the Graph app it replaces
-# Let employees create meetings as themselves. This replaces any policy already granted to everyone;
-# if your tenant has one, add the app to that policy instead (Set-CsApplicationAccessPolicy with @{Add=...}).
-Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global
-Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Identity <organizer-object-id>
-# Policy changes can take up to 30 minutes to apply.
-```
-
-The `@{Remove=...}` line appears only after switching from another Graph app,
-and the `-Identity` grant only when a guest meeting organizer is configured.
-`-Global` replaces any application access policy already granted to everyone in
-the tenant; a tenant with one adds the app to that policy instead.
+The script creates or updates the `MentraMeetings` policy for the meetings app,
+grants it to everyone (`-Global`) and to the guest meeting organizer when one is
+configured, and removes the Graph app it replaces after a switch. It never takes
+the place of another app's policy: when the tenant already has application
+access policies other than Mentra's (including the copy of `MentraMeetings` that
+`-Global` makes in `Global`), it stops without changing anything and says which
+policy to add the meetings app to. Re-running it is safe.
 See the [Runtime API contract](../../private-deployment.md#teams-meeting-creation)
 for identity selection and the [deployment inputs](./README.md#teams-meeting-creation)
 for secret/configuration wiring.
