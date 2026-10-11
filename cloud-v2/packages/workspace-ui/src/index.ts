@@ -15,7 +15,7 @@ export { invitationPreviewQuery, workspaceDetailQuery, workspaceKeys, workspaceL
 export { assignableRoles, can, effectiveRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "./roles";
 
 export { WorkspaceAuditPanel } from "./components/audit-panel";
-export { ConfirmButton, CopyButton, initials } from "./components/common";
+export { Avatar, ConfirmButton, CopyButton, Count, initials, Spinner, WorkspaceAvatar } from "./components/common";
 export { CreateWorkspaceDialog, CreateWorkspaceForm, useCreateWorkspace } from "./components/create-workspace";
 export { expiryFromDateInput, SecretDialog, WorkspaceCredentialsPanel } from "./components/credentials-panel";
 export { InvitationAcceptView } from "./components/invitation-accept-view";
@@ -27,3 +27,9 @@ export {
 export { WorkspaceMembersPanel } from "./components/members-panel";
 export { WorkspacePicker } from "./components/workspace-picker";
 export { WorkspaceSettingsPanel } from "./components/settings-panel";
+
+// Mentra's controls, for a host's own screens: one button system, inputs and selects (styles/mentra.css).
+export { Button, buttonVariants } from "./ui/button";
+export { Input } from "./ui/input";
+export { Label } from "./ui/label";
+export { NativeSelect } from "./ui/native-select";

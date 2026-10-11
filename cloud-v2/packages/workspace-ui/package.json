@@ -6,9 +6,10 @@
   "description": "Shared React workspace screens (picker, members, invitations, credentials, settings, audit) for the workspace portal, the admin portal and the Developer Console.",
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./mentra.css": "./styles/mentra.css"
   },
-  "sideEffects": false,
+  "sideEffects": ["*.css"],
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc -b"

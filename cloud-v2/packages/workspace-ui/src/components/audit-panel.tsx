@@ -100,7 +100,7 @@ export function WorkspaceAuditPanel({ api, workspaceId }: { api: WorkspaceApi; w
                     {auditResult.hasNextPage && !auditResult.isFetchNextPageError ? (
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="secondary"
                         size="sm"
                         disabled={auditResult.isFetchingNextPage}
                         onClick={() => void auditResult.fetchNextPage()}
@@ -122,11 +122,11 @@ export function WorkspaceAuditPanel({ api, workspaceId }: { api: WorkspaceApi; w
 function AuditEntry({ event }: { event: AuditEventView }) {
   const changes = changeLines(event);
   return (
-    <li className="flex gap-3 py-3 text-sm first:pt-0 last:pb-0">
-      <span aria-hidden="true" className="bg-ring mt-1.5 size-2 shrink-0 rounded-full" />
+    <li className="flex gap-3 py-3.5 text-sm first:pt-0 last:pb-0">
+      <span aria-hidden="true" className="bg-brand mt-[7px] size-2 shrink-0 rounded-full" />
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
-          <span className="font-medium">{actionLabel(event.action)}</span>
+          <span className="text-[15px] font-semibold">{actionLabel(event.action)}</span>
           <time dateTime={event.occurredAt} className="text-muted-foreground text-xs whitespace-nowrap">
             {formatDateTime(event.occurredAt)}
           </time>
@@ -135,7 +135,7 @@ function AuditEntry({ event }: { event: AuditEventView }) {
         {changes.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 pt-0.5">
             {changes.map((line) => (
-              <code key={line} className="bg-muted rounded-md px-1.5 py-0.5 font-mono text-xs break-all">
+              <code key={line} className="bg-surface rounded-[8px] px-2 py-1 font-mono text-xs break-all">
                 {line}
               </code>
             ))}

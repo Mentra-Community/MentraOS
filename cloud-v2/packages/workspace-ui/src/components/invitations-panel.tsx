@@ -47,18 +47,20 @@ export interface InvitationLink {
 /** The link of an invitation just sent, with Copy and Dismiss. Shown whatever state the queries are in. */
 function InvitationLinkNotice({ link, onDismiss }: { link: InvitationLink; onDismiss?(): void }) {
   return (
-    <div role="status" className="bg-muted space-y-2 rounded-lg p-3 text-sm">
+    <div role="status" className="rounded-notice bg-surface space-y-3 p-4 text-sm">
       <p>
         {link.resent ? "A new invitation was sent to " : "Invitation sent to "}
         <strong>{link.email}</strong> as {ROLE_LABELS[link.role]}.{" "}
         {link.resent ? "The earlier link no longer works. " : ""}If the email does not arrive, share this link. It only
         works for someone signed in with that address.
       </p>
-      <code className="bg-background block rounded-md border p-2 text-xs break-all select-all">{link.inviteUrl}</code>
+      <code className="bg-background block rounded-[10px] border px-3 py-2.5 font-mono text-xs break-all select-all">
+        {link.inviteUrl}
+      </code>
       <div className="flex gap-2">
         <CopyButton text={link.inviteUrl} label="Copy link" />
         {onDismiss ? (
-          <Button type="button" variant="ghost" size="sm" onClick={onDismiss}>
+          <Button type="button" variant="secondary" size="sm" onClick={onDismiss}>
             Dismiss
           </Button>
         ) : null}
@@ -111,7 +113,7 @@ function InviteForm({
 
   return (
     <form onSubmit={submit} className={cn(stacked ? "space-y-4" : "flex flex-wrap items-end gap-3")}>
-      <div className="grid gap-1.5">
+      <div className="grid gap-2">
         <Label htmlFor={emailId}>Email address</Label>
         <Input
           id={emailId}
@@ -125,7 +127,7 @@ function InviteForm({
           onChange={(event) => setEmail(event.target.value)}
         />
       </div>
-      <div className="grid gap-1.5">
+      <div className="grid gap-2">
         <Label htmlFor={roleId}>Role</Label>
         <NativeSelect
           id={roleId}
@@ -140,14 +142,14 @@ function InviteForm({
             </option>
           ))}
         </NativeSelect>
-        {stacked ? <p className="text-muted-foreground text-xs">{ROLE_DESCRIPTIONS[selectedRole]}</p> : null}
+        {stacked ? <p className="text-muted-foreground text-sm">{ROLE_DESCRIPTIONS[selectedRole]}</p> : null}
       </div>
       {stacked ? (
         <>
           <ErrorNotice error={invite.error} />
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end gap-2.5 pt-2">
             {onCancel ? (
-              <Button type="button" variant="ghost" onClick={onCancel}>
+              <Button type="button" variant="secondary" onClick={onCancel}>
                 Cancel
               </Button>
             ) : null}
@@ -201,20 +203,20 @@ function PendingInvitationsList({
             className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 first:pt-0 last:pb-0"
           >
             <div className="flex min-w-0 items-center gap-3">
-              <Avatar label={invitation.email} className="bg-muted text-muted-foreground border border-dashed" />
+              <Avatar label={invitation.email} className="text-muted-foreground bg-background border-dashed" />
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="truncate font-medium">{invitation.email}</span>
+                  <span className="truncate text-[15px] font-semibold">{invitation.email}</span>
                   <RoleBadge role={invitation.role} />
                 </div>
-                <div className="text-muted-foreground text-xs">Expires {formatDate(invitation.expiresAt)}</div>
+                <div className="text-muted-foreground mt-0.5 text-xs">Expires {formatDate(invitation.expiresAt)}</div>
               </div>
             </div>
             {viewer && canChangeRole(viewer, null, invitation.role) ? (
-              <div className="flex flex-wrap items-center gap-1">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   aria-label={`Resend invitation to ${invitation.email}`}
                   title="Sends a new link. The earlier link stops working."
@@ -403,15 +405,15 @@ export function InviteDialogBody({
   if (link) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <span className="bg-secondary text-secondary-foreground inline-flex size-6 items-center justify-center rounded-full">
-            <CheckIcon className="size-3.5" />
+        <div className="flex items-center gap-2.5 text-[15px] font-semibold">
+          <span className="bg-info text-info-foreground inline-flex size-7 items-center justify-center rounded-full">
+            <CheckIcon className="size-4" />
           </span>
           Invitation sent
         </div>
         <InvitationLinkNotice link={link} />
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={() => setLink(null)}>
+        <div className="flex justify-end gap-2.5 pt-2">
+          <Button type="button" variant="secondary" onClick={() => setLink(null)}>
             Invite someone else
           </Button>
           <Button type="button" onClick={onClose}>

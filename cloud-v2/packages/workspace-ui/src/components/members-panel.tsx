@@ -107,12 +107,12 @@ function MembersTable({
   return (
     <div className="-mx-6 overflow-x-auto">
       <table className="w-full text-left text-sm">
-        <thead className="text-muted-foreground border-y bg-muted/50 text-xs">
+        <thead className="text-muted-foreground border-y text-xs">
           <tr>
-            <th className="py-2.5 pr-4 pl-6 font-medium">Member</th>
-            <th className="py-2.5 pr-4 font-medium">Role</th>
-            <th className="hidden py-2.5 pr-4 font-medium sm:table-cell">Joined</th>
-            <th className="py-2.5 pr-6 font-medium">
+            <th className="py-3 pr-4 pl-6 font-semibold">Member</th>
+            <th className="py-3 pr-4 font-semibold">Role</th>
+            <th className="hidden py-3 pr-4 font-semibold sm:table-cell">Joined</th>
+            <th className="py-3 pr-6 font-semibold">
               <span className="sr-only">Actions</span>
             </th>
           </tr>
@@ -124,12 +124,12 @@ function MembersTable({
             const options = canManage && !isSelf ? roleOptions(viewer, member.role) : [];
             return (
               <tr key={member.membershipId} className="border-b last:border-b-0">
-                <td className="py-3 pr-4 pl-6">
+                <td className="py-3.5 pr-4 pl-6">
                   <div className="flex items-center gap-3">
                     <Avatar label={label} className="hidden sm:inline-flex" />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium [overflow-wrap:anywhere]">{label}</span>
+                        <span className="text-[15px] font-semibold [overflow-wrap:anywhere]">{label}</span>
                         {isSelf ? <Badge>You</Badge> : null}
                       </div>
                       {showUserIds ? (
@@ -145,9 +145,10 @@ function MembersTable({
                     </div>
                   </div>
                 </td>
-                <td className="py-3 pr-4">
+                <td className="py-3.5 pr-4">
                   {options.length > 0 ? (
                     <NativeSelect
+                      compact
                       aria-label={`Role for ${label}`}
                       value={member.role}
                       disabled={busy}
@@ -163,10 +164,10 @@ function MembersTable({
                     <RoleBadge role={member.role} />
                   )}
                 </td>
-                <td className="text-muted-foreground hidden py-3 pr-4 whitespace-nowrap sm:table-cell">
+                <td className="text-muted-foreground hidden py-3.5 pr-4 whitespace-nowrap sm:table-cell">
                   {formatDate(member.startedAt)}
                 </td>
-                <td className="py-3 pr-6 text-right">
+                <td className="py-3.5 pr-6 text-right">
                   {canManage && !isSelf && canRemoveRole(viewer, member.role) ? (
                     <ConfirmButton
                       label="Remove"

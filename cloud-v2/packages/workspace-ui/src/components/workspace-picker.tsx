@@ -81,7 +81,7 @@ export function WorkspacePicker({
                 <p className="text-muted-foreground text-sm">You are not in any workspace yet.</p>
               )}
               {allowCreate && !creating ? (
-                <Button type="button" variant="outline" size="sm" onClick={() => setCreating(true)}>
+                <Button type="button" variant="secondary" onClick={() => setCreating(true)}>
                   <PlusIcon /> New workspace
                 </Button>
               ) : null}
@@ -92,7 +92,7 @@ export function WorkspacePicker({
 
       {allowCreate && creating ? (
         <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
-          <div className="grid gap-1.5">
+          <div className="grid gap-2">
             <Label htmlFor={nameId}>Workspace name</Label>
             <Input
               id={nameId}
@@ -110,7 +110,7 @@ export function WorkspacePicker({
           </Button>
           <Button
             type="button"
-            variant="ghost"
+            variant="secondary"
             onClick={() => {
               create.reset();
               setCreating(false);

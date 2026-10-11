@@ -70,21 +70,22 @@ export function CreateWorkspaceForm({
           maxLength={NAME_MAX_LENGTH}
           autoComplete="off"
           placeholder="Acme Field Team"
-          className={cn(wide && "h-11")}
+          className={cn(wide && "h-12")}
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
       </div>
       <ErrorNotice error={create.error} />
-      <div className={cn("flex justify-end gap-2", wide && "block")}>
+      <div className={cn("flex justify-end gap-2.5 pt-2", wide && "block pt-0")}>
         {onCancel ? (
-          <Button type="button" variant="ghost" onClick={onCancel}>
+          <Button type="button" variant="secondary" onClick={onCancel}>
             Cancel
           </Button>
         ) : null}
         <Button
           type="submit"
-          className={cn(wide && "h-11 w-full rounded-full")}
+          size={wide ? "lg" : "default"}
+          className={cn(wide && "w-full")}
           disabled={create.isPending || trimmed === ""}
         >
           {create.isPending ? "Creating…" : "Create workspace"}

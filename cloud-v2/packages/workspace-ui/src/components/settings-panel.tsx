@@ -90,7 +90,7 @@ function SettingsForms({
     <div className="space-y-6">
       <Panel title="General" description="How this workspace is named and identified.">
         {canRename ? (
-          <form onSubmit={submitRename} className="grid gap-1.5">
+          <form onSubmit={submitRename} className="grid gap-2">
             <Label htmlFor={nameId}>Workspace name</Label>
             <div className="flex flex-wrap items-center gap-3">
               <Input
@@ -110,33 +110,35 @@ function SettingsForms({
         ) : (
           <div className="grid gap-1">
             <span className="text-muted-foreground text-xs">Workspace name</span>
-            <span className="text-sm font-medium">{detail.name}</span>
+            <span className="text-[15px] font-semibold">{detail.name}</span>
             <span className="text-muted-foreground text-xs">Only workspace admins and owners can rename it.</span>
           </div>
         )}
         <ErrorNotice error={rename.error} />
 
-        <div className="grid gap-1.5 border-t pt-4">
-          <span className="text-sm font-medium">Workspace ID</span>
+        <div className="grid gap-2 border-t pt-5">
+          <span className="text-sm font-semibold">Workspace ID</span>
           <div className="flex flex-wrap items-center gap-3">
-            <code className="bg-muted rounded-md border px-2.5 py-1.5 font-mono text-xs select-all">{workspaceId}</code>
+            <code className="bg-surface flex h-9 items-center rounded-full border px-4 font-mono text-[13px] select-all">
+              {workspaceId}
+            </code>
             <CopyButton text={workspaceId} label="Copy" ariaLabel="Copy the workspace ID" />
           </div>
-          <span className="text-muted-foreground text-xs">Tools and support may ask for it.</span>
+          <span className="text-muted-foreground text-sm">Tools and support may ask for it.</span>
         </div>
       </Panel>
 
       {isMember || canDelete ? (
-        <Card role="region" aria-label="Danger zone" className="border-destructive/30 gap-0 py-0">
-          <CardHeader className="border-destructive/20 border-b py-5">
-            <CardTitle className="text-destructive text-base">Danger zone</CardTitle>
+        <Card role="region" aria-label="Danger zone" className="gap-0 py-0">
+          <CardHeader className="border-b py-6">
+            <CardTitle className="text-destructive text-lg">Danger zone</CardTitle>
             <CardDescription>These actions end access and cannot be undone here.</CardDescription>
           </CardHeader>
-          <CardContent className="divide-destructive/15 divide-y px-0">
+          <CardContent className="divide-y px-0">
             {isMember ? (
               <section className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
                 <div className="max-w-xl space-y-1">
-                  <h3 className="text-sm font-semibold">Leave workspace</h3>
+                  <h3 className="text-[15px] font-semibold">Leave workspace</h3>
                   <p className="text-muted-foreground text-sm">
                     You lose access to this workspace. The last owner cannot leave: make someone else an owner first.
                   </p>
@@ -158,9 +160,9 @@ function SettingsForms({
             ) : null}
 
             {canDelete ? (
-              <section className="space-y-3 px-6 py-5">
+              <section className="space-y-4 px-6 py-5">
                 <div className="max-w-xl space-y-1">
-                  <h3 className="text-sm font-semibold">Delete workspace</h3>
+                  <h3 className="text-[15px] font-semibold">Delete workspace</h3>
                   <p className="text-muted-foreground text-sm">
                     Deleting a workspace ends every membership and invitation and revokes every credential. It cannot
                     be undone.
@@ -169,13 +171,13 @@ function SettingsForms({
                 {deleteNotice ? (
                   <div
                     role="note"
-                    className="max-w-xl rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+                    className="rounded-notice bg-error text-error-foreground max-w-xl px-4 py-3 text-sm"
                   >
                     {deleteNotice}
                   </div>
                 ) : null}
                 <form onSubmit={submitDelete} className="flex flex-wrap items-end gap-3">
-                  <div className="grid gap-1.5">
+                  <div className="grid gap-2">
                     <Label htmlFor={confirmId}>
                       <span>
                         Type <strong>{detail.name}</strong> to confirm

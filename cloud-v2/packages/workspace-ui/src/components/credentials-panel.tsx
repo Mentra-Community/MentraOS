@@ -192,7 +192,7 @@ function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }
     <>
       {canCreate ? (
         <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
-          <div className="grid gap-1.5">
+          <div className="grid gap-2">
             <Label htmlFor={nameId}>Name</Label>
             <Input
               id={nameId}
@@ -205,7 +205,7 @@ function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }
               onChange={(event) => setName(event.target.value)}
             />
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid gap-2">
             <Label htmlFor={packagesId}>Packages (optional)</Label>
             <Input
               id={packagesId}
@@ -216,7 +216,7 @@ function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }
               onChange={(event) => setPackages(event.target.value)}
             />
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid gap-2">
             <Label htmlFor={expiresId}>Expires (optional)</Label>
             <Input
               id={expiresId}
@@ -245,11 +245,11 @@ function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }
           <table className="w-full text-left text-sm">
             <thead className="text-muted-foreground text-xs">
               <tr>
-                <th className="py-2 pr-4 font-medium">Credential</th>
-                <th className="py-2 pr-4 font-medium">Packages</th>
-                <th className="py-2 pr-4 font-medium">Expires</th>
-                <th className="py-2 pr-4 font-medium">Last used</th>
-                <th className="py-2 font-medium">
+                <th className="py-3 pr-4 font-semibold">Credential</th>
+                <th className="py-3 pr-4 font-semibold">Packages</th>
+                <th className="py-3 pr-4 font-semibold">Expires</th>
+                <th className="py-3 pr-4 font-semibold">Last used</th>
+                <th className="py-3 font-semibold">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -257,8 +257,8 @@ function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }
             <tbody>
               {credentials.map((credential) => (
                 <tr key={credential.credentialId} className="border-t align-top">
-                  <td className="py-2 pr-4">
-                    <div className="font-medium">{credential.name}</div>
+                  <td className="py-3 pr-4">
+                    <div className="text-[15px] font-semibold">{credential.name}</div>
                     <code className="text-muted-foreground text-xs">{credential.display}</code>
                     <div className="text-muted-foreground text-xs">
                       {credential.issuedByService
@@ -268,14 +268,14 @@ function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }
                           : null}
                     </div>
                   </td>
-                  <td className="py-2 pr-4">
+                  <td className="py-3 pr-4">
                     {credential.packageNames.length > 0 ? credential.packageNames.join(", ") : "All packages"}
                   </td>
-                  <td className="py-2 pr-4">{credential.expiresAt ? formatDate(credential.expiresAt) : "Never"}</td>
-                  <td className="py-2 pr-4">
+                  <td className="py-3 pr-4">{credential.expiresAt ? formatDate(credential.expiresAt) : "Never"}</td>
+                  <td className="py-3 pr-4">
                     {credential.lastUsedAt ? formatDateTime(credential.lastUsedAt) : "Never used"}
                   </td>
-                  <td className="py-2 text-right">
+                  <td className="py-3 text-right">
                     <ConfirmButton
                       label="Revoke"
                       ariaLabel={`Revoke ${credential.name}`}
@@ -328,25 +328,25 @@ export function SecretDialog({ name, token, onDone }: { name: string; token: str
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-[4px]">
       <div
         ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         onKeyDown={keepFocusInside}
-        className="bg-card text-card-foreground w-full max-w-lg space-y-4 rounded-xl border p-6 shadow-lg"
+        className="bg-background text-foreground rounded-card w-full max-w-lg space-y-5 p-6 shadow-dialog sm:p-7"
       >
-        <h2 id={titleId} className="text-lg leading-none font-semibold">
+        <h2 id={titleId} className="text-xl leading-tight font-semibold">
           Copy your new credential
         </h2>
         <p className="text-muted-foreground text-sm">
           <strong>{name}</strong> is ready. This credential is shown only once and cannot be shown again. Store it
           somewhere safe before you close this dialog.
         </p>
-        <code className="bg-muted block rounded-md border p-3 text-xs break-all select-all">{token}</code>
-        <div className="flex justify-end gap-2">
-          <CopyButton text={token} label="Copy credential" />
+        <code className="rounded-notice bg-surface block border p-3 font-mono text-xs break-all select-all">{token}</code>
+        <div className="flex justify-end gap-2.5">
+          <CopyButton text={token} label="Copy credential" size="default" />
           <Button type="button" onClick={onDone}>
             Done
           </Button>

@@ -1,22 +1,40 @@
+import { ChevronDownIcon } from "lucide-react";
 import * as React from "react";
 
 import { cn } from "../lib/utils";
 
 /**
- * A native `<select>` with the look of `SelectTrigger`. Unlike the Radix `Select`, its options are real
- * markup (also on the server) and it uses each platform's own accessible and mobile pickers, which suits
- * the short, fixed lists the workspace screens offer: roles and the caller's workspaces.
+ * A native `<select>` drawn like `Input` (same pill, border, height and focus ring) with one chevron.
+ * Unlike a custom listbox, its options are real markup (also on the server) and it uses each platform's
+ * own accessible and mobile pickers, which suits the short, fixed lists the workspace screens offer:
+ * roles and the caller's workspaces. `className` sizes the control (`w-full`); `compact` makes it 36px
+ * high, for a table row.
  */
-function NativeSelect({ className, ...props }: React.ComponentProps<"select">) {
+function NativeSelect({
+  className,
+  compact = false,
+  ...props
+}: React.ComponentProps<"select"> & { compact?: boolean }) {
   return (
-    <select
+    <span
       data-slot="native-select"
-      className={cn(
-        "border-input dark:bg-input/30 focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive h-9 w-fit rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      )}
-      {...props}
-    />
+      className={cn("relative inline-flex w-fit max-w-full has-[select:disabled]:opacity-45", className)}
+    >
+      <select
+        className={cn(
+          "w-full min-w-0 cursor-pointer appearance-none rounded-full border border-border bg-surface pr-10 pl-[18px] text-base text-foreground transition-[border-color,background-color] hover:bg-hover disabled:cursor-not-allowed disabled:hover:bg-surface aria-invalid:border-destructive",
+          compact ? "h-9 pr-9 pl-4 text-[15px]" : "h-11",
+        )}
+        {...props}
+      />
+      <ChevronDownIcon
+        aria-hidden="true"
+        className={cn(
+          "text-muted-foreground pointer-events-none absolute top-1/2 size-4 -translate-y-1/2",
+          compact ? "right-3.5" : "right-4",
+        )}
+      />
+    </span>
   );
 }
 

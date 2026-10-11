@@ -48,15 +48,16 @@ export function Dialog({
         if (event.target === event.currentTarget) onClose();
       }}
       className={cn(
-        "bg-card text-card-foreground m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl border p-0 shadow-[0_24px_60px_-12px_rgba(20,21,27,0.35)] backdrop:bg-[#111217]/40 backdrop:backdrop-blur-[2px]",
+        // The Store's dialog: 24px corners, a soft shadow over a dimmed, blurred page.
+        "bg-background text-foreground m-auto w-[calc(100%-2rem)] max-w-md rounded-card border-0 p-0 shadow-dialog backdrop:bg-black/45 backdrop:backdrop-blur-[4px]",
         className,
       )}
     >
       {open ? (
-        <div className="space-y-5 p-6">
+        <div className="space-y-6 p-6 sm:p-7">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 space-y-1.5">
-              <h2 id={titleId} className="text-lg leading-tight font-semibold">
+              <h2 id={titleId} className="text-xl leading-tight font-semibold">
                 {title}
               </h2>
               {description ? (
@@ -69,7 +70,7 @@ export function Dialog({
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="text-muted-foreground -mt-1 -mr-2 rounded-full"
+              className="text-muted-foreground -mt-1.5 -mr-2"
               aria-label="Close"
               onClick={onClose}
             >

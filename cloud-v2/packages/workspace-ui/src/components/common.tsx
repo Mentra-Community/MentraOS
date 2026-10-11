@@ -29,19 +29,29 @@ export function Panel({
   return (
     <Card role="region" aria-label={title} className={cn("gap-5", className)}>
       <CardHeader className={actions ? "grid-cols-[1fr_auto]" : undefined}>
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle className="flex items-center gap-2 text-lg">
           {title}
-          {count !== undefined ? (
-            <span className="bg-secondary text-secondary-foreground rounded-full px-2 py-0.5 text-xs font-medium tabular-nums">
-              {count}
-            </span>
-          ) : null}
+          {count !== undefined ? <Count>{count}</Count> : null}
         </CardTitle>
         {description ? <CardDescription>{description}</CardDescription> : null}
         {actions ? <div className="col-start-2 row-span-2 row-start-1 self-center">{actions}</div> : null}
       </CardHeader>
       <CardContent className="space-y-4">{children}</CardContent>
     </Card>
+  );
+}
+
+/** How many there are, beside a heading: "Members 5", "Pending invitations 2". */
+export function Count({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <span
+      className={cn(
+        "bg-surface text-muted-foreground inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs leading-none font-semibold tabular-nums",
+        className,
+      )}
+    >
+      {children}
+    </span>
   );
 }
 
@@ -62,7 +72,7 @@ export function Avatar({ label, single = false, className }: { label: string; si
     <span
       aria-hidden="true"
       className={cn(
-        "bg-secondary text-secondary-foreground inline-flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
+        "border-border bg-surface text-foreground inline-flex size-9 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
         className,
       )}
     >
@@ -71,11 +81,43 @@ export function Avatar({ label, single = false, className }: { label: string; si
   );
 }
 
+/**
+ * A workspace's first letter on a rounded green tile, in place of a logo (the Store's fallback app icon).
+ * Size it with `className` (`size-9 rounded-[10px] text-sm`).
+ */
+export function WorkspaceAvatar({ name, className }: { name: string; className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "bg-info text-info-foreground inline-flex size-11 shrink-0 items-center justify-center rounded-[14px] text-base font-semibold",
+        className,
+      )}
+    >
+      {initials(name).slice(0, 1)}
+    </span>
+  );
+}
+
+/** The sign-in page's spinner, with what is loading. */
 export function Loading({ children = "Loading…" }: { children?: string }) {
   return (
-    <p role="status" className="text-muted-foreground text-sm">
+    <p role="status" className="text-muted-foreground flex items-center gap-2.5 text-sm">
+      <Spinner />
       {children}
     </p>
+  );
+}
+
+export function Spinner({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "border-border border-t-brand inline-block size-4 shrink-0 animate-spin rounded-full border-2 motion-reduce:[animation-duration:2.4s]",
+        className,
+      )}
+    />
   );
 }
 
@@ -84,11 +126,11 @@ export function Restricted({ children }: { children: ReactNode }) {
   return <p className="text-muted-foreground text-sm">{children}</p>;
 }
 
-/** The failure of the last action, in words. Renders nothing when there is none. */
+/** The failure of the last action, in words, as the sign-in page's error notice. Renders nothing when there is none. */
 export function ErrorNotice({ error }: { error: unknown }) {
   if (error === null || error === undefined) return null;
   return (
-    <p role="alert" className="text-destructive text-sm">
+    <p role="alert" className="rounded-notice bg-error text-error-foreground px-4 py-3 text-sm">
       {errorMessage(error)}
     </p>
   );
@@ -99,7 +141,7 @@ export function LoadError({ error, onRetry }: { error: unknown; onRetry: () => v
   return (
     <div className="flex flex-wrap items-center gap-3">
       <ErrorNotice error={error} />
-      <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+      <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
         Try again
       </Button>
     </div>
@@ -127,11 +169,12 @@ export function QueryGate<T>({
   return <Loading>{loadingLabel}</Loading>;
 }
 
+/** A role as a grey chip. */
 export function RoleBadge({ role, className }: { role: WorkspaceRole; className?: string }) {
   return (
     <span
       className={cn(
-        "bg-secondary text-secondary-foreground inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
+        "bg-surface text-foreground inline-flex h-6 items-center rounded-full px-2.5 text-xs leading-none font-semibold whitespace-nowrap",
         className,
       )}
     >
@@ -140,11 +183,12 @@ export function RoleBadge({ role, className }: { role: WorkspaceRole; className?
   );
 }
 
+/** A small outlined chip ("You"). */
 export function Badge({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <span
       className={cn(
-        "border-border text-muted-foreground inline-flex items-center rounded-md border px-2 py-0.5 text-xs",
+        "border-border text-muted-foreground inline-flex h-6 items-center rounded-full border px-2.5 text-xs leading-none font-semibold whitespace-nowrap",
         className,
       )}
     >
@@ -171,7 +215,7 @@ export function ConfirmButton({
   prompt: string;
   confirmLabel: string;
   disabled?: boolean;
-  /** An outlined trigger, for a destructive action that stands on its own row (a danger zone). */
+  /** Full-size buttons, for a destructive action that stands on its own row (a danger zone) rather than in a list. */
   outline?: boolean;
   onConfirm: () => void;
 }) {
@@ -194,12 +238,8 @@ export function ConfirmButton({
       <Button
         ref={trigger}
         type="button"
-        variant={outline ? "outline" : "ghost"}
-        size="sm"
-        className={cn(
-          "text-destructive hover:text-destructive",
-          outline && "border-destructive/40 hover:bg-destructive/5 hover:border-destructive/60",
-        )}
+        variant="destructive-secondary"
+        size={outline ? "default" : "sm"}
         aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => setConfirming(true)}
@@ -209,12 +249,12 @@ export function ConfirmButton({
     );
   }
   return (
-    <span role="group" aria-label={ariaLabel} className="inline-flex flex-wrap items-center gap-2">
+    <span role="group" aria-label={ariaLabel} className="inline-flex flex-wrap items-center justify-end gap-2">
       <span className="text-sm">{prompt}</span>
       <Button
         type="button"
         variant="destructive"
-        size="sm"
+        size={outline ? "default" : "sm"}
         disabled={disabled}
         onClick={() => {
           close();
@@ -223,7 +263,7 @@ export function ConfirmButton({
       >
         {confirmLabel}
       </Button>
-      <Button type="button" variant="outline" size="sm" autoFocus onClick={close}>
+      <Button type="button" variant="secondary" size={outline ? "default" : "sm"} autoFocus onClick={close}>
         Cancel
       </Button>
     </span>
@@ -231,7 +271,18 @@ export function ConfirmButton({
 }
 
 /** Copies `text` to the clipboard and says whether it worked. */
-export function CopyButton({ text, label = "Copy", ariaLabel }: { text: string; label?: string; ariaLabel?: string }) {
+export function CopyButton({
+  text,
+  label = "Copy",
+  ariaLabel,
+  size = "sm",
+}: {
+  text: string;
+  label?: string;
+  ariaLabel?: string;
+  /** `default` beside a full-size button (a dialog's Done). */
+  size?: "sm" | "default";
+}) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -249,7 +300,7 @@ export function CopyButton({ text, label = "Copy", ariaLabel }: { text: string; 
   }
 
   return (
-    <Button type="button" variant="outline" size="sm" aria-label={ariaLabel} onClick={copy}>
+    <Button type="button" variant="secondary" size={size} aria-label={ariaLabel} onClick={copy}>
       {state === "copied" ? (
         <>
           <CheckIcon /> Copied

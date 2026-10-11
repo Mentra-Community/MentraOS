@@ -13,7 +13,7 @@ import { WorkspaceApiError } from "../errors";
 import { invitationPreviewQuery, workspaceKeys } from "../queries";
 import { ROLE_LABELS } from "../roles";
 import { Button } from "../ui/button";
-import { Avatar, ErrorNotice, Loading, LoadError, Panel, Restricted } from "./common";
+import { ErrorNotice, Loading, LoadError, Panel, Restricted, WorkspaceAvatar } from "./common";
 
 export function InvitationAcceptView({
   api,
@@ -79,7 +79,7 @@ export function InvitationAcceptCard({
   acceptError: unknown;
 }) {
   const dismiss = onDismiss ? (
-    <Button type="button" variant="ghost" size="sm" onClick={onDismiss}>
+    <Button type="button" variant="secondary" size="sm" onClick={onDismiss}>
       Dismiss
     </Button>
   ) : null;
@@ -98,7 +98,7 @@ export function InvitationAcceptCard({
         <Panel title="Invitation">
           <Restricted>Sign in to view this invitation.</Restricted>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+            <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
               Try again
             </Button>
             {dismiss}
@@ -109,7 +109,7 @@ export function InvitationAcceptCard({
     if (error instanceof WorkspaceApiError && (error.status === 404 || error.status === 410)) {
       return (
         <Panel title="Invitation">
-          <p className="text-sm font-medium">This invitation is no longer valid.</p>
+          <p className="text-[15px] font-semibold">This invitation is no longer valid.</p>
           <Restricted>
             It may have expired, been revoked or already been used. Ask the person who invited you to send a new one.
           </Restricted>
@@ -130,31 +130,37 @@ export function InvitationAcceptCard({
     <section
       role="region"
       aria-label={`Join ${workspaceName}`}
-      className="bg-card text-card-foreground rounded-xl border p-6 shadow-sm"
+      className="bg-card text-card-foreground rounded-card border p-6 sm:p-8"
     >
       <div className="flex items-start gap-4">
-        <Avatar label={workspaceName} single className="bg-accent text-accent-foreground size-11 rounded-xl text-base" />
+        <WorkspaceAvatar name={workspaceName} className="size-12 text-lg" />
         <div className="min-w-0 space-y-1">
-          <h2 className="text-base leading-tight font-semibold">Join {workspaceName}</h2>
-          <p className="text-sm">
-            You have been invited to join <strong>{workspaceName}</strong> as {ROLE_LABELS[role]}.
+          <h2 className="text-xl leading-tight font-semibold">Join {workspaceName}</h2>
+          <p className="text-[15px]">
+            You have been invited to join <strong className="font-semibold">{workspaceName}</strong> as{" "}
+            {ROLE_LABELS[role]}.
           </p>
         </div>
       </div>
-      <p className="text-muted-foreground mt-4 flex items-start gap-2 text-sm">
+      <p className="rounded-notice bg-surface text-muted-foreground mt-6 flex items-start gap-2.5 px-4 py-3 text-sm">
         <MailIcon className="mt-0.5 size-4 shrink-0" />
         <span>
-          This invitation was sent to <strong className="text-foreground">{email}</strong>. You need to be signed in
-          with that verified address to accept it.
+          This invitation was sent to <strong className="text-foreground font-semibold">{email}</strong>. You need to be
+          signed in with that verified address to accept it.
         </span>
       </p>
-      <div className="mt-5 flex flex-wrap items-center gap-2">
-        <Button type="button" disabled={accepting} onClick={onAccept}>
+      {/* As on the sign-in page's consent screen: the way out, then the action, as equal pills. */}
+      <div className={onDismiss ? "mt-6 grid grid-cols-2 gap-2.5" : "mt-6 grid"}>
+        {onDismiss ? (
+          <Button type="button" variant="secondary" size="lg" onClick={onDismiss}>
+            Dismiss
+          </Button>
+        ) : null}
+        <Button type="button" size="lg" disabled={accepting} onClick={onAccept}>
           {accepting ? "Joining…" : "Accept invitation"}
         </Button>
-        {dismiss}
       </div>
-      <div className="mt-3 empty:hidden">
+      <div className="mt-4 empty:hidden">
         <ErrorNotice error={acceptError} />
       </div>
     </section>
