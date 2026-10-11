@@ -6,6 +6,25 @@ import {createFrameworkRunSummaryProjection} from "./framework-run-summary.servi
 import {requestInputDigest} from "./test-request.service";
 import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import type {FrameworkRun} from "../types/framework-run.types";
+import {lifecycleRuns} from '../testing/framework-lifecycle.fixture';
+
+test('ingest and detail retain actual frozen Harness diagnostic actions with independent cleanup readiness', async () => {
+  for (const fixture of lifecycleRuns) {
+    let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
+    const service = new FrameworkResultService({async insert(payload, payloadSha256) {stored = {payload, payloadSha256, uploadsComplete: true}},
+      async getByRequest() {return stored}, async getByRun() {return stored}, async getAsset() {return null}},
+      async () => ({hostId: fixture.run.hostId, input: {routineId: fixture.run.routineId, definitionRevision: fixture.run.definitionRevision,
+        routineSource: fixture.run.routineSource, platform: fixture.run.platform, laneId: fixture.run.laneId, build: fixture.run.build}}),
+      async () => {}, async () => ({definition: fixture.definition}) as unknown as RoutineEnrollment);
+    const receipt = await service.ingest(fixture.run, fixture.run.hostId);
+    expect(receipt.payloadSha256).toBe(requestInputDigest(fixture.run));
+    const detail = await service.detailForHost(fixture.run.requestId, fixture.run.hostId);
+    expect(detail.run as unknown).toEqual(fixture.producedRun);
+    expect(detail.outcome).toBe(fixture.scenario === 'diagnostic-failure' ? 'failed' : 'teardown-failed');
+    expect(detail.run.result.teardown.ready).toBe(true);
+    expect(detail.evidenceStatus).toBe(fixture.scenario === 'routine-teardown' ? 'complete' : 'failed');
+  }
+});
 
 test('candidate result metadata remains outside immutable result and host reader requires original accepted host', async () => {
   const {frameworkRunSchema} = await import('../types/framework-run.types');
