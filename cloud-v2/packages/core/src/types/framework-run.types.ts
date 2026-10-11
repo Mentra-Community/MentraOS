@@ -22,14 +22,15 @@ const lifecycleAction = z.object({id, instruction: z.string().min(1).max(2000), 
   scope: z.enum(["shared", "routine"]), fixtureProvider: routineIdentitySchema.optional(), status: z.enum(["passed", "failed", "cancelled", "not-run"]), durationMs: ms,
   startedAt: z.string().datetime({offset: true}).optional(), finishedAt: z.string().datetime({offset: true}).optional(),
   causedBy: id.optional()}).strict();
-const failure = z.object({phase: z.enum(["setup", "test", "teardown", "evidence"]),
-  actionId: id, message: z.string().min(1).max(20000)}).strict();
 const json: z.ZodType<unknown> = z.lazy(() => z.union([z.null(), z.boolean(), z.string(),
   z.number().finite(), z.array(json), z.record(json)]));
+const failure = z.object({phase: z.enum(["setup", "test", "teardown", "evidence"]),
+  actionId: id, message: z.string().min(1).max(20000),
+  diagnostics: json.refine(value => Buffer.byteLength(JSON.stringify(value)) <= 64 * 1024, 'Failure diagnostics exceed 64 KiB').optional()}).strict();
 const cleanupOutcome = z.discriminatedUnion("state", [
   z.object({state: z.literal("cleaned"), resourceId: id, evidence: z.array(z.string()), errors: z.array(failure).optional()}).strict(),
-  z.object({state: z.literal("still-active"), resourceId: id, writer: json, evidence: z.array(z.string())}).strict(),
-  z.object({state: z.literal("failed"), resourceId: id, failure}).strict(),
+  z.object({state: z.literal("still-active"), resourceId: id, writer: json, evidence: z.array(z.string()), errors: z.array(failure).optional()}).strict(),
+  z.object({state: z.literal("failed"), resourceId: id, failure, errors: z.array(failure).optional()}).strict(),
 ]);
 const frozenFrameworkRunSchema = z.object({
   schemaVersion: z.literal(1), requestId: id, hostId: id, routineId: routineIdentitySchema,
@@ -49,8 +50,10 @@ const frozenFrameworkRunSchema = z.object({
     teardown: z.object({ready: z.boolean(), actions: z.array(lifecycleAction).max(1000).optional(),
       outcomes: z.array(cleanupOutcome), errors: z.array(failure),
       unavailableResources: z.array(z.object({resource: id, cause: z.string(), nextAction: z.string()}).strict())}).strict(),
-    failures: z.array(failure), evidence: z.array(frameworkAssetIdSchema).max(FRAMEWORK_RUN_ASSET_LIMIT),
-    timing: z.object({startedAt: z.string().datetime({offset: true}), setupMs: ms, testMs: ms, teardownMs: ms}).strict(),
+    failures: z.array(failure), diagnostics: z.array(lifecycleAction).max(1000).optional(),
+    evidence: z.array(frameworkAssetIdSchema).max(FRAMEWORK_RUN_ASSET_LIMIT),
+    timing: z.object({startedAt: z.string().datetime({offset: true}), setupMs: ms, testMs: ms, teardownMs: ms,
+      diagnosticsMs: ms.optional()}).strict(),
   }).strict(),
 }).strict();
 type FrozenFrameworkRun = z.infer<typeof frozenFrameworkRunSchema>;
@@ -104,13 +107,13 @@ function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof 
     }
   }
   if (new Set(run.result.steps.map(step => step.id)).size !== run.result.steps.length) problem("Duplicate step identity");
-  for (const phase of ["setup", "teardown"] as const) {
-    const actions = run.result[phase].actions ?? [];
+  for (const phase of ["setup", "teardown", "diagnostics"] as const) {
+    const actions = phase === 'diagnostics' ? run.result.diagnostics ?? [] : run.result[phase].actions ?? [];
     if (new Set(actions.map(action => action.id)).size !== actions.length) problem(`Duplicate ${phase} action identity`);
     for (const action of actions) {
-      if (action.stage && !(phase === "setup"
+      if (action.stage && (phase === 'diagnostics' || !(phase === "setup"
         ? ["validation", "before-entry", "entry", "after-entry", "recording"]
-        : ["recording", "teardown-actions", "resource-cleanup"]).includes(action.stage))
+        : ["recording", "teardown-actions", "resource-cleanup"]).includes(action.stage)))
         problem(`Invalid ${phase} lifecycle stage`);
       if (action.status === "not-run" && (action.durationMs !== 0 || action.startedAt || action.finishedAt))
         problem(`Unexecuted ${phase} action cannot have execution timing`);
@@ -123,9 +126,19 @@ function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof 
   }
   if (run.result.setup.status === "passed" && run.result.setup.actions?.some(action => action.status !== "passed"))
     problem("Passing setup contradicts setup actions");
-  if (run.result.teardown.ready && run.result.teardown.actions?.some(action => action.scope === "routine" && action.status !== "passed"
-    && !(action.status === "not-run" && run.result.setup.status !== "passed")))
-    problem("Ready teardown contradicts routine teardown actions");
+  for (const action of run.result.diagnostics ?? []) {
+    if (action.scope !== 'shared' || action.fixtureProvider) problem('Diagnostic actions must retain framework ownership');
+    if (action.status !== 'passed' && action.status !== 'not-run' && !run.result.failures.some(error => error.phase === 'evidence' && error.actionId === action.id))
+      problem('Failed diagnostic actions must remain in run failures');
+  }
+  if ((run.result.diagnostics !== undefined) !== (run.result.timing.diagnosticsMs !== undefined))
+    problem('Diagnostic actions and timing must be recorded together');
+  if (run.result.diagnostics && Math.abs(run.result.diagnostics.reduce((total, action) => total + action.durationMs, 0)
+    - run.result.timing.diagnosticsMs!) > 0.001) problem('Diagnostic timing contradicts its named actions');
+  for (const action of run.result.teardown.actions ?? []) if (run.result.teardown.ready && action.scope === 'routine'
+    && action.status !== 'passed' && !(action.status === 'not-run' && run.result.setup.status !== 'passed')
+    && !run.result.failures.some(error => error.phase === 'teardown' && error.actionId === action.id))
+    problem('Routine teardown failure must remain classified independently of physical readiness');
   if (run.result.test === "passed" && (run.result.setup.status !== "passed" || run.result.steps.length === 0 || run.result.failures.some(failure => failure.phase === "setup" || failure.phase === "test") || run.result.steps.some(step => step.status !== "passed")))
     problem("Passing test contradicts setup or steps");
   const reportedCleanupFailure = (error: z.infer<typeof failure>) => (error.phase === "teardown" || error.phase === "evidence")
@@ -146,21 +159,23 @@ function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof 
         && error.actionId === action.id && reportedCleanupFailure(error));
     const diagnosed = outcomes.some(outcome => outcome.state === "cleaned"
       ? !!outcome.errors?.length && outcome.errors.every(reportedCleanupFailure)
+        || run.result.teardown.errors.some(error => (error.actionId === resourceId || error.actionId === action.id) && reportedCleanupFailure(error))
       : outcome.state === "failed" ? reportedCleanupFailure(outcome.failure)
         : !run.result.teardown.ready && run.result.teardown.unavailableResources.some(item => item.resource === outcome.resourceId));
     if (!diagnosed && !unresolved) problem("Failed shared cleanup must retain its classified diagnostics or unresolved resource custody");
-    if (run.result.teardown.ready && (action.status !== "failed" || !outcomes.some(outcome => outcome.state === "cleaned"
-      && !!outcome.errors?.length && outcome.errors.every(error => error.phase === "evidence" && reportedCleanupFailure(error)))))
-      problem("Ready teardown may contain failed shared cleanup only for recorded evidence diagnostics on a cleaned resource");
+    if (run.result.teardown.ready && (action.status !== "failed" || !outcomes.some(outcome => outcome.state === "cleaned") || !diagnosed))
+      problem("Ready teardown may contain failed shared cleanup only with classified failures and a matching cleaned resource");
   }
   for (const error of run.result.teardown.errors) if (!run.result.failures.some(flattened => sameFailure(error, flattened)))
     problem("Teardown diagnostics must remain in run failures");
-  for (const outcome of run.result.teardown.outcomes) if (outcome.state === "cleaned") for (const error of outcome.errors ?? []) {
+  for (const outcome of run.result.teardown.outcomes) for (const error of [...outcome.errors ?? [], ...(outcome.state === 'failed' ? [outcome.failure] : [])]) {
     if (!run.result.teardown.errors.some(flattened => sameFailure(error, flattened))
       || !run.result.failures.some(flattened => sameFailure(error, flattened))) problem("Cleanup diagnostics must remain in teardown errors and run failures");
   }
-  if (run.result.teardown.ready && (run.result.failures.some(failure => failure.phase === "teardown")
-    || run.result.teardown.errors.some(error => error.phase !== "evidence") || run.result.teardown.unavailableResources.length
+  for (const outcome of run.result.teardown.outcomes) if (outcome.state === 'cleaned'
+    && run.result.teardown.unavailableResources.some(item => item.resource === outcome.resourceId))
+    problem('A cleaned resource cannot remain unavailable');
+  if (run.result.teardown.ready && (run.result.teardown.unavailableResources.length
     || run.result.teardown.outcomes.some(outcome => outcome.state !== "cleaned"))) problem("Ready teardown contradicts cleanup outcomes");
 }
 /** New publications always carry actual routine and installed framework provenance. */
@@ -183,7 +198,7 @@ export function frameworkRunOutcome(run: RecordedFrameworkRun) {
   if (run.result.setup.status === "failed") return "setup-failed";
   if (run.result.test === "failed") return "failed";
   if (run.result.setup.status === "cancelled" || run.result.test === "cancelled") return "cancelled";
-  if (!run.result.teardown.ready) return "teardown-failed";
+  if (!run.result.teardown.ready || run.result.failures.some(failure => failure.phase === 'teardown')) return "teardown-failed";
   return run.result.test === "passed" ? "pass" : "not-run";
 }
 

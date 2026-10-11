@@ -26,6 +26,27 @@ import type {TestHistoryEntry} from "../../../../packages/core/src/types/test-hi
 import {readTestRunLink} from "../lib/test-run-links"
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types"
 import {frameworkRunSchema, recordedFrameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types"
+import lifecycleFixture from '../../../../packages/core/src/testing/framework-lifecycle.harness.fixture.json';
+
+test('run page separates actual Harness diagnostic actions/time from teardown failures and resource readiness', () => {
+  const fixture = lifecycleFixture.runs.find(fixture => fixture.scenario === 'cleaned-provider-error')!;
+  const run = frameworkRunSchema.parse(fixture.run), client = new QueryClient();
+  client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome: 'teardown-failed', uploadsComplete: true, evidenceStatus: 'failed'});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+  const teardownStart = html.indexOf('aria-label="Teardown details"'), diagnosticStart = html.indexOf('aria-label="Diagnostics details"');
+  const teardown = html.slice(teardownStart, diagnosticStart), diagnostic = html.slice(diagnosticStart, html.indexOf('id="run-phase-evidence"'));
+  expect(teardown).toContain('Resources ready');
+  expect(teardown).toContain('Cleanup journal unavailable');
+  expect(teardown).toContain('>Failed</span>');
+  expect(diagnostic).toContain('Save failure screenshot');
+  expect(diagnostic).toContain('Submit incident report');
+  expect(diagnostic).toContain('Started ');
+  expect(diagnostic).toContain('Finished ');
+  expect(diagnostic).not.toContain('<video');
+  expect(teardown).not.toContain('Save failure screenshot');
+  expect(html).toContain(' · Diagnostics ');
+  expect(teardownStart).toBeLessThan(diagnosticStart);
+});
 
 const routine = routineEnrollmentSchema.parse({
   routineId: "notes-phone",
