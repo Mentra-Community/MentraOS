@@ -774,9 +774,36 @@ describe("workspace manifest refresh", () => {
 
   it("ignores a refresh for a selection the user has since left", async () => {
     const {store, deployment} = await signedIn()
+    const revision = store.currentRevision()
     await store.returnToMentra()
-    expect(store.adoptRefreshedManifest(deployment, withEnterprise(), {running: false})).toBe("superseded")
+    expect(store.adoptRefreshedManifest(deployment, withEnterprise(), {running: false, revision})).toBe("superseded")
     expect(store.getActive().kind).toBe("consumer")
+  })
+
+  it("never lets a slower, older refresh overwrite a newer saved manifest", async () => {
+    const {persistence, store, reconcile, isRunning} = await signedIn({running: true})
+    let respondOld: (value: ReturnType<typeof candidate>) => void = () => {}
+    const older = refreshWorkspaceManifest({
+      isRunning,
+      reconcile,
+      store,
+      resolve: () => new Promise((done) => (respondOld = done)),
+      waitMs: 1,
+    })
+    await expect(older).resolves.toBe("finishing-in-background")
+    // A foreground check saves a change that waits for the next start.
+    await expect(
+      refreshWorkspaceManifest({
+        isRunning,
+        reconcile,
+        store,
+        resolve: async () => candidate(manifest({features: navigationOn})),
+      }),
+    ).resolves.toBe("saved-for-next-start")
+
+    respondOld(candidate(manifest()))
+    await new Promise((done) => setTimeout(done, 0))
+    expect(nextStart(persistence).features.navigation).toBe(true)
   })
 
   it("does nothing for Mentra's own deployment", async () => {

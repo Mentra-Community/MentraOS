@@ -40,13 +40,14 @@ export async function refreshWorkspaceManifest(
   const store = options.store ?? deploymentStore
   const deployment = store.getActive()
   if (deployment.kind !== "workspace") return "not-workspace"
+  const revision = store.currentRevision()
   const resolve =
     options.resolve ?? ((origin: string) => resolveDeploymentCandidate(origin, {allowInsecureLocalhost: __DEV__}))
 
   const applied = Promise.resolve()
     .then(() => resolve(deployment.workspaceOrigin))
     .then(
-      (candidate) => adopt(store, deployment, candidate, options),
+      (candidate) => adopt(store, deployment, revision, candidate, options),
       (error: unknown) => {
         console.warn("DEPLOYMENT: workspace manifest refresh failed; using the saved manifest", error)
         return "unavailable" as const
@@ -68,12 +69,13 @@ export async function refreshWorkspaceManifest(
 async function adopt(
   store: DeploymentStore,
   deployment: WorkspaceDeployment,
+  revision: number,
   candidate: DeploymentCandidate,
   {isRunning, reconcile}: Pick<RefreshWorkspaceManifestOptions, "isRunning" | "reconcile">,
 ): Promise<WorkspaceManifestRefresh> {
   let outcome: RefreshedManifestOutcome
   try {
-    outcome = store.adoptRefreshedManifest(deployment, candidate.manifest, {running: isRunning()})
+    outcome = store.adoptRefreshedManifest(deployment, candidate.manifest, {running: isRunning(), revision})
   } catch (error) {
     console.warn("DEPLOYMENT: workspace manifest refresh failed; using the saved manifest", error)
     return "unavailable"

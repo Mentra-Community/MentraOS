@@ -42,6 +42,8 @@ export class DeploymentStore {
   private selectingWorkspace = false
   /** The workspace manifest last saved; a running session may run on part of it until the next start. */
   private savedManifest: DeploymentManifest | null
+  /** Advances whenever the selection or its saved manifest changes. */
+  private revision = 0
   private readonly listeners = new Set<(deployment: ActiveDeployment, resolved: boolean) => void>()
 
   constructor(private readonly persistence: DeploymentStorage = new MmkvDeploymentStorage()) {
@@ -136,17 +138,24 @@ export class DeploymentStore {
   adoptRefreshedManifest(
     expected: WorkspaceDeployment,
     manifest: DeploymentManifest,
-    {running}: {running: boolean},
+    {running, revision}: {running: boolean; revision: number},
   ): RefreshedManifestOutcome {
-    if (this.active !== expected) return "superseded"
+    // A refresh that started before another one saved its result is older.
+    if (this.active !== expected || revision !== this.revision) return "superseded"
     if (sameJson(this.savedManifest ?? expected.manifest, manifest)) return "unchanged"
     if (!keepsWorkspaceSession(expected.manifest, manifest)) return "sign-in-changed"
     this.persistence.save({...expected, manifest})
     this.savedManifest = manifest
+    this.revision += 1
     const next = running ? withLiveChanges(expected.manifest, manifest) : manifest
     if (sameJson(next, expected.manifest)) return "saved-for-next-start"
     this.setActive({...expected, manifest: next})
     return "updated"
+  }
+
+  /** Pass to {@link adoptRefreshedManifest} for a refresh that starts now. */
+  currentRevision(): number {
+    return this.revision
   }
 
   subscribe(listener: (deployment: ActiveDeployment, resolved: boolean) => void): () => void {
@@ -155,6 +164,7 @@ export class DeploymentStore {
   }
 
   private setActive(deployment: ActiveDeployment, resolved = true): void {
+    this.revision += 1
     this.active = deployment
     this.resolved = resolved
     for (const listener of this.listeners) listener(deployment, resolved)
