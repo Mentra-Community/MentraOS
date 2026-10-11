@@ -8,11 +8,14 @@ import type {CloudClientTransports, WebSocketLike} from "./transports"
 
 /** Runs delayed callbacks immediately so retry backoff does not slow tests. */
 const immediateTimers: CloudClientTimers = {
-  setTimeout: (callback) => {
-    callback()
-    return 0
+  setTimeout: (callback, delayMs) => {
+    if (delayMs < 10_000) {
+      callback()
+      return 0
+    }
+    return setTimeout(callback, delayMs)
   },
-  clearTimeout: () => undefined,
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
   setInterval: () => 0,
   clearInterval: () => undefined,
 }
