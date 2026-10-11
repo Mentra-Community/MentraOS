@@ -12,7 +12,9 @@ export type WorkspaceManifestRefresh =
   | "finishing-in-background"
 
 export interface RefreshWorkspaceManifestOptions {
-  /** Brings a session that is already running up to date with the adopted manifest. */
+  /** True once Engine has started from the saved manifest (a warm relaunch, background recovery, a late fetch). */
+  isRunning: () => boolean
+  /** Brings a running session up to date with the miniapp catalog it adopted. */
   onUpdated: () => Promise<void> | void
   waitMs?: number
   store?: DeploymentStore
@@ -23,8 +25,10 @@ export interface RefreshWorkspaceManifestOptions {
  * Re-read the selected workspace's manifest at launch, so miniapps and features
  * its administrator added reach the phone without signing in again.
  *
- * Launch waits up to `waitMs` so Engine can start from the new manifest; a later
- * one still applies when it arrives. A failure keeps the saved manifest.
+ * Launch waits up to `waitMs` so Engine can start from the new manifest. When
+ * Engine is already running, its miniapp catalog applies now (an open miniapp
+ * asks before it updates) and the rest at Engine's next start. A failure keeps
+ * the saved manifest.
  */
 export async function refreshWorkspaceManifest(
   options: RefreshWorkspaceManifestOptions,
@@ -38,7 +42,7 @@ export async function refreshWorkspaceManifest(
   const applied = Promise.resolve()
     .then(() => resolve(deployment.workspaceOrigin))
     .then(
-      (candidate) => adopt(store, deployment, candidate, options.onUpdated),
+      (candidate) => adopt(store, deployment, candidate, options),
       (error: unknown) => {
         console.warn("DEPLOYMENT: workspace manifest refresh failed; using the saved manifest", error)
         return "unavailable" as const
@@ -61,11 +65,11 @@ async function adopt(
   store: DeploymentStore,
   deployment: WorkspaceDeployment,
   candidate: DeploymentCandidate,
-  onUpdated: () => Promise<void> | void,
+  {isRunning, onUpdated}: Pick<RefreshWorkspaceManifestOptions, "isRunning" | "onUpdated">,
 ): Promise<WorkspaceManifestRefresh> {
   let outcome: RefreshedManifestOutcome
   try {
-    outcome = store.adoptRefreshedManifest(deployment, candidate.manifest)
+    outcome = store.adoptRefreshedManifest(deployment, candidate.manifest, {running: isRunning()})
   } catch (error) {
     console.warn("DEPLOYMENT: workspace manifest refresh failed; using the saved manifest", error)
     return "unavailable"

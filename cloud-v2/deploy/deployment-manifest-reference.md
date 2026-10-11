@@ -115,9 +115,10 @@ its parameters. Editing the checked-in demo JSON alone does not change an
 Azure deployment.
 
 After the user confirms the workspace, the Mentra App persists the validated
-manifest locally, re-reads it at each launch and applies changes to the running
-app. Turning speech on (`cloudSpeech`, `onDeviceSpeech`) takes effect the next
-time the app starts from closed. A change to `deploymentId`, `services.coreUrl` or
+manifest locally and re-reads it each time it opens. Added, updated and removed
+managed miniapps apply then; an open miniapp asks before it updates, and one
+that was removed goes when it closes. Other changes, such as `features`, apply
+the next time the app starts from closed. A change to `deploymentId`, `services.coreUrl` or
 `auth` is not adopted; employees log out and select the organization again.
 Logout clears the workspace selection, and activation clears prior local account
 data. Keep `deploymentId` and the workspace origin stable across normal

@@ -40,12 +40,15 @@ export class DeploymentStore {
   private active: ActiveDeployment
   private resolved: boolean
   private selectingWorkspace = false
+  /** The workspace manifest last saved; a running session may run on part of it until the next start. */
+  private savedManifest: DeploymentManifest | null
   private readonly listeners = new Set<(deployment: ActiveDeployment, resolved: boolean) => void>()
 
   constructor(private readonly persistence: DeploymentStorage = new MmkvDeploymentStorage()) {
     const restored = restoreDeploymentSelection(persistence.load())
     this.active = restored ?? createConsumerDeployment()
     this.resolved = restored !== null
+    this.savedManifest = restored?.kind === "workspace" ? restored.manifest : null
   }
 
   getActive(): ActiveDeployment {
@@ -79,6 +82,7 @@ export class DeploymentStore {
     }
     await withClearedDeploymentDebugOverrides(() => this.persistence.save(deployment))
     this.selectingWorkspace = false
+    this.savedManifest = deployment.manifest
     this.setActive(deployment)
     return deployment
   }
@@ -93,6 +97,7 @@ export class DeploymentStore {
       this.persistence.save(deployment)
     }
     this.selectingWorkspace = false
+    this.savedManifest = null
     this.setActive(deployment, true)
   }
 
@@ -107,6 +112,7 @@ export class DeploymentStore {
   async beginWorkspaceSelection(): Promise<void> {
     await withClearedDeploymentDebugOverrides(() => this.persistence.remove())
     this.selectingWorkspace = true
+    this.savedManifest = null
     this.setActive(createConsumerDeployment(), false)
   }
 
@@ -114,22 +120,32 @@ export class DeploymentStore {
   async clearSelection(): Promise<void> {
     await withClearedDeploymentDebugOverrides(() => this.persistence.remove())
     this.selectingWorkspace = false
+    this.savedManifest = null
     this.setActive(createConsumerDeployment(), false)
   }
 
   /**
    * Adopt the workspace's current manifest for the selection it was fetched for.
    *
-   * Only a manifest with the same deployment, Core and sign-in configuration is
-   * adopted; those identify the stored session, which carries over.
+   * Only a manifest with the same deployment, Core, Runtime and sign-in
+   * configuration is adopted; those identify the stored session, which carries
+   * over. It is saved whole. Before Engine starts it becomes the active
+   * deployment; a running session takes only its miniapp catalog and
+   * presentation, and the rest applies when Engine next starts.
    */
-  adoptRefreshedManifest(expected: WorkspaceDeployment, manifest: DeploymentManifest): RefreshedManifestOutcome {
+  adoptRefreshedManifest(
+    expected: WorkspaceDeployment,
+    manifest: DeploymentManifest,
+    {running}: {running: boolean},
+  ): RefreshedManifestOutcome {
     if (this.active !== expected) return "superseded"
-    if (sameJson(expected.manifest, manifest)) return "unchanged"
+    if (sameJson(this.savedManifest ?? expected.manifest, manifest)) return "unchanged"
     if (!keepsWorkspaceSession(expected.manifest, manifest)) return "sign-in-changed"
-    const refreshed: WorkspaceDeployment = {...expected, manifest}
-    this.persistence.save(refreshed)
-    this.setActive(refreshed)
+    this.persistence.save({...expected, manifest})
+    this.savedManifest = manifest
+    const next = running ? withLiveChanges(expected.manifest, manifest) : manifest
+    if (sameJson(next, expected.manifest)) return "saved-for-next-start"
+    this.setActive({...expected, manifest: next})
     return "updated"
   }
 
@@ -145,15 +161,39 @@ export class DeploymentStore {
   }
 }
 
-export type RefreshedManifestOutcome = "updated" | "unchanged" | "sign-in-changed" | "superseded"
+export type RefreshedManifestOutcome =
+  | "updated"
+  | "saved-for-next-start"
+  | "unchanged"
+  | "sign-in-changed"
+  | "superseded"
 
 /** The stored Entra account and Cloud session belong to these fields. */
 function keepsWorkspaceSession(current: DeploymentManifest, next: DeploymentManifest): boolean {
   return (
     current.deploymentId === next.deploymentId &&
     current.services.coreUrl === next.services.coreUrl &&
+    current.services.runtimeUrl === next.services.runtimeUrl &&
     sameJson(current.auth, next.auth)
   )
+}
+
+/**
+ * What a running session adopts from a refreshed manifest: its miniapp catalog,
+ * which installs as miniapps can be replaced, and its presentation. Feature
+ * switches, OTA, telemetry, glasses and system-miniapp policy were set up when
+ * Engine started, so they stay until it starts again.
+ */
+function withLiveChanges(running: DeploymentManifest, next: DeploymentManifest): DeploymentManifest {
+  const {branding: _branding, ...rest} = running
+  return {
+    ...rest,
+    ...(next.branding ? {branding: next.branding} : {}),
+    displayName: next.displayName,
+    links: next.links,
+    content: next.content,
+    miniapps: next.miniapps,
+  }
 }
 
 /** Structural equality for schema-parsed manifest values, independent of key order. */

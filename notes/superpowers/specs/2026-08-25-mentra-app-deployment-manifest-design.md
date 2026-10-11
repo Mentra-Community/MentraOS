@@ -876,7 +876,8 @@ Rules:
   tears Mantle down and re-enters the same boot route, so activation is
   covered by the same call. Each launch re-reads the selected workspace's
   manifest (`mobile/src/services/deployment/refresh.ts`); a running session
-  applies it through `engine.updateDeploymentPolicy` and the same sync.
+  applies its miniapp catalog through `engine.updateMiniappPolicy` and the same
+  sync, and the rest at the next engine start.
 - A non-approved system miniapp is not installed, registered, shown in the
   system miniapp catalog, autostarted, or launched from a primary system-miniapp
   surface even though its code may exist in the shared binary. Comprehensive

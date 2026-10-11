@@ -1,4 +1,12 @@
-import {appRegistry, sha256Hex} from "@mentra/engine-host-internal"
+import {
+  appRegistry,
+  installMiniappRelease,
+  markMiniappUpdateDeferred,
+  MiniappInstallCancelledError,
+  miniappLauncher,
+  MiniappRunningError,
+  sha256Hex,
+} from "@mentra/engine-host-internal"
 import {Directory, File, Paths} from "expo-file-system"
 
 import {shouldSkipMiniappInstall} from "./miniappVisibility"
@@ -226,22 +234,38 @@ async function installEntry(
     zipPath = await waitForDownload(downloadVerifiedBundle(entry, context), context.signal)
     context.assertCurrent()
     if (shouldSkipMiniappInstall(entry.packageName)) return false
-    const result = await appRegistry.installFromLocalZip(zipPath, {
+    const adoptIdenticalInstalledVersion = desiredIdentity?.source !== "deployment_manifest"
+    const release = {
       expectedPackageName: entry.packageName,
       expectedVersion: entry.version,
       rejectExistingVersion: true,
-      adoptIdenticalInstalledVersion: desiredIdentity?.source !== "deployment_manifest",
       releaseIdentity: {
-        source: "deployment_manifest",
+        source: "deployment_manifest" as const,
         deploymentId,
         deploymentOrigin: workspaceOrigin,
         bundleSha256: entry.sha256.toLowerCase(),
       },
-    })
+    }
+    if (installedVersions.length > 0 && !installedVersions.includes(entry.version)) {
+      // A new version of an installed miniapp updates like a Store release: an
+      // idle one at once, an open one after asking. "Not now" waits until it
+      // closes, when its deferred update syncs the workspace again.
+      await installMiniappRelease(
+        {localZipPath: zipPath, adoptIdenticalInstalledVersion},
+        {...release, onlyIfStopped: true, askIfRunning: true, isCancelled: () => context.signal.aborted},
+      )
+      return true
+    }
+    const result = await appRegistry.installFromLocalZip(zipPath, {...release, adoptIdenticalInstalledVersion})
     if (result.is_error()) throw result.error
     return true
   } catch (error) {
     if (error instanceof SupersededSync) throw error
+    if (error instanceof MiniappInstallCancelledError) throw new SupersededSync()
+    if (error instanceof MiniappRunningError) {
+      console.log(`${LOG_TAG}: ${entry.packageName}@${entry.version} waits until the open miniapp closes`)
+      return false
+    }
     // AppRegistry owns rollback of the directory it creates. A pre-download
     // existence snapshot cannot establish ownership of a later installation.
     console.warn(`${LOG_TAG}: failed to install ${entry.packageName}@${entry.version}`, error)
@@ -332,6 +356,11 @@ async function syncWorkspace(
     if (desiredNames.has(previous.packageName)) continue
     if (!hasExactOwnership(deployment.manifest.deploymentId, deployment.workspaceOrigin, previous)) {
       nextEntries.delete(recordKey(previous))
+      continue
+    }
+    if (miniappLauncher.isRunning(previous.packageName)) {
+      // The workspace removed a miniapp that is open: it goes when it closes.
+      markMiniappUpdateDeferred(previous.packageName)
       continue
     }
     const uninstall = await appRegistry.uninstall(previous.packageName, previous.version)

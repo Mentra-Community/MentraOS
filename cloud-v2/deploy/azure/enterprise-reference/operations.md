@@ -239,6 +239,8 @@ SYSTEM installs are never adopted or deleted.
 
 The Mentra App resolves the remote manifest when the workspace is selected and
 re-reads it each time the app opens, so a changed managed list installs then.
+An open miniapp asks the employee before it updates, and a removed one goes when
+it closes.
 Runtime minimum-version policy remains live and independent.
 
 The reference Mentra Cloud image does not contain customer miniapp ZIPs. Put them in

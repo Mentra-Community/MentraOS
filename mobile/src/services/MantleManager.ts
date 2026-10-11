@@ -419,26 +419,34 @@ class MantleManager {
     })
   }
 
+  /** True once Engine is being or has been configured from the active deployment. */
+  public isInitialized(): boolean {
+    return this.initialized || this.initialization !== null
+  }
+
   /**
-   * Bring a running session up to date with a refreshed workspace manifest for
-   * the same deployment, Core and sign-in: Engine's per-request policy first,
-   * then the managed miniapps, after any synchronization already in progress.
-   * Before the first init() this does nothing; init() reads the new manifest.
+   * Bring a running session up to date with the miniapp catalog of a refreshed
+   * workspace manifest: Engine's catalog policy first, then the managed
+   * miniapps. An open miniapp asks before it updates. Before the first init()
+   * this does nothing; init() reads the new manifest.
    */
   public async applyDeploymentUpdate(): Promise<void> {
-    if (!this.initialized && !this.initialization) return
+    if (!this.isInitialized()) return
     const generation = this.miniappGeneration
     // init() configures Engine from the deployment active when it starts.
     await this.initialization?.catch(() => {})
     this.assertInitializationCurrent(generation)
     const config = deploymentCloudConfigValues(deploymentStore.getActive())
-    engine.updateDeploymentPolicy({
+    engine.updateMiniappPolicy({
       localMiniappAllowlist: config.localMiniappAllowlist,
       localMiniappPolicy: config.localMiniappPolicy,
       miniappConfiguration: config.miniappConfiguration,
-      otaManifestUrl: config.otaManifestUrl,
-      features: config.features,
     })
+    await this.resyncMiniapps(generation)
+  }
+
+  /** Reconcile installations again, after any reconciliation already in progress. */
+  private resyncMiniapps(generation = this.miniappGeneration): Promise<void> {
     const previous = this.miniappInitialization
     const update = (async () => {
       await previous?.catch(() => {})
@@ -446,11 +454,17 @@ class MantleManager {
       await this.restoreMiniapps()
     })()
     this.miniappInitialization = update
-    await update
+    return update
   }
 
   public async waitForMiniapps(): Promise<void> {
-    await this.miniappInitialization
+    // A reconciliation that a deployment update superseded hands over to the
+    // one that update started; wait for whichever runs last.
+    let current: Promise<void> | null
+    do {
+      current = this.miniappInitialization
+      await current
+    } while (current !== this.miniappInitialization)
   }
 
   private async initialize(options: {background?: boolean}) {
@@ -1100,6 +1114,16 @@ class MantleManager {
     syncAppPresentationState()
     const unsubscribeAppPresentationState = useAppStatusStore.subscribe(syncAppPresentationState)
     this.subs.push({remove: unsubscribeAppPresentationState})
+    // A workspace update that waited for an open miniapp, or a removal of one,
+    // runs once that miniapp closes.
+    this.subs.push({
+      remove: engine.miniapps.onDeferredUpdateReady(() => {
+        if (deploymentStore.getActive().kind !== "workspace") return
+        void this.resyncMiniapps().catch((error) =>
+          console.warn("MANTLE: deferred workspace miniapp sync failed", error),
+        )
+      }),
+    })
     this.subs.push({
       remove: engine.settings.onChanged(SETTINGS.native_notifications_enabled.key, () => {
         this.stopPhoneNotificationPresentation()

@@ -269,42 +269,26 @@ function frozenMiniappPolicy(
   }
 }
 
-/** The parts of a workspace manifest that Engine reads per request. */
-export type DeploymentPolicy = Pick<
+/** A workspace's miniapp catalog: the releases it manages, its allowlist and miniapp configuration. */
+export type MiniappPolicy = Pick<
   IslandConfigValues,
-  "localMiniappAllowlist" | "localMiniappPolicy" | "miniappConfiguration" | "otaManifestUrl" | "features"
+  "localMiniappAllowlist" | "localMiniappPolicy" | "miniappConfiguration"
 >
 
 /**
- * Replace the deployment's miniapp, configuration, OTA and feature policy on a
- * running runtime, as `updateUiSeams` does for UI seams. Each is read when it is
- * used, so the change applies to the next check. Endpoints and auth stay as
- * configured. Speech can be turned off here but not on, since it depends on
- * what `start()` set up.
+ * Replace the workspace's miniapp catalog on a running runtime, as
+ * `updateUiSeams` does for UI seams. Installs, launches and miniapp
+ * configuration read it when they run. Everything else stays as configured:
+ * endpoints, auth and feature switches belong to the started session.
  */
-export function updateDeploymentPolicy(policy: DeploymentPolicy): void {
+export function updateMiniappPolicy(policy: MiniappPolicy): void {
   if (!options?.config) {
-    console.warn("engine.updateDeploymentPolicy() called before engine.configure(); ignored")
+    console.warn("engine.updateMiniappPolicy() called before engine.configure(); ignored")
     return
   }
-  const current = options.config
-  // Speech needs what start() set up (the realtime session and microphone
-  // uplink, or the downloaded on-device model), so it can only turn off here.
-  const startedOnly = (feature: "cloudSpeech" | "onDeviceSpeech") =>
-    current.features?.[feature] !== false && policy.features?.[feature] !== false
   options = {
     ...options,
-    config: {
-      ...current,
-      ...frozenMiniappPolicy(policy),
-      miniappConfiguration: policy.miniappConfiguration,
-      otaManifestUrl: policy.otaManifestUrl,
-      features: {
-        ...policy.features,
-        cloudSpeech: startedOnly("cloudSpeech"),
-        onDeviceSpeech: startedOnly("onDeviceSpeech"),
-      },
-    },
+    config: {...options.config, ...frozenMiniappPolicy(policy), miniappConfiguration: policy.miniappConfiguration},
   }
 }
 

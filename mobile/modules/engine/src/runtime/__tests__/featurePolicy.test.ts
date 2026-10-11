@@ -12,7 +12,7 @@ import {
   isOfflineSystemMiniappAllowed,
   resetForTests,
   start,
-  updateDeploymentPolicy,
+  updateMiniappPolicy,
 } from "../bootstrap"
 
 describe("deployment feature policy", () => {
@@ -222,7 +222,7 @@ describe("Store-updated bundled releases", () => {
   })
 })
 
-describe("updateDeploymentPolicy", () => {
+describe("updateMiniappPolicy", () => {
   afterEach(() => resetForTests())
 
   const acme = (packageName: string, sha256: string) => ({
@@ -240,44 +240,37 @@ describe("updateDeploymentPolicy", () => {
       deploymentOrigin: "https://acme.example",
     })
 
-  test("admits a newly managed miniapp on a running runtime and keeps endpoints", async () => {
+  test("admits a newly managed miniapp on a running runtime and keeps the session's other settings", async () => {
     configure({
       auth: {},
       config: {
         coreUrl: "https://core.acme.example",
         localMiniappPolicy: {systemPackageNames: ["com.mentra.settings"], managed: [acme("com.mentra.call", "aa")]},
-        features: {cloudSpeech: true, onDeviceSpeech: false, navigation: false},
+        features: {cloudSpeech: true, navigation: false},
       },
     })
     await start()
     expect(managedInstall("com.mentra.enterprise", "bb")).toBe(false)
 
-    updateDeploymentPolicy({
+    updateMiniappPolicy({
       localMiniappPolicy: {
         systemPackageNames: ["com.mentra.settings"],
         managed: [acme("com.mentra.call", "aa"), acme("com.mentra.enterprise", "BB")],
       },
       miniappConfiguration: {"com.mentra.enterprise": {backendUrl: "https://backend.acme.example"}},
-      otaManifestUrl: null,
-      features: {cloudSpeech: true, onDeviceSpeech: false, navigation: true},
     })
 
     expect(managedInstall("com.mentra.enterprise", "bb")).toBe(true)
     expect(managedInstall("com.mentra.call", "aa")).toBe(true)
     expect(getMiniappConfiguration("com.mentra.enterprise")).toEqual({backendUrl: "https://backend.acme.example"})
-    expect(isFeatureEnabled("navigation")).toBe(true)
+    // Endpoints and feature switches belong to the started session.
     expect(getConfigValues().coreUrl).toBe("https://core.acme.example")
-  })
-
-  test("turns speech off on a running runtime but leaves turning it on to start()", () => {
-    configure({auth: {}, config: {features: {cloudSpeech: false, onDeviceSpeech: true}}})
-    updateDeploymentPolicy({features: {cloudSpeech: true, onDeviceSpeech: false}})
-    expect(isFeatureEnabled("cloudSpeech")).toBe(false)
-    expect(isFeatureEnabled("onDeviceSpeech")).toBe(false)
+    expect(isFeatureEnabled("cloudSpeech")).toBe(true)
+    expect(isFeatureEnabled("navigation")).toBe(false)
   })
 
   test("is ignored before configure()", () => {
-    updateDeploymentPolicy({features: {navigation: false}})
-    expect(isFeatureEnabled("navigation")).toBe(true)
+    updateMiniappPolicy({localMiniappAllowlist: ["com.mentra.settings"]})
+    expect(getConfigValues().localMiniappAllowlist).toBeUndefined()
   })
 })

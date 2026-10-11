@@ -20,10 +20,15 @@ phone without a new sign-in:
 
 - Launch waits up to 3 seconds for it, so Engine starts from the new manifest.
 - When Engine is already running (it arrived later, or an Android warm relaunch
-  or background recovery started Engine), `MantleManager.applyDeploymentUpdate()`
-  hands Engine the new miniapp, configuration, OTA and feature policy
-  (`engine.updateDeploymentPolicy`) and re-syncs managed miniapps. Speech can only
-  turn on when Engine next starts, since its session, uplink and model start then.
+  or background recovery started Engine), the session takes the manifest's
+  miniapp catalog and presentation now. `MantleManager.applyDeploymentUpdate()`
+  hands Engine the catalog (`engine.updateMiniappPolicy`) and re-syncs managed
+  miniapps. A new version of an installed miniapp goes through the Store's
+  release installer: an idle one updates; an open one asks first, and "Not now"
+  waits until it closes. A removed miniapp that is open goes when it closes.
+- Everything else (feature switches, OTA, telemetry, glasses and system-miniapp
+  policy) is saved and applies when Engine next starts. Runtime only serves what
+  its manifest enables, so a switch turned off is already enforced there.
 - The stored Entra account and Cloud session belong to the deployment ID, Core
   and `auth`. A manifest that changes any of these is not adopted; the person
   selects the workspace again.

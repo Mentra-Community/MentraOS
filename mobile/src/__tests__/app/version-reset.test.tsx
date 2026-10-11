@@ -25,7 +25,7 @@ jest.mock("@/stores/navigation", () => ({
 }))
 jest.mock("@/services/MantleManager", () => ({
   __esModule: true,
-  default: {init: jest.fn(), applyDeploymentUpdate: jest.fn()},
+  default: {init: jest.fn(), isInitialized: () => false, applyDeploymentUpdate: jest.fn()},
 }))
 jest.mock("@/utils/cloudVersion", () => ({fetchMinimumClientVersion: jest.fn()}))
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))
