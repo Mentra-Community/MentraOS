@@ -1,7 +1,7 @@
 import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {expect, test} from "bun:test";
 import {FRAMEWORK_RUN_ASSET_LIMIT, frameworkAssetIdSchema, frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema} from "./framework-run.types";
-import lifecycleFixture from '../testing/framework-lifecycle.harness.fixture.json';
+import {lifecycleRuns} from '../testing/framework-lifecycle.fixture';
 
 function run() {
   return {
@@ -26,9 +26,9 @@ function run() {
 }
 
 test('frozen Harness results preserve diagnostic actions and failed verdict independently of physical readiness', () => {
-  for (const fixture of lifecycleFixture.runs) {
+  for (const fixture of lifecycleRuns) {
     const parsed = frameworkRunSchema.parse(fixture.run);
-    expect(parsed.result as unknown).toEqual(fixture.run.result);
+    expect(parsed as unknown).toEqual(fixture.producedRun);
     expect(parsed.result.teardown.ready).toBe(true);
     expect(parsed.result.diagnostics?.every(action => action.scope === 'shared')).toBe(true);
     expect(parsed.result.timing.diagnosticsMs).toBeCloseTo(parsed.result.diagnostics!.reduce((total, action) => total + action.durationMs, 0), 5);
@@ -38,13 +38,13 @@ test('frozen Harness results preserve diagnostic actions and failed verdict inde
 });
 
 test('diagnostic contract rejects missing timing, malformed actions, unreported failures and unbounded metadata', () => {
-  const base = lifecycleFixture.runs.find(fixture => fixture.scenario === 'diagnostic-failure')!.run;
+  const base = lifecycleRuns.find(fixture => fixture.scenario === 'diagnostic-failure')!.run;
   const [action] = base.result.diagnostics!;
   for (const result of [
     {...base.result, diagnostics: undefined},
     {...base.result, timing: {...base.result.timing, diagnosticsMs: undefined}},
     {...base.result, timing: {...base.result.timing, diagnosticsMs: -1}},
-    {...base.result, timing: {...base.result.timing, diagnosticsMs: base.result.timing.diagnosticsMs + 1}},
+    {...base.result, timing: {...base.result.timing, diagnosticsMs: base.result.timing.diagnosticsMs! + 1}},
     {...base.result, diagnostics: [...base.result.diagnostics!, action]},
     {...base.result, diagnostics: [{...action, durationMs: -1}]},
     {...base.result, diagnostics: [{...action, scope: 'routine'}]},
@@ -69,6 +69,34 @@ test('ready cleanup rejects failed/live outcomes and retains secondary errors fo
     expect(frameworkRunSchema.parse({...good, result}).result.teardown.outcomes[0]).toEqual(outcome);
     expect(frameworkRunSchema.safeParse({...good, result: {...result, teardown: {...result.teardown, ready: true}}}).success).toBe(false);
     expect(frameworkRunSchema.safeParse({...good, result: {...result, failures: []}}).success).toBe(false);
+  }
+});
+
+test('cleanup failures retain identical diagnostic JSON in every flattened copy and outcome state', () => {
+  const good = run();
+  const details = {measurements: [{mask: 'screen', pixels: 7}], context: {attempt: 1, settled: true}};
+  for (const diagnostics of [details, null, false, [1, 'two'], undefined]) {
+    const error = {phase: 'teardown' as const, actionId: 'app', message: 'Cleanup observation failed',
+      ...(diagnostics !== undefined ? {diagnostics} : {})};
+    for (const state of ['cleaned', 'still-active', 'failed'] as const) {
+      const outcome = state === 'failed' ? {state, resourceId: 'app', failure: error, errors: [error]}
+        : state === 'still-active' ? {state, resourceId: 'app', writer: {pid: 1}, evidence: [], errors: [error]}
+          : {state, resourceId: 'app', evidence: [], errors: [error]};
+      const result = {...good.result, failures: [error], teardown: {ready: state === 'cleaned', outcomes: [outcome],
+        errors: [error], unavailableResources: state === 'cleaned' ? [] : [{resource: 'app', cause: 'Unresolved', nextAction: 'Inspect owned writer'}]}};
+      expect(frameworkRunSchema.safeParse({...good, result}).success).toBe(true);
+      for (const changedDiagnostics of [undefined, null, {measurements: [{mask: 'screen', pixels: 8}]}]) {
+        if (JSON.stringify(changedDiagnostics) === JSON.stringify(diagnostics)) continue;
+        const {diagnostics: _removed, ...without} = error as typeof error & {diagnostics?: unknown};
+        const changed = {...without, ...(changedDiagnostics !== undefined ? {diagnostics: changedDiagnostics} : {})};
+        expect(frameworkRunSchema.safeParse({...good, result: {...result, failures: [changed]}}).success).toBe(false);
+        expect(frameworkRunSchema.safeParse({...good, result: {...result, teardown: {...result.teardown, errors: [changed]}}}).success).toBe(false);
+      }
+      if (diagnostics === details) {
+        const reordered = {...error, diagnostics: {context: {settled: true, attempt: 1}, measurements: [{pixels: 7, mask: 'screen'}]}};
+        expect(frameworkRunSchema.safeParse({...good, result: {...result, failures: [reordered]}}).success).toBe(true);
+      }
+    }
   }
 });
 

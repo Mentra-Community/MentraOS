@@ -444,7 +444,8 @@ export function FrameworkRunPage({runId, stepId}: {runId: string; stepId?: strin
       durationMs={run.result.timing.teardownMs} sources={run.result.stepSources?.teardown} failures={run.result.failures.filter(failure => failure.phase === "teardown")}
       unavailable={run.result.teardown.unavailableResources} ready={run.result.teardown.ready} />
     {!!run.result.diagnostics?.length && run.result.timing.diagnosticsMs !== undefined && <LifecyclePanel phase="diagnostics"
-      actions={run.result.diagnostics} status={run.result.diagnostics.some(action => action.status === 'failed') ? 'failed' : 'passed'}
+      actions={run.result.diagnostics} status={run.result.diagnostics.some(action => action.status === 'failed') ? 'failed'
+        : run.result.diagnostics.some(action => action.status === 'cancelled') ? 'cancelled' : 'passed'}
       durationMs={run.result.timing.diagnosticsMs} failures={[]} />}
     <section id="run-phase-evidence" tabIndex={-1} className={PANEL}><h3 className="font-semibold">Evidence</h3>
       {run.result.failures.filter(failure => failure.phase === "evidence").map((failure, index) => <p id={`run-failure-${failure.phase}-${index}`} tabIndex={-1} role="alert" className="mt-2 scroll-mt-24 whitespace-pre-wrap" key={index}>{failure.actionId}: {failure.message}</p>)}

@@ -57,6 +57,16 @@ const frozenFrameworkRunSchema = z.object({
   }).strict(),
 }).strict();
 type FrozenFrameworkRun = z.infer<typeof frozenFrameworkRunSchema>;
+function sameJson(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) || Array.isArray(right)) return Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length && left.every((value, index) => sameJson(value, right[index]));
+  const leftObject = left as Record<string, unknown>, rightObject = right as Record<string, unknown>;
+  const keys = Object.keys(leftObject);
+  return keys.length === Object.keys(rightObject).length && keys.every(key => Object.hasOwn(rightObject, key)
+    && sameJson(leftObject[key], rightObject[key]));
+}
 function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof FrozenFrameworkRun, 'routineSource' | 'frameworkBinding'>> & {frameworkBinding?: FrozenFrameworkRun['frameworkBinding']}, ctx: z.RefinementCtx) {
   const problem = (message: string) => ctx.addIssue({code: "custom", message});
   if (run.result.runId !== run.requestId || run.startedAt !== run.result.timing.startedAt
@@ -74,7 +84,8 @@ function validateFrozenFrameworkRun(run: Pick<FrozenFrameworkRun, Exclude<keyof 
   // The recorder assigns original step offsets before finalization can reject its public video.
   // Retain those observations when the matching cleaned recorder reports that evidence failure.
   const sameFailure = (left: z.infer<typeof failure>, right: z.infer<typeof failure>) =>
-    left.phase === right.phase && left.actionId === right.actionId && left.message === right.message;
+    left.phase === right.phase && left.actionId === right.actionId && left.message === right.message
+    && sameJson(left.diagnostics, right.diagnostics);
   const failedRecordingFinalization = run.result.teardown.actions?.some(action => action.scope === 'shared'
     && action.status === 'failed' && action.id.startsWith('cleanup:')
     && run.result.teardown.outcomes.some(outcome => outcome.state === 'cleaned'

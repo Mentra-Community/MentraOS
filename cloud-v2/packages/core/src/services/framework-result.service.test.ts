@@ -6,10 +6,10 @@ import {createFrameworkRunSummaryProjection} from "./framework-run-summary.servi
 import {requestInputDigest} from "./test-request.service";
 import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import type {FrameworkRun} from "../types/framework-run.types";
-import lifecycleFixture from '../testing/framework-lifecycle.harness.fixture.json';
+import {lifecycleRuns} from '../testing/framework-lifecycle.fixture';
 
 test('ingest and detail retain actual frozen Harness diagnostic actions with independent cleanup readiness', async () => {
-  for (const fixture of lifecycleFixture.runs) {
+  for (const fixture of lifecycleRuns) {
     let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
     const service = new FrameworkResultService({async insert(payload, payloadSha256) {stored = {payload, payloadSha256, uploadsComplete: true}},
       async getByRequest() {return stored}, async getByRun() {return stored}, async getAsset() {return null}},
@@ -19,7 +19,7 @@ test('ingest and detail retain actual frozen Harness diagnostic actions with ind
     const receipt = await service.ingest(fixture.run, fixture.run.hostId);
     expect(receipt.payloadSha256).toBe(requestInputDigest(fixture.run));
     const detail = await service.detailForHost(fixture.run.requestId, fixture.run.hostId);
-    expect(detail.run.result as unknown).toEqual(fixture.run.result);
+    expect(detail.run as unknown).toEqual(fixture.producedRun);
     expect(detail.outcome).toBe(fixture.scenario === 'diagnostic-failure' ? 'failed' : 'teardown-failed');
     expect(detail.run.result.teardown.ready).toBe(true);
     expect(detail.evidenceStatus).toBe(fixture.scenario === 'routine-teardown' ? 'complete' : 'failed');
