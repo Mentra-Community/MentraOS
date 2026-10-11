@@ -16,6 +16,7 @@ import {SupportProfileModel} from "../../models/support-profile.model"
 import {UserModel} from "../../models/user.model"
 import * as otc from "./one-time-code.service"
 import {AccountError} from "./account-error"
+import {removeDeletedUserFromWorkspaces} from "../workspaces/account-deletion.service"
 
 const RESET_CODE_TTL_SEC = 15 * 60
 const DELETE_CODE_TTL_SEC = 15 * 60
@@ -162,9 +163,14 @@ export async function requestAccountDeletion(email: string, tenantUserId: string
 
 export async function confirmAccountDeletion(mentraUserId: string, tenantUserId: string, code: string): Promise<void> {
   await otc.consumeCode({code, purpose: "account_deletion", expectSubject: tenantUserId})
-  // Order: kill V2 sessions, remove the operational support profile/outbox,
-  // then delete the Supabase user. Everything human-identifying (email,
-  // password, name) lives in GoTrue and dies here.
+  // Order: kill V2 sessions, end workspace memberships, remove the operational
+  // support profile/outbox, then delete the Supabase user. Everything
+  // human-identifying (email, password, name) lives in GoTrue and dies here.
+  //
+  // Workspace access ends before the GoTrue user goes: the memberships and the
+  // credentials they created end in one transaction. Should anything after it
+  // fail, the account still exists and the person can request deletion again;
+  // the other order could leave a deleted account still holding workspace access.
   //
   // OPEN DECISION (deferred, revisit in a future PR): the Mongo users row
   // ({mentraUserId, tenantId, tenantUserId}) is intentionally kept as a
@@ -175,6 +181,7 @@ export async function confirmAccountDeletion(mentraUserId: string, tenantUserId:
   // Cloud V1 is a different system with its own database; its data lifecycle
   // is not a cloud-v2 concern and no code here talks to it.
   await revokeAllSessionsForUser({mentraUserId})
+  await removeDeletedUserFromWorkspaces(mentraUserId)
   // Set the tombstone before removing the profile so no new support write can
   // recreate it. A PostHog capture already in flight when the tombstone lands
   // may still deliver; delivered analytics data is governed by that project's

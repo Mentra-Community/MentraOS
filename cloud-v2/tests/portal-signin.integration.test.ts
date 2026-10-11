@@ -22,6 +22,9 @@ import {LoginTransactionModel} from "../packages/core/src/models/login-transacti
 import {AuthRateLimitModel} from "../packages/core/src/models/auth-rate-limit.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {DeveloperApiKeyService} from "../packages/core/src/services/developer-orgs/developer-api-key.service"
+import {convertLegacyAdminKeys} from "../packages/core/src/services/workspaces/legacy-admin-keys"
+import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {resetPortalSigninCaches} from "../packages/core/src/services/signin/portal-signin.service"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
@@ -68,6 +71,10 @@ beforeAll(async () => {
     AuthRateLimitModel.syncIndexes(),
     DeveloperOrgApiKeyModel.syncIndexes(),
   ])
+  for (const model of [AccessCredentialModel, WorkspaceAuditEventModel]) {
+    await model.createCollection()
+    await model.syncIndexes()
+  }
   app = createApp({readinessChecks: [mongoReadinessCheck]})
 })
 
@@ -87,12 +94,22 @@ async function clean() {
     LoginTransactionModel.deleteMany({}),
     AuthRateLimitModel.deleteMany({}),
     DeveloperOrgApiKeyModel.deleteMany({}),
+    AccessCredentialModel.deleteMany({}),
+    WorkspaceAuditEventModel.deleteMany({}),
   ])
   resetIdpTokenCaches()
   resetPortalSigninCaches()
 }
 
 const ADMIN_PERSON = {sub: "supa-admin", email: ADMIN_EMAIL, emailConfirmed: true}
+
+/** Signed in, and refused everything that needs an organization capability. */
+async function expectNoOrganizationCapabilities(cookie: string) {
+  const me = await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie}})
+  expect(me.status).toBe(200)
+  expect(((await me.json()) as {organization: {capabilities: string[]}}).organization.capabilities).toEqual([])
+  expect((await app.request(`${ADMIN_ORIGIN}/api/admin/reports`, {headers: {cookie}})).status).toBe(403)
+}
 
 describe("hosted Core (Supabase)", () => {
   let idp: FakeIdp
@@ -132,10 +149,10 @@ describe("hosted Core (Supabase)", () => {
 
     const me = await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie: `${ADMIN_COOKIE}=${result.sessionCookie}`}})
     expect(me.status).toBe(200)
-    const body = (await me.json()) as {principal: {mentraUserId: string; email: string; emailVerified: boolean}}
-    expect(body.principal.mentraUserId).toBe(phoneUser.mentraUserId)
-    expect(body.principal.email).toBe(ADMIN_EMAIL)
-    expect(body.principal.emailVerified).toBe(true)
+    const body = (await me.json()) as {user: {mentraUserId: string; email: string; emailVerified: boolean}}
+    expect(body.user.mentraUserId).toBe(phoneUser.mentraUserId)
+    expect(body.user.email).toBe(ADMIN_EMAIL)
+    expect(body.user.emailVerified).toBe(true)
   })
 
   test("the authorize request pins email profile: no openid, no nonce, S256 PKCE, and the configured redirect", async () => {
@@ -256,8 +273,7 @@ describe("hosted Core (Supabase)", () => {
   test("an unverified allowlisted email signs in but gets no admin access (L06)", async () => {
     const result = await portalSignIn(app, idp, {portal: "admin", person: {sub: "supa-unverified", email: ADMIN_EMAIL, emailConfirmed: false}})
     expect(result.done.status).toBe(302)
-    const me = await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie: `${ADMIN_COOKIE}=${result.sessionCookie}`}})
-    expect(me.status).toBe(403)
+    await expectNoOrganizationCapabilities(`${ADMIN_COOKIE}=${result.sessionCookie}`)
   })
 
   test("a cross-origin POST with the admin cookie gets 403; the same POST with a key bearer is unaffected", async () => {
@@ -272,10 +288,12 @@ describe("hosted Core (Supabase)", () => {
     expect(sameOrigin.status).not.toBe(403)
     expect(sameOrigin.status).not.toBe(401)
 
+    // An operator key (here an admin key converted at startup) with the testing scope writes from anywhere.
     const key = await new DeveloperApiKeyService().create("org_admin_keys", "ops", "seed", "local")
     const restore = applyEnv({CLOUD_CORE_ADMIN_EMAILS: `${ADMIN_EMAIL},api-key@${key.id}.local`})
     try {
-      const bearer = await app.request(path, {method: "POST", headers: {authorization: `Bearer ${key.value}`, origin: "https://evil.example", "content-type": "application/json"}, body: "{}"})
+      await convertLegacyAdminKeys()
+      const bearer = await app.request(`${ADMIN_ORIGIN}/api/admin/test-dispatches/picker`, {method: "POST", headers: {authorization: `Bearer ${key.value}`, origin: "https://evil.example", "content-type": "application/json"}, body: "{}"})
       expect(bearer.status).not.toBe(403)
       expect(bearer.status).not.toBe(401)
     } finally {
@@ -374,9 +392,9 @@ describe("Private Cloud (Entra)", () => {
     expect(result.done.status).toBe(302)
     const me = await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie: `${ADMIN_COOKIE}=${result.sessionCookie}`}})
     expect(me.status).toBe(200)
-    const body = (await me.json()) as {principal: {mentraUserId: string; emailVerified: boolean}}
-    expect(body.principal.mentraUserId).toBe(phoneUser.mentraUserId)
-    expect(body.principal.emailVerified).toBe(true)
+    const body = (await me.json()) as {user: {mentraUserId: string; emailVerified: boolean}}
+    expect(body.user.mentraUserId).toBe(phoneUser.mentraUserId)
+    expect(body.user.emailVerified).toBe(true)
     expect(entra.tokenRequests[0]?.auth).toBe("client_secret_post")
   })
 
@@ -385,8 +403,7 @@ describe("Private Cloud (Entra)", () => {
     try {
       const result = await portalSignIn(app, entra, {portal: "admin", person: {...ENTRA_PERSON, email: "alex@mentra.glass"}})
       expect(result.done.status).toBe(302)
-      const me = await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie: `${ADMIN_COOKIE}=${result.sessionCookie}`}})
-      expect(me.status).toBe(403)
+      await expectNoOrganizationCapabilities(`${ADMIN_COOKIE}=${result.sessionCookie}`)
     } finally {
       restore()
     }

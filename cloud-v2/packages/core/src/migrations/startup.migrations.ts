@@ -25,6 +25,12 @@ import { reconcileTestRunIndexes, TestAssetModel, TestRunModel } from "../models
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import {ReportModel} from '../models/report.model';
 import {ReportAssetModel, reconcileReportAssetIndexes} from '../models/report-asset.model';
+import { AccessCredentialModel } from "../models/access-credential.model";
+import { WorkspaceAuditEventModel } from "../models/workspace-audit-event.model";
+import { WorkspaceInvitationModel } from "../models/workspace-invitation.model";
+import { WorkspaceMembershipModel } from "../models/workspace-membership.model";
+import { WorkspaceModel } from "../models/workspace.model";
+import { convertLegacyAdminKeys } from "../services/workspaces/legacy-admin-keys";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
@@ -99,6 +105,22 @@ export async function runStartupMigrations(): Promise<void> {
   await safeCreateInvitationIndexes();
   await backfillDeveloperOrgOwners();
   await backfillMembersFromWorkos();
+  // Workspaces rely on unique indexes (one active membership per person, one
+  // pending invitation per address, unique ids). Build them, and their
+  // collections, before serving: autoIndex runs in the background and a failed
+  // build would only be logged, and a request in the first moments after boot
+  // must not create a collection inside a transaction.
+  await Promise.all(
+    [WorkspaceModel, WorkspaceMembershipModel, WorkspaceInvitationModel, AccessCredentialModel, WorkspaceAuditEventModel].map(
+      async (model) => {
+        await model.createCollection();
+        await model.createIndexes();
+      },
+    ),
+  );
+  // Allowlisted admin API keys keep working as operator keys, before any
+  // request is served. A key that fails is logged and retried next start.
+  await convertLegacyAdminKeys();
   await ensureMentraAccountOem();
 }
 

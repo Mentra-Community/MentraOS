@@ -121,9 +121,9 @@ describe("a Private Cloud admin portal on Core's host", () => {
     expect(done.headers.get("location")).toBe("/?report=rep_1")
     const me = await coreRequest("/api/admin/me", {headers: {cookie: `${ADMIN_COOKIE}=${session}`}})
     expect(me.status).toBe(200)
-    const body = (await me.json()) as {admin: boolean; principal: {mentraUserId: string; email: string; emailVerified: boolean}}
-    expect(body.admin).toBe(true)
-    expect(body.principal).toMatchObject({mentraUserId: phoneUser.mentraUserId, email: "it-admin@contoso.com", emailVerified: true})
+    const body = (await me.json()) as {user: {mentraUserId: string; email: string; emailVerified: boolean; isOrganizationAdmin: boolean}; organization: {capabilities: string[]}}
+    expect(body.user).toMatchObject({mentraUserId: phoneUser.mentraUserId, email: "it-admin@contoso.com", emailVerified: true, isOrganizationAdmin: true})
+    expect(body.organization.capabilities).toContain("organization.workspaces.administer")
     // Incident triage is an Organization Admin capability.
     expect((await coreRequest("/api/admin/reports", {headers: {cookie: `${ADMIN_COOKIE}=${session}`}})).status).toBe(200)
   })

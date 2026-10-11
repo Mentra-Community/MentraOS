@@ -1,11 +1,17 @@
 /**
- * @fileoverview The enterprise portal API (`/api/portal/*`).
+ * @fileoverview The workspace portal API (`/api/portal/*`).
  *
- * People sign in to the enterprise portal with the deployment's identity
+ * People sign in to the workspace portal with the deployment's identity
  * provider (`/api/portal/auth/*`); every other route requires a signed-in
- * person (the enterprise portal session, or an identity-provider access token).
+ * person (the workspace portal session, or an identity-provider access token).
  * Core credentials get 403 and the admin portal's cookie authenticates nothing
- * here. Enterprise orgs are owned by Core users (`mentraUserId`).
+ * here.
+ *
+ *  - `/me`: who is signed in, their enterprise org, and whether they may create a workspace;
+ *  - `/workspaces/*`: the workspace API (`workspaces.api.ts`), the same handlers
+ *    `/api/workspaces` and `/api/admin/workspaces` serve;
+ *  - `/org`, `/trusted-issuers`: enterprise orgs and their trusted issuers, owned
+ *    by Core users (`mentraUserId`) and kept separate from workspaces.
  */
 
 import { Hono } from "hono";
@@ -17,8 +23,10 @@ import {
 } from "../../services/enterprise/enterprise.service";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
+import { organizationView } from "../../services/workspaces/authorization.service";
 import { requireUserPrincipal, userPrincipal } from "../middleware/principal.middleware";
 import { createPortalAuthApi } from "../signin/portal-auth.api";
+import { createWorkspacesApi } from "../workspaces/workspaces.api";
 
 const app = new Hono<AppEnv>();
 const enterprise = new EnterpriseService();
@@ -48,6 +56,7 @@ app.get("/health", c => c.json({ status: "ok", service: "cloud-core-portal" }));
 // Enterprise portal sign-in, ahead of the person gate.
 app.route("/auth", createPortalAuthApi("portal"));
 app.use("*", requireUserPrincipal("portal"));
+app.route("/workspaces", createWorkspacesApi());
 app.get("/me", getMe);
 app.get("/org", getOrg);
 app.put("/org", putOrg);
@@ -61,7 +70,8 @@ async function getMe(c: AppContext) {
   const org = await enterprise.getPrimaryOrgForUser(user);
   return c.json({
     authenticated: true,
-    user: { id: user.mentraUserId, email: user.email },
+    user: { id: user.mentraUserId, email: user.email, emailVerified: userPrincipal(c).emailVerified },
+    workspaceCreation: organizationView(userPrincipal(c)).workspaceCreation,
     onboardingRequired: org === null,
     org,
   });

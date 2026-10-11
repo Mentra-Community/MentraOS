@@ -1,21 +1,21 @@
 /**
  * @fileoverview Admin report triage API integration tests.
  *
- * Covers the adminAuth-gated read surface behind the internal admin console:
- * list (filters, context excluded), detail (context + asset rows), artifact
- * payload bytes, and the auth gate itself (401 without credentials, 403 for a
- * non-allowlisted principal).
+ * Covers the read surface behind the admin portal's `organization.incidents.read`
+ * gate: list (filters, context excluded), detail (context + asset rows),
+ * artifact payload bytes, and the gate itself (401 without credentials, 401 for
+ * an organization API key that is not allowlisted, 403 for a workspace key).
  *
- * Admin auth uses the org API-key bearer path: an `msk_…` token is not a JWT,
- * so authenticateBearerToken falls through to the local DB validation without
- * touching WorkOS, and the resulting synthetic `api-key@{keyId}.local` email
- * is allowlisted via CLOUD_CORE_ADMIN_EMAILS. Fully local — no WorkOS needed.
+ * The admin principal is an organization API key made before operator keys
+ * (`msk_…`), allowlisted as `api-key@{keyId}.local` on CLOUD_CORE_ADMIN_EMAILS
+ * and converted to an operator key the way Core's startup does
+ * (`convertLegacyAdminKeys`), so it keeps its token. Fully local.
  *
- * Prereq: a running Mongo. Defaults to
- * `mongodb://127.0.0.1:27017/mentra-cloud-v2-test`; override via `MONGO_URL`.
- * The test wipes its own collections between cases — do NOT point at a real DB.
+ * Safety: `localTestMongoUrl` (loopback only, random database, ignores
+ * `MONGO_URL`); the database is dropped afterwards. Converting a key runs a
+ * transaction, so the Mongo must be a replica set.
  *
- * Run: `bun test tests/admin-reports.integration.test.ts`
+ * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/admin-reports.integration.test.ts`
  */
 
 import crypto from "node:crypto";
@@ -62,7 +62,6 @@ const directory = Bun.serve({
     nodePub.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
-  process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-test";
   process.env.SUPABASE_JWT_SECRET = "test-supabase-secret-not-for-production";
   process.env.SUPABASE_URL = directory.url.origin;
   process.env.SUPABASE_SERVICE_ROLE_KEY = "local-directory-test-key";
@@ -86,18 +85,31 @@ import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
 import { DeveloperOrgApiKeyModel } from "../packages/core/src/models/developer-org-api-key.model";
 import { DeveloperApiKeyService } from "../packages/core/src/services/developer-orgs/developer-api-key.service";
+import { AccessCredentialModel } from "../packages/core/src/models/access-credential.model";
+import { WorkspaceAuditEventModel } from "../packages/core/src/models/workspace-audit-event.model";
+import { WorkspaceModel } from "../packages/core/src/models/workspace.model";
+import { WorkspaceMembershipModel } from "../packages/core/src/models/workspace-membership.model";
+import { convertLegacyAdminKeys } from "../packages/core/src/services/workspaces/legacy-admin-keys";
+import { createWorkspace } from "../packages/core/src/services/workspaces/workspace.service";
+import { createWorkspaceCredential } from "../packages/core/src/services/workspaces/credential.service";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
 
 const REPORTS_PATH = "http://localhost/api/client/reports";
 const ADMIN_REPORTS_PATH = "http://localhost/api/admin/reports";
 
+const databaseUrl = localTestMongoUrl("admin-reports");
+let verified = false;
 let coreApp: ReturnType<typeof createApp>;
 let userAccessToken: string;
 let adminBearer: string;
 let nonAdminBearer: string;
+let workspaceBearer: string;
 let adminEmail: string;
 
 beforeAll(async () => {
-  await connectMongo(process.env.MONGO_URL!);
+  await connectMongo(databaseUrl);
+  assertConnectedTo(databaseUrl, ReportModel.db.name);
+  verified = true;
   await Promise.all([
     ReportModel.syncIndexes(),
     ReportAssetModel.syncIndexes(),
@@ -106,6 +118,10 @@ beforeAll(async () => {
     SeenJtiModel.syncIndexes(),
     RevokedJtiModel.syncIndexes(),
     DeveloperOrgApiKeyModel.syncIndexes(),
+    ...[AccessCredentialModel, WorkspaceAuditEventModel, WorkspaceModel, WorkspaceMembershipModel].map(async model => {
+      await model.createCollection();
+      await model.syncIndexes();
+    }),
   ]);
   coreApp = createApp({ readinessChecks: [mongoReadinessCheck] });
 
@@ -119,6 +135,14 @@ beforeAll(async () => {
   adminBearer = adminKey.value!;
   nonAdminBearer = nonAdminKey.value!;
   adminEmail = `api-key@${adminKey.id}.local`;
+  // What Core's startup does for an allowlisted admin key: it becomes an operator key with the same token.
+  process.env.CLOUD_CORE_ADMIN_EMAILS = adminEmail;
+  expect((await convertLegacyAdminKeys()).converted).toEqual([adminKey.id]);
+
+  // A workspace key (`msk_`), which holds no organization capability.
+  const owner = { kind: "user" as const, mentraUserId: "mu_reports_owner", email: "owner@example.test", emailVerified: true, isOrganizationAdmin: false };
+  const workspace = await createWorkspace(owner, { name: "Reports test" });
+  workspaceBearer = (await createWorkspaceCredential(owner, workspace.workspaceId, { name: "CI" })).token;
 });
 
 afterAll(async () => {
@@ -129,8 +153,10 @@ afterAll(async () => {
   if (savedServiceKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
   else process.env.SUPABASE_SERVICE_ROLE_KEY = savedServiceKey;
   directory.stop(true);
-  await UserModel.deleteMany({ tenantUserId: /^internal-fixture-/ });
-  await DeveloperOrgApiKeyModel.deleteMany({ orgId: "org_admin_reports_test" });
+  if (verified) {
+    assertConnectedTo(databaseUrl, ReportModel.db.name);
+    await ReportModel.db.dropDatabase();
+  }
   await disconnectMongo();
   await rm(STORAGE_DIR, { recursive: true, force: true });
 });
@@ -143,6 +169,7 @@ beforeEach(async () => {
   directoryNeverEnds = false;
   directoryHonorsFilters = false;
   directoryRequests = 0;
+  assertConnectedTo(databaseUrl, ReportModel.db.name);
   await Promise.all([
     ReportModel.deleteMany({}),
     ReportAssetModel.deleteMany({}),
@@ -155,10 +182,23 @@ describe("admin reports auth gate", () => {
     const anonymous = await coreApp.fetch(new Request(ADMIN_REPORTS_PATH));
     expect(anonymous.status).toBe(401);
 
-    const forbidden = await coreApp.fetch(
+    // An organization API key that is not allowlisted was never converted: it is no principal here.
+    const unconverted = await coreApp.fetch(
       new Request(ADMIN_REPORTS_PATH, { headers: { authorization: `Bearer ${nonAdminBearer}` } }),
     );
+    expect(unconverted.status).toBe(401);
+
+    // A workspace key is a principal but holds no organization capability.
+    const forbidden = await coreApp.fetch(
+      new Request(ADMIN_REPORTS_PATH, { headers: { authorization: `Bearer ${workspaceBearer}` } }),
+    );
     expect(forbidden.status).toBe(403);
+  });
+
+  test("the converted admin key stops working once its address leaves the allowlist", async () => {
+    expect((await adminGet(ADMIN_REPORTS_PATH)).status).toBe(200);
+    process.env.CLOUD_CORE_ADMIN_EMAILS = "someone-else@example.test";
+    expect((await adminGet(ADMIN_REPORTS_PATH)).status).toBe(401);
   });
 });
 
@@ -479,7 +519,7 @@ describe("admin reports read surface", () => {
 
     expect((await coreApp.fetch(new Request(url))).status).toBe(401);
     const forbidden = await coreApp.fetch(
-      new Request(url, { headers: { authorization: `Bearer ${nonAdminBearer}` } }),
+      new Request(url, { headers: { authorization: `Bearer ${workspaceBearer}` } }),
     );
     expect(forbidden.status).toBe(403);
   });
@@ -573,7 +613,7 @@ describe("admin reports read surface", () => {
         expect(anonymous.status).toBe(401);
         expect(anonymous.headers.get("content-range")).toBeNull();
         await anonymous.arrayBuffer();
-        const forbidden = await fetch(url, { method, headers: { authorization: `Bearer ${nonAdminBearer}`, range: "bytes=0-1" } });
+        const forbidden = await fetch(url, { method, headers: { authorization: `Bearer ${workspaceBearer}`, range: "bytes=0-1" } });
         expect(forbidden.status).toBe(403);
         expect(forbidden.headers.get("content-range")).toBeNull();
         await forbidden.arrayBuffer();

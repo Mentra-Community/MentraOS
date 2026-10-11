@@ -30,6 +30,7 @@ import {ReportSlackDeliveryService} from "./services/report-slack-delivery.servi
 import {ReportServerLogCollectionService} from './services/report-server-log-collection.service'
 import {assertSupabaseApiKeys} from "./services/account/gotrue.client"
 import {assertSigninConfiguration} from "./services/signin/config"
+import {assertOrganizationConfiguration} from "./services/workspaces/organization"
 
 const logger = createLogger("core")
 
@@ -52,6 +53,8 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const mongoUrl = opts.mongoUrl ?? process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2"
 
   assertSupabaseApiKeys()
+  // A malformed workspace setting (CLOUD_CORE_WORKSPACE_CREATION) stops Core here, not at the first request.
+  assertOrganizationConfiguration()
   await connectMongo(mongoUrl)
   try {
     await runStartupMigrations()

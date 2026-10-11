@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { ulid } from "ulid";
 import { DeveloperOrgApiKeyModel } from "../../models/developer-org-api-key.model";
+import { deploymentEnvironmentLabel } from "../workspaces/organization";
 
 export interface ApiKeyRecord {
   id: string; // keyId — what the console uses to revoke
@@ -115,19 +116,5 @@ function serializeApiKey(
  * `CLOUD_CORE_ENVIRONMENT`, else derived from `CONSOLE2_URL`, else `local`.
  */
 export function apiKeyEnvironmentLabel(): string {
-  const explicit = process.env.CLOUD_CORE_ENVIRONMENT;
-  if (explicit) return explicit;
-
-  const consoleUrl = process.env.CONSOLE2_URL;
-  if (!consoleUrl) return "local";
-  try {
-    const host = new URL(consoleUrl).hostname;
-    if (host.includes(".dev.")) return "dev";
-    if (host.includes(".staging.")) return "staging";
-    if (host === "console2.mentraglass.com") return "prod";
-    if (host === "localhost" || host === "127.0.0.1") return "local";
-    return host;
-  } catch {
-    return "local";
-  }
+  return deploymentEnvironmentLabel();
 }
