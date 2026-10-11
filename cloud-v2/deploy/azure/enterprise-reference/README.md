@@ -19,8 +19,21 @@ on, Runtime also runs speech-to-text (Soniox), text-to-speech (ElevenLabs) and
 glasses photos, stored on the replica, with a Redis sidecar. Speech and questions
 then leave the stack for Soniox, ElevenLabs and the miniapp's hosted backend. The
 installer doesn't offer this. Its keys are the `soniox-api-key` and
-`elevenlabs-api-key` secrets in the stack's Key Vault, which an Owner stored and
-granted to Runtime once, as for the Graph client secret below.
+`elevenlabs-api-key` secrets in the stack's Key Vault, copied from Doppler
+`cloud-v2/dev`. As with the Graph client secret below, CI can't grant Key Vault
+access, so an Owner stores them and runs `access.bicep` once:
+
+```bash
+for pair in SONIOX_API_KEY:soniox-api-key ELEVENLABS_API_KEY:elevenlabs-api-key; do
+  # --plain ends with a newline that must not reach the key.
+  printf %s "$(doppler secrets get "${pair%%:*}" --project cloud-v2 --config dev --plain)" |
+    az keyvault secret set --vault-name kv-mentra-enterprise-ref --name "${pair#*:}" --file /dev/stdin --output none
+done
+az deployment group create --resource-group rg-mentra-enterprise-reference \
+  --template-file cloud-v2/deploy/azure/enterprise-reference/access.bicep \
+  --parameters keyVaultName=kv-mentra-enterprise-ref cloudSpeechAndPhotos=true \
+    teamsGraphClientId=<ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID>
+```
 
 Core's report API is available independently of Runtime and consumer telemetry.
 See [report setup and retrieval](operations.md#reports-and-durable-attachments)
