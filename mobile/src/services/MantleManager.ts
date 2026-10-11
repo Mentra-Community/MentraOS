@@ -915,6 +915,9 @@ class MantleManager {
       deployment.manifest.miniapps.managed.some((app) => app.packageName === packageName)
     )
       return
+    // Never replace an open miniapp, such as a workspace release that waits to
+    // be removed until it closes. A later reconciliation installs the bundle.
+    if (miniappLauncher.isRunning(packageName)) return
     const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
     // Bundled consumer assets excluded by the workspace are expected skips.
     if (approved !== null && !approved.includes(packageName)) return

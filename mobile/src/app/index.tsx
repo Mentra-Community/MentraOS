@@ -341,7 +341,7 @@ export default function InitScreen() {
       // Runs beside the version check, which calls the same workspace Runtime.
       manifestRefreshRef.current = refreshWorkspaceManifest({
         isRunning: () => mantle.isInitialized(),
-        onUpdated: () => mantle.applyDeploymentUpdate(),
+        reconcile: () => mantle.applyDeploymentUpdate(),
       }).then((outcome) => console.log(`INDEX: workspace manifest refresh: ${outcome}`))
       await checkCustomUrl()
       await checkCloudVersion()

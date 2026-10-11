@@ -14,8 +14,12 @@ export type WorkspaceManifestRefresh =
 export interface RefreshWorkspaceManifestOptions {
   /** True once Engine has started from the saved manifest (a warm relaunch, background recovery, a late fetch). */
   isRunning: () => boolean
-  /** Brings a running session up to date with the miniapp catalog it adopted. */
-  onUpdated: () => Promise<void> | void
+  /**
+   * Reconciles a running session with the active deployment's miniapp catalog:
+   * after an update, and again for an unchanged manifest, in case an earlier
+   * reconciliation (a failed download, say) did not finish.
+   */
+  reconcile: () => Promise<void> | void
   waitMs?: number
   store?: DeploymentStore
   resolve?: (workspaceOrigin: string) => Promise<DeploymentCandidate>
@@ -65,7 +69,7 @@ async function adopt(
   store: DeploymentStore,
   deployment: WorkspaceDeployment,
   candidate: DeploymentCandidate,
-  {isRunning, onUpdated}: Pick<RefreshWorkspaceManifestOptions, "isRunning" | "onUpdated">,
+  {isRunning, reconcile}: Pick<RefreshWorkspaceManifestOptions, "isRunning" | "reconcile">,
 ): Promise<WorkspaceManifestRefresh> {
   let outcome: RefreshedManifestOutcome
   try {
@@ -74,12 +78,12 @@ async function adopt(
     console.warn("DEPLOYMENT: workspace manifest refresh failed; using the saved manifest", error)
     return "unavailable"
   }
-  if (outcome === "updated") {
+  if (outcome === "updated" || outcome === "unchanged" || outcome === "saved-for-next-start") {
     try {
-      await onUpdated()
+      await reconcile()
     } catch (error) {
-      // The manifest is adopted and saved; the next launch starts from it.
-      console.warn("DEPLOYMENT: running session could not apply the refreshed manifest", error)
+      // The manifest is saved; the next launch reconciles from it.
+      console.warn("DEPLOYMENT: running session could not reconcile its miniapps", error)
     }
   }
   return outcome

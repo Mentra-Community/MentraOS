@@ -174,8 +174,14 @@ function keepsWorkspaceSession(current: DeploymentManifest, next: DeploymentMani
     current.deploymentId === next.deploymentId &&
     current.services.coreUrl === next.services.coreUrl &&
     current.services.runtimeUrl === next.services.runtimeUrl &&
-    sameJson(current.auth, next.auth)
+    sameJson(withScopeSets(current.auth), withScopeSets(next.auth))
   )
+}
+
+/** Scopes are requested as a set, so their order is not part of the sign-in. */
+function withScopeSets(auth: DeploymentManifest["auth"]): DeploymentManifest["auth"] {
+  if (auth.mode !== "microsoft-entra") return auth
+  return {...auth, sessionScopes: [...auth.sessionScopes].sort(), teamsScopes: [...auth.teamsScopes].sort()}
 }
 
 /**

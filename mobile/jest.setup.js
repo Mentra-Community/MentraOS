@@ -991,6 +991,7 @@ const mockIslandEntries = () => {
     getDevAppRecords: jest.fn(() => []),
     sha256Hex: jest.fn(() => Promise.resolve("0".repeat(64))),
     miniappLauncher: {
+      isRunning: jest.fn(() => false),
       isProjectedRunning: jest.fn(() => false),
       ensureConnected: jest.fn(() => Promise.resolve(true)),
       ensureRunning: jest.fn(() => Promise.resolve(true)),
