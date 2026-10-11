@@ -41,6 +41,12 @@ final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
         listeners[id] = nil
     }
 
+    /// Whether phone Bluetooth is switched off right now. Read on the main thread,
+    /// where the central manager delivers its state.
+    var isPoweredOff: Bool {
+        (centralManager?.state ?? state) == .poweredOff
+    }
+
     /// Read-only system lookup. It neither connects nor claims ownership.
     func connectedPeripherals(withServices services: [CBUUID]) -> [CBPeripheral] {
         dispatchPrecondition(condition: .onQueue(.main))
