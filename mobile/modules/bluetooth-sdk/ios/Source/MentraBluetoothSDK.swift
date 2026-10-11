@@ -1292,10 +1292,8 @@ public final class MentraBluetoothSDK {
         let message = values
         return try await withUsageOutcome(record: { latencyMs, errorCode, _ in
             let glassesNetwork = glassesNetwork()
-            let now = BluetoothSdkAnalytics.epochMillis()
             analytics.recordUsage {
                 $0.streamStartSettled(
-                    streamId: streamId,
                     streamUrl: request.streamUrl,
                     width: request.video?.width,
                     height: request.video?.height,
@@ -1304,8 +1302,7 @@ public final class MentraBluetoothSDK {
                     captureAudio: request.captureAudio,
                     glassesNetwork: glassesNetwork,
                     latencyMs: latencyMs,
-                    errorCode: errorCode,
-                    nowMs: now
+                    errorCode: errorCode
                 )
             }
         }) {
@@ -1314,6 +1311,8 @@ public final class MentraBluetoothSDK {
                 throw BluetoothSdkError(code: "stream_control_unsupported", message: "Update the glasses software before starting a stream.")
             }
             let pending = PendingResponse<StreamStatusEvent>(operation: "start stream \(streamId)", telemetryOperation: "start stream", onTimeout: requestTimeoutReporter)
+            let requestedAt = BluetoothSdkAnalytics.epochMillis()
+            analytics.recordUsage { $0.streamRequested(streamId: streamId, streamUrl: request.streamUrl, nowMs: requestedAt) }
             // seq assignment through the BLE hand-off must stay await-free so this
             // MainActor turn is one critical section: rejectPreemptedStreamStarts
             // only works if seq order equals the order the commands reach the
@@ -2449,7 +2448,9 @@ public final class MentraBluetoothSDK {
             if changes["connected"] as? Bool == false {
                 resetWifiProtocolSession(sessionId: "", code: "wifi_session_disconnected")
             }
-            analytics.observeGlassesStatus(glassesStatus) { BluetoothAvailability.shared.isPoweredOff }
+            // CBCentralManager state is read here on the main actor, not on the analytics queue.
+            let phoneBluetoothOff = BluetoothAvailability.shared.isPoweredOff
+            analytics.observeGlassesStatus(glassesStatus) { phoneBluetoothOff }
             let nextState = state
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateGlasses: nextState.glasses)

@@ -370,8 +370,10 @@ decode it from the glasses' BLE advertisement / manufacturer data.
 Apart from that glasses serial, the SDK does not upload BLE MAC addresses,
 CoreBluetooth identifiers, the host phone's Android device serial, Bluetooth
 device names, user ids, tokens, Wi-Fi names or credentials, stream, webhook or
-upload URLs, location, microphone data, photos, videos, or transcripts. Error
-details have URLs removed before they are sent. PostHog receives a locally generated anonymous SDK install id as
+upload URLs, microphone data, photos, videos, or transcripts, and it never reads
+device location. Error details have URLs removed before they are sent. PostHog
+derives an approximate location (country, region, city) from the IP address
+each event is sent from. PostHog receives a locally generated anonymous SDK install id as
 `distinct_id`, and events include `$process_person_profile: false`.
 
 ## React Hooks

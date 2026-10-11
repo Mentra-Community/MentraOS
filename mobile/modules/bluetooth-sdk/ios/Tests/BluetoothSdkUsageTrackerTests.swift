@@ -80,8 +80,10 @@ final class BluetoothSdkUsageTrackerTests: XCTestCase {
     }
 
     func testStreamIsReportedAtStartAndOnceAtItsTerminalStatus() throws {
+        XCTAssertNil(tracker.streamRequested(streamId: "s1", streamUrl: "rtmps://live.example.com/app/secret-key", nowMs: 6600))
+        // The first live status can arrive before startStream returns.
+        XCTAssertNil(stream("streaming", nowMs: 10000))
         let started = tracker.streamStartSettled(
-            streamId: "s1",
             streamUrl: "rtmps://live.example.com/app/secret-key",
             width: 1280,
             height: 720,
@@ -90,8 +92,7 @@ final class BluetoothSdkUsageTrackerTests: XCTestCase {
             captureAudio: true,
             glassesNetwork: "wifi",
             latencyMs: 3400,
-            errorCode: nil,
-            nowMs: 10000
+            errorCode: nil
         )
         XCTAssertEqual(started.name, "bluetooth_sdk_stream_started")
         XCTAssertEqual(started.properties["success"] as? Bool, true)
@@ -122,11 +123,42 @@ final class BluetoothSdkUsageTrackerTests: XCTestCase {
         XCTAssertNil(stream("stopped", terminal: true, nowMs: 71000))
     }
 
+    func testStreamThatEndsRightAfterGoingLiveIsStillReported() throws {
+        _ = tracker.streamRequested(streamId: "s1", streamUrl: "rtmp://host/app", nowMs: 0)
+        XCTAssertNil(stream("streaming", nowMs: 1000))
+        let ended = try XCTUnwrap(stream("error", terminal: true, nowMs: 1500))
+        XCTAssertEqual(ended.properties["duration_ms"] as? Int64, 500)
+        XCTAssertEqual(ended.properties["end_state"] as? String, "error")
+    }
+
+    func testNewStartReportsTheLiveStreamItReplaces() throws {
+        _ = tracker.streamRequested(streamId: "s1", streamUrl: "rtmp://host/app", nowMs: 0)
+        _ = stream("streaming", nowMs: 1000)
+        let replaced = try XCTUnwrap(tracker.streamRequested(streamId: "s2", streamUrl: "srt://host:9000", nowMs: 11000))
+        XCTAssertEqual(replaced.name, "bluetooth_sdk_stream_ended")
+        XCTAssertEqual(replaced.properties["protocol"] as? String, "rtmp")
+        XCTAssertEqual(replaced.properties["end_state"] as? String, "replaced")
+        XCTAssertEqual(replaced.properties["duration_ms"] as? Int64, 10000)
+        // The replaced stream's own late terminal status is not reported again.
+        XCTAssertNil(stream("stopped", terminal: true, nowMs: 12000))
+        XCTAssertNil(tracker.streamStatus(
+            streamId: "s2", state: "streaming", terminal: nil, reconnectAttempt: nil, bitrate: nil, fps: nil,
+            droppedFrames: nil, temperatureC: nil, errorDetails: nil, nowMs: 12000
+        ))
+        let second = try XCTUnwrap(tracker.streamStatus(
+            streamId: "s2", state: "stopped", terminal: true, reconnectAttempt: nil, bitrate: nil, fps: nil,
+            droppedFrames: nil, temperatureC: nil, errorDetails: nil, nowMs: 20000
+        ))
+        XCTAssertEqual(second.properties["protocol"] as? String, "srt")
+        XCTAssertEqual(second.properties["duration_ms"] as? Int64, 8000)
+    }
+
     func testOlderGlassesEndAStreamOnStoppedAndErrorDetailsLoseTheirUrls() throws {
-        _ = tracker.streamStartSettled(
-            streamId: "s2", streamUrl: "https://whip.example.com/whip/abc", width: nil, height: nil, fps: nil,
-            bitrate: nil, captureAudio: false, glassesNetwork: "hotspot", latencyMs: 100, errorCode: nil, nowMs: 0
-        )
+        _ = tracker.streamRequested(streamId: "s2", streamUrl: "https://whip.example.com/whip/abc", nowMs: 0)
+        XCTAssertNil(tracker.streamStatus(
+            streamId: nil, state: "streaming", terminal: nil, reconnectAttempt: nil, bitrate: nil, fps: nil,
+            droppedFrames: nil, temperatureC: nil, errorDetails: nil, nowMs: 500
+        ))
         XCTAssertNil(tracker.streamStatus(
             streamId: nil, state: "error", terminal: nil, reconnectAttempt: nil, bitrate: nil, fps: nil,
             droppedFrames: nil, temperatureC: nil, errorDetails: nil, nowMs: 1000
@@ -142,10 +174,11 @@ final class BluetoothSdkUsageTrackerTests: XCTestCase {
         XCTAssertEqual(ended.properties["stopped_by_app"] as? Bool, false)
     }
 
-    func testFailedStreamStartReportsTheErrorAndOpensNoStream() {
+    func testStreamThatNeverWentLiveEndsWithoutASecondEvent() {
+        _ = tracker.streamRequested(streamId: "s3", streamUrl: "srt://host:9000", nowMs: 0)
         let failed = tracker.streamStartSettled(
-            streamId: "s3", streamUrl: "srt://host:9000", width: nil, height: nil, fps: nil, bitrate: nil,
-            captureAudio: true, glassesNetwork: "none", latencyMs: 30000, errorCode: "stream_start_failed", nowMs: 0
+            streamUrl: "srt://host:9000", width: nil, height: nil, fps: nil, bitrate: nil,
+            captureAudio: true, glassesNetwork: "none", latencyMs: 30000, errorCode: "stream_start_failed"
         )
         XCTAssertEqual(failed.properties["success"] as? Bool, false)
         XCTAssertEqual(failed.properties["error_code"] as? String, "stream_start_failed")
@@ -154,6 +187,8 @@ final class BluetoothSdkUsageTrackerTests: XCTestCase {
             streamId: "s3", state: "stopped", terminal: true, reconnectAttempt: nil, bitrate: nil, fps: nil,
             droppedFrames: nil, temperatureC: nil, errorDetails: nil, nowMs: 1000
         ))
+        // Nothing live was replaced either.
+        XCTAssertNil(tracker.streamRequested(streamId: "s4", streamUrl: "srt://host:9000", nowMs: 2000))
     }
 
     func testStreamProtocolFollowsTheGlassesSchemeMapping() {

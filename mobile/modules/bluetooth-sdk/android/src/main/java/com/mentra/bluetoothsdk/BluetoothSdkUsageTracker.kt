@@ -24,7 +24,8 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
     private data class OpenStream(
         val streamId: String,
         val protocol: String,
-        val startedAtMs: Long,
+        /** Set by the first live status; null while the start is still pending. */
+        var startedAtMs: Long? = null,
         var reconnectAttempts: Int = 0,
         var stoppedByApp: Boolean = false,
         var bitrate: Long? = null,
@@ -156,8 +157,22 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
             },
         )
 
+    /**
+     * Opens the stream as its start command is sent, so a status that arrives
+     * before `startStream` returns is still attributed to it. A new start
+     * supersedes a stream that was live (the glasses stop it), so that stream is
+     * reported as `replaced`.
+     */
+    fun streamRequested(streamId: String, streamUrl: String, nowMs: Long): AnalyticsEvent? {
+        val replaced =
+            stream
+                ?.takeIf { it.startedAtMs != null && it.streamId != streamId }
+                ?.let { streamEndedEvent(it, "replaced", errorDetails = null, nowMs = nowMs) }
+        stream = OpenStream(streamId = streamId, protocol = streamProtocol(streamUrl))
+        return replaced
+    }
+
     fun streamStartSettled(
-        streamId: String,
         streamUrl: String,
         width: Int?,
         height: Int?,
@@ -167,17 +182,12 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
         glassesNetwork: String,
         latencyMs: Long,
         errorCode: String?,
-        nowMs: Long,
-    ): AnalyticsEvent {
-        val protocol = streamProtocol(streamUrl)
-        if (errorCode == null) {
-            stream = OpenStream(streamId = streamId, protocol = protocol, startedAtMs = nowMs)
-        }
-        return AnalyticsEvent(
+    ): AnalyticsEvent =
+        AnalyticsEvent(
             EVENT_STREAM_STARTED,
             buildMap {
                 putOutcome(errorCode)
-                put("protocol", protocol)
+                put("protocol", streamProtocol(streamUrl))
                 width?.let { put("width", it) }
                 height?.let { put("height", it) }
                 fps?.let { put("fps", it) }
@@ -187,7 +197,6 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
                 put("latency_ms", latencyMs)
             },
         )
-    }
 
     fun streamStopRequested() {
         stream?.stoppedByApp = true
@@ -197,7 +206,8 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
      * Folds one accepted `stream_status` into the open stream and reports the
      * stream once, on its terminal status. Glasses with stream revisions flag the
      * terminal status; older glasses only send a final `stopped` or
-     * `reconnect_failed`.
+     * `reconnect_failed`. A stream that never went live ends silently: its
+     * `bluetooth_sdk_stream_started` already reported the failure.
      */
     fun streamStatus(
         streamId: String?,
@@ -213,6 +223,7 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
     ): AnalyticsEvent? {
         val open = stream ?: return null
         if (!streamId.isNullOrBlank() && streamId != open.streamId) return null
+        if (state in LIVE_STREAM_STATES && open.startedAtMs == null) open.startedAtMs = nowMs
         reconnectAttempt?.let { open.reconnectAttempts = maxOf(open.reconnectAttempts, it) }
         bitrate?.let { open.bitrate = it }
         fps?.let { open.fps = it }
@@ -221,12 +232,17 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
         val ended = terminal == true || (terminal == null && state in LEGACY_TERMINAL_STREAM_STATES)
         if (!ended) return null
         stream = null
-        return AnalyticsEvent(
+        if (open.startedAtMs == null) return null
+        return streamEndedEvent(open, state, errorDetails, nowMs)
+    }
+
+    private fun streamEndedEvent(open: OpenStream, endState: String, errorDetails: String?, nowMs: Long) =
+        AnalyticsEvent(
             EVENT_STREAM_ENDED,
             buildMap {
                 put("protocol", open.protocol)
-                put("duration_ms", (nowMs - open.startedAtMs).coerceAtLeast(0))
-                put("end_state", state)
+                open.startedAtMs?.let { put("duration_ms", (nowMs - it).coerceAtLeast(0)) }
+                put("end_state", endState)
                 put("stopped_by_app", open.stoppedByApp)
                 put("reconnect_attempts", open.reconnectAttempts)
                 sanitizedDetail(errorDetails)?.let { put("error_code", it) }
@@ -236,7 +252,6 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
                 open.temperatureC?.let { put("temperature_c", it) }
             },
         )
-    }
 
     /**
      * Follows the active mic source. A session ends when the source turns off or
@@ -356,6 +371,7 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
         private const val OTA_FAILED = "failed"
         private const val OTA_IDLE = "idle"
         private val LEGACY_TERMINAL_STREAM_STATES = setOf("stopped", "reconnect_failed")
+        private val LIVE_STREAM_STATES = setOf("streaming", "reconnected")
         private val URL_PATTERN = Regex("""[A-Za-z][A-Za-z0-9+.\-]*://\S+""")
 
         /** Mirrors the glasses' scheme mapping in ASG StreamCommandHandler. */

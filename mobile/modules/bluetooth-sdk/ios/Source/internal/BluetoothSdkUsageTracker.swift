@@ -35,6 +35,7 @@ struct BluetoothSdkUsageTracker {
     private static let otaFailed = "failed"
     private static let otaIdle = "idle"
     private static let legacyTerminalStreamStates: Set<String> = ["stopped", "reconnect_failed"]
+    private static let liveStreamStates: Set<String> = ["streaming", "reconnected"]
     private static let urlPattern = try! NSRegularExpression(pattern: #"[A-Za-z][A-Za-z0-9+.\-]*://\S+"#)
 
     private struct OpenRecording {
@@ -50,7 +51,8 @@ struct BluetoothSdkUsageTracker {
     private struct OpenStream {
         let streamId: String
         let streamProtocol: String
-        let startedAtMs: Int64
+        /// Set by the first live status; nil while the start is still pending.
+        var startedAtMs: Int64?
         var reconnectAttempts = 0
         var stoppedByApp = false
         var bitrate: Int64?
@@ -185,8 +187,20 @@ struct BluetoothSdkUsageTracker {
         return AnalyticsEvent(name: Self.eventVideoRecorded, properties: properties)
     }
 
-    mutating func streamStartSettled(
-        streamId: String,
+    /// Opens the stream as its start command is sent, so a status that arrives
+    /// before `startStream` returns is still attributed to it. A new start
+    /// supersedes a stream that was live (the glasses stop it), so that stream is
+    /// reported as `replaced`.
+    mutating func streamRequested(streamId: String, streamUrl: String, nowMs: Int64) -> AnalyticsEvent? {
+        var replaced: AnalyticsEvent?
+        if let open = stream, open.startedAtMs != nil, open.streamId != streamId {
+            replaced = Self.streamEndedEvent(open, endState: "replaced", errorDetails: nil, nowMs: nowMs)
+        }
+        stream = OpenStream(streamId: streamId, streamProtocol: Self.streamProtocol(streamUrl))
+        return replaced
+    }
+
+    func streamStartSettled(
         streamUrl: String,
         width: Int?,
         height: Int?,
@@ -195,16 +209,11 @@ struct BluetoothSdkUsageTracker {
         captureAudio: Bool,
         glassesNetwork: String,
         latencyMs: Int64,
-        errorCode: String?,
-        nowMs: Int64
+        errorCode: String?
     ) -> AnalyticsEvent {
-        let streamProtocol = Self.streamProtocol(streamUrl)
-        if errorCode == nil {
-            stream = OpenStream(streamId: streamId, streamProtocol: streamProtocol, startedAtMs: nowMs)
-        }
         var properties: [String: Any] = [:]
         Self.putOutcome(&properties, errorCode)
-        properties["protocol"] = streamProtocol
+        properties["protocol"] = Self.streamProtocol(streamUrl)
         if let width { properties["width"] = width }
         if let height { properties["height"] = height }
         if let fps { properties["fps"] = fps }
@@ -222,7 +231,8 @@ struct BluetoothSdkUsageTracker {
     /// Folds one accepted `stream_status` into the open stream and reports the
     /// stream once, on its terminal status. Glasses with stream revisions flag the
     /// terminal status; older glasses only send a final `stopped` or
-    /// `reconnect_failed`.
+    /// `reconnect_failed`. A stream that never went live ends silently: its
+    /// `bluetooth_sdk_stream_started` already reported the failure.
     mutating func streamStatus(
         streamId: String?,
         state: String,
@@ -237,6 +247,7 @@ struct BluetoothSdkUsageTracker {
     ) -> AnalyticsEvent? {
         guard var open = stream else { return nil }
         if let streamId, !streamId.isBlank, streamId != open.streamId { return nil }
+        if Self.liveStreamStates.contains(state), open.startedAtMs == nil { open.startedAtMs = nowMs }
         if let reconnectAttempt { open.reconnectAttempts = max(open.reconnectAttempts, reconnectAttempt) }
         if let bitrate { open.bitrate = bitrate }
         if let fps { open.fps = fps }
@@ -248,13 +259,18 @@ struct BluetoothSdkUsageTracker {
             return nil
         }
         stream = nil
+        guard open.startedAtMs != nil else { return nil }
+        return Self.streamEndedEvent(open, endState: state, errorDetails: errorDetails, nowMs: nowMs)
+    }
+
+    private static func streamEndedEvent(_ open: OpenStream, endState: String, errorDetails: String?, nowMs: Int64) -> AnalyticsEvent {
         var properties: [String: Any] = [
             "protocol": open.streamProtocol,
-            "duration_ms": max(nowMs - open.startedAtMs, 0),
-            "end_state": state,
+            "end_state": endState,
             "stopped_by_app": open.stoppedByApp,
             "reconnect_attempts": open.reconnectAttempts,
         ]
+        if let startedAtMs = open.startedAtMs { properties["duration_ms"] = max(nowMs - startedAtMs, 0) }
         if let detail = Self.sanitizedDetail(errorDetails) { properties["error_code"] = detail }
         if let bitrate = open.bitrate { properties["bitrate"] = bitrate }
         if let fps = open.fps { properties["fps"] = fps }

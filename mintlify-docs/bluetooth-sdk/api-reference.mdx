@@ -213,9 +213,10 @@ Captured properties are intentionally narrow:
 
 Apart from the glasses manufacturing serial, the SDK does not upload BLE MAC
 addresses, CoreBluetooth identifiers, Bluetooth device names, user ids, tokens,
-Wi-Fi names or credentials, stream, webhook or upload URLs, location,
-microphone data, photos, videos, or transcripts. Error details have URLs
-removed before they are sent. It stores a locally generated
+Wi-Fi names or credentials, stream, webhook or upload URLs, microphone data,
+photos, videos, or transcripts, and it never reads device location. Error
+details have URLs removed before they are sent. PostHog derives an approximate
+location (country, region, city) from the IP address each event is sent from. It stores a locally generated
 anonymous SDK install id and sends it as PostHog `distinct_id`; events include
 `$process_person_profile: false` so PostHog does not create person profiles for
 these SDK usage pings.

@@ -84,9 +84,11 @@ class BluetoothSdkUsageTrackerTest {
 
     @Test
     fun `a stream is reported at start and once at its terminal status`() {
+        assertThat(tracker.streamRequested("s1", "rtmps://live.example.com/app/secret-key", nowMs = 6_600)).isNull()
+        // The first live status can arrive before startStream returns.
+        assertThat(stream("streaming", nowMs = 10_000)).isNull()
         val started =
             tracker.streamStartSettled(
-                streamId = "s1",
                 streamUrl = "rtmps://live.example.com/app/secret-key",
                 width = 1280,
                 height = 720,
@@ -96,7 +98,6 @@ class BluetoothSdkUsageTrackerTest {
                 glassesNetwork = "wifi",
                 latencyMs = 3_400,
                 errorCode = null,
-                nowMs = 10_000,
             )
         assertThat(started.name).isEqualTo("bluetooth_sdk_stream_started")
         assertThat(started.properties)
@@ -127,8 +128,34 @@ class BluetoothSdkUsageTrackerTest {
     }
 
     @Test
+    fun `a stream that ends right after going live is still reported`() {
+        tracker.streamRequested("s1", "rtmp://host/app", nowMs = 0)
+        assertThat(stream("streaming", nowMs = 1_000)).isNull()
+        val ended = stream("error", terminal = true, nowMs = 1_500)!!
+        assertThat(ended.properties).containsEntry("duration_ms", 500L).containsEntry("end_state", "error")
+    }
+
+    @Test
+    fun `a new start reports the live stream it replaces`() {
+        tracker.streamRequested("s1", "rtmp://host/app", nowMs = 0)
+        stream("streaming", nowMs = 1_000)
+        val replaced = tracker.streamRequested("s2", "srt://host:9000", nowMs = 11_000)!!
+        assertThat(replaced.name).isEqualTo("bluetooth_sdk_stream_ended")
+        assertThat(replaced.properties)
+            .containsEntry("protocol", "rtmp")
+            .containsEntry("end_state", "replaced")
+            .containsEntry("duration_ms", 10_000L)
+        // The replaced stream's own late terminal status is not reported again.
+        assertThat(stream("stopped", terminal = true, nowMs = 12_000)).isNull()
+        assertThat(tracker.streamStatus("s2", "streaming", null, null, null, null, null, null, null, 12_000)).isNull()
+        val second = tracker.streamStatus("s2", "stopped", true, null, null, null, null, null, null, 20_000)!!
+        assertThat(second.properties).containsEntry("protocol", "srt").containsEntry("duration_ms", 8_000L)
+    }
+
+    @Test
     fun `older glasses without a terminal flag end a stream on stopped, and error details lose their URLs`() {
-        tracker.streamStartSettled("s2", "https://whip.example.com/whip/abc", null, null, null, null, false, "hotspot", 100, null, 0)
+        tracker.streamRequested("s2", "https://whip.example.com/whip/abc", nowMs = 0)
+        assertThat(tracker.streamStatus(null, "streaming", null, null, null, null, null, null, null, 500)).isNull()
         assertThat(tracker.streamStatus(null, "error", null, null, null, null, null, null, null, 1_000)).isNull()
         val ended =
             tracker.streamStatus(null, "reconnect_failed", null, null, null, null, null, null, "connect to https://whip.example.com/whip/abc failed", 9_000)!!
@@ -140,10 +167,13 @@ class BluetoothSdkUsageTrackerTest {
     }
 
     @Test
-    fun `a failed stream start reports the error and opens no stream`() {
-        val failed = tracker.streamStartSettled("s3", "srt://host:9000", null, null, null, null, true, "none", 30_000, "stream_start_failed", 0)
+    fun `a stream that never went live ends without a second event`() {
+        tracker.streamRequested("s3", "srt://host:9000", nowMs = 0)
+        val failed = tracker.streamStartSettled("srt://host:9000", null, null, null, null, true, "none", 30_000, "stream_start_failed")
         assertThat(failed.properties).containsEntry("success", false).containsEntry("error_code", "stream_start_failed").containsEntry("protocol", "srt")
         assertThat(tracker.streamStatus("s3", "stopped", true, null, null, null, null, null, null, 1_000)).isNull()
+        // Nothing live was replaced either.
+        assertThat(tracker.streamRequested("s4", "srt://host:9000", nowMs = 2_000)).isNull()
     }
 
     @Test

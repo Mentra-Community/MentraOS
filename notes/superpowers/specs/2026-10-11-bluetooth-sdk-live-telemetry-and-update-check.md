@@ -143,9 +143,10 @@ the SDK already embeds.
     - `$process_person_profile: false`, `$geoip_disable: true`
   - The capture is fire-and-forget after the response is built, so PostHog
     latency never delays the SDK.
-  - Core uses the same public project write key that the SDK embeds, as a
-    constant in the route module. It does not use Core's `POSTHOG_API_KEY`,
-    which belongs to support profiles.
+  - Core records with its existing `POSTHOG_API_KEY`. In production that is
+    the Bluetooth SDK's PostHog project, so these checks land beside the SDK's
+    usage events; dev and staging Core write to the development project. A
+    Core without the key answers checks but records nothing.
 
 `bluetooth_sdk_update_check` is the canonical "install was active" signal for
 every customer. Daily active installs per app is the count of distinct
@@ -236,7 +237,9 @@ with URLs removed.
 - Stream, webhook or upload URLs.
 - Auth tokens.
 - Wi-Fi SSIDs or passwords.
-- Location of any kind.
+- Device location. PostHog's default approximate location from the request IP
+  stays on for SDK events; Core's update-check record disables it because
+  Core's IP says nothing about the install.
 
 ## Documentation
 

@@ -1221,10 +1221,8 @@ class MentraBluetoothSdk private constructor(
         return withUsageOutcome(
             { latencyMs, errorCode, _ ->
                 val glassesNetwork = glassesNetwork()
-                val now = System.currentTimeMillis()
                 analytics.recordUsage {
                     streamStartSettled(
-                        streamId = streamId,
                         streamUrl = request.streamUrl,
                         width = request.video?.width,
                         height = request.video?.height,
@@ -1234,7 +1232,6 @@ class MentraBluetoothSdk private constructor(
                         glassesNetwork = glassesNetwork,
                         latencyMs = latencyMs,
                         errorCode = errorCode,
-                        nowMs = now,
                     )
                 }
             },
@@ -1244,6 +1241,8 @@ class MentraBluetoothSdk private constructor(
                 throw BluetoothSdkException("stream_control_unsupported", "Update the glasses software before starting a stream.")
             }
             val pending = PendingResponse<StreamStatusEvent>("start stream $streamId", "start stream")
+            val requestedAt = System.currentTimeMillis()
+            analytics.recordUsage { streamRequested(streamId, request.streamUrl, requestedAt) }
             var start: PendingStreamStart? = null
             try {
                 // seq assignment and the BLE hand-off must be one critical section:
