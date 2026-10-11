@@ -101,6 +101,13 @@
         "zod": "^3.24.1",
       },
     },
+    "cloud-v2/packages/miniapp-tools": {
+      "name": "@mentra/miniapp-tools",
+      "version": "0.1.0-dev.0",
+      "dependencies": {
+        "pino": "^9.6.0",
+      },
+    },
     "cloud-v2/packages/protocol": {
       "name": "@mentra/cloud-protocol",
       "version": "3.3.0",
@@ -478,6 +485,8 @@
     "@mentra/miniapp": ["@mentra/miniapp@workspace:mobile/modules/miniapp"],
 
     "@mentra/miniapp-cli": ["@mentra/miniapp-cli@workspace:sdk/miniapp-cli"],
+
+    "@mentra/miniapp-tools": ["@mentra/miniapp-tools@workspace:cloud-v2/packages/miniapp-tools"],
 
     "@mentra/workspace-contract": ["@mentra/workspace-contract@workspace:cloud-v2/packages/workspace-contract"],
 

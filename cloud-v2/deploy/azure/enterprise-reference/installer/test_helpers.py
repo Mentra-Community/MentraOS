@@ -224,11 +224,12 @@ else:sys.exit(9)
         parameters = self.parameters(config)
         self.assertEqual(parameters['keyVaultName']['value'], 'kvacmementra')
         for name in ('refreshTokenPepper', 'mentraJwtPrivateKey', 'miniappJwtPrivateKey', 'teamsGraphClientSecret',
-                     'manageAcrPullRoleAssignment'):
+                     'manageAcrPullRoleAssignment', 'cloudSpeechAndPhotos'):
             self.assertNotIn(name, parameters)
         template = (ROOT / 'main.bicep').read_text()
         self.assertNotIn('@secure()', template)
-        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 7)
+        # 5 Core secrets, the admin portal secret, the Graph secret and the demo's 2 speech keys.
+        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 9)
         # Each app reads only its own secrets with its own identity; nothing reads the admin key.
         core = template[template.index("resource core '"):template.index("resource runtime '")]
         runtime = template[template.index("resource runtime '"):]
@@ -237,6 +238,11 @@ else:sys.exit(9)
         # Each Graph app has its own secret, so a new app ID and its secret switch together.
         self.assertIn("secrets/teams-graph-client-secret-${teamsGraphClientId}'", runtime)
         self.assertIn("'teams-graph-client-secret-${teamsGraphClientId}'", (ROOT / 'access.bicep').read_text())
+        # Only Runtime reads the demo's speech keys, and access.bicep grants them with the same switch.
+        for secret in ('soniox-api-key', 'elevenlabs-api-key'):
+            self.assertIn(f"secrets/{secret}'", runtime)
+            self.assertNotIn(secret, core)
+            self.assertIn(f"'{secret}'", (ROOT / 'access.bicep').read_text())
         self.assertNotIn('Microsoft.Authorization/roleAssignments', template)
         bootstrap = (ROOT / 'bootstrap.bicep').read_text()
         self.assertNotIn('4633458b-17de-408a-b874-0445c86b69e6', bootstrap)

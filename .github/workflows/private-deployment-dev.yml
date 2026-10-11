@@ -55,6 +55,8 @@ jobs:
       ENTRA_TENANT_ID: 2e7662c0-e826-4928-95b2-60bdd48d5d95
       ENTRA_CORE_CLIENT_ID: 20424d9e-4b99-44e8-82c9-0ad06f08a8db
       ENTRA_MOBILE_CLIENT_ID: 95ad08c2-7837-4ddf-933c-1fce3d6d2799
+      # Earlier addresses stay bound as aliases (additionalWorkspaceDomains below).
+      WORKSPACE_HOSTNAME: demo.acmeworkspace.com
       # redis:7-alpine, the sidecar behind the demo's speech and photos.
       REDIS_DIGEST: sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
     steps:
@@ -163,6 +165,26 @@ jobs:
           fi
           az acr manifest show-metadata --registry "$AZURE_REGISTRY" --name "redis@$REDIS_DIGEST" >/dev/null
 
+      # Azure issues a managed certificate only for a hostname already on an app
+      # in the environment, so a new workspace hostname is attached first. The
+      # deployment then creates its certificate and binds it.
+      - name: Attach the workspace hostname to Runtime
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          attached=$(az containerapp hostname list \
+            --name "$AZURE_CONTAINER_APP" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?name=='$WORKSPACE_HOSTNAME'].name" \
+            --output tsv)
+          if [[ -z "$attached" ]]; then
+            az containerapp hostname add \
+              --hostname "$WORKSPACE_HOSTNAME" \
+              --name "$AZURE_CONTAINER_APP" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --output none
+          fi
+
       # The demo also runs speech-to-text, text-to-speech and photos for the
       # Enterprise demo miniapp. Their keys are the stack's soniox-api-key and
       # elevenlabs-api-key Key Vault secrets.
@@ -186,7 +208,7 @@ jobs:
             --arg tenantId "$ENTRA_TENANT_ID" \
             --arg coreApiClientId "$ENTRA_CORE_CLIENT_ID" \
             --arg mobileClientId "$ENTRA_MOBILE_CLIENT_ID" \
-            --arg workspaceHostname "mentra.acmeworkspace.com" \
+            --arg workspaceHostname "$WORKSPACE_HOSTNAME" \
             --slurpfile reference cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json \
             --slurpfile demo cloud-v2/deploy/azure/enterprise-reference/demo-miniapps.json \
             '{
@@ -202,8 +224,8 @@ jobs:
                 mobileClientId:{value:$mobileClientId},
                 coreAdminEmails:{value:env.CORE_ADMIN_EMAILS},
                 workspaceHostname:{value:$workspaceHostname},
-                workspaceCertificateName:{value:"ca-mentra-enterprise-reference-acme-workspace"},
-                additionalWorkspaceDomains:{value:[{hostname:"enterprisedev.mentraglass.com",certificateName:"ca-mentra-enterprise-reference-workspace"}]},
+                workspaceCertificateName:{value:"ca-mentra-enterprise-reference-acme-demo"},
+                additionalWorkspaceDomains:{value:[{hostname:"mentra.acmeworkspace.com",certificateName:"ca-mentra-enterprise-reference-acme-workspace"},{hostname:"enterprisedev.mentraglass.com",certificateName:"ca-mentra-enterprise-reference-workspace"}]},
                 displayName:{value:$reference[0].displayName},
                 approvedSystemMiniapps:{value:$reference[0].systemMiniapps.approvedPackageNamesOverride},
                 teamsGraphClientId:{value:env.TEAMS_GRAPH_CLIENT_ID},

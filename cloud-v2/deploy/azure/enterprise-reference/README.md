@@ -19,8 +19,21 @@ on, Runtime also runs speech-to-text (Soniox), text-to-speech (ElevenLabs) and
 glasses photos, stored on the replica, with a Redis sidecar. Speech and questions
 then leave the stack for Soniox, ElevenLabs and the miniapp's hosted backend. The
 installer doesn't offer this. Its keys are the `soniox-api-key` and
-`elevenlabs-api-key` secrets in the stack's Key Vault, which an Owner stored and
-granted to Runtime once, as for the Graph client secret below.
+`elevenlabs-api-key` secrets in the stack's Key Vault, copied from Doppler
+`cloud-v2/dev`. As with the Graph client secret below, CI can't grant Key Vault
+access, so an Owner stores them and runs `access.bicep` once:
+
+```bash
+for pair in SONIOX_API_KEY:soniox-api-key ELEVENLABS_API_KEY:elevenlabs-api-key; do
+  # --plain ends with a newline that must not reach the key.
+  printf %s "$(doppler secrets get "${pair%%:*}" --project cloud-v2 --config dev --plain)" |
+    az keyvault secret set --vault-name kv-mentra-enterprise-ref --name "${pair#*:}" --file /dev/stdin --output none
+done
+az deployment group create --resource-group rg-mentra-enterprise-reference \
+  --template-file cloud-v2/deploy/azure/enterprise-reference/access.bicep \
+  --parameters keyVaultName=kv-mentra-enterprise-ref cloudSpeechAndPhotos=true \
+    teamsGraphClientId=<ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID>
+```
 
 Core's report API is available independently of Runtime and consumer telemetry.
 See [report setup and retrieval](operations.md#reports-and-durable-attachments)
@@ -38,12 +51,12 @@ Feedback also opens the same form.
 - Mobile public client: `95ad08c2-7837-4ddf-933c-1fce3d6d2799`
 - Core API: `20424d9e-4b99-44e8-82c9-0ad06f08a8db`
 - Core scope: `api://20424d9e-4b99-44e8-82c9-0ad06f08a8db/mentra.session`
-- Workspace: `https://mentra.acmeworkspace.com`
+- Workspace: `https://demo.acmeworkspace.com`
 
-The demo workspace is branded **Acme Industries**. The original
-`https://enterprisedev.mentraglass.com` remains an HTTPS alias for existing
-installs. Both addresses serve the same deployment, with discovery URLs matching
-the address used to enroll. The deployment ID, Core origin, Entra tenant, and existing sessions
+The demo workspace is branded **Acme Industries**. The earlier
+`https://mentra.acmeworkspace.com` and `https://enterprisedev.mentraglass.com`
+remain HTTPS aliases for existing installs. All three addresses serve the same
+deployment, with discovery URLs matching the address used to enroll. The deployment ID, Core origin, Entra tenant, and existing sessions
 are preserved. `acmeworkspace.com` is also verified as an Entra sign-in domain;
 demo employee accounts still require their own assignment and Teams license.
 
@@ -169,14 +182,20 @@ separately in `services.coreUrl`.
 
 When migrating an existing hostname, set `workspaceCertificateName` to a new
 managed-certificate resource name; Azure certificates cannot change their subject
-in place. To keep existing clients working, include the old binding in
-`additionalWorkspaceDomains`, for example:
+in place. Azure issues it only for a hostname already on an app in the
+environment, so add the new hostname to Runtime first (`az containerapp hostname
+add`; the reference CI deployment does this itself). To keep existing clients
+working, include the old binding in `additionalWorkspaceDomains`, for example:
 
 ```json
 {
-  "workspaceHostname": "mentra.acmeworkspace.com",
-  "workspaceCertificateName": "ca-mentra-enterprise-reference-acme-workspace",
+  "workspaceHostname": "demo.acmeworkspace.com",
+  "workspaceCertificateName": "ca-mentra-enterprise-reference-acme-demo",
   "additionalWorkspaceDomains": [
+    {
+      "hostname": "mentra.acmeworkspace.com",
+      "certificateName": "ca-mentra-enterprise-reference-acme-workspace"
+    },
     {
       "hostname": "enterprisedev.mentraglass.com",
       "certificateName": "ca-mentra-enterprise-reference-workspace"
@@ -213,7 +232,7 @@ Treat this as a documented tradeoff, not a production network posture; see
 ## Smoke test
 
 ```bash
-export MENTRA_WORKSPACE=https://mentra.acmeworkspace.com
+export MENTRA_WORKSPACE=https://demo.acmeworkspace.com
 cloud-v2/deploy/azure/enterprise-reference/scripts/smoke-test.sh "$MENTRA_WORKSPACE"
 ```
 
