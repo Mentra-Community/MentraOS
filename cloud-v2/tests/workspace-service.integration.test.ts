@@ -357,6 +357,24 @@ describe("deleted accounts", () => {
     expect(await WorkspaceMembershipModel.countDocuments({mentraUserId: "mu_gone"})).toBe(0)
   })
 
+  test("a deleted account's owner membership can always be removed or demoted, with one live owner left", async () => {
+    const ws = await newWorkspace()
+    const demoted = await addMember(ws, "mu_gone_a", "owner")
+    const removed = await addMember(ws, "mu_gone_b", "owner")
+    await deleteAccount("mu_gone_a")
+    await deleteAccount("mu_gone_b")
+    expect(await countActiveOwners(ws)).toBe(1)
+
+    // Demoting one is not demoting the last live owner.
+    await changeRole(user("mu_owner"), ws, demoted, "admin", 0)
+    expect((await getActiveMembership(ws, "mu_gone_a"))!.role).toBe("admin")
+    // Removing one is not removing the last live owner either.
+    await removeMember(user("mu_owner"), ws, removed, 1)
+    expect(await getActiveMembership(ws, "mu_gone_b")).toBeNull()
+    expect((await getActiveMembership(ws, "mu_owner"))!.role).toBe("owner")
+    expect(await countActiveOwners(ws)).toBe(1)
+  })
+
   test("the last-owner guard never counts a deleted account's owner membership", async () => {
     const ws = await newWorkspace()
     // An owner membership of a deleted account, as a failed deletion could leave behind.

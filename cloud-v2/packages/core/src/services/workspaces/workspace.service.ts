@@ -131,8 +131,8 @@ export async function listMembers(workspaceId: string): Promise<MembershipRow[]>
 }
 
 /**
- * The workspace's active owners who can still act: a deleted account's owner membership (account
- * deletion ends it, but one could be left behind by a failure) never counts, so the last-owner
+ * The workspace's active owners who can still act: a deleted account's owner membership never
+ * counts (its deletion ends it, and Core finishes an interrupted deletion itself), so the last-owner
  * guard cannot rest on an owner nobody can sign in as.
  */
 export async function countActiveOwners(workspaceId: string, session?: ClientSession): Promise<number> {
@@ -310,7 +310,7 @@ export async function changeRole(
       fail("forbidden", `a ${actorRole} cannot change a ${fromRole} to ${toRole}`)
     }
     if (fromRole === toRole) return toSummary(workspace)
-    if (fromRole === "owner") await assertNotLastOwner(session, workspaceId)
+    if (fromRole === "owner") await assertNotLastOwner(session, workspaceId, target)
 
     const updated = await bumpRevision(session, workspaceId, expectedRevision)
     const changed = await WorkspaceMembershipModel.updateOne(
@@ -344,7 +344,7 @@ export async function removeMember(
     const target = await loadActiveMembership(session, workspaceId, membershipId)
     const fromRole = target.role as WorkspaceRole
     if (!canChangeRole(actorRole, fromRole, null)) fail("forbidden", `a ${actorRole} cannot remove a ${fromRole}`)
-    if (fromRole === "owner") await assertNotLastOwner(session, workspaceId)
+    if (fromRole === "owner") await assertNotLastOwner(session, workspaceId, target)
 
     const updated = await bumpRevision(session, workspaceId, expectedRevision)
     return endMembership(session, {
@@ -367,7 +367,7 @@ export async function leaveWorkspace(actor: Actor & {kind: "user"}, workspaceId:
           .lean<MembershipRow>()
       : null
     if (!membership) fail("not_found", "not a member of this workspace")
-    if (membership.role === "owner") await assertNotLastOwner(session, workspaceId)
+    if (membership.role === "owner") await assertNotLastOwner(session, workspaceId, membership)
 
     const updated = await bumpRevision(session, workspaceId, undefined)
     await endMembership(session, {
@@ -563,7 +563,13 @@ export async function requireMembershipManager(
   return role
 }
 
-async function assertNotLastOwner(session: ClientSession, workspaceId: string): Promise<void> {
+/**
+ * Refuse removing or demoting `owner` when it is the workspace's last live owner. A deleted account's
+ * owner membership is no live owner: removing or demoting it is always allowed (and it never counts
+ * toward the others, `countActiveOwners`).
+ */
+async function assertNotLastOwner(session: ClientSession, workspaceId: string, owner: MembershipRow): Promise<void> {
+  if (await isDeletedAccountId(owner.mentraUserId, session)) return
   if ((await countActiveOwners(workspaceId, session)) <= 1) {
     fail("last_owner", "a workspace must keep at least one owner")
   }
