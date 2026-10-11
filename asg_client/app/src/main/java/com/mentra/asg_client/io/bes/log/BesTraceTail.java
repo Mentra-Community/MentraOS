@@ -54,6 +54,12 @@ public final class BesTraceTail {
         void release();
     }
 
+    /** Told when the TRACE stream shows the BES booted again (a new {@code bid}). */
+    public interface BootChangeListener {
+        /** {@code oldBid} is the boot the cursor was on, {@code newBid} the one now reporting. */
+        void onBootChange(String oldBid, String newBid);
+    }
+
     private static final TransferGate NO_GATE = new TransferGate() {
         @Override
         public boolean acquire(long timeoutMs) {
@@ -76,6 +82,8 @@ public final class BesTraceTail {
     private volatile boolean mSubSupported;
     private volatile TransferGate mGate = NO_GATE;
     private volatile BooleanSupplier mOtaStateCheck;
+    private volatile BootChangeListener mBootChangeListener;
+    private String mNotifiedBid;
     private volatile int mGroupMaxBatches = AsgConstants.BES_TRACE_GROUP_COMMIT_MAX_BATCHES;
     private volatile long mGroupMaxMs = AsgConstants.BES_TRACE_GROUP_COMMIT_MAX_MS;
 
@@ -155,6 +163,31 @@ public final class BesTraceTail {
         mSender = sender;
     }
 
+    /** Listener for a BES boot seen in the TRACE stream (runs on the tail thread); null clears. */
+    public void setBootChangeListener(BootChangeListener listener) {
+        mBootChangeListener = listener;
+    }
+
+    /** Reports each new boot id once, when it differs from the one the cursor is on. */
+    private void noteBootChange(String newBid) {
+        BootChangeListener listener = mBootChangeListener;
+        BesTraceSession session = mSession;
+        if (listener == null || session == null || newBid == null
+                || newBid.equals(mNotifiedBid) || newBid.equals(session.bid())) {
+            return;
+        }
+        String oldBid = session.bid();
+        if (oldBid == null && !session.hasCursor()) {
+            return; // First boot this store has seen: ordinary connect path reads sr_syvr.
+        }
+        mNotifiedBid = newBid;
+        try {
+            listener.onBootChange(oldBid, newBid);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "BES boot-change listener failed", e);
+        }
+    }
+
     @VisibleForTesting
     public Looper looper() {
         Handler handler = mHandler;
@@ -180,6 +213,8 @@ public final class BesTraceTail {
         mSubSent = false;
         mSubConfirmed = false;
         mSubAttemptAtMs = -1;
+        mBootChangeListener = null;
+        mNotifiedBid = null;
         mPendingBatches = 0;
         mGroupMaxBatches = AsgConstants.BES_TRACE_GROUP_COMMIT_MAX_BATCHES;
         mGroupMaxMs = AsgConstants.BES_TRACE_GROUP_COMMIT_MAX_MS;
@@ -410,6 +445,7 @@ public final class BesTraceTail {
             mWindowBatches = 0;
             mWindowBytes = 0;
         }
+        noteBootChange(BesTraceSession.parseBid(body));
         mWindowActive = true;
         mWindowEndsMs = now + AsgConstants.BES_TRACE_WINDOW_MS;
         if (!mLeaseHeld && mContext != null) {
@@ -435,6 +471,7 @@ public final class BesTraceTail {
         String bid = BesTraceSession.parseBid(body);
         if (bid != null && mSession != null && mSession.hasCursor()
                 && !bid.equals(mSession.bid())) {
+            noteBootChange(bid);
             schedule(0);
         }
     }
@@ -459,6 +496,12 @@ public final class BesTraceTail {
             Log.w(TAG, "BES TRACE read rejected: " + reply.error);
             schedule(AsgConstants.BES_TRACE_POLL_IDLE_MS);
             return;
+        }
+        for (BesTraceStore.Line line : reply.lines) {
+            if (line.text.startsWith("[ASG-BES-REBOOT]")) {
+                noteBootChange(reply.bid);
+                break;
+            }
         }
         if (mPendingBatches > 0 && (!Objects.equals(reply.bid, mSession.bid())
                 || reply.generation != mSession.generation())) {
