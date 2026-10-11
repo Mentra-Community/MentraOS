@@ -9,24 +9,65 @@ import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import type { WorkspaceRole } from "@mentra/workspace-contract";
 
-/** A titled card holding one panel's content. */
+/** A titled card holding one panel's content, with an optional count beside the title and actions on the right. */
 export function Panel({
   title,
   description,
+  count,
+  actions,
+  className,
   children,
 }: {
   title: string;
   description?: string;
+  /** How many items the panel lists, once known. */
+  count?: number;
+  actions?: ReactNode;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <Card role="region" aria-label={title}>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
+    <Card role="region" aria-label={title} className={cn("gap-5", className)}>
+      <CardHeader className={actions ? "grid-cols-[1fr_auto]" : undefined}>
+        <CardTitle className="flex items-center gap-2 text-base">
+          {title}
+          {count !== undefined ? (
+            <span className="bg-secondary text-secondary-foreground rounded-full px-2 py-0.5 text-xs font-medium tabular-nums">
+              {count}
+            </span>
+          ) : null}
+        </CardTitle>
         {description ? <CardDescription>{description}</CardDescription> : null}
+        {actions ? <div className="col-start-2 row-span-2 row-start-1 self-center">{actions}</div> : null}
       </CardHeader>
       <CardContent className="space-y-4">{children}</CardContent>
     </Card>
+  );
+}
+
+/** Up to two letters for an email address or a name: "olivia.lee@acme.test" is "OL", "Acme Field Team" is "AF". */
+export function initials(value: string): string {
+  const base = value.includes("@") ? value.split("@")[0]! : value;
+  const letters = base
+    .split(/[._\-\s]+/)
+    .filter(Boolean)
+    .map((part) => part[0]!)
+    .join("");
+  return (letters || base.slice(0, 1) || "?").slice(0, 2).toUpperCase();
+}
+
+/** A round badge with a person's initials (or a workspace's first letter, `single`), in place of a picture. */
+export function Avatar({ label, single = false, className }: { label: string; single?: boolean; className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "bg-secondary text-secondary-foreground inline-flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
+        className,
+      )}
+    >
+      {single ? initials(label).slice(0, 1) : initials(label)}
+    </span>
   );
 }
 
@@ -122,6 +163,7 @@ export function ConfirmButton({
   prompt,
   confirmLabel,
   disabled,
+  outline = false,
   onConfirm,
 }: {
   label: string;
@@ -129,6 +171,8 @@ export function ConfirmButton({
   prompt: string;
   confirmLabel: string;
   disabled?: boolean;
+  /** An outlined trigger, for a destructive action that stands on its own row (a danger zone). */
+  outline?: boolean;
   onConfirm: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -150,9 +194,12 @@ export function ConfirmButton({
       <Button
         ref={trigger}
         type="button"
-        variant="ghost"
+        variant={outline ? "outline" : "ghost"}
         size="sm"
-        className="text-destructive hover:text-destructive"
+        className={cn(
+          "text-destructive hover:text-destructive",
+          outline && "border-destructive/40 hover:bg-destructive/5 hover:border-destructive/60",
+        )}
         aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => setConfirming(true)}

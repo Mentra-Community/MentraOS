@@ -42,17 +42,21 @@ screens a second React (and every hook a null dispatcher). Each site's
 | Export | What it is |
 | --- | --- |
 | `createWorkspaceApi({basePath, fetch?, credentials?})` | Typed client for every route; throws `WorkspaceApiError` |
-| `WorkspacePicker` | Choose among your workspaces; optionally create one |
-| `WorkspaceMembersPanel` (`showUserIds?`) | Members, role changes, removal; `showUserIds` adds each member's copyable Mentra user id (for Organization Admins, who need it to recover ownership) |
-| `WorkspaceInvitationsPanel` | Pending invitations, invite by email |
+| `WorkspacePicker` | Choose among your workspaces in a select; optionally create one inline |
+| `CreateWorkspaceDialog` (`open`, `onClose`, `onCreated`), `CreateWorkspaceForm`, `useCreateWorkspace` | Create a workspace from just its name; the new workspace's detail is cached and the list refreshed |
+| `WorkspaceMembersPanel` (`showUserIds?`) | Members (with a count), role changes, removal; `showUserIds` adds each member's copyable Mentra user id (for Organization Admins, who need it to recover ownership) |
+| `WorkspaceInvitationsPanel` | Invite by email, and the pending invitations with Resend and Revoke, in one card |
+| `WorkspaceInviteDialog` (`open`, `onClose`) | Invite by email and role in a dialog; the link is shown once after sending |
+| `WorkspacePendingInvitationsPanel` | The pending invitations alone (Resend, Revoke), for a member page that invites through the dialog; renders nothing when none are pending |
 | `WorkspaceCredentialsPanel` | `msk_` credentials; the token is shown once, with a copy button |
-| `WorkspaceSettingsPanel` (`onDeleted?`, `onLeft?`) | Rename, leave, delete |
+| `WorkspaceSettingsPanel` (`onDeleted?`, `onLeft?`) | Name and workspace ID (with copy), then a danger zone to leave or delete |
 | `WorkspaceAuditPanel` | The workspace's audit log, paged |
-| `InvitationAcceptView` (`token`, `onAccepted(workspaceId)`) | What an invitation link opens |
+| `InvitationAcceptView` (`token`, `onAccepted(workspaceId)`, `onDismiss?`) | What an invitation link opens |
 | `SecretDialog` (`name`, `token`, `onDone`) | The show-once dialog for a new credential, for other screens that mint one (the admin portal's operator keys) |
 | `ConfirmButton` (`label`, `ariaLabel`, `prompt`, `confirmLabel`, `onConfirm`) | A destructive action behind an inline confirm step |
 | `expiryFromDateInput` | The end of a `<input type="date">` day as an ISO string, or null |
-| `effectiveRole`, `assignableRoles`, `can`, `ROLE_LABELS` | The capability helpers the panels use |
+| `effectiveRole`, `assignableRoles`, `can`, `ROLE_LABELS`, `ROLE_DESCRIPTIONS` | The capability helpers the panels use, and a one-line description of each role |
+| `workspaceListQuery`, `workspaceDetailQuery`, `invitationPreviewQuery`, `workspaceKeys` | Query options and keys, for a host that shows the same data (a workspace switcher) |
 | `errorMessage`, `isWorkspaceChangedError`, `WORKSPACE_CHANGED_MESSAGE` | Error text, and the 409 handling |
 
 ## Behavior worth knowing
@@ -72,6 +76,11 @@ screens a second React (and every hook a null dispatcher). Each site's
 - **Destructive actions ask twice**: removing a member, revoking a credential or an
   invitation, leaving a workspace (an inline confirm step), and deleting one (type the
   workspace name).
+- **Resend is a new invitation.** It sends the same address the same role again; Core
+  supersedes the pending invitation, so only the newest link works.
+- **Dialogs are the platform's `<dialog>`**, opened with `showModal()`: the page behind is
+  inert, focus stays inside, Escape and the backdrop close it. Their content renders only
+  while open.
 - **Secrets are shown once and never cached.** A credential's token and an invitation
   link live in the panel's state until dismissed. They are not in the query or mutation
   cache and never in API paths: invitation tokens travel in POST bodies. (The invitation

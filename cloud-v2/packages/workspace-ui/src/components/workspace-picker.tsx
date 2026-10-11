@@ -1,15 +1,19 @@
-/** Chooses among the caller's workspaces, and optionally creates a new one. */
+/**
+ * Chooses among the caller's workspaces in a native select, and optionally creates a new one inline. A host
+ * with its own workspace navigation (the workspace portal's switcher) uses `CreateWorkspaceDialog` instead.
+ */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { PlusIcon } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 import type { WorkspaceApi } from "../api";
-import { workspaceKeys, workspaceListQuery } from "../queries";
+import { workspaceListQuery } from "../queries";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { NativeSelect } from "../ui/native-select";
 import { ErrorNotice, QueryGate } from "./common";
+import { useCreateWorkspace } from "./create-workspace";
 
 export function WorkspacePicker({
   api,
@@ -23,21 +27,12 @@ export function WorkspacePicker({
   /** Offer "New workspace". The server decides who may actually create one and says so when it refuses. */
   allowCreate?: boolean;
 }) {
-  const client = useQueryClient();
   const listResult = useQuery(workspaceListQuery(api));
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const selectId = useId();
   const nameId = useId();
-
-  const create = useMutation({
-    mutationFn: (workspaceName: string) => api.createWorkspace(workspaceName),
-    gcTime: 0,
-    onSuccess: async (created) => {
-      client.setQueryData(workspaceKeys.detail(api, created.workspaceId), created);
-      await client.invalidateQueries({ queryKey: workspaceKeys.list(api) });
-    },
-  });
+  const create = useCreateWorkspace(api);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

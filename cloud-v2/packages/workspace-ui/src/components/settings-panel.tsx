@@ -1,5 +1,5 @@
 /**
- * Workspace settings: rename, leave, delete.
+ * Workspace settings: the name and ID, then a danger zone to leave or delete.
  *
  * Rename needs `workspace.settings.manage`, delete needs `workspace.delete` and the workspace's name
  * typed back, and leaving is offered to anyone who is a member (an organization admin acting from
@@ -14,12 +14,10 @@ import type { WorkspaceApi } from "../api";
 import { useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { can } from "../roles";
 import { Button } from "../ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ConfirmButton, ErrorNotice, Panel, QueryGate } from "./common";
-
-const TITLE = "Settings";
-const DESCRIPTION = "Name, membership and deletion for this workspace.";
+import { ConfirmButton, CopyButton, ErrorNotice, Panel, QueryGate } from "./common";
 
 interface SettingsPanelProps {
   api: WorkspaceApi;
@@ -36,12 +34,10 @@ export function WorkspaceSettingsPanel(props: SettingsPanelProps) {
   const { api, workspaceId } = props;
   const detailResult = useQuery(workspaceDetailQuery(api, workspaceId));
   return (
-    <Panel title={TITLE} description={DESCRIPTION}>
-      <QueryGate result={detailResult}>
-        {/* Keyed by workspace so one workspace's half-typed name or delete confirmation never carries to another. */}
-        {(detail) => <SettingsForms key={workspaceId} {...props} detail={detail} />}
-      </QueryGate>
-    </Panel>
+    <QueryGate result={detailResult}>
+      {/* Keyed by workspace so one workspace's half-typed name or delete confirmation never carries to another. */}
+      {(detail) => <SettingsForms key={workspaceId} {...props} detail={detail} />}
+    </QueryGate>
   );
 }
 
@@ -91,86 +87,122 @@ function SettingsForms({
   }
 
   return (
-    <>
-      {canRename ? (
-        <form onSubmit={submitRename} className="flex flex-wrap items-end gap-3">
-          <div className="grid gap-1.5">
+    <div className="space-y-6">
+      <Panel title="General" description="How this workspace is named and identified.">
+        {canRename ? (
+          <form onSubmit={submitRename} className="grid gap-1.5">
             <Label htmlFor={nameId}>Workspace name</Label>
-            <Input
-              id={nameId}
-              required
-              maxLength={64}
-              autoComplete="off"
-              className="w-72"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </div>
-          <Button type="submit" disabled={busy || trimmed === "" || trimmed === detail.name}>
-            Save name
-          </Button>
-        </form>
-      ) : (
-        <div className="grid gap-1">
-          <span className="text-muted-foreground text-xs">Workspace name</span>
-          <span className="text-sm font-medium">{detail.name}</span>
-        </div>
-      )}
-
-      {isMember ? (
-        <section className="space-y-2 border-t pt-4">
-          <h3 className="text-sm font-semibold">Leave workspace</h3>
-          <p className="text-muted-foreground text-sm">
-            You lose access to this workspace. The last owner cannot leave: make someone else an owner first.
-          </p>
-          <ConfirmButton
-            label="Leave workspace"
-            ariaLabel="Leave workspace"
-            prompt={`Leave ${detail.name}?`}
-            confirmLabel="Confirm leave"
-            disabled={busy}
-            onConfirm={() => {
-              rename.reset();
-              remove.reset();
-              leave.mutate(undefined, { onSuccess: () => onLeft?.() });
-            }}
-          />
-        </section>
-      ) : null}
-
-      {canDelete ? (
-        <section className="border-destructive/40 space-y-3 rounded-md border p-4">
-          <h3 className="text-destructive text-sm font-semibold">Danger zone</h3>
-          <p className="text-muted-foreground text-sm">
-            Deleting a workspace ends every membership and invitation and revokes every credential. It cannot be
-            undone.
-          </p>
-          {deleteNotice ? (
-            <div role="note" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-              {deleteNotice}
-            </div>
-          ) : null}
-          <form onSubmit={submitDelete} className="flex flex-wrap items-end gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor={confirmId}>
-                Type <strong>{detail.name}</strong> to confirm
-              </Label>
+            <div className="flex flex-wrap items-center gap-3">
               <Input
-                id={confirmId}
+                id={nameId}
+                required
+                maxLength={64}
                 autoComplete="off"
-                className="w-72"
-                value={confirmName}
-                onChange={(event) => setConfirmName(event.target.value)}
+                className="w-full max-w-sm"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
               />
+              <Button type="submit" disabled={busy || trimmed === "" || trimmed === detail.name}>
+                Save name
+              </Button>
             </div>
-            <Button type="submit" variant="destructive" disabled={busy || confirmName !== detail.name}>
-              Delete workspace
-            </Button>
           </form>
-        </section>
-      ) : null}
+        ) : (
+          <div className="grid gap-1">
+            <span className="text-muted-foreground text-xs">Workspace name</span>
+            <span className="text-sm font-medium">{detail.name}</span>
+            <span className="text-muted-foreground text-xs">Only workspace admins and owners can rename it.</span>
+          </div>
+        )}
+        <ErrorNotice error={rename.error} />
 
-      <ErrorNotice error={rename.error ?? leave.error ?? remove.error} />
-    </>
+        <div className="grid gap-1.5 border-t pt-4">
+          <span className="text-sm font-medium">Workspace ID</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <code className="bg-muted rounded-md border px-2.5 py-1.5 font-mono text-xs select-all">{workspaceId}</code>
+            <CopyButton text={workspaceId} label="Copy" ariaLabel="Copy the workspace ID" />
+          </div>
+          <span className="text-muted-foreground text-xs">Tools and support may ask for it.</span>
+        </div>
+      </Panel>
+
+      {isMember || canDelete ? (
+        <Card role="region" aria-label="Danger zone" className="border-destructive/30 gap-0 py-0">
+          <CardHeader className="border-destructive/20 border-b py-5">
+            <CardTitle className="text-destructive text-base">Danger zone</CardTitle>
+            <CardDescription>These actions end access and cannot be undone here.</CardDescription>
+          </CardHeader>
+          <CardContent className="divide-destructive/15 divide-y px-0">
+            {isMember ? (
+              <section className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+                <div className="max-w-xl space-y-1">
+                  <h3 className="text-sm font-semibold">Leave workspace</h3>
+                  <p className="text-muted-foreground text-sm">
+                    You lose access to this workspace. The last owner cannot leave: make someone else an owner first.
+                  </p>
+                </div>
+                <ConfirmButton
+                  label="Leave workspace"
+                  ariaLabel="Leave workspace"
+                  prompt={`Leave ${detail.name}?`}
+                  confirmLabel="Confirm leave"
+                  disabled={busy}
+                  outline
+                  onConfirm={() => {
+                    rename.reset();
+                    remove.reset();
+                    leave.mutate(undefined, { onSuccess: () => onLeft?.() });
+                  }}
+                />
+              </section>
+            ) : null}
+
+            {canDelete ? (
+              <section className="space-y-3 px-6 py-5">
+                <div className="max-w-xl space-y-1">
+                  <h3 className="text-sm font-semibold">Delete workspace</h3>
+                  <p className="text-muted-foreground text-sm">
+                    Deleting a workspace ends every membership and invitation and revokes every credential. It cannot
+                    be undone.
+                  </p>
+                </div>
+                {deleteNotice ? (
+                  <div
+                    role="note"
+                    className="max-w-xl rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+                  >
+                    {deleteNotice}
+                  </div>
+                ) : null}
+                <form onSubmit={submitDelete} className="flex flex-wrap items-end gap-3">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor={confirmId}>
+                      <span>
+                        Type <strong>{detail.name}</strong> to confirm
+                      </span>
+                    </Label>
+                    <Input
+                      id={confirmId}
+                      autoComplete="off"
+                      className="w-72"
+                      value={confirmName}
+                      onChange={(event) => setConfirmName(event.target.value)}
+                    />
+                  </div>
+                  <Button type="submit" variant="destructive" disabled={busy || confirmName !== detail.name}>
+                    Delete workspace
+                  </Button>
+                </form>
+              </section>
+            ) : null}
+            {leave.error || remove.error ? (
+              <div className="px-6 py-4">
+                <ErrorNotice error={leave.error ?? remove.error} />
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+    </div>
   );
 }

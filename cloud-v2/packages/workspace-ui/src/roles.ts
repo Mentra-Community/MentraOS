@@ -16,6 +16,14 @@ export const ROLE_LABELS: Record<WorkspaceRole, string> = {
   owner: "Owner",
 };
 
+/** What each role may do, in one line, for role pickers. Each role also holds everything of the roles before it. */
+export const ROLE_DESCRIPTIONS: Record<WorkspaceRole, string> = {
+  member: "Can see the workspace and use its miniapps.",
+  developer: "Can also publish miniapps and create credentials.",
+  admin: "Can also manage members, settings and the audit log.",
+  owner: "Full control, including admins, owners and deleting the workspace.",
+};
+
 /** Whether the workspace detail grants `capability`. Undefined (not loaded yet) grants nothing. */
 export function can(detail: Pick<WorkspaceDetail, "capabilities"> | undefined, capability: WorkspaceCapability): boolean {
   return detail?.capabilities.includes(capability) ?? false;

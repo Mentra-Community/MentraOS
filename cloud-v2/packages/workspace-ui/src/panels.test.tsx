@@ -6,7 +6,16 @@ import { createWorkspaceApi } from "./api";
 import { WorkspaceApiError } from "./errors";
 import { InvitationAcceptCard, InvitationAcceptView, type InvitationLoad } from "./components/invitation-accept-view";
 import { WorkspaceAuditPanel } from "./components/audit-panel";
-import { InvitationsScreen, WorkspaceInvitationsPanel } from "./components/invitations-panel";
+import {
+  InviteDialogBody,
+  InvitationsScreen,
+  PendingInvitationsScreen,
+  WorkspaceInvitationsPanel,
+  WorkspaceInviteDialog,
+  WorkspacePendingInvitationsPanel,
+} from "./components/invitations-panel";
+import { CreateWorkspaceDialog, CreateWorkspaceForm } from "./components/create-workspace";
+import { ROLE_DESCRIPTIONS } from "./roles";
 import { QueryGate } from "./components/common";
 import { WorkspaceMembersPanel } from "./components/members-panel";
 import { WorkspacePicker } from "./components/workspace-picker";
@@ -520,5 +529,188 @@ describe("invitation accept view", () => {
       new WorkspaceApiError(403, "email_mismatch", "sign in with the verified email address this invitation was sent to"),
     );
     expect(markup).toContain("Sign in with the verified email address this invitation was sent to");
+  });
+});
+
+describe("pending invitations panel", () => {
+  const render = (role: "owner" | "admin" | "developer", invitations = INVITATIONS) => {
+    const { api } = offlineApi();
+    return renderSeeded(
+      api,
+      { detail: detailFor(role), invitations },
+      <WorkspacePendingInvitationsPanel api={api} workspaceId={WORKSPACE_ID} />,
+    );
+  };
+
+  test("lists pending invitations with Resend and Revoke where the viewer could have sent them", () => {
+    const owner = render("owner");
+    expect(owner).toContain("Pending invitations");
+    expect(labelsStartingWith(owner, "Resend invitation")).toEqual([
+      "Resend invitation to newbie@acme.test",
+      "Resend invitation to boss@acme.test",
+    ]);
+    expect(labelsStartingWith(owner, "Revoke invitation")).toEqual([
+      "Revoke invitation for newbie@acme.test",
+      "Revoke invitation for boss@acme.test",
+    ]);
+    const admin = render("admin");
+    expect(labelsStartingWith(admin, "Resend invitation")).toEqual(["Resend invitation to newbie@acme.test"]);
+    expect(admin).toContain("boss@acme.test");
+    // The invite form lives in the dialog, not here.
+    expect(owner).not.toContain("<form");
+  });
+
+  test("renders nothing for a viewer who cannot manage members, or when nothing is pending", () => {
+    expect(render("developer")).toBe("");
+    expect(render("owner", [])).toBe("");
+  });
+
+  test("a resent invitation shows its new link and says the earlier one stopped working", () => {
+    const { api } = offlineApi();
+    const markup = renderSeeded(
+      api,
+      { detail: detailFor("admin"), invitations: INVITATIONS },
+      <PendingInvitationsScreen
+        api={api}
+        workspaceId={WORKSPACE_ID}
+        initialLink={{ email: "newbie@acme.test", role: "member", inviteUrl: "https://example.test/join#new", resent: true }}
+      />,
+    );
+    expect(markup).toContain("https://example.test/join#new");
+    expect(markup).toContain("The earlier link no longer works.");
+  });
+});
+
+describe("invite dialog", () => {
+  test("asks for an email and a role, and explains the role", () => {
+    const { api } = offlineApi();
+    const markup = renderSeeded(
+      api,
+      { detail: detailFor("admin") },
+      <InviteDialogBody api={api} workspaceId={WORKSPACE_ID} onClose={() => {}} />,
+    );
+    expect(markup).toContain("Email address");
+    expect(markup).toContain('aria-label="Invitation role"');
+    expect(markup).toContain(ROLE_DESCRIPTIONS.member);
+    expect(markup).toContain("Send invitation");
+    expect(markup).toContain("Cancel");
+  });
+
+  test("after sending it shows the link once, with Copy and Done", () => {
+    const { api } = offlineApi();
+    const markup = renderSeeded(
+      api,
+      { detail: detailFor("admin") },
+      <InviteDialogBody
+        api={api}
+        workspaceId={WORKSPACE_ID}
+        onClose={() => {}}
+        initialLink={{ email: "friend@acme.test", role: "developer", inviteUrl: "https://example.test/join#one-time" }}
+      />,
+    );
+    expect(markup).toContain("Invitation sent");
+    expect(markup).toContain("https://example.test/join#one-time");
+    expect(markup).toContain("Copy link");
+    expect(markup).toContain("Done");
+    expect(markup).not.toContain("<form");
+  });
+
+  test("a developer cannot invite", () => {
+    const { api } = offlineApi();
+    const markup = renderSeeded(
+      api,
+      { detail: detailFor("developer") },
+      <InviteDialogBody api={api} workspaceId={WORKSPACE_ID} onClose={() => {}} />,
+    );
+    expect(markup).toContain("Only workspace admins can invite people.");
+    expect(markup).not.toContain("<form");
+  });
+
+  test("the dialog renders its content only while open", () => {
+    const { api } = offlineApi();
+    const seed = { detail: detailFor("owner") };
+    const closed = renderSeeded(
+      api,
+      seed,
+      <WorkspaceInviteDialog api={api} workspaceId={WORKSPACE_ID} open={false} onClose={() => {}} />,
+    );
+    expect(closed).toContain("<dialog");
+    expect(closed).not.toContain("Email address");
+    const open = renderSeeded(
+      api,
+      seed,
+      <WorkspaceInviteDialog api={api} workspaceId={WORKSPACE_ID} open onClose={() => {}} />,
+    );
+    expect(open).toContain(`Invite people to ${WORKSPACE_NAME}`);
+    expect(open).toContain("Email address");
+  });
+});
+
+describe("settings panel: general", () => {
+  test("shows the workspace ID with a copy button, to everyone in the workspace", () => {
+    for (const role of ["member", "owner"] as const) {
+      const { api } = offlineApi();
+      const markup = renderSeeded(api, { detail: detailFor(role) }, <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />);
+      expect(markup).toContain("Workspace ID");
+      expect(markup).toContain(`>${WORKSPACE_ID}<`);
+      expect(markup).toContain('aria-label="Copy the workspace ID"');
+    }
+  });
+
+  test("leaving and deleting sit in the danger zone", () => {
+    const { api } = offlineApi();
+    const markup = renderSeeded(api, { detail: detailFor("owner") }, <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />);
+    const zone = markup.indexOf("Danger zone");
+    expect(zone).toBeGreaterThan(markup.indexOf("Workspace ID"));
+    expect(markup.indexOf("Leave workspace")).toBeGreaterThan(zone);
+    expect(markup.indexOf("Delete workspace")).toBeGreaterThan(zone);
+  });
+});
+
+describe("creating a workspace", () => {
+  test("asks only for a name", () => {
+    const { api, requests } = offlineApi();
+    const markup = renderSeeded(api, {}, <CreateWorkspaceForm api={api} onCreated={() => {}} onCancel={() => {}} />);
+    expect(markup).toContain("Workspace name");
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Create workspace<\/button>/);
+    expect(markup).toContain("Cancel");
+    expect(markup.match(/<input/g)).toHaveLength(1);
+    expect(requests).toEqual([]);
+  });
+
+  test("the dialog shows the form only while open", () => {
+    const { api } = offlineApi();
+    expect(renderSeeded(api, {}, <CreateWorkspaceDialog api={api} open={false} onClose={() => {}} onCreated={() => {}} />)).not.toContain(
+      "Workspace name",
+    );
+    const open = renderSeeded(api, {}, <CreateWorkspaceDialog api={api} open onClose={() => {}} onCreated={() => {}} />);
+    expect(open).toContain("Create a workspace");
+    expect(open).toContain("Workspace name");
+  });
+});
+
+describe("members panel: count and invitation card dismiss", () => {
+  test("the member count shows beside the title once the list has loaded", () => {
+    const { api } = offlineApi();
+    const detail = detailFor("owner");
+    const markup = renderSeeded(api, { detail, members: membersFor(detail) }, <WorkspaceMembersPanel api={api} workspaceId={WORKSPACE_ID} />);
+    expect(markup).toMatch(/Members<span[^>]*>5<\/span>/);
+  });
+
+  test("the invitation card offers Dismiss only when the host passes it", () => {
+    const preview = { workspaceName: WORKSPACE_NAME, email: "newbie@acme.test", role: "member" as const };
+    const render = (onDismiss?: () => void) =>
+      renderToStaticMarkup(
+        <InvitationAcceptCard
+          load={{ status: "ready", preview }}
+          onRetry={() => {}}
+          onAccept={() => {}}
+          onDismiss={onDismiss}
+          accepting={false}
+          acceptError={null}
+        />,
+      );
+    expect(render(() => {})).toContain(">Dismiss<");
+    expect(render()).not.toContain(">Dismiss<");
   });
 });

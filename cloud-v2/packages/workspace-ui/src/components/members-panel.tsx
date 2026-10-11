@@ -19,7 +19,7 @@ import { formatDate } from "../lib/format";
 import { membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { can, canRemoveRole, effectiveRole, ROLE_LABELS, roleOptions } from "../roles";
 import { NativeSelect } from "../ui/native-select";
-import { Badge, ConfirmButton, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
+import { Avatar, Badge, ConfirmButton, CopyButton, ErrorNotice, Panel, QueryGate, Restricted, RoleBadge } from "./common";
 
 export function WorkspaceMembersPanel({
   api,
@@ -48,7 +48,11 @@ export function WorkspaceMembersPanel({
   );
 
   return (
-    <Panel title="Members" description="People in this workspace and the role each of them holds.">
+    <Panel
+      title="Members"
+      count={can(detailResult.data, "workspace.members.read") ? membersResult.data?.length : undefined}
+      description="People in this workspace and the role each of them holds."
+    >
       <QueryGate result={detailResult}>
         {(detail) =>
           !can(detail, "workspace.members.read") ? (
@@ -101,14 +105,14 @@ function MembersTable({
 
   if (members.length === 0) return <Restricted>No members yet.</Restricted>;
   return (
-    <div className="overflow-x-auto">
+    <div className="-mx-6 overflow-x-auto">
       <table className="w-full text-left text-sm">
-        <thead className="text-muted-foreground text-xs">
+        <thead className="text-muted-foreground border-y bg-muted/50 text-xs">
           <tr>
-            <th className="py-2 pr-4 font-medium">Member</th>
-            <th className="py-2 pr-4 font-medium">Role</th>
-            <th className="py-2 pr-4 font-medium">Joined</th>
-            <th className="py-2 font-medium">
+            <th className="py-2.5 pr-4 pl-6 font-medium">Member</th>
+            <th className="py-2.5 pr-4 font-medium">Role</th>
+            <th className="hidden py-2.5 pr-4 font-medium sm:table-cell">Joined</th>
+            <th className="py-2.5 pr-6 font-medium">
               <span className="sr-only">Actions</span>
             </th>
           </tr>
@@ -119,24 +123,29 @@ function MembersTable({
             const isSelf = member.membershipId === ownMembershipId;
             const options = canManage && !isSelf ? roleOptions(viewer, member.role) : [];
             return (
-              <tr key={member.membershipId} className="border-t">
-                <td className="py-2 pr-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{label}</span>
-                    {isSelf ? <Badge>You</Badge> : null}
-                  </div>
-                  {showUserIds ? (
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <code className="text-muted-foreground font-mono text-xs select-all">{member.mentraUserId}</code>
-                      <CopyButton
-                        text={member.mentraUserId}
-                        label="Copy id"
-                        ariaLabel={`Copy the Mentra user id of ${label}`}
-                      />
+              <tr key={member.membershipId} className="border-b last:border-b-0">
+                <td className="py-3 pr-4 pl-6">
+                  <div className="flex items-center gap-3">
+                    <Avatar label={label} className="hidden sm:inline-flex" />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium [overflow-wrap:anywhere]">{label}</span>
+                        {isSelf ? <Badge>You</Badge> : null}
+                      </div>
+                      {showUserIds ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <code className="text-muted-foreground font-mono text-xs select-all">{member.mentraUserId}</code>
+                          <CopyButton
+                            text={member.mentraUserId}
+                            label="Copy id"
+                            ariaLabel={`Copy the Mentra user id of ${label}`}
+                          />
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
+                  </div>
                 </td>
-                <td className="py-2 pr-4">
+                <td className="py-3 pr-4">
                   {options.length > 0 ? (
                     <NativeSelect
                       aria-label={`Role for ${label}`}
@@ -154,8 +163,10 @@ function MembersTable({
                     <RoleBadge role={member.role} />
                   )}
                 </td>
-                <td className="text-muted-foreground py-2 pr-4">{formatDate(member.startedAt)}</td>
-                <td className="py-2 text-right">
+                <td className="text-muted-foreground hidden py-3 pr-4 whitespace-nowrap sm:table-cell">
+                  {formatDate(member.startedAt)}
+                </td>
+                <td className="py-3 pr-6 text-right">
                   {canManage && !isSelf && canRemoveRole(viewer, member.role) ? (
                     <ConfirmButton
                       label="Remove"
