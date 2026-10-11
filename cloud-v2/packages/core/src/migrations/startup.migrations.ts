@@ -107,14 +107,23 @@ export async function runStartupMigrations(): Promise<void> {
   await backfillMembersFromWorkos();
   // Workspaces rely on unique indexes (one active membership per person, one
   // pending invitation per address, unique ids). Build them, and their
-  // collections, before serving: autoIndex runs in the background and a failed
-  // build would only be logged, and a request in the first moments after boot
-  // must not create a collection inside a transaction.
+  // collections, before serving: a request in the first moments after boot must
+  // not create a collection inside a transaction. An index the database refuses
+  // (some databases a Private Cloud uses support only part of MongoDB's index
+  // options) is logged and does not stop Core: sign-in, incidents and keys keep
+  // working.
   await Promise.all(
     [WorkspaceModel, WorkspaceMembershipModel, WorkspaceInvitationModel, AccessCredentialModel, WorkspaceAuditEventModel].map(
       async (model) => {
-        await model.createCollection();
-        await model.createIndexes();
+        try {
+          await model.createCollection();
+          await model.createIndexes();
+        } catch (error) {
+          logger.error(
+            { collection: model.collection.collectionName, error: (error as Error)?.message },
+            "failed to create workspace collection indexes",
+          );
+        }
       },
     ),
   );

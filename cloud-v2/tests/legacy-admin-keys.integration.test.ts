@@ -14,7 +14,8 @@
  * Safety: the test connects through `localTestMongoUrl` (loopback only, random
  * database name, ignores `MONGO_URL`) and asserts the live connection is on that
  * database before any destructive call. The database is dropped in `afterAll`,
- * only if the check passed. Converting a key runs a transaction, so the Mongo
+ * only if the check passed. Converting a key needs no transaction (a Private
+ * Cloud database may not have them), but the rest of Core does, so the Mongo
  * must be a replica set.
  *
  * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/legacy-admin-keys.integration.test.ts`
@@ -22,7 +23,7 @@
 
 import {createHash, randomBytes} from "node:crypto"
 
-import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, spyOn, test} from "bun:test"
 
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo} from "../packages/core/src/connections/mongo.connection"
@@ -530,6 +531,28 @@ describe("legacy admin keys", () => {
         consoleUrl,
         status: 401,
       })
+    }
+  })
+
+  test("converting and carrying over a revocation never open a transaction", async () => {
+    // Cosmos DB for MongoDB and a standalone mongod have no multi-document transactions.
+    const startSession = spyOn(AccessCredentialModel.db, "startSession").mockImplementation(() => {
+      throw new Error("Transaction numbers are only allowed on a replica set member or mongos")
+    })
+    try {
+      const key = await legacyKey()
+      allowlist(key)
+      expect(await convertLegacyAdminKeys()).toEqual({converted: [key.keyId], revoked: [], failed: []})
+      expect((await call("GET", "/api/admin/reports", key.token)).status).toBe(200)
+
+      await legacyKeys().updateOne({keyId: key.keyId}, {$set: {revokedAt: new Date("2026-08-01T00:00:00Z")}})
+      expect(await convertLegacyAdminKeys()).toEqual({converted: [], revoked: [key.keyId], failed: []})
+      expect((await call("GET", "/api/admin/reports", key.token)).status).toBe(401)
+
+      expect(startSession).not.toHaveBeenCalled()
+      expect(await createdEvents(key.keyId)).toHaveLength(1)
+    } finally {
+      startSession.mockRestore()
     }
   })
 

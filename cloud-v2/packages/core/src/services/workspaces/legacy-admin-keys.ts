@@ -20,7 +20,9 @@
  * converted from a key that is now revoked there is revoked too. Each conversion
  * and each carried revocation records its audit event as the system.
  *
- * A key that fails to convert (its transaction is refused, say) is logged and
+ * Each conversion is one upsert of one document, with its audit event written
+ * after it, so it needs no transaction (some databases a Private Cloud uses
+ * cannot run one across collections). A key that fails to convert is logged and
  * skipped, and the next start tries again: one admin key must never keep Core
  * from serving.
  */
@@ -28,9 +30,9 @@
 import {createLogger} from "@mentra/cloud-shared"
 import {OPERATOR_KEY_SCOPES} from "@mentra/workspace-contract"
 import mongoose from "mongoose"
-import {withTransaction} from "../../connections/mongo.connection"
 import {AccessCredentialModel, type AccessCredentialRow} from "../../models/access-credential.model"
-import {markRevoked, recordCreated} from "./credential.service"
+import {recordOrganizationEvent} from "./audit.service"
+import {createdEvent, markRevoked} from "./credential.service"
 import {getAdminEmailAllowlist} from "../admin-email-policy"
 import {credentialEnvironmentLabels} from "./organization"
 
@@ -103,7 +105,7 @@ async function convertOne(keyId: string, converted: string[], revoked: string[])
       return
     }
     if (legacy?.revokedAt && !existing.revokedAt) {
-      await withTransaction(session => markRevoked(session, existing, SYSTEM))
+      await markRevoked(null, existing, SYSTEM)
       revoked.push(keyId)
       logger.info({credentialId: keyId}, "revoked the operator key of a revoked legacy admin key")
     }
@@ -127,42 +129,38 @@ async function convertOne(keyId: string, converted: string[], revoked: string[])
   }
   const {hash, env, last4} = legacy
 
-  const inserted = await withTransaction(async session => {
-    const now = new Date()
-    const result = await AccessCredentialModel.updateOne(
-      {credentialId: keyId},
-      {
-        $setOnInsert: {
-          credentialId: keyId,
-          prefix: "msk",
-          credentialKind: "organization",
-          workspaceId: null,
-          name: legacy.name?.trim() || "Admin API key",
-          env,
-          hash,
-          last4,
-          scopes: [...OPERATOR_KEY_SCOPES],
-          packageNames: [],
-          createdByMembershipId: null,
-          createdByMentraUserId: null,
-          createdByEmail: legacyAdminKeyAddress(keyId),
-          issuedByService: null,
-          expiresAt: null,
-          lastUsedAt: legacy.lastUsedAt ?? null,
-          revokedAt: null,
-          createdAt: legacy.createdAt ?? now,
-          updatedAt: now,
-        },
+  const now = new Date()
+  const result = await AccessCredentialModel.updateOne(
+    {credentialId: keyId},
+    {
+      $setOnInsert: {
+        credentialId: keyId,
+        prefix: "msk",
+        credentialKind: "organization",
+        workspaceId: null,
+        name: legacy.name?.trim() || "Admin API key",
+        env,
+        hash,
+        last4,
+        scopes: [...OPERATOR_KEY_SCOPES],
+        packageNames: [],
+        createdByMembershipId: null,
+        createdByMentraUserId: null,
+        createdByEmail: legacyAdminKeyAddress(keyId),
+        issuedByService: null,
+        expiresAt: null,
+        lastUsedAt: legacy.lastUsedAt ?? null,
+        revokedAt: null,
+        createdAt: legacy.createdAt ?? now,
+        updatedAt: now,
       },
-      // The legacy creation time carries over, and a row that exists is left exactly as it is.
-      {upsert: true, session, timestamps: false},
-    )
-    if (result.upsertedCount !== 1) return false
-    const row = await AccessCredentialModel.findOne({credentialId: keyId}).session(session).lean<AccessCredentialRow>()
-    await recordCreated(session, row!, SYSTEM)
-    return true
-  })
-  if (!inserted) return
+    },
+    // The legacy creation time carries over, and a row that exists is left exactly as it is.
+    {upsert: true, timestamps: false},
+  )
+  if (result.upsertedCount !== 1) return
+  const row = await AccessCredentialModel.findOne({credentialId: keyId}).lean<AccessCredentialRow>()
+  if (row) await recordOrganizationEvent(createdEvent(row, SYSTEM))
   converted.push(keyId)
   logger.info({credentialId: keyId}, "converted a legacy admin key to an operator key")
   if (!credentialEnvironmentLabels().includes(env)) {

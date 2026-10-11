@@ -3,7 +3,10 @@
  *
  * Every workspace mutation records one audit event in the same transaction as
  * the change itself, so the trail never disagrees with the data. Operator-key
- * events are recorded with `workspaceId` null.
+ * events are recorded with `workspaceId` null. An operator key is one document,
+ * so its changes are written without a transaction (some databases a Private
+ * Cloud uses cannot run one across collections) and their audit event follows
+ * as a separate write (`recordOrganizationEvent`).
  *
  * `eventId` is a ULID from one monotonic source per process and identifies the
  * event; a workspace's audit page reads newest first by it. Each event's
@@ -12,10 +15,13 @@
  * identified by id and name, never by token or hash.
  */
 
+import {createLogger} from "@mentra/cloud-shared"
 import type {ClientSession} from "mongoose"
 import {monotonicFactory} from "ulid"
 import {WorkspaceAuditEventModel, type WorkspaceAuditEventRow} from "../../models/workspace-audit-event.model"
 import {currentRequestId} from "../request-context"
+
+const logger = createLogger("core").child({service: "workspace-audit"})
 
 const nextEventId = monotonicFactory()
 
@@ -35,17 +41,34 @@ export type WorkspaceAuditEventInput = Omit<
 > & {requestId?: string | null}
 
 /**
- * Append an audit event inside the caller's transaction and return its
- * `eventId`. The id and timestamp are assigned here, so a retried transaction
- * callback records a fresh event rather than reusing a rolled-back one.
+ * Append an audit event inside the caller's transaction (or, with `session`
+ * null, on its own) and return its `eventId`. The id and timestamp are assigned
+ * here, so a retried transaction callback records a fresh event rather than
+ * reusing a rolled-back one.
  */
-export async function recordWorkspaceEvent(session: ClientSession, event: WorkspaceAuditEventInput): Promise<string> {
+export async function recordWorkspaceEvent(
+  session: ClientSession | null,
+  event: WorkspaceAuditEventInput,
+): Promise<string> {
   const eventId = nextEventId()
   await WorkspaceAuditEventModel.create(
     [{...event, requestId: event.requestId ?? currentRequestId(), eventId, occurredAt: new Date()}],
-    {session},
+    session ? {session} : {},
   )
   return eventId
+}
+
+/**
+ * Record the audit event of an organization-level change already written on its own (an operator
+ * key). A failure is logged, never thrown: the change has happened, and reporting it as failed would
+ * invite a retry that repeats it.
+ */
+export async function recordOrganizationEvent(event: WorkspaceAuditEventInput): Promise<void> {
+  try {
+    await recordWorkspaceEvent(null, event)
+  } catch (err) {
+    logger.error({err, action: event.action, target: redactSecrets(event.target ?? null)}, "could not record an audit event")
+  }
 }
 
 /** One workspace's audit events, newest first, strictly older than `before` when given. */

@@ -27,7 +27,12 @@
  * A workspace key also needs its workspace to be active: deletion revokes every
  * key, and a row written around it still never resolves.
  *
- * Mutations follow the shape of `workspace.service`: one transaction that
+ * Operator keys are one document each and belong to no workspace, so creating
+ * and revoking one is a single write without a transaction, followed by its
+ * audit event (`recordOrganizationEvent`): a Private Cloud database that cannot
+ * run a transaction across collections still mints and revokes them.
+ *
+ * Workspace credential mutations follow the shape of `workspace.service`: one transaction that
  * checks the actor, writes the workspace document (workspace credentials only;
  * `touchWorkspace`, which serializes them against every other mutation of that
  * workspace, such as the creator leaving, without bumping
@@ -53,7 +58,7 @@ import {withTransaction} from "../../connections/mongo.connection"
 import {AccessCredentialModel, type AccessCredentialRow} from "../../models/access-credential.model"
 import {WorkspaceMembershipModel, type WorkspaceMembershipRow} from "../../models/workspace-membership.model"
 import {WorkspaceModel} from "../../models/workspace.model"
-import {recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
+import {recordOrganizationEvent, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {isOrganizationAdminEmail} from "../admin-email-policy"
 import {credentialEnvironmentLabels} from "./organization"
 import {fail} from "./workspace-error"
@@ -206,24 +211,23 @@ export async function createOperatorKey(
   const expiresAt = validateExpiry(input?.expiresAt)
   const env = issuingEnvironment()
 
-  return withTransaction(async session => {
-    const {row, token} = await insertCredential(session, {
-      prefix: "mak",
-      credentialKind: "organization",
-      workspaceId: null,
-      name,
-      env,
-      scopes,
-      packageNames: [],
-      createdByMembershipId: null,
-      createdByMentraUserId: actor.mentraUserId,
-      createdByEmail: email,
-      issuedByService: null,
-      expiresAt,
-    })
-    await recordCreated(session, row, auditActor(actor))
-    return {credential: toView(row), token}
+  // One document, so no transaction: the audit event follows on its own.
+  const {row, token} = await insertCredential(null, {
+    prefix: "mak",
+    credentialKind: "organization",
+    workspaceId: null,
+    name,
+    env,
+    scopes,
+    packageNames: [],
+    createdByMembershipId: null,
+    createdByMentraUserId: actor.mentraUserId,
+    createdByEmail: email,
+    issuedByService: null,
+    expiresAt,
   })
+  await recordOrganizationEvent(createdEvent(row, auditActor(actor)))
+  return {credential: toView(row), token}
 }
 
 // --- Listing ---------------------------------------------------------------
@@ -285,19 +289,21 @@ export async function listOperatorKeys(): Promise<CredentialView[]> {
  */
 export async function revokeCredential(actor: Actor, credentialId: string): Promise<void> {
   if (!isId(credentialId)) fail("not_found", "credential not found")
+  const found = await AccessCredentialModel.findOne({credentialId}).lean<CredentialRow>()
+  if (!found) fail("not_found", "credential not found")
+
+  if (found.credentialKind === "organization") {
+    if (!(actor.kind === "system" || (actor.kind === "user" && actor.isOrganizationAdmin))) {
+      fail("forbidden", "only an organization admin can revoke an operator key")
+    }
+    // One document, so no transaction: the audit event follows on its own.
+    await markRevoked(null, found, auditActor(actor))
+    return
+  }
+
   await withTransaction(async session => {
     const row = await AccessCredentialModel.findOne({credentialId}).session(session).lean<CredentialRow>()
     if (!row) fail("not_found", "credential not found")
-
-    if (row.credentialKind === "organization") {
-      if (!(actor.kind === "system" || (actor.kind === "user" && actor.isOrganizationAdmin))) {
-        fail("forbidden", "only an organization admin can revoke an operator key")
-      }
-      if (row.revokedAt) return
-      await markRevoked(session, row, auditActor(actor))
-      return
-    }
-
     const workspaceId = row.workspaceId
     if (!workspaceId) fail("not_found", "credential not found")
     await loadActiveWorkspace(session, workspaceId)
@@ -322,12 +328,13 @@ export async function revokeCredential(actor: Actor, credentialId: string): Prom
 }
 
 /**
- * Revoke one live credential inside the caller's transaction and record `credential.revoked` as
- * `actor`. A key that is already revoked changes nothing and records nothing. The caller has
+ * Revoke one live credential and record `credential.revoked` as `actor`: inside the caller's
+ * transaction, or with `session` null (an operator key) on its own, its audit event following as a
+ * separate write. A key that is already revoked changes nothing and records nothing. The caller has
  * already written the workspace document (for a workspace key) and checked who may do this.
  */
 export async function markRevoked(
-  session: ClientSession,
+  session: ClientSession | null,
   row: CredentialRow,
   actor: WorkspaceAuditEventInput["actor"],
   now: Date = new Date(),
@@ -335,17 +342,19 @@ export async function markRevoked(
   const revoked = await AccessCredentialModel.updateOne(
     {credentialId: row.credentialId, revokedAt: null},
     {$set: {revokedAt: now}},
-    {session},
+    session ? {session} : {},
   )
   if (revoked.modifiedCount !== 1) return
-  await recordWorkspaceEvent(session, {
+  const event: WorkspaceAuditEventInput = {
     workspaceId: row.workspaceId ?? null,
     action: "credential.revoked",
     actor,
     target: auditTarget(row),
     before: {revokedAt: null},
     after: {revokedAt: now.toISOString()},
-  })
+  }
+  if (session) await recordWorkspaceEvent(session, event)
+  else await recordOrganizationEvent(event)
 }
 
 // --- Validating ------------------------------------------------------------
@@ -491,16 +500,16 @@ type NewCredential = Pick<
   | "expiresAt"
 >
 
-/** Generate the id and secret, insert the row inside the transaction and return it with the token. */
+/** Generate the id and secret, insert the row (inside the transaction, when there is one) and return it with the token. */
 async function insertCredential(
-  session: ClientSession,
+  session: ClientSession | null,
   fields: NewCredential,
 ): Promise<{row: CredentialRow; token: string}> {
   const credentialId = ulid()
   const secret = randomBytes(32).toString("base64url")
   const [doc] = await AccessCredentialModel.create(
     [{...fields, credentialId, hash: sha256Hex(secret), last4: secret.slice(-4)}],
-    {session},
+    session ? {session} : {},
   )
   return {
     row: doc!.toObject() as CredentialRow,
@@ -514,7 +523,12 @@ export async function recordCreated(
   row: CredentialRow,
   actor: WorkspaceAuditEventInput["actor"],
 ): Promise<void> {
-  await recordWorkspaceEvent(session, {
+  await recordWorkspaceEvent(session, createdEvent(row, actor))
+}
+
+/** The `credential.created` event of a new row. */
+export function createdEvent(row: CredentialRow, actor: WorkspaceAuditEventInput["actor"]): WorkspaceAuditEventInput {
+  return {
     workspaceId: row.workspaceId ?? null,
     action: "credential.created",
     actor,
@@ -526,7 +540,7 @@ export async function recordCreated(
       createdByMembershipId: row.createdByMembershipId ?? null,
       issuedByService: row.issuedByService ?? null,
     },
-  })
+  }
 }
 
 /** Identifies the credential without any of its secret material. */
