@@ -19,6 +19,8 @@ export type WorkspaceErrorCode =
   | "email_unverified"
   | "invitation_expired"
   | "invitation_not_found"
+  | "rate_limited"
+  | "invitations_unavailable"
 
 const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   not_found: 404,
@@ -33,6 +35,8 @@ const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   email_unverified: 403,
   invitation_expired: 410,
   invitation_not_found: 404,
+  rate_limited: 429,
+  invitations_unavailable: 503,
 }
 
 export class WorkspaceError extends Error {

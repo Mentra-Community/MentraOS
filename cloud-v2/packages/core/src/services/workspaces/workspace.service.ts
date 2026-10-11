@@ -467,6 +467,8 @@ export function validateName(name: unknown): string {
   if (trimmed.length < 1 || trimmed.length > NAME_MAX_LENGTH) {
     fail("invalid_request", `name must be 1-${NAME_MAX_LENGTH} characters`)
   }
+  // Names go into invitation emails' subjects and bodies: no line breaks or other control characters.
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) fail("invalid_request", "name must not contain control characters")
   return trimmed
 }
 
@@ -573,10 +575,10 @@ export async function touchWorkspace(session: ClientSession, workspaceId: string
 }
 
 /**
- * End a membership, revoke the credentials it created and record the audit
- * event. The caller has already bumped the workspace's revision in the same
- * transaction. Ending closes the membership's last `roleHistory` entry at
- * `endedAt`, so nothing is appended to it.
+ * End a membership, revoke the credentials it created and the invitations it
+ * sent, and record the audit event. The caller has already bumped the
+ * workspace's revision in the same transaction. Ending closes the membership's
+ * last `roleHistory` entry at `endedAt`, so nothing is appended to it.
  */
 export async function endMembership(
   session: ClientSession,
@@ -614,13 +616,31 @@ export async function endMembership(
     )
   }
 
+  // An invitation carries its inviter's authority, which ends with the membership.
+  const invitations = await WorkspaceInvitationModel.find({
+    workspaceId: workspace.workspaceId,
+    invitedByMembershipId: membership.membershipId,
+    status: "pending",
+  })
+    .select({_id: 0, invitationId: 1})
+    .session(session)
+    .lean()
+  const revokedInvitationIds = invitations.map(invitation => invitation.invitationId)
+  if (revokedInvitationIds.length > 0) {
+    await WorkspaceInvitationModel.updateMany(
+      {invitationId: {$in: revokedInvitationIds}, status: "pending"},
+      {$set: {status: "revoked"}},
+      {session},
+    )
+  }
+
   await recordWorkspaceEvent(session, {
     workspaceId: workspace.workspaceId,
     action,
     actor: auditActor(actor),
     target: {membershipId: membership.membershipId, mentraUserId: membership.mentraUserId ?? null},
     before: {role: membership.role, status: "active"},
-    after: {status: "ended", endedReason: reason, revokedCredentialIds},
+    after: {status: "ended", endedReason: reason, revokedCredentialIds, revokedInvitationIds},
   })
   return toSummary(workspace)
 }

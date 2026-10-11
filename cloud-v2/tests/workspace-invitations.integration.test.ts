@@ -23,6 +23,7 @@ import type {Model} from "mongoose"
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {AuthRateLimitModel} from "../packages/core/src/models/auth-rate-limit.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
@@ -41,6 +42,7 @@ import {
 import {
   changeRole,
   createWorkspace,
+  removeMember,
   deleteWorkspace,
   getActiveMembership,
   getWorkspace,
@@ -63,6 +65,7 @@ import {
 } from "./support/signin-harness"
 
 const MODELS: Model<any>[] = [
+  AuthRateLimitModel,
   WorkspaceModel,
   WorkspaceMembershipModel,
   WorkspaceInvitationModel,
@@ -391,7 +394,7 @@ describe("createInvitation", () => {
     )
   })
 
-  test("CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE must contain {token}: a clear error at first use, nothing written", async () => {
+  test("CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE must contain {token}: invitations_unavailable at first use, nothing written", async () => {
     const ws = await newWorkspace()
     const bad = [
       undefined,
@@ -405,9 +408,8 @@ describe("createInvitation", () => {
       if (template === undefined) delete process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE
       else process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE = template
       const err = await thrown(() => createInvitation(user("mu_owner"), ws, {email: "x@example.test", role: "member"}))
-      expect(err).not.toBeInstanceOf(WorkspaceError)
-      expect(err.message).toContain("CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE")
-      expect(err.message).toContain("{token}")
+      expect(err).toBeInstanceOf(WorkspaceError)
+      expect({code: err.code, status: err.status}).toEqual({code: "invitations_unavailable", status: 503})
     }
     expect(await WorkspaceInvitationModel.countDocuments({})).toBe(0)
     expect(await WorkspaceAuditEventModel.countDocuments({action: "invitation.created"})).toBe(0)
@@ -451,12 +453,12 @@ describe("createInvitation", () => {
     )
     process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE = "https://core.example.test/invite"
     const err = await thrown(() => createInvitation(user("mu_owner"), ws, {email: "fourth@example.test", role: "member"}))
-    expect(err).not.toBeInstanceOf(WorkspaceError)
-    expect(err.message).toContain("CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE")
+    expect(err).toBeInstanceOf(WorkspaceError)
+    expect({code: err.code, status: err.status}).toEqual({code: "invitations_unavailable", status: 503})
     expect(await WorkspaceInvitationModel.countDocuments({email: "fourth@example.test"})).toBe(0)
   })
 
-  test("with neither a template nor a usable portal URL, inviting is a plain Error before anything is written", async () => {
+  test("with neither a template nor a usable portal URL, inviting is invitations_unavailable before anything is written", async () => {
     const ws = await newWorkspace()
     delete process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE
     const revision = await revisionOf(ws)
@@ -468,9 +470,8 @@ describe("createInvitation", () => {
       if (portal === undefined) delete process.env.CLOUD_CORE_ENTERPRISE_PORTAL_URL
       else process.env.CLOUD_CORE_ENTERPRISE_PORTAL_URL = portal
       const err = await thrown(() => createInvitation(user("mu_owner"), ws, {email: "dev@example.test", role: "member"}))
-      expect(err).toBeInstanceOf(Error)
-      expect(err).not.toBeInstanceOf(WorkspaceError)
-      expect(err.message).toContain("CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE")
+      expect(err).toBeInstanceOf(WorkspaceError)
+      expect({code: err.code, status: err.status}).toEqual({code: "invitations_unavailable", status: 503})
     }
 
     expect(await WorkspaceInvitationModel.countDocuments({})).toBe(0)
@@ -499,9 +500,7 @@ describe("createInvitation", () => {
     expect(await WorkspaceInvitationModel.countDocuments({})).toBe(0)
 
     // An authorized caller still gets the configuration error, with nothing written.
-    const err = await thrown(() => createInvitation(user("mu_admin"), ws, input))
-    expect(err).not.toBeInstanceOf(WorkspaceError)
-    expect(err.message).toContain("CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE")
+    await expectError(() => createInvitation(user("mu_admin"), ws, input), "invitations_unavailable", 503)
     expect(await WorkspaceInvitationModel.countDocuments({})).toBe(0)
     expect(await WorkspaceAuditEventModel.countDocuments({action: "invitation.created"})).toBe(0)
   })
@@ -561,6 +560,102 @@ describe("createInvitation", () => {
       expect(await WorkspaceInvitationModel.countDocuments({workspaceId: ws, status: "pending"})).toBe(1)
       const usable = await Promise.all(results.map(result => peekInvitation(tokenOf(result.inviteUrl))))
       expect(usable.filter(Boolean)).toHaveLength(1)
+    }
+  })
+})
+
+describe("an invitation carries its inviter's authority", () => {
+  test("it is revoked when the inviter's membership ends", async () => {
+    const ws = await newWorkspace()
+    const created = await createInvitation(user("mu_admin"), ws, {email: "dev@example.test", role: "developer"})
+    const adminMembership = (await getActiveMembership(ws, "mu_admin"))!.membershipId
+
+    await removeMember(user("mu_owner"), ws, adminMembership, await revisionOf(ws))
+
+    expect((await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!.status).toBe("revoked")
+    const removed = (await listWorkspaceAudit(ws, {limit: 10})).find(event => event.action === "membership.removed")!
+    expect((removed.after as {revokedInvitationIds: string[]}).revokedInvitationIds).toEqual([created.invitationId])
+    await expectError(
+      () => acceptInvitation(user("mu_dev", {email: "dev@example.test"}), tokenOf(created.inviteUrl)),
+      "invitation_not_found",
+      404,
+    )
+  })
+
+  test("acceptance is refused once the inviter's role no longer grants the invited role", async () => {
+    const ws = await newWorkspace()
+    await addMember(ws, "mu_owner2", "owner")
+    const created = await createInvitation(user("mu_owner2"), ws, {email: "boss@example.test", role: "owner"})
+    const ownerTwo = (await getActiveMembership(ws, "mu_owner2"))!.membershipId
+    await changeRole(user("mu_owner"), ws, ownerTwo, "admin", await revisionOf(ws))
+
+    await expectError(
+      () => acceptInvitation(user("mu_boss", {email: "boss@example.test"}), tokenOf(created.inviteUrl)),
+      "invitation_not_found",
+      404,
+    )
+    expect(await getActiveMembership(ws, "mu_boss")).toBeNull()
+
+    // An invitation the demoted inviter may still send is unaffected.
+    const member = await createInvitation(user("mu_owner2"), ws, {email: "member@example.test", role: "member"})
+    await acceptInvitation(user("mu_member", {email: "member@example.test"}), tokenOf(member.inviteUrl))
+    expect((await getActiveMembership(ws, "mu_member"))?.role).toBe("member")
+  })
+
+  test("an Organization Admin's invitation does not depend on a membership", async () => {
+    const ws = await newWorkspace()
+    // A plain member who is also an Organization Admin invites an owner on the strength of the latter.
+    await addMember(ws, orgAdmin.mentraUserId, "member")
+    const created = await createInvitation(orgAdmin, ws, {email: "heir@example.test", role: "owner"})
+    expect((await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!.invitedByMembershipId).toBeNull()
+
+    await acceptInvitation(user("mu_heir", {email: "heir@example.test"}), tokenOf(created.inviteUrl))
+    expect((await getActiveMembership(ws, "mu_heir"))?.role).toBe("owner")
+  })
+})
+
+describe("invitation limits", () => {
+  test("a person may send 100 invitations an hour", async () => {
+    const ws = await newWorkspace()
+    for (let i = 0; i < 100; i++) {
+      await createInvitation(user("mu_owner"), ws, {email: `bulk-${i}@example.test`, role: "member"})
+    }
+    await expectError(
+      () => createInvitation(user("mu_owner"), ws, {email: "one-more@example.test", role: "member"}),
+      "rate_limited",
+      429,
+    )
+    expect(await WorkspaceInvitationModel.countDocuments({email: "one-more@example.test"})).toBe(0)
+    // Another person is not held back.
+    await createInvitation(user("mu_admin"), ws, {email: "from-admin@example.test", role: "member"})
+  })
+
+  test("a workspace holds at most 200 pending invitations", async () => {
+    const ws = await newWorkspace()
+    const expiresAt = new Date(Date.now() + DAY_MS)
+    await WorkspaceInvitationModel.insertMany(
+      Array.from({length: 200}, (_, i) => ({
+        invitationId: `winv_seed_${i}`,
+        workspaceId: ws,
+        email: `seed-${i}@example.test`,
+        role: "member",
+        tokenHash: sha256(`seed-${i}`),
+        status: "pending",
+        expiresAt,
+      })),
+    )
+    await expectError(
+      () => createInvitation(user("mu_owner"), ws, {email: "overflow@example.test", role: "member"}),
+      "rate_limited",
+      429,
+    )
+    await revokeInvitation(user("mu_owner"), ws, "winv_seed_0")
+    await createInvitation(user("mu_owner"), ws, {email: "overflow@example.test", role: "member"})
+  })
+
+  test("a workspace name with a line break or other control character is refused", async () => {
+    for (const name of ["Acme\nSubject: reset your password", "Ac\rme", "Ac\u0007me", "Ac\u0085me"]) {
+      await expectError(() => createWorkspace(user("mu_owner"), {name}), "invalid_request", 400)
     }
   })
 })
@@ -1240,7 +1335,7 @@ describe("through the workspace API, signed in with the fake identity provider",
     expect(await WorkspaceMembershipModel.countDocuments({workspaceId, status: "active"})).toBe(2)
   })
 
-  test("with neither a template nor a portal URL, the invitation route answers 500 and writes nothing", async () => {
+  test("with neither a template nor a portal URL, the invitation route answers 503 invitations_unavailable and writes nothing", async () => {
     idp.registerUser({sub: "supa-owner", email: "owner@example.test", emailConfirmed: true})
     const owner = await bearer("supa-owner", "owner@example.test")
     const {workspaceId} = (await (await post("/api/workspaces", owner, {name: "Acme"})).json()) as {workspaceId: string}
@@ -1251,9 +1346,12 @@ describe("through the workspace API, signed in with the fake identity provider",
       role: "member",
     })
 
-    // The operator's configuration problem is logged, not described to the caller.
-    expect(response.status).toBe(500)
-    expect(await response.json()).toEqual({error: "server_error", error_description: "internal server error"})
+    // The operator's configuration problem is logged; the caller learns only that invitations are unavailable.
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({
+      error: "invitations_unavailable",
+      error_description: "invitations are not configured on this deployment",
+    })
     expect(await WorkspaceInvitationModel.countDocuments({})).toBe(0)
   })
 })

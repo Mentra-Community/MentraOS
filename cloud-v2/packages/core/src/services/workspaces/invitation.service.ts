@@ -34,6 +34,7 @@ import {WorkspaceInvitationModel, type WorkspaceInvitationRow} from "../../model
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel} from "../../models/workspace.model"
 import {sendEmail} from "../email/email.service"
+import {consumeRateLimit} from "../signin/rate-limit.service"
 import {recordWorkspaceEvent} from "./audit.service"
 import {
   auditActor,
@@ -56,6 +57,10 @@ const EMAIL_MAX_LENGTH = 254
 /** Tokens are 43 base64url characters; anything much longer is not one and is not worth hashing. */
 const TOKEN_MAX_LENGTH = 256
 const TOKEN_PLACEHOLDER = "{token}"
+/** Invitations one person may send per hour, across workspaces: invitation emails carry Mentra's name. */
+const INVITATIONS_PER_PERSON_PER_HOUR = 100
+/** Pending invitations one workspace may hold at once. */
+const MAX_PENDING_INVITATIONS = 200
 
 /** An invitation as listed to administrators. It never includes the token or its hash. */
 export interface InvitationRow {
@@ -77,8 +82,10 @@ export interface InvitationRow {
  * role)`: admins invite members and developers, only owners invite admins and
  * owners. A person inviting must have a verified email (`email_unverified`
  * otherwise). A pending invitation to the same address is revoked (superseded), so
- * only the newest link works. `inviteUrl` is built from `inviteUrlTemplate()`; a
- * missing or unusable template throws a plain `Error` before anything is written.
+ * only the newest link works. A person may send at most 100 invitations an hour
+ * and a workspace hold at most 200 pending ones (`rate_limited`). `inviteUrl` is
+ * built from `inviteUrlTemplate()`; a missing or unusable template is
+ * `invitations_unavailable` (503), before anything is written.
  * The template is checked only once the workspace exists and the actor may
  * invite this role, so a caller who may not invite is refused (404, 410, 403)
  * whatever the deployment's configuration says.
@@ -91,6 +98,11 @@ export async function createInvitation(
   const email = normalizeInviteEmail(input?.email)
   const role = input?.role
   if (!isWorkspaceRole(role)) fail("invalid_role", "role must be a workspace role")
+
+  if (actor.kind === "user" && isId(actor.mentraUserId)) {
+    const withinLimit = await consumeRateLimit(`workspace-invitations:${actor.mentraUserId}`, INVITATIONS_PER_PERSON_PER_HOUR, 3600)
+    if (!withinLimit) fail("rate_limited", "too many invitations sent in the last hour; try again later")
+  }
 
   const token = randomBytes(32).toString("base64url")
   const tokenHash = hashToken(token)
@@ -107,6 +119,11 @@ export async function createInvitation(
     // Only now, for a caller who may invite: a configuration problem is the operator's to hear about, not a stranger's.
     const template = inviteUrlTemplate()
     await touchWorkspace(session, workspaceId)
+    const pending = await WorkspaceInvitationModel.countDocuments({workspaceId, status: "pending", expiresAt: {$gt: new Date()}})
+      .session(session)
+    if (pending >= MAX_PENDING_INVITATIONS) {
+      fail("rate_limited", "this workspace has too many pending invitations; revoke some before inviting more")
+    }
 
     const invitationId = `winv_${ulid()}`
     const superseded = await WorkspaceInvitationModel.findOneAndUpdate(
@@ -123,7 +140,7 @@ export async function createInvitation(
           role,
           tokenHash,
           status: "pending",
-          invitedByMembershipId: await actorMembershipId(session, actor, workspaceId),
+          invitedByMembershipId: await actorMembershipId(session, actor, workspaceId, role),
           expiresAt,
         },
       ],
@@ -264,6 +281,20 @@ export async function acceptInvitation(
     await loadActiveWorkspace(session, invitation.workspaceId)
 
     if (invitation.expiresAt.getTime() <= Date.now()) fail("invitation_expired", "this invitation has expired")
+    // The invitation is only as good as its inviter's standing today.
+    if (invitation.invitedByMembershipId) {
+      const inviter = await WorkspaceMembershipModel.findOne({
+        membershipId: invitation.invitedByMembershipId,
+        workspaceId: invitation.workspaceId,
+        status: "active",
+      })
+        .select({role: 1})
+        .session(session)
+        .lean()
+      if (!inviter || !canChangeRole(inviter.role as WorkspaceRole, null, invitation.role as WorkspaceRole)) {
+        fail("invitation_not_found", "this invitation is no longer valid; ask for a new one")
+      }
+    }
     if (actor.emailVerified !== true || normalizeAddress(actor.email) !== invitation.email) {
       fail("email_mismatch", "sign in with the verified email address this invitation was sent to")
     }
@@ -325,18 +356,29 @@ export async function acceptInvitation(
 
 // --- Helpers ---------------------------------------------------------------
 
-/** The membership the actor invites from, or null (organization admins and the system may have none). */
-async function actorMembershipId(session: ClientSession, actor: Actor, workspaceId: string): Promise<string | null> {
+/**
+ * The membership whose role grants this invitation, or null when the authority comes from elsewhere
+ * (an Organization Admin, or the system). An invitation recorded against a membership is valid only
+ * while that membership could still send it: it is revoked when the membership ends, and refused at
+ * acceptance once the membership's role no longer grants the invited role.
+ */
+async function actorMembershipId(
+  session: ClientSession,
+  actor: Actor,
+  workspaceId: string,
+  role: WorkspaceRole,
+): Promise<string | null> {
   if (actor.kind !== "user" || !isId(actor.mentraUserId)) return null
   const membership = await WorkspaceMembershipModel.findOne({
     workspaceId,
     mentraUserId: actor.mentraUserId,
     status: "active",
   })
-    .select({membershipId: 1})
+    .select({membershipId: 1, role: 1})
     .session(session)
     .lean()
-  return membership?.membershipId ?? null
+  if (!membership || !canChangeRole(membership.role as WorkspaceRole, null, role)) return null
+  return membership.membershipId
 }
 
 function normalizeAddress(email: unknown): string {
@@ -380,14 +422,18 @@ export function inviteUrlTemplate(): string {
   const problem =
     `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE must be an absolute http(s) URL containing "${TOKEN_PLACEHOLDER}", ` +
     "or CLOUD_CORE_ENTERPRISE_PORTAL_URL must be set so invitation links open the workspace portal"
-  if (!template.includes(TOKEN_PLACEHOLDER)) throw new Error(problem)
-  let sample: URL
+  const unusable = (): never => {
+    logger.error(problem)
+    fail("invitations_unavailable", "invitations are not configured on this deployment")
+  }
+  if (!template.includes(TOKEN_PLACEHOLDER)) unusable()
+  let sample: URL | null = null
   try {
     sample = new URL(template.split(TOKEN_PLACEHOLDER).join("sample"))
   } catch {
-    throw new Error(problem)
+    unusable()
   }
-  if (sample.protocol !== "https:" && sample.protocol !== "http:") throw new Error(problem)
+  if (sample!.protocol !== "https:" && sample!.protocol !== "http:") unusable()
   return template
 }
 
