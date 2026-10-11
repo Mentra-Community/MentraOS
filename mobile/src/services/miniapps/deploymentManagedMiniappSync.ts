@@ -1,5 +1,6 @@
 import {
   appRegistry,
+  canShowRunningUpdatePrompt,
   installMiniappRelease,
   markMiniappUpdateDeferred,
   MiniappInstallCancelledError,
@@ -229,6 +230,15 @@ async function installEntry(
     return false
   }
 
+  const isUpdate = installedVersions.length > 0 && !installedVersions.includes(entry.version)
+  if (isUpdate && miniappLauncher.isRunning(entry.packageName) && !canAskToUpdate(entry.packageName)) {
+    // Like a Store release, an update the user would not be asked about now is
+    // not downloaded: it waits until the miniapp closes or a prompt can appear.
+    markMiniappUpdateDeferred(entry.packageName)
+    console.log(`${LOG_TAG}: ${entry.packageName}@${entry.version} waits until the open miniapp closes`)
+    return false
+  }
+
   let zipPath: string | undefined
   try {
     zipPath = await waitForDownload(downloadVerifiedBundle(entry, context), context.signal)
@@ -246,7 +256,7 @@ async function installEntry(
         bundleSha256: entry.sha256.toLowerCase(),
       },
     }
-    if (installedVersions.length > 0 && !installedVersions.includes(entry.version)) {
+    if (isUpdate) {
       // A new version of an installed miniapp updates like a Store release: an
       // idle one at once, an open one after asking. "Not now" waits until it
       // closes, when its deferred update syncs the workspace again.
@@ -275,6 +285,11 @@ async function installEntry(
       removeCachedBundle(new File(zipPath))
     }
   }
+}
+
+/** An open miniapp's update asks first; that is possible only for one the user sees, when a prompt may appear. */
+function canAskToUpdate(packageName: string): boolean {
+  return miniappLauncher.isProjectedRunning(packageName) && canShowRunningUpdatePrompt(packageName)
 }
 
 async function syncWorkspace(

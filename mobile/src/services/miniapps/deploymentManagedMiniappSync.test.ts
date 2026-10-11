@@ -182,6 +182,7 @@ jest.mock("../../../modules/engine/src/utils/storage/zip", () => ({printDirector
 // installs like the real one, after asking when the miniapp is open.
 const mockRunning = new Set<string>()
 let mockPromptAnswer: "update" | "not_now" = "update"
+let mockCanPrompt = true
 const mockReleaseInstalls: Array<{archive: unknown; options: Record<string, unknown>}> = []
 const mockDeferred: string[] = []
 jest.mock("@mentra/engine-host-internal", () => {
@@ -193,7 +194,11 @@ jest.mock("@mentra/engine-host-internal", () => {
     MiniappRunningError,
     MiniappInstallCancelledError: class MiniappInstallCancelledError extends Error {},
     markMiniappUpdateDeferred: (packageName: string) => mockDeferred.push(packageName),
-    miniappLauncher: {isRunning: (packageName: string) => mockRunning.has(packageName)},
+    miniappLauncher: {
+      isRunning: (packageName: string) => mockRunning.has(packageName),
+      isProjectedRunning: (packageName: string) => mockRunning.has(packageName),
+    },
+    canShowRunningUpdatePrompt: () => mockCanPrompt,
     installMiniappRelease: async (
       archive: {localZipPath: string; adoptIdenticalInstalledVersion?: boolean},
       {onlyIfStopped, askIfRunning, isCancelled, ...options}: Record<string, unknown>,
@@ -296,6 +301,7 @@ beforeEach(async () => {
   mockValidatedArchives.length = 0
   mockRunning.clear()
   mockPromptAnswer = "update"
+  mockCanPrompt = true
   mockReleaseInstalls.length = 0
   mockDeferred.length = 0
   selectDeployment(workspace)
@@ -995,6 +1001,25 @@ describe("workspace updates while a managed miniapp may be open", () => {
     // Closing it fires the deferred update, which syncs the workspace again.
     mockRunning.delete(pkg)
     await deploymentManagedMiniappSync.sync(updated)
+    expect(registry.getInstalledVersions(pkg)).toEqual([nextVersion])
+  })
+
+  it("does not download an open miniapp's update while it may not ask about it", async () => {
+    await ownCurrentRelease()
+    mockDownload.mockClear()
+    mockRunning.add(pkg)
+    // In the background, or within a day of the last prompt.
+    mockCanPrompt = false
+    await deploymentManagedMiniappSync.sync(updated)
+    await deploymentManagedMiniappSync.sync(updated)
+    expect(mockDownload).not.toHaveBeenCalled()
+    expect(mockReleaseInstalls).toEqual([])
+    expect(mockDeferred).toEqual([pkg, pkg])
+    expect(registry.getInstalledVersions(pkg)).toEqual([version])
+
+    mockCanPrompt = true
+    await deploymentManagedMiniappSync.sync(updated)
+    expect(mockDownload).toHaveBeenCalledTimes(1)
     expect(registry.getInstalledVersions(pkg)).toEqual([nextVersion])
   })
 

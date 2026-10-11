@@ -49,6 +49,7 @@ export {
   type ReleaseInstallOptions,
 } from "./services/miniappReleaseInstall"
 export {markMiniappUpdateDeferred} from "./services/deferredMiniappUpdates"
+export {canShowRunningUpdatePrompt} from "./services/runningUpdatePrompt"
 export {MiniappRunningError} from "./utils/storeInstallRuntime"
 export {sha256Hex} from "./utils/sha256"
 export {
