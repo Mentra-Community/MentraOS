@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/shared" },
     { "path": "./packages/auth" },
+    { "path": "./packages/miniapp-tools" },
     { "path": "./packages/cli" },
     { "path": "./packages/core" },
     { "path": "./packages/runtime" },
