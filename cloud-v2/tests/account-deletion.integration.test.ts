@@ -35,6 +35,7 @@ import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-toke
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {removeDeletedUserFromWorkspaces} from "../packages/core/src/services/workspaces/account-deletion.service"
 import {
+  createOperatorKey,
   createWorkspaceCredential,
   mintServiceCredential,
   validateCredentialToken,
@@ -287,17 +288,43 @@ describe("confirmAccountDeletion", () => {
     expect(await countActiveOwners(s.solo.workspaceId)).toBe(1)
   })
 
-  test("invitations the user sent, and invitations to the user's email, stay valid", async () => {
+  test("invitations the user sent end with their membership; invitations to the user's email stay valid", async () => {
     const s = await scenario()
 
     await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
 
-    for (const invitationId of [s.sentInvitationId, s.receivedInvitationId]) {
-      expect({invitationId, status: (await WorkspaceInvitationModel.findOne({invitationId}).lean())!.status}).toEqual({
-        invitationId,
-        status: "pending",
-      })
-    }
+    expect((await WorkspaceInvitationModel.findOne({invitationId: s.sentInvitationId}).lean())!.status).toBe("revoked")
+    expect((await WorkspaceInvitationModel.findOne({invitationId: s.receivedInvitationId}).lean())!.status).toBe("pending")
+    const removed = await WorkspaceAuditEventModel.find({action: "membership.removed"}).lean()
+    expect(removed.flatMap(event => (event.after as {revokedInvitationIds?: string[]}).revokedInvitationIds ?? [])).toEqual([
+      s.sentInvitationId,
+    ])
+  })
+
+  test("the person's operator keys are revoked and their email is cleared from their membership rows", async () => {
+    const s = await scenario()
+    const operatorKey = await createOperatorKey(
+      {kind: "user", mentraUserId: s.mentraUserId, email: "ops-admin@example.test", emailVerified: true, isOrganizationAdmin: true},
+      {name: "Incident fetcher", scopes: ["organization.incidents.read"]},
+    )
+    const othersOperatorKey = await createOperatorKey(
+      {kind: "user", mentraUserId: "mu_other_admin", email: "other-admin@example.test", emailVerified: true, isOrganizationAdmin: true},
+      {name: "Another fetcher", scopes: ["organization.incidents.read"]},
+    )
+    const memberships = await WorkspaceMembershipModel.find({mentraUserId: s.mentraUserId}).lean()
+    expect(memberships.some(row => row.email)).toBe(true)
+
+    await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
+
+    const revoked = (await AccessCredentialModel.findOne({credentialId: operatorKey.credential.credentialId}).lean())!
+    expect(revoked.revokedAt).toBeInstanceOf(Date)
+    const kept = (await AccessCredentialModel.findOne({credentialId: othersOperatorKey.credential.credentialId}).lean())!
+    expect(kept.revokedAt).toBeNull()
+    expect(
+      await WorkspaceAuditEventModel.countDocuments({action: "credential.revoked", "target.credentialId": operatorKey.credential.credentialId}),
+    ).toBe(1)
+    const after = await WorkspaceMembershipModel.find({mentraUserId: s.mentraUserId}).lean()
+    expect(after.map(row => row.email)).toEqual(after.map(() => null))
   })
 
   test("a wrong code changes nothing", async () => {
@@ -344,7 +371,7 @@ describe("removeDeletedUserFromWorkspaces", () => {
     const eventsAfterFirst = await WorkspaceAuditEventModel.countDocuments({})
     const revisions = await Promise.all([s.team, s.solo].map(async w => (await getWorkspace(w.workspaceId))!))
 
-    expect(await removeDeletedUserFromWorkspaces(s.mentraUserId)).toEqual({endedMembershipIds: []})
+    expect(await removeDeletedUserFromWorkspaces(s.mentraUserId)).toEqual({endedMembershipIds: [], revokedOperatorKeyIds: []})
 
     expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(eventsAfterFirst)
     for (const previous of revisions) {
@@ -352,7 +379,7 @@ describe("removeDeletedUserFromWorkspaces", () => {
     }
   })
 
-  test("a person with no active membership returns at once: no transaction, nothing written", async () => {
+  test("a person with no active membership needs no transaction and changes no workspace", async () => {
     const {mentraUserId: lonely} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-lonely"})
     const {mentraUserId: former} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-former"})
     const team = await createWorkspace(actor("mu_owner"), {name: "Team"})
@@ -365,7 +392,7 @@ describe("removeDeletedUserFromWorkspaces", () => {
       for (const mentraUserId of [lonely, former, "mu_never_seen"]) {
         expect({mentraUserId, result: await removeDeletedUserFromWorkspaces(mentraUserId)}).toEqual({
           mentraUserId,
-          result: {endedMembershipIds: []},
+          result: {endedMembershipIds: [], revokedOperatorKeyIds: []},
         })
       }
       expect(startSession).not.toHaveBeenCalled()
@@ -373,7 +400,7 @@ describe("removeDeletedUserFromWorkspaces", () => {
       // Someone with a membership does go through a transaction.
       const {mentraUserId: member} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-member"})
       const membershipId = await addMember(team.workspaceId, {mentraUserId: member, role: "member"})
-      expect(await removeDeletedUserFromWorkspaces(member)).toEqual({endedMembershipIds: [membershipId]})
+      expect(await removeDeletedUserFromWorkspaces(member)).toEqual({endedMembershipIds: [membershipId], revokedOperatorKeyIds: []})
       expect(startSession).toHaveBeenCalledTimes(1)
     } finally {
       startSession.mockRestore()
@@ -389,7 +416,7 @@ describe("removeDeletedUserFromWorkspaces", () => {
     const membershipId = await addMember(gone.workspaceId, {mentraUserId, role: "developer"})
     await WorkspaceModel.updateOne({workspaceId: gone.workspaceId}, {$set: {status: "deleted", deletedAt: new Date()}})
 
-    expect(await removeDeletedUserFromWorkspaces(mentraUserId)).toEqual({endedMembershipIds: [membershipId]})
+    expect(await removeDeletedUserFromWorkspaces(mentraUserId)).toEqual({endedMembershipIds: [membershipId], revokedOperatorKeyIds: []})
 
     expect(await WorkspaceMembershipModel.findOne({membershipId}).lean()).toMatchObject({
       status: "ended",

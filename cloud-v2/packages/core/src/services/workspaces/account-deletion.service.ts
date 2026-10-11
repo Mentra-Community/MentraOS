@@ -3,39 +3,56 @@
  *
  * One transaction, as the deleted user, ends every active membership the user
  * holds with `endedReason: "account_deleted"`. Each ends as removal does
- * (`endMembership`): the workspace's revision is bumped, the credentials that
- * membership created are revoked, and one `membership.removed` event is recorded.
+ * (`endMembership`): the workspace's revision is bumped, the credentials and
+ * pending invitations that membership created are revoked, and one
+ * `membership.removed` event is recorded. Then the operator keys the person
+ * created are revoked (a deleted account is no Organization Admin), and the
+ * email copied onto their membership rows for display is cleared.
  *
  * Account deletion is never refused for a workspace's sake. A workspace whose
  * last owner this was is left without one, and an Organization Admin recovers it
  * (`recoverOwnership`).
  *
- * Pending invitations the user sent stay valid: an invitation does not depend on
- * its inviter's membership (accepting checks the invitation, the workspace and
- * the invitee only), which is also what removing an inviter does. Invitations
- * addressed to the user's email stay too: they name an address, not an account.
- *
- * Operator keys the user created are not revoked here: an operator key works
- * only while its creator's email is on the Organization Admin allowlist, and the
- * allowlist, not the account, decides that.
+ * Invitations addressed to the user's email stay: they name an address, not an
+ * account. Audit events keep the actor's email as it was recorded.
  */
 
 import {withTransaction} from "../../connections/mongo.connection"
+import {AccessCredentialModel, type AccessCredentialRow} from "../../models/access-credential.model"
 import {WorkspaceMembershipModel} from "../../models/workspace-membership.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
-import {endMembership, isId, type Actor, type MembershipRow} from "./workspace.service"
+import {markRevoked} from "./credential.service"
+import {auditActor, endMembership, isId, type Actor, type MembershipRow} from "./workspace.service"
 
 /**
- * End the deleted user's workspace memberships, in one transaction. Safe to run
- * again: a second run finds nothing left to end.
+ * End the deleted user's workspace memberships (in one transaction), revoke the operator keys they
+ * created and clear their email from their membership rows. Safe to run again: a second run finds
+ * nothing left to end or revoke.
  */
-export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Promise<{endedMembershipIds: string[]}> {
+export async function removeDeletedUserFromWorkspaces(
+  mentraUserId: string,
+): Promise<{endedMembershipIds: string[]; revokedOperatorKeyIds: string[]}> {
   // A missing id must not become a `null` filter.
   if (!isId(mentraUserId)) throw new Error("mentraUserId is required")
   const actor: Actor = {kind: "user", mentraUserId, email: null, emailVerified: false, isOrganizationAdmin: false}
   // Most accounts belong to no workspace; they need no transaction (nor a replica set).
-  if (!(await WorkspaceMembershipModel.exists({status: "active", mentraUserId}))) return {endedMembershipIds: []}
+  const endedMembershipIds = (await WorkspaceMembershipModel.exists({status: "active", mentraUserId}))
+    ? await endMemberships(mentraUserId, actor)
+    : []
 
+  // An operator key is one document: revoked one by one, without a transaction.
+  const operatorKeys = await AccessCredentialModel.find({
+    credentialKind: "organization",
+    createdByMentraUserId: mentraUserId,
+    revokedAt: null,
+  }).lean<AccessCredentialRow[]>()
+  for (const key of operatorKeys) await markRevoked(null, key, auditActor(actor))
+
+  await WorkspaceMembershipModel.updateMany({mentraUserId, email: {$ne: null}}, {$set: {email: null}})
+  return {endedMembershipIds, revokedOperatorKeyIds: operatorKeys.map(key => key.credentialId)}
+}
+
+async function endMemberships(mentraUserId: string, actor: Actor): Promise<string[]> {
   return withTransaction(async session => {
     const memberships = await WorkspaceMembershipModel.find({status: "active", mentraUserId})
       .sort({workspaceId: 1, startedAt: 1, _id: 1})
@@ -68,6 +85,6 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
         })
       }
     }
-    return {endedMembershipIds: memberships.map(membership => membership.membershipId)}
+    return memberships.map(membership => membership.membershipId)
   })
 }

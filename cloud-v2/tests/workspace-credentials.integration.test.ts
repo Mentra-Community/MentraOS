@@ -721,7 +721,7 @@ describe("validateCredentialToken", () => {
     expect(await validateCredentialToken(mine.token)).toBeNull()
   })
 
-  test("deleting the creator's account ends their workspace keys everywhere, but not their operator key", async () => {
+  test("deleting the creator's account ends their workspace keys everywhere, and their operator key", async () => {
     const {workspaceId} = await newWorkspace()
     await addMember(workspaceId, orgAdmin.mentraUserId, "developer")
     const own = (await createWorkspace(orgAdmin, {name: "Own"})).workspaceId
@@ -733,10 +733,10 @@ describe("validateCredentialToken", () => {
 
     expect(await validateCredentialToken(inShared.token)).toBeNull()
     expect(await validateCredentialToken(inOwn.token)).toBeNull()
-    // The admin allowlist, not the account, decides an operator key.
-    expect(await validateCredentialToken(operator.token)).not.toBeNull()
-    process.env.CLOUD_CORE_ADMIN_EMAILS = "someone-else@example.test"
+    // A deleted account is no Organization Admin, even while its email stays on the allowlist.
     expect(await validateCredentialToken(operator.token)).toBeNull()
+    const row = await AccessCredentialModel.findOne({credentialId: operator.credential.credentialId}).lean()
+    expect(row?.revokedAt).toBeInstanceOf(Date)
   })
 
   test("a key with neither a creator nor a service is invalid", async () => {
@@ -1032,6 +1032,31 @@ describe("createOperatorKey", () => {
     const {secret} = parse(token)
     expect(JSON.stringify(events[0])).not.toContain(secret)
     expect(JSON.stringify(events[0])).not.toContain(sha256Hex(secret))
+  })
+
+  test("creating, using and revoking an operator key never opens a transaction", async () => {
+    // A Private Cloud may run on a database without multi-document transactions
+    // (Cosmos DB for MongoDB, a standalone mongod). Operator keys must still work there.
+    const startSession = spyOn(AccessCredentialModel.db, "startSession").mockImplementation(() => {
+      throw new Error("Transaction numbers are only allowed on a replica set member or mongos")
+    })
+    try {
+      const {credential, token} = await createOperatorKey(orgAdmin, {
+        name: "ops",
+        scopes: ["organization.incidents.read"],
+      })
+      expect(await validateCredentialToken(token)).not.toBeNull()
+      await revokeCredential(orgAdmin, credential.credentialId)
+      expect(await validateCredentialToken(token)).toBeNull()
+      expect(startSession).not.toHaveBeenCalled()
+
+      const actions = (await WorkspaceAuditEventModel.find({"target.credentialId": credential.credentialId}).lean())
+        .map((event) => event.action)
+        .sort()
+      expect(actions).toEqual(["credential.created", "credential.revoked"])
+    } finally {
+      startSession.mockRestore()
+    }
   })
 
   test("stops validating immediately once the creator's email leaves the admin allowlist", async () => {
