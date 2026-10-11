@@ -179,8 +179,8 @@ function SettingsForms({
                 <form onSubmit={submitDelete} className="flex flex-wrap items-end gap-3">
                   <div className="grid gap-2">
                     <Label htmlFor={confirmId}>
-                      <span>
-                        Type <strong>{detail.name}</strong> to confirm
+                      <span className="font-normal">
+                        Type <strong className="font-semibold">{detail.name}</strong> to confirm
                       </span>
                     </Label>
                     <Input

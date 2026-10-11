@@ -1,7 +1,7 @@
+import { Avatar, Button } from "@mentra/workspace-ui";
 import { LogOut, Menu, MoreHorizontal, X, type LucideIcon } from "lucide-react";
 import { useCallback, useRef, useState, type ReactNode } from "react";
-import mentraLogo from "@/assets/mentra-logo.svg";
-import { Button } from "@/components/ui/button";
+import { MentraLogo } from "@/components/brand";
 import { Link } from "@/lib/navigation";
 import { useDismiss } from "@/lib/use-dismiss";
 import { cn } from "@/lib/utils";
@@ -59,7 +59,7 @@ export function AppShell({
     <Button
       variant="ghost"
       size="icon"
-      className="size-10 shrink-0 rounded-[10px] text-[#5d6068] hover:bg-[#f3f4f2] hover:text-[#111217] md:hidden"
+      className="-ml-2 md:hidden"
       onClick={() => setMobileSidebarOpen(true)}
       aria-label="Open sidebar"
     >
@@ -68,11 +68,11 @@ export function AppShell({
   );
 
   return (
-    <div className="h-dvh overflow-hidden bg-[#f5f6f4] text-[#14151b]">
+    <div className="bg-background text-foreground h-dvh overflow-hidden">
       {mobileSidebarOpen ? (
         <button
           type="button"
-          className="fixed inset-0 z-20 bg-[#111217]/30 md:hidden"
+          className="fixed inset-0 z-20 bg-black/45 backdrop-blur-[4px] md:hidden"
           aria-label="Close sidebar"
           onClick={() => setMobileSidebarOpen(false)}
         />
@@ -80,16 +80,16 @@ export function AppShell({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-30 flex w-[264px] flex-col border-r border-[#e4e6e2] bg-white shadow-xl transition-transform duration-200 md:z-20 md:translate-x-0 md:shadow-none",
-          mobileSidebarOpen ? "translate-x-0" : "-translate-x-full",
+          "bg-background fixed inset-y-0 left-0 z-30 flex w-[264px] flex-col border-r transition-transform duration-200 md:z-20 md:translate-x-0 md:shadow-none",
+          mobileSidebarOpen ? "shadow-dialog translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-14 shrink-0 items-center justify-between px-5">
-          <img src={mentraLogo} alt="Mentra" className="h-[20px] w-[37px]" />
+        <div className="flex h-16 shrink-0 items-center justify-between pr-3 pl-6">
+          <MentraLogo className="h-[22px]" />
           <Button
             variant="ghost"
             size="icon-sm"
-            className="rounded-[8px] text-[#5d6068] md:hidden"
+            className="text-muted-foreground md:hidden"
             onClick={() => setMobileSidebarOpen(false)}
             aria-label="Close sidebar"
           >
@@ -109,7 +109,7 @@ export function AppShell({
           {groups.map(group => (
             <div key={group.key}>
               {group.label ? (
-                <div className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#a0a3aa]">{group.label}</div>
+                <div className="text-muted-foreground px-4 pb-2 text-xs font-semibold">{group.label}</div>
               ) : null}
               <ul className="space-y-0.5">
                 {group.items.map(item => {
@@ -121,11 +121,11 @@ export function AppShell({
                         href={item.href}
                         aria-current={active ? "page" : undefined}
                         className={cn(
-                          "flex h-9 items-center gap-3 rounded-[10px] px-3 text-[14px] font-medium text-[#5d6068] hover:bg-[#f3f4f2] hover:text-[#14151b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#36dd89]/60",
-                          active && "bg-[#111217] text-white hover:bg-[#111217] hover:text-white",
+                          "text-foreground hover:bg-hover flex h-10 items-center gap-3 rounded-full px-4 text-[15px] font-semibold transition-colors",
+                          active && "bg-primary text-primary-foreground hover:bg-primary",
                         )}
                       >
-                        <Icon className={cn("size-4", active ? "text-white" : "text-[#8a8d95]")} />
+                        <Icon className={cn("size-[18px]", active ? "text-primary-foreground" : "text-muted-foreground")} />
                         {item.label}
                       </Link>
                     </li>
@@ -141,13 +141,13 @@ export function AppShell({
 
       <div className="h-dvh overflow-y-auto overflow-x-hidden overscroll-contain md:pl-[264px]">
         {title ? (
-          <header className="sticky top-0 z-10 border-b border-[#e4e6e2] bg-white/88 backdrop-blur">
-            <div className="mx-auto flex min-h-[68px] max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5 md:min-h-[76px] md:flex-nowrap md:px-8 md:py-4">
+          <header className="bg-background/90 sticky top-0 z-10 border-b backdrop-blur">
+            <div className="mx-auto flex min-h-[68px] max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5 md:min-h-[84px] md:flex-nowrap md:px-8 md:py-4">
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 {menuButton}
                 <div className="min-w-0">
-                  <h1 className="truncate font-display text-[20px] font-bold leading-7 text-[#14151b] md:text-[22px]">{title}</h1>
-                  {description ? <p className="mt-0.5 truncate text-xs text-[#747780] sm:text-sm">{description}</p> : null}
+                  <h1 className="truncate text-xl leading-tight font-semibold md:text-2xl">{title}</h1>
+                  {description ? <p className="text-muted-foreground mt-1 truncate text-sm">{description}</p> : null}
                 </div>
               </div>
               {headerAction ? <div className="shrink-0">{headerAction}</div> : null}
@@ -175,12 +175,12 @@ function AccountFooter({ userEmail, onSignOut, signingOut }: { userEmail: string
   useDismiss(ref, open, close);
 
   return (
-    <div ref={ref} className="relative shrink-0 border-t border-[#eceeeb] px-4 py-3">
+    <div ref={ref} className="relative shrink-0 border-t px-4 py-3">
       {open ? (
-        <div className="absolute bottom-[62px] left-3 right-3 z-40 overflow-hidden rounded-[14px] border border-[#e0e4de] bg-white p-1 shadow-[0_12px_30px_rgba(20,21,27,0.14)]">
+        <div className="rounded-menu bg-popover shadow-menu absolute right-3 bottom-[66px] left-3 z-40 overflow-hidden border p-1.5">
           <button
             type="button"
-            className="flex h-10 w-full items-center gap-3 rounded-[10px] px-3 text-left text-sm font-medium text-[#a64235] hover:bg-[#fff3f1] disabled:opacity-60"
+            className="hover:bg-hover flex h-10 w-full items-center gap-3 rounded-full px-3.5 text-left text-[15px] font-semibold disabled:opacity-45"
             disabled={signingOut}
             onClick={() => onSignOut?.()}
           >
@@ -190,18 +190,16 @@ function AccountFooter({ userEmail, onSignOut, signingOut }: { userEmail: string
         </div>
       ) : null}
       <div className="flex items-center gap-3">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#111217] text-xs font-semibold text-white">
-          {accountInitials(userEmail)}
-        </div>
+        <Avatar label={userEmail} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{userEmail}</div>
-          <div className="truncate text-xs text-[#9a9da4]">Account</div>
+          <div className="truncate text-sm font-semibold">{userEmail}</div>
+          <div className="text-muted-foreground truncate text-xs">Account</div>
         </div>
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
-          className="shrink-0 rounded-full text-[#747780] hover:bg-[#f3f4f2] hover:text-[#111217]"
+          className="text-muted-foreground"
           aria-label="Open account menu"
           aria-expanded={open}
           onClick={() => setOpen(value => !value)}
@@ -211,15 +209,4 @@ function AccountFooter({ userEmail, onSignOut, signingOut }: { userEmail: string
       </div>
     </div>
   );
-}
-
-export function accountInitials(value: string): string {
-  const local = value.split("@")[0] || "MD";
-  return local
-    .split(/[._\- ]+/)
-    .filter(Boolean)
-    .map(part => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
 }

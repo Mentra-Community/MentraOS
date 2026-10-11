@@ -1,9 +1,8 @@
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { workspaceListQuery } from "@mentra/workspace-ui";
-import { Loader2, UsersRound } from "lucide-react";
+import { buttonVariants, Spinner, workspaceListQuery } from "@mentra/workspace-ui";
 import { useState } from "react";
+import { BrandPage } from "@/components/brand";
 import { PortalShell } from "@/components/portal-shell";
-import mentraLogo from "./assets/mentra-logo.svg";
 import { SignedOutScreen } from "./components/signed-out";
 import { api, safeLocalStorage, type PortalMe } from "./lib/api";
 import { Redirect, usePathname } from "./lib/navigation";
@@ -138,59 +137,26 @@ function InvitationRoute() {
 }
 
 export function LoginGate({ invitePending = false, loginUrl = loginHref() }: { invitePending?: boolean; loginUrl?: string }) {
-
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8f6_100%)] px-5 py-10 text-[#14141a]">
-      <div className="pointer-events-none absolute left-[42%] top-[-54%] size-[980px] rounded-full bg-[radial-gradient(circle,rgba(201,244,232,0.78)_0%,rgba(228,246,240,0.46)_35%,rgba(255,255,255,0)_70%)] blur-[68px]" />
-      <div className="pointer-events-none absolute left-[-24%] top-[58%] size-[720px] rounded-full bg-[radial-gradient(circle,rgba(214,242,235,0.68)_0%,rgba(232,247,242,0.4)_42%,rgba(255,255,255,0)_72%)] blur-[62px]" />
-
-      <section className="relative flex w-full flex-col items-center justify-center gap-5">
-        <div className="relative w-full max-w-[440px] overflow-hidden rounded-[24px] p-9 shadow-[0_16px_40px_-8px_rgba(20,20,26,0.07),0_0_0_1px_rgba(20,20,26,0.07),inset_0_1px_0_rgba(255,255,255,0.9)]">
-          <div className="absolute inset-0 rounded-[24px] bg-[rgba(255,255,255,0.82)] backdrop-blur-[14px]" />
-          <div className="relative text-center">
-            <img src={mentraLogo} alt="Mentra" className="mx-auto h-[27px] w-[50px]" />
-
-            <div className="h-[22px]" />
-            <div className="mx-auto flex h-11 w-fit items-center gap-2 rounded-full bg-[#f0faf5] px-4 text-[12px] font-bold uppercase tracking-[0.14em] text-[#087d50] shadow-[0_0_0_1px_rgba(8,125,80,0.12)]">
-              <UsersRound className="size-4" />
-              Workspaces
-            </div>
-
-            <div className="h-[18px]" />
-            <h1 className="font-display text-[28px] font-bold leading-[32px] tracking-[-0.64px] text-[#14141a]">
-              Sign into the Mentra Workspace Portal
-            </h1>
-
-            <div className="h-2.5" />
-            <p className="mx-auto max-w-[320px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
-              {invitePending
-                ? "Sign in with the email address your invitation was sent to, then accept it."
-                : "Manage your workspaces, their members, roles and invitations."}
-            </p>
-
-            <div className="h-8" />
-            <a
-              className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
-              href={loginUrl}
-            >
-              Sign in
-            </a>
-
-            <div className="h-5" />
-            <p className="font-body text-[11.5px] leading-4 text-[#a6a6ac]">
-              Sign in with your Mentra account.
-            </p>
-          </div>
-        </div>
-      </section>
-    </main>
+    <BrandPage title="Sign into the Mentra Workspace Portal">
+      <p className="text-muted-foreground mb-7">
+        {invitePending
+          ? "Sign in with the email address your invitation was sent to, then accept it."
+          : "Manage your workspaces, their members, roles and invitations."}
+      </p>
+      <a className={buttonVariants({ size: "lg", className: "w-full" })} href={loginUrl}>
+        Sign in
+      </a>
+      <p className="text-muted-foreground mt-6 text-sm">Sign in with your Mentra account.</p>
+    </BrandPage>
   );
 }
 
+/** While the portal works something out: the sign-in page's spinner and what it is doing. */
 function Splash({ label }: { label: string }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f5f7f4] text-[#68746d]">
-      <Loader2 className="mr-3 size-5 animate-spin" />
+    <main role="status" className="bg-background text-muted-foreground flex min-h-dvh flex-col items-center justify-center gap-4">
+      <Spinner className="size-7 border-[3px]" />
       {label}
     </main>
   );

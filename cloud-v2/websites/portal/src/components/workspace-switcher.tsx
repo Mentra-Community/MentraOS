@@ -1,4 +1,4 @@
-import { initials } from "@mentra/workspace-ui";
+import { Count, WorkspaceAvatar } from "@mentra/workspace-ui";
 import { Check, ChevronsUpDown, Mail, Plus } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "@/lib/navigation";
@@ -93,27 +93,27 @@ export function WorkspaceSwitcher({
         }`}
         onClick={() => setOpen(value => !value)}
         className={cn(
-          "flex w-full items-center gap-3 rounded-[12px] border border-[#e4e6e2] bg-white px-2.5 py-2 text-left shadow-[0_1px_2px_rgba(20,21,27,0.04)] transition-colors hover:bg-[#f7f8f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#36dd89]/60",
-          open && "bg-[#f7f8f6]",
+          "rounded-menu bg-background hover:bg-hover flex w-full cursor-pointer items-center gap-3 border px-2.5 py-2 text-left transition-colors",
+          open && "bg-hover",
         )}
       >
         <span className="relative shrink-0">
           {current ? (
             <WorkspaceAvatar name={current.name} className="size-9 rounded-[10px] text-[15px]" />
           ) : (
-            <span className="flex size-9 items-center justify-center rounded-[10px] border border-dashed border-[#cfd5cd] text-[#a0a3aa]">
+            <span className="text-muted-foreground flex size-9 items-center justify-center rounded-[10px] border border-dashed">
               <ChevronsUpDown className="size-4" />
             </span>
           )}
           {invitations.length > 0 ? (
-            <span aria-hidden="true" className="absolute -right-1 -top-1 size-3 rounded-full bg-[#36dd89] ring-2 ring-white" />
+            <span aria-hidden="true" className="bg-brand ring-background absolute -top-1 -right-1 size-3 rounded-full ring-2" />
           ) : null}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[14px] font-semibold leading-5 text-[#14151b]">
+          <span className="block truncate text-[15px] leading-5 font-semibold">
             {current ? current.name : "Choose a workspace"}
           </span>
-          <span className="block truncate text-[12px] leading-4 text-[#8a8d95]">
+          <span className="text-muted-foreground block truncate text-xs leading-4">
             {current
               ? (current.roleLabel ?? "\u00a0")
               : workspaces === undefined
@@ -121,7 +121,7 @@ export function WorkspaceSwitcher({
                 : `${others.length} workspace${others.length === 1 ? "" : "s"}`}
           </span>
         </span>
-        <ChevronsUpDown className="size-4 shrink-0 text-[#a0a3aa]" />
+        <ChevronsUpDown className="text-muted-foreground size-4 shrink-0" />
       </button>
 
       {open ? (
@@ -133,27 +133,27 @@ export function WorkspaceSwitcher({
           onClick={event => {
             if (event.target instanceof Element && event.target.closest('a[role="menuitem"]')) setOpen(false);
           }}
-          className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 max-h-[min(70vh,520px)] overflow-y-auto rounded-[14px] border border-[#e0e4de] bg-white p-1.5 shadow-[0_16px_40px_-12px_rgba(20,21,27,0.28)]"
+          className="rounded-menu bg-popover shadow-menu absolute top-[calc(100%+6px)] right-0 left-0 z-40 max-h-[min(70vh,520px)] overflow-y-auto border p-1.5"
         >
           <MenuLabel>Workspaces</MenuLabel>
           {workspaces === undefined && listFailed ? (
-            <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-sm text-[#8a8d95]" role="alert">
+            <div className="text-muted-foreground flex items-center justify-between gap-2 px-2 py-1.5 text-sm" role="alert">
               <span>Couldn&apos;t load your workspaces.</span>
               {onRetry ? (
                 <button
                   type="button"
                   role="menuitem"
                   onClick={onRetry}
-                  className="rounded-[8px] px-2 py-1 font-medium text-[#14151b] outline-none hover:bg-[#f3f4f2] focus-visible:bg-[#f3f4f2]"
+                  className="text-foreground hover:bg-hover focus-visible:bg-hover rounded-full px-3 py-1 font-semibold focus-visible:outline-offset-[-3px]"
                 >
                   Retry
                 </button>
               ) : null}
             </div>
           ) : workspaces === undefined ? (
-            <div className="px-2 py-1.5 text-sm text-[#8a8d95]">Loading…</div>
+            <div className="text-muted-foreground px-2 py-1.5 text-sm">Loading…</div>
           ) : others.length === 0 ? (
-            <div className="px-2 py-1.5 text-sm text-[#8a8d95]">You are not in any workspace yet.</div>
+            <div className="text-muted-foreground px-2 py-1.5 text-sm">You are not in any workspace yet.</div>
           ) : (
             others.map(workspace => {
               const selected = workspace.workspaceId === current?.workspaceId;
@@ -163,14 +163,14 @@ export function WorkspaceSwitcher({
                   href={workspace.href}
                   role="menuitem"
                   aria-current={selected ? "true" : undefined}
-                  className="flex items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-sm outline-none hover:bg-[#f3f4f2] focus-visible:bg-[#f3f4f2]"
+                  className="flex items-center gap-2.5 hover:bg-hover focus-visible:bg-hover rounded-[12px] px-2 py-1.5 text-sm focus-visible:outline-offset-[-3px]"
                 >
-                  <WorkspaceAvatar name={workspace.name} className="size-7 rounded-[8px] text-xs" />
+                  <WorkspaceAvatar name={workspace.name} className="size-8 rounded-[9px] text-sm" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-[#14151b]">{workspace.name}</span>
-                    {workspace.roleLabel ? <span className="block truncate text-xs text-[#8a8d95]">{workspace.roleLabel}</span> : null}
+                    <span className="block truncate font-semibold">{workspace.name}</span>
+                    {workspace.roleLabel ? <span className="text-muted-foreground block truncate text-xs">{workspace.roleLabel}</span> : null}
                   </span>
-                  {selected ? <Check className="size-4 shrink-0 text-[#087d50]" aria-label="Current workspace" /> : null}
+                  {selected ? <Check className="text-brand size-4 shrink-0" aria-label="Current workspace" /> : null}
                 </Link>
               );
             })
@@ -185,21 +185,21 @@ export function WorkspaceSwitcher({
                 setOpen(false);
                 onCreate();
               }}
-              className="flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-sm font-medium text-[#14151b] outline-none hover:bg-[#f3f4f2] focus-visible:bg-[#f3f4f2]"
+              className="flex w-full cursor-pointer items-center gap-2.5 text-left font-semibold hover:bg-hover focus-visible:bg-hover rounded-[12px] px-2 py-1.5 text-sm focus-visible:outline-offset-[-3px]"
             >
-              <span className="flex size-7 items-center justify-center rounded-[8px] border border-dashed border-[#cfd5cd] text-[#5d6068]">
+              <span className="text-muted-foreground flex size-8 items-center justify-center rounded-[9px] border border-dashed">
                 <Plus className="size-4" />
               </span>
               Create workspace
             </button>
           ) : (
-            <div role="menuitem" aria-disabled="true" className="flex items-start gap-2.5 rounded-[10px] px-2 py-1.5 text-sm">
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-[8px] border border-dashed border-[#e0e4de] text-[#c0c3c8]">
+            <div role="menuitem" aria-disabled="true" className="flex items-start gap-2.5 rounded-[12px] px-2 py-1.5 text-sm">
+              <span className="text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-[9px] border border-dashed opacity-45">
                 <Plus className="size-4" />
               </span>
               <span className="min-w-0">
-                <span className="block font-medium text-[#a0a3aa]">Create workspace</span>
-                {createNotice ? <span className="block text-xs leading-4 text-[#8a8d95]">{createNotice}</span> : null}
+                <span className="text-muted-foreground block font-semibold">Create workspace</span>
+                {createNotice ? <span className="text-muted-foreground block text-xs leading-4">{createNotice}</span> : null}
               </span>
             </div>
           )}
@@ -209,23 +209,21 @@ export function WorkspaceSwitcher({
               <MenuSeparator />
               <MenuLabel>
                 Pending invitations
-                <span className="ml-1.5 rounded-full bg-[#e9f8f1] px-1.5 py-0.5 text-[10px] font-semibold text-[#087d50]">
-                  {invitations.length}
-                </span>
+                <Count className="ml-2">{invitations.length}</Count>
               </MenuLabel>
               {invitations.map(invitation => (
                 <Link
                   key={invitation.key}
                   href={invitation.href}
                   role="menuitem"
-                  className="flex items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-sm outline-none hover:bg-[#f3f4f2] focus-visible:bg-[#f3f4f2]"
+                  className="flex items-center gap-2.5 hover:bg-hover focus-visible:bg-hover rounded-[12px] px-2 py-1.5 text-sm focus-visible:outline-offset-[-3px]"
                 >
-                  <span className="flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-[#e9f8f1] text-[#087d50]">
-                    <Mail className="size-3.5" />
+                  <span className="bg-info text-info-foreground flex size-8 shrink-0 items-center justify-center rounded-[9px]">
+                    <Mail className="size-4" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-[#14151b]">{invitation.label}</span>
-                    {invitation.detail ? <span className="block truncate text-xs text-[#8a8d95]">{invitation.detail}</span> : null}
+                    <span className="block truncate font-semibold">{invitation.label}</span>
+                    {invitation.detail ? <span className="text-muted-foreground block truncate text-xs">{invitation.detail}</span> : null}
                   </span>
                 </Link>
               ))}
@@ -237,27 +235,12 @@ export function WorkspaceSwitcher({
   );
 }
 
-/** A workspace's initial on a tinted square, in place of a logo. */
-export function WorkspaceAvatar({ name, className }: { name: string; className?: string }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "flex shrink-0 items-center justify-center bg-[linear-gradient(135deg,#e9f8f1_0%,#c9f4e0_100%)] font-display font-bold text-[#087d50] ring-1 ring-inset ring-[#087d50]/10",
-        className,
-      )}
-    >
-      {initials(name).slice(0, 1)}
-    </span>
-  );
-}
-
 function MenuLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center px-2 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#a0a3aa]">{children}</div>
+    <div className="text-muted-foreground flex items-center px-2 pt-1.5 pb-1 text-xs font-semibold">{children}</div>
   );
 }
 
 function MenuSeparator() {
-  return <div role="separator" className="-mx-1.5 my-1.5 h-px bg-[#eceeeb]" />;
+  return <div role="separator" className="bg-border -mx-1.5 my-1.5 h-px" />;
 }

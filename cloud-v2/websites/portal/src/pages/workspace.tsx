@@ -10,10 +10,12 @@
 import { useQuery } from "@tanstack/react-query";
 import type { WorkspaceCapability, WorkspaceDetail } from "@mentra/workspace-contract";
 import {
+  Button,
   can,
   effectiveRole,
   errorMessage,
   ROLE_LABELS,
+  Spinner,
   WorkspaceApiError,
   WorkspaceAuditPanel,
   WorkspaceInviteDialog,
@@ -23,11 +25,10 @@ import {
   workspaceDetailQuery,
   workspaceListQuery,
 } from "@mentra/workspace-ui";
-import { Loader2, ScrollText, Settings, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { ScrollText, Settings, UserPlus, Users, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NavGroup } from "@/components/app-shell";
 import { PortalShell } from "@/components/portal-shell";
-import { Button } from "@/components/ui/button";
 import { safeLocalStorage } from "@/lib/api";
 import { navigate, Redirect } from "@/lib/navigation";
 import { portalWorkspaceApi, STORE_DELETE_NOTICE } from "@/lib/portal";
@@ -156,10 +157,7 @@ export function WorkspaceScreen({ workspaceId, section }: { workspaceId: string;
       description={meta?.description(name)}
       headerAction={
         active === "members" && can(data, "workspace.members.manage") ? (
-          <Button
-            className="h-9 rounded-full bg-[#111217] px-4 text-white hover:bg-[#25262c]"
-            onClick={() => setInviting(true)}
-          >
+          <Button onClick={() => setInviting(true)}>
             <UserPlus className="size-4" />
             Invite
           </Button>
@@ -168,15 +166,15 @@ export function WorkspaceScreen({ workspaceId, section }: { workspaceId: string;
     >
       {!data ? (
         detail.isError ? (
-          <div role="alert" className="flex flex-wrap items-center gap-3 rounded-[14px] bg-[#fff3f1] px-4 py-3 text-sm text-[#a64235]">
+          <div role="alert" className="rounded-notice bg-error text-error-foreground flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
             {errorMessage(detail.error)}
-            <Button variant="outline" size="sm" onClick={() => void detail.refetch()}>
+            <Button variant="secondary" size="sm" onClick={() => void detail.refetch()}>
               Try again
             </Button>
           </div>
         ) : (
-          <div role="status" className="flex items-center gap-3 text-sm text-[#68746d]">
-            <Loader2 className="size-4 animate-spin" /> Loading workspace
+          <div role="status" className="text-muted-foreground flex items-center gap-2.5 text-sm">
+            <Spinner /> Loading workspace
           </div>
         )
       ) : !active ? (

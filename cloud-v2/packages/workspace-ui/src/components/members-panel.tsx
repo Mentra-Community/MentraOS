@@ -105,9 +105,10 @@ function MembersTable({
 
   if (members.length === 0) return <Restricted>No members yet.</Restricted>;
   return (
-    <div className="-mx-6 overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead className="text-muted-foreground border-y text-xs">
+    // On a phone each row stacks: the member across the top, their role and Remove under it.
+    <div className="-mx-6 overflow-x-auto max-sm:border-t">
+      <table className="w-full text-left text-sm max-sm:block">
+        <thead className="text-muted-foreground border-y text-xs max-sm:hidden">
           <tr>
             <th className="py-3 pr-4 pl-6 font-semibold">Member</th>
             <th className="py-3 pr-4 font-semibold">Role</th>
@@ -117,16 +118,19 @@ function MembersTable({
             </th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="max-sm:block">
           {members.map((member) => {
             const label = member.email ?? member.mentraUserId;
             const isSelf = member.membershipId === ownMembershipId;
             const options = canManage && !isSelf ? roleOptions(viewer, member.role) : [];
             return (
-              <tr key={member.membershipId} className="border-b last:border-b-0">
-                <td className="py-3.5 pr-4 pl-6">
+              <tr
+                key={member.membershipId}
+                className="border-b last:border-b-0 max-sm:grid max-sm:grid-cols-[1fr_auto] max-sm:items-center max-sm:gap-x-3 max-sm:gap-y-3 max-sm:px-6 max-sm:py-4"
+              >
+                <td className="py-3.5 pr-4 pl-6 max-sm:col-span-2 max-sm:p-0">
                   <div className="flex items-center gap-3">
-                    <Avatar label={label} className="hidden sm:inline-flex" />
+                    <Avatar label={label} />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[15px] font-semibold [overflow-wrap:anywhere]">{label}</span>
@@ -145,7 +149,7 @@ function MembersTable({
                     </div>
                   </div>
                 </td>
-                <td className="py-3.5 pr-4">
+                <td className="py-3.5 pr-4 max-sm:p-0">
                   {options.length > 0 ? (
                     <NativeSelect
                       compact
@@ -167,7 +171,7 @@ function MembersTable({
                 <td className="text-muted-foreground hidden py-3.5 pr-4 whitespace-nowrap sm:table-cell">
                   {formatDate(member.startedAt)}
                 </td>
-                <td className="py-3.5 pr-6 text-right">
+                <td className="py-3.5 pr-6 text-right max-sm:p-0">
                   {canManage && !isSelf && canRemoveRole(viewer, member.role) ? (
                     <ConfirmButton
                       label="Remove"
