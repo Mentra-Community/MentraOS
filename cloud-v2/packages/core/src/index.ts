@@ -20,6 +20,7 @@ import {createLogger} from "@mentra/cloud-shared"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/mongo.connection"
 import {createApp} from "./api/app"
 import {runStartupMigrations} from "./migrations/startup.migrations"
+import {startAccountDeletionCompletion} from "./services/account/account.service"
 import {createCoreStop, serveCore} from "./http-server"
 import {startFrameworkRunSummaryBackfill} from "./services/framework-run-summary.service"
 import {startRoutineWorkReporting} from "./services/routine-work-notification"
@@ -74,6 +75,8 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const server = serveCore(app.fetch, port)
   const boundPort = server.port!
   const stopSummaryBackfill = startFrameworkRunSummaryBackfill()
+  // Confirmed account deletions are finished by Core itself, after a crash or an account-directory outage too.
+  const stopAccountDeletionCompletion = startAccountDeletionCompletion()
   const reportNotifications = new ReportSlackDeliveryService()
   const reportServerLogs = new ReportServerLogCollectionService()
   const routineJobs = new RoutineJobService()
@@ -90,6 +93,7 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     url: `http://localhost:${boundPort}`,
     stop: createCoreStop(server, async () => {
       await stopSummaryBackfill()
+      await stopAccountDeletionCompletion()
       await stopRoutineWorkReporting()
       await disconnectMongo()
     }),

@@ -31,7 +31,14 @@ import {RefreshTokenModel} from "../packages/core/src/models/refresh-token.model
 import {SeenJtiModel} from "../packages/core/src/models/seen-jti.model"
 import {SupportProfileModel} from "../packages/core/src/models/support-profile.model"
 import {UserModel} from "../packages/core/src/models/user.model"
-import {confirmAccountDeletion, login, otc, resetPassword} from "../packages/core/src/services/account/account.service"
+import {
+  confirmAccountDeletion,
+  finishPendingAccountDeletions,
+  login,
+  otc,
+  resetPassword,
+  startAccountDeletionCompletion,
+} from "../packages/core/src/services/account/account.service"
 import {refreshSession, revokeAllSessionsForUser} from "../packages/core/src/services/session.service"
 import {createPortalSession} from "../packages/core/src/services/signin/browser-session.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
@@ -253,20 +260,24 @@ describe("confirmAccountDeletion", () => {
     expect(before.signInPage.endedAt).not.toBeNull()
   })
 
-  test("from the moment deletion starts the account is no principal: sign-in, exchange, refresh, sessions and tokens", async () => {
+  test("with the account directory down, a confirmed deletion is accepted and the account is no principal; Core finishes it later", async () => {
     const before = await signedInEverywhere()
     const phone = await login(ADMIN_EMAIL, PASSWORD)
-    // Deletion stalls after its first step: the account directory cannot answer about this account.
+    // The account directory cannot answer about this account.
     const restore = blockDirectory(["GET", "DELETE"])
     try {
       const code = await otc.issueEmailCode({purpose: "account_deletion", subject: SUB, ttlSec: 900})
-      await expect(confirmAccountDeletion(before.user.mentraUserId, SUB, code)).rejects.toThrow()
+      // Accepted: the person never has to come back to finish it.
+      await confirmAccountDeletion(before.user.mentraUserId, SUB, code)
     } finally {
       restore()
     }
-    // The directory still has the account, but Core treats it as deleted.
+    // The directory still has the account and the deletion is not complete, but Core treats the account as deleted.
     expect(await accountInDirectory()).toBe(true)
-    expect((await UserModel.findOne({mentraUserId: before.user.mentraUserId}).lean())?.supportTelemetryDeletedAt).toBeInstanceOf(Date)
+    expect(await UserModel.findOne({mentraUserId: before.user.mentraUserId}).lean()).toMatchObject({
+      supportTelemetryDeletedAt: expect.any(Date),
+      accountDeletionCompletedAt: null,
+    })
 
     // Signing in again, through Core's account login (the phone's token exchange), is refused.
     await expect(login(ADMIN_EMAIL, PASSWORD)).rejects.toMatchObject({code: "invalid_grant"})
@@ -288,31 +299,51 @@ describe("confirmAccountDeletion", () => {
     })
     expect((await adminMe(undefined, cookieValue)).status).toBe(401)
 
-    // Asked again with the directory answering, the deletion completes.
-    const code = await otc.issueEmailCode({purpose: "account_deletion", subject: SUB, ttlSec: 900})
-    await confirmAccountDeletion(before.user.mentraUserId, SUB, code)
+    // With the directory answering again, Core's sweep finishes the deletion; a second sweep finds nothing.
+    expect(await finishPendingAccountDeletions()).toEqual({completed: [before.user.mentraUserId], failed: []})
     expect(await accountInDirectory()).toBe(false)
+    expect((await UserModel.findOne({mentraUserId: before.user.mentraUserId}).lean())?.accountDeletionCompletedAt).toBeInstanceOf(Date)
+    expect(await finishPendingAccountDeletions()).toEqual({completed: [], failed: []})
   })
 
-  test("a deletion that fails while the directory still has the account lifts the tombstone, so the person can sign in and ask again", async () => {
+  test("a deletion interrupted right after its confirmation (a crash) is finished by Core's sweep, and the tombstone never lifts", async () => {
     const before = await signedInEverywhere()
+    const deletedAt = new Date()
+    // All that a confirmation that crashed at once leaves behind: the tombstone.
+    await UserModel.updateOne({mentraUserId: before.user.mentraUserId}, {$set: {supportTelemetryDeletedAt: deletedAt}})
+    expect(await BrowserSessionModel.countDocuments({mentraUserId: before.user.mentraUserId, revokedAt: null})).toBe(1)
+
+    // A failing step leaves it pending, and still deleted.
     const restore = blockDirectory(["DELETE"])
     try {
-      const code = await otc.issueEmailCode({purpose: "account_deletion", subject: SUB, ttlSec: 900})
-      await expect(confirmAccountDeletion(before.user.mentraUserId, SUB, code)).rejects.toThrow()
+      expect(await finishPendingAccountDeletions()).toEqual({completed: [], failed: [before.user.mentraUserId]})
     } finally {
       restore()
     }
-    expect((await UserModel.findOne({mentraUserId: before.user.mentraUserId}).lean())?.supportTelemetryDeletedAt).toBeNull()
-    // Everything signed in before is still revoked, but the person can sign in again.
-    expect((await adminMe(undefined, before.cookieValue)).status).toBe(401)
-    const fresh = await login(ADMIN_EMAIL, PASSWORD)
-    expect(fresh.access_token).toBeTruthy()
+    expect(await UserModel.findOne({mentraUserId: before.user.mentraUserId}).lean()).toMatchObject({
+      supportTelemetryDeletedAt: deletedAt,
+      accountDeletionCompletedAt: null,
+    })
+    await expect(login(ADMIN_EMAIL, PASSWORD)).rejects.toMatchObject({code: "invalid_grant"})
 
-    const code = await otc.issueEmailCode({purpose: "account_deletion", subject: SUB, ttlSec: 900})
-    await confirmAccountDeletion(before.user.mentraUserId, SUB, code)
+    expect(await finishPendingAccountDeletions()).toEqual({completed: [before.user.mentraUserId], failed: []})
+    expect(await BrowserSessionModel.countDocuments({mentraUserId: before.user.mentraUserId, revokedAt: null})).toBe(0)
     expect(await accountInDirectory()).toBe(false)
-    expect((await UserModel.findOne({mentraUserId: before.user.mentraUserId}).lean())?.supportTelemetryDeletedAt).toBeInstanceOf(Date)
+    expect(await UserModel.findOne({mentraUserId: before.user.mentraUserId}).lean()).toMatchObject({
+      supportTelemetryDeletedAt: deletedAt,
+      accountDeletionCompletedAt: expect.any(Date),
+    })
+  })
+
+  test("Core runs the sweep at start and on an interval, and stops it cleanly", async () => {
+    const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: SUB})
+    await UserModel.updateOne({mentraUserId: user.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+
+    const stop = startAccountDeletionCompletion(60_000)
+    await stop()
+
+    expect((await UserModel.findOne({mentraUserId: user.mentraUserId}).lean())?.accountDeletionCompletedAt).toBeInstanceOf(Date)
+    expect(await accountInDirectory()).toBe(false)
   })
 
   test("a failing Supabase logout still completes account deletion", async () => {

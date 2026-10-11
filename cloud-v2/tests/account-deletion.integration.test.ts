@@ -32,7 +32,12 @@ import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-au
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
-import {confirmAccountDeletion, gotrue, otc} from "../packages/core/src/services/account/account.service"
+import {
+  confirmAccountDeletion,
+  finishPendingAccountDeletions,
+  gotrue,
+  otc,
+} from "../packages/core/src/services/account/account.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {removeDeletedUserFromWorkspaces} from "../packages/core/src/services/workspaces/account-deletion.service"
@@ -455,22 +460,70 @@ describe("confirmAccountDeletion", () => {
     expect(await accountExists(s.tenantUserId)).toBe(true)
   })
 
-  test("workspace access is gone before the account directory is asked to delete the account, so a failure there is retryable", async () => {
+  test("workspace access is gone before the account directory is asked; with the directory down, Core finishes the deletion later", async () => {
     const s = await scenario()
     idp.outage = true
 
-    await expect(confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))).rejects.toThrow()
+    // Accepted: the deletion is recorded, and the person never has to come back.
+    await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
 
     expect(await listWorkspacesForUser(s.mentraUserId)).toEqual([])
     expect(await validateCredentialToken(s.teamKey.token)).toBeNull()
+    expect((await UserModel.findOne({mentraUserId: s.mentraUserId}).lean())?.accountDeletionCompletedAt).toBeNull()
+    expect(await finishPendingAccountDeletions()).toEqual({completed: [], failed: [s.mentraUserId]})
 
-    // The account still exists, so the person asks again and it completes.
+    // The directory answers again: the next sweep deletes the account there and records completion.
     idp.outage = false
     expect(await accountExists(s.tenantUserId)).toBe(true)
-    await confirmAccountDeletion(s.mentraUserId, s.tenantUserId, await deletionCode(s.tenantUserId))
+    expect(await finishPendingAccountDeletions()).toEqual({completed: [s.mentraUserId], failed: []})
     expect(await accountExists(s.tenantUserId)).toBe(false)
+    expect((await UserModel.findOne({mentraUserId: s.mentraUserId}).lean())?.accountDeletionCompletedAt).toBeInstanceOf(Date)
     // Nothing was ended twice.
     expect(await WorkspaceAuditEventModel.countDocuments({action: "membership.removed"})).toBe(2)
+  })
+
+  test("two concurrent confirmations and the sweep finish the deletion once", async () => {
+    const s = await scenario()
+    const [first, second] = [await deletionCode(s.tenantUserId), await deletionCode(s.tenantUserId)]
+
+    const results = await Promise.allSettled([
+      confirmAccountDeletion(s.mentraUserId, s.tenantUserId, first),
+      confirmAccountDeletion(s.mentraUserId, s.tenantUserId, second),
+      finishPendingAccountDeletions(),
+    ])
+
+    expect(results.map(result => result.status)).toEqual(["fulfilled", "fulfilled", "fulfilled"])
+    expect(await accountExists(s.tenantUserId)).toBe(false)
+    const user = (await UserModel.findOne({mentraUserId: s.mentraUserId}).lean())!
+    expect(user.supportTelemetryDeletedAt).toBeInstanceOf(Date)
+    expect(user.accountDeletionCompletedAt).toBeInstanceOf(Date)
+    // Each membership ended once, and each of its keys was revoked once.
+    const removed = await WorkspaceAuditEventModel.find({action: "membership.removed"}).lean()
+    expect(removed).toHaveLength(2)
+    expect(removed.flatMap(event => (event.after as {revokedCredentialIds: string[]}).revokedCredentialIds).sort()).toEqual(
+      [s.teamKey.credential.credentialId, s.soloKey.credential.credentialId].sort(),
+    )
+    for (const key of [s.teamKey, s.soloKey]) expect(await validateCredentialToken(key.token)).toBeNull()
+    expect((await WorkspaceInvitationModel.findOne({invitationId: s.sentInvitationId}).lean())!.status).toBe("revoked")
+    expect(await finishPendingAccountDeletions()).toEqual({completed: [], failed: []})
+  })
+
+  test("a deleted account's membership left behind by an interrupted deletion is ended by the sweep", async () => {
+    const s = await scenario()
+    // A confirmation that stopped right after setting the tombstone.
+    await UserModel.updateOne({mentraUserId: s.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+    expect(await countActiveOwners(s.solo.workspaceId)).toBe(0)
+    expect((await WorkspaceMembershipModel.findOne({membershipId: s.soloMembershipId}).lean())!.status).toBe("active")
+
+    expect(await finishPendingAccountDeletions()).toEqual({completed: [s.mentraUserId], failed: []})
+
+    for (const membershipId of [s.teamMembershipId, s.soloMembershipId]) {
+      expect((await WorkspaceMembershipModel.findOne({membershipId}).lean())).toMatchObject({
+        status: "ended",
+        endedReason: "account_deleted",
+      })
+    }
+    expect(await accountExists(s.tenantUserId)).toBe(false)
   })
 })
 

@@ -107,13 +107,20 @@ account (`revokeAllSessionsForUser`) also:
 Removing a sign-in source from configuration ends its portal sessions on their
 next request.
 
-Deleting the account first marks it deleted (the users row's tombstone), and a
-deleted account is no principal from then on: Core refuses its token exchange
+Deleting the account is durable and forward-only. Confirming it marks the
+account deleted (the users row's tombstone), once, and the mark is never lifted;
+a deleted account is no principal from then on: Core refuses its token exchange
 (and so Core's account login), refresh, portal sign-in, portal sessions,
-identity-provider tokens, the keys it created, and a service vouching for it.
-Should the deletion fail while the account directory still has the account,
-the mark is lifted so the person can sign in and ask again. A phone access token
-already issued lives out its hour; it is not a workspace principal.
+identity-provider tokens, the keys it created, and a service vouching for it. A
+phone access token already issued lives out its hour; it is not a workspace
+principal.
+
+The rest of the deletion (ending sessions and workspace memberships, removing
+the support profile, deleting the account in the account directory) runs right
+away, and every step is idempotent. Should a step fail, or Core stop, Core
+finishes the deletion itself: a sweep at startup and every minute picks up every
+tombstone without `accountDeletionCompletedAt` and records that once all steps
+have run. The person never has to sign in again to retry.
 
 ## Hosted Core configuration
 

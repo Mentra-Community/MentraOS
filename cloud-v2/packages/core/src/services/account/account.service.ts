@@ -17,6 +17,10 @@ import {UserModel} from "../../models/user.model"
 import * as otc from "./one-time-code.service"
 import {AccountError} from "./account-error"
 import {removeDeletedUserFromWorkspaces} from "../workspaces/account-deletion.service"
+import {MENTRA_TENANT_ID} from "../signin/config"
+import {createLogger} from "@mentra/cloud-shared"
+
+const logger = createLogger("core").child({service: "account.service"})
 
 const RESET_CODE_TTL_SEC = 15 * 60
 const DELETE_CODE_TTL_SEC = 15 * 60
@@ -161,51 +165,121 @@ export async function requestAccountDeletion(email: string, tenantUserId: string
   })
 }
 
+/**
+ * Confirm the deletion of the signed-in person's account with the emailed code.
+ *
+ * Deletion is durable and forward-only. Confirming sets the tombstone
+ * (`supportTelemetryDeletedAt`), once, and nothing ever lifts it: from then on
+ * the account is deleted and no principal (`isDeletedAccount`). Sign-in, token
+ * exchange and refresh, portal sessions, identity-provider tokens and the keys
+ * it created are refused, and nothing can give it workspace access again. It
+ * also stops new support writes before the profile is removed; a PostHog
+ * capture already in flight may still deliver, and delivered analytics data is
+ * governed by that project's retention/deletion policy.
+ *
+ * The rest (`finishAccountDeletion`) runs right away and, should any step fail
+ * or the process stop, again from Core's own sweep (`startAccountDeletionCompletion`)
+ * until it is recorded as complete. The person never signs in again to retry,
+ * so a failure there does not fail the confirmation: the deletion is accepted.
+ *
+ * OPEN DECISION (deferred, revisit in a future PR): the Mongo users row
+ * ({mentraUserId, tenantId, tenantUserId}) is intentionally kept as a tombstone
+ * for identifier stability and audit lineage. If we want gone-means-gone,
+ * hard-delete it once the deletion is complete.
+ *
+ * Cloud V1 is a different system with its own database; its data lifecycle is
+ * not a cloud-v2 concern and no code here talks to it.
+ */
 export async function confirmAccountDeletion(mentraUserId: string, tenantUserId: string, code: string): Promise<void> {
   await otc.consumeCode({code, purpose: "account_deletion", expectSubject: tenantUserId})
-  // Order: set the deletion tombstone, kill V2 sessions, end workspace
-  // memberships, remove the operational support profile/outbox, then delete the
-  // Supabase user. Everything human-identifying (email, password, name) lives in
-  // GoTrue and dies here.
-  //
-  // The tombstone comes first: from then on the account is no principal
-  // (`isDeletedAccount`). Sign-in, token exchange and refresh, portal sessions,
-  // identity-provider tokens and the keys it created are refused, and nothing can
-  // give it workspace access again while the cleanup runs. It also stops new
-  // support writes before the profile is removed; a PostHog capture already in
-  // flight may still deliver, and delivered analytics data is governed by that
-  // project's retention/deletion policy.
-  //
-  // Workspace access ends before the GoTrue user goes: the memberships and the
-  // credentials they created end in one transaction. Should a step fail while
-  // the account directory still has the account, the tombstone is lifted again,
-  // so the person can sign in and request deletion again; the other order could
-  // leave a deleted account still holding workspace access. When the directory
-  // no longer has the account, or cannot say, the account stays deleted.
-  //
-  // OPEN DECISION (deferred, revisit in a future PR): the Mongo users row
-  // ({mentraUserId, tenantId, tenantUserId}) is intentionally kept as a
-  // tombstone for identifier stability and audit lineage. If we want
-  // gone-means-gone, hard-delete it here.
-  //
-  // Cloud V1 is a different system with its own database; its data lifecycle
-  // is not a cloud-v2 concern and no code here talks to it.
-  const deletedAt = new Date()
-  await UserModel.updateOne({mentraUserId}, {$set: {supportTelemetryDeletedAt: deletedAt}})
+  // Only the first confirmation sets the time.
+  await UserModel.updateOne({mentraUserId, supportTelemetryDeletedAt: null}, {$set: {supportTelemetryDeletedAt: new Date()}})
   try {
-    await revokeAllSessionsForUser({mentraUserId})
-    await removeDeletedUserFromWorkspaces(mentraUserId)
-    await SupportProfileModel.deleteOne({mentraUserId})
-    await gotrue.deleteUser(tenantUserId)
+    await finishAccountDeletion(mentraUserId)
   } catch (err) {
-    const stillThere = await gotrue.getUserById(tenantUserId).catch(() => null)
-    if (stillThere) {
-      await UserModel.updateOne(
-        {mentraUserId, supportTelemetryDeletedAt: deletedAt},
-        {$set: {supportTelemetryDeletedAt: null}},
-      ).catch(() => undefined)
+    logger.warn({err, mentraUserId}, "account deletion will be finished by the deletion sweep")
+  }
+}
+
+/**
+ * Run every step of a confirmed deletion and record its completion. Each step is
+ * idempotent, so a repeat (a retry, a concurrent confirmation, the sweep) is
+ * harmless, and completion is recorded once. Order:
+ *  1. end V2 sessions, portal sessions and the identity provider's sessions;
+ *  2. end workspace memberships, and revoke what the person created
+ *     (`removeDeletedUserFromWorkspaces`), before the account directory is
+ *     asked: a deleted account must never be left holding workspace access;
+ *  3. remove the operational support profile/outbox;
+ *  4. on hosted Core, delete the account in the account directory (GoTrue).
+ *     Everything human-identifying (email, password, name) lives there.
+ * Throws when a step fails; the deletion stays pending and the sweep retries it.
+ * A users row without a tombstone is no deletion and is left alone.
+ */
+export async function finishAccountDeletion(mentraUserId: string): Promise<"completed" | "not_deleted"> {
+  const user = await UserModel.findOne({mentraUserId}).lean()
+  if (!user?.supportTelemetryDeletedAt) return "not_deleted"
+  if (user.accountDeletionCompletedAt) return "completed"
+  await revokeAllSessionsForUser({mentraUserId})
+  await removeDeletedUserFromWorkspaces(mentraUserId)
+  await SupportProfileModel.deleteOne({mentraUserId})
+  if (user.tenantId === MENTRA_TENANT_ID) await gotrue.deleteUser(user.tenantUserId)
+  await UserModel.updateOne(
+    {mentraUserId, accountDeletionCompletedAt: null},
+    {$set: {accountDeletionCompletedAt: new Date()}},
+  )
+  return "completed"
+}
+
+/**
+ * Finish deletions that were confirmed but not completed, oldest first, at most
+ * `limit` per call. One account's failure is logged and does not stop the others.
+ */
+export async function finishPendingAccountDeletions(limit = 25): Promise<{completed: string[]; failed: string[]}> {
+  const pending = await UserModel.find({
+    supportTelemetryDeletedAt: {$gt: new Date(0)},
+    accountDeletionCompletedAt: null,
+  })
+    .sort({supportTelemetryDeletedAt: 1})
+    .limit(limit)
+    .select({mentraUserId: 1})
+    .lean()
+  const completed: string[] = []
+  const failed: string[] = []
+  for (const {mentraUserId} of pending) {
+    try {
+      await finishAccountDeletion(mentraUserId)
+      completed.push(mentraUserId)
+    } catch (err) {
+      failed.push(mentraUserId)
+      logger.warn({err, mentraUserId}, "account deletion is not finished yet; the next sweep retries")
     }
-    throw err
+  }
+  return {completed, failed}
+}
+
+/**
+ * Sweep for unfinished deletions once now and then every `intervalMs`, so a
+ * deletion that a crash or an account-directory outage interrupted completes on
+ * its own. Returns a stop function that waits for a sweep in progress.
+ */
+export function startAccountDeletionCompletion(intervalMs = 60_000): () => Promise<void> {
+  let stopped = false
+  let active: Promise<unknown> | undefined
+  const tick = () => {
+    if (stopped || active) return
+    active = finishPendingAccountDeletions()
+      .catch(err => logger.warn({err}, "account deletion sweep failed; it runs again shortly"))
+      .finally(() => {
+        active = undefined
+      })
+  }
+  const timer = setInterval(tick, intervalMs)
+  timer.unref()
+  tick()
+  return async () => {
+    stopped = true
+    clearInterval(timer)
+    await active
   }
 }
 
