@@ -9,6 +9,8 @@ import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
 import { api, ApiError } from "./lib/api";
+import { loginHref, signOutOfAdminPortal } from "./lib/session";
+import { SignedOutScreen } from "./components/signed-out";
 import {
   hasInvalidTestRunListScope, readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
@@ -199,15 +201,13 @@ function AdminPage() {
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [signedOut, setSignedOut] = useState<{ signOutUrl: string | null } | null>(null);
 
   async function signOut() {
     setSigningOut(true);
-    try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; reload still drops us at the login gate
-    }
-    window.location.reload();
+    const result = await signOutOfAdminPortal();
+    qc.clear();
+    setSignedOut(result);
   }
 
   const me = useQuery({
@@ -386,11 +386,18 @@ function AdminPage() {
     "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
   };
 
+  if (signedOut) return <SignedOutScreen signOutUrl={signedOut.signOutUrl} />;
   if (me.isLoading) return <Splash label="Checking admin session" />;
   if (me.isError) {
-    // A 403 means the Mentra login itself worked but the account isn't on the
-    // admin allowlist; offering the login button again would be misleading.
-    return <LoginGate denied={me.error instanceof ApiError && me.error.status === 403} />;
+    // A 403 means the sign-in itself worked but the account isn't an
+    // Organization Admin; offering the sign-in button again would be misleading.
+    return (
+      <LoginGate
+        denied={me.error instanceof ApiError && me.error.status === 403}
+        onSignOut={signOut}
+        signingOut={signingOut}
+      />
+    );
   }
 
   return (
@@ -1384,19 +1391,10 @@ function formatDate(value: string | null | undefined): string {
   return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-function LoginGate({ denied = false }: { denied?: boolean }) {
-  // The full URL preserves report and testRun/step deep links through the
-  // login round-trip; safeReturnTo on Core validates the origin either way.
-  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
-
-  async function signOutAndReload() {
-    try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; the reload lands back on this gate either way
-    }
-    window.location.reload();
-  }
+export function LoginGate({ denied = false, onSignOut, signingOut = false }: { denied?: boolean; onSignOut?: () => void; signingOut?: boolean }) {
+  // The relative path and query preserve report and testRun/step deep links
+  // through the sign-in round trip; Core accepts only a relative return_to.
+  const loginUrl = loginHref();
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8f6_100%)] px-5 py-10 text-[#14141a]">
@@ -1423,7 +1421,7 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
             <div className="h-2.5" />
             <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
               {denied
-                ? "You're signed in, but this account isn't on the admin allowlist. Switch accounts, or ask for your email to be added to the Core admin allowlist."
+                ? "You're signed in, but this account isn't an admin. Admin access needs a verified email on the Core admin allowlist. Switch accounts, or ask for your email to be added."
                 : "Review miniapp releases, publish preinstalled registries, and manage internal operations."}
             </p>
 
@@ -1432,7 +1430,8 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
               <button
                 type="button"
                 className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
-                onClick={signOutAndReload}
+                onClick={onSignOut}
+                disabled={signingOut}
               >
                 Sign out and switch account
               </button>
@@ -1441,7 +1440,7 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
                 className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
                 href={loginUrl}
               >
-                Continue with Mentra login
+                Sign in
               </a>
             )}
 

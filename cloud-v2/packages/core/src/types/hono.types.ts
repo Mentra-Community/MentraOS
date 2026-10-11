@@ -10,6 +10,7 @@
 
 import type {Context} from "hono"
 import type {FederatedIdentity, Logger} from "@mentra/cloud-shared"
+import type {CorePrincipal} from "../services/signin/principal.service"
 
 export interface AppVariables {
   /** Request ID for log correlation. Set by request-id middleware on every request. */
@@ -40,7 +41,14 @@ export interface AppVariables {
     federatedIdentity?: FederatedIdentity
   }
 
-  /** Developer console session. */
+  /**
+   * The caller of a portal API (`/api/admin`, `/api/portal`): a person (a
+   * portal session or an identity-provider access token) or a Core credential.
+   * Set by `principalAuth`.
+   */
+  principal?: CorePrincipal
+
+  /** Developer console session, or the admin portal caller (its label for audit fields). */
   developer?: {
     developerId: string
     email: string

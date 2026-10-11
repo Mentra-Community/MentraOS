@@ -6,12 +6,16 @@ MOBILE_NAME="${MOBILE_NAME:-Mentra Mobile}"
 CORE_CLIENT_ID="${CORE_CLIENT_ID:-}"
 MOBILE_CLIENT_ID="${MOBILE_CLIENT_ID:-}"
 INSTALLER_OWNER="${INSTALLER_OWNER:-}"
+CORE_OWNER="${CORE_OWNER:-}"
+ADMIN_PORTAL_URL="${ADMIN_PORTAL_URL:-}"
 GRANT_ADMIN_CONSENT=false
 CONSENT_ONLY=false
+PORTAL_ONLY=false
 IOS_REDIRECT="msauth.com.mentra.mentra://auth"
 APK_REDIRECT="msauth://com.mentra.mentra/q%2FZbvbReOLgD1T6V3o1PK%2Fzjwz0%3D"
 PLAY_REDIRECT="msauth://com.mentra.mentra/Pwi%2FLvF9HHWTAMonaqwan%2BeIX6A%3D"
 ACS_APP_ID="1fd5118e-2576-4263-8130-9503064c837a"
+GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"
 INTEGRATED_TAG="WindowsAzureActiveDirectoryIntegratedApp"
 
 usage() {
@@ -26,8 +30,15 @@ usage() {
     "  --mobile-client-id UUID      Reconcile this existing Mobile registration" \
     "  --installer-owner UUID       Tag new registrations with this installer; a same-named app is" \
     "                               reused only if it carries the tag" \
+    "  --core-owner UUID            Make this user or service principal an owner of Core, so it can" \
+    "                               manage Core's admin portal client secret and redirect URI" \
+    "  --admin-portal-url URL       Core's https:// origin; registers URL/api/admin/auth/callback," \
+    "                               the admin portal's sign-in redirect, on Core" \
     "  --grant-admin-consent        Grant tenant-wide consent after configuring permissions" \
-    "  --consent-only               Only grant consent for --mobile-client-id; change nothing else" \
+    "  --consent-only               Only grant consent for --mobile-client-id (and --core-client-id," \
+    "                               if given); change nothing else" \
+    "  --admin-portal-only          Only configure admin portal sign-in on --core-client-id (the" \
+    "                               email claim, sign-in permissions and --admin-portal-url)" \
     "  --help                       Show this help" \
     "" \
     "Run while signed into the customer's tenant as an Application/Cloud Application or Global Administrator."
@@ -40,12 +51,33 @@ while [[ $# -gt 0 ]]; do
     --core-client-id) CORE_CLIENT_ID="$2"; shift 2 ;;
     --mobile-client-id) MOBILE_CLIENT_ID="$2"; shift 2 ;;
     --installer-owner) INSTALLER_OWNER="$2"; shift 2 ;;
+    --core-owner) CORE_OWNER="$2"; shift 2 ;;
+    --admin-portal-url) ADMIN_PORTAL_URL="$2"; shift 2 ;;
     --grant-admin-consent) GRANT_ADMIN_CONSENT=true; shift ;;
     --consent-only) CONSENT_ONLY=true; shift ;;
+    --admin-portal-only) PORTAL_ONLY=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+# Core sends exactly <origin>/api/admin/auth/callback, so register exactly that.
+ADMIN_PORTAL_URL="${ADMIN_PORTAL_URL%/}"
+ORIGIN_PATTERN='^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$'
+if [[ -n "$ADMIN_PORTAL_URL" && ! "$ADMIN_PORTAL_URL" =~ $ORIGIN_PATTERN ]]; then
+  printf -- '--admin-portal-url must be the https:// origin of Core, such as https://core.example.com\n' >&2
+  exit 2
+fi
+PORTAL_REDIRECT="${ADMIN_PORTAL_URL:+$ADMIN_PORTAL_URL/api/admin/auth/callback}"
+UUID_PATTERN='^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$'
+if [[ -n "$CORE_OWNER" && ! "$CORE_OWNER" =~ $UUID_PATTERN ]]; then
+  printf -- '--core-owner must be an object ID (a UUID)\n' >&2
+  exit 2
+fi
+if [[ "$PORTAL_ONLY" == true && ! "$CORE_CLIENT_ID" =~ $UUID_PATTERN ]]; then
+  printf -- '--admin-portal-only requires --core-client-id\n' >&2
+  exit 2
+fi
 
 for command in az jq python3; do
   command -v "$command" >/dev/null || { printf '%s is required\n' "$command" >&2; exit 1; }
@@ -133,11 +165,61 @@ grant_admin_consent() {
   done
 }
 
+# Admin portal sign-in: Core is also a confidential web client of this
+# directory. Its ID tokens need the email claim (Entra sends members' email only
+# as an optional claim), the OpenID sign-in scopes, and, once Core's address is
+# known, the portal's redirect URI. Everything else on the app is kept.
+configure_admin_portal() {
+  local app graph_sp body
+  app="$(retry az ad app show --id "$1" -o json)"
+  graph_sp="$(retry az ad sp show --id "$GRAPH_APP_ID" -o json)"
+  body="$(jq -cn --argjson existing "$app" --argjson graph "$graph_sp" --arg graph_app "$GRAPH_APP_ID" \
+    --arg redirect "$PORTAL_REDIRECT" '
+    [$graph.oauth2PermissionScopes[]? | select(.value == ("openid", "email", "profile")) | {id, type: "Scope"}] as $sign_in |
+    if ($sign_in | length) != 3 then error("Microsoft Graph sign-in scopes were not found") else . end |
+    ($existing.optionalClaims.idToken // []) as $claims |
+    ($existing.requiredResourceAccess // []) as $access |
+    {optionalClaims: (($existing.optionalClaims // {}) + {idToken: (if any($claims[]; .name == "email") then $claims
+       else $claims + [{name: "email", source: null, essential: false, additionalProperties: []}] end)}),
+     requiredResourceAccess: (($access | map(select(.resourceAppId != $graph_app)))
+       + [{resourceAppId: $graph_app, resourceAccess: (([$access[] | select(.resourceAppId == $graph_app)
+           | (.resourceAccess // [])[]] + $sign_in) | unique_by(.id))}])}
+    + (if $redirect == "" then {} else {web: (($existing.web // {}) | del(.redirectUriSettings)
+       | .redirectUris = ((.redirectUris // []) + [$redirect] | unique))} end)')"
+  retry az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$1" \
+    --headers 'Content-Type=application/json' --body "$body" --output none
+}
+
+# An owner can manage the app's client secrets and redirect URIs without an
+# Entra administrator role.
+add_owner() {
+  local owners
+  owners="$(az rest --method GET --uri "https://graph.microsoft.com/v1.0/applications/$1/owners?\$select=id" \
+    --query 'value[].id' -o json)" || return
+  jq -e --arg id "$2" 'index($id) != null' <<<"$owners" >/dev/null && return 0
+  az rest --method POST --uri "https://graph.microsoft.com/v1.0/applications/$1/owners/\$ref" \
+    --headers 'Content-Type=application/json' --output none \
+    --body "$(jq -cn --arg id "$2" '{"@odata.id": ("https://graph.microsoft.com/v1.0/directoryObjects/" + $id)}')"
+}
+
 if [[ "${CONSENT_ONLY:-false}" == true ]]; then
   [[ "$MOBILE_CLIENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { printf -- '--consent-only requires --mobile-client-id\n' >&2; exit 2; }
   grant_admin_consent "$MOBILE_CLIENT_ID"
-  jq -n --arg tenantId "$TENANT_ID" --arg mobileClientId "$MOBILE_CLIENT_ID" \
-    '{tenantId:$tenantId,mobileClientId:$mobileClientId,consent:"granted"}'
+  [[ -z "$CORE_CLIENT_ID" ]] || grant_admin_consent "$CORE_CLIENT_ID"
+  jq -n --arg tenantId "$TENANT_ID" --arg mobileClientId "$MOBILE_CLIENT_ID" --arg coreApiClientId "$CORE_CLIENT_ID" \
+    '{tenantId:$tenantId,mobileClientId:$mobileClientId,consent:"granted"}
+     + (if $coreApiClientId == "" then {} else {coreApiClientId:$coreApiClientId} end)'
+  exit 0
+fi
+
+if [[ "${PORTAL_ONLY:-false}" == true ]]; then
+  portal_object_id="$(retry az ad app show --id "$CORE_CLIENT_ID" --query id -o tsv)"
+  configure_admin_portal "$portal_object_id"
+  [[ -z "$CORE_OWNER" ]] || retry add_owner "$portal_object_id" "$CORE_OWNER"
+  [[ "$GRANT_ADMIN_CONSENT" != true ]] || grant_admin_consent "$CORE_CLIENT_ID"
+  jq -n --arg tenantId "$TENANT_ID" --arg coreApiClientId "$CORE_CLIENT_ID" --arg redirect "$PORTAL_REDIRECT" \
+    '{tenantId:$tenantId,coreApiClientId:$coreApiClientId}
+     + (if $redirect == "" then {} else {adminPortalRedirectUri:$redirect} end)'
   exit 0
 fi
 
@@ -226,6 +308,8 @@ core_body="$(jq -cn \
   '{identifierUris: (($existing.identifierUris // []) + [$uri] | unique), api:(($existing.api // {}) + {requestedAccessTokenVersion:2, oauth2PermissionScopes: ((($existing.api.oauth2PermissionScopes // []) | map(select(.value != "mentra.session"))) + [{adminConsentDescription:"Allow the Mentra App to access this organization Core on behalf of the signed-in user.",adminConsentDisplayName:"Access Mentra Core",id:$scope_id,isEnabled:true,type:"User",userConsentDescription:"Allow the Mentra App to access your organization Core.",userConsentDisplayName:"Access Mentra Core",value:"mentra.session"}])})}')"
 retry az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$CORE_OBJECT_ID" \
   --headers 'Content-Type=application/json' --body "$core_body" --output none
+configure_admin_portal "$CORE_OBJECT_ID"
+[[ -z "$CORE_OWNER" ]] || retry add_owner "$CORE_OBJECT_ID" "$CORE_OWNER"
 
 MOBILE_OBJECT_ID="$(find_or_create_app "$MOBILE_CLIENT_ID" "$MOBILE_NAME")"
 MOBILE_CLIENT_ID="$(retry az ad app show --id "$MOBILE_OBJECT_ID" --query appId -o tsv)"
@@ -281,6 +365,7 @@ tag_service_principal "$MOBILE_SP_ID" true
 
 if [[ "$GRANT_ADMIN_CONSENT" == "true" ]]; then
   grant_admin_consent "$MOBILE_CLIENT_ID"
+  grant_admin_consent "$CORE_CLIENT_ID"
 fi
 
 jq -n \
@@ -289,7 +374,9 @@ jq -n \
   --arg mobileClientId "$MOBILE_CLIENT_ID" \
   --arg sessionScope "api://$CORE_CLIENT_ID/mentra.session" \
   --arg mobileServicePrincipalId "$MOBILE_SP_ID" \
-  '{tenantId:$tenantId,coreApiClientId:$coreApiClientId,mobileClientId:$mobileClientId,sessionScope:$sessionScope,mobileServicePrincipalId:$mobileServicePrincipalId}'
+  --arg redirect "$PORTAL_REDIRECT" \
+  '{tenantId:$tenantId,coreApiClientId:$coreApiClientId,mobileClientId:$mobileClientId,sessionScope:$sessionScope,mobileServicePrincipalId:$mobileServicePrincipalId}
+   + (if $redirect == "" then {} else {adminPortalRedirectUri:$redirect} end)'
 
 if [[ "$GRANT_ADMIN_CONSENT" != "true" ]]; then
   printf '%s\n' 'Admin consent was not granted. Review the permissions, then rerun with --grant-admin-consent.' >&2

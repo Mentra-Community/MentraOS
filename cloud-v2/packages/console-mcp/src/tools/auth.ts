@@ -21,8 +21,8 @@ export function registerAuthTools(server: McpServer, config: ConsoleMcpConfig): 
         capabilities: config.capabilities,
         hints: {
           reports:
-            "Set MENTRA_ADMIN_TOKEN: an org API key (msk_...) allowlisted via CLOUD_CORE_ADMIN_EMAILS, " +
-            "or a WorkOS access token of an admin user. msk_ keys are env-pinned — match MENTRA_CORE_URL/MENTRA_ENV.",
+            "Set MENTRA_ADMIN_TOKEN: an org API key (msk_...) allowlisted via CLOUD_CORE_ADMIN_EMAILS. " +
+            "msk_ keys are env-pinned — match MENTRA_CORE_URL/MENTRA_ENV.",
         },
       };
 

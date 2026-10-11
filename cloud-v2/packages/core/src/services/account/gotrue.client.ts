@@ -14,12 +14,20 @@
  * not JWTs, so they travel only in the `apikey` header; a legacy key also goes
  * in `Authorization: Bearer`, as GoTrue has always accepted it.
  */
+import * as jose from "jose";
 import { AccountError } from "./account-error";
 
 export interface GotrueIdentity {
   id: string;
   email: string;
+  /** `email_confirmed_at`, falling back to `confirmed_at`. */
   emailVerified: boolean;
+  /**
+   * `email_confirmed_at` alone. `confirmed_at` can be set by confirming something
+   * other than the email (a phone number), so anything that trusts the email
+   * address itself (web sign-in, Organization Admin status) uses this.
+   */
+  emailConfirmed: boolean;
   name?: string;
   avatarUrl?: string;
 }
@@ -111,6 +119,7 @@ function identityFrom(user: any): GotrueIdentity {
     id: user.id,
     email: user.email,
     emailVerified: Boolean(user.email_confirmed_at ?? user.confirmed_at),
+    emailConfirmed: Boolean(user.email_confirmed_at),
     name: meta.full_name ?? meta.name ?? undefined,
     avatarUrl: meta.avatar_url ?? meta.picture ?? undefined,
   };
@@ -209,6 +218,40 @@ export async function findUserByEmail(email: string): Promise<GotrueIdentity | n
   return null;
 }
 
+/**
+ * Whether the admin directory can be queried at all: both the project URL and
+ * the service-role key are set. A deployment without GoTrue (a Private Cloud)
+ * has no Mentra accounts.
+ */
+export function isGotrueAdminConfigured(): boolean {
+  return Boolean(process.env.SUPABASE_URL?.trim() && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
+}
+
+/**
+ * The account behind a Supabase user ID, for web sign-in. Null when the account
+ * does not exist (404). Unlike `getUserById`, a directory that cannot answer
+ * (any other status, a network error or a timeout) throws, so a GoTrue outage
+ * is never mistaken for an account without a confirmed email.
+ */
+export async function getAccountForSignIn(userId: string, timeoutMs = 5_000): Promise<GotrueIdentity | null> {
+  let response: { status: number; body: any };
+  try {
+    response = await gotrue(`/admin/users/${encodeURIComponent(userId)}`, {
+      method: "GET",
+      admin: true,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    if (err instanceof AccountError) throw err;
+    throw new AccountError("server_error", "account directory unavailable", 503);
+  }
+  if (response.status === 404) return null;
+  if (response.status !== 200 || typeof response.body?.id !== "string") {
+    throw new AccountError("server_error", "account directory unavailable", 503);
+  }
+  return identityFrom(response.body);
+}
+
 export async function getUserById(userId: string, signal?: AbortSignal): Promise<GotrueIdentity | null> {
   const { status, body } = await gotrue(`/admin/users/${userId}`, { method: "GET", admin: true, signal });
   if (status !== 200 || !body?.id) return null;
@@ -302,4 +345,46 @@ export async function exchangeOAuthCode(code: string, codeVerifier: string): Pro
   });
   if (status === 200 && body?.user) return identityFrom(body.user);
   throw new AccountError("invalid_grant", "oauth code exchange failed", 400);
+}
+
+const GLOBAL_SIGN_OUT_TOKEN_TTL_SEC = 60;
+
+/**
+ * End every Supabase session of one person: the sign-in page's, every
+ * website's and the CLI's. Refresh then fails, and the sign-in page asks for
+ * credentials again.
+ *
+ * Supabase has no admin call that ends a person's sessions by user ID, so Core
+ * signs a 60-second token for the person with the project's HS256 JWT secret
+ * (`SUPABASE_JWT_SECRET`) and calls `POST /auth/v1/logout?scope=global` with
+ * it and the secret key. The token carries no `session_id`, which GoTrue
+ * treats as a sign-out of every session. This works only while Supabase still
+ * trusts the legacy HS256 secret.
+ */
+export async function signOutAllSessions(supabaseUserId: string, timeoutMs = 5_000): Promise<void> {
+  const secret = process.env.SUPABASE_JWT_SECRET?.trim();
+  if (!secret) throw new AccountError("server_error", "SUPABASE_JWT_SECRET not configured", 500);
+  const issuer = process.env.CLOUD_CORE_SUPABASE_ISSUER?.trim().replace(/\/+$/, "") || `${baseUrl()}/auth/v1`;
+  const iat = Math.floor(Date.now() / 1000);
+  const token = await new jose.SignJWT({ role: "authenticated" })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(supabaseUserId)
+    .setAudience("authenticated")
+    .setIssuer(issuer)
+    .setIssuedAt(iat)
+    .setExpirationTime(iat + GLOBAL_SIGN_OUT_TOKEN_TTL_SEC)
+    .sign(new TextEncoder().encode(secret));
+  let status: number;
+  try {
+    const res = await fetch(`${baseUrl()}/auth/v1/logout?scope=global`, {
+      method: "POST",
+      headers: { apikey: serviceKey(), authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    status = res.status;
+    await res.body?.cancel();
+  } catch {
+    throw new AccountError("server_error", "Supabase sign-out failed", 502);
+  }
+  if (status !== 204) throw new AccountError("server_error", `Supabase sign-out failed with HTTP ${status}`, 502);
 }

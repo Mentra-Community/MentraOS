@@ -13,15 +13,18 @@
  * Wires the core in-process via app.fetch; the OEM-signed path is covered by
  * oem-auth.integration.test.ts.
  *
- * Prereq: a running Mongo. Defaults to
- * `mongodb://127.0.0.1:27017/mentra-cloud-v2-test`; override via `MONGO_URL`.
- * The test wipes its own collections between cases — do NOT point at a real DB.
+ * It also covers Supabase tokens signed either way: HS256 with the project's
+ * JWT secret, or RS256 / ES256 with the project's key set (a fake identity
+ * provider serves it), so the project can switch signing keys with no Core change.
  *
- * Run: `bun test tests/auth.mentra-user-exchange.integration.test.ts`
+ * Safety: the test connects through `localTestMongoUrl` (loopback only, random
+ * database name, ignores `MONGO_URL`) and drops that database afterwards.
+ *
+ * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/auth.mentra-user-exchange.integration.test.ts`
  */
 
 import crypto from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 // Crypto material must be set BEFORE importing core so the lazy key loader finds
 // it. The HS256 secrets are read per verification, so order is not critical for
@@ -36,7 +39,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
     nodePub.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
-  process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-test";
   process.env.SUPABASE_JWT_SECRET = "test-supabase-secret-not-for-production";
   process.env.MENTRA_CORE_JWT_SECRET =
     "test-mentra-core-secret-not-for-production";
@@ -54,14 +56,25 @@ import { OemModel } from "../packages/core/src/models/oem.model";
 import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
+import * as jose from "jose";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
+import { resetKeySets } from "../packages/core/src/services/signin/key-sets";
+import { installFakeIdp, type FakeIdp } from "./support/fake-idp";
+import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
 
 let coreApp: ReturnType<typeof createApp>;
+const databaseUrl = localTestMongoUrl("mentra-user-exchange");
+let verified = false;
+
+const SUPABASE_ISSUER = "https://testproj.supabase.co/auth/v1";
+const SUPABASE_JWKS = "https://testproj.supabase.co/auth/v1/.well-known/jwks.json";
 
 // === Test lifecycle ===
 
 beforeAll(async () => {
-  await connectMongo(process.env.MONGO_URL!);
+  await connectMongo(databaseUrl);
+  assertConnectedTo(databaseUrl, UserModel.db.name);
+  verified = true;
   await Promise.all([
     OemModel.syncIndexes(),
     UserModel.syncIndexes(),
@@ -73,10 +86,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (verified) {
+    assertConnectedTo(databaseUrl, UserModel.db.name);
+    await UserModel.db.dropDatabase();
+  }
   await disconnectMongo();
 });
 
 beforeEach(async () => {
+  assertConnectedTo(databaseUrl, UserModel.db.name);
   await Promise.all([
     OemModel.deleteMany({}),
     UserModel.deleteMany({}),
@@ -157,6 +175,108 @@ describe("Mentra user exchange — legacy mentra-core token", () => {
     expect(res.status).toBe(200);
     const claims = decodeJwtPayload(((await res.json()) as { access_token: string }).access_token);
     expect(claims.tenant_id).toBe("mentra");
+  });
+});
+
+describe("Supabase tokens signed either way", () => {
+  let idp: FakeIdp;
+
+  beforeEach(async () => {
+    resetKeySets();
+    idp = await installFakeIdp({
+      issuer: SUPABASE_ISSUER,
+      jwksUrl: SUPABASE_JWKS,
+      hs256Secret: process.env.SUPABASE_JWT_SECRET,
+    });
+  });
+  afterEach(() => {
+    idp.restore();
+  });
+
+  async function exchangeSupabaseToken(token: string): Promise<{ status: number; mentraUserId?: string; error?: string }> {
+    const res = await exchange(token);
+    const body = (await res.json()) as { access_token?: string; error?: string };
+    return {
+      status: res.status,
+      mentraUserId: body.access_token ? (decodeJwtPayload(body.access_token).sub as string) : undefined,
+      error: body.error,
+    };
+  }
+
+  test("legacy and asymmetric Supabase tokens resolve the same Core user", async () => {
+    const legacy = await exchangeSupabaseToken(await idp.mint({ sub: "supa-1", aud: "authenticated" }, { alg: "HS256" }));
+    const modern = await exchangeSupabaseToken(await idp.mint({ sub: "supa-1", aud: "authenticated" }, { alg: "ES256" }));
+    expect(legacy.status).toBe(200);
+    expect(modern.status).toBe(200);
+    expect(modern.mentraUserId).toBe(legacy.mentraUserId);
+  });
+
+  test("an RS256 token is accepted", async () => {
+    const result = await exchangeSupabaseToken(await idp.mint({ sub: "supa-rs", aud: "authenticated" }, { alg: "RS256" }));
+    expect(result.status).toBe(200);
+    expect(result.mentraUserId).toMatch(/^mu_/);
+  });
+
+  test("after a key rotation, a token with the new kid is accepted after one key-set refresh", async () => {
+    expect((await exchangeSupabaseToken(await idp.mint({ sub: "supa-rot", aud: "authenticated" }, { alg: "ES256" }))).status).toBe(200);
+    const fetchesBefore = idp.jwksFetches;
+    await idp.rotateKey();
+    const rotated = await exchangeSupabaseToken(await idp.mint({ sub: "supa-rot", aud: "authenticated" }, { alg: "ES256" }));
+    expect(rotated.status).toBe(200);
+    expect(idp.jwksFetches).toBe(fetchesBefore + 1);
+  });
+
+  test("an asymmetric token whose aud is not 'authenticated' is refused", async () => {
+    const result = await exchangeSupabaseToken(await idp.mint({ sub: "supa-aud", aud: "anon" }, { alg: "ES256" }));
+    expect(result.status).toBe(400);
+    expect(result.error).toBe("invalid_grant");
+  });
+
+  test("alg none is refused", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const unsigned = new jose.UnsecuredJWT({ sub: "supa-none", aud: "authenticated", iss: SUPABASE_ISSUER })
+      .setIssuedAt(now)
+      .setExpirationTime(now + 60)
+      .encode();
+    const result = await exchangeSupabaseToken(unsigned);
+    expect(result.status).toBe(400);
+    expect(result.error).toBe("invalid_grant");
+  });
+
+  test("an HS256 token signed with another secret is refused", async () => {
+    const forged = mintHs256({ sub: "supa-forged", secret: "another-secret", iss: SUPABASE_ISSUER });
+    const result = await exchangeSupabaseToken(forged);
+    expect(result.status).toBe(400);
+    expect(result.error).toBe("invalid_grant");
+  });
+
+  test("a jku header pointing at another key set is ignored: only the configured key set counts", async () => {
+    const seen: string[] = [];
+    const inner = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(String(input instanceof Request ? input.url : input));
+      return inner(input as RequestInfo, init);
+    }) as typeof fetch;
+    try {
+      const token = await idp.mint(
+        { sub: "supa-jku", aud: "authenticated" },
+        { alg: "RS256", key: "attacker", header: { jku: "https://attacker.example/jwks.json" } },
+      );
+      const result = await exchangeSupabaseToken(token);
+      expect(result.status).toBe(400);
+      expect(result.error).toBe("invalid_grant");
+      expect(seen.some(url => url.startsWith("https://attacker.example"))).toBe(false);
+    } finally {
+      globalThis.fetch = inner;
+    }
+  });
+
+  test("a token Supabase issued to a web client never becomes a phone session", async () => {
+    const result = await exchangeSupabaseToken(
+      await idp.mint({ sub: "supa-web", aud: "authenticated", client_id: "admin-portal" }, { alg: "HS256" }),
+    );
+    expect(result.status).toBe(400);
+    expect(result.error).toBe("invalid_grant");
   });
 });
 

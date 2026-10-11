@@ -84,6 +84,19 @@ jobs:
         # Run before typecheck creates dist output, which would duplicate tests.
         run: bun test packages
 
+      - name: Run website sign-in tests
+        working-directory: cloud-v2
+        # Mentra's sign-in page, and the portal sites' sign-in, sign-out and
+        # Pages relay. Browserless: React views render to static markup.
+        run: |
+          bun test --max-concurrency=1 \
+            websites/account/src \
+            websites/portal/src \
+            websites/portal/functions \
+            websites/admin/functions \
+            websites/admin/src/lib/session.test.ts \
+            websites/admin/src/components/signed-out.test.tsx
+
       - name: Typecheck backend packages
         working-directory: cloud-v2
         run: bun run typecheck
@@ -94,6 +107,7 @@ jobs:
           bun run typecheck:console
           bun run typecheck:admin
           bun run typecheck:portal
+          bun run typecheck:account
 
       - name: Build websites
         working-directory: cloud-v2
@@ -101,3 +115,70 @@ jobs:
           bun run build:console
           bun run build:admin
           bun run build:portal
+          bun run build:account
+
+  workspace-integration:
+    name: Sign-in integration tests (local Mongo 7)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          # Match the Cloud V2 deployment image.
+          bun-version: "1.3.14"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cloud-v2-${{ hashFiles('cloud-v2/bun.lock', 'sdk/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cloud-v2-
+
+      - name: Install dependencies
+        working-directory: cloud-v2
+        run: bun install --frozen-lockfile
+
+      # The port is published on the loopback interface only.
+      - name: Start Mongo 7
+        run: |
+          docker run -d --name cloud-v2-test-mongo -p 127.0.0.1:27017:27017 mongo:7
+          for attempt in $(seq 1 60); do
+            if docker exec cloud-v2-test-mongo mongosh --quiet --eval "quit(db.adminCommand({ping: 1}).ok ? 0 : 1)"; then
+              echo "Mongo is up (attempt ${attempt})"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Mongo did not start in time" >&2
+          docker logs cloud-v2-test-mongo >&2
+          exit 1
+
+      - name: Run sign-in integration tests
+        working-directory: cloud-v2
+        env:
+          # Every one of these tests reads this variable (through
+          # tests/support/local-mongo.ts, which refuses anything that is not a
+          # plain loopback URL) and works in its own randomly named database.
+          CLOUD_V2_TEST_MONGO_URL: mongodb://127.0.0.1:27017
+        # Only these suites: the rest of cloud-v2/tests needs services CI does
+        # not provide (for example Redis, Soniox and R2).
+        run: |
+          bun test --max-concurrency=1 --timeout 30000 \
+            tests/auth.mentra-user-exchange.integration.test.ts \
+            tests/idp-tokens.integration.test.ts \
+            tests/signin-sessions.integration.test.ts \
+            tests/portal-signin.integration.test.ts \
+            tests/principal-auth.integration.test.ts \
+            tests/signin-revocation.integration.test.ts \
+            tests/enterprise-portal.integration.test.ts \
+            tests/private-cloud-signin.integration.test.ts \
+            tests/signin-security.integration.test.ts
+
+      - name: Show Mongo logs after a failure
+        if: failure()
+        run: docker logs cloud-v2-test-mongo

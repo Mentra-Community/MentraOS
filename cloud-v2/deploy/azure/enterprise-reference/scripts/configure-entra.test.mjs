@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import {spawnSync} from "node:child_process"
-import {mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs"
+import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -197,4 +197,219 @@ test("retries stay quiet until the last attempt", () => {
   const failed = run(`broken() { echo "does not exist" >&2; return 1; }\nretry broken`)
   assert.notEqual(failed.status, 0)
   assert.equal(failed.stderr.trim(), "does not exist")
+})
+
+// Admin portal sign-in. A stand-in for the few Entra objects these paths touch:
+// apps and service principals by ID, app owners and consent grants. Every
+// write is recorded; nothing contacts Azure.
+const GRAPH = "00000003-0000-0000-c000-000000000000"
+const CORE = "33333333-3333-3333-3333-333333333333"
+const MOBILE = "44444444-4444-4444-4444-444444444444"
+const OPERATOR = "55555555-5555-5555-5555-555555555555"
+const signInScopes = [
+  {value: "openid", id: "id-openid"},
+  {value: "email", id: "id-email"},
+  {value: "profile", id: "id-profile"},
+  {value: "offline_access", id: "id-offline"},
+  {value: "User.Read", id: "id-user-read"},
+]
+const fakeEntra = `#!/usr/bin/env node
+const fs = require("node:fs")
+const args = process.argv.slice(2)
+const world = JSON.parse(fs.readFileSync(process.env.ENTRA_WORLD, "utf8"))
+fs.appendFileSync(process.env.ENTRA_TEST_CALLS, JSON.stringify(args) + "\\n")
+const option = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined)
+function reply(value) {
+  const query = option("--query")
+  if (query === "[0].id") value = value[0]?.id ?? ""
+  else if (query === "value[].id") value = value.value.map((item) => item.id)
+  else if (query === "value[0].id") value = value.value[0]?.id ?? ""
+  else if (query) value = value[query]
+  if (option("-o") === "tsv" || option("--output") === "tsv") console.log(value ?? "")
+  else console.log(JSON.stringify(value))
+}
+const command = args.slice(0, 3).join(" ")
+if (args.slice(0, 2).join(" ") === "account show") reply({tenantId: world.tenantId})
+else if (command === "ad app show") {
+  const app = world.apps.find((a) => a.id === option("--id") || a.appId === option("--id"))
+  if (!app) process.exit(3)
+  reply(app)
+} else if (command === "ad sp list") {
+  const appId = option("--filter").match(/appId eq '([^']+)'/)[1]
+  reply(world.sps.filter((s) => s.appId === appId))
+} else if (command === "ad sp show") {
+  const sp = world.sps.find((s) => s.appId === option("--id") || s.id === option("--id"))
+  if (!sp) process.exit(3)
+  reply(sp)
+} else if (args[0] === "rest") {
+  const uri = option("--uri")
+  if (option("--method") === "GET" && uri.includes("/owners")) reply({value: (world.owners || []).map((id) => ({id}))})
+  else if (option("--method") === "GET" && uri.includes("oauth2PermissionGrants")) reply({value: []})
+  else if (option("--method") === "GET" && uri.includes("/servicePrincipals/")) reply({tags: []})
+  else if (option("--method") === "PATCH" || option("--method") === "POST") {
+    fs.appendFileSync(process.env.ENTRA_TEST_CALLS + ".writes", JSON.stringify({method: option("--method"), uri, body: JSON.parse(option("--body"))}) + "\\n")
+  } else process.exit(9)
+} else {
+  console.error("Unexpected Azure command", args)
+  process.exit(9)
+}
+`
+
+function coreApp(overrides = {}) {
+  return {
+    id: "core-object",
+    appId: CORE,
+    signInAudience: "AzureADMyOrg",
+    web: {homePageUrl: "https://intranet.acme.example", redirectUris: ["https://other.acme.example/callback"],
+      redirectUriSettings: [{uri: "https://other.acme.example/callback", index: null}], implicitGrantSettings: {enableIdTokenIssuance: false}},
+    optionalClaims: {idToken: [{name: "upn", source: null, essential: false, additionalProperties: []}], accessToken: [{name: "ipaddr"}]},
+    requiredResourceAccess: [
+      {resourceAppId: "66666666-6666-6666-6666-666666666666", resourceAccess: [{id: "kept", type: "Scope"}]},
+      {resourceAppId: GRAPH, resourceAccess: [{id: "id-user-read", type: "Scope"}]},
+    ],
+    ...overrides,
+  }
+}
+
+function entra(t, cliArgs, {apps = [coreApp()], scopes = signInScopes, owners = [], env = {}} = {}) {
+  const root = mkdtempSync(path.join(tmpdir(), "entra-portal-"))
+  t.after(() => rmSync(root, {recursive: true, force: true}))
+  const callsFile = path.join(root, "calls.jsonl")
+  writeFileSync(callsFile, "")
+  writeFileSync(path.join(root, "az"), fakeEntra, {mode: 0o755})
+  const sps = [
+    {id: "graph-sp", appId: GRAPH, oauth2PermissionScopes: scopes},
+    {id: "acs-sp", appId: "1fd5118e-2576-4263-8130-9503064c837a",
+      oauth2PermissionScopes: [{value: "Teams.ManageCalls", id: "id-calls"}, {value: "Teams.ManageChats", id: "id-chats"}]},
+    {id: "core-sp", appId: CORE},
+    {id: "mobile-sp", appId: MOBILE},
+    {id: "other-sp", appId: "66666666-6666-6666-6666-666666666666", oauth2PermissionScopes: [{value: "Other.Read", id: "kept"}]},
+  ]
+  writeFileSync(path.join(root, "world.json"), JSON.stringify({tenantId: "tenant", apps, sps, owners}))
+  const result = spawnSync("/bin/bash", [new URL("configure-entra.sh", import.meta.url).pathname, ...cliArgs], {
+    encoding: "utf8",
+    env: {...process.env, PATH: `${root}:${process.env.PATH}`, ENTRA_WORLD: path.join(root, "world.json"),
+      ENTRA_TEST_CALLS: callsFile, MENTRA_ENTRA_RETRY_SECONDS: "0", MENTRA_SUBSCRIPTION_ID: "", ...env},
+  })
+  const read = (file) => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) : [])
+  return {...result, calls: read(callsFile), writes: read(callsFile + ".writes")}
+}
+
+test("admin portal sign-in adds Core's redirect, email claim and sign-in scopes and keeps the rest", (t) => {
+  const result = entra(t, ["--admin-portal-only", "--core-client-id", CORE, "--admin-portal-url", "https://core.acme.example/"])
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(JSON.parse(result.stdout), {
+    tenantId: "tenant",
+    coreApiClientId: CORE,
+    adminPortalRedirectUri: "https://core.acme.example/api/admin/auth/callback",
+  })
+  // One change, to the Core registration only: no Mobile, service principal or consent writes.
+  assert.equal(result.writes.length, 1)
+  const {method, uri, body} = result.writes[0]
+  assert.equal(method, "PATCH")
+  assert.equal(uri, "https://graph.microsoft.com/v1.0/applications/core-object")
+  assert.deepEqual(body.web.redirectUris.sort(), [
+    "https://core.acme.example/api/admin/auth/callback",
+    "https://other.acme.example/callback",
+  ])
+  assert.equal(body.web.homePageUrl, "https://intranet.acme.example")
+  assert.equal("redirectUriSettings" in body.web, false)
+  assert.deepEqual(body.optionalClaims.idToken.map((claim) => claim.name), ["upn", "email"])
+  assert.deepEqual(body.optionalClaims.accessToken, [{name: "ipaddr"}])
+  const graph = body.requiredResourceAccess.find((access) => access.resourceAppId === GRAPH)
+  // Only the OpenID sign-in scopes are added; a scope an administrator added stays.
+  assert.deepEqual(graph.resourceAccess.map((access) => access.id).sort(), ["id-email", "id-openid", "id-profile", "id-user-read"])
+  assert.ok(graph.resourceAccess.every((access) => access.type === "Scope"))
+  assert.deepEqual(body.requiredResourceAccess.find((access) => access.resourceAppId !== GRAPH).resourceAccess, [{id: "kept", type: "Scope"}])
+})
+
+test("admin portal sign-in is idempotent", (t) => {
+  const configured = coreApp({
+    web: {redirectUris: ["https://core.acme.example/api/admin/auth/callback"]},
+    optionalClaims: {idToken: [{name: "email", source: null, essential: true, additionalProperties: ["include_externally_authenticated_upn"]}]},
+    requiredResourceAccess: [{resourceAppId: GRAPH, resourceAccess: ["id-openid", "id-email", "id-profile"].map((id) => ({id, type: "Scope"}))}],
+  })
+  const result = entra(t, ["--admin-portal-only", "--core-client-id", CORE, "--admin-portal-url", "https://core.acme.example"], {apps: [configured]})
+  assert.equal(result.status, 0, result.stderr)
+  const {body} = result.writes[0]
+  assert.deepEqual(body.web.redirectUris, ["https://core.acme.example/api/admin/auth/callback"])
+  // An administrator's own email claim settings are kept, not duplicated.
+  assert.deepEqual(body.optionalClaims.idToken, configured.optionalClaims.idToken)
+  assert.equal(body.requiredResourceAccess.length, 1)
+  assert.equal(body.requiredResourceAccess[0].resourceAccess.length, 3)
+})
+
+test("without Core's address the redirect is left alone", (t) => {
+  const result = entra(t, ["--admin-portal-only", "--core-client-id", CORE])
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal("web" in result.writes[0].body, false)
+  assert.equal("adminPortalRedirectUri" in JSON.parse(result.stdout), false)
+})
+
+test("missing Microsoft Graph sign-in scopes stop before any change", (t) => {
+  const result = entra(t, ["--admin-portal-only", "--core-client-id", CORE], {scopes: signInScopes.filter((s) => s.value !== "email")})
+  assert.notEqual(result.status, 0)
+  assert.equal(result.writes.length, 0)
+})
+
+test("the operator is made an owner of Core once", (t) => {
+  for (const [owners, added] of [[[], 1], [[OPERATOR], 0]]) {
+    const result = entra(t, ["--admin-portal-only", "--core-client-id", CORE, "--core-owner", OPERATOR], {owners})
+    assert.equal(result.status, 0, result.stderr)
+    const posts = result.writes.filter((write) => write.uri.endsWith("/owners/$ref"))
+    assert.equal(posts.length, added)
+    if (added) {
+      assert.equal(posts[0].uri, "https://graph.microsoft.com/v1.0/applications/core-object/owners/$ref")
+      assert.deepEqual(posts[0].body, {"@odata.id": `https://graph.microsoft.com/v1.0/directoryObjects/${OPERATOR}`})
+    }
+  }
+})
+
+test("consent-only grants Core's sign-in scopes along with Mobile's", (t) => {
+  const mobile = {id: "mobile-object", appId: MOBILE, requiredResourceAccess: [{resourceAppId: GRAPH, resourceAccess: [{id: "id-user-read", type: "Scope"}]}]}
+  const core = coreApp({requiredResourceAccess: [{resourceAppId: GRAPH, resourceAccess: ["id-openid", "id-email", "id-profile"].map((id) => ({id, type: "Scope"}))}]})
+  const result = entra(t, ["--consent-only", "--mobile-client-id", MOBILE, "--core-client-id", CORE], {apps: [core, mobile]})
+  assert.equal(result.status, 0, result.stderr)
+  const grants = result.writes.filter((write) => write.uri.endsWith("/oauth2PermissionGrants")).map((write) => write.body)
+  assert.deepEqual(grants, [
+    {clientId: "mobile-sp", consentType: "AllPrincipals", resourceId: "graph-sp", scope: "User.Read"},
+    {clientId: "core-sp", consentType: "AllPrincipals", resourceId: "graph-sp", scope: "openid email profile"},
+  ])
+  assert.equal(JSON.parse(result.stdout).coreApiClientId, CORE)
+})
+
+for (const [cliArgs, message] of [
+  [["--admin-portal-only"], /requires --core-client-id/],
+  [["--admin-portal-only", "--core-client-id", CORE, "--admin-portal-url", "http://core.acme.example"], /https:\/\/ origin/],
+  [["--admin-portal-only", "--core-client-id", CORE, "--admin-portal-url", "https://core.acme.example/portal"], /https:\/\/ origin/],
+  [["--admin-portal-only", "--core-client-id", CORE, "--admin-portal-url", "https://Core.acme.example"], /https:\/\/ origin/],
+  [["--admin-portal-only", "--core-client-id", CORE, "--core-owner", "operator@acme.example"], /--core-owner must be an object ID/],
+]) {
+  test(`invalid admin portal options are refused before Azure is called: ${cliArgs.slice(-1)[0]}`, (t) => {
+    const result = entra(t, cliArgs)
+    assert.equal(result.status, 2)
+    assert.match(result.stderr, message)
+    assert.equal(result.calls.length, 0)
+  })
+}
+
+test("reconciling both apps also sets up Core's admin portal sign-in and consent", (t) => {
+  const mobile = {id: "mobile-object", appId: MOBILE, signInAudience: "AzureADMyOrg"}
+  const result = entra(t, ["--core-client-id", CORE, "--mobile-client-id", MOBILE, "--admin-portal-url", "https://core.acme.example",
+    "--core-owner", OPERATOR, "--grant-admin-consent"], {apps: [coreApp(), mobile]})
+  assert.equal(result.status, 0, result.stderr)
+  const output = JSON.parse(result.stdout)
+  assert.equal(output.adminPortalRedirectUri, "https://core.acme.example/api/admin/auth/callback")
+  assert.equal(output.mobileClientId, MOBILE)
+  const corePatches = result.writes.filter((write) => write.uri.endsWith("/applications/core-object"))
+  // The existing Core reconcile, then admin portal sign-in.
+  assert.equal(corePatches.length, 2)
+  assert.ok(corePatches[0].body.api.oauth2PermissionScopes.some((scope) => scope.value === "mentra.session"))
+  assert.ok(corePatches[1].body.web.redirectUris.includes(output.adminPortalRedirectUri))
+  assert.ok(result.writes.some((write) => write.uri.endsWith("/applications/core-object/owners/$ref")))
+  assert.ok(result.writes.some((write) => write.uri.endsWith("/applications/mobile-object")))
+  // Consent covers Core too. (The stand-in does not apply PATCHes, so the scopes
+  // granted are the app's earlier ones; the consent-only test checks the sign-in scopes.)
+  const grants = result.writes.filter((write) => write.uri.endsWith("/oauth2PermissionGrants")).map((write) => write.body.clientId)
+  assert.ok(grants.includes("core-sp"))
 })

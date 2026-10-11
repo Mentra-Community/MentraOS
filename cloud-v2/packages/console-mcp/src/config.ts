@@ -5,7 +5,7 @@
  * MENTRA_CORE_URL (explicit base URL) or MENTRA_ENV (prod | staging | dev).
  * Report tools require MENTRA_ADMIN_TOKEN: an org API key (msk_...) whose
  * synthetic email (api-key@{keyId}.local) is allowlisted via
- * CLOUD_CORE_ADMIN_EMAILS, or a WorkOS access token of an admin user.
+ * CLOUD_CORE_ADMIN_EMAILS.
  * API keys are env-pinned — a key minted for prod will not authenticate
  * against staging or dev.
  */

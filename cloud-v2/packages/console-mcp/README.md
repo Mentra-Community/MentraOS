@@ -14,7 +14,7 @@ This replaces the incident tools of the legacy server at `cloud/packages/console
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `MENTRA_ADMIN_TOKEN` | Yes (for report tools) | Bearer token for the admin API: an org API key (`msk_...`) whose synthetic email `api-key@{keyId}.local` is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`, or a WorkOS access token of an admin user |
+| `MENTRA_ADMIN_TOKEN` | Yes (for report tools) | Bearer token for the admin API: an org API key (`msk_...`) whose synthetic email `api-key@{keyId}.local` is allowlisted via `CLOUD_CORE_ADMIN_EMAILS` |
 | `MENTRA_CORE_URL` | No | Core API base URL; overrides `MENTRA_ENV`. Local dev: `http://localhost:3000` |
 | `MENTRA_ENV` | No | `prod` (default) \| `staging` \| `dev` — picks the matching core deployment |
 

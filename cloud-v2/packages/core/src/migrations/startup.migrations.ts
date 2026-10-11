@@ -11,6 +11,9 @@ import { DeveloperOrgInvitationModel } from "../models/developer-org-invitation.
 import { DeveloperOrgMembershipModel } from "../models/developer-org-membership.model";
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
+import { BrowserSessionModel } from "../models/browser-session.model";
+import { LoginTransactionModel } from "../models/login-transaction.model";
+import { AuthRateLimitModel } from "../models/auth-rate-limit.model";
 import { OemModel } from "../models/oem.model";
 import {TestHostStateModel} from "../models/test-host-state.model";
 import {TestRerunModel} from "../models/test-rerun.model";
@@ -54,6 +57,11 @@ export async function runStartupMigrations(): Promise<void> {
   await dropLegacyUserIdentityIndex();
   await dedupeUserIdentityRows();
   await UserModel.createIndexes();
+  // Portal sign-in: session and transaction lookups are by unique hash, and
+  // rows expire by TTL. Built before serving so a session is never duplicated.
+  await BrowserSessionModel.createIndexes();
+  await LoginTransactionModel.createIndexes();
+  await AuthRateLimitModel.createIndexes();
   // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes();
   // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.

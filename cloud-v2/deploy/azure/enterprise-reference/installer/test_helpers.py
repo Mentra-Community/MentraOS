@@ -16,6 +16,8 @@ class HelperTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)
         self.env = dict(os.environ, PATH=str(self.path) + ':' + os.environ['PATH'])
+        # Scripts never reach Azure: until a test installs its own stand-in, az fails.
+        self.executable('az', 'import sys\nprint("Tests never call Azure: az", *sys.argv[1:], file=sys.stderr)\nsys.exit(97)\n')
 
     def executable(self, name, body):
         path = self.path / name
@@ -226,7 +228,7 @@ else:sys.exit(9)
             self.assertNotIn(name, parameters)
         template = (ROOT / 'main.bicep').read_text()
         self.assertNotIn('@secure()', template)
-        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 6)
+        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 7)
         # Each app reads only its own secrets with its own identity; nothing reads the admin key.
         core = template[template.index("resource core '"):template.index("resource runtime '")]
         runtime = template[template.index("resource runtime '"):]
@@ -243,6 +245,106 @@ else:sys.exit(9)
         self.assertIn('scope: runtimeSecret[i]', access)
         # The admin key appears only in the comment saying no app can read it.
         self.assertEqual(access.count('mentra-admin-key'), 1)
+
+    def test_parameters_and_core_carry_admin_portal_sign_in(self):
+        import re
+        config = json.loads((ROOT / 'deployment.config.example.json').read_text())
+        parameters = self.parameters(config)
+        self.assertEqual(parameters['verifiedEmailDomains']['value'], ['acme.example'])
+        self.assertIs(parameters['adminPortalSignIn']['value'], False)
+        self.assertIs(self.parameters(dict(config, adminPortalSignIn=True))['adminPortalSignIn']['value'], True)
+        # A standalone configuration without these settings deploys no domains and sign-in off.
+        del config['verifiedEmailDomains'], config['adminPortalSignIn']
+        parameters = self.parameters(config)
+        self.assertEqual(parameters['verifiedEmailDomains']['value'], [])
+        self.assertIs(parameters['adminPortalSignIn']['value'], False)
+        template = (ROOT / 'main.bicep').read_text()
+        self.assertIn('param verifiedEmailDomains array = []', template)
+        self.assertIn('param adminPortalSignIn bool = false', template)
+        core = template[template.index("resource core '"):template.index("resource runtime '")]
+        provider = template[template.index('var oidcProviders = ['):template.index('var mongoConnectionString')]
+        # Present either way: Core serves the admin portal, and its sign-in answers "not configured" when off.
+        for line in ("{ name: 'CLOUD_CORE_OIDC_PROVIDERS', value: string(oidcProviders) }",
+                     "{ name: 'CLOUD_CORE_ADMIN_PORTAL_URL', value: coreOrigin }",
+                     "{ name: 'CLOUD_CORE_ADMIN_STATIC_DIR', value: '/app/admin-dist' }",
+                     "{ name: 'CLOUD_CORE_IDP_SIGNOUT_URL', value: '${loginEndpoint}${tenantId}/oauth2/v2.0/logout' }"):
+            self.assertIn(line, core)
+        # The phone's provider settings are unchanged, and the email domains are always listed.
+        for line in ("audience: coreApiClientId", "subjectClaim: 'oid'", "directoryTenantClaim: 'tid'",
+                     "expectedDirectoryTenantId: tenantId", "requiredScopes: ['mentra.session']",
+                     "allowedClientIds: [mobileClientId]", "issuer: '${loginEndpoint}${tenantId}/v2.0'",
+                     "jwksUrl: '${loginEndpoint}${tenantId}/discovery/v2.0/keys'", "tenantId: deploymentId",
+                     'verifiedEmailDomains: verifiedEmailDomains'):
+            self.assertIn(line, provider)
+        # With sign-in on, Core reads its secret from Key Vault and signs in as the Core API app itself.
+        # With it off, each of these is an empty array or object.
+        gated = [
+            (core, r"\], adminPortalSignIn \? \[\s*\{ name: 'entra-browser-client-secret', "
+                   r"keyVaultUrl: '\$\{vaultUri\}secrets/entra-browser-client-secret', identity: coreIdentity\.id \}\s*\] : \[\]\)"),
+            (core, r"\], adminPortalSignIn \? \[\s*\{ name: 'ENTRA_BROWSER_CLIENT_SECRET', "
+                   r"secretRef: 'entra-browser-client-secret' \}\s*\] : \[\]\)"),
+            (provider, r"\}, adminPortalSignIn \? \{\s*browser: \{\s*clientId: coreApiClientId\s*"
+                       r"clientSecretEnv: 'ENTRA_BROWSER_CLIENT_SECRET'\s*scopes: \['openid', 'email', 'profile'\]\s*"
+                       r"emailClaim: 'email'\s*displayName: displayName\s*\}\s*\} : \{\}\)"),
+        ]
+        ungated = core + provider
+        for text, pattern in gated:
+            match = re.search(pattern, text)
+            self.assertIsNotNone(match, pattern)
+            ungated = ungated.replace(match.group(0), '')
+        # Off renders no secret reference, no secretRef and no browser settings.
+        for name in ('entra-browser-client-secret', 'ENTRA_BROWSER_CLIENT_SECRET', 'browser'):
+            self.assertNotIn(name, ungated)
+        self.assertNotIn('entra-browser-client-secret', template[template.index("resource runtime '"):])
+        # Only Core is granted the secret, under the same setting, once it exists.
+        access = (ROOT / 'access.bicep').read_text()
+        self.assertIn('param adminPortalSignIn bool = false', access)
+        self.assertRegex(access, r"var coreSecrets = concat\(\[[^\]]*\], adminPortalSignIn \? \['entra-browser-client-secret'\] : \[\]\)")
+        self.assertEqual(access.count("'entra-browser-client-secret'"), 1)
+
+    def test_configuration_requires_canonical_email_domains(self):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        expression = source.split("jq -e '\n", 1)[1].split("\n' \"$CONFIG\"", 1)[0]
+        config = json.loads((ROOT / 'deployment.config.example.json').read_text())
+        config['sourceImage'] = 'ghcr.io/mentra-community/mentra-cloud@sha256:' + 'a' * 64
+        for key in ('tenantId', 'coreApiClientId', 'mobileClientId'):
+            config[key] = '11111111-1111-1111-1111-111111111111'
+        for value, expected in ((['acme.com', 'us.acme.com'], True), ([], True), (None, True), (['xn--bcher-kva.example'], True),
+                                (['notmentra.glass'], True), (['Acme.com'], False), (['acme.com.'], False), (['acme'], False),
+                                (['-acme.com'], False), (['mentra.glass'], False), (['eu.mentraglass.com'], False),
+                                (['acme.com', 'acme.com'], False), ('acme.com', False), ([42], False)):
+            with self.subTest(value=value):
+                config['verifiedEmailDomains'] = value
+                if value is None:
+                    del config['verifiedEmailDomains']
+                result = subprocess.run(['jq', '-e', expression], input=json.dumps(config), capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, expected, result.stderr)
+        config['verifiedEmailDomains'] = ['acme.com']
+        for value, expected in ((True, True), (False, True), (None, True), ('true', False), (1, False)):
+            with self.subTest(adminPortalSignIn=value):
+                config['adminPortalSignIn'] = value
+                if value is None:
+                    del config['adminPortalSignIn']
+                result = subprocess.run(['jq', '-e', expression], input=json.dumps(config), capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, expected, result.stderr)
+
+    def test_deploy_stops_before_granting_access_without_the_portal_secret(self):
+        source = (ROOT / 'scripts/deploy.sh').read_text()
+        start, end = '# Admin portal sign-in: Core reads', '# End of the admin portal secret check.'
+        # Checked after the signing keys and before access.bicep grants Core the secret.
+        self.assertLess(source.index('ensure-vault-secrets.sh" "$KEY_VAULT"'), source.index(start))
+        self.assertLess(source.index(end), source.index('# Grant each app read access to exactly its own secrets.'))
+        # Sign-in on: the secret must be in Key Vault. Off: it is not needed or looked up.
+        for signin, exists, code, looked_up in (('true', False, 1, 1), ('true', True, 0, 1), ('false', False, 0, 0)):
+            with self.subTest(signin=signin, exists=exists):
+                (self.path / 'calls').unlink(missing_ok=True)
+                fake = ('if a[:3]==["keyvault","secret","show"] and a[a.index("--name")+1]=="entra-browser-client-secret":'
+                        f'sys.exit({0 if exists else 3})\nelse:sys.exit(9)\n')
+                result, calls = self.deploy_block(start, end, fake, prelude=f'ADMIN_PORTAL_SIGN_IN={signin}\n')
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(len(calls), looked_up)
+                if code:
+                    self.assertIn('has no entra-browser-client-secret', result.stderr)
 
     def test_configuration_requires_a_valid_key_vault_name(self):
         source = (ROOT / 'scripts/deploy.sh').read_text()
@@ -469,6 +571,8 @@ else:sys.exit(9)
         bootstrap = next(c for c in calls if c[:3] == ['deployment', 'group', 'what-if'] and 'bootstrap' in c[c.index('--template-file') + 1])
         self.assertIn('operatorPrincipalId=abcdef12-1234-1234-1234-abcdef123456', bootstrap)
         self.assertIn('keyVaultName=kvacmementra', bootstrap)
+        access = next(c for c in calls if c[:3] == ['deployment', 'group', 'what-if'] and 'access' in c[c.index('--template-file') + 1])
+        self.assertIn('adminPortalSignIn=false', access)
         self.assertFalse(any(c[:3] in (['deployment', 'group', 'create'], ['acr', 'import']) for c in calls))
         parameters = json.loads((self.path / 'main-parameters.json').read_text())['parameters']
         self.assertEqual(parameters['cloudImage']['value'], 'acmementraregistry.azurecr.io/mentra-cloud-enterprise@sha256:' + 'a' * 64)
