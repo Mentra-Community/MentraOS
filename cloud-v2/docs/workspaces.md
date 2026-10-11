@@ -55,7 +55,8 @@ account; a deleted account is refused (`404 user_not_found`).
 - An invitation is only as good as its inviter: it is revoked when the
   inviter's membership ends, and refused at acceptance once the inviter's role
   no longer grants the invited role. A person may send 100 invitations an hour,
-  and a workspace hold 200 pending ones.
+  and a workspace hold 200 pending ones; replacing the pending invitation to an
+  address does not count against that.
 - Deleting a workspace ends its memberships and revokes its keys and
   invitations at once, without asking any other service. Miniapps it publishes
   in the Mentra Miniapp Store stay published until a Store operator assigns

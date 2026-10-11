@@ -83,7 +83,8 @@ export interface InvitationRow {
  * owners. A person inviting must have a verified email (`email_unverified`
  * otherwise). A pending invitation to the same address is revoked (superseded), so
  * only the newest link works. A person may send at most 100 invitations an hour
- * and a workspace hold at most 200 pending ones (`rate_limited`). `inviteUrl` is
+ * and a workspace hold at most 200 pending ones (`rate_limited`); replacing the
+ * pending invitation to an address does not count against that. `inviteUrl` is
  * built from `inviteUrlTemplate()`; a missing or unusable template is
  * `invitations_unavailable` (503), before anything is written.
  * The template is checked only once the workspace exists and the actor may
@@ -119,8 +120,13 @@ export async function createInvitation(
     // Only now, for a caller who may invite: a configuration problem is the operator's to hear about, not a stranger's.
     const template = inviteUrlTemplate()
     await touchWorkspace(session, workspaceId)
-    const pending = await WorkspaceInvitationModel.countDocuments({workspaceId, status: "pending", expiresAt: {$gt: new Date()}})
-      .session(session)
+    // The pending invitation to this address, if any, is replaced below, so it does not count.
+    const pending = await WorkspaceInvitationModel.countDocuments({
+      workspaceId,
+      status: "pending",
+      expiresAt: {$gt: new Date()},
+      email: {$ne: email},
+    }).session(session)
     if (pending >= MAX_PENDING_INVITATIONS) {
       fail("rate_limited", "this workspace has too many pending invitations; revoke some before inviting more")
     }

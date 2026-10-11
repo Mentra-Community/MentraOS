@@ -653,6 +653,38 @@ describe("invitation limits", () => {
     await createInvitation(user("mu_owner"), ws, {email: "overflow@example.test", role: "member"})
   })
 
+  test("at the limit, re-inviting an address that already has a pending invitation replaces it", async () => {
+    const ws = await newWorkspace()
+    const expiresAt = new Date(Date.now() + DAY_MS)
+    await WorkspaceInvitationModel.insertMany(
+      Array.from({length: 200}, (_, i) => ({
+        invitationId: `winv_seed_${i}`,
+        workspaceId: ws,
+        email: `seed-${i}@example.test`,
+        role: "member",
+        tokenHash: sha256(`seed-${i}`),
+        status: "pending",
+        expiresAt,
+      })),
+    )
+
+    const replacement = await createInvitation(user("mu_owner"), ws, {email: "seed-7@example.test", role: "developer"})
+
+    expect(await WorkspaceInvitationModel.countDocuments({workspaceId: ws, status: "pending"})).toBe(200)
+    expect((await WorkspaceInvitationModel.findOne({invitationId: "winv_seed_7"}).lean())!.status).toBe("revoked")
+    expect(await WorkspaceInvitationModel.findOne({invitationId: replacement.invitationId}).lean()).toMatchObject({
+      email: "seed-7@example.test",
+      role: "developer",
+      status: "pending",
+    })
+    // A new address is still refused.
+    await expectError(
+      () => createInvitation(user("mu_owner"), ws, {email: "overflow@example.test", role: "member"}),
+      "rate_limited",
+      429,
+    )
+  })
+
   test("a workspace name with a line break or other control character is refused", async () => {
     for (const name of ["Acme\nSubject: reset your password", "Ac\rme", "Ac\u0007me", "Ac\u0085me"]) {
       await expectError(() => createWorkspace(user("mu_owner"), {name}), "invalid_request", 400)
