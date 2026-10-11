@@ -8,7 +8,7 @@ Each Core deployment trusts one identity provider for its websites:
 - **A Mentra Private Cloud** uses the customer's own identity provider (Microsoft
   Entra in the Azure reference), configured in `CLOUD_CORE_OIDC_PROVIDERS`.
 
-The admin portal and the enterprise portal are confidential OpenID Connect
+The admin portal and the workspace portal are confidential OpenID Connect
 clients of that provider. Core runs their server side: it redeems the
 authorization code, verifies who signed in, maps the person to the same Core user
 the Mentra App has, and keeps its own session. The browser never holds an
@@ -46,7 +46,7 @@ from configuration, never from `Host` or forwarding headers.
 | Cookie | Portal |
 | --- | --- |
 | `__Host-mentra_admin_session` | Admin portal |
-| `__Host-mentra_portal_session` | Enterprise portal |
+| `__Host-mentra_portal_session` | Workspace portal |
 | `__Host-mentra_client_tx` | Either portal, during sign-in (10 minutes) |
 
 Cookies are opaque 256-bit values, `HttpOnly`, `Secure`, `SameSite=Lax`,
@@ -57,18 +57,23 @@ Cookies are opaque 256-bit values, `HttpOnly`, `Secure`, `SameSite=Lax`,
 A session ends after 7 days without use and 30 days after sign-in. Its value
 rotates after 24 hours; the previous value stays valid for 60 seconds. A session
 belongs to one portal: the admin portal's cookie authenticates nothing under
-`/api/portal`, and the enterprise portal's nothing under `/api/admin`. Unsafe
+`/api/portal`, the workspace portal's nothing under `/api/admin`, and neither
+anything under `/api/workspaces` or `/api/organization`. Unsafe
 requests authenticated by a portal cookie must be same-origin (`Origin`, or
 `Sec-Fetch-Site: same-origin`).
 
-### Who may use the admin API
+### Who may use the portal APIs
 
-`/api/admin/*` accepts, in order:
+Every portal API resolves its caller, in order, to:
 
-1. an organization API key (`msk_…`) whose synthetic email,
-   `api-key@<keyId>.local`, is on `CLOUD_CORE_ADMIN_EMAILS`;
+1. a Core key in the bearer (`msk_…` or `mak_…`, see [Workspaces and keys](workspaces.md));
 2. an identity-provider access token from this environment's web clients;
-3. the admin portal session.
+3. the route group's portal session: the admin portal's under `/api/admin`, the
+   workspace portal's under `/api/portal`.
+
+`/api/workspaces` and `/api/organization` take bearers only. Signing in grants
+no organization capability by itself: the admin portal opens only the pages the
+caller's capabilities allow, and each admin route checks its own capability.
 
 A person is an Organization Admin when their **verified** email is on
 `CLOUD_CORE_ADMIN_EMAILS` (exact address or plus-tagged alias) or in a domain on
@@ -82,7 +87,8 @@ allowlist change applies on the next one.
   (exact match; list each subdomain), and never when the token says
   `email_verified: false`. Any other email it asserts is display data.
 
-`/api/portal/*` requires a person; a key gets 403.
+Workspace and organization administration is done by people; a key gets 403
+there.
 
 ### Revocation
 
@@ -107,11 +113,11 @@ next request.
 | --- | --- | --- |
 | `CLOUD_CORE_SUPABASE_ISSUER` | Public | The Supabase issuer, exactly as its discovery document reports it (`…/auth/v1`). Unset: portal sign-in is not configured. |
 | `CLOUD_CORE_SUPABASE_JWKS_URL` | Public | Optional. Supabase's key set, for tokens signed with asymmetric keys. Default `${SUPABASE_URL}/auth/v1/.well-known/jwks.json`. |
-| `CLOUD_CORE_WEB_CLIENT_IDS` | Public | Comma-separated client IDs of this environment's web clients (its admin portal, enterprise portal, Console and CLI). A token issued to any other client, another environment's included, is refused. |
+| `CLOUD_CORE_WEB_CLIENT_IDS` | Public | Comma-separated client IDs of this environment's web clients (its admin portal, workspace portal, Console and CLI). A token issued to any other client, another environment's included, is refused. |
 | `CLOUD_CORE_ADMIN_PORTAL_URL` | Public | The admin portal's origin. Its callback is `${CLOUD_CORE_ADMIN_PORTAL_URL}/api/admin/auth/callback`. |
 | `CLOUD_CORE_ADMIN_PORTAL_CLIENT_ID` | Public | The admin portal's Supabase client ID. |
 | `CLOUD_CORE_ADMIN_PORTAL_CLIENT_SECRET` | Secret | Its client secret. |
-| `CLOUD_CORE_ENTERPRISE_PORTAL_URL`, `…_CLIENT_ID`, `…_CLIENT_SECRET` | Public / Secret | The same for the enterprise portal. |
+| `CLOUD_CORE_ENTERPRISE_PORTAL_URL`, `…_CLIENT_ID`, `…_CLIENT_SECRET` | Public / Secret | The same for the workspace portal (`portal.mentraglass.com`). |
 | `CLOUD_CORE_IDP_SIGNOUT_URL` | Public | Optional. The sign-in page's `/signout`, offered after a portal sign-out. |
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` | As before | Also used to read `email_confirmed_at`, to end the portal's Supabase session, and for account-wide sign-out. |
 

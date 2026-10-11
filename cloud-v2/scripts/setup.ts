@@ -7,7 +7,7 @@
  *
  * Modes:
  *   `bun scripts/setup.ts`        — dev (Redis only, Mongo via Atlas)
- *   `bun scripts/setup.ts --test` — test (Redis + Mongo locally)
+ *   `bun scripts/setup.ts --test` — test (Redis + Mongo replica set locally)
  *
  * Future additions (tracked under their own tickets):
  * - OS-1490: Doppler auth check + secrets pull
@@ -94,15 +94,18 @@ async function startContainers() {
   }
 
   if (TEST_MODE) {
-    step("waiting for Mongo to respond to ping");
-    const mongoDeadline = Date.now() + 15_000;
+    // The compose healthcheck runs `rs.initiate` on first boot; here we wait
+    // for the resulting single-node replica set to elect itself primary.
+    // Transactions (and so every workspace write path) fail until it has.
+    step("waiting for the Mongo replica set (rs0) to elect a primary");
+    const mongoDeadline = Date.now() + 30_000;
     while (Date.now() < mongoDeadline) {
       try {
-        const result = await $`docker exec ${MONGO_CONTAINER} mongosh --quiet --eval "db.runCommand({ping:1}).ok"`
+        const result = await $`docker exec ${MONGO_CONTAINER} mongosh --quiet --eval "db.hello().isWritablePrimary"`
           .quiet()
           .text();
-        if (result.trim() === "1") {
-          ok(`Mongo ready at localhost:27017`);
+        if (result.trim() === "true") {
+          ok(`Mongo replica set rs0 primary ready at localhost:27017`);
           return;
         }
       } catch {
@@ -111,7 +114,7 @@ async function startContainers() {
       await Bun.sleep(300);
     }
     fail(
-      `Mongo did not respond within 15s. Check \`docker logs ${MONGO_CONTAINER}\`.`,
+      `Mongo replica set did not elect a primary within 30s. Check \`docker logs ${MONGO_CONTAINER}\`.`,
     );
   }
 }
