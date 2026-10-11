@@ -32,6 +32,7 @@ const all = await session.miniapps.list({ includeIncompatible: true });
 // reports as running, without changing phone navigation or foregrounding anything
 // (the WebView mounts only if the user opens it).
 await session.miniapps.start("com.mentra.todo");
+await session.miniapps.open("com.mentra.todo"); // start and bring its phone UI forward
 await session.miniapps.stop("com.mentra.todo");
 ```
 
@@ -39,7 +40,28 @@ await session.miniapps.stop("com.mentra.todo");
 |---|---|---|
 | `list(options?)` | `Promise<MiniappInfo[]>` | `options.includeIncompatible` defaults to `false`. Each entry carries its declared `actions`. |
 | `start(packageName)` | `Promise<void>` | Background-spawn; no foreground change. |
+| `open(packageName)` | `Promise<void>` | Start and foreground the miniapp's phone UI. |
 | `stop(packageName)` | `Promise<void>` | Stop a running miniapp. |
+
+Each `MiniappInfo` also reports `system` (the Mentra App build ships this
+miniapp) and, when a bundled Store maintains the installed release,
+`storeOwnerPackageName` or `systemStoreOwnerPackageName`. Actions declared with
+`"audience": "host"` are not listed.
+
+### Installing miniapps
+
+`session.miniapps.install`, `checkInstallCompatibility`, `onInstallProgress` and
+`uninstall` are accepted only from a Store miniapp bundled with the Mentra App.
+Other callers, system miniapps included, get `NOT_PERMITTED`. The host downloads
+the release, checks its SHA-256, archive, publisher signature, version and
+compatibility, and installs it through the same installer as every other source.
+
+An automatic update passes `onlyIfStopped: true`: it never stops a running
+miniapp by itself and answers `APP_RUNNING` instead. With `askIfRunning: true`
+as well, the Mentra App stages the release and asks the user whether to update
+now; declining, or a question the app does not show (it is in the background,
+another question is open, or it asked about this miniapp within the last day),
+still answers `APP_RUNNING`, and the update installs once the miniapp stops.
 
 ## Invoke an action
 

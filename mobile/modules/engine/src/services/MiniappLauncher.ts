@@ -25,14 +25,22 @@
 
 import {File} from "expo-file-system"
 
-import {isDevMiniappAllowed, isInstalledMiniappAllowed, isLocalMiniappPackageAllowed} from "../runtime/bootstrap"
+import {
+  isDevMiniappAllowed,
+  isInstalledMiniappAllowed,
+  isLocalMiniappPackageAllowed,
+  isMiniappAvailable,
+  type MiniappAvailabilityMode,
+} from "../runtime/bootstrap"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
+import {MiniappRunningError} from "../utils/storeInstallRuntime"
 import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState} from "./AppRegistry"
 import devServerBridge from "./DevServerBridge"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSRouter} from "./MentraJSRouter"
+import {isHostTrustedSystemMiniapp} from "./SystemMiniappPolicy"
 
 interface LauncherDeps {
   /** The host-constructed router (needs the native Crust binding). */
@@ -47,6 +55,15 @@ export interface LaunchHints {
   devPort?: string
 }
 
+export interface RuntimeLaunchOptions {
+  /** False for an invocation-scoped wake that must not enter the running tray. */
+  projectRunning?: boolean
+}
+
+function availabilityMode(options?: RuntimeLaunchOptions): MiniappAvailabilityMode {
+  return options?.projectRunning === false ? "background" : "interactive"
+}
+
 /** Everything the launcher resolved for a package — bg source + UI entry. */
 export interface ResolvedBundle {
   bgSource: string
@@ -54,6 +71,8 @@ export interface ResolvedBundle {
   uiBaseDir: string | null
   declaredPermissions: string[]
   installedManifest?: InstalledMiniappManifest
+  /** Build-owned SYSTEM trust derived from install provenance, never the manifest. */
+  hostTrustedSystem: boolean
   /** Set for dev miniapps (HTTP off the dev server); null for released. */
   devUrl: string | null
   devPort: number | null
@@ -77,8 +96,35 @@ class MiniappLauncher {
    */
   private readonly inFlight = new Map<string, Promise<LaunchResult>>()
 
-  /** Explicit installs hold new launches of their package until they commit or roll back. */
+  /**
+   * Installs hold new launches of their package until they commit or roll
+   * back: explicit installs for the whole install, automatic updates only while
+   * their files change.
+   */
   private readonly installing = new Map<string, Promise<void>>()
+
+  /**
+   * Run an automatic update only while the miniapp is idle. `install` prepares
+   * the release, then calls `beforeActivate` immediately before files change:
+   * a launch during preparation wins and the update defers with
+   * {@link MiniappRunningError}; a launch during activation waits for the
+   * commit or rollback and then reads the resulting bundle.
+   */
+  async installWhenIdle<T>(packageName: string, install: (beforeActivate: () => void) => Promise<T>): Promise<T> {
+    const assertIdle = () => {
+      if (this.isRunning(packageName) || this.inFlight.has(packageName)) throw new MiniappRunningError(packageName)
+    }
+    assertIdle()
+    let release: (() => void) | undefined
+    try {
+      return await install(() => {
+        assertIdle()
+        release = this.reserveInstall(packageName)
+      })
+    } finally {
+      release?.()
+    }
+  }
 
   /** Stabilize existing launches and hold new ones until an explicit install finishes. */
   async pauseLaunches(packageName: string): Promise<() => void> {
@@ -120,6 +166,11 @@ class MiniappLauncher {
     return this.deps?.router.registeredPackages().includes(packageName) ?? false
   }
 
+  /** True iff the live context is projected as normal user activity. */
+  isProjectedRunning(packageName: string): boolean {
+    return this.deps?.router.isProjectedRunning(packageName) ?? false
+  }
+
   /**
    * Resolve the background JS source + UI entry + declared permissions for a
    * package. Handles both dev (HTTP off the running dev server) and released
@@ -127,7 +178,12 @@ class MiniappLauncher {
    * NOT spawn. Returns null when the bundle can't be resolved (dev server
    * unreachable with no on-disk snapshot, missing entry, no installed version).
    */
-  async resolveBundle(packageName: string, hints?: LaunchHints): Promise<ResolvedBundle | null> {
+  async resolveBundle(
+    packageName: string,
+    hints?: LaunchHints,
+    runtimeOptions?: RuntimeLaunchOptions,
+  ): Promise<ResolvedBundle | null> {
+    if (!isMiniappAvailable(packageName, availabilityMode(runtimeOptions))) return null
     const devAllowed = isDevMiniappAllowed(
       packageName,
       useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
@@ -216,6 +272,8 @@ class MiniappLauncher {
       uiBaseDir: uiUri ? uiUri.replace(/\/[^/]+$/, "/") : null,
       declaredPermissions,
       installedManifest,
+      // A dev server is never host-trusted, whatever package name it claims.
+      hostTrustedSystem: false,
       devUrl: resolvedUrl,
       devPort: this.resolveDevPort(hints?.devPort, packageName),
     }
@@ -235,7 +293,14 @@ class MiniappLauncher {
       entry?: {background?: string; ui?: string}
       permissions?: Array<{type: string; required?: boolean; description?: string}>
       hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-      actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
+      actions?: Array<{
+        id?: unknown
+        description?: unknown
+        parameters?: unknown
+        outputSchema?: unknown
+        lifecycle?: unknown
+        audience?: unknown
+      }>
     } | null
     const declaredPermissions = (manifest?.permissions ?? [])
       .map((p) => p.type)
@@ -268,6 +333,7 @@ class MiniappLauncher {
       uiBaseDir: entryPaths.ui ? entryPaths.ui.replace(/\/[^/]+$/, "/") : null,
       declaredPermissions,
       installedManifest,
+      hostTrustedSystem: isHostTrustedSystemMiniapp(packageName, appRegistry.getReleaseIdentity(packageName, version)),
       // Snapshot fallback is file:// — do not wire the sidecar; the laptop is gone.
       devUrl: null,
       devPort: null,
@@ -285,29 +351,43 @@ class MiniappLauncher {
    * messages (the action broker) follow up with
    * {@link LocalMiniappRuntime.waitForConnect}.
    */
-  async ensureRunning(packageName: string, hints?: LaunchHints): Promise<LaunchResult> {
-    // An explicit install holds launches until its files and metadata commit
-    // or roll back; the launch then resolves whichever bundle is active.
+  async ensureRunning(
+    packageName: string,
+    hints?: LaunchHints,
+    runtimeOptions?: RuntimeLaunchOptions,
+  ): Promise<LaunchResult> {
+    // An install holds launches until its files and metadata commit or roll
+    // back; the launch then resolves whichever bundle is active.
     const installation = this.installing.get(packageName)
     if (installation) await installation
-    if (!isLocalMiniappPackageAllowed(packageName)) {
+    if (
+      !isMiniappAvailable(packageName, availabilityMode(runtimeOptions)) ||
+      !isLocalMiniappPackageAllowed(packageName)
+    ) {
       throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
     }
     const router = this.requireRouter()
+    const projectRunning = runtimeOptions?.projectRunning ?? true
 
     // Already spawned: best-effort resolve for the UI entry, never throw —
     // a headless caller that doesn't need UI gets {null, null} fast even if
-    // the dev server has since dropped.
+    // the dev server has since dropped. A user launch promotes a context a
+    // transient action woke.
     if (router.registeredPackages().includes(packageName)) {
-      const existing = await this.resolveBundle(packageName, hints).catch(() => null)
+      if (projectRunning) router.projectRunning(packageName)
+      const existing = await this.resolveBundle(packageName, hints, runtimeOptions).catch(() => null)
       return {uiUri: existing?.uiUri ?? null, uiBaseDir: existing?.uiBaseDir ?? null}
     }
 
     // Coalesce concurrent launches of the same package onto one promise.
     const pending = this.inFlight.get(packageName)
-    if (pending) return pending
+    if (pending) {
+      const result = await pending
+      if (projectRunning) router.projectRunning(packageName)
+      return result
+    }
 
-    const launch = this.spawn(packageName, hints)
+    const launch = this.spawn(packageName, hints, {projectRunning})
     this.inFlight.set(packageName, launch)
     try {
       return await launch
@@ -317,9 +397,13 @@ class MiniappLauncher {
   }
 
   /** Resolve the bundle and spawn the context. Serialized via {@link inFlight}. */
-  private async spawn(packageName: string, hints?: LaunchHints): Promise<LaunchResult> {
+  private async spawn(
+    packageName: string,
+    hints?: LaunchHints,
+    runtimeOptions?: RuntimeLaunchOptions,
+  ): Promise<LaunchResult> {
     const router = this.requireRouter()
-    const resolved = await this.resolveBundle(packageName, hints)
+    const resolved = await this.resolveBundle(packageName, hints, runtimeOptions)
     if (!resolved) {
       throw new Error(`MiniappLauncher: cannot resolve bundle for ${packageName}`)
     }
@@ -330,23 +414,30 @@ class MiniappLauncher {
     const devBuild = Boolean(resolved.devUrl) || Boolean(activeVersion?.startsWith("dev-"))
     const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
     if (
-      devBuild
+      // Availability may change while the bundle resolves.
+      !isMiniappAvailable(packageName, availabilityMode(runtimeOptions)) ||
+      (devBuild
         ? !isDevMiniappAllowed(packageName, superMode)
         : !isInstalledMiniappAllowed(
             packageName,
             version,
             version ? appRegistry.getReleaseIdentity(packageName, version) : null,
-          )
+          ))
     ) {
       throw new Error(`MiniappLauncher: ${packageName} bundle is not authorized by deployment policy`)
     }
 
     // Re-check after the async resolve: a different path may have spawned it
     // while we were fetching/reading the bundle.
-    if (!router.registeredPackages().includes(packageName)) {
+    const projectRunning = runtimeOptions?.projectRunning ?? true
+    if (router.registeredPackages().includes(packageName)) {
+      if (projectRunning) router.projectRunning(packageName)
+    } else {
       const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
         permissions: resolved.declaredPermissions,
         installedManifest: resolved.installedManifest,
+        hostTrustedSystem: resolved.hostTrustedSystem,
+        projectRunning,
       })
       if (!ok) {
         throw new Error(`MiniappLauncher: spawn failed for ${packageName}`)
@@ -411,8 +502,13 @@ class MiniappLauncher {
    * Used by the action broker, which must not deliver to a context that hasn't
    * come up yet. Throws on spawn failure or connect timeout.
    */
-  async ensureConnected(packageName: string, connectTimeoutMs = 10_000, hints?: LaunchHints): Promise<void> {
-    await this.ensureRunning(packageName, hints)
+  async ensureConnected(
+    packageName: string,
+    connectTimeoutMs = 10_000,
+    hints?: LaunchHints,
+    runtimeOptions?: RuntimeLaunchOptions,
+  ): Promise<void> {
+    await this.ensureRunning(packageName, hints, runtimeOptions)
     await localMiniappRuntime.waitForConnect(packageName, connectTimeoutMs)
   }
 

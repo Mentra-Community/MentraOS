@@ -33,6 +33,7 @@ mock.module("../../runtime/bootstrap", () => ({
   isDevMiniappAllowed: () => true,
   isInstalledMiniappAllowed: () => true,
   isOfflineSystemMiniappAllowed: () => true,
+  isMiniappAvailable: () => true,
 }))
 mock.module("../../stores/settings", () => ({
   SETTINGS: {super_mode: {key: "super_mode"}},
