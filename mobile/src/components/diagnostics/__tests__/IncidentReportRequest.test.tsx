@@ -1,5 +1,6 @@
-import {act, fireEvent, render} from "@testing-library/react-native"
+import {act, fireEvent, render, within} from "@testing-library/react-native"
 import type {ReactNode} from "react"
+import {ScrollView} from "react-native"
 
 import {useAuth} from "@/contexts/AuthContext"
 import {submitIncidentReportOnce} from "@/services/bugReport/incidentReportAutomation"
@@ -39,9 +40,9 @@ const receipt = {
   report_id: "rep_screen",
 }
 const auth = (signedIn: boolean) =>
-  ({user: signedIn ? {id: "user-1"} : null, session: signedIn ? {token: "test-token"} : null} as ReturnType<
+  ({user: signedIn ? {id: "user-1"} : null, session: signedIn ? {token: "test-token"} : null}) as ReturnType<
     typeof useAuth
-  >)
+  >
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -74,6 +75,37 @@ it("shows the correlated incident ID and returns to the previous screen with Don
   expect(submitIncidentReportOnce).toHaveBeenCalledWith(expect.stringContaining("user-1"), request)
   fireEvent.press(tree.getByTestId("incident-report-done"))
   expect(mockDismiss).toHaveBeenCalledTimes(1)
+})
+
+it("keeps Done outside the scrolling receipt when collection details grow", async () => {
+  const collectionClock = {requestedAt: "2026-10-11T08:14:05.102Z", deadlineAt: "2026-10-11T08:18:05.102Z"}
+  const detailedReceipt = {
+    ...receipt,
+    collection: {
+      reportId: receipt.report_id,
+      state: "complete" as const,
+      logCollection: {
+        phone: {...collectionClock, state: "received" as const, entryCount: 424},
+        glasses: {...collectionClock, state: "unavailable" as const, reason: "no_paired_mentra_live"},
+        glasses_firmware: {...collectionClock, state: "unavailable" as const, reason: "no_paired_mentra_live"},
+        cloud: {...collectionClock, state: "requested" as const},
+        miniapp_server: {...collectionClock, state: "requested" as const},
+      },
+    },
+  }
+  jest.mocked(submitIncidentReportOnce).mockResolvedValue(detailedReceipt)
+  const tree = render(<IncidentReportRequest params={request} onDismiss={mockDismiss} />)
+  await act(async () => {})
+
+  const scrollingDetails = tree.UNSAFE_getByType(ScrollView)
+  expect(JSON.parse(within(scrollingDetails).getByTestId("incident-report-result").props.children)).toEqual(
+    detailedReceipt,
+  )
+  expect(within(scrollingDetails).queryByTestId("incident-report-done")).toBeNull()
+  expect(mockDismiss).not.toHaveBeenCalled()
+  fireEvent.press(tree.getByTestId("incident-report-done"))
+  expect(mockDismiss).toHaveBeenCalledTimes(1)
+  expect(submitIncidentReportOnce).toHaveBeenCalledTimes(1)
 })
 
 it("shows the partial failed incident and allows teardown to dismiss it", async () => {
