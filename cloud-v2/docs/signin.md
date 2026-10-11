@@ -107,6 +107,14 @@ account (`revokeAllSessionsForUser`) also:
 Removing a sign-in source from configuration ends its portal sessions on their
 next request.
 
+Deleting the account first marks it deleted (the users row's tombstone), and a
+deleted account is no principal from then on: Core refuses its token exchange
+(and so Core's account login), refresh, portal sign-in, portal sessions,
+identity-provider tokens, the keys it created, and a service vouching for it.
+Should the deletion fail while the account directory still has the account,
+the mark is lifted so the person can sign in and ask again. A phone access token
+already issued lives out its hour; it is not a workspace principal.
+
 ## Hosted Core configuration
 
 | Variable | Kind | Meaning |

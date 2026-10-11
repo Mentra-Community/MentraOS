@@ -163,37 +163,50 @@ export async function requestAccountDeletion(email: string, tenantUserId: string
 
 export async function confirmAccountDeletion(mentraUserId: string, tenantUserId: string, code: string): Promise<void> {
   await otc.consumeCode({code, purpose: "account_deletion", expectSubject: tenantUserId})
-  // Order: kill V2 sessions, set the deletion tombstone, end workspace
+  // Order: set the deletion tombstone, kill V2 sessions, end workspace
   // memberships, remove the operational support profile/outbox, then delete the
   // Supabase user. Everything human-identifying (email, password, name) lives in
   // GoTrue and dies here.
   //
-  // The tombstone comes before the workspace cleanup, so from then on ownership
-  // recovery and invitations sent as an Organization Admin treat the account as
-  // deleted and nothing can hand it workspace access again behind the cleanup.
+  // The tombstone comes first: from then on the account is no principal
+  // (`isDeletedAccount`). Sign-in, token exchange and refresh, portal sessions,
+  // identity-provider tokens and the keys it created are refused, and nothing can
+  // give it workspace access again while the cleanup runs. It also stops new
+  // support writes before the profile is removed; a PostHog capture already in
+  // flight may still deliver, and delivered analytics data is governed by that
+  // project's retention/deletion policy.
   //
   // Workspace access ends before the GoTrue user goes: the memberships and the
-  // credentials they created end in one transaction. Should anything after it
-  // fail, the account still exists and the person can request deletion again;
-  // the other order could leave a deleted account still holding workspace access.
+  // credentials they created end in one transaction. Should a step fail while
+  // the account directory still has the account, the tombstone is lifted again,
+  // so the person can sign in and request deletion again; the other order could
+  // leave a deleted account still holding workspace access. When the directory
+  // no longer has the account, or cannot say, the account stays deleted.
   //
   // OPEN DECISION (deferred, revisit in a future PR): the Mongo users row
   // ({mentraUserId, tenantId, tenantUserId}) is intentionally kept as a
   // tombstone for identifier stability and audit lineage. If we want
-  // gone-means-gone, hard-delete it here. This flow also still needs an
-  // integration test covering the cascade.
+  // gone-means-gone, hard-delete it here.
   //
   // Cloud V1 is a different system with its own database; its data lifecycle
   // is not a cloud-v2 concern and no code here talks to it.
-  await revokeAllSessionsForUser({mentraUserId})
-  // Set the tombstone before removing the profile so no new support write can
-  // recreate it. A PostHog capture already in flight when the tombstone lands
-  // may still deliver; delivered analytics data is governed by that project's
-  // retention/deletion policy.
-  await UserModel.updateOne({mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
-  await removeDeletedUserFromWorkspaces(mentraUserId)
-  await SupportProfileModel.deleteOne({mentraUserId})
-  await gotrue.deleteUser(tenantUserId)
+  const deletedAt = new Date()
+  await UserModel.updateOne({mentraUserId}, {$set: {supportTelemetryDeletedAt: deletedAt}})
+  try {
+    await revokeAllSessionsForUser({mentraUserId})
+    await removeDeletedUserFromWorkspaces(mentraUserId)
+    await SupportProfileModel.deleteOne({mentraUserId})
+    await gotrue.deleteUser(tenantUserId)
+  } catch (err) {
+    const stillThere = await gotrue.getUserById(tenantUserId).catch(() => null)
+    if (stillThere) {
+      await UserModel.updateOne(
+        {mentraUserId, supportTelemetryDeletedAt: deletedAt},
+        {$set: {supportTelemetryDeletedAt: null}},
+      ).catch(() => undefined)
+    }
+    throw err
+  }
 }
 
 export {gotrue, otc}

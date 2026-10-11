@@ -26,6 +26,8 @@
  * directory tenant, subject claim), are refused when they carry a `nonce` (an
  * ID token), and are refused when issued before `webSignInsRevokedAt`.
  *
+ * Either kind is refused for a deleted account (`isDeletedAccount`).
+ *
  * An invalid token is `null`. An outage (the key set or the account directory
  * cannot answer) throws `IdentityProviderUnavailableError`, which callers turn
  * into 503: never a successful, and never a silently degraded, sign-in.
@@ -36,7 +38,7 @@ import * as jose from "jose"
 
 import {AccountError} from "../account/account-error"
 import {getAccountForSignIn, isGotrueAdminConfigured} from "../account/gotrue.client"
-import {findOrCreateUser} from "../user.service"
+import {findOrCreateUser, isDeletedAccount} from "../user.service"
 import {findProviderByIssuer, webClientIds, type WebIdentityProvider} from "./config"
 import {canonicalEmail, trustedEmail} from "./email-trust"
 import {KeySetUnavailableError, resetKeySets, verifyWithKeySet} from "./key-sets"
@@ -152,6 +154,7 @@ async function verifySupabaseToken(token: string, provider: WebIdentityProvider,
   const sessionStartedAt = new Date(sessionStart * 1000)
 
   const user = await findOrCreateUser({tenantId: provider.tenantId, tenantUserId: subject})
+  if (isDeletedAccount(user)) return null
   const revokedAt = (user as {webSignInsRevokedAt?: Date | null}).webSignInsRevokedAt
   if (revokedAt && sessionStartedAt.getTime() < revokedAt.getTime()) return null
 
@@ -229,6 +232,7 @@ async function verifyProviderToken(token: string, provider: WebIdentityProvider,
 
   const issuedAt = new Date(payload.iat * 1000)
   const user = await findOrCreateUser({tenantId: provider.tenantId, tenantUserId: subject})
+  if (isDeletedAccount(user)) return null
   const revokedAt = (user as {webSignInsRevokedAt?: Date | null}).webSignInsRevokedAt
   if (revokedAt && issuedAt.getTime() < revokedAt.getTime()) return null
 

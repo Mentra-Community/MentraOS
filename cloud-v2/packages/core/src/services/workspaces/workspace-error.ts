@@ -22,6 +22,7 @@ export type WorkspaceErrorCode =
   | "rate_limited"
   | "invitations_unavailable"
   | "user_not_found"
+  | "account_deleted"
 
 const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   not_found: 404,
@@ -39,6 +40,7 @@ const STATUS_BY_CODE: Record<WorkspaceErrorCode, number> = {
   rate_limited: 429,
   invitations_unavailable: 503,
   user_not_found: 404,
+  account_deleted: 403,
 }
 
 export class WorkspaceError extends Error {

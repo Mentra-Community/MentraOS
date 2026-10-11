@@ -706,6 +706,24 @@ describe("an invitation carries its inviter's authority", () => {
   })
 })
 
+describe("deleted accounts", () => {
+  test("a deleted account cannot accept an invitation (account_deleted), even to its own address", async () => {
+    const ws = await newWorkspace()
+    const created = await invite(ws, "gone@example.test", "developer")
+    await account("mu_gone")
+    // What account deletion does first: the users row becomes a tombstone.
+    await UserModel.updateOne({mentraUserId: "mu_gone"}, {$set: {supportTelemetryDeletedAt: new Date()}})
+
+    await expectError(
+      () => acceptInvitation(user("mu_gone", {email: "gone@example.test"}), created.token),
+      "account_deleted",
+      403,
+    )
+    expect(await getActiveMembership(ws, "mu_gone")).toBeNull()
+    expect((await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!.status).toBe("pending")
+  })
+})
+
 describe("invitation limits", () => {
   test("a person may send 100 invitations an hour", async () => {
     const ws = await newWorkspace()

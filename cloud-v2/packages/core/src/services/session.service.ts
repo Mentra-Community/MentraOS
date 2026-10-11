@@ -42,7 +42,7 @@ import {
   UnauthorizedClient,
   type TokenResponse,
 } from "../types/oauth.types"
-import {findOrCreateUser} from "./user.service"
+import {findOrCreateUser, isDeletedAccount, isDeletedAccountId} from "./user.service"
 import {isConfiguredOidcTenant, recordSeenJti, verifyTenantJwt} from "./oem.service"
 import {SUPABASE_ASYMMETRIC_ALGORITHMS, supabaseIssuer, supabaseJwksUrl} from "./signin/config"
 import {KeySetUnavailableError, verifyWithKeySet} from "./signin/key-sets"
@@ -111,7 +111,9 @@ const ACCOUNT_SUBJECT_TOKEN_TTL_SEC = 60
  *
  * Step-by-step matches design.md "Lifecycles / Issue session":
  *   1–5. Delegated to `resolveSubjectIdentity`.
- *   6.   findOrCreateUser by (tenantId, tenantUserId).
+ *   6.   findOrCreateUser by (tenantId, tenantUserId); a deleted account is
+ *        refused (`isDeletedAccount`). Core's account login and OAuth go
+ *        through here too.
  *   7–8. Mint access + refresh, persist refresh-token hash, return.
  */
 export async function createSession(args: {subjectToken: string}): Promise<TokenResponse> {
@@ -121,6 +123,7 @@ export async function createSession(args: {subjectToken: string}): Promise<Token
     tenantId: identity.tenantId,
     tenantUserId: identity.tenantUserId,
   })
+  if (isDeletedAccount(user)) throw new InvalidGrant("account is deleted")
 
   // Burn the subject token's jti BEFORE minting anything. The unique-index
   // insert makes exactly one concurrent presentation win; doing it first means
@@ -199,6 +202,8 @@ export async function refreshSession(args: {refreshToken: string}): Promise<Toke
   if (!oldDoc.sessionId || !oldDoc.mentraUserId || !oldDoc.tenantId) {
     throw new InvalidGrant("refresh_token session identity is incomplete")
   }
+  // Deletion revokes the account's refresh tokens; one that slipped past that is refused here.
+  if (await isDeletedAccountId(oldDoc.mentraUserId)) throw new InvalidGrant("account is deleted")
 
   // Mid-session revocation check. If the tenant's authority was terminated
   // after this session was issued, refuse to re-up. The tenant may be an OEM

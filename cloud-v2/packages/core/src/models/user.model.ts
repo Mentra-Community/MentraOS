@@ -29,7 +29,10 @@ const UserSchema = new Schema(
     /** The OEM's own user identifier (their `sub` claim). */
     tenantUserId: {type: String, required: true},
 
-    /** Tombstone set at the start of account deletion. Prevents new support
+    /** Tombstone set at the start of account deletion. From then on the
+     * account is no principal (`isDeletedAccount`): no sign-in, token exchange
+     * or refresh, portal session, identity-provider token or key of it is
+     * accepted, and it cannot join a workspace. It also prevents new support
      * telemetry storage or delivery; a capture already in flight when it is
      * set may still reach PostHog, whose retention policy governs delivered
      * data (see confirmAccountDeletion). */

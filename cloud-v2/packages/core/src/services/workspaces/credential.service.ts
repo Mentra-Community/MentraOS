@@ -25,7 +25,10 @@
  *    and rejoining is a new membership row, so it never revives the old key.
  *
  * A workspace key also needs its workspace to be active: deletion revokes every
- * key, and a row written around it still never resolves.
+ * key, and a row written around it still never resolves. A key a person created
+ * (an operator key, or a member's workspace key) also ends with the person's
+ * account: account deletion revokes it, and validation refuses it once the
+ * account is deleted (`isDeletedAccountId`).
  *
  * Operator keys are one document each and belong to no workspace, so creating
  * and revoking one is a single write without a transaction, followed by its
@@ -60,6 +63,7 @@ import {WorkspaceMembershipModel, type WorkspaceMembershipRow} from "../../model
 import {WorkspaceModel} from "../../models/workspace.model"
 import {recordOrganizationEvent, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {isOrganizationAdminEmail} from "../admin-email-policy"
+import {isDeletedAccountId} from "../user.service"
 import {credentialEnvironmentLabels} from "./organization"
 import {fail} from "./workspace-error"
 import {
@@ -414,6 +418,8 @@ async function effectiveGrant(row: CredentialRow): Promise<{scopes: string[]; pa
     if (row.workspaceId) return null
     // Checked on every call: an operator key is only as good as its creator's admin status today.
     if (!isOrganizationAdminEmail({email: row.createdByEmail ?? null, verified: true})) return null
+    // Deletion revokes a deleted account's keys; one that slipped past that is refused here.
+    if (row.createdByMentraUserId && (await isDeletedAccountId(row.createdByMentraUserId))) return null
     return {scopes: [...row.scopes], packageNames: []}
   }
 
@@ -431,6 +437,7 @@ async function effectiveGrant(row: CredentialRow): Promise<{scopes: string[]; pa
       status: "active",
     }).lean<WorkspaceMembershipRow>()
     if (!membership || membership.workspaceId !== row.workspaceId) return null
+    if (await isDeletedAccountId(membership.mentraUserId)) return null
     const granted = capabilitiesForRole(membership.role as WorkspaceRole) as ReadonlySet<string>
     const scopes = row.scopes.filter(scope => granted.has(scope))
     if (scopes.length === 0) return null

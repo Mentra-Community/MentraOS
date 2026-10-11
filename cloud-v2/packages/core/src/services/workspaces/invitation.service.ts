@@ -54,6 +54,7 @@ import {
   isId,
   isWorkspaceRole,
   loadActiveWorkspace,
+  refuseDeletedAccount,
   requireMembershipManager,
   roleEntry,
   touchWorkspace,
@@ -281,7 +282,8 @@ export async function peekInvitation(
  * surrounding whitespace aside), otherwise `email_mismatch`. Order of refusals:
  * unknown, used or revoked token (`invitation_not_found`), expired
  * (`invitation_expired`), an inviter whose authority no longer grants the role
- * (`invitation_not_found`), wrong or unverified email (`email_mismatch`), already
+ * (`invitation_not_found`), wrong or unverified email (`email_mismatch`), a
+ * deleted account (`account_deleted`; deleted accounts are no principals), already
  * an active member (`already_member`; the invitation stays pending). One
  * transaction claims the invitation, inserts the membership under a new
  * `membershipId`, bumps `authorizationRevision` and records the audit events,
@@ -311,6 +313,7 @@ export async function acceptInvitation(
     if (actor.emailVerified !== true || normalizeAddress(actor.email) !== invitation.email) {
       fail("email_mismatch", "sign in with the verified email address this invitation was sent to")
     }
+    await refuseDeletedAccount(session, actor.mentraUserId)
     const existing = await WorkspaceMembershipModel.findOne({
       workspaceId: invitation.workspaceId,
       mentraUserId: actor.mentraUserId,

@@ -340,6 +340,44 @@ describe("createWorkspace", () => {
   })
 })
 
+describe("deleted accounts", () => {
+  /** What account deletion does first: the users row becomes a tombstone. */
+  async function deleteAccount(mentraUserId: string) {
+    await UserModel.updateOne(
+      {mentraUserId},
+      {$set: {supportTelemetryDeletedAt: new Date()}, $setOnInsert: {tenantId: "mentra", tenantUserId: `sb-${mentraUserId}`}},
+      {upsert: true},
+    )
+  }
+
+  test("a deleted account cannot create a workspace (account_deleted), and nothing is written", async () => {
+    await deleteAccount("mu_gone")
+    await expectError(() => createWorkspace(user("mu_gone"), {name: "Ghost"}), "account_deleted", 403)
+    expect(await WorkspaceModel.countDocuments({name: "Ghost"})).toBe(0)
+    expect(await WorkspaceMembershipModel.countDocuments({mentraUserId: "mu_gone"})).toBe(0)
+  })
+
+  test("the last-owner guard never counts a deleted account's owner membership", async () => {
+    const ws = await newWorkspace()
+    // An owner membership of a deleted account, as a failed deletion could leave behind.
+    await addMember(ws, "mu_gone", "owner")
+    await deleteAccount("mu_gone")
+    expect(await countActiveOwners(ws)).toBe(1)
+
+    const ownerId = (await getActiveMembership(ws, "mu_owner"))!.membershipId
+    await expectError(() => leaveWorkspace(user("mu_owner"), ws), "last_owner", 409)
+    await expectError(() => changeRole(user("mu_owner"), ws, ownerId, "admin", 0), "last_owner", 409)
+    await expectError(() => removeMember(orgAdmin, ws, ownerId, 0), "last_owner", 409)
+    expect((await getActiveMembership(ws, "mu_owner"))!.role).toBe("owner")
+
+    // A live second owner still counts.
+    await addMember(ws, "mu_owner2", "owner")
+    expect(await countActiveOwners(ws)).toBe(2)
+    await leaveWorkspace(user("mu_owner"), ws)
+    expect(await countActiveOwners(ws)).toBe(1)
+  })
+})
+
 describe("changeRole", () => {
   test("admin promotes member to developer; cannot grant admin (403 forbidden)", async () => {
     const ws = await newWorkspace()

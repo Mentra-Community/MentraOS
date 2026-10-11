@@ -46,6 +46,7 @@ import {
   type WorkspaceMembershipRow,
 } from "../../models/workspace-membership.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
+import {isDeletedAccountId} from "../user.service"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
 import {workspaceCreationPolicy} from "./organization"
 import {fail, WorkspaceError, type WorkspaceErrorCode} from "./workspace-error"
@@ -129,10 +130,22 @@ export async function listMembers(workspaceId: string): Promise<MembershipRow[]>
     .lean<MembershipRow[]>()
 }
 
+/**
+ * The workspace's active owners who can still act: a deleted account's owner membership (account
+ * deletion ends it, but one could be left behind by a failure) never counts, so the last-owner
+ * guard cannot rest on an owner nobody can sign in as.
+ */
 export async function countActiveOwners(workspaceId: string, session?: ClientSession): Promise<number> {
-  return WorkspaceMembershipModel.countDocuments({workspaceId, role: "owner", status: "active"}).session(
-    session ?? null,
-  )
+  const owners = await WorkspaceMembershipModel.find({workspaceId, role: "owner", status: "active"})
+    .select({_id: 0, mentraUserId: 1})
+    .session(session ?? null)
+    .lean<Array<{mentraUserId: string}>>()
+  if (owners.length === 0) return 0
+  const deleted = await UserModel.countDocuments({
+    mentraUserId: {$in: owners.map(owner => owner.mentraUserId)},
+    supportTelemetryDeletedAt: {$ne: null},
+  }).session(session ?? null)
+  return owners.length - deleted
 }
 
 // --- Lifecycle -------------------------------------------------------------
@@ -141,6 +154,8 @@ export async function countActiveOwners(workspaceId: string, session?: ClientSes
  * Create a workspace; the creator becomes its owner. The creator's email must be
  * verified (`email_unverified` otherwise): a workspace's name goes out in its
  * invitation emails, so only someone the identity provider vouches for may make one.
+ * A deleted account is no principal; should one reach here it is refused
+ * (`account_deleted`).
  *
  * `CLOUD_CORE_WORKSPACE_CREATION` (`workspaceCreationPolicy`) is `open` (default)
  * or `organization-admins`.
@@ -156,6 +171,7 @@ export async function createWorkspace(actor: Actor & {kind: "user"}, input: {nam
     fail("forbidden", "only organization admins can create workspaces")
   }
   return withTransaction(async session => {
+    await refuseDeletedAccount(session, actor.mentraUserId)
     const workspaceId = `ws_${ulid()}`
     const membershipId = `wm_${ulid()}`
     const now = new Date()
@@ -526,6 +542,14 @@ export async function actingRole(
     .session(session)
     .lean<MembershipRow>()
   return membership ? (membership.role as WorkspaceRole) : null
+}
+
+/**
+ * Refuse a deleted account (`account_deleted`, 403) inside a transaction that would give it a
+ * membership. Deleted accounts are no principals; this is the guard behind that.
+ */
+export async function refuseDeletedAccount(session: ClientSession, mentraUserId: string): Promise<void> {
+  if (await isDeletedAccountId(mentraUserId, session)) fail("account_deleted", "this account is deleted")
 }
 
 /** Membership changes need at least the admin role, whoever is asking. */

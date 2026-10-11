@@ -23,6 +23,7 @@ import type {Model} from "mongoose"
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -59,6 +60,7 @@ const MODELS: Model<any>[] = [
   WorkspaceInvitationModel,
   AccessCredentialModel,
   WorkspaceAuditEventModel,
+  UserModel,
 ]
 
 const ADMIN_EMAIL = "org-admin@example.test"
@@ -601,6 +603,35 @@ describe("validateCredentialToken", () => {
 
     expect(await validateCredentialToken(member.token)).toBeNull()
     expect(await validateCredentialToken(service.token)).toBeNull()
+  })
+
+  test("a key a person created is null once their account is deleted, before anything revokes it", async () => {
+    const {workspaceId, developer} = await newWorkspace()
+    const workspaceKey = await createWorkspaceCredential(developer, workspaceId, {name: "k"})
+    const operatorKey = await createOperatorKey(orgAdmin, {name: "ops", scopes: ["organization.incidents.read"]})
+    const storeKey = await mintServiceCredential("store", {
+      workspaceId,
+      name: "Store key",
+      packageNames: ["com.acme.app"],
+      actorEmail: developer.email!,
+    })
+    for (const key of [workspaceKey, operatorKey, storeKey]) expect(await validateCredentialToken(key.token)).not.toBeNull()
+
+    // What account deletion does first: the users row becomes a tombstone. Revocation comes after.
+    await UserModel.insertMany(
+      [developer.mentraUserId, orgAdmin.mentraUserId].map(mentraUserId => ({
+        mentraUserId,
+        tenantId: "mentra",
+        tenantUserId: `sb-${mentraUserId}`,
+        supportTelemetryDeletedAt: new Date(),
+      })),
+    )
+
+    expect(await validateCredentialToken(workspaceKey.token)).toBeNull()
+    expect(await validateCredentialToken(operatorKey.token)).toBeNull()
+    expect(await AccessCredentialModel.countDocuments({revokedAt: {$ne: null}})).toBe(0)
+    // A key the Store issued belongs to the service and the workspace, not to the person who asked for it.
+    expect(await validateCredentialToken(storeKey.token)).not.toBeNull()
   })
 
   test("a revoked key is null", async () => {

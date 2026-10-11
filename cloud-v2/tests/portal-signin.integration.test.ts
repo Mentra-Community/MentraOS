@@ -191,6 +191,22 @@ describe("hosted Core (Supabase)", () => {
     expect(sessions[0]!.endedAt).not.toBeNull()
   })
 
+  test("a deleted account cannot sign in, and its open portal session stops working", async () => {
+    const result = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
+    const cookie = `${ADMIN_COOKIE}=${result.sessionCookie}`
+    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie}})).status).toBe(200)
+
+    // Account deletion sets the tombstone before anything else.
+    const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: ADMIN_PERSON.sub})
+    await UserModel.updateOne({mentraUserId: user.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+
+    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie}})).status).toBe(401)
+    const again = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
+    expect(again.done.status).toBe(400)
+    expect(again.sessionCookie).toBeNull()
+    expect(await BrowserSessionModel.countDocuments({mentraUserId: user.mentraUserId, revokedAt: null})).toBe(1)
+  })
+
   test("a failing Supabase logout still signs the person in", async () => {
     idp.failLogout = true
     const result = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
@@ -396,6 +412,16 @@ describe("Private Cloud (Entra)", () => {
     expect(body.user.mentraUserId).toBe(phoneUser.mentraUserId)
     expect(body.user.emailVerified).toBe(true)
     expect(entra.tokenRequests[0]?.auth).toBe("client_secret_post")
+  })
+
+  test("a deleted account cannot sign in with its provider", async () => {
+    const user = await findOrCreateUser({tenantId: "contoso", tenantUserId: "entra-oid-1"})
+    await UserModel.updateOne({mentraUserId: user.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+
+    const result = await portalSignIn(app, entra, {portal: "admin", person: ENTRA_PERSON})
+    expect(result.done.status).toBe(400)
+    expect(result.sessionCookie).toBeNull()
+    expect(await BrowserSessionModel.countDocuments({})).toBe(0)
   })
 
   test("a provider email outside verifiedEmailDomains signs in without organization capabilities (L06)", async () => {

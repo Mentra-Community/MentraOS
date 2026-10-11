@@ -667,6 +667,25 @@ describe("POST /authorize", () => {
     expect(denied.reason).toBe("not_a_member")
   })
 
+  test("a deleted account is no principal: its bearer, a vouched mentra_user and its memberships are refused", async () => {
+    const {workspaceId, developer} = await newWorkspace()
+    expect((await store().authorize({credential: {type: "bearer", token: developer.bearer}, workspaceId})).allowed).toBe(true)
+
+    // Account deletion sets the tombstone before it ends any membership.
+    await UserModel.updateOne({mentraUserId: developer.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+
+    const asBearer = await store().authorize({credential: {type: "bearer", token: developer.bearer}, workspaceId})
+    const vouched = await store().authorize({
+      credential: {type: "mentra_user", mentraUserId: developer.mentraUserId},
+      workspaceId,
+    })
+    for (const decision of [asBearer, vouched]) {
+      expect(decision).toMatchObject({allowed: false, reason: "unauthenticated", principal: null, capabilities: []})
+    }
+    expect(await store().resolvePrincipal(developer.bearer)).toBeNull()
+    expect(await store().checkMemberships(developer.mentraUserId, [workspaceId])).toEqual({[workspaceId]: null})
+  })
+
   test("a mentra_user credential never carries Organization Admin standing, even for an allowlisted person", async () => {
     const {workspaceId} = await newWorkspace()
     const orgAdmin = await person("org-admin", {email: ADMIN_EMAIL})
@@ -1421,6 +1440,13 @@ describe("POST /users/resolve-email", () => {
 
     expect(await store().resolveEmail("verified@example.test")).toBe(mentraUserId)
     expect(await UserModel.countDocuments({})).toBe(1)
+  })
+
+  test("an account being deleted is nobody", async () => {
+    const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "gt_verified"})
+    await UserModel.updateOne({mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+
+    expect(await store().resolveEmail("verified@example.test")).toBeNull()
   })
 
   test("an unconfirmed or unknown email is nobody, and no Mentra user is created", async () => {

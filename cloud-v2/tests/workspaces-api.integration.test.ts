@@ -1536,6 +1536,40 @@ describe("organization workspaces", () => {
   })
 })
 
+describe("a deleted account is no principal", () => {
+  test("its bearer token, portal sessions and keys are refused from the moment deletion starts", async () => {
+    const owner = await person("deleting", {email: ADMIN_EMAIL})
+    const ws = await createWorkspace(owner)
+    const workspaceKey = await call("POST", `/api/workspaces/${ws.workspaceId}/credentials`, {as: owner, body: {name: "ci"}})
+    expect(workspaceKey.status).toBe(201)
+    const operatorKey = await call("POST", "/api/organization/credentials", {
+      as: owner,
+      body: {name: "ops", scopes: ["organization.incidents.read"]},
+    })
+    expect(operatorKey.status).toBe(201)
+    const portal = await session("portal", owner)
+    const admin = await session("admin", owner)
+    const reachable = async () => ({
+      bearer: (await call("GET", "/api/workspaces", {as: owner})).status,
+      portal: (await call("GET", "/api/portal/workspaces", {as: portal})).status,
+      admin: (await call("GET", "/api/admin/workspaces", {as: admin})).status,
+      // `/api/organization` answers every principal, a key included, with what it may do.
+      workspaceKey: (await call("GET", "/api/organization", {as: workspaceKey.json.token})).status,
+      operatorKey: (await call("GET", "/api/organization", {as: operatorKey.json.token})).status,
+    })
+    expect(await reachable()).toEqual({bearer: 200, portal: 200, admin: 200, workspaceKey: 200, operatorKey: 200})
+
+    // Account deletion sets the tombstone first; nothing else about the account has changed yet.
+    await UserModel.updateOne({mentraUserId: owner.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
+
+    expect(await reachable()).toEqual({bearer: 401, portal: 401, admin: 401, workspaceKey: 401, operatorKey: 401})
+    // So it can neither create nor join a workspace.
+    expect((await call("POST", "/api/workspaces", {as: owner, body: {name: "Again"}})).status).toBe(401)
+    expect((await call("POST", "/api/portal/workspaces", {as: portal, body: {name: "Again"}})).status).toBe(401)
+    expect(await WorkspaceModel.countDocuments({name: "Again"})).toBe(0)
+  })
+})
+
 describe("ownership recovery", () => {
   test("by mentraUserId: 404 for a user that does not exist, 200 for one that does", async () => {
     const ws = await newWorkspace()

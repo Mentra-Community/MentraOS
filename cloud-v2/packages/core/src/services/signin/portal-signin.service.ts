@@ -32,7 +32,7 @@ import * as client from "openid-client"
 
 import {UserModel} from "../../models/user.model"
 import type {AppEnv} from "../../types/hono.types"
-import {findOrCreateUser} from "../user.service"
+import {findOrCreateUser, isDeletedAccount} from "../user.service"
 import {
   ConfigurationError,
   isDeployedEnvironment,
@@ -450,6 +450,7 @@ async function providerSignIn(
     tokenEmailVerified: payload.email_verified,
   })
   const user = await findOrCreateUser({tenantId: provider.tenantId, tenantUserId: subject})
+  if (isDeletedAccount(user)) throw new SignInRefused("account is deleted")
   const revokedAt = (await UserModel.findOne({mentraUserId: user.mentraUserId}, {webSignInsRevokedAt: 1}).lean())?.webSignInsRevokedAt
   const issuedAt = typeof payload.iat === "number" ? new Date(payload.iat * 1000) : new Date()
   if (revokedAt && issuedAt.getTime() < revokedAt.getTime()) throw new SignInRefused("sign-in from before a revocation")

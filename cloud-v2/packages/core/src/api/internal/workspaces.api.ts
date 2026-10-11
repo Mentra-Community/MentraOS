@@ -59,7 +59,7 @@ import {findAccountByEmail, isGotrueAdminConfigured} from "../../services/accoun
 import {IdentityProviderUnavailableError} from "../../services/signin/idp-tokens"
 import {principalFromToken, wirePrincipal, type CorePrincipal} from "../../services/signin/principal.service"
 import {MENTRA_TENANT_ID} from "../../services/signin/config"
-import {findOrCreateUser} from "../../services/user.service"
+import {findOrCreateUser, isDeletedAccount, isDeletedAccountId} from "../../services/user.service"
 import {authorize} from "../../services/workspaces/authorization.service"
 import {isCredentialToken, mintServiceCredential} from "../../services/workspaces/credential.service"
 import {getWorkspace, listWorkspacesForUser} from "../../services/workspaces/workspace.service"
@@ -86,7 +86,7 @@ app.post("/authorize", async c => {
   let principal: CorePrincipal | WirePrincipal | null
   try {
     principal =
-      credential.type === "bearer" ? await principalFromToken(credential.token) : mentraUserPrincipal(credential)
+      credential.type === "bearer" ? await principalFromToken(credential.token) : await mentraUserPrincipal(credential)
   } catch (err) {
     if (err instanceof IdentityProviderUnavailableError) return identityUnavailable(c)
     throw err
@@ -133,8 +133,13 @@ app.post("/memberships/check", async c => {
   if (workspaceIds.some(id => !id.trim())) throw new InvalidRequest("each workspace id must be a non-empty string")
 
   // Active workspaces the person is an active member of: anything else (no such workspace, deleted,
-  // not a member, left) is null.
-  const held = new Map((await listWorkspacesForUser(mentraUserId)).map(entry => [entry.workspaceId, entry]))
+  // not a member, left) is null, and a deleted account is a member of nothing.
+  const held = new Map(
+    (await isDeletedAccountId(mentraUserId) ? [] : await listWorkspacesForUser(mentraUserId)).map(entry => [
+      entry.workspaceId,
+      entry,
+    ]),
+  )
   const checked: MembershipCheckResponse = {
     // `fromEntries` defines each id as an own property, so an id such as `__proto__` is just a key.
     memberships: Object.fromEntries(
@@ -196,6 +201,8 @@ app.post("/users/resolve-email", requireService("store"), async c => {
   // An address nobody has proven they own names nobody. Only a confirmed email counts, as at sign-in.
   if (!identity?.emailConfirmed) return c.json({error: USER_NOT_FOUND_ERROR}, 404)
   const user = await findOrCreateUser({tenantId: MENTRA_TENANT_ID, tenantUserId: identity.id})
+  // An account being deleted names nobody either.
+  if (isDeletedAccount(user)) return c.json({error: USER_NOT_FOUND_ERROR}, 404)
   const resolved: ResolveEmailResponse = {mentraUserId: user.mentraUserId}
   return c.json(resolved)
 })
@@ -255,8 +262,14 @@ function authorizeFields(body: JsonObject): {
   }
 }
 
-/** The person a service vouches for. Never an Organization Admin: that needs a verified identity. */
-function mentraUserPrincipal(credential: Extract<AuthorizeCredential, {type: "mentra_user"}>): WirePrincipal {
+/**
+ * The person a service vouches for, or null for a deleted account (no principal). Never an
+ * Organization Admin: that needs a verified identity.
+ */
+async function mentraUserPrincipal(
+  credential: Extract<AuthorizeCredential, {type: "mentra_user"}>,
+): Promise<WirePrincipal | null> {
+  if (await isDeletedAccountId(credential.mentraUserId)) return null
   return {
     kind: "user",
     mentraUserId: credential.mentraUserId,

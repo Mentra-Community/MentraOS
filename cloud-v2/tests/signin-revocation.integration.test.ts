@@ -31,8 +31,8 @@ import {RefreshTokenModel} from "../packages/core/src/models/refresh-token.model
 import {SeenJtiModel} from "../packages/core/src/models/seen-jti.model"
 import {SupportProfileModel} from "../packages/core/src/models/support-profile.model"
 import {UserModel} from "../packages/core/src/models/user.model"
-import {confirmAccountDeletion, otc, resetPassword} from "../packages/core/src/services/account/account.service"
-import {revokeAllSessionsForUser} from "../packages/core/src/services/session.service"
+import {confirmAccountDeletion, login, otc, resetPassword} from "../packages/core/src/services/account/account.service"
+import {refreshSession, revokeAllSessionsForUser} from "../packages/core/src/services/session.service"
 import {resetSigningKeyCache} from "../packages/core/src/services/signing-keys.service"
 import {createPortalSession} from "../packages/core/src/services/signin/browser-session.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
@@ -174,6 +174,28 @@ async function expectRevokedEverywhere(before: Awaited<ReturnType<typeof signedI
   expect(before.console.endedAt).not.toBeNull()
 }
 
+/** Make the account directory's admin API answer 503 for `methods` on this person, until the returned function runs. */
+function blockDirectory(methods: string[]): () => void {
+  const inner = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init)
+    if (request.url.startsWith(`${SUPABASE_PROJECT}/auth/v1/admin/users/${SUB}`) && methods.includes(request.method)) {
+      return new Response(JSON.stringify({error: "unavailable"}), {status: 503})
+    }
+    return inner(input as RequestInfo, init)
+  }) as typeof fetch
+  return () => {
+    globalThis.fetch = inner
+  }
+}
+
+async function accountInDirectory(): Promise<boolean> {
+  const response = await fetch(`${SUPABASE_PROJECT}/auth/v1/admin/users/${SUB}`, {
+    headers: {apikey: "sb_secret_signin_test", authorization: "Bearer sb_secret_signin_test"},
+  })
+  return response.status === 200
+}
+
 async function expectOneGlobalLogout() {
   const calls = idp.logoutCalls.filter(call => call.scope === "global")
   expect(calls).toHaveLength(1)
@@ -228,6 +250,68 @@ describe("confirmAccountDeletion", () => {
     resetIdpTokenCaches()
     expect((await adminMe(`Bearer ${await bearerToken(before.sessionStart, before.console.sessionId)}`)).status).toBe(401)
     expect(before.signInPage.endedAt).not.toBeNull()
+  })
+
+  test("from the moment deletion starts the account is no principal: sign-in, exchange, refresh, sessions and tokens", async () => {
+    const before = await signedInEverywhere()
+    const phone = await login(ADMIN_EMAIL, PASSWORD)
+    // Deletion stalls after its first step: the account directory cannot answer about this account.
+    const restore = blockDirectory(["GET", "DELETE"])
+    try {
+      const code = await otc.issueEmailCode({purpose: "account_deletion", subject: SUB, ttlSec: 900})
+      await expect(confirmAccountDeletion(before.user.mentraUserId, SUB, code)).rejects.toThrow()
+    } finally {
+      restore()
+    }
+    // The directory still has the account, but Core treats it as deleted.
+    expect(await accountInDirectory()).toBe(true)
+    expect((await UserModel.findOne({mentraUserId: before.user.mentraUserId}).lean())?.supportTelemetryDeletedAt).toBeInstanceOf(Date)
+
+    // Signing in again, through Core's account login (the phone's token exchange), is refused.
+    await expect(login(ADMIN_EMAIL, PASSWORD)).rejects.toMatchObject({code: "invalid_grant"})
+    // So is refreshing the phone session it had (deletion also revoked it).
+    await expect(refreshSession({refreshToken: phone.refresh_token})).rejects.toMatchObject({code: "invalid_grant"})
+    // A Supabase sign-in that started after the revocation is refused too.
+    resetIdpTokenCaches()
+    const later = nowSec() + 2
+    expect((await adminMe(`Bearer ${await bearerToken(later, "later-session", later)}`)).status).toBe(401)
+    // As is a portal session, should one be created now.
+    const {cookieValue} = await createPortalSession("admin", {
+      mentraUserId: before.user.mentraUserId,
+      tenantId: "mentra",
+      sourceId: "mentra",
+      subject: SUB,
+      email: ADMIN_EMAIL,
+      emailVerified: true,
+      authTime: new Date(),
+    })
+    expect((await adminMe(undefined, cookieValue)).status).toBe(401)
+
+    // Asked again with the directory answering, the deletion completes.
+    const code = await otc.issueEmailCode({purpose: "account_deletion", subject: SUB, ttlSec: 900})
+    await confirmAccountDeletion(before.user.mentraUserId, SUB, code)
+    expect(await accountInDirectory()).toBe(false)
+  })
+
+  test("a deletion that fails while the directory still has the account lifts the tombstone, so the person can sign in and ask again", async () => {
+    const before = await signedInEverywhere()
+    const restore = blockDirectory(["DELETE"])
+    try {
+      const code = await otc.issueEmailCode({purpose: "account_deletion", subject: SUB, ttlSec: 900})
+      await expect(confirmAccountDeletion(before.user.mentraUserId, SUB, code)).rejects.toThrow()
+    } finally {
+      restore()
+    }
+    expect((await UserModel.findOne({mentraUserId: before.user.mentraUserId}).lean())?.supportTelemetryDeletedAt).toBeNull()
+    // Everything signed in before is still revoked, but the person can sign in again.
+    expect((await adminMe(undefined, before.cookieValue)).status).toBe(401)
+    const fresh = await login(ADMIN_EMAIL, PASSWORD)
+    expect(fresh.access_token).toBeTruthy()
+
+    const code = await otc.issueEmailCode({purpose: "account_deletion", subject: SUB, ttlSec: 900})
+    await confirmAccountDeletion(before.user.mentraUserId, SUB, code)
+    expect(await accountInDirectory()).toBe(false)
+    expect((await UserModel.findOne({mentraUserId: before.user.mentraUserId}).lean())?.supportTelemetryDeletedAt).toBeInstanceOf(Date)
   })
 
   test("a failing Supabase logout still completes account deletion", async () => {
