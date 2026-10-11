@@ -23,4 +23,6 @@ export const MESSAGES = {
   samePassword: "Choose a password that is different from your current one.",
   resetExpired: "This reset link has expired. Request a new one.",
   updatePasswordFailed: "Could not update your password. Try again.",
+  emailVerified: "Your email has been verified. Open the Mentra app to continue.",
+  emailLinkFailed: "This link is invalid or has expired. Open the Mentra app to request a new one.",
 } as const;

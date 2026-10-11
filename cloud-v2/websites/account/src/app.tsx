@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
 import { isConfigured, type AccountConfig } from "./lib/config";
+import type { EmailLinkLanding } from "./lib/email-link";
 import { createRecoveryState } from "./lib/recovery";
 import { matchRoute } from "./lib/router";
 import { createAccountAuthClient, type AccountAuthClient } from "./lib/supabase";
@@ -8,7 +9,7 @@ import { HomeRoute } from "./routes/home";
 import { ResetRoute } from "./routes/reset";
 import { SignOutRoute } from "./routes/signout";
 import { SignUpRoute } from "./routes/sign-up";
-import { ErrorBoundary, NotConfigured, NotFound } from "./ui";
+import { EmailLinkResult, ErrorBoundary, NotConfigured, NotFound } from "./ui";
 
 export interface PageLocation {
   origin: string;
@@ -23,6 +24,8 @@ export interface AppEnvironment {
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
   /** Defaults to the real Supabase client; tests pass a fake. */
   createAuth?: (config: AccountConfig) => AccountAuthClient;
+  /** The outcome of an email link that fell back to the Site URL, already removed from the URL. */
+  emailLink?: EmailLinkLanding | null;
 }
 
 /**
@@ -30,6 +33,8 @@ export interface AppEnvironment {
  * route shows a fixed message and no client is created.
  */
 export function createApp(config: AccountConfig, env: AppEnvironment): ReactElement {
+  // An email link's outcome needs no Supabase client and starts no session.
+  if (env.emailLink && matchRoute(env.location.pathname) === "home") return <EmailLinkResult landing={env.emailLink} />;
   if (!isConfigured(config)) return <NotConfigured />;
 
   let auth: AccountAuthClient;

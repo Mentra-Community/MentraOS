@@ -1,4 +1,5 @@
 import { Component, type ChangeEvent, type ReactNode } from "react";
+import type { EmailLinkLanding } from "./lib/email-link";
 import { MESSAGES } from "./lib/messages";
 
 export function Page({ title, children }: { title: string; children?: ReactNode }) {
@@ -51,6 +52,18 @@ export function NotConfigured() {
   return (
     <Page title="Mentra account">
       <Notice tone="error">{MESSAGES.notConfigured}</Notice>
+    </Page>
+  );
+}
+
+export function EmailLinkResult({ landing }: { landing: EmailLinkLanding }) {
+  return landing.kind === "verified" ? (
+    <Page title="Email verified">
+      <p className="muted">{MESSAGES.emailVerified}</p>
+    </Page>
+  ) : (
+    <Page title="Link expired">
+      <Notice tone="error">{MESSAGES.emailLinkFailed}</Notice>
     </Page>
   );
 }

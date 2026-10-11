@@ -35,6 +35,26 @@ describe("app", () => {
     }
   });
 
+  test("an email link's outcome shows at the root without a Supabase client, even when unconfigured", () => {
+    for (const config of [
+      createAccountConfig({}),
+      createAccountConfig({ supabaseUrl: "https://auth.example", supabaseAnonKey: "sb_publishable_x" }),
+    ]) {
+      const verified = { ...environment("/"), emailLink: { kind: "verified" as const } };
+      const html = renderToStaticMarkup(createApp(config, verified));
+      expect(html).toContain("Email verified");
+      expect(html).toContain(MESSAGES.emailVerified);
+      expect(verified.createAuth).not.toHaveBeenCalled();
+
+      const failed = { ...environment("/"), emailLink: { kind: "failed" as const } };
+      expect(renderToStaticMarkup(createApp(config, failed))).toContain(MESSAGES.emailLinkFailed);
+    }
+    // Only the root shows it; other routes keep their behavior.
+    const config = createAccountConfig({ supabaseUrl: "https://auth.example", supabaseAnonKey: "sb_publishable_x" });
+    const signup = { ...environment("/signup"), emailLink: { kind: "verified" as const } };
+    expect(renderToStaticMarkup(createApp(config, signup))).toContain("Create your Mentra account");
+  });
+
   test("routes by pathname and shows 'Page not found' for unknown paths", () => {
     const config = createAccountConfig({ supabaseUrl: "https://auth.example", supabaseAnonKey: "sb_publishable_x" });
     const render = (pathname: string, search = "") => renderToStaticMarkup(createApp(config, environment(pathname, search)));

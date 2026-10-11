@@ -21,12 +21,12 @@ Supabase sends people to its authorization page at the **Site URL plus the
 authorization path**; it takes no absolute URL. So the Site URL is the sign-in
 page's origin, and the page is `https://account.mentraglass.com/oauth/authorize`.
 
-**Account emails.** Without a `redirect_to`, Supabase links sign-up confirmation
-emails to the Site URL. Before the Site URL becomes the sign-in page, every Core
-(dev, staging and prod) must send an explicit `redirect_to` on its sign-up and
-resend-verification calls: `CLOUD_CORE_ACCOUNT_EMAIL_REDIRECT_URL`, set to the
-page those emails land on today. That URL must be on the redirect allowlist, or
-Supabase silently falls back to the Site URL.
+**Account emails.** Core sends `redirect_to` on its sign-up and
+resend-verification calls when `CLOUD_CORE_ACCOUNT_EMAIL_REDIRECT_URL` is set; that
+URL must be on the redirect allowlist, or Supabase silently falls back to the
+Site URL. A confirmation link without one lands on the sign-in page's root, which
+shows "Email verified" (or that the link has expired) and starts no session. So
+the Site URL can point at the sign-in page before every Core sends `redirect_to`.
 
 **Issuer.** Core and every client use the `issuer` the discovery document
 reports, which can differ from the host it was fetched from:
@@ -145,5 +145,6 @@ while Core's account-wide sign-out depends on it: that call
   `account.mentraglass.com`, then lands back on the admin portal.
 - Signing out on the sign-in page (`/signout`) leaves the portals and the CLI
   signed in.
-- A Mentra App sign-up's confirmation link lands on the confirmation page, not
-  the sign-in page.
+- A Mentra App sign-up's confirmation link shows that the email is verified:
+  on the `CLOUD_CORE_ACCOUNT_EMAIL_REDIRECT_URL` page, or on the sign-in page's
+  root for a Core that does not send `redirect_to` yet.

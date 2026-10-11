@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { createApp } from "./app";
 import { readBuildConfig } from "./lib/config";
+import { readEmailLinkLanding } from "./lib/email-link";
 
 function sessionStorageOrNull(): Storage | null {
   try {
@@ -9,6 +10,11 @@ function sessionStorageOrNull(): Storage | null {
     return null;
   }
 }
+
+// Read and remove an email link's fragment before the Supabase client is
+// created, so its tokens neither start a session here nor stay in history.
+const emailLink = readEmailLinkLanding(window.location.hash);
+if (emailLink) window.history.replaceState(null, "", window.location.pathname + window.location.search);
 
 const container = document.getElementById("root");
 if (container) {
@@ -21,6 +27,7 @@ if (container) {
       },
       navigate: (url) => window.location.assign(url),
       storage: sessionStorageOrNull(),
+      emailLink,
     }),
   );
 }
