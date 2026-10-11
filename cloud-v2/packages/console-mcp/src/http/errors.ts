@@ -18,7 +18,7 @@ export function describeAdminApiStatus(status: number, what: string): string {
     case 401:
       return `unauthorized (401) fetching ${what} — MENTRA_ADMIN_TOKEN was rejected`;
     case 403:
-      return `forbidden (403) fetching ${what} — token is valid but not admin-allowlisted (CLOUD_CORE_ADMIN_EMAILS)`;
+      return `forbidden (403) fetching ${what} — token is valid but lacks the required organization capability`;
     case 404:
       return `not found (404) fetching ${what} — wrong id, or this environment does not serve the admin reports API yet`;
     default:
