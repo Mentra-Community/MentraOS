@@ -1595,6 +1595,25 @@ def consented_scopes(config, sp_id):
     return ' '.join(g.get('scope', '') for g in grants if g.get('consentType') == 'AllPrincipals').split()
 
 
+CONSENT_STEP = 'Admin consent'
+
+
+def ensure_admin_consent(config, consented, interactive):
+    """Grants tenant-wide consent for the sign-in apps when it is missing; returns the step left, if any."""
+    if consented:
+        return []
+    if confirm('Grant tenant-wide consent for the Mentra sign-in apps now? (needs an Entra admin role)', True, interactive):
+        try:
+            # Success means consent was granted; Graph can take a while to list it.
+            grant_admin_consent(config)
+            return []
+        except SetupError:
+            pass
+    return [{'step': CONSENT_STEP, 'action': 'A Global Administrator, Privileged Role Administrator or '
+             'Cloud Application Administrator opens these pages and selects "Grant admin consent" on each: '
+             f"{permissions_page(config['mobileClientId'])} and {permissions_page(config['coreApiClientId'])}"}]
+
+
 def mobile_access(config):
     sp = service_principal(config, config['mobileClientId'], 'id,appRoleAssignmentRequired')
     if not sp:
@@ -1689,18 +1708,7 @@ def entra_handoffs(args, config, interactive):
             access = mobile_access(config)
     except GraphError:
         return [{'step': 'Employee sign-in', 'action': 'Setup could not read the Entra applications. An Entra administrator should grant admin consent and assign employees to the Mobile application.'}]
-    if not access['consent']:
-        if confirm('Grant tenant-wide consent for the Mentra sign-in apps now? (needs an Entra admin role)', True, interactive):
-            try:
-                # Success means consent was granted; Graph can take a while to list it.
-                grant_admin_consent(config)
-                access['consent'] = True
-            except SetupError:
-                pass
-        if not access['consent']:
-            handoffs.append({'step': 'Admin consent', 'action': 'A Global Administrator, Privileged Role Administrator or '
-                             'Cloud Application Administrator opens these pages and selects "Grant admin consent" on each: '
-                             f"{permissions_page(config['mobileClientId'])} and {permissions_page(config['coreApiClientId'])}"})
+    handoffs.extend(ensure_admin_consent(config, access['consent'], interactive))
     sp_id = access['servicePrincipalId']
     portal = (f'https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ManagedAppMenuBlade/~/Users/objectId/{sp_id}'
               f"/appId/{config['mobileClientId']}" if sp_id else
@@ -2209,8 +2217,20 @@ def upgrade_command(args, directory, interactive=None):
     result = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
     if result['status'] == 'infrastructure_verified':
         config, state, release = load(directory)
-        checkpoint(directory, state, state['phase'],
-                   handoffs=other_handoffs(state, PORTAL_STEP) + admin_portal(directory, config, state))
+        portal_steps = admin_portal(directory, config, state)
+        # Admin portal sign-in adds the Core app's Graph sign-in scopes, which a tenant
+        # that blocks user consent must consent to before Organization Admins can sign in.
+        checked = config.get('adminPortalSignIn') is True and not portal_steps
+        consent_steps = []
+        if checked:
+            try:
+                consented = mobile_access(config)['consent']
+            except GraphError:
+                consented = False
+            consent_steps = ensure_admin_consent(config, consented, interactive)
+        # Once checked, the consent step reflects the tenant now, not an earlier run.
+        kept = [h for h in other_handoffs(state, PORTAL_STEP) if not (checked and h.get('step') == CONSENT_STEP)]
+        checkpoint(directory, state, state['phase'], handoffs=kept + portal_steps + consent_steps)
         relink()
         result = dict(result, status='upgraded', release=release['releaseTag'])
     return result

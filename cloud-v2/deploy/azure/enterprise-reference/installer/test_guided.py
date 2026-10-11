@@ -371,6 +371,37 @@ class GuidedTests(unittest.TestCase):
         self.assertEqual(result['status'], 'upgraded')
         self.assertEqual(setup.os.readlink(self.home / 'mentra-private-cloud'), 'packages/3.3.0-dev.2/mentra-private-cloud')
 
+    def upgrade_with_admin_portal(self, consented, grant):
+        self.write_state('infrastructure_verified', release_hash='same-release')
+        state = setup.read_json(self.directory / 'state.json')
+        state['handoffs'] = [{'step': 'Admin consent', 'action': 'from an earlier run'}, {'step': 'Employee access', 'action': 'kept'}]
+        setup.write_json(self.directory / 'state.json', state)
+        config = dict(self.config, adminPortalSignIn=True)
+        with patch.object(setup, 'digest', return_value='same-release'), patch.object(setup, 'relink'), \
+             patch.object(setup, 'load', side_effect=lambda d: (config, setup.read_json(d / 'state.json'), RELEASE)), \
+             patch.object(setup, 'install', return_value={'status': 'infrastructure_verified'}), \
+             patch.object(setup, 'admin_portal', return_value=[]), \
+             patch.object(setup, 'mobile_access', return_value={'consent': consented}), \
+             patch.object(setup, 'grant_admin_consent', side_effect=grant) as granted, contextlib.redirect_stdout(io.StringIO()):
+            result = setup.upgrade_command(self.args, self.directory, interactive=False)
+        self.assertEqual(result['status'], 'upgraded')
+        return [h['step'] for h in setup.read_json(self.directory / 'state.json')['handoffs']], granted
+
+    def test_an_upgrade_that_turns_on_admin_portal_sign_in_grants_admin_consent(self):
+        steps, granted = self.upgrade_with_admin_portal(consented=False, grant=None)
+        granted.assert_called_once()
+        self.assertEqual(steps, ['Employee access'])
+
+    def test_an_upgrade_that_cannot_grant_admin_consent_hands_it_off(self):
+        steps, granted = self.upgrade_with_admin_portal(consented=False, grant=setup.SetupError('needs a Global Administrator'))
+        granted.assert_called_once()
+        self.assertEqual(steps, ['Employee access', 'Admin consent'])
+
+    def test_an_upgrade_with_consent_already_granted_asks_nothing(self):
+        steps, granted = self.upgrade_with_admin_portal(consented=True, grant=None)
+        granted.assert_not_called()
+        self.assertEqual(steps, ['Employee access'])
+
     def test_upgrade_refuses_an_unfinished_deployment(self):
         packages = self.home / 'packages'
         old = packages / '3.3.0-dev.1/mentra-private-cloud'

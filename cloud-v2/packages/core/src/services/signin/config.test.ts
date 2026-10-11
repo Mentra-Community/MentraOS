@@ -17,6 +17,8 @@ const ENV_KEYS = [
   "CLOUD_CORE_WEB_CLIENT_IDS",
   "CLOUD_CORE_ADMIN_PORTAL_URL",
   "CLOUD_CORE_ENTERPRISE_PORTAL_URL",
+  "CLOUD_CORE_ADMIN_PORTAL_CLIENT_ID",
+  "CLOUD_CORE_ENTERPRISE_PORTAL_CLIENT_ID",
   "CLOUD_CORE_IDP_SIGNOUT_URL",
   "CLOUD_CORE_ENVIRONMENT",
   "NODE_ENV",
@@ -86,6 +88,8 @@ describe("valid configurations", () => {
     process.env.CLOUD_CORE_SUPABASE_ISSUER = "https://ref.supabase.co/auth/v1/"
     process.env.CLOUD_CORE_WEB_CLIENT_IDS = " admin-client , portal-client ,"
     process.env.CLOUD_CORE_ADMIN_PORTAL_URL = "https://admin.mentraglass.com"
+    process.env.CLOUD_CORE_ADMIN_PORTAL_CLIENT_ID = "admin-client"
+    process.env.CLOUD_CORE_ENTERPRISE_PORTAL_CLIENT_ID = "portal-client"
     await assertSigninConfiguration({skipDatabase: true})
     const provider = portalIdentityProvider()
     expect(provider.kind).toBe("supabase")
@@ -203,6 +207,15 @@ describe("refusals name the field", () => {
     process.env.CLOUD_CORE_SUPABASE_JWKS_URL = "http://keys.example/jwks.json"
     process.env.CLOUD_CORE_WEB_CLIENT_IDS = "admin"
     expect(await refusal()).toContain("CLOUD_CORE_SUPABASE_JWKS_URL")
+  })
+
+  test("a portal client missing from the web client IDs", async () => {
+    process.env.CLOUD_CORE_ENVIRONMENT = "dev"
+    process.env.CLOUD_CORE_SUPABASE_ISSUER = "https://ref.supabase.co/auth/v1"
+    process.env.CLOUD_CORE_WEB_CLIENT_IDS = "admin-client"
+    process.env.CLOUD_CORE_ADMIN_PORTAL_CLIENT_ID = "admin-client"
+    process.env.CLOUD_CORE_ENTERPRISE_PORTAL_CLIENT_ID = "portal-client"
+    expect(await refusal()).toContain("CLOUD_CORE_ENTERPRISE_PORTAL_CLIENT_ID")
   })
 
   test("no web client IDs while the issuer is set, on a deployed Core", async () => {

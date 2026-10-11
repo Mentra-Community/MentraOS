@@ -282,6 +282,14 @@ export async function assertSigninConfiguration(opts: {skipDatabase?: boolean} =
     if (deployed && webClientIds().size === 0) {
       throw new ConfigurationError("CLOUD_CORE_WEB_CLIENT_IDS must list this environment's web clients when CLOUD_CORE_SUPABASE_ISSUER is set")
     }
+    // A portal whose client is missing from the list could never complete a
+    // sign-in: Core refuses every token issued to an unlisted client.
+    for (const name of ["CLOUD_CORE_ADMIN_PORTAL_CLIENT_ID", "CLOUD_CORE_ENTERPRISE_PORTAL_CLIENT_ID"] as const) {
+      const clientId = clean(process.env[name])
+      if (clientId && !webClientIds().has(clientId)) {
+        throw new ConfigurationError(`CLOUD_CORE_WEB_CLIENT_IDS must include ${name}`)
+      }
+    }
   }
 
   for (const [name, raw] of [
