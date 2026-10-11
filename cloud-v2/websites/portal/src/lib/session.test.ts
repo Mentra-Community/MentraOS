@@ -8,7 +8,7 @@ test("the login gate starts sign-in with a relative return path", () => {
   expect(loginHref({ pathname: "/", search: "?report=rep_1" })).toBe("/api/portal/auth/login?return_to=%2F%3Freport%3Drep_1");
 });
 
-test("sign out POSTs the enterprise portal logout and returns the Mentra sign-out URL", async () => {
+test("sign out POSTs the workspace portal logout and returns the Mentra sign-out URL", async () => {
   const calls: Array<{ url: string; method?: string }> = [];
   const fetchMock = (async (url: string, init?: RequestInit) => {
     calls.push({ url, method: init?.method });

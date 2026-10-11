@@ -1,9 +1,9 @@
 /**
- * Enterprise portal sign-in and sign-out, through Core's routes on this origin.
+ * Workspace portal sign-in and sign-out, through Core's routes on this origin.
  *
  * Sign-in starts at `/api/portal/auth/login` with a relative `return_to` (the
  * current path and query, so report and test-run deep links survive the round
- * trip). Sign-out ends the enterprise portal session and returns the identity
+ * trip). Sign-out ends the workspace portal session and returns the identity
  * provider's sign-out URL, which the signed-out screen offers as a link.
  */
 

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Clock, Fingerprint, Globe2, Loader2, LogOut, Mail, Plus, ShieldCheck, ToggleLeft, ToggleRight, Users } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { Building2, Clock, Fingerprint, Globe2, Loader2, Mail, Plus, ShieldCheck, ToggleLeft, ToggleRight, Users, UsersRound } from "lucide-react";
+import { useEffect, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import mentraLogo from "./assets/mentra-logo.svg";
 import { SignedOutScreen } from "./components/signed-out";
 import { loginHref, signOutOfEnterprisePortal } from "./lib/session";
+import { forgetPendingInvite, takePendingInvite } from "./lib/workspace-invite";
+import { WorkspacesPage, type WorkspaceCreation } from "./pages/workspaces";
 
 type EnterpriseOrg = {
   id: string;
@@ -16,7 +18,7 @@ type EnterpriseOrg = {
   slug: string;
   status: "active" | "disabled" | "pending";
 };
-type PortalPageKey = "overview" | "environments" | "access";
+type PortalPageKey = "workspaces" | "enterprise" | "overview" | "environments" | "access";
 
 type TrustedIssuer = {
   id: string;
@@ -38,6 +40,14 @@ type PortalUser = {
   email: string | null;
 };
 
+type PortalMe = {
+  authenticated: true;
+  user: PortalUser;
+  workspaceCreation: WorkspaceCreation;
+  onboardingRequired: boolean;
+  org: EnterpriseOrg | null;
+};
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -56,41 +66,66 @@ export function App() {
   );
 }
 
-const PORTAL_NAV: readonly NavItem[] = [
-  { key: "overview", label: "Overview", icon: Building2 },
-  { key: "environments", label: "Auth environments", icon: Fingerprint },
-  { key: "access", label: "Access", icon: Users },
-];
+const WORKSPACES_NAV: NavItem = { key: "workspaces", label: "Workspaces", icon: UsersRound };
+
+/** The enterprise pages: set-up until a Mentra admin approves the enterprise org, then its three pages. */
+function enterpriseNav(approved: boolean): NavItem[] {
+  if (!approved) return [{ key: "enterprise", label: "Enterprise", icon: Building2 }];
+  return [
+    { key: "overview", label: "Enterprise", icon: Building2 },
+    { key: "environments", label: "Auth environments", icon: Fingerprint },
+    { key: "access", label: "Enterprise access", icon: Users },
+  ];
+}
 
 const PORTAL_PAGE_META: Record<PortalPageKey, { title: string; description: string }> = {
-  overview: { title: "Overview", description: "Enterprise account status and runtime setup." },
+  workspaces: { title: "Workspaces", description: "Your workspaces: members, invitations, roles and settings." },
+  enterprise: { title: "Enterprise", description: "Set up an enterprise org to manage the identity issuers Mentra trusts for your people." },
+  overview: { title: "Enterprise", description: "Enterprise account status and runtime setup." },
   environments: { title: "Auth environments", description: "Manage trusted issuer and JWKS configuration." },
-  access: { title: "Access", description: "Manage enterprise members and approval state." },
+  access: { title: "Enterprise access", description: "Manage enterprise members and approval state." },
 };
+
+// An invitation link's token leaves the address bar before anything else runs (lib/workspace-invite).
+const sessionStore = typeof window !== "undefined" ? safeSessionStorage() : null;
+let initialInvite = typeof window !== "undefined"
+  ? takePendingInvite(window.location, sessionStore, url => window.history.replaceState(null, "", url))
+  : null;
+
+function safeSessionStorage(): Storage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
 
 function PortalPage() {
   const qc = useQueryClient();
-  const [page, setPage] = useState<PortalPageKey>("overview");
+  const [page, setPage] = useState<PortalPageKey>("workspaces");
+  const [inviteToken, setInviteToken] = useState<string | null>(initialInvite);
   const [signingOut, setSigningOut] = useState(false);
   const [signedOut, setSignedOut] = useState<{ signOutUrl: string | null } | null>(null);
   const me = useQuery({
     queryKey: ["portal-me"],
-    queryFn: () => api<{ authenticated: true; user: PortalUser; onboardingRequired: boolean; org: EnterpriseOrg | null }>("/api/portal/me"),
+    queryFn: () => api<PortalMe>("/api/portal/me"),
     retry: false,
   });
   const issuers = useQuery({
     queryKey: ["trusted-issuers"],
     queryFn: () => api<{ org: EnterpriseOrg; issuers: TrustedIssuer[] }>("/api/portal/trusted-issuers"),
-    enabled: Boolean(me.data?.org),
+    enabled: me.data?.org?.status === "active",
   });
 
   if (signedOut) return <SignedOutScreen signOutUrl={signedOut.signOutUrl} />;
-  if (me.isLoading) return <Splash label="Checking enterprise session" />;
-  if (me.isError) return <LoginGate />;
+  if (me.isLoading) return <Splash label="Checking your session" />;
+  if (me.isError) return <LoginGate invitePending={inviteToken !== null} />;
 
   const org = me.data?.org ?? issuers.data?.org ?? null;
-  const displayName = me.data?.user.email || "Enterprise user";
+  const displayName = me.data?.user.email || "Signed in";
   const approved = org?.status === "active";
+  const nav = [WORKSPACES_NAV, ...enterpriseNav(approved)];
+  const active: PortalPageKey = nav.some(item => item.key === page) ? page : "workspaces";
 
   async function signOut() {
     setSigningOut(true);
@@ -99,56 +134,60 @@ function PortalPage() {
     setSignedOut(result);
   }
 
-  // Onboarding (no org) and pending approval are focused, nav-free states —
-  // the issuer/environment pages stay locked until a Mentra admin approves.
-  if (!org) {
-    return (
-      <FocusShell userLabel={displayName} onSignOut={signOut} signingOut={signingOut}>
-        <EnterpriseOnboarding
-          user={me.data?.user ?? { id: "preview", email: displayName }}
-          onSaved={async () => {
-            await Promise.all([
-              qc.invalidateQueries({ queryKey: ["portal-me"] }),
-              qc.invalidateQueries({ queryKey: ["trusted-issuers"] }),
-            ]);
-          }}
-        />
-      </FocusShell>
-    );
+  function inviteDone() {
+    forgetPendingInvite(sessionStore);
+    initialInvite = null;
+    setInviteToken(null);
   }
 
-  if (!approved) {
-    return (
-      <FocusShell userLabel={displayName} onSignOut={signOut} signingOut={signingOut}>
-        <ApprovalPending org={org} />
-      </FocusShell>
-    );
-  }
-
-  const meta = PORTAL_PAGE_META[page];
+  const meta = PORTAL_PAGE_META[active];
 
   return (
     <AppShell
-      brandTitle="Enterprise"
+      brandTitle="Workspace"
       brandSubtitle="Portal"
       badge={
-        <div className="rounded-[10px] border border-[#e0e4de] bg-[#f7f8f6] px-3 py-2">
-          <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[#a0a3aa]">Organization</div>
-          <div className="truncate text-sm font-semibold text-[#1c1d22]">{org.name}</div>
-        </div>
+        active !== "workspaces" && org ? (
+          <div className="rounded-[10px] border border-[#e0e4de] bg-[#f7f8f6] px-3 py-2">
+            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[#a0a3aa]">Enterprise org</div>
+            <div className="truncate text-sm font-semibold text-[#1c1d22]">{org.name}</div>
+          </div>
+        ) : undefined
       }
-      nav={PORTAL_NAV}
-      activeKey={page}
+      nav={nav}
+      activeKey={active}
       onSelect={key => setPage(key as PortalPageKey)}
       title={meta.title}
       description={meta.description}
       userEmail={displayName}
-      accountLabel="Enterprise"
+      accountLabel="Account"
       onSignOut={signOut}
       signingOut={signingOut}
     >
-      {page === "overview" ? <EnterpriseOverview org={org} issuers={issuers.data?.issuers ?? []} /> : null}
-      {page === "environments" ? (
+      {active === "workspaces" ? (
+        <WorkspacesPage
+          creation={me.data?.workspaceCreation ?? { allowed: false, reason: null }}
+          inviteToken={inviteToken}
+          onInviteDone={inviteDone}
+        />
+      ) : null}
+      {active === "enterprise" ? (
+        org ? (
+          <ApprovalPending org={org} />
+        ) : (
+          <EnterpriseOnboarding
+            user={me.data?.user ?? { id: "preview", email: displayName }}
+            onSaved={async () => {
+              await Promise.all([
+                qc.invalidateQueries({ queryKey: ["portal-me"] }),
+                qc.invalidateQueries({ queryKey: ["trusted-issuers"] }),
+              ]);
+            }}
+          />
+        )
+      ) : null}
+      {active === "overview" && org ? <EnterpriseOverview org={org} issuers={issuers.data?.issuers ?? []} /> : null}
+      {active === "environments" && org ? (
         <EnvironmentsPage
           org={org}
           issuers={issuers.data?.issuers ?? []}
@@ -158,47 +197,8 @@ function PortalPage() {
           }}
         />
       ) : null}
-      {page === "access" ? <EnterpriseAccess org={org} /> : null}
+      {active === "access" && org ? <EnterpriseAccess org={org} /> : null}
     </AppShell>
-  );
-}
-
-/** Focused, nav-free layout for the onboarding + approval-pending states. */
-function FocusShell({
-  children,
-  userLabel,
-  onSignOut,
-  signingOut,
-}: {
-  children: ReactNode;
-  userLabel: string;
-  onSignOut: () => void;
-  signingOut?: boolean;
-}) {
-  return (
-    <div className="min-h-dvh bg-[#f5f6f4] text-[#14151b]">
-      <header className="border-b border-[#e4e6e2] bg-white">
-        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5">
-          <div className="flex items-center gap-3">
-            <img src={mentraLogo} alt="" className="h-[22px] w-[41px]" />
-            <div>
-              <div className="font-display text-[15px] font-bold leading-5 text-[#14151b]">Enterprise Portal</div>
-              <div className="text-xs leading-4 text-[#8a8d95]">MentraOS · {userLabel}</div>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="flex items-center gap-2 rounded-full border border-[#e0e4de] px-4 py-2 text-sm font-medium text-[#5d6068] hover:bg-[#f3f4f2] disabled:opacity-60"
-            disabled={signingOut}
-            onClick={onSignOut}
-          >
-            <LogOut className="size-4" />
-            {signingOut ? "Signing out..." : "Sign out"}
-          </button>
-        </div>
-      </header>
-      <main className="mx-auto max-w-5xl px-5 py-10">{children}</main>
-    </div>
   );
 }
 
@@ -630,8 +630,7 @@ function ReferencePanel({ org }: { org: EnterpriseOrg | null }) {
   );
 }
 
-export function LoginGate() {
-  const loginUrl = loginHref();
+export function LoginGate({ invitePending = false, loginUrl = loginHref() }: { invitePending?: boolean; loginUrl?: string }) {
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8f6_100%)] px-5 py-10 text-[#14141a]">
@@ -646,18 +645,20 @@ export function LoginGate() {
 
             <div className="h-[22px]" />
             <div className="mx-auto flex h-11 w-fit items-center gap-2 rounded-full bg-[#f0faf5] px-4 text-[12px] font-bold uppercase tracking-[0.14em] text-[#087d50] shadow-[0_0_0_1px_rgba(8,125,80,0.12)]">
-              <Building2 className="size-4" />
-              Enterprise
+              <UsersRound className="size-4" />
+              Workspaces
             </div>
 
             <div className="h-[18px]" />
             <h1 className="font-display text-[28px] font-bold leading-[32px] tracking-[-0.64px] text-[#14141a]">
-              Sign into Mentra Enterprise Portal
+              Sign into the Mentra Workspace Portal
             </h1>
 
             <div className="h-2.5" />
             <p className="mx-auto max-w-[320px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
-              Manage OEM auth issuers and token exchange configuration for runtime deployments.
+              {invitePending
+                ? "Sign in with the email address your invitation was sent to, then accept it."
+                : "Manage your workspaces, their members and roles, and your enterprise's trusted identity issuers."}
             </p>
 
             <div className="h-8" />
@@ -670,7 +671,7 @@ export function LoginGate() {
 
             <div className="h-5" />
             <p className="font-body text-[11.5px] leading-4 text-[#a6a6ac]">
-              Enterprise access controls which issuers can mint exchange tokens.
+              Sign in with your Mentra account.
             </p>
           </div>
         </div>

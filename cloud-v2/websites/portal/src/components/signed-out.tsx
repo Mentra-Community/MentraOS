@@ -2,7 +2,7 @@ import { LogOut } from "lucide-react";
 import mentraLogo from "../assets/mentra-logo.svg";
 
 /**
- * After signing out of the enterprise portal. The enterprise portal session has ended;
+ * After signing out of the workspace portal. The workspace portal session has ended;
  * the Mentra account (or the company's identity provider) may still be signed
  * in, so its sign-out is offered as a separate link when Core provides one.
  */
@@ -16,7 +16,7 @@ export function SignedOutScreen({ signOutUrl }: { signOutUrl: string | null }) {
           <LogOut className="size-5" />
         </div>
         <div className="h-[18px]" />
-        <h1 className="font-display text-[26px] font-bold leading-[30px] tracking-[-0.52px]">Signed out of the enterprise portal</h1>
+        <h1 className="font-display text-[26px] font-bold leading-[30px] tracking-[-0.52px]">Signed out of the workspace portal</h1>
         <div className="h-2.5" />
         <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
           {signOutUrl
