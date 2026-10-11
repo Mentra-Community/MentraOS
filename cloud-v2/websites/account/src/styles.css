@@ -1,36 +1,65 @@
+/*
+ * Mentra brand styling, copied from the Mentra Miniapp Store website
+ * (ui/styles.css) and the Mentra App's sign-in screens (mobile/src/theme).
+ * Red Hat Display is self-hosted from public/fonts under the SIL Open Font
+ * License (public/fonts/OFL.txt).
+ */
+@font-face {
+  font-family: "Red Hat Display";
+  src: url("/fonts/RedHatDisplay-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Red Hat Display";
+  src: url("/fonts/RedHatDisplay-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: swap;
+}
+
 :root {
   color-scheme: light dark;
-  --bg: #f3f3f1;
-  --card: #ffffff;
-  --text: #1b1b19;
-  --muted: #5c5c57;
-  --border: #d6d6d1;
-  --primary: #1b1b19;
-  --primary-text: #ffffff;
-  --focus: #2563eb;
-  --error-bg: #fdecea;
-  --error-text: #8a1c12;
-  --info-bg: #eef3fb;
-  --info-text: #1d3a6b;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Store palette (light). */
+  --bg: #ffffff;
+  --surface: #f5f5f5;
+  --hover: #f1f1f1;
+  --text: #0a0a0a;
+  --muted: #737373;
+  --border: #e5e5e5;
+  --button: #0a0a0a;
+  --button-text: #ffffff;
+  --error-bg: #fff3e6;
+  --error: #8a4200;
+  /* Mentra App greens: logo mark and confirmation notices. */
+  --brand: #00b869;
+  --info-bg: #eaf9ef;
+  --info: #006a3f;
+  /* Store focus and accent green. */
+  --focus: #00a814;
+  font-family: "Red Hat Display", system-ui, sans-serif;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   font-size: 16px;
   line-height: 1.5;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #161615;
-    --card: #20201e;
-    --text: #f1f1ee;
-    --muted: #a8a8a2;
-    --border: #3a3a37;
-    --primary: #f1f1ee;
-    --primary-text: #161615;
-    --focus: #7aa7ff;
-    --error-bg: #3a1b18;
-    --error-text: #ffb4a9;
-    --info-bg: #1b2638;
-    --info-text: #c4d6f5;
+    --bg: #171717;
+    --surface: #1f1f1f;
+    --hover: #292929;
+    --text: #fafafa;
+    --muted: #a3a3a3;
+    --border: #303030;
+    --button: #ffffff;
+    --button-text: #0a0a0a;
+    --error-bg: #302017;
+    --error: #ffd5a3;
+    --brand: #36dd89;
+    --info-bg: #0e2b1d;
+    --info: #9bf2c3;
   }
 }
 
@@ -50,43 +79,72 @@ body {
 
 body > noscript {
   display: block;
-  padding: 2rem 1rem;
+  padding: 2rem 1.5rem;
   text-align: center;
+}
+
+h1,
+p {
+  margin: 0;
+}
+
+strong {
+  font-weight: 600;
 }
 
 .page {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 10vh 1rem 2rem;
+  padding: 10vh 24px 48px;
 }
 
 .card {
   width: 100%;
-  max-width: 400px;
-  background: var(--card);
+  max-width: 420px;
+  background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 2rem;
+  border-radius: 24px;
+  padding: 40px 32px 36px;
 }
 
-.wordmark {
-  margin: 0 0 1.5rem;
-  font-size: 1.125rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+.logo {
+  display: block;
+  height: 24px;
+  width: auto;
+  margin: 0 auto 28px;
+}
+
+.logo-mark {
+  fill: var(--brand);
+}
+
+.logo-wordmark {
+  fill: var(--text);
 }
 
 h1 {
-  margin: 0 0 1.25rem;
-  font-size: 1.375rem;
+  margin-bottom: 24px;
+  font-size: 24px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.25;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
-p {
-  margin: 0 0 1rem;
+h1:last-child {
+  margin-bottom: 0;
+}
+
+.card > p {
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.card > p:last-child {
+  margin-bottom: 0;
 }
 
 .muted {
@@ -97,121 +155,235 @@ p {
 .stack {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 12px;
+}
+
+.form .button {
+  margin-top: 8px;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 8px;
 }
 
 label {
-  font-size: 0.875rem;
+  font-size: 14px;
   font-weight: 600;
 }
 
 input {
   font: inherit;
-  color: inherit;
-  background: var(--card);
+  color: var(--text);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.625rem 0.75rem;
+  border-radius: 999px;
+  min-height: 48px;
+  padding: 0 20px;
+  width: 100%;
+}
+
+input:disabled {
+  opacity: 0.45;
 }
 
 .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 20px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   font: inherit;
   font-weight: 600;
-  border-radius: 8px;
-  padding: 0.625rem 1rem;
+  line-height: 1.4;
+  text-align: center;
   cursor: pointer;
-  border: 1px solid transparent;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.button svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
 }
 
 .button-primary {
-  background: var(--primary);
-  color: var(--primary-text);
+  background: var(--button);
+  color: var(--button-text);
+}
+
+.button-primary:hover:not(:disabled) {
+  opacity: 0.8;
 }
 
 .button-secondary {
-  background: transparent;
+  background: var(--surface);
   color: var(--text);
   border-color: var(--border);
 }
 
+.button-secondary:hover:not(:disabled) {
+  background: var(--hover);
+}
+
 .button:disabled,
 .link-button:disabled {
-  opacity: 0.6;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-.link-button {
-  font: inherit;
-  color: var(--text);
-  background: none;
-  border: none;
-  padding: 0;
-  margin-top: 1.25rem;
-  text-decoration: underline;
-  cursor: pointer;
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0;
+  color: var(--muted);
+  font-size: 14px;
 }
 
-.divider {
-  margin: 1.25rem 0;
-  text-align: center;
-  color: var(--muted);
-  font-size: 0.875rem;
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
 }
 
 .links {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0.5rem 1rem;
-  margin-top: 1.5rem;
-  font-size: 0.9375rem;
+  justify-content: center;
+  gap: 8px 24px;
+  margin-top: 28px;
+  font-size: 15px;
 }
 
-a {
+a,
+.link-button {
   color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+a:hover,
+.link-button:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link-button {
+  display: block;
+  margin: 24px auto 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  background: none;
+  border: none;
+  cursor: pointer;
 }
 
 .notice {
-  padding: 0.75rem 1rem;
-  border-radius: 8px;
+  padding: 14px 18px;
+  border-radius: 12px;
   background: var(--info-bg);
-  color: var(--info-text);
+  color: var(--info);
+  font-size: 14px;
+}
+
+.card > .notice {
+  margin-bottom: 20px;
+}
+
+.card > .notice:last-child {
+  margin-bottom: 0;
 }
 
 .notice-error {
   background: var(--error-bg);
-  color: var(--error-text);
+  color: var(--error);
 }
 
 .scopes {
-  margin: 0 0 1rem;
-  padding-left: 1.25rem;
+  margin: 0 0 16px;
+  padding: 14px 18px 14px 38px;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.scopes li + li {
+  margin-top: 4px;
 }
 
 .uri {
-  word-break: break-all;
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.875rem;
+  font-size: 13px;
 }
 
 .actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
-  margin-top: 1.5rem;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
 }
 
 :focus-visible {
   outline: 3px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
 input:focus-visible {
-  outline-offset: 0;
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .page {
+    padding: 32px 20px;
+  }
+
+  .card {
+    border: 0;
+    border-radius: 0;
+    padding: 8px 0;
+  }
 }
