@@ -31,6 +31,14 @@ function Page({workspaceId, setWorkspaceId}: {workspaceId: string | null; setWor
 The components must render inside a `QueryClientProvider`. Query keys start with the
 API's `basePath`, so two APIs can share one client without sharing data.
 
+`react`, `react-dom` and `@tanstack/react-query` are peer dependencies: the site that
+renders the screens provides them, so the screens and the site share one React and one
+query client context. Only the `cloud-v2` workspace links this package; the root and
+`sdk` workspaces exclude it (`!…/workspace-ui` in their `workspaces`). A package linked by
+two installs resolves its peers from whichever install ran last, which would give the
+screens a second React (and every hook a null dispatcher). Each site's
+`shared-react.test.ts` checks that the screens and the site resolve the same copies.
+
 | Export | What it is |
 | --- | --- |
 | `createWorkspaceApi({basePath, fetch?, credentials?})` | Typed client for every route; throws `WorkspaceApiError` |

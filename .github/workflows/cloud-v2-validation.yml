@@ -96,6 +96,7 @@ jobs:
             websites/admin/functions \
             websites/admin/src/lib/session.test.ts \
             websites/admin/src/lib/admin-access.test.ts \
+            websites/admin/src/lib/shared-react.test.ts \
             websites/admin/src/components/signed-out.test.tsx \
             websites/admin/src/pages/workspaces.test.tsx \
             websites/admin/src/pages/operator-keys.test.tsx

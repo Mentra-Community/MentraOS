@@ -28,11 +28,8 @@
     "react-dom": "^19"
   },
   "devDependencies": {
-    "@tanstack/react-query": "^5.101.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "react": "^19",
-    "react-dom": "^19",
     "typescript": "^5.7.0"
   }
 }
