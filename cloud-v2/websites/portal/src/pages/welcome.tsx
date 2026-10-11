@@ -1,8 +1,9 @@
 /**
  * The screens before a workspace: the first run (`/` with no workspaces) and an invitation link
- * (`/invitation`). Both are one centered column. The invitation this tab holds comes first, with Accept;
- * a person with no workspace also gets "Create your workspace" under it. Accepting opens the workspace
- * joined; creating opens the new one.
+ * (`/invitation`). Both are one centered column. The invitation this tab holds is shown alone, with
+ * Accept and Dismiss: someone who arrives with an invitation is offered that, not a workspace of their
+ * own. Accepting opens the workspace joined. Dismissing forgets the invitation, so a person with no
+ * workspace then gets the first run's "Create your workspace"; creating opens the new one.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -32,7 +33,7 @@ export function WelcomeScreen() {
         <p className="mx-auto mt-1.5 max-w-[420px] text-[14px] leading-6 text-[#68746d]">
           {firstRun
             ? token
-              ? "Join the workspace you were invited to, or create your own."
+              ? "Join the workspace you were invited to."
               : "Workspaces are how teams work together on Mentra. Create one to get started."
             : token
               ? "Accept to join the workspace with the account you are signed in with."
@@ -75,10 +76,13 @@ export function WelcomeScreen() {
           </div>
         )
       ) : firstRun ? (
-        <>
-          {token ? <OrDivider /> : <div className="h-7" />}
-          <CreateFirstWorkspace />
-        </>
+        // With an invitation pending, the first run is that invitation alone; dismissing it brings this card.
+        token ? null : (
+          <>
+            <div className="h-7" />
+            <CreateFirstWorkspace />
+          </>
+        )
       ) : home ? (
         <Link
           href={workspacePath(home.workspaceId)}
@@ -89,16 +93,6 @@ export function WelcomeScreen() {
         </Link>
       ) : null}
     </CenteredLayout>
-  );
-}
-
-function OrDivider() {
-  return (
-    <div className="my-5 flex items-center gap-3 text-xs font-medium uppercase tracking-[0.08em] text-[#a0a3aa]">
-      <span className="h-px flex-1 bg-[#e0e4de]" />
-      or
-      <span className="h-px flex-1 bg-[#e0e4de]" />
-    </div>
   );
 }
 

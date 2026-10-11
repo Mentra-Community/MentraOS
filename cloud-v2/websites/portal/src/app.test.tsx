@@ -280,13 +280,31 @@ describe("before a workspace", () => {
     expect(markup).not.toContain("Pending invitation");
   });
 
-  test("a pending invitation is listed above the create card, with Accept, and its token is never rendered", () => {
+  test("a first run with a pending invitation shows only the invitation, and its token is never rendered", () => {
     const preview = { workspaceName: "Acme Field Team", email: "new@acme.test", role: "member" as const };
     const markup = render("/", { list: [], preview }, { inviteToken: TOKEN });
+    expect(markup).toContain("Welcome to Mentra");
+    expect(markup).toContain("Join the workspace you were invited to.");
     expect(markup).toContain("Join Acme Field Team");
     expect(markup).toContain("Accept invitation");
-    expect(markup.indexOf("Accept invitation")).toBeLessThan(markup.indexOf("Create your workspace"));
+    expect(markup).toContain("Dismiss");
+    expect(markup).not.toContain("Create your workspace");
+    expect(markup).not.toContain("Workspace name");
+    expect(markup).not.toContain("create your own");
+    expect(markup).not.toContain(">or<");
     expect(markup).not.toContain(TOKEN);
+  });
+
+  test("once the invitation is dismissed, the first run offers Create your workspace", () => {
+    const preview = { workspaceName: "Acme Field Team", email: "new@acme.test", role: "member" as const };
+    const pending = render("/", { list: [], preview }, { inviteToken: TOKEN });
+    expect(pending).not.toContain("Create your workspace");
+    // Dismiss forgets the invitation (PortalSession.forgetInvite) and returns to `/`, now without a token.
+    const dismissed = render("/", { list: [], preview }, { inviteToken: null });
+    expect(dismissed).toContain("Create your workspace");
+    expect(dismissed).toContain("Workspace name");
+    expect(dismissed).not.toContain("Pending invitation");
+    expect(dismissed).not.toContain("Accept invitation");
   });
 
   test("when creating is not allowed the first run says why", () => {
