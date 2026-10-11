@@ -328,4 +328,3 @@ function auditEventView(row: WorkspaceAuditEventRow): AuditEventView {
     occurredAt: row.occurredAt.toISOString(),
   }
 }
-
