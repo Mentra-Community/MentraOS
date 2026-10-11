@@ -37,10 +37,10 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
       typeof row.actionId === 'string' && typeof message === 'string' && typeof row.screenshotAssetId === 'string')
       add(row.phase, row.actionId, message, row.screenshotAssetId);
     if (run.platform !== 'ios-on-mac' || row.privateEvidence) continue;
-    // Test failures are associated by the reporter; lifecycle failures by the successful guarded native journal row.
+    // Nested test failures are associated by the reporter; guarded journal rows also capture outer step and lifecycle failures.
     if (typeof row.id === 'string' && row.status === 'failed' && typeof row.error === 'string' && typeof row.screenshot === 'string')
       addPath('test', row.id, row.error, row.screenshot);
-    if (row.command === 'failure-screenshot' && row.state === 'complete' && (row.phase === 'setup' || row.phase === 'teardown') &&
+    if (row.command === 'failure-screenshot' && row.state === 'complete' && (row.phase === 'setup' || row.phase === 'test' || row.phase === 'teardown') &&
       typeof row.actionId === 'string' && typeof row.message === 'string' && typeof row.screenshotPath === 'string' &&
       (row.source === 'screenshot' || row.source === 'desktop-screenshot'))
       addPath(row.phase, row.actionId, row.message, row.screenshotPath, row.source === 'screenshot' ? 'app' : 'desktop');
@@ -72,10 +72,9 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
 
 export function failureDiagnosticAssets(run: RecordedFrameworkRun): Asset[] {
   if (!run.result.failures.length) return [];
-  const lifecycle = run.platform === 'ios-on-mac' && run.result.failures.some(failure => ['setup', 'teardown'].includes(failure.phase));
   return run.assets.filter(asset => ['report', 'diagnostic'].includes(asset.kind) && asset.mimeType === 'application/json' &&
     (run.platform === 'android' ? asset.path === 'setup-evidence/setup-diagnostics.json'
-      : (asset.path === 'run.json' && run.result.failures.some(failure => failure.phase === 'test')) || lifecycle && (isJournal(asset.path) || isBundle(asset.path))));
+      : (asset.path === 'run.json' && run.result.failures.some(failure => failure.phase === 'test')) || isJournal(asset.path) || isBundle(asset.path)));
 }
 
 function diagnosticRows(asset: Asset, bytes: Buffer): unknown[] {
