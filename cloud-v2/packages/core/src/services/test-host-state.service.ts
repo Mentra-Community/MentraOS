@@ -191,10 +191,24 @@ const deploymentCursor = (row: {deploymentGeneration?: number; deploymentSequenc
   deploymentGeneration: row.deploymentGeneration ?? {$exists: false},
   deploymentSequence: row.deploymentSequence ?? {$exists: false},
 })
+async function retryHostStateWrite<T>(write: () => Promise<T | undefined>, conflict: string): Promise<T> {
+  // Only an atomic write collision returns undefined; semantic conflicts and database errors propagate.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const receipt = await write()
+    if (receipt !== undefined) return receipt
+  }
+  throw new TestRunError(409, conflict)
+}
 export class TestHostStateService {
   constructor(private readonly now: () => number = Date.now) {}
   async report(input: unknown, hostId: string) {
     const snapshot = hostStateSchema.parse(input)
+    return retryHostStateWrite(
+      () => this.reportSnapshot(snapshot, hostId),
+      'Controller snapshot advanced concurrently; retry current observation',
+    )
+  }
+  private async reportSnapshot(snapshot: TestHostState, hostId: string) {
     if (snapshot.hostId !== hostId) throw new TestRunError(409, "Host snapshot differs from authenticated controller")
     const current = await TestHostStateModel.findOne({hostId}).lean()
     if (current) {
@@ -222,7 +236,7 @@ export class TestHostStateService {
           sequence: current.sequence,
           ...deploymentCursor(current),
         }
-      : {hostId}
+      : {hostId, incarnationGeneration: {$exists: false}}
     const history: FrameworkHistoryEntry[] = (current?.frameworkHistory ?? []).map((value) =>
       frameworkHistoryEntrySchema.parse(value),
     )
@@ -243,7 +257,7 @@ export class TestHostStateService {
           prior.endedAt = interval.endedAt
           prior.endReason = interval.endReason
         }
-      } else history.push(interval)
+      } else history.push(frameworkHistoryEntrySchema.parse(interval))
     }
     history.sort((a, b) => a.incarnationGeneration - b.incarnationGeneration)
     // A late history-bearing restart may already have inserted the successor. Move the process stop
@@ -317,7 +331,7 @@ export class TestHostStateService {
         },
         {upsert: !current, new: true, writeConcern: testWriteConcern},
       ).lean()
-      if (!saved) throw new TestRunError(409, "Controller snapshot advanced concurrently; retry current observation")
+      if (!saved) return undefined
       return {
         hostId,
         incarnation: saved.incarnation,
@@ -325,8 +339,8 @@ export class TestHostStateService {
         sequence: saved.sequence,
       }
     } catch (error) {
-      if ((error as {code?: number}).code === 11000)
-        throw new TestRunError(409, "Controller snapshot advanced concurrently")
+      if (!current && (error as {code?: number}).code === 11000)
+        return undefined
       throw error
     }
   }
@@ -353,6 +367,12 @@ export class TestHostStateService {
   }
   async reportDeployment(input: unknown, hostId: string) {
     const observation = updaterDeploymentSchema.parse(input)
+    return retryHostStateWrite(
+      () => this.reportDeploymentObservation(observation, hostId),
+      'Host deployment observation advanced concurrently',
+    )
+  }
+  private async reportDeploymentObservation(observation: z.infer<typeof updaterDeploymentSchema>, hostId: string) {
     if (observation.hostId !== hostId)
       throw new TestRunError(409, "Deployment observation differs from authenticated host")
     const current = await TestHostStateModel.findOne({hostId}).lean()
@@ -391,7 +411,7 @@ export class TestHostStateService {
       },
       {new: true, writeConcern: testWriteConcern},
     ).lean()
-    if (!saved) throw new TestRunError(409, "Host deployment observation advanced concurrently")
+    if (!saved) return undefined
     return {hostId, generation: saved.deploymentGeneration ?? 0, sequence: saved.deploymentSequence ?? 0}
   }
 }
