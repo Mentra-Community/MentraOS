@@ -41,6 +41,19 @@ They hold every organization capability (`organization.workspaces.administer`,
 they recover a workspace whose Owners are gone. Recovery names an existing
 account; a deleted account is refused (`404 user_not_found`).
 
+## The workspace portal
+
+The workspace portal (`websites/portal`) is centred on the current workspace. A switcher at
+the top of the sidebar shows it and your role, and lists your other workspaces, **Create
+workspace** and the invitation this tab holds. Every page carries its workspace:
+`/w/<workspaceId>/members` (members, with pending invitations under them),
+`/w/<workspaceId>/settings` and `/w/<workspaceId>/audit`; the sidebar offers only what your
+role opens. `/` opens your last-used workspace (remembered in the browser, never an
+authority), else your first, else the first-run screen. An invitation link lands on
+`/invitation`, which reads the token from the tab's session storage. Company sign-in
+(enterprise orgs and trusted issuers) is not in the navigation; its pages stay reachable
+at `/enterprise` until it returns as workspace settings.
+
 ## Creating and joining
 
 - Anyone signed in with a verified email may create a workspace and becomes its

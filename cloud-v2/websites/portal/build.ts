@@ -11,6 +11,9 @@ const result = await Bun.build({
   plugins: [tailwind],
   minify: true,
   target: "browser",
+  // Absolute asset URLs: the app is served for every path (`/w/<workspaceId>/members`), so a relative
+  // `./chunk.js` would resolve under the workspace path and get the app's HTML back instead.
+  publicPath: "/",
   sourcemap: "linked",
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
