@@ -238,9 +238,8 @@ from the manifest removes that deployment-owned install. Unrelated local and
 SYSTEM installs are never adopted or deleted.
 
 The Mentra App resolves the remote manifest when the workspace is selected and
-re-reads it at each launch, so a changed managed list installs on the next
-launch, or the one after when the first doesn't get the manifest within 3
-seconds. Runtime minimum-version policy remains live and independent.
+re-reads it each time the app opens, so a changed managed list installs then.
+Runtime minimum-version policy remains live and independent.
 
 The reference Mentra Cloud image does not contain customer miniapp ZIPs. Put them in
 `cloud-v2/deploy/azure/enterprise-reference/miniapps/` when producing the

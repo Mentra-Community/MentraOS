@@ -613,7 +613,7 @@ describe("workspace manifest refresh", () => {
       manifest: manifest(),
     })
     persistence.saves = 0
-    return {persistence, store, deployment}
+    return {persistence, store, deployment, onUpdated: jest.fn()}
   }
 
   const candidate = (next: DeploymentManifest) => ({
@@ -623,45 +623,32 @@ describe("workspace manifest refresh", () => {
   })
 
   it("applies a new managed miniapp at launch without a new sign-in", async () => {
-    const {persistence, store, deployment} = await signedIn()
+    const {persistence, store, deployment, onUpdated} = await signedIn()
     const seen: ActiveDeployment[] = []
     store.subscribe((next) => seen.push(next))
     const resolve = jest.fn(async () => candidate(withEnterprise()))
 
-    await expect(refreshWorkspaceManifest({canApplyNow: () => true, store, resolve})).resolves.toBe("updated")
+    await expect(refreshWorkspaceManifest({onUpdated, store, resolve})).resolves.toBe("updated")
 
     expect(resolve).toHaveBeenCalledWith(WORKSPACE)
     expect(store.getActive()).toMatchObject({kind: "workspace", activatedAt: deployment.activatedAt})
     expect(store.getActive().manifest.miniapps.managed).toEqual([enterprise])
     expect(seen).toHaveLength(1)
-    expect(new DeploymentStore(persistence).getActive().manifest.miniapps.managed).toEqual([enterprise])
-  })
-
-  it("saves the manifest for the next launch once Engine has started", async () => {
-    const {persistence, store, deployment} = await signedIn()
-    const outcome = await refreshWorkspaceManifest({
-      canApplyNow: () => false,
-      store,
-      resolve: async () => candidate(withEnterprise()),
-    })
-    expect(outcome).toBe("saved-for-next-launch")
-    // This session keeps running on the deployment Engine was configured from.
-    expect(store.getActive()).toBe(deployment)
+    // A session that is already running (e.g. an Android warm relaunch) is brought up to date.
+    expect(onUpdated).toHaveBeenCalledTimes(1)
     expect(new DeploymentStore(persistence).getActive().manifest.miniapps.managed).toEqual([enterprise])
   })
 
   it("leaves an unchanged manifest alone, whatever its key order", async () => {
-    const {persistence, store, deployment} = await signedIn()
+    const {persistence, store, deployment, onUpdated} = await signedIn()
     const copy = JSON.parse(JSON.stringify(deployment.manifest)) as Record<string, unknown>
     const same = Object.fromEntries(Object.entries(copy).reverse()) as unknown as DeploymentManifest
-    const outcome = await refreshWorkspaceManifest({
-      canApplyNow: () => true,
-      store,
-      resolve: async () => candidate(same),
-    })
-    expect(outcome).toBe("unchanged")
+    await expect(refreshWorkspaceManifest({onUpdated, store, resolve: async () => candidate(same)})).resolves.toBe(
+      "unchanged",
+    )
     expect(store.getActive()).toBe(deployment)
     expect(persistence.saves).toBe(0)
+    expect(onUpdated).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -677,56 +664,68 @@ describe("workspace manifest refresh", () => {
       },
     ],
   ])("keeps the saved manifest when the %s changes, since the session belongs to it", async (_, change) => {
-    const {persistence, store, deployment} = await signedIn()
+    const {persistence, store, deployment, onUpdated} = await signedIn()
     const outcome = await refreshWorkspaceManifest({
-      canApplyNow: () => true,
+      onUpdated,
       store,
       resolve: async () => candidate({...withEnterprise(), ...change}),
     })
     expect(outcome).toBe("sign-in-changed")
     expect(store.getActive()).toBe(deployment)
     expect(persistence.saves).toBe(0)
+    expect(onUpdated).not.toHaveBeenCalled()
   })
 
   it("starts with the saved manifest when the workspace can't be reached or storage fails", async () => {
-    const {persistence, store, deployment} = await signedIn()
+    const {persistence, store, deployment, onUpdated} = await signedIn()
     const unreachable = async () => {
       throw new DeploymentResolutionError("Workspace manifest request failed.", "network")
     }
-    await expect(refreshWorkspaceManifest({canApplyNow: () => true, store, resolve: unreachable})).resolves.toBe(
-      "unavailable",
-    )
+    await expect(refreshWorkspaceManifest({onUpdated, store, resolve: unreachable})).resolves.toBe("unavailable")
     persistence.failSaves = true
     await expect(
-      refreshWorkspaceManifest({canApplyNow: () => true, store, resolve: async () => candidate(withEnterprise())}),
+      refreshWorkspaceManifest({onUpdated, store, resolve: async () => candidate(withEnterprise())}),
     ).resolves.toBe("unavailable")
     expect(store.getActive()).toBe(deployment)
+    expect(onUpdated).not.toHaveBeenCalled()
   })
 
-  it("saves a slow manifest for the next launch instead of holding up this one", async () => {
-    const {persistence, store, deployment} = await signedIn()
+  it("keeps the adopted manifest when the running session can't apply it", async () => {
+    const {persistence, store} = await signedIn()
+    const onUpdated = jest.fn(async () => {
+      throw new Error("MANTLE: initialization cancelled by cleanup")
+    })
+    await expect(
+      refreshWorkspaceManifest({onUpdated, store, resolve: async () => candidate(withEnterprise())}),
+    ).resolves.toBe("updated")
+    expect(new DeploymentStore(persistence).getActive().manifest.miniapps.managed).toEqual([enterprise])
+  })
+
+  it("applies a slow manifest when it arrives instead of holding up launch", async () => {
+    const {store, onUpdated} = await signedIn()
     let respond: (value: ReturnType<typeof candidate>) => void = () => {}
     const slow = new Promise<ReturnType<typeof candidate>>((done) => (respond = done))
-    const outcome = await refreshWorkspaceManifest({canApplyNow: () => true, store, resolve: () => slow, waitMs: 1})
+    const outcome = await refreshWorkspaceManifest({onUpdated, store, resolve: () => slow, waitMs: 1})
     expect(outcome).toBe("finishing-in-background")
+    expect(onUpdated).not.toHaveBeenCalled()
     respond(candidate(withEnterprise()))
     await slow
     await new Promise((done) => setTimeout(done, 0))
-    expect(store.getActive()).toBe(deployment)
-    expect(new DeploymentStore(persistence).getActive().manifest.miniapps.managed).toEqual([enterprise])
+    expect(store.getActive().manifest.miniapps.managed).toEqual([enterprise])
+    expect(onUpdated).toHaveBeenCalledTimes(1)
   })
 
   it("ignores a refresh for a selection the user has since left", async () => {
     const {store, deployment} = await signedIn()
     await store.returnToMentra()
-    expect(store.adoptRefreshedManifest(deployment, withEnterprise(), {activate: true})).toBe("superseded")
+    expect(store.adoptRefreshedManifest(deployment, withEnterprise())).toBe("superseded")
     expect(store.getActive().kind).toBe("consumer")
   })
 
   it("does nothing for Mentra's own deployment", async () => {
     const store = new DeploymentStore(new MemoryDeploymentStorage())
     const resolve = jest.fn()
-    await expect(refreshWorkspaceManifest({canApplyNow: () => true, store, resolve})).resolves.toBe("not-workspace")
+    await expect(refreshWorkspaceManifest({onUpdated: jest.fn(), store, resolve})).resolves.toBe("not-workspace")
     expect(resolve).not.toHaveBeenCalled()
   })
 })

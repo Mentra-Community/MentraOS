@@ -242,30 +242,69 @@ export function configure(opts: IslandConfigureOptions): void {
     console.warn("engine.configure() called after engine.start(); ignored — stop() the runtime before reconfiguring")
     return
   }
-  const localMiniappAllowlist = opts.config?.localMiniappAllowlist
-  const localMiniappPolicy = opts.config?.localMiniappPolicy
   options = {
     ...opts,
-    config: opts.config
-      ? {
-          ...opts.config,
-          localMiniappAllowlist: Array.isArray(localMiniappAllowlist)
-            ? Object.freeze([...localMiniappAllowlist])
-            : localMiniappAllowlist,
-          localMiniappPolicy: localMiniappPolicy
-            ? Object.freeze({
-                systemPackageNames: Array.isArray(localMiniappPolicy.systemPackageNames)
-                  ? Object.freeze([...localMiniappPolicy.systemPackageNames])
-                  : null,
-                managed: Object.freeze(
-                  localMiniappPolicy.managed.map((entry) =>
-                    Object.freeze({...entry, sha256: entry.sha256.toLowerCase()}),
-                  ),
-                ),
-              })
-            : undefined,
-        }
+    config: opts.config ? {...opts.config, ...frozenMiniappPolicy(opts.config)} : undefined,
+  }
+}
+
+function frozenMiniappPolicy(
+  config: Pick<IslandConfigValues, "localMiniappAllowlist" | "localMiniappPolicy">,
+): Pick<IslandConfigValues, "localMiniappAllowlist" | "localMiniappPolicy"> {
+  const {localMiniappAllowlist, localMiniappPolicy} = config
+  return {
+    localMiniappAllowlist: Array.isArray(localMiniappAllowlist)
+      ? Object.freeze([...localMiniappAllowlist])
+      : localMiniappAllowlist,
+    localMiniappPolicy: localMiniappPolicy
+      ? Object.freeze({
+          systemPackageNames: Array.isArray(localMiniappPolicy.systemPackageNames)
+            ? Object.freeze([...localMiniappPolicy.systemPackageNames])
+            : null,
+          managed: Object.freeze(
+            localMiniappPolicy.managed.map((entry) => Object.freeze({...entry, sha256: entry.sha256.toLowerCase()})),
+          ),
+        })
       : undefined,
+  }
+}
+
+/** The parts of a workspace manifest that Engine reads per request. */
+export type DeploymentPolicy = Pick<
+  IslandConfigValues,
+  "localMiniappAllowlist" | "localMiniappPolicy" | "miniappConfiguration" | "otaManifestUrl" | "features"
+>
+
+/**
+ * Replace the deployment's miniapp, configuration, OTA and feature policy on a
+ * running runtime, as `updateUiSeams` does for UI seams. Each is read when it is
+ * used, so the change applies to the next check. Endpoints and auth stay as
+ * configured. Speech can be turned off here but not on, since it depends on
+ * what `start()` set up.
+ */
+export function updateDeploymentPolicy(policy: DeploymentPolicy): void {
+  if (!options?.config) {
+    console.warn("engine.updateDeploymentPolicy() called before engine.configure(); ignored")
+    return
+  }
+  const current = options.config
+  // Speech needs what start() set up (the realtime session and microphone
+  // uplink, or the downloaded on-device model), so it can only turn off here.
+  const startedOnly = (feature: "cloudSpeech" | "onDeviceSpeech") =>
+    current.features?.[feature] !== false && policy.features?.[feature] !== false
+  options = {
+    ...options,
+    config: {
+      ...current,
+      ...frozenMiniappPolicy(policy),
+      miniappConfiguration: policy.miniappConfiguration,
+      otaManifestUrl: policy.otaManifestUrl,
+      features: {
+        ...policy.features,
+        cloudSpeech: startedOnly("cloudSpeech"),
+        onDeviceSpeech: startedOnly("onDeviceSpeech"),
+      },
+    },
   }
 }
 

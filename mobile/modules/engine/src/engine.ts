@@ -13,6 +13,7 @@ import {
   getConfigValues,
   start as bootstrapStart,
   stop as bootstrapStop,
+  updateDeploymentPolicy,
   updateUiSeams,
 } from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
@@ -57,6 +58,8 @@ export const engine = {
   configure,
   /** Merge host-UI seams on a running runtime (scan overlay, wifi setup, …). */
   updateUiSeams,
+  /** Replace a workspace's miniapp, OTA and feature policy on a running runtime. */
+  updateDeploymentPolicy,
   /** Start the runtime: mark started + construct/connect the cloud client + begin
    * syncing device settings to the glasses. */
   async start() {

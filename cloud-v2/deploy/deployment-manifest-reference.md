@@ -115,9 +115,9 @@ its parameters. Editing the checked-in demo JSON alone does not change an
 Azure deployment.
 
 After the user confirms the workspace, the Mentra App persists the validated
-manifest locally and re-reads it at each launch. A changed manifest applies to
-that launch when it arrives within 3 seconds, before the app's engine starts, and
-otherwise to the next launch. A change to `deploymentId`, `services.coreUrl` or
+manifest locally, re-reads it at each launch and applies changes to the running
+app. Turning speech on (`cloudSpeech`, `onDeviceSpeech`) takes effect the next
+time the app starts from closed. A change to `deploymentId`, `services.coreUrl` or
 `auth` is not adopted; employees log out and select the organization again.
 Logout clears the workspace selection, and activation clears prior local account
 data. Keep `deploymentId` and the workspace origin stable across normal
@@ -501,7 +501,7 @@ on both supported phone platforms.
 | Only Settings appears | Check the system allowlist and managed list; the reference intentionally approves only Settings. |
 | Phone Mode is missing | Include `simulated-glasses` in a non-null glasses allowlist. |
 | A managed miniapp does not install | Check ZIP reachability, size, SHA-256, inner package/version, system-package conflicts, and existing install ownership. |
-| Published edits do not appear on the phone | Redeploy/restart Runtime as needed, then relaunch the app (twice if the first launch didn't get the manifest within 3 seconds). Changes to `deploymentId`, Core or `auth` need a new workspace selection. |
+| Published edits do not appear on the phone | Redeploy/restart Runtime as needed, then reopen the app. Changes to `deploymentId`, Core or `auth` need a new workspace selection. |
 | Required update has no store button | Null platform store URL selects managed-update guidance. Supply a support URL or distribute the new app through the organization's channel. |
 
 Maintainers should keep this reference aligned with the schema, resolver,

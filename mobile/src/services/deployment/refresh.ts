@@ -12,8 +12,8 @@ export type WorkspaceManifestRefresh =
   | "finishing-in-background"
 
 export interface RefreshWorkspaceManifestOptions {
-  /** False once Engine was configured from the saved manifest, e.g. by background recovery. */
-  canApplyNow: () => boolean
+  /** Brings a session that is already running up to date with the adopted manifest. */
+  onUpdated: () => Promise<void> | void
   waitMs?: number
   store?: DeploymentStore
   resolve?: (workspaceOrigin: string) => Promise<DeploymentCandidate>
@@ -23,9 +23,8 @@ export interface RefreshWorkspaceManifestOptions {
  * Re-read the selected workspace's manifest at launch, so miniapps and features
  * its administrator added reach the phone without signing in again.
  *
- * A manifest that arrives within `waitMs`, before Engine is configured, applies
- * to this launch. A later one is saved for the next launch. A failure keeps the
- * saved manifest.
+ * Launch waits up to `waitMs` so Engine can start from the new manifest; a later
+ * one still applies when it arrives. A failure keeps the saved manifest.
  */
 export async function refreshWorkspaceManifest(
   options: RefreshWorkspaceManifestOptions,
@@ -36,41 +35,48 @@ export async function refreshWorkspaceManifest(
   const resolve =
     options.resolve ?? ((origin: string) => resolveDeploymentCandidate(origin, {allowInsecureLocalhost: __DEV__}))
 
-  const fetched = Promise.resolve()
+  const applied = Promise.resolve()
     .then(() => resolve(deployment.workspaceOrigin))
     .then(
-      (candidate) => ({candidate}),
-      (error: unknown) => ({error}),
+      (candidate) => adopt(store, deployment, candidate, options.onUpdated),
+      (error: unknown) => {
+        console.warn("DEPLOYMENT: workspace manifest refresh failed; using the saved manifest", error)
+        return "unavailable" as const
+      },
     )
   let timer: ReturnType<typeof setTimeout> | undefined
-  const waited = new Promise<"timeout">((done) => {
-    timer = setTimeout(() => done("timeout"), options.waitMs ?? LAUNCH_WAIT_MS)
+  const waited = new Promise<"finishing-in-background">((done) => {
+    timer = setTimeout(() => done("finishing-in-background"), options.waitMs ?? LAUNCH_WAIT_MS)
   })
-  const first = await Promise.race([fetched, waited])
+  const outcome = await Promise.race([applied, waited])
   clearTimeout(timer)
-
-  if (first === "timeout") {
-    void fetched.then((result) => {
-      const outcome = adopt(store, deployment, result, false)
-      console.log(`DEPLOYMENT: workspace manifest refresh finished after launch: ${outcome}`)
-    })
-    return "finishing-in-background"
+  if (outcome === "finishing-in-background") {
+    void applied.then((late) => console.log(`DEPLOYMENT: workspace manifest refresh finished after launch: ${late}`))
   }
-  return adopt(store, deployment, first, options.canApplyNow())
+  return outcome
 }
 
 /** Never throws: launch continues with the saved manifest on any failure. */
-function adopt(
+async function adopt(
   store: DeploymentStore,
   deployment: WorkspaceDeployment,
-  result: {candidate: DeploymentCandidate} | {error: unknown},
-  activate: boolean,
-): WorkspaceManifestRefresh {
+  candidate: DeploymentCandidate,
+  onUpdated: () => Promise<void> | void,
+): Promise<WorkspaceManifestRefresh> {
+  let outcome: RefreshedManifestOutcome
   try {
-    if ("error" in result) throw result.error
-    return store.adoptRefreshedManifest(deployment, result.candidate.manifest, {activate})
+    outcome = store.adoptRefreshedManifest(deployment, candidate.manifest)
   } catch (error) {
     console.warn("DEPLOYMENT: workspace manifest refresh failed; using the saved manifest", error)
     return "unavailable"
   }
+  if (outcome === "updated") {
+    try {
+      await onUpdated()
+    } catch (error) {
+      // The manifest is adopted and saved; the next launch starts from it.
+      console.warn("DEPLOYMENT: running session could not apply the refreshed manifest", error)
+    }
+  }
+  return outcome
 }

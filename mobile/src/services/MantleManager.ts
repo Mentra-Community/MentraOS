@@ -419,9 +419,34 @@ class MantleManager {
     })
   }
 
-  /** True once Engine is being or has been configured from the active deployment. */
-  public isInitialized(): boolean {
-    return this.initialized || this.initialization !== null
+  /**
+   * Bring a running session up to date with a refreshed workspace manifest for
+   * the same deployment, Core and sign-in: Engine's per-request policy first,
+   * then the managed miniapps, after any synchronization already in progress.
+   * Before the first init() this does nothing; init() reads the new manifest.
+   */
+  public async applyDeploymentUpdate(): Promise<void> {
+    if (!this.initialized && !this.initialization) return
+    const generation = this.miniappGeneration
+    // init() configures Engine from the deployment active when it starts.
+    await this.initialization?.catch(() => {})
+    this.assertInitializationCurrent(generation)
+    const config = deploymentCloudConfigValues(deploymentStore.getActive())
+    engine.updateDeploymentPolicy({
+      localMiniappAllowlist: config.localMiniappAllowlist,
+      localMiniappPolicy: config.localMiniappPolicy,
+      miniappConfiguration: config.miniappConfiguration,
+      otaManifestUrl: config.otaManifestUrl,
+      features: config.features,
+    })
+    const previous = this.miniappInitialization
+    const update = (async () => {
+      await previous?.catch(() => {})
+      this.assertInitializationCurrent(generation)
+      await this.restoreMiniapps()
+    })()
+    this.miniappInitialization = update
+    await update
   }
 
   public async waitForMiniapps(): Promise<void> {

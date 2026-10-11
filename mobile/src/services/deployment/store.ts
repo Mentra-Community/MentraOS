@@ -121,20 +121,14 @@ export class DeploymentStore {
    * Adopt the workspace's current manifest for the selection it was fetched for.
    *
    * Only a manifest with the same deployment, Core and sign-in configuration is
-   * adopted; those identify the stored session. `activate: false` saves it for
-   * the next launch without replacing the deployment this session runs on.
+   * adopted; those identify the stored session, which carries over.
    */
-  adoptRefreshedManifest(
-    expected: WorkspaceDeployment,
-    manifest: DeploymentManifest,
-    {activate}: {activate: boolean},
-  ): RefreshedManifestOutcome {
+  adoptRefreshedManifest(expected: WorkspaceDeployment, manifest: DeploymentManifest): RefreshedManifestOutcome {
     if (this.active !== expected) return "superseded"
     if (sameJson(expected.manifest, manifest)) return "unchanged"
     if (!keepsWorkspaceSession(expected.manifest, manifest)) return "sign-in-changed"
     const refreshed: WorkspaceDeployment = {...expected, manifest}
     this.persistence.save(refreshed)
-    if (!activate) return "saved-for-next-launch"
     this.setActive(refreshed)
     return "updated"
   }
@@ -151,12 +145,7 @@ export class DeploymentStore {
   }
 }
 
-export type RefreshedManifestOutcome =
-  | "updated"
-  | "saved-for-next-launch"
-  | "unchanged"
-  | "sign-in-changed"
-  | "superseded"
+export type RefreshedManifestOutcome = "updated" | "unchanged" | "sign-in-changed" | "superseded"
 
 /** The stored Entra account and Cloud session belong to these fields. */
 function keepsWorkspaceSession(current: DeploymentManifest, next: DeploymentManifest): boolean {

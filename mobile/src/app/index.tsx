@@ -339,7 +339,7 @@ export default function InitScreen() {
     const init = async () => {
       console.log("INDEX: init()")
       // Runs beside the version check, which calls the same workspace Runtime.
-      manifestRefreshRef.current = refreshWorkspaceManifest({canApplyNow: () => !mantle.isInitialized()}).then(
+      manifestRefreshRef.current = refreshWorkspaceManifest({onUpdated: () => mantle.applyDeploymentUpdate()}).then(
         (outcome) => console.log(`INDEX: workspace manifest refresh: ${outcome}`),
       )
       await checkCustomUrl()
