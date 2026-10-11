@@ -1,7 +1,7 @@
 // Per-secret Key Vault read access, applied after the secrets exist. Core reads
 // only its signing keys, refresh pepper and admin portal sign-in secret; Runtime
-// reads only the configured Graph app's secret. No app can read
-// mentra-admin-key, which is for operators.
+// reads only the configured Graph app's secret and, in the Acme demo, its speech
+// keys. No app can read mentra-admin-key, which is for operators.
 @description('Existing Key Vault created by bootstrap.bicep.')
 param keyVaultName string
 param coreIdentityName string = 'id-mentra-enterprise-reference-core'
@@ -12,6 +12,9 @@ param teamsGraphClientId string = ''
 
 @description('Admin portal sign-in (main.bicep adminPortalSignIn). Core is granted entra-browser-client-secret, which must already exist. False grants nothing more.')
 param adminPortalSignIn bool = false
+
+@description('Acme demo speech and photos (main.bicep cloudSpeechAndPhotos). Runtime is granted soniox-api-key and elevenlabs-api-key, which must already exist. False grants nothing more.')
+param cloudSpeechAndPhotos bool = false
 
 var secretsUserRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
@@ -24,7 +27,10 @@ var coreSecrets = concat([
   'miniapp-jwt-private-key'
   'miniapp-jwt-public-key'
 ], adminPortalSignIn ? ['entra-browser-client-secret'] : [])
-var runtimeSecrets = empty(teamsGraphClientId) ? [] : ['teams-graph-client-secret-${teamsGraphClientId}']
+var runtimeSecrets = concat(
+  empty(teamsGraphClientId) ? [] : ['teams-graph-client-secret-${teamsGraphClientId}'],
+  cloudSpeechAndPhotos ? ['soniox-api-key', 'elevenlabs-api-key'] : []
+)
 
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName

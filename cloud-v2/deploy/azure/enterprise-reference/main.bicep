@@ -308,6 +308,27 @@ var deploymentManifest = {
   telemetry: telemetryEnabled
 }
 
+var speechAndPhotosEnv = cloudSpeechAndPhotos ? [
+  { name: 'SONIOX_API_KEY', secretRef: 'soniox-api-key' }
+  { name: 'ELEVENLABS_API_KEY', secretRef: 'elevenlabs-api-key' }
+  { name: 'AUDIO_PROVIDER', value: 'soniox' }
+  // Photos are stored on the replica and served from /api/camera/blob.
+  { name: 'STORAGE_PROVIDER', value: 'local' }
+  { name: 'REDIS_URL', value: 'redis://127.0.0.1:6379' }
+  // Container Apps ingress carries no UDP, so the phone streams audio over the realtime WebSocket.
+  { name: 'AUDIO_UDP_AUTO_DETECT_LAN', value: 'false' }
+  { name: 'AUDIO_WORKERS', value: '1' }
+] : []
+var redisSidecar = cloudSpeechAndPhotos ? [
+  {
+    name: 'redis'
+    image: redisImage
+    // Sessions, audio and pending photos are transient; a failed snapshot must not stop writes.
+    args: ['--appendonly', 'no', '--stop-writes-on-bgsave-error', 'no']
+    resources: { cpu: json('0.25'), memory: '0.5Gi' }
+  }
+] : []
+
 resource core 'Microsoft.App/containerApps@2024-03-01' = {
   name: coreName
   location: location
@@ -393,26 +414,6 @@ var additionalWorkspaceBindings = [for domain in additionalWorkspaceDomains: {
   certificateId: resourceId('Microsoft.App/managedEnvironments/managedCertificates', environmentName, domain.certificateName)
 }]
 var workspaceAliasOrigins = [for domain in additionalWorkspaceDomains: 'https://${domain.hostname}']
-var speechAndPhotosEnv = cloudSpeechAndPhotos ? [
-  { name: 'SONIOX_API_KEY', secretRef: 'soniox-api-key' }
-  { name: 'ELEVENLABS_API_KEY', secretRef: 'elevenlabs-api-key' }
-  { name: 'AUDIO_PROVIDER', value: 'soniox' }
-  // Photos are stored on the replica and served from /api/camera/blob.
-  { name: 'STORAGE_PROVIDER', value: 'local' }
-  { name: 'REDIS_URL', value: 'redis://127.0.0.1:6379' }
-  // Container Apps ingress carries no UDP, so the phone streams audio over the realtime WebSocket.
-  { name: 'AUDIO_UDP_AUTO_DETECT_LAN', value: 'false' }
-  { name: 'AUDIO_WORKERS', value: '1' }
-] : []
-var redisSidecar = cloudSpeechAndPhotos ? [
-  {
-    name: 'redis'
-    image: redisImage
-    // Sessions, audio and pending photos are transient; a failed snapshot must not stop writes.
-    args: ['--appendonly', 'no', '--stop-writes-on-bgsave-error', 'no']
-    resources: { cpu: json('0.25'), memory: '0.5Gi' }
-  }
-] : []
 
 resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
   name: runtimeName
