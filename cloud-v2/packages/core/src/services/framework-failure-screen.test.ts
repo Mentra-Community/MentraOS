@@ -47,10 +47,13 @@ test('Android failure image requires its exact recorded phase, action, message a
     {...diagnostic[0], error: {message: other.message}, screenshotAssetId: 'other-screen'}])).toEqual([]);
 });
 
-test('Mac failed result uses its explicit public screenshot path without choosing a nearby image', () => {
+test('a retained Mac reporter failure cannot establish a terminal screenshot association', () => {
   const run = fixture('ios-on-mac');
   const row = {id: failure.actionId, status: 'failed', error: failure.message, screenshot: screenshot.path};
-  expect(recordedFailureScreens(run, {results: [row]})).toEqual(association);
+  expect(recordedFailureScreens(run, {results: [row]})).toEqual([]);
+  const terminal = {command: 'failure-screenshot', state: 'complete', phase: 'test', actionId: failure.actionId,
+    message: failure.message, screenshotPath: screenshot.path, source: 'screenshot'};
+  expect(recordedFailureScreens(run, [row, terminal])).toEqual(association);
   for (const changed of [{privateEvidence: true}, {status: 'passed'}, {error: 'Different failure'},
     {screenshot: 'screenshots/failure-update.png'}, {id: 'other'}])
     expect(recordedFailureScreens(run, {results: [{...row, ...changed}]})).toEqual([]);
@@ -211,22 +214,23 @@ test.each(['setup', 'test', 'teardown'] as const)('Mac %s journal associates eac
     .toEqual([{phase, actionId: original.actionId, assetId: app.id}]);
 });
 
-test('outer Mac test failure reads its guarded journal despite all nested reported actions passing', async () => {
+test.each(['passed', 'failed'] as const)('outer Mac test failure reads its terminal journal with historical %s nested rows', async status => {
   const {run, rows, original, app, desktop} = lifecycleFixture('test');
   const nested = jsonAsset('nested-report', 'run.json', {results: [
-    {id: original.actionId, status: 'passed', screenshot: app.path},
+    {id: original.actionId, status, error: original.message, screenshot: 'screenshots/historical.png'},
   ]});
   const journal = jsonAsset('journal', journalPath('a'), {records: rows});
-  const recorded = {...run, assets: [...run.assets, nested.asset, journal.asset]};
+  const historical = {...app, id: 'historical-screen', path: 'screenshots/historical.png'};
+  const recorded = {...run, assets: [...run.assets, historical, nested.asset, journal.asset]};
   const readIds: string[] = [], signals: AbortSignal[] = [];
   const expected = [{phase: original.phase, actionId: original.actionId, assetId: app.id, desktopAssetId: desktop.id}];
-  expect(failureDiagnosticAssets(recorded)).toEqual([nested.asset, journal.asset]);
+  expect(failureDiagnosticAssets(recorded)).toEqual([journal.asset]);
   expect(await readFailureScreens(recorded, async (asset, signal) => {
     readIds.push(asset.id); signals.push(signal);
     return new Response(asset.id === nested.asset.id ? nested.body : journal.body);
   })).toEqual(expected);
-  expect(readIds).toEqual([nested.asset.id, journal.asset.id]);
-  expect(signals[0]).toBe(signals[1]);
+  expect(readIds).toEqual([journal.asset.id]);
+  expect(signals).toHaveLength(1);
   expect(recorded.result.failures).toEqual([original]);
   expect(recorded.result.test).toBe('failed');
   expect(await readFailureScreens({...recorded, assets: [app, desktop, nested.asset]}, async () => new Response(nested.body)))
@@ -237,7 +241,7 @@ test('outer Mac test failure reads its guarded journal despite all nested report
   ]});
   expect(await readFailureScreens({...recorded, assets: [app, desktop, conflicting.asset, journal.asset]}, async asset =>
     new Response(asset.id === conflicting.asset.id ? conflicting.body : journal.body)))
-    .toEqual([{phase: original.phase, actionId: original.actionId, desktopAssetId: desktop.id}]);
+    .toEqual(expected);
 });
 
 test('multiple declared Mac journals merge before association and share one total byte budget', async () => {

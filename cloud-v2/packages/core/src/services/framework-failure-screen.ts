@@ -37,9 +37,8 @@ export function recordedFailureScreens(run: RecordedFrameworkRun, diagnostic: un
       typeof row.actionId === 'string' && typeof message === 'string' && typeof row.screenshotAssetId === 'string')
       add(row.phase, row.actionId, message, row.screenshotAssetId);
     if (run.platform !== 'ios-on-mac' || row.privateEvidence) continue;
-    // Nested test failures are associated by the reporter; guarded journal rows also capture outer step and lifecycle failures.
-    if (typeof row.id === 'string' && row.status === 'failed' && typeof row.error === 'string' && typeof row.screenshot === 'string')
-      addPath('test', row.id, row.error, row.screenshot);
+    // Only the execution boundary associates a terminal failure. A retained
+    // nested reporter row may have been caught before more app interaction.
     if (row.command === 'failure-screenshot' && row.state === 'complete' && (row.phase === 'setup' || row.phase === 'test' || row.phase === 'teardown') &&
       typeof row.actionId === 'string' && typeof row.message === 'string' && typeof row.screenshotPath === 'string' &&
       (row.source === 'screenshot' || row.source === 'desktop-screenshot'))
@@ -74,7 +73,7 @@ export function failureDiagnosticAssets(run: RecordedFrameworkRun): Asset[] {
   if (!run.result.failures.length) return [];
   return run.assets.filter(asset => ['report', 'diagnostic'].includes(asset.kind) && asset.mimeType === 'application/json' &&
     (run.platform === 'android' ? asset.path === 'setup-evidence/setup-diagnostics.json'
-      : (asset.path === 'run.json' && run.result.failures.some(failure => failure.phase === 'test')) || isJournal(asset.path) || isBundle(asset.path)));
+      : isJournal(asset.path) || isBundle(asset.path)));
 }
 
 function diagnosticRows(asset: Asset, bytes: Buffer): unknown[] {
