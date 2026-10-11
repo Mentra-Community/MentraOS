@@ -1137,8 +1137,11 @@ def bootstrap_admin(args, directory, config, state):
     saved = vault_get(config, ADMIN_KEY_SECRET)
     credential = {'id': (saved.get('tags') or {}).get('keyId', ''), 'value': saved.get('value', '')} if saved else {}
     creator = working_key(credential, allowlist)
+    if creator and admin_key_refused(state['outputs']['coreOrigin'], credential['value']):
+        # Allowlisted but refused: revoked in the admin portal, say. admin-key.ts replaces it.
+        creator = None
     if not creator:
-        # No key yet, or a saved key whose creator is not allowlisted, which Core does not accept.
+        # No key yet, a saved key whose creator is not allowlisted, or one Core refuses.
         # Core returns the journaled key while it still works, and mints a mak_ key otherwise.
         result = execute_admin_script(config, current, state['owner'], (ROOT / 'installer/admin-key.ts').read_bytes())
         match = re.search(r'MENTRA_ADMIN_BEGIN(.*?)MENTRA_ADMIN_END', result.stdout, re.S)
@@ -1162,6 +1165,19 @@ def bootstrap_admin(args, directory, config, state):
 def admin_key_command(config):
     return (f"az keyvault secret show --vault-name {config['keyVaultName']} --name {ADMIN_KEY_SECRET} "
             f"--subscription {config['subscriptionId']} --query value --output tsv")
+
+
+def admin_key_refused(core_origin, token):
+    """True only when Core answers 401 for the key: it is revoked, expired or unknown. Anything else is not a refusal."""
+    request = urllib.request.Request(core_origin.rstrip('/') + '/api/admin/reports?limit=1',
+                                     headers={'Authorization': 'Bearer ' + token})
+    try:
+        with urllib.request.urlopen(request, timeout=30):
+            return False
+    except urllib.error.HTTPError as error:
+        return error.code == 401
+    except (OSError, http.client.HTTPException):
+        return False
 
 
 def check_admin_access(core_origin, token, attempts=30, wait=10):

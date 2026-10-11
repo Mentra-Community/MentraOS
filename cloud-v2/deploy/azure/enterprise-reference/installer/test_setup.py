@@ -483,8 +483,13 @@ class InstallerTests(unittest.TestCase):
                 setup.configure_mirror(self.args, self.directory, self.config, self.state)
         self.assertEqual(original, {p.name: p.read_bytes() for p in self.directory.glob('*.json')})
 
-    def admin_context(self, deployed, ready_after_update=True):
-        """Fake Core: `containerapp show` reports `deployed` until an update rolls out a new allowlist."""
+    def admin_context(self, deployed, ready_after_update=True, refused=False):
+        """Fake Core: `containerapp show` reports `deployed` until an update rolls out a new allowlist.
+
+        `refused` is what Core answers when setup probes a saved key (True: 401)."""
+        probe = patch.object(setup, 'admin_key_refused', return_value=refused)
+        self.probe = probe.start()
+        self.addCleanup(probe.stop)
         self.config.update(coreName='ca-test-core', keyVaultName='kvtest1234')
         self.state['binding'].update(coreName='ca-test-core', keyVaultName='kvtest1234')
         self.save()
@@ -602,6 +607,35 @@ class InstallerTests(unittest.TestCase):
              patch.object(setup, 'check_admin_access'):
             setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
         vault_set.assert_called_once_with(self.config, 'mentra-admin-key', credential['value'], keyId=credential['id'])
+
+    def test_admin_bootstrap_replaces_a_saved_key_core_refuses(self):
+        allowlist = 'existing@example.com,' + setup.OPERATOR_EMAIL
+        calls, azure = self.admin_context(allowlist, refused=True)
+        self.allowlisted(allowlist)
+        saved = self.vaulted('01M3ZG55PT8Z7J3HFVFZ49QWPR', 'mak_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43)
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=saved), \
+             patch.object(setup, 'vault_set') as vault_set, \
+             patch.object(setup, 'execute_admin_script', return_value=self.minted('01M49R16X16A5RK24C3ZB7J283')) as execute, \
+             patch.object(setup, 'check_admin_access') as access:
+            setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        self.probe.assert_called_once_with('https://core.example', saved['value'])
+        execute.assert_called_once()
+        value = 'mak_local_01M49R16X16A5RK24C3ZB7J283.' + 'a' * 43
+        vault_set.assert_called_once_with(self.config, 'mentra-admin-key', value, keyId='01M49R16X16A5RK24C3ZB7J283')
+        access.assert_called_once_with('https://core.example', value)
+
+    def test_admin_key_refused_only_on_401(self):
+        def raising(code):
+            def urlopen(request, timeout):
+                raise setup.urllib.error.HTTPError(request.full_url, code, 'status', {}, None)
+            return urlopen
+        with patch.object(setup.urllib.request, 'urlopen', side_effect=raising(401)):
+            self.assertTrue(setup.admin_key_refused('https://core.example', 'mak_local_x'))
+        for code in (403, 500, 503):
+            with patch.object(setup.urllib.request, 'urlopen', side_effect=raising(code)):
+                self.assertFalse(setup.admin_key_refused('https://core.example', 'mak_local_x'))
+        with patch.object(setup.urllib.request, 'urlopen', side_effect=OSError('offline')):
+            self.assertFalse(setup.admin_key_refused('https://core.example', 'mak_local_x'))
 
     def test_admin_bootstrap_replaces_a_saved_key_whose_creator_is_not_allowlisted(self):
         calls, azure = self.admin_context(setup.OPERATOR_EMAIL)
