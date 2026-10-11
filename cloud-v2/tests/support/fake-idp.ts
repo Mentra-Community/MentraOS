@@ -12,7 +12,8 @@
  *    with `client_secret_post`, and a Basic header whose client ID was
  *    form-encoded (`-` sent as `%2D`) is refused; GoTrue's
  *    `POST /logout?scope=local|global`; and the admin user lookup Core uses for
- *    email confirmation (`GET /admin/users/:id`).
+ *    email confirmation (`GET /admin/users/:id`), and the admin user listing
+ *    Core searches by email (`GET /admin/users?filter=`).
  *  - `kind: "oidc"` behaves like Microsoft Entra: RS256 ID tokens with `nonce`,
  *    `oid` and `tid`, and RS256 access tokens for the Core API.
  *
@@ -332,6 +333,20 @@ export async function createFakeIdp(opts: FakeIdpOptions): Promise<FakeIdp> {
           email: person.email ?? null,
           email_confirmed_at: person.emailConfirmed === false ? null : "2026-01-01T00:00:00Z",
           user_metadata: {email_verified: true},
+        })
+      }
+      if (request.method === "GET" && /\/admin\/users\/?$/.test(url.pathname)) {
+        // GoTrue's admin listing: `filter` narrows by a partial email match, paged by `page` and `per_page`.
+        const filter = (url.searchParams.get("filter") ?? "").toLowerCase()
+        const perPage = Number(url.searchParams.get("per_page") ?? "50")
+        const page = Number(url.searchParams.get("page") ?? "1")
+        const matching = [...users.values()].filter(user => (user.email ?? "").toLowerCase().includes(filter))
+        return json({
+          users: matching.slice((page - 1) * perPage, page * perPage).map(user => ({
+            id: user.sub,
+            email: user.email ?? null,
+            email_confirmed_at: user.emailConfirmed === false ? null : "2026-01-01T00:00:00Z",
+          })),
         })
       }
       return json({error: "not_found"}, 404)

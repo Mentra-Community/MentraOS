@@ -377,7 +377,9 @@ function hashTokenIfPlausible(token: unknown): string | null {
  */
 export function inviteUrlTemplate(): string {
   const template = process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE?.trim() || defaultInviteUrlTemplate()
-  const problem = `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE must be an absolute http(s) URL containing "${TOKEN_PLACEHOLDER}"`
+  const problem =
+    `CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE must be an absolute http(s) URL containing "${TOKEN_PLACEHOLDER}", ` +
+    "or CLOUD_CORE_ENTERPRISE_PORTAL_URL must be set so invitation links open the workspace portal"
   if (!template.includes(TOKEN_PLACEHOLDER)) throw new Error(problem)
   let sample: URL
   try {

@@ -36,7 +36,8 @@
  * user id (the Store's private-miniapp and beta invitations). Core stays the
  * only service that maps account-provider identities to Mentra users: only an
  * email the account directory has confirmed resolves, and its Mentra user is
- * created on first use.
+ * created on first use. A directory that cannot answer is a 503, never "no such
+ * person".
  */
 
 import {
@@ -54,7 +55,7 @@ import {
 } from "@mentra/workspace-contract"
 import {Hono} from "hono"
 import {z} from "zod"
-import {findUserByEmail, isGotrueAdminConfigured} from "../../services/account/gotrue.client"
+import {findAccountByEmail, isGotrueAdminConfigured} from "../../services/account/gotrue.client"
 import {IdentityProviderUnavailableError} from "../../services/signin/idp-tokens"
 import {principalFromToken, wirePrincipal, type CorePrincipal} from "../../services/signin/principal.service"
 import {MENTRA_TENANT_ID} from "../../services/signin/config"
@@ -191,7 +192,7 @@ app.post("/users/resolve-email", requireService("store"), async c => {
   if (!parsed.success) throw new InvalidRequest("email must be an email address")
   // A deployment without Mentra accounts (a Private Cloud) has nobody to resolve.
   if (!isGotrueAdminConfigured()) return c.json({error: USER_NOT_FOUND_ERROR}, 404)
-  const identity = await findUserByEmail(parsed.data)
+  const identity = await findAccountByEmail(parsed.data)
   // An address nobody has proven they own names nobody. Only a confirmed email counts, as at sign-in.
   if (!identity?.emailConfirmed) return c.json({error: USER_NOT_FOUND_ERROR}, 404)
   const user = await findOrCreateUser({tenantId: MENTRA_TENANT_ID, tenantUserId: identity.id})

@@ -17,7 +17,7 @@
 
 import type {OrganizationCapability} from "@mentra/workspace-contract"
 import {Hono} from "hono"
-import {findUserByEmail, isGotrueAdminConfigured} from "../../services/account/gotrue.client"
+import {findAccountByEmail, isGotrueAdminConfigured} from "../../services/account/gotrue.client"
 import {MENTRA_TENANT_ID} from "../../services/signin/config"
 import {findOrCreateUser, getUser} from "../../services/user.service"
 import {organizationView} from "../../services/workspaces/authorization.service"
@@ -134,7 +134,7 @@ async function userIdForEmail(raw: string): Promise<string | null> {
   const email = raw.trim().toLowerCase()
   if (!/^[^@\s]+@[^@\s]+$/.test(email)) throw new InvalidRequest("email must be an email address")
   if (!isGotrueAdminConfigured()) throw new InvalidRequest("this deployment names people by their Mentra user id")
-  const identity = await findUserByEmail(email)
+  const identity = await findAccountByEmail(email)
   if (!identity?.emailConfirmed) return null
   return (await findOrCreateUser({tenantId: MENTRA_TENANT_ID, tenantUserId: identity.id})).mentraUserId
 }

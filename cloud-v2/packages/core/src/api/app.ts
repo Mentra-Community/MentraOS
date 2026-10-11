@@ -17,7 +17,7 @@
  *   /api/workspaces/*, /api/organization/*
  *                               — the same workspace and organization handlers, for
  *                                 bearers (identity-provider access tokens, Core keys)
- *   /api/internal/workspaces/*  — the signed service API the Store calls
+ *   /api/internal/workspaces/*  — the signed service API the Store calls (64 KiB body limit)
  *   everything else (GET)       — the admin portal's files, when
  *                                 CLOUD_CORE_ADMIN_STATIC_DIR is set (Private Cloud)
  *
@@ -33,6 +33,7 @@
  */
 
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { createHealthApp, createLogger, type ReadinessCheck } from "@mentra/cloud-shared";
 import type { AppEnv } from "../types/hono.types";
 import { OauthError } from "../types/oauth.types";
@@ -69,6 +70,9 @@ import wellKnown from "./well-known.api";
 import { createAdminStaticApp } from "./admin-static";
 
 const logger = createLogger("core").child({ service: "app" });
+
+/** The largest body the signed workspace service API reads. */
+const INTERNAL_WORKSPACES_BODY_LIMIT_BYTES = 64 * 1024;
 
 export interface CreateAppOptions {
   readinessChecks: ReadinessCheck[];
@@ -113,6 +117,14 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
   app.route("/api/agent/reports", reportAgent);
+  // Service calls carry small JSON bodies; the limit applies before the signature check reads one.
+  app.use(
+    "/api/internal/workspaces/*",
+    bodyLimit({
+      maxSize: INTERNAL_WORKSPACES_BODY_LIMIT_BYTES,
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+  );
   app.route("/api/internal/workspaces", internalWorkspaces);
   app.route("/api/internal/test-requests", createRoutineJobBindingApi());
   app.route("/api/internal/test-requests", createTestRequestsApi());
