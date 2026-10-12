@@ -67,7 +67,7 @@ const en = {
     glassesMicGates: "Glasses microphone settings",
     vadLabel: "Allow voice activity detection",
     barrierLabel: "Barrier",
-    barrierSubtitle: "Block quiet audio",
+    barrierSubtitle: "Keep the mic from hearing the glasses speaker",
     tuningTitle: "Mic tuning",
     tuningEntrySubtitle: "Gain, RMS gate, and speaker-elevated thresholds. RAM-only on the glasses.",
     tuningWaiting: "Waiting for the glasses to report a level...",

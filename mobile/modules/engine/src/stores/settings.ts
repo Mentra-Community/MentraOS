@@ -465,10 +465,15 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  // Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). Opt-in.
+  /*
+   * Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). The
+   * firmware only applies it while the glasses speaker is playing (plus a short
+   * decay tail), so it keeps the wearer's mic from hearing the glasses' own
+   * speech without touching quiet audio the rest of the time.
+   */
   loudness_gate_enabled: {
     key: "loudness_gate_enabled",
-    defaultValue: () => false,
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -1160,14 +1165,15 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
 
-        // Reset existing installs once; later user/app opt-ins remain available.
-        const LOUDNESS_GATE_MIGRATION_KEY = "migration:loudness_gate_default_off_v1"
+        // Turn the Barrier back on once for installs that were reset to off;
+        // a later user opt-out remains in force.
+        const LOUDNESS_GATE_MIGRATION_KEY = "migration:loudness_gate_default_on_v1"
         const loudnessGateMigrationDone = storage.load<boolean>(LOUDNESS_GATE_MIGRATION_KEY)
         if (loudnessGateMigrationDone.is_error() || !loudnessGateMigrationDone.value) {
           // updateServer: true, matching the android_blur / camera_fov migrations. The flag is
           // inert until the Cloud V2 settings sync lands, but this setting is saveOnServer, so
           // the intent recorded here is the one that should carry over.
-          const result = await get().setSetting(SETTINGS.loudness_gate_enabled.key, false, true)
+          const result = await get().setSetting(SETTINGS.loudness_gate_enabled.key, true, true)
           if (result.is_error()) {
             console.log("SETTINGS: loudness gate migration failed:", result.error)
           } else {
