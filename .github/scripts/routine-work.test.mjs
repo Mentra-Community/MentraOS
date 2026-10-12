@@ -141,19 +141,37 @@ test('create/edit intake accepts fixture operations and rejects unsupported, dup
   }
 })
 
-test('authoring intake fixture operation registry stays in sync with the Core contract', async () => {
-  const fixtureCapabilities = async path => {
+test('create/edit intake accepts glasses Wi-Fi on both platforms and rejects wrong-kind or duplicate authority', () => {
+  for (const kind of ['create', 'edit']) for (const platform of ['mac', 'android']) {
+    const resources = ['app', 'recorder', ...(platform === 'android' ? ['phone'] : [])]
+      .map(kind => ({kind, capabilities: []}))
+    const request = {...input, kind, requirements: {...input.requirements, platform, glasses: ['mentra-live'],
+      resources: [...resources, {kind: 'glasses', capabilities: ['connection', 'software', 'wifi']}]}}
+    assert.deepEqual(parseRoutineWorkBrief(body(request), kind), request)
+    for (const capabilities of [['wifi', 'wifi'], ['wifi', 'arbitrary-shell']])
+      assert.throws(() => parseRoutineWorkBrief(body({...request, requirements: {...request.requirements,
+        resources: [...resources, {kind: 'glasses', capabilities}]}}), kind), /resource requirements/)
+    assert.throws(() => parseRoutineWorkBrief(body({...request, requirements: {...request.requirements,
+      resources: request.requirements.resources.map(resource => resource.kind === 'app'
+        ? {...resource, capabilities: ['wifi']} : resource)}}), kind), /resource requirements/)
+  }
+})
+
+test('all authoring intake resource operations stay in sync with the Core contract', async () => {
+  const capabilities = async path => {
     const source = await readFile(new URL(path, import.meta.url), 'utf8')
     const registry = /const (?:resourceCapabilities|resourceCapabilityMap) = \{([\s\S]*?)\n\}/.exec(source)
     assert.ok(registry, `Missing resource capability registry in ${path}`)
-    const fixture = /'fixture-data':\s*\[([^\]]*)\]/.exec(registry[1])
-    assert.ok(fixture, `Missing fixture-data capabilities in ${path}`)
-    assert.equal(fixture[1].replace(/'[^']*'/g, '').replace(/[\s,]/g, ''), '', 'Fixture capabilities must remain literal strings')
-    return [...fixture[1].matchAll(/'([^']*)'/g)].map(match => match[1])
+    const rows = [...registry[1].matchAll(/(?:'([^']+)'|([\w-]+)):\s*\[([^\]]*)\]/g)]
+    assert.equal(rows.length, 9, 'Every resource kind must use a literal capability array')
+    return Object.fromEntries(rows.map(row => {
+      assert.equal(row[3].replace(/'[^']*'/g, '').replace(/[\s,]/g, ''), '', 'Capabilities must remain literal strings')
+      return [row[1] ?? row[2], [...row[3].matchAll(/'([^']*)'/g)].map(match => match[1])]
+    }))
   }
   const [intake, core] = await Promise.all([
-    fixtureCapabilities('./routine-work.mjs'),
-    fixtureCapabilities('../../cloud-v2/packages/core/src/types/routine-definition.types.ts'),
+    capabilities('./routine-work.mjs'),
+    capabilities('../../cloud-v2/packages/core/src/types/routine-definition.types.ts'),
   ])
   assert.deepEqual(intake, core)
 })
