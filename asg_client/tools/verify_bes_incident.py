@@ -34,8 +34,8 @@ INCIDENT_ROOT = f"/data/data/{PACKAGE}/files/bes_incident"
 KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 # A bundle directory name: <serial>-dump-<dumpId> or <serial>-reset-<bootId>. The store root also
 # holds files (device_id, last_boot, collected.json, evictions.json) that are not bundles.
-BUNDLE_DIR_RE = re.compile(r"^[A-Za-z0-9._:]{1,100}-(dump|reset)-[0-9a-f]{8}-[0-9a-f]{8}$|"
-                           r"^[A-Za-z0-9._:]{1,100}-(dump|reset)-[0-9a-f]{16}$")
+BUNDLE_DIR_RE = re.compile(r"^[A-Za-z0-9._:-]{1,100}-(dump|reset)-[0-9a-f]{8}-[0-9a-f]{8}$|"
+                           r"^[A-Za-z0-9._:-]{1,100}-(dump|reset)-[0-9a-f]{16}$")
 DUMP_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{8}$")
 BOOT_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 ANON_RE = re.compile(r"^anon[0-9a-f]{16}$")
@@ -128,7 +128,9 @@ def verify_bundle(path, device_id=None):
         if serial.startswith("anon"):
             ok = bool(ANON_RE.match(serial))
             if device_id is not None:
-                ok = ok and serial == device_id
+                # The store keeps the bare id in device_id; the key part is "anon" + that id.
+                expected = device_id if device_id.startswith("anon") else "anon" + device_id
+                ok = ok and serial == expected
             checks.check("anon serial well-formed/matches device_id", ok,
                          f"{serial} device_id={device_id}")
         else:

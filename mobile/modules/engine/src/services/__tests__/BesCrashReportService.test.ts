@@ -244,18 +244,30 @@ describe("BesCrashReportService", () => {
     expect(sendBesCrashReported).toHaveBeenCalledTimes(2)
   })
 
-  test("a REPORTED event resends the ack and upload without submitting", async () => {
-    await expect(handleBesCrashDetected(dumpEvent({state: "REPORTED", reportId: "rep_glasses"}))).resolves.toEqual({
+  test("a REPORTED event for this user's own report resends the ack and upload without submitting", async () => {
+    await handleBesCrashDetected(dumpEvent())
+    timeline.length = 0
+    await expect(handleBesCrashDetected(dumpEvent({state: "REPORTED", reportId: "rep_1"}))).resolves.toEqual({
       status: "reported",
-      reportId: "rep_glasses",
+      reportId: "rep_1",
       submitted: false,
     })
-    expect(submit).not.toHaveBeenCalled()
-    expect(storedIncidents().size).toBe(0)
+    expect(submit).toHaveBeenCalledTimes(1)
     expect(timeline.filter((step) => step.startsWith("ack") || step.startsWith("upload"))).toEqual([
-      `ack:${DUMP_KEY}:rep_glasses`,
-      "upload:rep_glasses",
+      `ack:${DUMP_KEY}:rep_1`,
+      "upload:rep_1",
     ])
+  })
+
+  test("a REPORTED event nobody here owns is deferred without ack, upload or submit", async () => {
+    await expect(handleBesCrashDetected(dumpEvent({state: "REPORTED", reportId: "rep_glasses"}))).resolves.toEqual({
+      status: "ignored",
+      reason: "reported_by_other_owner",
+    })
+    expect(submit).not.toHaveBeenCalled()
+    expect(sendBesCrashReported).not.toHaveBeenCalled()
+    expect(sendIncidentId).not.toHaveBeenCalled()
+    expect(timers.size).toBe(0)
   })
 
   test("a failed submit stores nothing and sends no ack", async () => {
@@ -444,6 +456,29 @@ describe("BesCrashReportService user scope", () => {
       submitted: false,
     })
     expect(submit).toHaveBeenCalledTimes(2)
+  })
+
+  test("after an account switch the glasses' REPORTED id of the previous user is not uploaded", async () => {
+    await handleBesCrashDetected(dumpEvent())
+    expect(storedReportId("user_a")).toBe("rep_1")
+    sendBesCrashReported.mockClear()
+    sendIncidentId.mockClear()
+
+    currentUser = "user_b"
+    await expect(handleBesCrashDetected(dumpEvent({state: "REPORTED", reportId: "rep_1"}))).resolves.toEqual({
+      status: "ignored",
+      reason: "reported_by_other_owner",
+    })
+    expect(submit).toHaveBeenCalledTimes(1)
+    expect(sendBesCrashReported).not.toHaveBeenCalled()
+    expect(sendIncidentId).not.toHaveBeenCalled()
+    expect(timers.size).toBe(0)
+
+    currentUser = "user_a"
+    await expect(handleBesCrashDetected(dumpEvent({state: "REPORTED", reportId: "rep_1"}))).resolves.toMatchObject({
+      status: "reported",
+      reportId: "rep_1",
+    })
   })
 
   test("user ids cannot collide with incidentKeys that contain colons", async () => {

@@ -310,4 +310,21 @@ public class BesIncidentUploaderTest {
                 .isNull();
         assertThat(access.find(KEY).getString("state")).isEqualTo("REPORTED");
     }
+
+    @Test
+    public void transferCompleteIsNotAttributedWhenTwoReportsShareTheRelayFileName() throws Exception {
+        String otherKey = "ML395018B-dump-0000002b-1f2e3d4d";
+        String otherReport = "rep_01JZWY3V8N0ZZZZZZZZZZZZZZZ";
+        access.createStored(otherKey, 2000L, "[CRASH-CONTEXT] v=2 seq=2\nx\n", trace(5));
+        assertThat(access.markReported(otherKey, otherReport)).isTrue();
+        assertThat(BesIncidentUploader.relayFileBaseName(otherReport))
+                .isEqualTo(BesIncidentUploader.relayFileBaseName(REPORT));
+        uploader.prepare(KEY, BesIncidentUploader.ARTIFACT_RELAY);
+        uploader.prepare(otherKey, BesIncidentUploader.ARTIFACT_RELAY);
+
+        assertThat(uploader.onTransferComplete(BesIncidentUploader.relayFileBaseName(REPORT), true))
+                .isNull();
+        assertThat(access.find(KEY).getString("state")).isEqualTo("REPORTED");
+        assertThat(access.find(otherKey).getString("state")).isEqualTo("REPORTED");
+    }
 }

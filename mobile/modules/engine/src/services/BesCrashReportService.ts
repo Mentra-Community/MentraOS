@@ -165,13 +165,12 @@ async function acknowledgeAndUpload(
 
 async function processIncident(event: BesCrashDetectedEvent): Promise<BesCrashReportOutcome> {
   const {incidentKey} = event
-  if (event.state === "REPORTED" && typeof event.reportId === "string" && REPORT_ID_PATTERN.test(event.reportId)) {
-    return acknowledgeAndUpload(incidentKey, event.reportId, false)
-  }
   if (event.state !== "STORED" && event.state !== "REPORTED") {
     return {status: "ignored", reason: `state_${event.state}`}
   }
 
+  // Report ownership is decided by the signed-in user, never by the glasses: the glasses keep a
+  // reportId across account switches, and Cloud rejects uploads that target another user's report.
   let userId: string
   try {
     userId = await cloudClientService.resolveMentraUserId()
@@ -182,6 +181,18 @@ async function processIncident(event: BesCrashDetectedEvent): Promise<BesCrashRe
   }
 
   const storedReportId = readStoredReportId(userId, incidentKey)
+  if (event.state === "REPORTED") {
+    if (!(typeof event.reportId === "string" && REPORT_ID_PATTERN.test(event.reportId))) {
+      return {status: "ignored", reason: "reported_without_report_id"}
+    }
+    if (storedReportId !== event.reportId) {
+      // Reported by another account (or by a phone that no longer remembers it). A new report
+      // cannot replace the one the glasses hold, so leave this incident to its owner.
+      console.warn(`[${LOG_TAG}] ${incidentKey}: reported under a different owner; deferring`)
+      return {status: "ignored", reason: "reported_by_other_owner"}
+    }
+    return acknowledgeAndUpload(incidentKey, storedReportId, false)
+  }
   if (storedReportId) return acknowledgeAndUpload(incidentKey, storedReportId, false)
 
   const reason = besCrashTriggerReason(event)

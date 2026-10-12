@@ -258,6 +258,7 @@ public final class BesIncidentUploader {
         }
         try {
             List<JSONObject> pending = access.pendingForPhone();
+            String matchedKey = null;
             for (JSONObject record : pending) {
                 if (!"REPORTED".equals(record.optString("state", ""))
                         || record.isNull("reportId")) {
@@ -272,11 +273,21 @@ public final class BesIncidentUploader {
                         || !base.equalsIgnoreCase(relayFileBaseName(reportId))) {
                     continue;
                 }
-                String key = record.optString("incidentKey", "");
-                boolean marked = access.markUploaded(key);
-                Log.i(TAG, "Relay file " + fileName + " confirmed for " + key
+                if (matchedKey != null) {
+                    // The 15-character file name cannot tell these reports apart, so no completion
+                    // can be attributed to either; both stay REPORTED and are retried.
+                    Log.e(TAG, "Relay file " + fileName + " is ambiguous between "
+                            + matchedKey + " and " + record.optString("incidentKey", "")
+                            + "; not marking either uploaded");
+                    return null;
+                }
+                matchedKey = record.optString("incidentKey", "");
+            }
+            if (matchedKey != null) {
+                boolean marked = access.markUploaded(matchedKey);
+                Log.i(TAG, "Relay file " + fileName + " confirmed for " + matchedKey
                         + ", markUploaded=" + marked);
-                return marked ? key : null;
+                return marked ? matchedKey : null;
             }
         } catch (RuntimeException e) {
             Log.e(TAG, "transfer_complete bookkeeping failed for " + fileName, e);

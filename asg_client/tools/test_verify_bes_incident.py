@@ -147,6 +147,15 @@ class VerifyBesIncidentTests(unittest.TestCase):
         names = {n: ok for n, ok, _ in checks.results}
         self.assertFalse(names["trace.txt wallMs monotonic"])
 
+    def test_anon_serial_matches_the_bare_stored_device_id(self):
+        incident, dump, dump_id = dump_incident(serial="anon0123456789abcdef")
+        key = incident["incidentKey"]
+        write_bundle(self.tmp, key, incident, dump, "1\t1\t0\tx\n")
+        self.assertTrue(self.verify(key, device_id="0123456789abcdef").passed)
+        checks = self.verify(key, device_id="ffffffffffffffff")
+        names = {name: ok for name, ok, _ in checks.results}
+        self.assertFalse(names["anon serial well-formed/matches device_id"])
+
     def test_anon_serial_matches_device_id(self):
         incident, dump, dump_id = dump_incident(serial="anon0123456789abcdef")
         key = incident["incidentKey"]
@@ -180,7 +189,7 @@ class StoreEnumerationTests(unittest.TestCase):
     def test_device_listing_keeps_only_bundle_directories(self):
         listing = ("ML395018B-dump-0000002a-1f2e3d4c\nML395018B-reset-9f3a0c1b2d4e5f60\n"
                    "collected.json\ndevice_id\nevictions.json\nlast_boot\n"
-                   "ML395018B-dump-0000002a-1f2e3d4c.tmp\n")
+                   "ML395018B-dump-0000002a-1f2e3d4c.tmp\nML-395-dump-0000002a-1f2e3d4c\n")
         calls = []
 
         def fake_adb(command):
@@ -197,7 +206,8 @@ class StoreEnumerationTests(unittest.TestCase):
         finally:
             v.adb_shell = original
         self.assertEqual(keys, ["ML395018B-dump-0000002a-1f2e3d4c",
-                                "ML395018B-reset-9f3a0c1b2d4e5f60"])
+                                "ML395018B-reset-9f3a0c1b2d4e5f60",
+                                "ML-395-dump-0000002a-1f2e3d4c"])
 
     def test_root_mode_skips_store_files_and_stray_directories(self):
         with tempfile.TemporaryDirectory() as root:
