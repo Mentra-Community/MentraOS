@@ -211,7 +211,7 @@ test('queued gate uses configured Admin and stale elapsed stays at the observati
       lastProgressAt: '2026-10-12T00:00:10Z', observedAt: '2026-10-12T00:00:30Z'}
     const payload = routineCheckPayload(gate, f.now + 120000)
     expect(payload.details_url).toBe(`https://admin.dev.mentraglass.com/?prCheck=${gate.gateId}`)
-    expect(payload.output.summary).toContain('Progress unavailable: Open account (1/2) · 30s')
+    expect(payload.output.summary).toContain('Progress unavailable: Open account (1/2) · 0/2 test steps · 30s')
   } finally {if (old === undefined) delete process.env.ADMIN_URL; else process.env.ADMIN_URL = old}
 })
 
