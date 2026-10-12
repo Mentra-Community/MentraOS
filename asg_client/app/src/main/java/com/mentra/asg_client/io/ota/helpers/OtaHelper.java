@@ -1409,7 +1409,10 @@ public class OtaHelper {
                 isUpdating = false;
                 return false;
             }
-            if (!startRecoveryReconciliation()) return false;
+            if (!startRecoveryReconciliation()) {
+                abandonDowngradeNetworkPreparation();
+                return false;
+            }
             if (!ready.active) {
                 Intent handoff = RecoveryWorkerManager.newRecoveryIntent(OtaConstants.RECOVERY_REQUEST_DOWNGRADE);
                 handoff.putExtra(AsgConstants.EXTRA_RECOVERY_REQUEST_ID, mDowngradeRequestId);
@@ -1427,6 +1430,7 @@ public class OtaHelper {
             synchronized (OtaHelper.class) {
                 if (handoffOwner == this) { scheduleRecoveryReconcile(); return true; }
             }
+            abandonDowngradeNetworkPreparation();
             isUpdating = false;
             return false;
         }
@@ -1442,10 +1446,16 @@ public class OtaHelper {
             return true;
         } catch (Exception e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            abandonDowngradeNetworkPreparation();
             lastApkFailureErrorCode = "downgrade_hotspot_cleanup_failed";
             Log.e(TAG, "Refusing downgrade handoff before native hotspot cleanup", e);
             return false;
         }
+    }
+
+    private void abandonDowngradeNetworkPreparation() {
+        var network = networkManager;
+        if (network != null) network.abandonHotspotReplacement();
     }
 
     /** Adopt a snapshot without staging again if recovery finishes between query and adoption. */
@@ -1569,6 +1579,7 @@ public class OtaHelper {
                     sendProgressToPhone("install", 0, 0, 0, "FAILED", "apk_restart_guard_not_persisted");
                     return;
                 }
+                abandonDowngradeNetworkPreparation();
                 handoffOwner = null;
                 if (handoffWatchdog != null) HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
                 handoffWatchdog = null;

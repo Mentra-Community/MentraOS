@@ -52,6 +52,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private final Object mHotspotLock = new Object();
     private boolean mHotspotStarting;
     private boolean mHotspotStopping;
+    private boolean mHotspotReplacementPrepared;
     private int mHotspotStateNotificationGeneration;
     private int mHotspotGeneration;
     private long mHotspotReadinessDeadlineMs;
@@ -264,6 +265,11 @@ public class K900NetworkManager extends BaseNetworkManager {
     @Override
     public void startHotspot() {
         synchronized (mHotspotLock) {
+            if (mHotspotReplacementPrepared) {
+                Log.i(TAG, "Hotspot start refused while recovery owns APK replacement");
+                notifyHotspotError("APK replacement owns the hotspot");
+                return;
+            }
             if (mHotspotStarting) {
                 Log.d(TAG, "🔥 K900 vendor hotspot is already starting");
                 return;
@@ -568,6 +574,7 @@ public class K900NetworkManager extends BaseNetworkManager {
         }
         final int generation;
         synchronized (mHotspotLock) {
+            mHotspotReplacementPrepared = true;
             stopHotspot();
             generation = mHotspotGeneration;
         }
@@ -586,6 +593,13 @@ public class K900NetworkManager extends BaseNetworkManager {
                 throw new java.io.IOException("K900 hotspot did not stop before APK replacement");
             }
             Thread.sleep(AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
+        }
+    }
+
+    @Override
+    public void abandonHotspotReplacement() {
+        synchronized (mHotspotLock) {
+            mHotspotReplacementPrepared = false;
         }
     }
 

@@ -29,6 +29,9 @@ public interface INetworkManager {
      */
     void stopHotspotAndAwaitDisabled() throws Exception;
 
+    /** Release APK replacement's hotspot admission barrier after definitive abandonment. */
+    void abandonHotspotReplacement();
+
     /**
      * Check if the device is currently connected to a WiFi network
      *

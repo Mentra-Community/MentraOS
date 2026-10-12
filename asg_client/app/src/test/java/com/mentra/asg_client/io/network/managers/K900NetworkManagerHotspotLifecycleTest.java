@@ -284,9 +284,21 @@ public class K900NetworkManagerHotspotLifecycleTest {
         worker.join(2000);
         assertThat(worker.isAlive()).isFalse();
         assertThat(failure.get()).isNull();
+        manager.startHotspot();
+        advance(1000);
         assertThat(commands())
                 .extracting(i -> i.getBooleanExtra("enable", false))
                 .containsExactly(false);
+        // A definitive pre-handoff abandonment restores ordinary start admission.
+        manager.abandonHotspotReplacement();
+        manager.startHotspot();
+        advance(500);
+        assertThat(commands())
+                .extracting(i -> i.getBooleanExtra("enable", false))
+                .containsExactly(false, false, true);
+        manager.gateway = "192.168.43.1";
+        advance(200);
+        assertThat(manager.isHotspotEnabled()).isTrue();
     }
 
     private void advance(long millis) {

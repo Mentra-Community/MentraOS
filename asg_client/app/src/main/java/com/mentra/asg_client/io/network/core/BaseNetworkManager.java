@@ -878,6 +878,9 @@ public abstract class BaseNetworkManager implements INetworkController {
         }
     }
 
+    @Override
+    public void abandonHotspotReplacement() {}
+
     /** Register broadcast receiver for tethering state changes */
     private void registerTetheringStateReceiver() {
         if (tetheringStateReceiver != null) {

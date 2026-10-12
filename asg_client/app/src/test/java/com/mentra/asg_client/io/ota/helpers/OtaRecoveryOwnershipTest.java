@@ -6,6 +6,7 @@ import android.content.Context;
 import android.os.Bundle;
 import com.mentra.asg_client.RecoveryWorkerManager;
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import java.lang.reflect.Field;
@@ -21,10 +22,13 @@ import org.robolectric.annotation.Config;
 @Config(sdk = 33)
 public class OtaRecoveryOwnershipTest {
     OtaHelper helper;
+    INetworkManager network;
     @Before public void setup() throws Exception {
         RuntimeEnvironment.getApplication().getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE).edit().clear().commit();
         set("handoffOwner", null, null);
         helper = new OtaHelper(RuntimeEnvironment.getApplication(), mock(IBesOtaRegistry.class));
+        network = mock(INetworkManager.class);
+        helper.setNetworkManager(network);
         set("handoffOwner", null, helper);
         set("isUpdating", null, true);
         set("mDowngradeRequestId", helper, "current");
@@ -48,12 +52,23 @@ public class OtaRecoveryOwnershipTest {
         helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(active));
         assertEquals(true, get("isUpdating"));
         assertSame(helper, get("handoffOwner"));
+        verify(network, never()).abandonHotspotReplacement();
     }
     @Test public void idleQueryAfterLostVerdictReleasesAdmission() throws Exception {
         Bundle idle = new Bundle(); idle.putBoolean("active", false);
         helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(idle));
         assertEquals(false, get("isUpdating"));
         assertNull(get("handoffOwner"));
+        verify(network).abandonHotspotReplacement();
+    }
+
+    @Test public void busyRecoveryCannotReleaseHotspotReplacement() throws Exception {
+        Bundle busy = new Bundle();
+        busy.putBoolean("active", false);
+        busy.putBoolean("busy", true);
+        helper.applyRecoveryStatus(new RecoveryWorkerManager.DowngradeStatus(busy));
+        assertSame(helper, get("handoffOwner"));
+        verify(network, never()).abandonHotspotReplacement();
     }
     @Test public void adoptionDoesNotDownloadAgainIfTransactionFinishesAfterSnapshot() throws Exception {
         OtaHelper original = helper;
@@ -161,6 +176,7 @@ public class OtaRecoveryOwnershipTest {
         assertSame(helper, get("handoffOwner"));
         assertEquals(true, get("isUpdating"));
         assertFalse(RuntimeEnvironment.getApplication().getSharedPreferences(AsgConstants.PENDING_DOWNGRADE_PREFS, Context.MODE_PRIVATE).contains("terminal_status"));
+        verify(network, never()).abandonHotspotReplacement();
     }
 
     @Test public void admittedRetryRetiresOutcomeBeforeManifestFailure() throws Exception {
