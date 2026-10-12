@@ -48,8 +48,9 @@ function fixture() {
   }
   const jobs = {
     async freezeSelection(input: any, inherited?: any) {return {...input, routineSource: input.routineSource ?? testRoutineSource(), build: inherited ?? {repository: 'Mentra-Community/MentraOS', kind: 'android-apk', channel: 'pr', prNumber: 12, headSha: context.headSha, source: input.source, archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 10, sha256: 'd'.repeat(64)}, receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 1, sha256: 'e'.repeat(64)}}}},
-    async submitFrozen(selection: any) {submitted.push(selection.requestId); if (failedAdmission === selection.requestId) throw Error('Admission temporarily unavailable'); if (!requests.has(selection.requestId)) {const intent = {...selection, laneId: 'android'}; requests.set(selection.requestId, {requestId: selection.requestId, hostId: 'test-host', fleetSelection: selection, fleetSelectionSha256: requestInputDigest(selection), fleetBinding: {hostId: 'test-host', laneId: 'android'}, dispatchIntent: intent, dispatchIntentSha256: requestInputDigest(intent), state: 'running'})} return requests.get(selection.requestId)},
-    async cancel(id: string) {cancelled.push(id); return {} as any},
+    async submitFrozen(selection: any, deadline: string) {submitted.push(selection.requestId); if (failedAdmission === selection.requestId) throw Error('Admission temporarily unavailable'); if (!requests.has(selection.requestId)) {const intent = {...selection, laneId: 'android'}; requests.set(selection.requestId, {requestId: selection.requestId, hostId: 'test-host', fleetSelection: selection, fleetSelectionSha256: requestInputDigest(selection), fleetDeadline: new Date(deadline), fleetBinding: {hostId: 'test-host', laneId: 'android'}, dispatchIntent: intent, dispatchIntentSha256: requestInputDigest(intent), state: 'running'})} return requests.get(selection.requestId)},
+    async cancelFrozen(selection: any, deadline: string, value: {reason:string}) {const row=requests.get(selection.requestId)??{requestId:selection.requestId,fleetSelection:selection,fleetSelectionSha256:requestInputDigest(selection),fleetDeadline:new Date(deadline)}; if (requestInputDigest(row.fleetSelection)!==requestInputDigest(selection) || row.fleetDeadline && new Date(row.fleetDeadline).toISOString()!==new Date(deadline).toISOString()) throw new TestRunError(409,'Frozen cancellation mismatch'); row.fleetCancellation??={...value,requestedAt:new Date(now).toISOString()}; cancelled.push(selection.requestId); if (!row.fleetBinding) {row.state='terminal';row.terminalStatus='not-run'}; requests.set(selection.requestId,row)},
+    async cancel(id: string) {cancelled.push(id); if(!requests.has(id)) throw new TestRunError(404,'Missing ordinary request'); return {} as any},
   }
   const suite = new TestSuiteService(), results = {async summary(id: string) {const run=runs.get(id)?.payload; if(!run) throw new TestRunError(404, 'no published result'); return {...run,runId:id,outcome:run.result.test==='passed'?'pass':'failed',uploadsComplete:true,evidenceStatus:'complete'}}}, requestReader = {async get(id: string) {return requests.get(id) ?? null}}
   const rerun = new TestRerunService(store, suite, jobs as any, requestReader as any, results as any, () => now)
@@ -198,4 +199,40 @@ test('unavailable suite-group preview does not suppress an independent request-p
   expect(f.gate().attempt.members[1]!.requestId).toMatch(/^rerun-/); expect(f.gate().attempt.members[1]!.status).toBe('running');
   expect(f.gate().attempt.conclusion).toBeUndefined(); expect(f.gate().attempt.rerun!.groups).toHaveLength(2);
   preview.mockRestore(); await f.drain(3); expect(f.gate().attempt.members.every(member=>member.status==='running')).toBe(true);
+})
+
+
+test('cancelled accepted rerun fences a child whose ordinary admission failed before a later identical submit', async () => {
+  const f=fixture(); await f.start(); f.settle(); await f.drain(); await f.service.control(f.control('cancel-partial-linked'));
+  const submit=spyOn(f.rerun,'submit').mockImplementation(async input=>{
+    const row=f.reruns.get((input as {rerunId:string}).rerunId)!; f.failedAdmission(row.plan.members[1]!.requestId);
+    submit.mockRestore(); return f.rerun.submit(input);
+  }); mocks.push(submit); await f.drain(1);
+  const accepted=[...f.reruns.values()][0]!, absent=accepted.plan.members[1]!.requestId;
+  expect(f.requests.has(absent)).toBe(false);
+  await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000002',coverageGeneration:1,attemptGeneration:2},'admin:operator');
+  f.settle(); await f.drain();
+  expect(f.requests.get(absent)?.fleetCancellation).toBeDefined();
+  f.failedAdmission(); await f.rerun.submit({rerunId:accepted.rerunId,previewDigest:accepted.previewDigest});
+  expect(f.requests.get(absent)?.state).toBe('terminal');
+})
+
+
+test('cancellation fences a retained unaccepted preview before its later submit can claim and admit jobs', async () => {
+  const f=fixture(); await f.start(); f.settle(); await f.drain(); await f.service.control(f.control('cancel-retained-preview'));
+  const submit=spyOn(f.rerun,'submit').mockRejectedValue(new TestRunError(503,'Stopped before acceptance')); mocks.push(submit); await f.drain(1); submit.mockRestore();
+  const preview=[...f.reruns.values()][0]!; expect(preview.state).toBe('preview'); expect(f.gate().attempt.members.every(member=>!f.requests.has(member.requestId!))).toBe(true);
+  await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000002',coverageGeneration:1,attemptGeneration:2},'admin:operator'); await f.drain();
+  expect(f.gate().attempt.conclusion).toBe('cancelled'); expect(preview.plan.members.every(member=>f.requests.get(member.requestId)?.fleetCancellation)).toBe(true);
+  await f.rerun.submit({rerunId:preview.rerunId,previewDigest:preview.previewDigest});
+  expect(preview.plan.members.every(member=>f.requests.get(member.requestId)?.state==='terminal')).toBe(true);
+})
+
+
+test('cancel immediately after native rerun acceptance retains the predecessor original deadline before any preview', async () => {
+ const f=fixture(); await f.start(); f.settle(); await f.drain(); const originalIds=f.gate().attempt.members.map(member=>member.requestId!);
+ await f.service.control(f.control('cancel-before-preview'));
+ expect(f.gate().attempt.deadline).not.toBe(f.requests.get(originalIds[0]!)!.fleetDeadline.toISOString());
+ await f.service.cancelFromAdmin(f.gate().gateId,{operationId:'00000000-0000-4000-8000-000000000002',coverageGeneration:1,attemptGeneration:2},'admin:operator'); await f.drain();
+ expect(f.gate().attempt.conclusion).toBe('cancelled'); expect(f.reruns.size).toBe(0); expect(f.requests.size).toBe(2);
 })

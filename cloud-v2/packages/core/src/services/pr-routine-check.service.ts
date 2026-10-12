@@ -70,14 +70,14 @@ export function routineCheckPayload(gate: PrRoutineCheck, now: number): CheckPay
 export class PrRoutineCheckService {
   constructor(private readonly rows: PrRoutineCheckRepository = prRoutineCheckRepository,
     private readonly github: PrRoutineGithub = new GithubPrRoutineChecks(),
-    private readonly jobs: Pick<RoutineJobService, 'freezeSelection' | 'submitFrozen' | 'cancel'> = new RoutineJobService(),
+    private readonly jobs: Pick<RoutineJobService, 'freezeSelection' | 'submitFrozen' | 'cancelFrozen' | 'cancel'> = new RoutineJobService(),
     private readonly catalog: Pick<RoutineDispatchService, 'catalog'> = new RoutineDispatchService(),
     private readonly definitions: Pick<RoutineDefinitionService, 'getExact'> = new RoutineDefinitionService(),
     private readonly builds: Pick<GithubTestBuildGateway, 'inventory'> = new GithubTestBuildGateway(),
     private readonly requests: Pick<TestRequestService, 'get'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, 'summary'> = new FrameworkResultService(),
     private readonly suites: Pick<TestSuiteService, 'create' | 'bind' | 'complete'> = new TestSuiteService(),
-    private readonly reruns: Pick<TestRerunService, 'preview' | 'submit' | 'history' | 'detail'> = new TestRerunService(),
+    private readonly reruns: Pick<TestRerunService, 'preview' | 'submit' | 'history' | 'detail' | 'cancelRequest'> = new TestRerunService(),
     private readonly hosts: Pick<TestHostStateService, 'get'> = new TestHostStateService(),
     private readonly now: () => number = Date.now,
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve'> = new GithubRoutineSourceGateway()) {}
@@ -275,6 +275,10 @@ export class PrRoutineCheckService {
     const contain = async (member: PrRoutineMember, operation: () => Promise<void>) => {
       try {await operation()} catch {member.containmentPending = true; failed = true}
     }
+    const cancelRequest = async (requestId: string) => {
+      const reason = `PR routine check ${attempt.cancellation!.kind}`
+      if (!await this.reruns.cancelRequest(requestId, reason)) await this.jobs.cancel(requestId, {reason})
+    }
     // Cancel every accepted linked child, including one admitted outside this check.
     await Promise.all(attempt.members.filter(member => member.originalRequestId).map(member => contain(member, async () => {
       const parent = attempt.suiteId && member.suiteBound ? {suiteId: attempt.suiteId} : {requestId: member.originalRequestId!}
@@ -282,7 +286,7 @@ export class PrRoutineCheckService {
       for (let page = 0; page < 4; page++) {
         const history = await this.reruns.history(parent, 'suiteId' in parent ? member.memberId : member.originalRequestId!, before, 25)
         for (const child of history.attempts) if (child.requestId && child.requestId !== member.requestId) await contain(member, async () => {
-          await this.jobs.cancel(child.requestId!, {reason: `PR routine check ${attempt.cancellation!.kind}`})
+          await cancelRequest(child.requestId!)
           const request = await this.requests.get(child.requestId!) as unknown as StoredRoutineJob | null
           if (request && !request.dispatchCompletion && !!request.fleetBinding && !(request.hostRejection && !request.hostReceipt) && !request.preparationCancellation && !request.preparationRejection)
             member.containmentPending = true
@@ -293,8 +297,14 @@ export class PrRoutineCheckService {
       }
     })))
     await Promise.all(attempt.members.filter(member => member.requestId && !member.settled).map(member => contain(member, async () => {
-      try {await this.jobs.cancel(member.requestId!, {reason: `PR routine check ${attempt.cancellation!.kind}`})}
-      catch (error) {if (!(error instanceof TestRunError && error.status === 404)) throw error}
+      try {
+        // A retained preview or uncertain original admission can still be submitted later; fence its exact ID first.
+        if (await this.requests.get(member.requestId!)) await cancelRequest(member.requestId!)
+        else if (member.selection) {
+          if (member.selection.requestId !== member.requestId) throw new TestRunError(503, 'Cancellation selection differs from its current request');
+          await this.jobs.cancelFrozen(member.selection, member.requestDeadline ?? attempt.deadline, {reason: `PR routine check ${attempt.cancellation!.kind}`})
+        } else await cancelRequest(member.requestId!)
+      } catch (error) {if (!(error instanceof TestRunError && error.status === 404)) throw error}
       await this.observe(member)
     })))
     await Promise.all(attempt.members.map(member => contain(member, async () => {
@@ -340,6 +350,7 @@ export class PrRoutineCheckService {
           continue
         }
         member.requestId = id(gate, member.memberId)
+        member.requestDeadline = attempt.deadline
         member.selection = await this.jobs.freezeSelection({requestId: member.requestId, routineId: member.routineId,
           platform: member.platform, routineRevision: gate.routineRevision, source: eligible[0].source})
         changed = true
@@ -423,7 +434,7 @@ export class PrRoutineCheckService {
             group.previewDigest = preview.previewDigest
             for (const value of preview.plan.members) {
               const member = admitted.find(member => 'suiteId' in group.parent ? member.memberId === value.memberId : member.originalRequestId === value.memberId)!
-              member.requestId = value.requestId; member.selection = value.selection; member.status = 'admission pending'; member.settled = false; member.publicationComplete = false
+              member.requestId = value.requestId; member.requestDeadline = preview.plan.deadline ?? attempt.deadline; member.selection = value.selection; member.status = 'admission pending'; member.settled = false; member.publicationComplete = false
             }
           }
           await this.reruns.submit({rerunId: group.id, previewDigest: group.previewDigest})
@@ -449,6 +460,7 @@ export class PrRoutineCheckService {
       // A new attempt gets a new immutable request identity; failed pre-admission is not a linked original.
       if (member.requestId && member.requestId !== id(gate, member.memberId)) {
         member.requestId = id(gate, member.memberId)
+        member.requestDeadline = attempt.deadline
         if (member.selection) member.selection = {...member.selection, requestId: member.requestId}
       }
       member.settled = false; member.publicationComplete = false

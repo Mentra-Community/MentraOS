@@ -42,12 +42,13 @@ function fixture() {
         fleetBinding: {hostId: 'testing-air-1', laneId: 'android'}, state: 'running'})
       return requests.get(selection.requestId)},
     async cancel(id) {cancellations.push(id); if (holdCancellation) await holdCancellation; if (id === failCancellation) throw Error('provider-sensitive-cancel-error'); return {} as any},
+    async cancelFrozen(selection, _deadline, value) {await this.cancel(selection.requestId, value); return {} as any},
   }, {async catalog(revision) {return {routineRevision: revision!, routines: [{routineId: 'login', platforms: ['android']}]}}},
   {async getExact() {return {routineId: 'login', platform: 'android', definitionRevision: 'a'.repeat(40), definitionSha256: requestInputDigest(definition),
     routineSource: testRoutineSource(), definition} as any}}, {async inventory() {return structuredClone(builds)}},
   {async get(id) {return requests.get(id) ?? null}}, {async summary(id) {if (!results.has(id)) throw new TestRunError(404, 'missing'); return results.get(id)}},
   {async create() {return {} as any}, async bind() {return {} as any}, async complete() {return {} as any}},
-  {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
+  {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async cancelRequest() {return false}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
   {async get() {return null}}, () => now, {async resolve() {resolveCount++; return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)

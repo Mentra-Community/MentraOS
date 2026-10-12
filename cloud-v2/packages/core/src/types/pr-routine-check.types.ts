@@ -11,7 +11,7 @@ export type PrRoutineContext = {
 export type PrRoutineMember = {
   memberId: string; routineId: string; platform: 'android' | 'ios-on-mac';
   title: string; stepIds: string[]; stepNames: string[];
-  originalRequestId?: string; requestId?: string; suiteBound?: boolean; selection?: PortableRoutineSelection;
+  originalRequestId?: string; requestId?: string; requestDeadline?: string; suiteBound?: boolean; selection?: PortableRoutineSelection;
   status: string; publicationComplete: boolean; settled: boolean; progress?: RoutineProgress;
   laneLabel?: string; waitReason?: string; containmentPending?: boolean;
 }
