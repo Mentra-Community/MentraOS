@@ -323,7 +323,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 onBesRecoveryFailed();
                             }
                         });
-        BesTraceTail.get().setSender(this::sendQuietCommand);
+        BesTraceTail.get().setSender(this::sendBoundedQuietCommand);
         comManager.registerListener(this);
         comManager.start();
     }
@@ -498,15 +498,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 : null;
     }
 
-    /** BES TRACE delivery: the normal write safety path without per-frame logging. */
-    private boolean sendQuietCommand(String json) {
-        return transportCoordinator.runNormalWrite(quietWrite(json));
-    }
-
     /**
-     * Same write, bounded: for callers that run on a deadline-driven thread (the crash pull). It
-     * gives up after {@link AsgConstants#BES_INCIDENT_SEND_TIMEOUT_MS} and the request is then
-     * never sent.
+     * BES log and TRACE delivery: the normal write safety path without per-frame logging, bounded.
+     * Both callers run on deadline-driven threads (the TRACE poll and the crash pull), so a
+     * blocked UART lane must not hold them. It gives up after
+     * {@link AsgConstants#BES_INCIDENT_SEND_TIMEOUT_MS} and the request is then never sent.
      */
     private boolean sendBoundedQuietCommand(String json) {
         return transportCoordinator.runNormalWrite(

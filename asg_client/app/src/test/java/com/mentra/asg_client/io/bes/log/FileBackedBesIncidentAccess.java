@@ -182,6 +182,42 @@ public final class FileBackedBesIncidentAccess implements BesIncidentUploadAcces
     }
 
     @Override
+    public synchronized byte[] commitArtifact(
+            String incidentKey, String artifactKey, ArtifactBuilder builder) {
+        try {
+            JSONObject record = load(incidentKey);
+            if (record == null) {
+                return null;
+            }
+            JSONObject artifact = record.getJSONObject("artifacts").getJSONObject(artifactKey);
+            byte[] bytes = builder.build(bundleDir(incidentKey), new JSONObject(record.toString()));
+            if (bytes == null) {
+                return null;
+            }
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            StringBuilder hex = new StringBuilder();
+            for (byte b : digest.digest(bytes)) {
+                hex.append(String.format(java.util.Locale.US, "%02x", b));
+            }
+            if (!artifact.isNull("sha256") && !hex.toString().equals(artifact.getString("sha256"))) {
+                return null;
+            }
+            File file = new File(bundleDir(incidentKey),
+                    artifactKey.endsWith(":relay") ? "upload-relay.json" : "upload-full.json");
+            Files.write(file.toPath(), bytes);
+            recordArtifactCalls++;
+            markAttemptedCalls++;
+            artifact.put("sha256", hex.toString());
+            artifact.put("bytes", bytes.length);
+            artifact.put("attempted", true);
+            save(incidentKey, record);
+            return bytes;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Override
     public synchronized boolean recordArtifact(
             String incidentKey, String artifactKey, String sha256, long bytes) {
         recordArtifactCalls++;

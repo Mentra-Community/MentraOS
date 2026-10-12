@@ -305,6 +305,60 @@ public final class BesIncidentStore implements BesIncidentUploadAccess {
     }
 
     @Override
+    public synchronized byte[] commitArtifact(String incidentKey, String artifactKey,
+            ArtifactBuilder builder) {
+        JSONObject record = find(incidentKey);
+        if (record == null || !BesIncident.isArtifactKey(artifactKey)) {
+            return null;
+        }
+        JSONObject artifacts = record.optJSONObject("artifacts");
+        JSONObject artifact = artifacts == null ? null : artifacts.optJSONObject(artifactKey);
+        if (artifact == null) {
+            return null;
+        }
+        boolean relay = artifactKey.endsWith(":relay");
+        File file = new File(bundleDir(incidentKey),
+                relay ? BesIncident.FILE_UPLOAD_RELAY : BesIncident.FILE_UPLOAD_FULL);
+        String recordedSha = artifact.isNull("sha256") ? null : artifact.optString("sha256", "");
+        if (recordedSha != null && recordedSha.isEmpty()) {
+            recordedSha = null;
+        }
+        try {
+            byte[] bytes = builder.build(bundleDir(incidentKey), record);
+            if (bytes == null) {
+                return null;
+            }
+            String sha = sha256Hex(bytes);
+            if (recordedSha != null && !recordedSha.equals(sha)) {
+                Log.e(TAG, "Rebuilt " + artifactKey + " differs from the recorded body for "
+                        + incidentKey);
+                return null;
+            }
+            writeAtomic(file, bytes);
+            artifact.put("sha256", sha);
+            artifact.put("bytes", bytes.length);
+            artifact.put("attempted", true);
+            if (!writeRecord(record)) {
+                return null;
+            }
+            enforceBudget(incidentKey);
+            return find(incidentKey) != null && file.isFile() ? bytes : null;
+        } catch (IOException | JSONException | java.security.NoSuchAlgorithmException e) {
+            Log.e(TAG, "commitArtifact failed for " + incidentKey + " " + artifactKey, e);
+            return null;
+        }
+    }
+
+    private static String sha256Hex(byte[] bytes) throws java.security.NoSuchAlgorithmException {
+        byte[] hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+        StringBuilder hex = new StringBuilder(hash.length * 2);
+        for (byte b : hash) {
+            hex.append(String.format(java.util.Locale.US, "%02x", b));
+        }
+        return hex.toString();
+    }
+
+    @Override
     public synchronized boolean markAttempted(String incidentKey, String artifactKey) {
         JSONObject record = find(incidentKey);
         if (record == null || !BesIncident.isArtifactKey(artifactKey)) {

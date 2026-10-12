@@ -9,7 +9,6 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -178,25 +177,16 @@ public final class BesIncidentUploader {
                 if (bytes == null) {
                     // First build, or an unattempted recorded body whose file was lost. The
                     // builder is deterministic, so a rebuild must reproduce the recorded hash.
-                    bytes = build(dir, record, relay, artifactKey);
+                    // Build, persist, record and attempt-mark happen as one store step, so a
+                    // concurrent trim or budget pass cannot delete the body in between.
+                    bytes = access.commitArtifact(incidentKey, artifactKey,
+                            (bundleDir, rec) -> build(bundleDir, rec, relay, artifactKey));
                     if (bytes == null) {
-                        Log.w(TAG, "No bundle content to upload for " + incidentKey);
-                        return null;
-                    }
-                    String sha = sha256(bytes);
-                    if (recordedSha != null && !recordedSha.equals(sha)) {
-                        Log.e(TAG, "Rebuilt " + artifactKey + " differs from the recorded body for "
+                        Log.w(TAG, "Could not build and persist " + artifactKey + " for "
                                 + incidentKey);
                         return null;
                     }
-                    writeAtomically(file, bytes);
-                    if (recordedSha == null
-                            && !access.recordArtifact(incidentKey, artifactKey, sha, bytes.length)) {
-                        Log.e(TAG, "Could not record " + artifactKey + " for " + incidentKey);
-                        return null;
-                    }
-                }
-                if (!attempted && !access.markAttempted(incidentKey, artifactKey)) {
+                } else if (!attempted && !access.markAttempted(incidentKey, artifactKey)) {
                     Log.e(TAG, "Could not mark " + artifactKey + " attempted for " + incidentKey);
                     return null;
                 }
@@ -327,19 +317,6 @@ public final class BesIncidentUploader {
                 out.write(buf, 0, n);
             }
             return out.toByteArray();
-        }
-    }
-
-    private static void writeAtomically(File file, byte[] bytes) throws IOException {
-        File tmp = new File(file.getParentFile(), file.getName() + ".tmp");
-        try (FileOutputStream out = new FileOutputStream(tmp)) {
-            out.write(bytes);
-            out.flush();
-            out.getFD().sync();
-        }
-        if (!tmp.renameTo(file)) {
-            tmp.delete();
-            throw new IOException("rename failed for " + file);
         }
     }
 

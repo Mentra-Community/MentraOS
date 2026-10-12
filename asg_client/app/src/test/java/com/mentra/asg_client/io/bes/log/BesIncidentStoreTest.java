@@ -369,6 +369,48 @@ public class BesIncidentStoreTest {
         assertFalse(store.markAttempted(old, BesIncident.ARTIFACT_FULL));
     }
 
+    @Test
+    public void aCommittedUploadBodyIsRecordedAttemptedAndKeptWithinTheBudget() throws Exception {
+        BesIncidentStore store = store();
+        for (int n = 1; n <= 7; n++) {
+            addIncident(store, n, MIB);
+        }
+        String target = addIncident(store, 8, 100 * 1024);
+        byte[] body = new byte[3 * MIB];
+        java.util.Arrays.fill(body, (byte) 'x');
+
+        byte[] committed = store.commitArtifact(target, BesIncident.ARTIFACT_FULL,
+                (dir, record) -> body);
+
+        assertNotNull(committed);
+        assertEquals(body.length, committed.length);
+        File file = new File(store.bundleDir(target), BesIncident.FILE_UPLOAD_FULL);
+        assertEquals(body.length, file.length());
+        JSONObject artifact = store.find(target).getJSONObject("artifacts")
+                .getJSONObject(BesIncident.ARTIFACT_FULL);
+        assertFalse(artifact.isNull("sha256"));
+        assertEquals(body.length, artifact.getLong("bytes"));
+        assertTrue(artifact.getBoolean("attempted"));
+        assertTrue(store.totalBytes() <= AsgConstants.BES_INCIDENT_DIR_BUDGET_BYTES);
+        // The attempted body is immutable: later budget passes leave it alone.
+        store.enforceBudget(null);
+        assertEquals(body.length, file.length());
+        assertTrue(store.find(target).getJSONObject("artifacts")
+                .getJSONObject(BesIncident.ARTIFACT_FULL).getBoolean("attempted"));
+    }
+
+    @Test
+    public void aCommittedUploadBodyMustReproduceTheRecordedHash() throws Exception {
+        BesIncidentStore store = store();
+        String key = addIncident(store, 1, 1000);
+        assertNotNull(store.commitArtifact(key, BesIncident.ARTIFACT_RELAY,
+                (dir, record) -> "one".getBytes(StandardCharsets.UTF_8)));
+        assertNull(store.commitArtifact(key, BesIncident.ARTIFACT_RELAY,
+                (dir, record) -> "two".getBytes(StandardCharsets.UTF_8)));
+        assertNull(store.commitArtifact("ML395018B-dump-0000ffff-0000ffff",
+                BesIncident.ARTIFACT_RELAY, (dir, record) -> new byte[] {1}));
+    }
+
     // ---------------------------------------------------- atomic write recovery
 
     @Test

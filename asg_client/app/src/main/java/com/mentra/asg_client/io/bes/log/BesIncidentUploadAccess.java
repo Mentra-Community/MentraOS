@@ -31,6 +31,22 @@ public interface BesIncidentUploadAccess {
      *  values returns false and changes nothing. */
     boolean recordArtifact(String incidentKey, String artifactKey, String sha256, long bytes);
 
+    /** Builds an upload body from the bundle sources. */
+    interface ArtifactBuilder {
+        /** Returns the body, or null when the bundle has nothing to upload. */
+        byte[] build(File bundleDir, JSONObject record) throws java.io.IOException;
+    }
+
+    /**
+     * Builds, persists, records and attempt-marks an upload body as one step that no trim,
+     * eviction or budget pass can interleave with. The body file is written into the bundle, its
+     * sha256/bytes recorded (an already recorded hash must be reproduced) and the artifact marked
+     * attempted, then the storage budget is enforced with this incident protected. Returns the
+     * persisted bytes, or null when the incident is gone, the builder yields nothing, the hash
+     * differs from the recorded one, or the incident did not survive the budget.
+     */
+    byte[] commitArtifact(String incidentKey, String artifactKey, ArtifactBuilder builder);
+
     /** Sets attempted=true for the artifact; its body file is immutable from now on. */
     boolean markAttempted(String incidentKey, String artifactKey);
 
