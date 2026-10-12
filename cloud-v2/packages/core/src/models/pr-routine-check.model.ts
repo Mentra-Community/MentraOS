@@ -6,7 +6,7 @@ const schema = new Schema({
   gateId: {type: String, required: true, unique: true},
   revision: {type: Number, required: true},
   payload: {type: Schema.Types.Mixed, required: true},
-  nextAt: {type: Date, required: true},
+  nextAt: {type: Date},
   lease: {type: Schema.Types.Mixed},
 }, {collection: 'pr_routine_checks', timestamps: true})
 schema.index({nextAt: 1})

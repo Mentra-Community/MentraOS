@@ -41,5 +41,5 @@ export type CheckPayload = {
   output: {title: string; summary: string};
   actions: []
 }
-export type PrRoutineCheckRow = {gateId: string; revision: number; payload: PrRoutineCheck; nextAt: Date;
+export type PrRoutineCheckRow = {gateId: string; revision: number; payload: PrRoutineCheck; nextAt?: Date;
   lease?: {id: string; expiresAt: Date}}

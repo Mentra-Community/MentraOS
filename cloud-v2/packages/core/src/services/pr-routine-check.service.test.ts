@@ -8,8 +8,9 @@ import {TestRunError} from './test-result-error'
 import {testRoutineSource} from '../testing/framework-fixtures'
 
 function fixture() {
-  let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, resolveCount = 0, deliveries = 0, lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false
+  let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, contextCalls = 0, resolveCount = 0, deliveries = 0, lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false
   const stored = new Map<string, PrRoutineCheckRow>(), events = new Map<string, string>(), requests = new Map<string, any>(), results = new Map<string, any>()
+  const controls = new Map<string,{deliveryId:string;digest:string;control:unknown;nextAt:Date}>(), processed = new Set<string>()
   const checkPayloads: CheckPayload[] = [], submissions: Array<{selection: any; deadline: string}> = [], cancellations: string[] = []
   const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true,
     sameRepository: true, labels: ['routine:login'], peers: [12]}
@@ -18,13 +19,14 @@ function fixture() {
     async insert(payload, nextAt) {if (!stored.has(payload.gateId)) stored.set(payload.gateId, {gateId: payload.gateId, revision: 0, payload: structuredClone(payload), nextAt})},
     async claim(id) {const row = stored.get(id); if (!row || row.lease) return null; row.lease = {id: String(++lease), expiresAt: new Date(now + 120000)}; return structuredClone(row)},
     async save(row, payload, nextAt) {const current = stored.get(row.gateId)!; if (current.revision !== row.revision || current.lease?.id !== row.lease?.id) return false;
-      stored.set(row.gateId, {gateId: row.gateId, revision: row.revision + 1, payload: structuredClone(payload), nextAt});
+      stored.set(row.gateId, {gateId: row.gateId, revision: row.revision + 1, payload: structuredClone(payload), ...(nextAt ? {nextAt} : {})});
       if (crashCreation && payload.creation && !payload.checkId) {crashCreation = false; return false}
       if (crashProducer && Object.values(payload.buildRequests ?? {}).some(value => value.state === 'uncertain')) {crashProducer = false; return false}
       return true},
-    async due(date) {return [...stored.values()].filter(row => row.nextAt <= date).map(row => row.gateId)},
+    async wake(id, date) {const row=stored.get(id); if(row && (!row.nextAt || row.nextAt>date)) row.nextAt=date},
+    async due(date) {return [...stored.values()].filter(row => row.nextAt && row.nextAt <= date).sort((a,b)=>a.nextAt!.getTime()-b.nextAt!.getTime()).slice(0,20).map(row => row.gateId)},
     async predecessors(number, except) {return [...stored.values()].filter(row => row.payload.context.number === number && row.gateId !== except).map(row => row.gateId)},
-    async eventsDue() {return []}, async eventSettled() {}, async event(id, hash) {if (events.has(id) && events.get(id) !== hash) throw Error('conflict'); events.set(id, hash)},
+    async eventsDue(date) {return [...controls.values()].filter(row=>!processed.has(row.deliveryId)&&row.nextAt<=date)}, async eventSettled(id,nextAt) {if(nextAt) controls.get(id)!.nextAt=nextAt;else processed.add(id)}, async event(id, hash, _gateId, control) {if (events.has(id) && events.get(id) !== hash) throw Error('conflict'); events.set(id, hash); if(control && !controls.has(id)) controls.set(id,{deliveryId:id,digest:hash,control:structuredClone(control),nextAt:new Date(now)})},
   }
   let builds: any[] = [], history: any[] = [], failSubmit = false, failHistory = false, failCancellation: string | undefined, holdCancellation: Promise<void> | undefined, dispatchFailure: boolean | undefined
   const buildCalls: string[] = []
@@ -32,7 +34,7 @@ function fixture() {
   const previews: any[] = [], rerunSubmits: any[] = []
   const definition = {id: 'login', title: 'Account login', steps: [{id: 'open', instruction: 'Open account'}, {id: 'check', instruction: 'Verify login'}], platforms: ['android']}
   const createService = () => new PrRoutineCheckService(rows, {
-    async context() {return structuredClone(context)}, async permission() {return true}, async ownedCheck() {return true},
+    async context() {contextCalls++; return structuredClone(context)}, async permission() {return true}, async ownedCheck() {return true},
     async findCheck() {findCalls++; return deliveries && !lostDelivery ? 99 : undefined}, async producer() {return producerReceipt}, async deliver(_id, payload) {if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return 99}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
   }, {
     async freezeSelection(value: any) {return {...value, build: {repository: 'Mentra-Community/MentraOS', kind: 'android-apk', channel: 'pr', headSha: context.headSha, source: value.source,
@@ -55,7 +57,7 @@ function fixture() {
   return {get service() {return service}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
     failSubmit(value = true) {failSubmit = value}, failHistory(value = true) {failHistory = value}, failCancellation(value?: string) {failCancellation = value}, holdCancellation(value?: Promise<void>) {holdCancellation = value}, history(value: any[]) {history = value},
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
-    get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
+    get contextCalls() {return contextCalls}, get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
     inventory(value: any[]) {builds = value},
     build() {builds = [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}]},
     async intake(event = 'event-one') {await service.intake(12, event, requestInputDigest(event)); await service.tick()},
@@ -161,7 +163,7 @@ test('linked native rerun IDs remain distinct when a new same-head coverage gene
   await f.service.control(control(f, 'coverage-one-rerun')); await f.drain(1);
   const first = f.gate().attempt.rerun!.id; expect(f.previews.at(-1)!.rerunId.startsWith(first)).toBe(true);
   f.gate().attempt.conclusion = 'failure'; f.gate().attempt.members[0]!.settled = true;
-  f.context.baseRef = 'staging'; await f.drain(6); await complete(f);
+  f.context.baseRef = 'staging'; await f.intake('new-coverage'); await f.drain(6); await complete(f);
   expect(f.gate().coverageGeneration).toBe(2); expect(f.gate().attempt.generation).toBe(1);
   await f.service.control(control(f, 'coverage-two-rerun')); await f.drain(1);
   expect(f.gate().attempt.generation).toBe(2); expect(f.gate().attempt.rerun!.id).not.toBe(first);
@@ -184,7 +186,7 @@ test('late old-head success intent cannot publish green after head changes', asy
   const gate = f.gate(), payload = routineCheckPayload(gate, f.now)
   gate.reporting.intended = {revision: 100, payload, digest: requestInputDigest(payload)}
   const before = f.checkPayloads.length; f.context.headSha = 'c'.repeat(40)
-  await f.drain(1)
+  f.stored.get(gate.gateId)!.nextAt = new Date(f.now); await f.drain(1)
   expect(f.checkPayloads.slice(before).some(value => value.conclusion === 'success')).toBe(false)
   await f.drain(2); expect(f.gate().attempt.conclusion).toBe('cancelled')
 })
@@ -398,3 +400,40 @@ test('public progress renders observed completed test counts across named lifecy
   expect(routineCheckPayload(f.gate(), f.now).output.summary).toContain('1/2 test steps');
  }
 });
+
+test('closed and superseded terminal delivery keeps its first timestamp and parks after all custody settles', async () => {
+ for (const changed of ['closed','head']) {
+  const f=fixture(); f.context.labels=[]; await f.intake(); await f.drain(3);
+  if(changed==='closed') f.context.open=false; else f.context.headSha='c'.repeat(40);
+  await f.service.reconcile(f.gate().gateId); const finished=f.gate().attempt.finishedAt, payload=requestInputDigest(routineCheckPayload(f.gate(),f.now)), delivered=f.deliveries;
+  expect(f.gate().attempt.conclusion).toBe('cancelled'); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+  for(let i=0;i<3;i++) {f.advance();await f.service.reconcile(f.gate().gateId)}
+  expect(f.gate().attempt.finishedAt).toBe(finished); expect(requestInputDigest(routineCheckPayload(f.gate(),f.now))).toBe(payload); expect(f.deliveries).toBe(delivered);
+ }
+})
+
+test('more than twenty parked histories do not consume active capacity and persisted PR events wake the existing gate', async () => {
+ const f=fixture(); f.context.labels=[]; await f.intake(); await f.drain(3); const original=f.gate(), calls=f.contextCalls;
+ expect(f.stored.get(original.gateId)!.nextAt).toBeUndefined();
+ for(let i=0;i<40;i++) {const sha=i.toString(16).padStart(40,'0'), gateId=prRoutineGateId(sha);f.stored.set(gateId,{gateId,revision:0,payload:{...structuredClone(original),gateId,headSha:sha,predecessors:[]}})}
+ await f.drain(2); expect(f.contextCalls).toBe(calls); expect(f.stored.size).toBe(41);
+ f.context.labels=['routine:login']; await f.service.intake(12,'wake-labels',requestInputDigest('wake-labels'),structuredClone(f.context));
+ await f.service.tick(); expect(f.gate().coverageGeneration).toBe(2); await f.drain(4); expect(f.gate().attempt.members).toHaveLength(1); expect(f.gate().attempt.conclusion).toBeUndefined();
+ const activeReads=f.contextCalls-calls; expect(activeReads).toBeLessThan(15);
+})
+
+test('persisted native Re-run wakes a parked gate within its event tick and retains a fresh attempt', async () => {
+ const f=fixture(); await f.intake(); f.build(); await f.drain(); await complete(f,'failed');
+ expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined(); const old=f.gate().attempt.generation;
+ await f.service.receiveControl(control(f,'parked-native-rerun')); await f.service.tick();
+ expect(f.gate().attempt.generation).toBe(old+1); expect(f.previews.length).toBeGreaterThan(0);
+ await f.drain(2); expect(f.gate().controls.filter(row=>row.id==='parked-native-rerun')).toHaveLength(1);
+})
+
+test('final delivery outage and timeout containment remain due until delivered and physically settled', async () => {
+ const f=fixture(); await f.intake(); f.build(); await f.drain(); f.outage(); f.advance(3*3600000); await f.drain(1);
+ expect(f.gate().attempt.conclusion).toBe('timed_out'); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeDefined();
+ const request=f.requests.get(f.gate().attempt.members[0]!.requestId!);request.state='terminal';request.terminalStatus='cancelled';request.dispatchCompletion={disposition:'clean'};
+ await f.drain(2); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeDefined(); expect(f.gate().reporting.intended).toBeDefined();
+ f.outage(false); await f.drain(2); expect(f.gate().reporting.intended).toBeUndefined(); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+})

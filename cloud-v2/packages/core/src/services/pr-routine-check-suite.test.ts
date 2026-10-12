@@ -36,8 +36,9 @@ function fixture() {
   const rows: PrRoutineCheckRepository = {
     async get(id) {return structuredClone(gates.get(id) ?? null)}, async insert(payload, nextAt) {if (!gates.has(payload.gateId)) gates.set(payload.gateId, {gateId: payload.gateId, revision: 0, payload: structuredClone(payload), nextAt})},
     async claim(id) {const row = gates.get(id); if (!row || row.lease) return null; row.lease = {id: String(++lease), expiresAt: new Date(now + 120000)}; return structuredClone(row)},
-    async save(row, payload, nextAt) {const old = gates.get(row.gateId)!; if (old.revision !== row.revision || old.lease?.id !== row.lease?.id) return false; if (lostRerunCommit && payload.attempt.rerun?.groups?.some(group => group.previewDigest)) {lostRerunCommit=false; delete old.lease; return false}; gates.set(row.gateId, {gateId: row.gateId, revision: row.revision + 1, payload: structuredClone(payload), nextAt}); return true},
-    async due(date) {return [...gates.values()].filter(row => row.nextAt <= date).map(row => row.gateId)}, async predecessors() {return []}, async eventsDue() {return []}, async event() {}, async eventSettled() {},
+    async save(row, payload, nextAt) {const old = gates.get(row.gateId)!; if (old.revision !== row.revision || old.lease?.id !== row.lease?.id) return false; if (lostRerunCommit && payload.attempt.rerun?.groups?.some(group => group.previewDigest)) {lostRerunCommit=false; delete old.lease; return false}; gates.set(row.gateId, {gateId: row.gateId, revision: row.revision + 1, payload: structuredClone(payload), ...(nextAt ? {nextAt} : {})}); return true},
+    async wake(id,date) {const row=gates.get(id); if(row && (!row.nextAt||row.nextAt>date)) row.nextAt=date},
+    async due(date) {return [...gates.values()].filter(row => row.nextAt && row.nextAt <= date).map(row => row.gateId)}, async predecessors() {return []}, async eventsDue() {return []}, async event() {}, async eventSettled() {},
   }
   mocks.push(spyOn(TestSuiteModel, 'find').mockImplementation(((filter: any) => query(() => [...suites.values()].filter(row => row.payload.members.some((member: any) => member.requestId === filter['payload.members.requestId'])))) as any))
   const store: RerunRepository = {

@@ -7,7 +7,8 @@ export interface PrRoutineCheckRepository {
   get(gateId: string): Promise<PrRoutineCheckRow | null>
   insert(value: PrRoutineCheck, now: Date): Promise<void>
   claim(gateId: string, now: Date): Promise<PrRoutineCheckRow | null>
-  save(row: PrRoutineCheckRow, value: PrRoutineCheck, nextAt: Date): Promise<boolean>
+  save(row: PrRoutineCheckRow, value: PrRoutineCheck, nextAt: Date | null): Promise<boolean>
+  wake(gateId: string, now: Date): Promise<void>
   due(now: Date): Promise<string[]>
   predecessors(prNumber: number, exceptGateId: string): Promise<string[]>
   eventsDue(now: Date): Promise<Array<{deliveryId: string; digest: string; control: unknown}>>
@@ -30,10 +31,11 @@ export const prRoutineCheckRepository: PrRoutineCheckRepository = {
   },
   async save(row, payload, nextAt) {
     const receipt = await PrRoutineCheckModel.updateOne({gateId: row.gateId, revision: row.revision, 'lease.id': row.lease!.id, 'lease.expiresAt': {$gt: new Date()}},
-      {$set: {payload, nextAt}, $inc: {revision: 1}, $unset: {lease: 1}}, {writeConcern: testWriteConcern, timeoutMS: 10_000})
+      {$set: {payload, ...(nextAt ? {nextAt} : {})}, $inc: {revision: 1}, $unset: {lease: 1, ...(!nextAt ? {nextAt: 1} : {})}}, {writeConcern: testWriteConcern, timeoutMS: 10_000})
     return receipt.modifiedCount === 1
   },
-  async due(now) {return (await PrRoutineCheckModel.find({nextAt: {$lte: now}}).select({gateId: 1}).sort({nextAt: 1})
+  async wake(gateId, now) {await PrRoutineCheckModel.updateOne({gateId}, {$min: {nextAt: now}}, {writeConcern: intakeWriteConcern, timeoutMS: 2_000})},
+  async due(now) {return (await PrRoutineCheckModel.find({nextAt: {$exists: true, $lte: now}}).select({gateId: 1}).sort({nextAt: 1})
     .limit(20).read('primary').readConcern('majority').setOptions({timeoutMS: 10_000}).lean()).map(row => row.gateId)},
   async predecessors(prNumber, exceptGateId) {return (await PrRoutineCheckModel.find({'payload.context.number': prNumber,
     gateId: {$ne: exceptGateId}}).select({gateId: 1}).limit(100).read('primary').readConcern('majority').setOptions({timeoutMS: 2_000}).lean()).map(row => row.gateId)},

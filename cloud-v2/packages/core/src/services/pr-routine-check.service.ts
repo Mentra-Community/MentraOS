@@ -85,6 +85,14 @@ export class PrRoutineCheckService {
     const acceptedAt = iso(this.now())
     return {generation, acceptedAt, deadline: iso(this.now() + 3 * 3600_000), members: []}
   }
+  private settled(gate: PrRoutineCheck) {
+    return !!gate.attempt.conclusion && [gate.attempt, ...gate.retired].every(attempt =>
+      attempt.members.every(member => member.settled && !member.containmentPending))
+  }
+  private next(gate: PrRoutineCheck, pendingAt: number) {
+    return this.settled(gate) && !gate.reporting.intended && !gate.reporting.error &&
+      gate.reporting.deliveredDigest === digest(routineCheckPayload(gate, this.now())) ? null : new Date(pendingAt)
+  }
   async intake(number: number, deliveryId: string, eventDigest: string, receivedContext?: PrRoutineContext) {
     const context = receivedContext ?? await this.github.context(number), gateId = prRoutineGateId(context.headSha)
     await this.rows.event(deliveryId, eventDigest, gateId, {kind: 'intake', number, context})
@@ -499,7 +507,7 @@ export class PrRoutineCheckService {
       try {context = suppliedContext ?? await this.github.context(gate.context.number)} catch (error) {if (!gate.attempt.cancellation) throw error}
       if (context.headSha !== gate.headSha || !context.open) {
         gate.attempt.cancellation ??= {kind: context.open ? 'superseded' : 'closed', requestedAt: iso(this.now())}
-        if (gate.attempt.conclusion && gate.attempt.conclusion !== 'timed_out') {gate.attempt.conclusion = 'cancelled'; gate.attempt.finishedAt = iso(this.now())}
+        if (gate.attempt.conclusion && !['timed_out', 'cancelled'].includes(gate.attempt.conclusion)) {gate.attempt.conclusion = 'cancelled'; gate.attempt.finishedAt = iso(this.now())}
       }
       else if (selectionKey(context) !== gate.selectionKey) {
         gate.retired.push({...gate.attempt, cancellation: {kind: 'superseded', requestedAt: iso(this.now())}})
@@ -577,13 +585,13 @@ export class PrRoutineCheckService {
       if (!await this.rows.save(row, gate, new Date(this.now()))) return
       return this.deliver(gateId)
     }
-    await this.rows.save(row, gate, new Date(nextAt))
+    await this.rows.save(row, gate, this.next(gate, nextAt))
   }
   private async deliver(gateId: string) {
     const row = await this.rows.claim(gateId, new Date(this.now()))
     if (!row) return
     const gate = structuredClone(row.payload), intended = gate.reporting.intended
-    if (!intended) {await this.rows.save(row, gate, new Date(this.now() + 15_000)); return}
+    if (!intended) {await this.rows.save(row, gate, this.next(gate, this.now() + 15_000)); return}
     try {
       if (intended.payload.conclusion === 'success') {
         const context = await this.github.context(gate.context.number)
@@ -625,27 +633,30 @@ export class PrRoutineCheckService {
       gate.reporting.deliveredDigest = intended.digest; gate.reporting.deliveredAt = iso(this.now())
       gate.reporting.nextAt = iso(this.now() + 15_000); delete gate.reporting.intended; delete gate.reporting.error
     } catch {gate.reporting.error = 'GitHub App check delivery is unavailable; verify checks:write and webhook installation.'}
-    await this.rows.save(row, gate, new Date(this.now() + 15_000))
+    await this.rows.save(row, gate, this.next(gate, this.now() + 15_000))
   }
   async tick() {
-    const [events, due] = await Promise.all([this.rows.eventsDue(new Date(this.now())), this.rows.due(new Date(this.now()))])
-    await Promise.allSettled([
-      ...events.map(async event => {
-        try {
-          const input = event.control as {kind?: string; number?: number; context?: PrRoutineContext}
-          if (input.kind === 'intake') await this.intake(input.number!, event.deliveryId, event.digest, input.context!)
-          else await this.control(event.control as Parameters<PrRoutineCheckService['control']>[0])
-          await this.rows.eventSettled(event.deliveryId)
-        }
-        catch (error) {await this.rows.eventSettled(event.deliveryId, error instanceof TestRunError && error.status === 409 ? undefined : new Date(this.now() + 30_000))}
-      }),
-      ...due.map(async gateId => {
-        const row = await this.rows.get(gateId)
-        await this.reconcile(gateId)
-        await this.deliver(gateId)
-        for (const predecessor of row?.payload.predecessors ?? []) await this.reconcile(predecessor)
-      }),
-    ])
+    const events = await this.rows.eventsDue(new Date(this.now()))
+    const handled = await Promise.allSettled(events.map(async event => {
+      try {
+        const input = event.control as {kind?: string; number?: number; context?: PrRoutineContext}
+        let gateId: string
+        if (input.kind === 'intake') gateId = (await this.intake(input.number!, event.deliveryId, event.digest, input.context!)).gateId
+        else gateId = (await this.control(event.control as Parameters<PrRoutineCheckService['control']>[0])).gateId
+        await this.rows.wake(gateId, new Date(this.now()))
+        await this.rows.eventSettled(event.deliveryId)
+        return gateId
+      }
+      catch (error) {await this.rows.eventSettled(event.deliveryId, error instanceof TestRunError && error.status === 409 ? undefined : new Date(this.now() + 30_000)); return undefined}
+    }))
+    const due = await this.rows.due(new Date(this.now()))
+    const ready = new Set([...handled.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []), ...due])
+    await Promise.allSettled([...ready].map(async gateId => {
+      const row = await this.rows.get(gateId)
+      await this.reconcile(gateId)
+      await this.deliver(gateId)
+      for (const predecessor of row?.payload.predecessors ?? []) await this.reconcile(predecessor)
+    }))
   }
 
   async detail(gateId: string) {return this.rows.get(gateId)}
