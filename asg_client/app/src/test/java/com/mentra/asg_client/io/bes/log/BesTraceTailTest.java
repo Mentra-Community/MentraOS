@@ -253,6 +253,44 @@ public class BesTraceTailTest {
         assertEquals(reads + 1, count("mh_rlog"));
     }
 
+    @Test
+    public void bootChangeListenerFiresOnceForANewBootIdAndNotForTheFirstOne() throws Exception {
+        List<String> changes = new ArrayList<>();
+        mTail.setBootChangeListener((oldBid, newBid) -> changes.add(oldBid + ">" + newBid));
+        mTail.setSupported(true);
+        idle();
+        mTail.onUartPayload(frame("hm_rlog", bidData(BID_A, 5, 0, 40, LINE_A)));
+        idle();
+        assertTrue("the first boot this store sees is not a change", changes.isEmpty());
+        mTail.onUartPayload(frame("hm_rlog", bidData(BID_A, 5, 40, 80, LINE_A)));
+        idle();
+        assertTrue("the same boot is not a change", changes.isEmpty());
+        mTail.onUartPayload(frame("hm_rlog", bidData(BID_B, 5, 0, 40, LINE_A)));
+        idle();
+        assertEquals(java.util.Collections.singletonList(BID_A + ">" + BID_B), changes);
+        mTail.onUartPayload(frame("hm_rlog", bidData(BID_B, 5, 40, 80, LINE_A)));
+        idle();
+        assertEquals(1, changes.size());
+    }
+
+    @Test
+    public void bootChangeListenerAlsoHearsTheReadyFrameOfANewBootBeforeAnyRead() throws Exception {
+        List<String> changes = new ArrayList<>();
+        mTail.setBootChangeListener((oldBid, newBid) -> changes.add(oldBid + ">" + newBid));
+        mTail.setSupported(true);
+        idle();
+        mTail.onUartPayload(frame("hm_rlog", bidData(BID_A, 5, 0, 40, LINE_A)));
+        idle();
+        mTail.onUartPayload(frame("hm_rlog_ready",
+                new JSONObject().put("g", 6).put("bid", BID_B)));
+        idle();
+        assertEquals(java.util.Collections.singletonList(BID_A + ">" + BID_B), changes);
+        // The read that then carries the [ASG-BES-REBOOT] marker does not announce it twice.
+        mTail.onUartPayload(frame("hm_rlog", bidData(BID_B, 6, 0, 40, LINE_A)));
+        idle();
+        assertEquals(1, changes.size());
+    }
+
     // ---- duplicates and persistence order -----------------------------------------------
 
     private BesTraceStore injectedStore(AtomicInteger syncs, AtomicBoolean failSync) {

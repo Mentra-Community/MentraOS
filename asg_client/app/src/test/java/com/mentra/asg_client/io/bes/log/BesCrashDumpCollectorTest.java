@@ -352,6 +352,125 @@ public class BesCrashDumpCollectorTest {
         assertEquals("match", rig.only().getString("attribution"));
     }
 
+    // ------------------------------------------- hardware watchdog (unit 1, OS-1988 BUGS.md 2)
+
+    private static final String WDT_PREV = "de63cf4fae59fad0";
+    private static final String WDT_NEW = "5d5b60c2873a4567";
+    private static final String OLD_DUMP_BOOT = "a4ff6663c0fb9ddf";
+    private static final String OBSERVED = "aed5a8de7f740ab8";
+    private static final long WDT_HW = 0x01;
+    private static final long WDT_SW = 0x00800030;
+
+    /** Boots through an assert (dump seq 7 collected) and then two bare watchdog resets. */
+    @Test
+    public void watchdogResetWithAnOlderCollectedDumpStillCreatesAResetIncident() throws Exception {
+        Rig rig = new Rig(T0);
+        byte[] dump = dumpOf(OLD_DUMP_BOOT);
+        String id = dumpId(7, dump);
+        rig.syvr(syvr(true, OLD_DUMP_BOOT, null, 0, null, 2, 0x00810030L));
+        rig.syvr(syvrDump(OBSERVED, id, dump.length, OLD_DUMP_BOOT, WDT_HW, WDT_SW));
+        rig.deliverGood(id, dump);
+        assertEquals(1, rig.incidents().size());
+        assertEquals(OBSERVED, rig.store.lastBoot());
+
+        // wdt #1: the BES restarts, the old dump is still saved, no new dump.
+        rig.sched.advance(60_000);
+        rig.syvr(syvrDump(WDT_PREV, id, dump.length, OLD_DUMP_BOOT, WDT_HW, WDT_SW));
+        assertEquals(WDT_PREV, rig.store.lastBoot());
+        assertNotNull(rig.store.find("ML395018B-reset-" + WDT_PREV));
+
+        // wdt #2, exactly the state from the unit.
+        rig.sched.advance(60_000);
+        rig.syvr(syvrDump(WDT_NEW, id, dump.length, OLD_DUMP_BOOT, WDT_HW, WDT_SW));
+        assertEquals(WDT_NEW, rig.store.lastBoot());
+        JSONObject reset = rig.store.find("ML395018B-reset-" + WDT_NEW);
+        assertNotNull(reset);
+        assertEquals("bes_unexpected_reset", reset.getString("reason"));
+        assertEquals(WDT_PREV, reset.getString("bootId"));
+        assertEquals(WDT_NEW, reset.getString("observedBootId"));
+        assertEquals(WDT_HW, reset.getLong("resetHw"));
+        assertEquals(WDT_SW, reset.getLong("resetSw"));
+        assertEquals(3, rig.incidents().size());
+        // The old dump was neither re-announced nor collected again.
+        assertEquals(1, rig.sender.sent.size());
+        assertEquals(3, rig.stored.size());
+    }
+
+    /**
+     * Why unit 1 made no reset incident: the build it ran (303004203) classified only the
+     * crash-reboot bit, so 0x01 / 0x00800030 was "expected". The collector's step 3 itself is
+     * sound once the classifier knows the watchdog class (test above).
+     */
+    @Test
+    public void theClassifierBeforeTheMeasuredCodesMissedTheWatchdogReset() throws Exception {
+        Rig rig = new Rig(T0);
+        rig.collector.setResetClassifier((hw, sw) -> (sw & (1L << 25)) != 0);
+        rig.syvr(syvr(true, WDT_PREV, null, 0, null, 2, 0x00810030L));
+        rig.syvr(syvr(true, WDT_NEW, null, 0, null, WDT_HW, WDT_SW));
+        assertNull(rig.store.find("ML395018B-reset-" + WDT_NEW));
+        assertEquals(WDT_NEW, rig.store.lastBoot());
+
+        Rig measured = new Rig(T0);
+        measured.syvr(syvr(true, WDT_PREV, null, 0, null, 2, 0x00810030L));
+        measured.syvr(syvr(true, WDT_NEW, null, 0, null, WDT_HW, WDT_SW));
+        assertNotNull(measured.store.find("ML395018B-reset-" + WDT_NEW));
+    }
+
+    @Test
+    public void watchdogResetWithALegacyCollectedDumpStillCreatesAResetIncident() throws Exception {
+        Rig rig = new Rig(T0);
+        byte[] dump = bytes("[ASSERT] old firmware, no boot id\n[CRASH-CONTEXT] v=1 seq=3\n");
+        String id = dumpId(3, dump);
+        rig.syvr(syvr(true, WDT_PREV, null, 0, null, 2, 0x00810030L));
+        rig.syvr(syvrDump(OBSERVED, id, dump.length, null, WDT_HW, WDT_SW));
+        rig.deliverGood(id, dump);
+        assertEquals("unknown", rig.only().getString("attribution"));
+        assertEquals("the legacy dump explains its own transition only", 1, rig.stored.size());
+
+        rig.sched.advance(60_000);
+        rig.syvr(syvrDump(WDT_NEW, id, dump.length, null, WDT_HW, WDT_SW));
+        assertNotNull(rig.store.find("ML395018B-reset-" + WDT_NEW));
+        assertEquals(2, rig.stored.size());
+        assertEquals(1, rig.sender.sent.size());
+    }
+
+    @Test
+    public void watchdogResetIncidentIsRaisedOnceAcrossARestartAndRepeatedReads() throws Exception {
+        Rig rig = new Rig(T0);
+        byte[] dump = dumpOf(OLD_DUMP_BOOT);
+        String id = dumpId(7, dump);
+        rig.syvr(syvr(true, WDT_PREV, null, 0, null, 2, 0x00810030L));
+        JSONObject again = syvrDump(WDT_NEW, id, dump.length, OLD_DUMP_BOOT, WDT_HW, WDT_SW);
+        // The dump is already collected from an earlier boot of the unit.
+        rig.store.markDumpCollected(id);
+        rig.syvr(again);
+        rig.syvr(again);
+        rig.syvr(again);
+        assertEquals(java.util.Collections.singletonList("ML395018B-reset-" + WDT_NEW), rig.stored);
+        assertTrue("an already collected dump is never pulled again", rig.sender.sent.isEmpty());
+
+        // The process restarts before last_boot could be trusted: the same boot is not announced again.
+        rig.store.saveLastBoot(WDT_PREV);
+        Rig restarted = new Rig(T0);
+        restarted.syvr(again);
+        assertTrue(restarted.stored.isEmpty());
+        assertEquals(1, restarted.incidents().size());
+        assertEquals(WDT_NEW, restarted.store.lastBoot());
+    }
+
+    @Test
+    public void aNewDumpFromTheSameWatchdogRestartGivesOnlyTheDumpIncident() throws Exception {
+        Rig rig = new Rig(T0);
+        rig.syvr(syvr(true, WDT_PREV, null, 0, null, 2, 0x00810030L));
+        byte[] dump = dumpOf(WDT_PREV); // the boot ASG saw crashed, then restarted through the watchdog
+        String id = dumpId(8, dump);
+        rig.syvr(syvrDump(WDT_NEW, id, dump.length, WDT_PREV, WDT_HW, WDT_SW));
+        rig.deliverGood(id, dump);
+        assertEquals("match", rig.only().getString("attribution"));
+        assertNull(rig.store.find("ML395018B-reset-" + WDT_NEW));
+        assertEquals(1, rig.stored.size());
+    }
+
     // ------------------------------------------------------ no-dump (reset) incidents
 
     @Test

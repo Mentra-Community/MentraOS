@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.log.BesBootRecheck;
 import com.mentra.asg_client.io.bes.log.BesIncidentNotifier;
 import com.mentra.asg_client.io.bes.log.BesLivenessMonitor;
 import com.mentra.asg_client.io.bes.log.BesTraceTail;
@@ -128,6 +129,12 @@ public class CommandProcessor {
         // A wedged BES is otherwise silent on Android's side; this is what turns the stall into a
         // record that survives to the incident report.
         BesLivenessMonitor.get().start(this::probeBesForLiveness);
+        // A BES-only reset leaves the MTK up, so nothing else would re-read sr_syvr and run the
+        // crash collector. A new boot id in the TRACE stream, or a confirmed reboot, does.
+        BesBootRecheck bootRecheck = BesBootRecheck.create(this::requestBesSystemVersionNow);
+        BesTraceTail.get().setBootChangeListener(
+                (oldBid, newBid) -> bootRecheck.onBootChange("trace bid " + oldBid + " -> " + newBid));
+        BesLivenessMonitor.get().setRebootListener(() -> bootRecheck.onBootChange("liveness"));
         this.chunkReassembler = new ChunkReassembler();
 
         // Register vendor-supplied protocol strategies (e.g. the Mentra Live MCU wire format)
@@ -635,7 +642,13 @@ public class CommandProcessor {
         return k900CommandHandler.requestSystemVersion();
     }
 
+    private boolean requestBesSystemVersionNow() {
+        return k900CommandHandler != null && k900CommandHandler.requestSystemVersion();
+    }
+
     public void cleanup() {
+        BesTraceTail.get().setBootChangeListener(null);
+        BesLivenessMonitor.get().setRebootListener(null);
         BesTraceTail.get().detach();
         BesLivenessMonitor.get().stop();
         if (streamCommandHandler != null) streamCommandHandler.cleanup();
