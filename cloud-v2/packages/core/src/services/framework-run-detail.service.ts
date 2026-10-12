@@ -2,7 +2,7 @@ import {z} from 'zod';
 import {TestAssetModel, TestRunModel} from '../models/test-run.model';
 import {testWriteConcern} from '../models/test-write-concern';
 import {recordedFrameworkRunSchema, type RecordedFrameworkRun} from '../types/framework-run.types';
-import {TestingDetailStorage, testingDetailPointerSchema} from './testing-detail-storage.service';
+import {TestingDetailStorage} from './testing-detail-storage.service';
 import {requestInputDigest} from './test-request.service';
 import {TestRunError} from './test-result-error';
 import type {StoredTestAsset} from './test-asset.service';
@@ -50,17 +50,32 @@ export async function findAcceptedTestAsset(runId: string, assetId: string): Pro
 
 export async function completeStoredRun(payload: RecordedFrameworkRun, payloadSha256: string) {
   const runId = payload.result.runId;
-  const acceptedAssets = await TestAssetModel.find({runId}).select({runId: 1, assetId: 1, storageKey: 1, sizeBytes: 1, sha256: 1, _id: 0})
+  const read = () => TestRunModel.findOne({runId, resultSchemaVersion: 1, payloadSha256})
     .read('primary').readConcern('majority').lean();
-  const detail = await writeRunEnvelope(payload, payloadSha256, acceptedAssets, true);
-  const result = await TestRunModel.updateOne({runId, resultSchemaVersion: 1, payloadSha256, uploadsComplete: false},
-    {$set: {detail, uploadsComplete: true}}, {writeConcern: testWriteConcern});
-  if (result.matchedCount !== 1) {
-    const winner = await TestRunModel.findOne({runId, resultSchemaVersion: 1, payloadSha256, uploadsComplete: true})
-      .read('primary').readConcern('majority').lean();
-    if (!winner || requestInputDigest(testingDetailPointerSchema.parse(winner.detail)) !== requestInputDigest(detail))
-      throw new TestRunError(409, 'Completed result publication conflicts');
+  const completed = async () => {
+    const row = await read();
+    if (!row?.uploadsComplete) return false;
+    await readStoredRun(row);
+    return true;
+  };
+  const current = await read();
+  if (!current) throw new TestRunError(409, 'Result publication identity is unavailable');
+  if (current.uploadsComplete) await readStoredRun(current);
+  else {
+    try {
+      const acceptedAssets = await TestAssetModel.find({runId}).select({runId: 1, assetId: 1, storageKey: 1, sizeBytes: 1, sha256: 1, _id: 0})
+        .read('primary').readConcern('majority').lean();
+      try {verifyRunEnvelope({version: 1, payload, payloadSha256, acceptedAssets}, true);}
+      catch {throw new TestRunError(409, 'Required manifest uploads are not acknowledged');}
+      const detail = await writeRunEnvelope(payload, payloadSha256, acceptedAssets, true);
+      const result = await TestRunModel.updateOne({runId, resultSchemaVersion: 1, payloadSha256, uploadsComplete: false},
+        {$set: {detail, uploadsComplete: true}}, {writeConcern: testWriteConcern});
+      if (result.matchedCount !== 1 && !await completed()) throw new TestRunError(409, 'Completed result publication conflicts');
+    } catch (error) {
+      // A concurrent winner may have deleted receipts; a timed-out update may have committed.
+      if (!await completed()) throw error;
+    }
   }
-  // This deletes only the new writer's pending custody after exact accepted authority is durable.
+  // A failed/partial cleanup rejects completion. The next host retry settles this same authority.
   await TestAssetModel.deleteMany({runId}, {writeConcern: testWriteConcern});
 }

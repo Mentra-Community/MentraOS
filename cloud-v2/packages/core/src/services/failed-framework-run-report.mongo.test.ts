@@ -6,7 +6,8 @@ import {tmpdir} from "node:os"
 import {join} from "node:path"
 import {ReportModel} from "../models/report.model"
 import {ReportAssetModel, reconcileReportAssetIndexes} from "../models/report-asset.model"
-import {writeRunEnvelope} from "./framework-run-detail.service"
+import {writeRunEnvelope, completeStoredRun} from "./framework-run-detail.service"
+import {TestAssetService} from "./test-asset.service"
 import {TestAssetModel, TestRunModel} from "../models/test-run.model"
 import {testFrameworkBinding, testRoutineSource} from "../testing/framework-fixtures"
 import {recordedFrameworkRunSchema} from "../types/framework-run.types"
@@ -119,6 +120,39 @@ const uri = process.env.FAILED_RUN_REPORT_MONGO_URI
       const detailPointer = await writeRunEnvelope(frozen, hash, [{runId: frozen.result.runId, assetId: 'setup-diagnostics', storageKey, sha256: digest, sizeBytes: bytes.length}], true)
       await TestRunModel.collection.insertOne({runId: frozen.result.runId, payloadSha256: hash, uploadsComplete: true, resultSchemaVersion: 1, detail: detailPointer})
       await TestAssetModel.deleteMany({})
+      // A duplicate that began before completion must reuse the compacted winner,
+      // even if its pending receipt insert happens after completion's cleanup.
+      const stale = spyOn(TestRunModel, 'findOne').mockImplementationOnce(() => ({
+        select() {return this}, read() {return this}, readConcern() {return this}, async lean() {return null},
+      }) as never)
+      try {
+        const uploaded = await new TestAssetService(undefined, () => storage).uploadDeclaredAsset('failed-run',
+          {assetId: 'setup-diagnostics', kind: 'metadata', contentType: 'application/json', filename: 'setup-diagnostics.json',
+            sizeBytes: bytes.length, sha256: digest}, new Blob([bytes]).stream(),
+          new Headers({'content-type': 'application/json', 'content-length': String(bytes.length)}), async () => {})
+        expect(uploaded.created).toBe(false)
+        expect(await TestAssetModel.countDocuments()).toBe(0)
+        expect(await storage.getObject(storageKey)).toEqual(bytes)
+      } finally {stale.mockRestore()}
+      const pending = structuredClone(frozen)
+      pending.requestId = pending.result.runId = 'pending-completion'
+      const pendingHash = requestInputDigest(pending)
+      const emptyDetail = await writeRunEnvelope(pending, pendingHash, [], false)
+      await TestRunModel.collection.insertOne({runId: pending.result.runId, payloadSha256: pendingHash,
+        resultSchemaVersion: 1, detail: emptyDetail, uploadsComplete: false})
+      await TestAssetModel.create({runId: pending.result.runId, assetId: 'setup-diagnostics', storageKey,
+        sha256: digest, sizeBytes: bytes.length})
+      const realUpdate = TestRunModel.updateOne.bind(TestRunModel)
+      const updateLost = spyOn(TestRunModel, 'updateOne').mockImplementationOnce(((...args: any[]) =>
+        (realUpdate as any)(...args).then(() => {throw Error('committed update acknowledgement lost')})) as never)
+      const deleteLost = spyOn(TestAssetModel, 'deleteMany').mockRejectedValueOnce(Error('receipt cleanup unavailable'))
+      try {
+        await expect(completeStoredRun(pending, pendingHash)).rejects.toThrow('receipt cleanup unavailable')
+        expect((await TestRunModel.findOne({runId: pending.result.runId}).lean())!.uploadsComplete).toBe(true)
+        expect(await TestAssetModel.countDocuments({runId: pending.result.runId})).toBe(1)
+        await Promise.all([completeStoredRun(pending, pendingHash), completeStoredRun(pending, pendingHash)])
+        expect(await TestAssetModel.countDocuments({runId: pending.result.runId})).toBe(0)
+      } finally {updateLost.mockRestore(); deleteLost.mockRestore()}
       const receipts = await Promise.all([service.complete(frozen, hash), service.complete(frozen, hash)])
       expect(receipts[0]?.reportId).toBe(receipts[1]?.reportId)
       const final = await service.complete(frozen, hash)

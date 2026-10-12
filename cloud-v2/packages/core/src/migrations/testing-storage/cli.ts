@@ -5,7 +5,7 @@ import mongoose from 'mongoose';
 import {requestInputDigest} from '../../services/test-request.service';
 import {createRecordedFrameworkRunSummaryProjection} from '../../services/framework-run-summary.service';
 import {writeRunEnvelope, verifyRunEnvelope, readStoredRun} from '../../services/framework-run-detail.service';
-import {readRoutineDefinition, writeRoutineDefinition, routineCollectionDetailSchema} from '../../services/routine-definition-detail.service';
+import {readRoutineDefinition, writeRoutineDefinition, routineCollectionDetailSchema, readRoutineCollection, writeRoutineCollection} from '../../services/routine-definition-detail.service';
 import {TestingDetailStorage} from '../../services/testing-detail-storage.service';
 import {reportNativeSnapshotSchema, expandNativeReportSnapshot} from '../../services/report-native-detail.service';
 import {frameworkRunOutcome, frameworkEvidenceComplete, recordedFrameworkRunSchema} from '../../types/framework-run.types';
@@ -18,6 +18,21 @@ const directory = resolve(directoryArgument), uri = process.env.MONGO_URL;
 if (!uri) throw Error('MONGO_URL must be injected from the existing Core environment');
 const client = new mongoose.mongo.MongoClient(uri, {serverSelectionTimeoutMS: 10_000, socketTimeoutMS: 120_000, promoteValues: false});
 const details = new TestingDetailStorage();
+const verifyBackup = async (path: string, database: string) => {
+  const manifest = JSON.parse(await readFile(join(path, 'full-backup-manifest.private.json'), 'utf8'));
+  const receipt = JSON.parse(await readFile(join(path, 'full-restore-verification.private.json'), 'utf8'));
+  const digest = createHash('sha256').update(JSON.stringify(manifest.files)).digest('hex');
+  if (manifest.database !== database || manifest.environment !== (process.env.CLOUD_CORE_ENVIRONMENT ?? 'local') ||
+    receipt.database !== database || receipt.verified !== true || receipt.originalManifestSha256 !== manifest.manifestSha256 ||
+    digest !== manifest.manifestSha256 || !manifest.files.length || !receipt.collections.length)
+    throw Error('Full backup restore verification does not match this database and manifest');
+  for (const file of manifest.files) {
+    const bytes = await readFile(join(path, 'baseline-full-db', file.path));
+    if (bytes.length !== file.bytes || createHash('sha256').update(bytes).digest('hex') !== file.sha256)
+      throw Error('Full verified backup archive differs');
+  }
+  return {directory: path, manifestSha256: manifest.manifestSha256, verificationSha256: requestInputDigest(receipt)};
+};
 const write = async (path: string, value: unknown) => {
   const temporary = `${path}.tmp`, file = await open(temporary, 'w', 0o600);
   try {await file.writeFile(JSON.stringify(value, null, 2)); await file.sync();} finally {await file.close();}
@@ -28,7 +43,7 @@ const digestJsonBson = (v: unknown) => requestInputDigest(mongoose.mongo.BSON.EJ
 const value = <T>(v: T): T => mongoose.mongo.BSON.EJSON.deserialize(mongoose.mongo.BSON.EJSON.serialize(v), {relaxed: true}) as T;
 type ScopeRow = {collection: 'test_runs' | 'routine_definitions' | 'routine_collections' | 'reports'; id: string; bsonSha256: string; bsonBytes: number;
   receiptRows?: {collection: 'test_assets' | 'report_assets'; ids: string[]; count: number; bytes: number; sha256: string}};
-type Scope = {version: 1; database: string; environment: string; capturedAt: string; rows: ScopeRow[]};
+type Scope = {version: 1; database: string; environment: string; capturedAt: string; rows: ScopeRow[]; backup: Awaited<ReturnType<typeof verifyBackup>>};
 const backupPath = (row: ScopeRow) => join(directory, 'source', `${row.collection}-${row.id}.bson`);
 const receiptPath = (row: ScopeRow) => join(directory, 'receipts', `${row.collection}-${row.id}.json`);
 const appliedPath = (row: ScopeRow) => join(directory, 'applied', `${row.collection}-${row.id}.json`);
@@ -42,6 +57,9 @@ try {
   for (const folder of ['source', 'receipts', 'applied']) await mkdir(join(directory, folder), {recursive: true, mode: 0o700});
   if (operation === 'plan') {
     if ((await readdir(join(directory, 'source'))).length) throw Error('Plan requires a fresh operation directory');
+    const backupDirectory = flags.find(flag => flag.startsWith('--backup-directory='))?.slice('--backup-directory='.length);
+    if (!backupDirectory) throw Error('Plan requires --backup-directory with a full restore-verified backup');
+    const backup = await verifyBackup(resolve(backupDirectory), db.databaseName);
     const rows: ScopeRow[] = [];
     const add = async (collection: ScopeRow['collection'], document: Record<string, unknown>, receiptFilter?: Record<string, unknown>, receiptCollection?: 'test_assets' | 'report_assets') => {
       const bson = mongoose.mongo.BSON.serialize(document), row: ScopeRow = {collection, id: String(document._id),
@@ -64,7 +82,7 @@ try {
     for await (const row of db.collection('reports').find({reportId: {$in: reports}, nativeDiagnostics: {$exists: false}}, {batchSize: 10}))
       await add('reports', row, {reportId: row.reportId, sourceTestRunId: {$exists: true}}, 'report_assets');
     rows.sort((a, b) => a.collection.localeCompare(b.collection) || a.id.localeCompare(b.id));
-    const scope: Scope = {version: 1, database: db.databaseName, environment: process.env.CLOUD_CORE_ENVIRONMENT ?? 'local', capturedAt: new Date().toISOString(), rows};
+    const scope: Scope = {version: 1, database: db.databaseName, environment: process.env.CLOUD_CORE_ENVIRONMENT ?? 'local', capturedAt: new Date().toISOString(), rows, backup};
     await write(join(directory, 'scope.private.json'), scope);
     console.log(JSON.stringify({operation, records: rows.length, scopeSha256: requestInputDigest(scope),
       bytes: rows.reduce((sum, row) => sum + row.bsonBytes + (row.receiptRows?.bytes ?? 0), 0)}));
@@ -72,6 +90,8 @@ try {
     const scope: Scope = JSON.parse(await readFile(join(directory, 'scope.private.json'), 'utf8'));
     if (scope.database !== db.databaseName || scope.environment !== (process.env.CLOUD_CORE_ENVIRONMENT ?? 'local')) throw Error('Scope database or storage environment differs');
     const scopeSha256 = requestInputDigest(scope);
+    if (requestInputDigest(await verifyBackup(scope.backup.directory, db.databaseName)) !== requestInputDigest(scope.backup))
+      throw Error('Full restore verification changed since scope preparation');
     const parseReceipts = async (row: ScopeRow) => {
       if (!row.receiptRows) return [];
       const bytes = await readFile(join(directory, 'source', `${row.collection}-${row.id}-${row.receiptRows.collection}.bson`));
@@ -91,7 +111,12 @@ try {
       else runRows.set(doc.runId, row);
     }
     const originalRun = async (runId: string) => {
-      const row = runRows.get(runId); if (!row) throw Error('Report result authority is outside this scope');
+      const row = runRows.get(runId);
+      if (!row) {
+        const accepted: any = value(await db.collection('test_runs').findOne({runId, resultSchemaVersion: 1, uploadsComplete: true}));
+        if (!accepted) throw Error('Report accepted result authority is unavailable');
+        return readStoredRun(accepted, details);
+      }
       const doc: any = value(await readBson(row)), assets = await parseReceipts(row);
       return verifyRunEnvelope({version: 1, payload: doc.payload, payloadSha256: doc.payloadSha256,
         acceptedAssets: assets.map(asset => ({runId: asset.runId, assetId: asset.assetId, storageKey: asset.storageKey,
@@ -116,8 +141,13 @@ try {
         const definitions = [];
         for (const member of doc.members) {
           const source = definitionRows.get(`${doc.commit}:${member.routineId}:${member.platform}`);
-          if (!source) throw Error('Collection exact member is absent from scope');
-          const definition: any = value(await readBson(source));
+          const definition: any = source ? value(await readBson(source)) : value(await db.collection('routine_definitions').findOne({definitionRevision: doc.commit, routineId: member.routineId, platform: member.platform}));
+          if (!definition) throw Error('Collection exact member is unavailable');
+          if (!source) {
+            const found = await readRoutineDefinition(definition, details);
+            if (found.definitionSha256 !== member.definitionSha256) throw Error('Collection exact member digest differs');
+            definitions.push(found); continue;
+          }
           const found = routineEnrollmentSchema.parse({routineId: definition.routineId, platform: definition.platform,
             definitionRevision: definition.definitionRevision, definitionSha256: definition.definitionSha256,
             definition: definition.definition, routineSource: definition.routineSource});
@@ -126,7 +156,7 @@ try {
         }
         const collection = routineCollectionDetailSchema.parse({commit: doc.commit, version: doc.version, definitions});
         if (requestInputDigest(collection) !== doc.manifestSha256) throw Error('Collection original manifest differs');
-        update = {detail: await details.write('collection', doc.commit, collection)}; removed = [];
+        update = {detail: (await writeRoutineCollection(collection, details)).detail}; removed = [];
       } else {
         const assets = await parseReceipts(row), runIds = [...new Set(assets.map(asset => asset.sourceTestRunId))];
         if (runIds.length !== 1) throw Error('Native report references more than one result');
@@ -161,7 +191,7 @@ try {
         if (row.collection === 'test_runs') await readStoredRun({...doc, ...receipt.update}, details);
         else if (row.collection === 'routine_definitions') await readRoutineDefinition({...doc, ...receipt.update}, details);
         else if (row.collection === 'routine_collections') {
-          const body = await details.read(receipt.update.detail, routineCollectionDetailSchema);
+          const body = await readRoutineCollection(receipt.update.detail, details);
           if (requestInputDigest(body) !== doc.manifestSha256) throw Error('Collection digest differs');
         } else {
           const snapshot = await details.read(receipt.update.nativeDiagnostics.detail, reportNativeSnapshotSchema);
@@ -182,6 +212,24 @@ try {
         ['test_runs', {'payload.schemaVersion': 1}], ['routine_definitions', {definition: {$exists: true}}],
         ['routine_collections', {detail: {$exists: false}}], ['reports', {reportId: {$in: await db.collection('report_assets').distinct('reportId', {sourceTestRunId: {$exists: true}})}, nativeDiagnostics: {$exists: false}}],
       ] as const) if (await db.collection(collection).countDocuments({...filter, _id: {$nin: ids(collection)}})) throw Error('Post-drain coverage delta requires verified export and approval');
+      for (const row of scope.rows) {
+        const doc = await db.collection(row.collection).findOne({_id: new mongoose.mongo.ObjectId(row.id)});
+        const receipt = JSON.parse(await readFile(receiptPath(row), 'utf8'));
+        if (!doc || receipt.scopeSha256 !== scopeSha256 || receipt.sourceSha256 !== row.bsonSha256)
+          throw Error('Approved record or export receipt is unavailable');
+        const expected: any = await readBson(row);
+        for (const [key, setting] of Object.entries(receipt.update)) expected[key] = setting;
+        for (const key of receipt.removed) delete expected[key];
+        const committed = digestJsonBson(value(doc)) === digestJsonBson(value(expected));
+        if (!committed && digestBson(doc) !== row.bsonSha256)
+          throw Error('Approved original record changed; re-export and approval required');
+        if (row.receiptRows) {
+          const approved = await parseReceipts(row), hashes = new Map(approved.map(doc => [String(doc._id), digestJsonBson(doc)]));
+          const current = await db.collection(row.receiptRows.collection).find({_id: {$in: row.receiptRows.ids.map(id => new mongoose.mongo.ObjectId(id))}}).toArray();
+          if ((!committed && current.length !== approved.length) || current.some(doc => hashes.get(String(doc._id)) !== digestJsonBson(value(doc))))
+            throw Error('Approved receipt rows changed before cutover');
+        }
+      }
       for (const row of [...scope.rows].sort((a,b) => ['test_runs', 'routine_definitions', 'routine_collections', 'reports'].indexOf(a.collection) - ['test_runs', 'routine_definitions', 'routine_collections', 'reports'].indexOf(b.collection))) {
         const doc = await db.collection(row.collection).findOne({_id: new mongoose.mongo.ObjectId(row.id)});
         if (!doc) throw Error('Approved original record is missing');
@@ -225,7 +273,7 @@ try {
         if (!doc) throw Error('Converted record is missing');
         if (row.collection === 'test_runs') await readStoredRun(doc, details);
         else if (row.collection === 'routine_definitions') await readRoutineDefinition(doc, details);
-        else if (row.collection === 'routine_collections') await details.read(doc.detail, routineCollectionDetailSchema);
+        else if (row.collection === 'routine_collections') await readRoutineCollection(doc.detail, details);
         else await details.read(value(doc.nativeDiagnostics.detail), reportNativeSnapshotSchema);
         if (row.receiptRows && await db.collection(row.receiptRows.collection).countDocuments({_id: {$in: row.receiptRows.ids.map(id => new mongoose.mongo.ObjectId(id))}}))
           throw Error('Approved redundant receipt rows remain');

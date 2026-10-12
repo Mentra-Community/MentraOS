@@ -124,7 +124,7 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
     async () => {projectionAttempts++;},
     source,
     undefined,
-    {async list() {return [];}, async complete() {throw new FrameworkResultConflict('not acknowledged');}},
+    {async complete(value) {if (!value.uploadsComplete) throw new FrameworkResultConflict('not acknowledged');}},
     {async complete() {return undefined;}},
   )
   const first = await service.ingest(run, "mini"), duplicate = await service.ingest(run, "mini");
@@ -270,7 +270,7 @@ test("interrupted cleanup ingestion retries the same failed result while hardwar
     routineSource: frozen.routineSource, platform: frozen.platform, laneId: frozen.laneId, build: frozen.build}}),
     async run => {projections++; expect(run.result.teardown.ready).toBe(false);},
     async () => ({definition: {steps: [{id: "required"}]}}) as unknown as RoutineEnrollment,
-    undefined, {async list() {return [];}, async complete() {}}, {async complete() {return undefined;}});
+    undefined, {async complete() {}}, {async complete() {return undefined;}});
   const digest = requestInputDigest(frozen);
   const first = await service.ingest(frozen, frozen.hostId);
   expect(first).toMatchObject({created: true, payloadSha256: digest});
@@ -687,7 +687,8 @@ test('asset declarations and accepted mappings preserve authorization and missin
   let owner = 'mini', acknowledged = false;
   const repository: FrameworkResultRepository = {async insert() {}, async getByRequest() {return null;}, async getByRun() {return null;},
     async getAsset(identity, id) {return ('requestId' in identity ? identity.requestId : identity.runId) === 'missing' ? null
-      : {runId: 'frozen-run', asset: id === declaration.id ? declaration : null};}};
+      : {runId: 'frozen-run', asset: id === declaration.id ? declaration : null, accepted: acknowledged ?
+          {runId: 'frozen-run', assetId: declaration.id, storageKey: 'original', sha256: declaration.sha256, sizeBytes: declaration.size} : null};}};
   const find = spyOn(TestRunModel, 'findOne').mockReturnValue({select() {return this;}, read() {return this;}, readConcern() {return this;},
     lean: async () => null} as never);
   const receipt = spyOn(TestAssetModel, 'findOne').mockReturnValue({read() {return this;}, readConcern() {return this;},
@@ -756,7 +757,7 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
     rows.set(row.assetId, row); return row;
   }}, () => storage);
   const service = new FrameworkResultService(
-    {async insert() {}, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset(_identity, assetId) {return {runId: stored.payload.result.runId, asset: stored.payload.assets.find(asset => asset.id === assetId) ?? null};}},
+    {async insert() {}, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset(_identity, assetId) {return {runId: stored.payload.result.runId, asset: stored.payload.assets.find(asset => asset.id === assetId) ?? null, accepted: rows.get(assetId) ?? null};}},
     async () => ({
       hostId: 'mini',
       input: {
@@ -772,13 +773,19 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
     async () => ({definition: {steps: [{id: "required"}]}}) as unknown as RoutineEnrollment,
     assets,
     {
-      async list() {
+      async complete(value) {
+        expect(value.payloadSha256).toBe(stored.payloadSha256);
+        if (stored.uploadsComplete) return;
         inventoryReads++; const all = [...rows.values()];
         if (corrupt === "duplicate") all[1] = {...all[0]!};
         if (corrupt === "digest") all[0] = {...all[0]!, sha256: "d".repeat(64)};
         if (corrupt === "size") all[0] = {...all[0]!, sizeBytes: bytes.length + 1};
-        return all;
-      }, async complete(value) {expect(value.payloadSha256).toBe(stored.payloadSha256); completionWrites++; stored.uploadsComplete = true;},
+        const indexed = new Map(all.map(asset => [asset.assetId, asset]));
+        if (all.length !== run.assets.length || indexed.size !== all.length || !run.assets.every(asset =>
+          indexed.get(asset.id)?.sha256 === asset.sha256 && indexed.get(asset.id)?.sizeBytes === asset.size))
+          throw new FrameworkResultConflict('not acknowledged');
+        completionWrites++; stored.uploadsComplete = true;
+      },
     },
     {async complete() {return undefined;}},
   )
@@ -877,7 +884,7 @@ test('failed recording publication preserves immutable step offsets and settled 
     async () =>
       ({definition: {steps: frozen.result.steps.map(step => ({id: step.id}))}}) as unknown as RoutineEnrollment,
     undefined,
-    {async list() {return [];}, async complete() {}},
+    {async complete() {}},
     {async complete() {return undefined;}},
   )
   const originalDigest = requestInputDigest(frozen);
@@ -898,3 +905,27 @@ test('failed recording publication preserves immutable step offsets and settled 
     recordingLocation: {...step.recordingLocation, startOffsetMs: step.recordingLocation!.startOffsetMs + 1}}))}}, frozen.hostId))
     .rejects.toThrow('different terminal result');
 })
+
+
+test('completed media resolves its descriptor and accepted mapping from one envelope', async () => {
+  const {TestingDetailStorage} = await import('./testing-detail-storage.service');
+  const {writeRunEnvelope} = await import('./framework-run-detail.service');
+  const {TestAssetService} = await import('./test-asset.service');
+  const run = structuredClone(lifecycleRuns[0]!.run);
+  const asset = {id: 'video', kind: 'recording' as const, path: 'recording.mp4', mimeType: 'video/mp4' as const,
+    size: 20, sha256: 'a'.repeat(64)};
+  run.assets = [asset]; const payloadSha256 = requestInputDigest(run);
+  const detail = await writeRunEnvelope(run, payloadSha256, [{runId: run.result.runId, assetId: asset.id,
+    storageKey: 'original/recording', sizeBytes: asset.size, sha256: asset.sha256}], true);
+  const row = spyOn(TestRunModel, 'findOne').mockReturnValue({read() {return this;}, readConcern() {return this;},
+    lean: async () => ({runId: run.result.runId, payloadSha256, detail, uploadsComplete: true})} as never);
+  const read = spyOn(TestingDetailStorage.prototype, 'read');
+  const stream = spyOn(TestAssetService.prototype, 'mediaDeclaredAsset').mockResolvedValue(new Response(null, {status: 206}));
+  const custody = spyOn(TestAssetModel, 'findOne');
+  try {
+    expect((await new FrameworkResultService().mediaByRun(run.result.runId, asset.id,
+      new Request('https://example.test/video', {method: 'HEAD', headers: {range: 'bytes=0-4'}}))).status).toBe(206);
+    expect(read).toHaveBeenCalledTimes(1); expect(custody).not.toHaveBeenCalled();
+    expect(stream.mock.calls[0]?.[1]).toMatchObject({storageKey: 'original/recording', sha256: asset.sha256});
+  } finally {row.mockRestore(); read.mockRestore(); stream.mockRestore(); custody.mockRestore();}
+});

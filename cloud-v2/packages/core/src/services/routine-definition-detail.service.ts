@@ -1,11 +1,36 @@
 import {z} from 'zod';
+import {routineSourceRefSchema} from '../types/framework-version.types';
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
 import {requestInputDigest} from './test-request.service';
-import {TestingDetailStorage} from './testing-detail-storage.service';
+import {TestingDetailStorage, testingDetailPointerSchema} from './testing-detail-storage.service';
 import {TestRunError} from './test-result-error';
 
 export const routineCollectionDetailSchema = z.object({commit: z.string().regex(/^[a-f0-9]{40}$/),
   version: z.number().int().positive(), definitions: z.array(routineEnrollmentSchema)}).strict();
+export const routineCollectionManifestSchema = z.object({commit: z.string().regex(/^[a-f0-9]{40}$/),
+  version: z.number().int().positive(), definitions: z.array(z.object({routineId: z.string(), platform: z.string(),
+    definitionRevision: z.string(), definitionSha256: z.string(), routineSource: routineSourceRefSchema,
+    detail: testingDetailPointerSchema}).strict()).max(1000)}).strict();
+
+/** Collection metadata stays bounded; exact definitions retain separate verified objects. */
+export async function writeRoutineCollection(input: z.infer<typeof routineCollectionDetailSchema>, storage = new TestingDetailStorage()) {
+  const collection = routineCollectionDetailSchema.parse(input);
+  const definitions = [];
+  for (const row of collection.definitions) {
+    const snapshot = await writeRoutineDefinition(row, storage);
+    const {card: _card, ...identity} = snapshot;
+    definitions.push(identity);
+  }
+  const detail = await storage.write('collection', collection.commit, routineCollectionManifestSchema.parse({...collection, definitions}));
+  return {detail, definitions};
+}
+
+export async function readRoutineCollection(pointer: unknown, storage = new TestingDetailStorage()) {
+  const manifest = await storage.read(pointer, routineCollectionManifestSchema), definitions = [];
+  for (let offset = 0; offset < manifest.definitions.length; offset += 8)
+    definitions.push(...await Promise.all(manifest.definitions.slice(offset, offset + 8).map(row => readRoutineDefinition(row, storage))));
+  return routineCollectionDetailSchema.parse({...manifest, definitions});
+}
 
 export function routineDefinitionProjection(row: RoutineEnrollment, detail: unknown) {
   const {verification: _verification, definition, ...identity} = row;

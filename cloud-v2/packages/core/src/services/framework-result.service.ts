@@ -10,13 +10,13 @@ import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema, reco
 import {requestInputDigest, TestRequestConflict} from "./test-request.service";
 import {frameworkBuildSchema} from "../types/framework-request.types";
 import {TestRunError} from "./test-result-error";
-import {TestAssetService, type TestAsset} from "./test-asset.service";
+import {TestAssetService, type TestAsset, type StoredTestAsset} from "./test-asset.service";
 import type {CandidateVerification} from '../types/candidate-verification.types';
 import type {RoutineSourceRef} from '../types/framework-version.types';
 import {readFailureScreens} from './framework-failure-screen';
 import {readRunIncident, readRunIncidentCorrelation} from './framework-run-incident';
 import {findTestRunReport, findDeviceIncidentReport, referenceDeviceIncidentDiagnostics} from './report.service';
-import {readStoredRun, writeRunEnvelope, completeStoredRun, findAcceptedTestAsset} from './framework-run-detail.service';
+import {readStoredRun, writeRunEnvelope, completeStoredRun} from './framework-run-detail.service';
 import {RoutineDefinitionService} from './routine-definition.service';
 import {failedRunNeedsReport} from './failed-framework-run-report.service';
 
@@ -38,9 +38,8 @@ export interface FrameworkResultRepository {
   getAsset(identity: {requestId: string} | {runId: string}, assetId: string): Promise<StoredFrameworkAsset | null>;
 }
 export interface StoredFrameworkRun {payload: RecordedFrameworkRun; payloadSha256: string; uploadsComplete: boolean}
-export interface StoredFrameworkAsset {runId: string; asset: FrameworkRun["assets"][number] | null}
+export interface StoredFrameworkAsset {runId: string; asset: FrameworkRun["assets"][number] | null; accepted: StoredTestAsset | null}
 export interface FrameworkUploadAcknowledgements {
-  list(runId: string): Promise<Array<{assetId: string; sha256: string; sizeBytes: number}>>;
   complete(stored: StoredFrameworkRun): Promise<void>;
 }
 export {nativeRunFilter, summarizeFrameworkRun} from "./framework-run-summary.service";
@@ -100,8 +99,10 @@ const mongoRepository: FrameworkResultRepository = {
   async getAsset(identity, assetId) {
     const row = await TestRunModel.findOne({...nativeRunFilter, ...identity}).read('primary').readConcern('majority').lean();
     if (!row) return null;
-    const run = (await readStoredRun(row)).payload;
-    return {runId: row.runId, asset: run.assets.find(asset => asset.id === assetId) ?? null};
+    const envelope = await readStoredRun(row);
+    const accepted = row.uploadsComplete ? envelope.acceptedAssets.find(asset => asset.assetId === assetId) ?? null
+      : await TestAssetModel.findOne({runId: row.runId, assetId}).read('primary').readConcern('majority').lean();
+    return {runId: row.runId, asset: envelope.payload.assets.find(asset => asset.id === assetId) ?? null, accepted};
   },
 };
 
@@ -112,10 +113,6 @@ const projectTerminal = async (run: FrameworkRun) => {
   if (result.matchedCount !== 1) throw new FrameworkResultConflict("Accepted request terminal projection conflicts with its result");
 };
 const uploadAcknowledgements: FrameworkUploadAcknowledgements = {
-  async list(runId) {
-    return await TestAssetModel.find({runId}).select({assetId: 1, sha256: 1, sizeBytes: 1, _id: 0})
-      .read("primary").readConcern("majority").lean();
-  },
   async complete(stored) {
     await completeStoredRun(stored.payload, stored.payloadSha256);
   },
@@ -199,15 +196,8 @@ export class FrameworkResultService {
     const stored = await this.repository.getByRequest(requestId), binding = await this.request(requestId);
     if (!stored || binding?.hostId !== hostId)
       throw new FrameworkResultConflict("Required manifest uploads are not acknowledged for this host");
-    if (!stored.uploadsComplete) {
-      const uploaded = await this.acknowledgements.list(stored.payload.result.runId);
-      const byId = new Map(uploaded.map(asset => [asset.assetId, asset]));
-      if (uploaded.length !== stored.payload.assets.length || byId.size !== uploaded.length || !stored.payload.assets.every(expected => {
-        const actual = byId.get(expected.id);
-        return actual?.sha256 === expected.sha256 && actual.sizeBytes === expected.size;
-      })) throw new FrameworkResultConflict("Required manifest uploads are not acknowledged for this host");
-      await this.acknowledgements.complete(stored);
-    }
+    // Settlement rereads current custody; a completed retry also finishes receipt cleanup.
+    await this.acknowledgements.complete(stored);
     // Assets/verdict are already durable. Report evidence is acknowledged before
     // disposal; Core reporting owns any pending Slack intent independently.
     const incident = await this.incidents.complete(stored.payload, stored.payloadSha256);
@@ -309,7 +299,7 @@ export class FrameworkResultService {
     request.signal.throwIfAborted();
     const asset = stored?.asset;
     if (!stored || !asset) throw new TestRunError(404, "Asset is not declared in this result");
-    const uploaded = await findAcceptedTestAsset(stored.runId, assetId);
+    const uploaded = stored.accepted;
     request.signal.throwIfAborted();
     if (!uploaded) throw new TestRunError(404, "Asset upload is not acknowledged");
     const kind: TestAsset["kind"] = asset.mimeType.startsWith("video/") ? "video"

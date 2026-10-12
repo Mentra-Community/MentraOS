@@ -7,14 +7,16 @@ verified object pointer. It does not delete recordings, screenshots or logs.
 Run with the existing Core environment injected, never a URI on the command line:
 
 ```
-bun packages/core/src/migrations/testing-storage/cli.ts plan /private/path/operation
+bun packages/core/src/migrations/testing-storage/cli.ts plan /private/path/operation --backup-directory=/private/path/full-backup
 bun packages/core/src/migrations/testing-storage/cli.ts export /private/path/operation
 bun packages/core/src/migrations/testing-storage/cli.ts verify /private/path/operation
 bun packages/core/src/migrations/testing-storage/cli.ts apply /private/path/operation --approved-scope-sha256=<digest> --frozen
 bun packages/core/src/migrations/testing-storage/cli.ts verify-applied /private/path/operation
 ```
 
-Before `plan`, take a full protected database backup and prove it restores locally.
+Before `plan`, take a full protected database backup and prove it restores locally
+with `verify-backup.ts`. The tool binds the original backup manifest and restore
+receipt to its scope, and checks archive digests before export or apply.
 Preparation only reads Mongo; `export` writes immutable objects and protected
 per-record receipts. `apply` requires the exact verified removal scope digest and
 a caller-confirmed write freeze. No automatic startup migration or old completed

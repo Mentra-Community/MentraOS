@@ -97,12 +97,13 @@ test('concurrent candidate enrollment is bounded and settles the exact current a
     expect(stored.definitionSha256).toBe(row.definitionSha256);
     expect(stored).not.toHaveProperty('ordinaryEnrolledAt');
     expect(updates).toHaveLength(2);
-    await service.enroll(candidate, 'mini');
+    const winner = stored.candidateBindings.find(value => value.workId === 'work:new' || value.workId === 'work:racing')!;
+    await service.enroll({...candidate, verification: winner}, 'mini');
     expect(updates).toHaveLength(2);
-    await service.enroll({...candidate, verification: {...verification, attemptId: 3}}, 'mini');
-    expect(stored.candidateBindings.find(value => value.workId === verification.workId)?.attemptId).toBe(3);
+    await service.enroll({...candidate, verification: {...winner, attemptId: 3}}, 'mini');
+    expect(stored.candidateBindings.find(value => value.workId === winner.workId)?.attemptId).toBe(3);
     expect(stored.candidateBindings).toHaveLength(20);
-    await expect(service.enroll(candidate, 'mini')).rejects.toThrow('another attempt');
+    await expect(service.enroll({...candidate, verification: winner}, 'mini')).rejects.toThrow('another attempt');
   } finally {insert.mockRestore(); find.mockRestore(); update.mockRestore();}
 });
 
