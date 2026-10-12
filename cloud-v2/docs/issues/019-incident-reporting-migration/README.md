@@ -173,8 +173,12 @@ the existing report for the authenticated `(mentraUserId, incidentKey)` pair
 instead of creating one. The response keeps the `{reportId, status}` shape, with
 the existing report's current status, and adds `deduplicated: true` on that path
 only. A deduplicated submission writes nothing and sends no Slack notification.
-Concurrent submissions converge on one report: a unique partial index on
-`{mentraUserId, incidentKey}` decides the race, and the loser reads the winner.
+Concurrent submissions converge on one report: a keyed report's `reportId` is
+derived from `(mentraUserId, incidentKey)` (still `rep_` plus 26 ULID-alphabet
+characters), so the unique `reportId` index decides the race, and the loser
+reads the winner. No other unique index is needed, which matters because Azure
+Cosmos DB, used by Private Cloud, cannot add a unique index to a collection that
+already holds reports.
 A keyed creation is acknowledged only after a majority-journaled write, like a
 correlated one, and the dedupe lookup reads from the primary at majority read
 concern, so a retry never confirms a report that could still roll back. If the
@@ -182,7 +186,7 @@ winner is not majority-visible within the 10-second write timeout, the loser
 returns `503` (`error: "temporarily_unavailable"`) and the device retries.
 The same key from another account creates that account's own report. Without a
 key, submission is unchanged: a new `rep_<ulid>` every time, the same response,
-and the same Slack timing. Reports without a key are not in the index.
+and the same Slack timing.
 
 A JSON log upload to `POST /api/client/reports/:reportId/artifacts` accepts an
 optional `retryKey` with the same pattern. With it, Core uses the SHA-256-bound
@@ -345,7 +349,8 @@ External incident requests, including the captions tester:
 - `context`
 - `artifacts`
 - `status`: `collecting`, `ready`, or `closed`
-- `incidentKey`: optional; unique per `mentraUserId` when present
+- `incidentKey`: optional; at most one report per `mentraUserId` and key, through
+  the derived `reportId`
 
 ## Why This Shape
 
