@@ -291,3 +291,12 @@ test('authenticated Admin cancellation fences head/generations and duplicate ope
  await f.drain(1); expect(f.cancellations).toContain(gate.attempt.members[0]!.requestId!); expect(f.gate().attempt.conclusion).toBeUndefined();
  const view = await f.service.adminDetail(gate.gateId); expect(view.canCancel).toBe(false); expect(view.cancelling).toBe(true);
 });
+
+test('public progress renders observed completed test counts across named lifecycle phases', async () => {
+ const f = fixture(); await f.intake(); await f.drain(2); const member = f.gate().attempt.members[0]!;
+ for (const phase of ['framework-setup', 'test', 'routine-teardown', 'publication'] as const) {
+  member.progress = {requestId: 'run-one', requestDigest: 'd'.repeat(64), ownerGeneration: 1, controllerIncarnation: 'controller', sequence: 1,
+   phase, completedSteps: 1, totalSteps: 2, startedAt: new Date(f.now - 30000).toISOString(), lastProgressAt: new Date(f.now).toISOString(), observedAt: new Date(f.now).toISOString()};
+  expect(routineCheckPayload(f.gate(), f.now).output.summary).toContain('1/2 test steps');
+ }
+});
