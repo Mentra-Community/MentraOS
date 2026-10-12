@@ -119,3 +119,22 @@ test('99 unresolved commands leave one slot after dropping terminal history', as
  expect((await f.service.submit(f.input('pause',{laneId:'lane-99'}),'alice')).laneId).toBe('lane-99')
  expect(f.rows()).toHaveLength(100)
 })
+
+test('bounded command admission always preserves return space for every accepted reservation, including cleanup in flight',async()=>{
+ const f=fixture();f.host().snapshot.lanes=Array.from({length:100},(_,i)=>({id:`lane-${i}`,dispatchMode:'automatic'}))
+ const held:Array<{id:string,laneId:string,generation:number,state:'granted',purpose:string,requestedAt:string}>=[]
+ for(let i=0;i<50;i++){
+  const reserve=f.input('reserve',{laneId:`lane-${i}`,purpose:'Manual work'});await f.service.submit(reserve,'alice')
+  const reservation={id:`held-${i}`,laneId:reserve.laneId,generation:1,state:'granted' as const,purpose:'Manual work',requestedAt:new Date(f.now).toISOString()};held.push(reservation)
+  await f.service.exchange('air',{schemaVersion:1,receipts:[f.receipt(reserve,{status:'accepted',reservation})]})
+ }
+ await expect(f.service.submit(f.input('reserve',{laneId:'lane-50',purpose:'Extra'}),'alice')).rejects.toThrow('retain space for release')
+ await expect(f.service.submit(f.input('pause',{laneId:'lane-50'}),'alice')).rejects.toThrow('retain space for release')
+ for(const reservation of held){
+  const release=f.input('release',{laneId:reservation.laneId,reservation:{id:reservation.id,generation:1}})
+  await f.service.submit(release,'alice')
+  await f.service.exchange('air',{schemaVersion:1,receipts:[f.receipt(release,{status:'accepted',reservation:{...reservation,state:'returning'}})]})
+ }
+ expect(f.rows()).toHaveLength(100)
+ expect(f.rows().filter(row=>row.command.action==='release')).toHaveLength(50)
+})

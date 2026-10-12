@@ -77,11 +77,13 @@ export class LaneControlsService {
         throw new TestRunError(409, 'Refresh lane status; this controller is not currently accepting dashboard controls')
       if (input.action === 'reserve' && lane.dispatchMode === 'paused')
         throw new TestRunError(409, 'Resume scheduling before reserving this lane')
+      const row: LaneControlRecord = {command: {...input, operatorId}}
+      const returnSlots = pendingReturnSlots([...records, row])
       const unresolved = records.filter(row => !delivered(row) || activeReservation(row))
-      const remaining = Math.max(0, 99 - unresolved.length)
+      const remaining = Math.max(0, 99 - unresolved.length - returnSlots)
       const recent = remaining ? records.filter(row => delivered(row) && !activeReservation(row)).slice(-remaining) : []
       const retained = records.filter(row => unresolved.includes(row) || recent.includes(row))
-      if (retained.length >= 100) throw new TestRunError(409, 'Lane control history is full; unresolved reservations must be returned first')
+      if (retained.length + 1 + returnSlots > 100) throw new TestRunError(409, 'Lane controls are busy; current reservations retain space for release')
       if (retained.some(row => row.command.laneId === input.laneId && !delivered(row)))
         throw new TestRunError(409, 'A lane control is awaiting its controller receipt')
       const owned = retained.filter(row => row.command.operatorId === operatorId && row.command.laneId === input.laneId)
@@ -95,7 +97,6 @@ export class LaneControlsService {
             !['waiting', 'granted'].includes(actual.state))
           throw new TestRunError(409, 'Release requires your current waiting or granted reservation; refresh its status')
       }
-      const row: LaneControlRecord = {command: {...input, operatorId}}
       return {records: [...retained, row], result: view(row)}
     })
   }
@@ -163,4 +164,15 @@ function reconcileReservations(records: LaneControlRecord[]): LaneControlRecord[
     return reservation && receipt?.result.status === 'accepted'
       ? {...row, receipt: {...receipt, result: {...receipt.result, reservation: latest.get(reservation.id)!}}} : row
   })
+}
+
+/** Admission reserves one delivery slot for every reservation that still needs its eventual return command. */
+function pendingReturnSlots(records: LaneControlRecord[]) {
+  return records.filter(row => row.command.action === 'reserve' && (!row.receipt ||
+    row.receipt.result.status === 'accepted' && row.receipt.result.reservation && ['waiting', 'granted'].includes(row.receipt.result.reservation.state)))
+    .filter(row => {
+      const id = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation?.id : undefined
+      return !id || !records.some(other => other.command.action === 'release' && other.command.reservation?.id === id &&
+        (!other.receipt || other.receipt.result.status === 'accepted'))
+    }).length
 }
