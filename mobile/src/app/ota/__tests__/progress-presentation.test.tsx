@@ -1,5 +1,5 @@
 import React from "react"
-import {render} from "@testing-library/react-native"
+import {fireEvent, render} from "@testing-library/react-native"
 
 import {MentraLiveOtaFlow} from "../../../../modules/engine/src/react/MentraLiveOtaFlow"
 import * as otaHook from "../../../../modules/engine/src/react/useMentraLiveOta"
@@ -150,4 +150,30 @@ test("does not present a predicted or unknown transport as an active installatio
   screen.rerender(flow())
   expect(screen.queryByText("Using Wi-Fi")).toBeNull()
   expect(screen.queryByText("Using glasses hotspot")).toBeNull()
+})
+
+test("shows the actual Mac join credentials and offers ordinary cancellation", () => {
+  state.hotspotPhase = "waiting_for_mac_wifi"
+  state.hotspotMacJoin = {ssid: "MentraLive_target", password: "private-passphrase"}
+  const cancel = jest.fn()
+  jest
+    .spyOn(otaHook, "useMentraLiveOta")
+    .mockImplementation(() => ({
+      state,
+      check: jest.fn(),
+      retryCheck: jest.fn(),
+      install: jest.fn(),
+      retryInstall: jest.fn(),
+      finish: jest.fn(),
+      discard: cancel,
+      openWifiSetup: jest.fn(),
+    }))
+  const ui = render(flow())
+  expect(ui.getByTestId("ota.hotspot.mac.join-required")).toBeTruthy()
+  expect(ui.getByTestId("ota.hotspot.mac.ssid").props.children).toBe("MentraLive_target")
+  expect(ui.getByText("Password: private-passphrase")).toBeTruthy()
+  expect(ui.getByTestId("ota.hotspot.mac.open-settings")).toBeTruthy()
+  expect(ui.getByText(/continues automatically after the connection is verified/)).toBeTruthy()
+  fireEvent.press(ui.getByText("Cancel update"))
+  expect(cancel).toHaveBeenCalledTimes(1)
 })

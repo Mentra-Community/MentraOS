@@ -22,6 +22,7 @@ import {
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "../services/OtaErrorMapping"
 import type {OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
+import {OtaProgressMessages} from "../services/otaInstallPolicy"
 import type {OtaCheckCurrentGlassesResult} from "../services/OtaUpdateCheckService"
 import {otaDeviceSessionRevision, subscribeOtaDeviceSession} from "../services/OtaDeviceSession"
 import type {ReleaseChangelog} from "../facades/ota"
@@ -74,7 +75,13 @@ export type MentraLiveOtaError = {
 }
 
 export type MentraLiveOtaTransport = "wifi" | "hotspot"
-export type MentraLiveOtaHotspotPhase = "idle" | "downloading" | "starting_hotspot" | "joining_hotspot" | "serving"
+export type MentraLiveOtaHotspotPhase =
+  | "idle"
+  | "downloading"
+  | "starting_hotspot"
+  | "joining_hotspot"
+  | "waiting_for_mac_wifi"
+  | "serving"
 export type MentraLiveOtaInstallPhase = "download" | "install"
 export type MentraLiveOtaStep = "apk" | "mtk" | "bes"
 
@@ -98,6 +105,7 @@ export type MentraLiveOtaState = {
   wifiStatusKnown: boolean
   hotspotSupported: boolean
   hotspotPhase: MentraLiveOtaHotspotPhase
+  hotspotMacJoin?: {ssid: string; password: string} | null
   hotspotArtifactPercent: number | null
   /**
    * Current phone download context. Index is zero-based; percent applies to this file only.
@@ -846,7 +854,10 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       copyKey = OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY
     } else if (installSnapshot.errorMsg) {
       displayedError = installSnapshot.errorMsg
-      copyKey = null
+      copyKey =
+        installSnapshot.errorMsg === OtaProgressMessages.hotspotLocationPermissionDenied
+          ? "ota:macJoinLocationPermissionDenied"
+          : null
     } else {
       displayedError = getOtaErrorMessage(glassesCode)
       copyKey = otaErrorCopyKey(glassesCode)
@@ -878,6 +889,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       wifiStatusKnown: otaSnapshot.wifiStatusKnown,
       hotspotSupported,
       hotspotPhase: installSnapshot.hotspotPhase,
+      hotspotMacJoin: installSnapshot.hotspotMacJoin ? {...installSnapshot.hotspotMacJoin} : null,
       hotspotArtifactPercent: installSnapshot.hotspotArtifactPercent,
       hotspotArtifact: artifact ? {kind: artifact.kind, index: artifact.index, totalCount: artifact.totalCount} : null,
       phase: installSnapshot.otaStatus?.phase ?? installSnapshot.otaProgress?.stage ?? null,
@@ -895,7 +907,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       canRetry: screen === "failed" && !requiresGlassesReboot,
       canFinish: screen === "complete" || (screen === "failed" && requiresGlassesReboot),
       canDismiss: false,
-      canDiscard: screen === "disconnected",
+      canDiscard: screen === "disconnected" || installSnapshot.hotspotPhase === "waiting_for_mac_wifi",
       canOpenWifiSetup: screen === "failed" && showChangeWifi,
       continueDisabled: installSnapshot.continueButtonDisabled,
       completedUpdate: false,

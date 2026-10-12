@@ -162,6 +162,32 @@ afterEach(() => {
 })
 
 describe("OtaInstallCoordinator hotspot transport selection", () => {
+  it("cancels a pending Mac OS join, clears credentials and fences a late prepared manifest", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    let completePreparation!: (url: string) => void
+    mockHotspotPrepare.mockImplementationOnce((_check, report) => {
+      report({phase: "waiting_for_mac_wifi", macJoin: {ssid: "target", password: "private-passphrase"}})
+      return new Promise<string>((resolve) => { completePreparation = resolve })
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(otaInstallCoordinator.snapshot()).toMatchObject({
+      hotspotPhase: "waiting_for_mac_wifi",
+      hotspotMacJoin: {ssid: "target", password: "private-passphrase"},
+    })
+    await otaInstallCoordinator.discard()
+    expect(mockHotspotTeardown).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().hotspotMacJoin).toBeNull()
+    completePreparation("http://192.168.43.20/version.json")
+    await flushNativeStartPromise()
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+  })
+
   it("does not infer an adopted install's transport from the default send policy or current Wi-Fi", () => {
     let restored!: typeof otaInstallCoordinator
     let restoredStore!: typeof useGlassesStore

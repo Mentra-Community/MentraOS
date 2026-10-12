@@ -129,6 +129,8 @@ export const OtaProgressMessages = {
   sendOtaStartFailed: "Failed to communicate with glasses.",
   hotspotArtifactDownloadFailed: "Could not download the update to your phone. Check phone internet and try again.",
   hotspotArtifactVerifyFailed: "The update package could not be verified. Please try again later.",
+  hotspotLocationPermissionDenied:
+    "Allow Location access for the Mentra App in macOS System Settings so it can verify the glasses Wi-Fi network.",
   hotspotWifiPermissionDenied: "Allow nearby devices access so the phone can connect to the glasses hotspot.",
   hotspotStartFailed: "Could not start the glasses hotspot. Please try again.",
   hotspotJoinFailed: "Could not connect the phone to the glasses hotspot. Please try again.",

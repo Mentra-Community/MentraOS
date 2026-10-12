@@ -1,4 +1,16 @@
-jest.mock("react-native", () => ({Platform: {OS: "android", Version: 33}}))
+jest.mock("react-native", () => ({Platform: {OS: "android", Version: 33}, AppState: {currentState: "active"}}))
+jest.mock("@mentra/crust", () => ({__esModule: true, default: {isIOSAppOnMac: false}}))
+jest.mock("expo-location", () => ({
+  getForegroundPermissionsAsync: jest.fn(async () => ({status: "granted"})),
+  requestForegroundPermissionsAsync: jest.fn(async () => ({status: "granted"})),
+}))
+jest.mock("@mentra/glasses-media", () => ({
+  glassesHotspot: {
+    waitForMacAssociation: jest.fn(),
+    verifiedMacAddress: jest.fn(),
+    releaseMacAssociation: jest.fn(async () => {}),
+  },
+}))
 
 jest.mock("react-native-wifi-reborn", () => ({
   __esModule: true,
@@ -372,5 +384,106 @@ describe("completed iOS hotspot join recovery", () => {
     await jest.advanceTimersByTimeAsync(3000)
     expect(await failure).toEqual(expect.objectContaining({message: "OTA owner changed"}))
     expect(mockLegacyConnect).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("user-operated Mac hotspot association", () => {
+  const native = jest.requireMock("@mentra/glasses-media").glassesHotspot
+  const crust = jest.requireMock("@mentra/crust").default
+  const location = jest.requireMock("expo-location")
+  const options = () => ({assertCurrent: () => {}, macJoin: {gateway: "192.168.43.1", onWaiting: jest.fn()}})
+  beforeEach(async () => {
+    jest.useFakeTimers()
+    Object.assign(Platform, {OS: "ios"})
+    crust.isIOSAppOnMac = true
+    mockLegacyConnect.mockClear()
+    native.waitForMacAssociation.mockReset().mockResolvedValue("192.168.43.20")
+    native.verifiedMacAddress.mockReset().mockResolvedValue("192.168.43.20")
+    location.getForegroundPermissionsAsync.mockResolvedValue({status: "granted"})
+    location.requestForegroundPermissionsAsync.mockResolvedValue({status: "granted"})
+    await localNetworkTransport.disconnect()
+    native.releaseMacAssociation.mockClear()
+  })
+  afterEach(async () => {
+    await localNetworkTransport.disconnect()
+    crust.isIOSAppOnMac = false
+    Object.assign(Platform, {OS: "android"})
+    jest.useRealTimers()
+  })
+  it("exposes credentials only to presentation, observes the exact target and never calls apply", async () => {
+    const opts = options()
+    expect(await localNetworkTransport.connect("target", "private-passphrase", opts)).toBe("192.168.43.20")
+    expect(opts.macJoin.onWaiting).toHaveBeenCalledWith({ssid: "target", password: "private-passphrase"})
+    expect(native.waitForMacAssociation).toHaveBeenCalledWith(expect.any(String), "target", "192.168.43.1", 60000)
+    expect(mockLegacyConnect).not.toHaveBeenCalled()
+    expect(await localNetworkTransport.verifiedMacAddress()).toBe("192.168.43.20")
+  })
+  it("rejects an unverified or different network rather than falling back to a private address", async () => {
+    await localNetworkTransport.connect("target", "private-passphrase", options())
+    native.verifiedMacAddress.mockResolvedValueOnce(null)
+    await expect(localNetworkTransport.verifiedMacAddress()).rejects.toThrow("requested glasses hotspot")
+    expect(mockLegacyConnect).not.toHaveBeenCalled()
+  })
+  it("fails denied Location before exposing credentials or starting an observer", async () => {
+    location.getForegroundPermissionsAsync.mockResolvedValueOnce({status: "denied"})
+    location.requestForegroundPermissionsAsync.mockResolvedValueOnce({status: "denied"})
+    const opts = options()
+    await expect(localNetworkTransport.connect("target", "private-passphrase", opts)).rejects.toMatchObject({
+      code: "hotspot_location_permission_denied",
+    })
+    expect(opts.macJoin.onWaiting).not.toHaveBeenCalled()
+    expect(native.waitForMacAssociation).not.toHaveBeenCalled()
+    expect(mockLegacyConnect).not.toHaveBeenCalled()
+  })
+  it("cancels an unanswered observer when OTA ownership is replaced", async () => {
+    native.waitForMacAssociation.mockReturnValueOnce(new Promise(() => {}))
+    let current = true
+    const pending = localNetworkTransport.connect("target", "private-passphrase", {
+      ...options(),
+      assertCurrent: () => {
+        if (!current) throw new Error("owner changed")
+      },
+    })
+    const result = pending.catch((error) => error)
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+    current = false
+    await jest.advanceTimersByTimeAsync(250)
+    expect(await result).toMatchObject({message: "owner changed"})
+    expect(native.releaseMacAssociation).toHaveBeenCalledTimes(1)
+    expect(mockLegacyConnect).not.toHaveBeenCalled()
+  })
+  it("bounds an unanswered native callback to sixty seconds and releases the observer", async () => {
+    native.waitForMacAssociation.mockReturnValueOnce(new Promise(() => {}))
+    const result = localNetworkTransport.connect("target", "private-passphrase", options()).catch((error) => error)
+    await jest.advanceTimersByTimeAsync(60000)
+    expect(await result).toMatchObject({message: "Mac hotspot join timed out"})
+    expect(native.releaseMacAssociation).toHaveBeenCalledTimes(1)
+    expect(mockLegacyConnect).not.toHaveBeenCalled()
+  })
+  it("refuses a Mac caller without a user join presentation instead of attempting native apply", async () => {
+    await expect(localNetworkTransport.connect("target", "private-passphrase")).rejects.toThrow("macOS Wi-Fi controls")
+    expect(mockLegacyConnect).not.toHaveBeenCalled()
+  })
+  it("retains the new observer when an older release callback finishes late", async () => {
+    await localNetworkTransport.connect("first", "passphrase", options())
+    let releaseOld!: () => void
+    native.releaseMacAssociation.mockReturnValueOnce(new Promise<void>((resolve) => { releaseOld = resolve }))
+    const older = localNetworkTransport.connect("second", "passphrase", options()).catch((error) => error)
+    await localNetworkTransport.connect("third", "passphrase", options())
+    const currentId = native.waitForMacAssociation.mock.calls[1][0]
+    releaseOld()
+    expect(await older).toMatchObject({message: "Local network connection was superseded"})
+    expect(await localNetworkTransport.verifiedMacAddress()).toBe("192.168.43.20")
+    expect(native.verifiedMacAddress).toHaveBeenLastCalledWith(currentId)
+    expect(native.waitForMacAssociation).toHaveBeenCalledTimes(2)
+  })
+  it("rejects a verification callback from a released session", async () => {
+    await localNetworkTransport.connect("target", "passphrase", options())
+    let resolveAddress!: (address: string) => void
+    native.verifiedMacAddress.mockReturnValueOnce(new Promise<string>((resolve) => { resolveAddress = resolve }))
+    const verifying = localNetworkTransport.verifiedMacAddress().catch((error) => error)
+    await localNetworkTransport.disconnect()
+    resolveAddress("192.168.43.20")
+    expect(await verifying).toMatchObject({message: "Local network connection was superseded"})
   })
 })

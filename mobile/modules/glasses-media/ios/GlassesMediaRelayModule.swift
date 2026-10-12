@@ -4,10 +4,53 @@ import Foundation
 public final class GlassesMediaRelayModule: Module {
     private let queue = DispatchQueue(label: "com.mentra.glassesmedia.relay")
     private var session: ManagedRelaySession?
+    private var macAssociation: (id: String, network: GlassesHotspotNetwork)?
 
     public func definition() -> ModuleDefinition {
         Name("MentraGlassesMediaRelay")
         Events("onRelayState")
+
+        // Ordinary product API: the caller owns AP setup and the user owns macOS association.
+        // No credentials, native apply, or test prejoin lease cross this boundary.
+        AsyncFunction("waitForMacAssociation") { (id: String, ssid: String, gateway: String, timeoutMs: Int, promise: Promise) in
+            guard ProcessInfo.processInfo.isiOSAppOnMac, !id.isEmpty, !ssid.isEmpty,
+                  LocalMediaPolicy.isPrivate(gateway), (1 ... 60000).contains(timeoutMs)
+            else { throw LocalMediaError("Invalid Mac hotspot verification request") }
+            self.queue.async {
+                guard self.macAssociation == nil, self.session == nil else {
+                    promise.reject(LocalMediaError("Previous local network session has not stopped")); return
+                }
+                let network = GlassesHotspotNetwork()
+                self.macAssociation = (id, network)
+                network.join(ssid: ssid, passphrase: "", gateway: gateway,
+                             userOperatedMacJoin: true, timeout: Double(timeoutMs) / 1000)
+                { result in
+                    switch result {
+                    case let .success(address): promise.resolve(address)
+                    case let .failure(error): promise.reject(error)
+                    }
+                }
+            }
+        }
+
+        AsyncFunction("verifiedMacAddress") { (id: String, promise: Promise) in
+            self.queue.async {
+                guard let association = self.macAssociation, association.id == id else { promise.resolve(nil); return }
+                association.network.verifiedMacAddress { promise.resolve($0) }
+            }
+        }
+
+        AsyncFunction("releaseMacAssociation") { (id: String, promise: Promise) in
+            self.queue.async {
+                guard let association = self.macAssociation, association.id == id else { promise.resolve(nil); return }
+                association.network.leave {
+                    self.queue.async {
+                        if self.macAssociation?.id == id { self.macAssociation = nil }
+                        promise.resolve(nil)
+                    }
+                }
+            }
+        }
 
         AsyncFunction("prepare") { (options: [String: Any], promise: Promise) in
             guard let id = options["attemptId"] as? String,
@@ -18,7 +61,7 @@ public final class GlassesMediaRelayModule: Module {
                 throw LocalMediaError("Invalid relay options")
             }
             self.queue.async {
-                guard self.session == nil else { promise.reject(LocalMediaError("Previous relay has not stopped")); return }
+                guard self.session == nil, self.macAssociation == nil else { promise.reject(LocalMediaError("Previous local network session has not stopped")); return }
                 let session = ManagedRelaySession(id: id, queue: self.queue)
                 self.session = session
                 session.start(ssid: ssid, password: password, gateway: gateway, endpoint: url,
@@ -48,6 +91,8 @@ public final class GlassesMediaRelayModule: Module {
         OnDestroy {
             self.queue.async {
                 self.session?.stop { self.session = nil }
+                self.macAssociation?.network.leave {}
+                self.macAssociation = nil
             }
         }
     }

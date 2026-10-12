@@ -25,7 +25,10 @@ public final class GlassesHotspotNetwork {
     private var monitorsReported: [Bool] = []
     private var interfaceReportsReady: (() -> Void)?
     private var localAccess: LocalNetworkAccessRequest?
-    private var localAddress: String? { binding?.address }
+    private var localAddress: String? {
+        binding?.address
+    }
+
     #if MENTRA_E2E
         private var testLeaseConsumed = false
     #endif
@@ -33,7 +36,7 @@ public final class GlassesHotspotNetwork {
     public var onPermissionRequired: (() -> Void)?
     public init() {}
 
-    public func join(ssid: String, passphrase: String, gateway: String? = nil, completion: @escaping (Result<String, Error>) -> Void) {
+    public func join(ssid: String, passphrase: String, gateway: String? = nil, userOperatedMacJoin: Bool = false, timeout: TimeInterval = 60, completion: @escaping (Result<String, Error>) -> Void) {
         queue.async {
             guard self.ssid == nil, !self.applying else { completion(.failure(LocalMediaError("Previous hotspot session has not finished cleaning up"))); return }
             if let gateway, !LocalMediaPolicy.isPrivate(gateway) {
@@ -53,7 +56,7 @@ public final class GlassesHotspotNetwork {
                 // Reuse is decided once, so it needs the interface types first.
                 self.awaitInterfaceReports(generation: gen) {
                     #if MENTRA_E2E
-                        if let raw = ProcessInfo.processInfo.environment["MENTRA_E2E_PREJOINED_HOTSPOT"] {
+                        if !userOperatedMacJoin, let raw = ProcessInfo.processInfo.environment["MENTRA_E2E_PREJOINED_HOTSPOT"] {
                             let selected = self.selectBinding()
                             guard !self.testLeaseConsumed,
                                   let lease = try? JSONDecoder().decode(MacE2EHotspotLease.self, from: Data(raw.utf8)),
@@ -81,8 +84,13 @@ public final class GlassesHotspotNetwork {
                                 self.bind(selected)
                                 self.logger.info("HOTSPOT_JOIN reuse_verified_macos_connection")
                                 self.waitForLocalAccess(address: selected.address, generation: gen)
+                            } else if userOperatedMacJoin {
+                                // macOS owns association. NEHotspotConfiguration add is unavailable
+                                // in this runtime; observe the user's actual target-network join.
+                                self.waitForAddress(ssid: ssid, generation: gen, remaining: Int(timeout * 2))
                             } else {
-                                self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen)
+                                self.finishJoin(.failure(LocalMediaError("Join the glasses hotspot using macOS Wi-Fi controls before starting media")))
+                                self.finishLeave()
                             }
                         }
                     }
@@ -90,10 +98,10 @@ public final class GlassesHotspotNetwork {
             } else {
                 self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen)
             }
-            self.queue.asyncAfter(deadline: .now() + 60) {
+            self.queue.asyncAfter(deadline: .now() + timeout) {
                 // Once associated, the user may still be reading the Local Network alert.
                 // Its response time is not a hotspot association timeout.
-                guard gen == self.generation, self.joinReply != nil, self.localAccess == nil else { return }
+                guard gen == self.generation, self.joinReply != nil, userOperatedMacJoin || self.localAccess == nil else { return }
                 self.cancelled = true
                 self.finishJoin(.failure(LocalMediaError("Hotspot join timed out")))
                 // apply() cannot be cancelled. Retain the reservation until its callback and remove the
@@ -120,6 +128,29 @@ public final class GlassesHotspotNetwork {
         queue.async {
             guard let binding = self.binding, !self.cancelled, self.isBindingIntact(binding) else { completion(nil); return }
             completion(binding.address)
+        }
+    }
+
+    /// Revalidate target association and the pinned interface before a later local server starts.
+    public func verifiedMacAddress(completion: @escaping (String?) -> Void) {
+        queue.async {
+            guard ProcessInfo.processInfo.isiOSAppOnMac, let ssid = self.ssid else { completion(nil); return }
+            let gen = self.generation
+            var finished = false
+            let finish: (String?) -> Void = { address in
+                guard !finished else { return }
+                finished = true
+                completion(address)
+            }
+            self.queue.asyncAfter(deadline: .now() + 3) { finish(nil) }
+            NEHotspotNetwork.fetchCurrent { network in
+                self.queue.async {
+                    guard gen == self.generation, !self.cancelled, network?.ssid == ssid,
+                          let binding = self.binding, self.isBindingIntact(binding)
+                    else { finish(nil); return }
+                    finish(binding.address)
+                }
+            }
         }
     }
 
@@ -206,6 +237,11 @@ public final class GlassesHotspotNetwork {
     }
 
     private func applyConfiguration(ssid: String, passphrase: String, generation gen: Int) {
+        guard !ProcessInfo.processInfo.isiOSAppOnMac else {
+            finishJoin(.failure(LocalMediaError("Join the glasses hotspot using macOS Wi-Fi controls")))
+            finishLeave()
+            return
+        }
         let config = NEHotspotConfiguration(ssid: ssid, passphrase: passphrase, isWEP: false)
         config.joinOnce = false
         applying = true
@@ -351,7 +387,27 @@ public final class GlassesHotspotNetwork {
             switch result {
             case .success:
                 NSLog("GLASSES-MEDIA local_network_permission=ready")
-                finishJoin(.success(address))
+                #if MENTRA_E2E
+                    // Preserve the separate media harness lease; ordinary Mac observation
+                    // never consumes it and always requires a current target SSID below.
+                    if testLeaseConsumed {
+                        finishJoin(.success(address))
+                        return
+                    }
+                #endif
+                if ProcessInfo.processInfo.isiOSAppOnMac {
+                    verifiedMacAddress { verified in
+                        guard gen == self.generation, !self.cancelled else { return }
+                        guard verified == address else {
+                            self.finishJoin(.failure(LocalMediaError("Glasses hotspot association changed during verification")))
+                            self.finishLeave()
+                            return
+                        }
+                        self.finishJoin(.success(address))
+                    }
+                } else {
+                    finishJoin(.success(address))
+                }
             case let .failure(error):
                 finishJoin(.failure(error))
                 finishLeave()

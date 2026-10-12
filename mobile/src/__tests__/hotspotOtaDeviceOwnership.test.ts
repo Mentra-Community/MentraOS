@@ -11,10 +11,16 @@ jest.mock("../../modules/engine/src/services/OtaArtifactDownloader", () => ({
   OtaArtifactError: class extends Error {},
 }))
 jest.mock("../../modules/engine/src/services/asg/localNetworkTransport", () => ({
+  isMacLocalNetwork: jest.fn(() => false),
+  LocalNetworkPermissionError: class extends Error {},
   localNetworkErrorDetails: jest.fn(() => ({
     native: {domain: "NEHotspotConfigurationErrorDomain", code: 8, completed: true},
   })),
-  localNetworkTransport: {connect: jest.fn(async () => "192.168.43.2"), disconnect: jest.fn(async () => {})},
+  localNetworkTransport: {
+    connect: jest.fn(async () => "192.168.43.2"),
+    verifiedMacAddress: jest.fn(async () => "192.168.43.20"),
+    disconnect: jest.fn(async () => {}),
+  },
 }))
 jest.mock("@mentra/bluetooth-sdk/ota-transport", () => ({
   otaServer: {
@@ -142,4 +148,45 @@ it("retains terminal native join facts and does not repeat downloads or enable r
   })
   expect(downloader.prepareArtifacts).toHaveBeenCalledTimes(1)
   expect(server.start).not.toHaveBeenCalled()
+})
+
+it("presents Mac OS join, verifies the real binding and skips the iPhone en0 address helper", async () => {
+  const mac = jest.requireMock("../../modules/engine/src/services/asg/localNetworkTransport").isMacLocalNetwork
+  mac.mockReturnValue(true)
+  const {Platform} = require("react-native")
+  const original = Platform.OS
+  Platform.OS = "ios"
+  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({
+    type: "hotspot_status",
+    state: "enabled",
+    ssid: "target",
+    password: "private-passphrase",
+    localIp: "192.168.43.1",
+  })
+  localNetwork.connect.mockImplementationOnce(
+    async (
+      _ssid: string,
+      _password: string,
+      options: {macJoin: {onWaiting: (credentials: {ssid: string; password: string}) => void}},
+    ) => {
+      options.macJoin.onWaiting({ssid: "target", password: "private-passphrase"})
+      return "192.168.43.20"
+    },
+  )
+  server.waitForWifiAddress.mockClear()
+  const progress = jest.fn()
+  try {
+    await hotspotOtaTransport.prepare(check, progress)
+    expect(progress).toHaveBeenCalledWith({
+      phase: "waiting_for_mac_wifi",
+      macJoin: {ssid: "target", password: "private-passphrase"},
+    })
+    expect(localNetwork.verifiedMacAddress).toHaveBeenCalled()
+    expect(server.waitForWifiAddress).not.toHaveBeenCalled()
+    expect(server.start).toHaveBeenNthCalledWith(1, "{}", {}, "192.168.43.20")
+    expect(progress).toHaveBeenLastCalledWith({phase: "serving"})
+  } finally {
+    mac.mockReturnValue(false)
+    Platform.OS = original
+  }
 })

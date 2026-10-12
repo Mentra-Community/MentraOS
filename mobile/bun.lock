@@ -326,6 +326,9 @@
     "modules/glasses-media": {
       "name": "@mentra/glasses-media",
       "version": "3.3.0",
+      "peerDependencies": {
+        "expo": "*",
+      },
     },
     "modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
