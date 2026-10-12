@@ -304,6 +304,21 @@ test('authenticated Admin cancellation fences head/generations and duplicate ope
  const view = await f.service.adminDetail(gate.gateId); expect(view.canCancel).toBe(false); expect(view.cancelling).toBe(true);
 });
 
+test('the same mounted Admin operation cancels a later rerun once, without replaying the prior generation', async () => {
+ const f = fixture(); await f.intake(); f.build(); await f.drain(); const gate = f.gate();
+ const input = {operationId: '00000000-0000-4000-8000-000000000001', coverageGeneration: gate.coverageGeneration, attemptGeneration: gate.attempt.generation};
+ await f.service.cancelFromAdmin(gate.gateId, input, 'admin:operator'); await f.drain(1);
+ const request = f.requests.get(gate.attempt.members[0]!.requestId!); request.state = 'terminal'; request.terminalStatus = 'cancelled'; request.dispatchCompletion = {disposition: 'clean'};
+ await f.drain(2); expect(f.gate().attempt.conclusion).toBe('cancelled');
+ await f.service.control(control(f, 'admin-following-rerun')); expect(f.gate().attempt.generation).toBe(2);
+ await expect(f.service.cancelFromAdmin(gate.gateId, input, 'admin:operator')).rejects.toThrow('generation changed');
+ const next = {...input, attemptGeneration: 2};
+ await f.service.cancelFromAdmin(gate.gateId, next, 'admin:operator'); await f.service.cancelFromAdmin(gate.gateId, next, 'admin:operator');
+ expect(f.gate().attempt.cancellation?.kind).toBe('cancel');
+ expect(f.gate().controls.filter(value => value.kind === 'cancel')).toHaveLength(2);
+ expect(new Set(f.gate().controls.filter(value => value.kind === 'cancel').map(value => value.id)).size).toBe(2);
+});
+
 test('public progress renders observed completed test counts across named lifecycle phases', async () => {
  const f = fixture(); await f.intake(); await f.drain(2); const member = f.gate().attempt.members[0]!;
  for (const phase of ['framework-setup', 'test', 'routine-teardown', 'publication'] as const) {

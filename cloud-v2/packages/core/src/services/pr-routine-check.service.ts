@@ -155,7 +155,7 @@ export class PrRoutineCheckService {
     const row = await this.rows.get(gateId)
     if (!row || row.payload.coverageGeneration !== input.coverageGeneration || row.payload.attempt.generation !== input.attemptGeneration)
       throw new TestRunError(409, 'PR check generation changed; refresh before cancelling')
-    const gate = row.payload, eventId = `admin-${input.operationId}`
+    const gate = row.payload, eventId = `admin-${input.coverageGeneration}-${input.attemptGeneration}-${input.operationId}`
     if (gate.controls.some(control => control.id === eventId)) return {accepted: true}
     const context = await this.github.context(gate.context.number)
     if (!context.open || context.headSha !== gate.headSha || selectionKey(context) !== gate.selectionKey)
