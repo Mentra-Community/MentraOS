@@ -49,8 +49,10 @@ import {
 } from "../../services/workspaces/credential.service"
 import {
   acceptInvitation,
+  acceptInvitationById,
   createInvitation,
   listPendingInvitations,
+  listInvitationsForPerson,
   peekInvitation,
   revokeInvitation,
   type InvitationRow,
@@ -104,12 +106,22 @@ export function createWorkspacesApi(): Hono<AppEnv> {
       ...summary,
       membership: await ownerMembership(summary.workspaceId, actor.mentraUserId),
       capabilities: [...capabilitiesForRole("owner")],
+      organizationAdmin: actor.isOrganizationAdmin,
     }
     return c.json(detail, 201)
   })
 
-  // --- Invitation links (before `/:workspaceId`) -----------------------------
-  // The token travels in the body, never the path: request logs record the path.
+  // --- Invitations to the caller (before `/:workspaceId`) ---------------------
+  // An invitation is found by its link's token or, for the person it is addressed to, by their verified
+  // email. A token travels in the body, never the path: request logs record the path. (`invitations` is
+  // never a workspace id, which all start `ws_`.)
+
+  // The invitations addressed to the caller's verified email that they can accept now.
+  app.get("/invitations/mine", async (c) => {
+    const items: InvitationPreview[] = await listInvitationsForPerson(userActor(c))
+    c.header("cache-control", "no-store")
+    return c.json({items})
+  })
 
   app.post("/invitations/peek", async (c) => {
     const body = await readJsonObject(c)
@@ -119,10 +131,18 @@ export function createWorkspacesApi(): Hono<AppEnv> {
     return c.json(invitation)
   })
 
+  // Accept by the link's `token`, or by `invitationId` (one of `/invitations/mine`): the same checks either way.
   app.post("/invitations/accept", async (c) => {
     const actor = userActor(c)
     const body = await readJsonObject(c)
-    return c.json(await acceptInvitation(actor, requiredString(body, "token")))
+    if ((body.token === undefined) === (body.invitationId === undefined)) {
+      fail("invalid_request", "send either token or invitationId")
+    }
+    return c.json(
+      body.token !== undefined
+        ? await acceptInvitation(actor, requiredString(body, "token"))
+        : await acceptInvitationById(actor, requiredString(body, "invitationId")),
+    )
   })
 
   // --- One workspace ---------------------------------------------------------
@@ -273,7 +293,14 @@ function workspaceDetail(c: AppContext, summary?: WorkspaceSummary): WorkspaceDe
   const decision = c.get("workspaceAuthorization")
   const workspace = summary ?? decision?.workspace
   if (!decision?.allowed || !workspace) throw new Error("a workspace route ran without its authorization decision")
-  return {...workspace, membership: decision.membership ?? null, capabilities: decision.capabilities}
+  const principal = c.get("principal")
+  return {
+    ...workspace,
+    membership: decision.membership ?? null,
+    capabilities: decision.capabilities,
+    // The caller's own standing, so a screen can say why they hold more than their membership's role.
+    organizationAdmin: principal?.kind === "user" && principal.isOrganizationAdmin,
+  }
 }
 
 async function ownerMembership(workspaceId: string, mentraUserId: string): Promise<WorkspaceDetail["membership"]> {

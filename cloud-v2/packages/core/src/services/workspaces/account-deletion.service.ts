@@ -24,7 +24,8 @@
  * (`recoverOwnership`, which refuses a deleted account).
  *
  * Invitations addressed to the user's email stay: they name an address, not an
- * account. Audit events keep the actor's email as it was recorded.
+ * account. Audit events keep the addresses they recorded, the actor's and the
+ * member's or invitee's they name: the audit trail is the record of who did what.
  */
 
 import type {ClientSession} from "mongoose"

@@ -34,7 +34,9 @@ import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {listWorkspaceAudit} from "../packages/core/src/services/workspaces/audit.service"
 import {
   acceptInvitation,
+  acceptInvitationById,
   createInvitation,
+  listInvitationsForPerson,
   listPendingInvitations,
   peekInvitation,
   revokeInvitation,
@@ -264,7 +266,7 @@ describe("createInvitation", () => {
     expect(events[0]).toMatchObject({
       action: "invitation.created",
       actor: {kind: "user", mentraUserId: "mu_admin"},
-      target: {invitationId: created.invitationId},
+      target: {invitationId: created.invitationId, email: "dev@example.test"},
       after: {email: "dev@example.test", role: "developer"},
     })
     expect(JSON.stringify(events)).not.toContain(token)
@@ -463,7 +465,7 @@ describe("createInvitation", () => {
     expect((await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean())!.tokenHash).toBe(
       sha256(token),
     )
-    expect(await peekInvitation(token)).toEqual({workspaceName: "Acme", email: "dev@example.test", role: "developer"})
+    expect(await peekInvitation(token)).toMatchObject({workspaceName: "Acme", email: "dev@example.test", role: "developer"})
 
     // A blank template counts as unset.
     process.env.CLOUD_CORE_WORKSPACE_INVITE_URL_TEMPLATE = "   "
@@ -552,7 +554,9 @@ describe("createInvitation", () => {
     const revoked = (await listWorkspaceAudit(ws, {limit: 10})).filter(event => event.action === "invitation.revoked")
     expect(revoked).toHaveLength(1)
     expect(revoked[0]).toMatchObject({
-      target: {invitationId: first.invitationId},
+      // Whose invitation it was, so the audit log can say so.
+      target: {invitationId: first.invitationId, email: "dev@example.test"},
+      before: {status: "pending", role: "member"},
       after: {status: "revoked", reason: "superseded", supersededBy: second.invitationId},
     })
 
@@ -846,7 +850,7 @@ describe("invitation email", () => {
   test("is sent after the transaction commits, with the link, and without a RESEND_API_KEY it is skipped", async () => {
     const ws = await newWorkspace("Acme <Labs>")
     const committedWhenSent: boolean[] = []
-    const sent: Array<{to: string[]; subject: string; html: string}> = []
+    const sent: Array<{to: string[]; subject: string; html: string; text: string}> = []
     fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (_url: unknown, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body))
       sent.push(body)
@@ -871,8 +875,12 @@ describe("invitation email", () => {
     expect(sent).toHaveLength(1)
     expect(committedWhenSent).toEqual([true])
     expect(sent[0]!.to).toEqual(["dev@example.test"])
-    expect(sent[0]!.subject).toContain("Acme <Labs>")
+    expect(sent[0]!.subject).toBe("You're invited to join Acme <Labs> on Mentra")
     expect(sent[0]!.html).toContain(created.inviteUrl)
+    // It says who invited them, as what, with a plain-text version alongside the HTML.
+    expect(sent[0]!.html).toContain("mu_owner@example.test")
+    expect(sent[0]!.text).toContain("mu_owner@example.test invited you to join Acme <Labs> on Mentra as a Developer.")
+    expect(sent[0]!.text).toContain(created.inviteUrl)
     // The workspace name is user-controlled text and must not reach the HTML unescaped.
     expect(sent[0]!.html).toContain("Acme &lt;Labs&gt;")
     expect(sent[0]!.html).not.toContain("<Labs>")
@@ -993,7 +1001,7 @@ describe("revokeInvitation", () => {
     expect((await listWorkspaceAudit(ws, {limit: 1}))[0]).toMatchObject({
       action: "invitation.revoked",
       actor: {kind: "user", mentraUserId: "mu_admin"},
-      target: {invitationId: created.invitationId},
+      target: {invitationId: created.invitationId, email: "dev@example.test"},
       before: {status: "pending"},
       after: {status: "revoked"},
     })
@@ -1043,9 +1051,14 @@ describe("peekInvitation", () => {
     const before = await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean()
 
     expect(await peekInvitation(created.token)).toEqual({
+      invitationId: created.invitationId,
+      workspaceId: ws,
       workspaceName: "Acme Labs",
       email: "dev@example.test",
       role: "developer",
+      // Who sent it: the address their membership records.
+      invitedByEmail: "mu_owner@example.test",
+      expiresAt: created.expiresAt.toISOString(),
     })
     expect(await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean()).toEqual(before)
   })
@@ -1123,13 +1136,14 @@ describe("acceptInvitation", () => {
     const acceptedEvent = events.find(event => event.action === "invitation.accepted")!
     expect(added).toMatchObject({
       actor: {kind: "user", mentraUserId: "mu_dev"},
-      target: {membershipId: result.membershipId, mentraUserId: "mu_dev"},
+      // The member's address as their membership records it (the verified address, trimmed).
+      target: {membershipId: result.membershipId, mentraUserId: "mu_dev", email: "Dev@Example.TEST"},
       before: {role: null},
       after: {role: "developer"},
     })
     expect(acceptedEvent).toMatchObject({
       actor: {kind: "user", mentraUserId: "mu_dev"},
-      target: {invitationId: created.invitationId, membershipId: result.membershipId},
+      target: {invitationId: created.invitationId, membershipId: result.membershipId, email: "dev@example.test"},
       before: {status: "pending"},
       after: {status: "accepted"},
     })
@@ -1371,6 +1385,205 @@ describe("acceptInvitation", () => {
   })
 })
 
+describe("listInvitationsForPerson", () => {
+  test("lists what the person can accept now, matched on their verified email, newest first, never a token", async () => {
+    const acme = await newWorkspace("Acme")
+    const beta = (await createWorkspace(user("mu_owner"), {name: "Beta"})).workspaceId
+    const gamma = (await createWorkspace(orgAdmin, {name: "Gamma"})).workspaceId
+    const fromAcme = await invite(acme, "dev@example.test", "developer")
+    // Sent by an Organization Admin on the organization's authority, outside any membership.
+    const fromAdmin = await createInvitation(orgAdmin, beta, {email: "DEV@example.test", role: "admin"})
+    const fromSystem = await createInvitation(system, gamma, {email: "dev@example.test", role: "member"})
+    await invite(acme, "someone-else@example.test")
+
+    // The person signs in with a differently cased address: it matches all the same.
+    const items = await listInvitationsForPerson(user("mu_dev", {email: " Dev@Example.TEST "}))
+
+    expect(items.map(item => item.invitationId)).toEqual([
+      fromSystem.invitationId,
+      fromAdmin.invitationId,
+      fromAcme.invitationId,
+    ])
+    expect(items[2]).toEqual({
+      invitationId: fromAcme.invitationId,
+      workspaceId: acme,
+      workspaceName: "Acme",
+      email: "dev@example.test",
+      role: "developer",
+      invitedByEmail: "mu_owner@example.test",
+      expiresAt: fromAcme.expiresAt.toISOString(),
+    })
+    expect(items.map(item => [item.workspaceName, item.role, item.invitedByEmail])).toEqual([
+      ["Gamma", "member", null],
+      ["Beta", "admin", orgAdmin.email],
+      ["Acme", "developer", "mu_owner@example.test"],
+    ])
+    const serialized = JSON.stringify(items)
+    expect(serialized).not.toContain(fromAcme.token)
+    for (const row of await WorkspaceInvitationModel.find({}).lean()) expect(serialized).not.toContain(row.tokenHash)
+  })
+
+  test("leaves out what cannot be accepted: expired, used, revoked, a deleted workspace, a lapsed inviter, a workspace they are in", async () => {
+    const live = await newWorkspace("Live")
+    const expiredWs = await newWorkspace("Expired")
+    const acceptedWs = await newWorkspace("Accepted")
+    const revokedWs = await newWorkspace("Revoked")
+    const deletedWs = await newWorkspace("Deleted")
+    const lapsedWs = await newWorkspace("Lapsed")
+    const joinedWs = await newWorkspace("Joined")
+    const kept = await invite(live, "dev@example.test")
+    await expire((await invite(expiredWs, "dev@example.test")).invitationId)
+    const accepted = await invite(acceptedWs, "dev@example.test")
+    await acceptInvitation(user("mu_other", {email: "dev@example.test"}), accepted.token)
+    await revokeInvitation(user("mu_owner"), revokedWs, (await invite(revokedWs, "dev@example.test")).invitationId)
+    await invite(deletedWs, "dev@example.test")
+    await deleteWorkspace(user("mu_owner"), deletedWs, {confirmName: "Deleted"})
+    // Sent by the admin, whose membership then ends: the invitation goes with it.
+    await createInvitation(user("mu_admin"), lapsedWs, {email: "dev@example.test", role: "member"})
+    const adminMembership = (await getActiveMembership(lapsedWs, "mu_admin"))!.membershipId
+    await removeMember(user("mu_owner"), lapsedWs, adminMembership, await revisionOf(lapsedWs))
+    // Already a member: accepting would be refused (already_member), so it is not offered.
+    await invite(joinedWs, "dev@example.test")
+    await addMember(joinedWs, "mu_dev", "member")
+
+    const items = await listInvitationsForPerson(user("mu_dev", {email: "dev@example.test"}))
+
+    expect(items.map(item => item.invitationId)).toEqual([kept.invitationId])
+  })
+
+  test("an inviter whose role no longer grants the invited role is left out, as peek and accept refuse it", async () => {
+    const ws = await newWorkspace()
+    const adminMembership = (await getActiveMembership(ws, "mu_admin"))!.membershipId
+    await createInvitation(user("mu_admin"), ws, {email: "dev@example.test", role: "developer"})
+    expect(await listInvitationsForPerson(user("mu_dev", {email: "dev@example.test"}))).toHaveLength(1)
+
+    await changeRole(user("mu_owner"), ws, adminMembership, "member", await revisionOf(ws))
+
+    expect(await listInvitationsForPerson(user("mu_dev", {email: "dev@example.test"}))).toEqual([])
+  })
+
+  test("is refused for an unverified or missing email, a deleted account and anyone who is not a person", async () => {
+    const ws = await newWorkspace()
+    await invite(ws, "dev@example.test")
+    for (const actor of [
+      user("mu_dev", {email: "dev@example.test", emailVerified: false}),
+      user("mu_dev", {email: "dev@example.test", emailVerified: "true" as unknown as boolean}),
+      user("mu_dev", {email: null}),
+      user("mu_dev", {email: "   "}),
+    ]) {
+      await expectError(() => listInvitationsForPerson(actor), "email_unverified", 403)
+    }
+    await account("mu_gone")
+    await UserModel.updateOne({mentraUserId: "mu_gone"}, {$set: {supportTelemetryDeletedAt: new Date()}})
+    await expectError(
+      () => listInvitationsForPerson(user("mu_gone", {email: "dev@example.test"})),
+      "account_deleted",
+      403,
+    )
+    for (const actor of [system, service, user("", {email: "dev@example.test"})]) {
+      await expectError(() => listInvitationsForPerson(actor as UserActor), "forbidden", 403)
+    }
+  })
+})
+
+describe("acceptInvitationById", () => {
+  test("accepts like the token does: a membership with the invited role, one revision bump, the same audit events", async () => {
+    const ws = await newWorkspace()
+    const created = await invite(ws, "dev@example.test", "developer")
+    const before = await revisionOf(ws)
+    const [listed] = await listInvitationsForPerson(user("mu_dev", {email: "dev@example.test"}))
+
+    const result = await acceptInvitationById(user("mu_dev", {email: "Dev@Example.test"}), listed!.invitationId)
+
+    expect(result.workspaceId).toBe(ws)
+    expect(await getActiveMembership(ws, "mu_dev")).toMatchObject({membershipId: result.membershipId, role: "developer"})
+    expect(await revisionOf(ws)).toBe(before + 1)
+    expect(await WorkspaceInvitationModel.findOne({invitationId: created.invitationId}).lean()).toMatchObject({
+      status: "accepted",
+      acceptedMembershipId: result.membershipId,
+    })
+    const actions = (await listWorkspaceAudit(ws, {limit: 2})).map(event => event.action).sort()
+    expect(actions).toEqual(["invitation.accepted", "membership.added"])
+    // Used up: the token and the id are both spent.
+    await expectError(() => acceptInvitationById(user("mu_dev"), created.invitationId), "invitation_not_found", 404)
+    await expectError(() => acceptInvitation(user("mu_dev"), created.token), "invitation_not_found", 404)
+    expect(await listInvitationsForPerson(user("mu_dev", {email: "dev@example.test"}))).toEqual([])
+  })
+
+  test("refuses exactly what accepting by token refuses", async () => {
+    const ws = await newWorkspace()
+    const forOther = await invite(ws, "other@example.test")
+    const expired = await invite(ws, "expired@example.test")
+    await expire(expired.invitationId)
+    const revoked = await invite(ws, "revoked@example.test")
+    await revokeInvitation(user("mu_owner"), ws, revoked.invitationId)
+    const joined = await invite(ws, "joined@example.test")
+    await addMember(ws, "mu_joined", "member")
+    const gone = await invite(ws, "gone@example.test")
+    await account("mu_gone")
+    await UserModel.updateOne({mentraUserId: "mu_gone"}, {$set: {supportTelemetryDeletedAt: new Date()}})
+
+    await expectError(() => acceptInvitationById(user("mu_dev"), "winv_missing"), "invitation_not_found", 404)
+    for (const id of ["", "  ", undefined, 7]) {
+      await expectError(() => acceptInvitationById(user("mu_dev"), id as never), "invitation_not_found", 404)
+    }
+    // Someone else's invitation, or one to their address they have not verified.
+    await expectError(
+      () => acceptInvitationById(user("mu_dev", {email: "dev@example.test"}), forOther.invitationId),
+      "email_mismatch",
+      403,
+    )
+    await expectError(
+      () => acceptInvitationById(user("mu_other", {email: "other@example.test", emailVerified: false}), forOther.invitationId),
+      "email_mismatch",
+      403,
+    )
+    await expectError(
+      () => acceptInvitationById(user("mu_expired", {email: "expired@example.test"}), expired.invitationId),
+      "invitation_expired",
+      410,
+    )
+    await expectError(
+      () => acceptInvitationById(user("mu_revoked", {email: "revoked@example.test"}), revoked.invitationId),
+      "invitation_not_found",
+      404,
+    )
+    await expectError(
+      () => acceptInvitationById(user("mu_joined", {email: "joined@example.test"}), joined.invitationId),
+      "already_member",
+      409,
+    )
+    await expectError(
+      () => acceptInvitationById(user("mu_gone", {email: "gone@example.test"}), gone.invitationId),
+      "account_deleted",
+      403,
+    )
+    for (const actor of [system, service]) {
+      await expectError(() => acceptInvitationById(actor as UserActor, forOther.invitationId), "forbidden", 403)
+    }
+    // Nothing was accepted along the way.
+    expect(await WorkspaceInvitationModel.countDocuments({workspaceId: ws, status: "accepted"})).toBe(0)
+
+    // An inviter whose authority has lapsed, and a deleted workspace, are refused too.
+    const adminMembership = (await getActiveMembership(ws, "mu_admin"))!.membershipId
+    const fromAdmin = await createInvitation(user("mu_admin"), ws, {email: "late@example.test", role: "member"})
+    await changeRole(user("mu_owner"), ws, adminMembership, "member", await revisionOf(ws))
+    await expectError(
+      () => acceptInvitationById(user("mu_late", {email: "late@example.test"}), fromAdmin.invitationId),
+      "invitation_not_found",
+      404,
+    )
+    const live = await invite(ws, "live@example.test")
+    await deleteWorkspace(user("mu_owner"), ws, {confirmName: "Acme"})
+    await WorkspaceInvitationModel.updateOne({invitationId: live.invitationId}, {$set: {status: "pending"}})
+    await expectError(
+      () => acceptInvitationById(user("mu_live", {email: "live@example.test"}), live.invitationId),
+      "workspace_deleted",
+      410,
+    )
+  })
+})
+
 describe("through the workspace API, signed in with the fake identity provider", () => {
   let app: ReturnType<typeof createApp>
   let idp: FakeIdp
@@ -1433,7 +1646,15 @@ describe("through the workspace API, signed in with the fake identity provider",
     const unverified = await bearer("supa-invitee", "invitee@example.test", {email_verified: true})
     const peeked = await post("/api/workspaces/invitations/peek", unverified, {token})
     expect(peeked.status).toBe(200)
-    expect(await peeked.json()).toEqual({workspaceName: "Acme", email: "invitee@example.test", role: "developer"})
+    expect(await peeked.json()).toEqual({
+      invitationId: expect.stringMatching(/^winv_/),
+      workspaceId,
+      workspaceName: "Acme",
+      email: "invitee@example.test",
+      role: "developer",
+      invitedByEmail: "owner@example.test",
+      expiresAt: expect.any(String),
+    })
     const refused = await post("/api/workspaces/invitations/accept", unverified, {token})
     expect(refused.status).toBe(403)
     expect(await refused.json()).toMatchObject({error: "email_mismatch"})
@@ -1477,6 +1698,74 @@ describe("through the workspace API, signed in with the fake identity provider",
     )
     expect(accepted.status).toBe(200)
     expect(await WorkspaceMembershipModel.countDocuments({workspaceId, status: "active"})).toBe(2)
+  })
+
+  test("GET /invitations/mine lists the verified invitee's invitations, and accept takes their invitationId", async () => {
+    const {workspaceId} = await invitedThroughApi()
+    const get = (path: string, headers: Record<string, string>) =>
+      app.request(`${PORTAL_ORIGIN}${path}`, {method: "GET", headers})
+
+    // Unverified: refused, as accepting is.
+    idp.registerUser({sub: "supa-invitee", email: "invitee@example.test", emailConfirmed: false})
+    const unverified = await get("/api/workspaces/invitations/mine", await bearer("supa-invitee", "invitee@example.test"))
+    expect(unverified.status).toBe(403)
+    expect(await unverified.json()).toMatchObject({error: "email_unverified"})
+
+    idp.registerUser({sub: "supa-invitee", email: "invitee@example.test", emailConfirmed: true})
+    resetIdpTokenCaches()
+    const invitee = await bearer("supa-invitee", "invitee@example.test")
+    const listed = await get("/api/workspaces/invitations/mine", invitee)
+    expect(listed.status).toBe(200)
+    expect(listed.headers.get("cache-control")).toBe("no-store")
+    const {items} = (await listed.json()) as {items: Array<Record<string, unknown>>}
+    expect(items).toEqual([
+      {
+        invitationId: expect.stringMatching(/^winv_/),
+        workspaceId,
+        workspaceName: "Acme",
+        email: "invitee@example.test",
+        role: "developer",
+        invitedByEmail: "owner@example.test",
+        expiresAt: expect.any(String),
+      },
+    ])
+    // The same list is under the workspace portal's route group.
+    const portal = await get("/api/portal/workspaces/invitations/mine", invitee)
+    expect(portal.status).toBe(200)
+
+    // Someone else sees none of it.
+    idp.registerUser({sub: "supa-other", email: "other@example.test", emailConfirmed: true})
+    const other = await bearer("supa-other", "other@example.test")
+    expect(((await (await get("/api/workspaces/invitations/mine", other)).json()) as {items: unknown[]}).items).toEqual([])
+    const stolen = await post("/api/workspaces/invitations/accept", other, {invitationId: items[0]!.invitationId})
+    expect(stolen.status).toBe(403)
+    expect(await stolen.json()).toMatchObject({error: "email_mismatch"})
+
+    // Exactly one of token and invitationId.
+    for (const body of [{}, {token: "x", invitationId: items[0]!.invitationId}, {invitationId: ""}, {invitationId: 7}]) {
+      const reply = await post("/api/workspaces/invitations/accept", invitee, body)
+      expect({body, status: reply.status}).toEqual({body, status: 400})
+    }
+
+    const accepted = await post("/api/workspaces/invitations/accept", invitee, {invitationId: items[0]!.invitationId})
+    expect(accepted.status).toBe(200)
+    expect(((await accepted.json()) as {workspaceId: string}).workspaceId).toBe(workspaceId)
+    expect(((await (await get("/api/workspaces/invitations/mine", invitee)).json()) as {items: unknown[]}).items).toEqual([])
+  })
+
+  test("GET /invitations/mine refuses a key and an anonymous caller", async () => {
+    const {workspaceId} = await invitedThroughApi()
+    const owner = await bearer("supa-owner", "owner@example.test")
+    const minted = await post(`/api/workspaces/${workspaceId}/credentials`, owner, {name: "CI"})
+    expect(minted.status).toBe(201)
+    const {token} = (await minted.json()) as {token: string}
+
+    const withKey = await app.request(`${PORTAL_ORIGIN}/api/workspaces/invitations/mine`, {
+      headers: {authorization: `Bearer ${token}`},
+    })
+    expect(withKey.status).toBe(403)
+    const anonymous = await app.request(`${PORTAL_ORIGIN}/api/workspaces/invitations/mine`)
+    expect(anonymous.status).toBe(401)
   })
 
   test("with neither a template nor a portal URL, the invitation route answers 503 invitations_unavailable and writes nothing", async () => {

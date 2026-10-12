@@ -44,13 +44,19 @@ account; a deleted account is refused (`404 user_not_found`).
 ## The workspace portal
 
 The workspace portal (`websites/portal`) is centred on the current workspace. A switcher at
-the top of the sidebar shows it and your role, and lists your other workspaces, **Create
-workspace** and the invitation this tab holds. Every page carries its workspace:
+the top of the sidebar shows it and your role (your membership's; "Member · Organization
+Admin" when an Organization Admin's powers go beyond it), and lists your other workspaces,
+**Create workspace** and your pending invitations with **Accept** and **Dismiss**. Every
+page carries its workspace:
 `/w/<workspaceId>/members` (members, with pending invitations under them),
 `/w/<workspaceId>/settings` and `/w/<workspaceId>/audit`; the sidebar offers only what your
 role opens. `/` opens your last-used workspace (remembered in the browser, never an
-authority), else your first, else the first-run screen. An invitation link lands on
-`/invitation`, which reads the token from the tab's session storage. Company sign-in
+authority), else your first, else the first run: your pending invitations if you have any
+you can accept, otherwise **Create your workspace**. An invitation link lands on
+`/invitation`, which reads the token from the tab's session storage. A link Core reports
+as no longer valid is shown as such once and then forgotten. Pending invitations are the
+link's and those addressed to your verified email, each shown once; **Dismiss** hides one
+in this browser only (Core does not record a refusal, and its link keeps working). Company sign-in
 (enterprise orgs and trusted issuers) is not in the navigation; its pages stay reachable
 at `/enterprise` until it returns as workspace settings.
 
@@ -61,8 +67,11 @@ at `/enterprise` until it returns as workspace settings.
   `CLOUD_CORE_WORKSPACE_CREATION=organization-admins`.
 - An invitation names an email, a role and an expiry (14 days). Admins invite
   Members and Developers, Owners anyone. Core stores only a hash of the
-  invitation token; the link carries the token. The invitee opens the link in
-  the workspace portal, signs in with that verified email, and accepts.
+  invitation token; the link carries the token. The email names the inviter.
+  The invitee opens the link in the workspace portal, signs in with that
+  verified email, and accepts. Signed in with that verified email, they also see
+  the invitation without the link (`GET /invitations/mine`) and can accept it by
+  its id, with the same checks.
   Accepting adds the membership without touching others. A newer invitation to
   the same address replaces the pending one.
 - An invitation is only as good as its inviter, and records the authority it
@@ -127,8 +136,11 @@ session authenticates only its own routes:
 | `/api/workspaces/*`, `/api/organization/*` | Servers and tools | Identity-provider access tokens and Core keys |
 
 Workspace routes (`GET`/`POST /`, `GET`/`PATCH`/`DELETE /:workspaceId`,
-`/members`, `/invitations`, `/invitations/peek`, `/invitations/accept`,
-`/credentials`, `/leave`, `/audit`) are for people; a key gets 403. Each checks
+`/members`, `/invitations`, `/invitations/mine`, `/invitations/peek`, `/invitations/accept`
+(by `token` or `invitationId`), `/credentials`, `/leave`, `/audit`) are for people; a key
+gets 403. A workspace's detail says whether the caller is an Organization Admin
+(`organizationAdmin`). Audit events name their subject: `target.email` for memberships and
+invitations, `target.name` for keys. Each checks
 the caller's capability in that workspace. `GET /api/organization` tells any
 caller, a key included, its organization capabilities and whether it may create
 a workspace. `/api/organization/workspaces` lists every workspace and

@@ -51,6 +51,8 @@ WorkspaceInvitationSchema.index(
 )
 // Account deletion finds the invitations a person sent.
 WorkspaceInvitationSchema.index({invitedByMentraUserId: 1, status: 1})
+// "Which invitations are addressed to this person?" (`GET /invitations/mine`, by their verified email).
+WorkspaceInvitationSchema.index({email: 1, status: 1})
 
 export type WorkspaceInvitationRow = InferSchemaType<typeof WorkspaceInvitationSchema>
 export const WorkspaceInvitationModel = registerModel("WorkspaceInvitation", WorkspaceInvitationSchema)
