@@ -48,9 +48,11 @@ public class K900NetworkManager extends BaseNetworkManager {
 
     private final Handler mWifiStateHandler = new Handler(Looper.getMainLooper());
     private final Handler mHotspotHandler = new Handler(Looper.getMainLooper());
+    private final Handler mHotspotNotificationHandler = new Handler(Looper.getMainLooper());
     private final Object mHotspotLock = new Object();
     private boolean mHotspotStarting;
     private boolean mHotspotStopping;
+    private int mHotspotStateNotificationGeneration;
     private int mHotspotGeneration;
     private long mHotspotReadinessDeadlineMs;
 
@@ -151,6 +153,35 @@ public class K900NetworkManager extends BaseNetworkManager {
         if (!isSystemApp) return;
         if (active) stationAutojoinPause.pause();
         else stationAutojoinPause.resume();
+    }
+
+    @Override
+    protected void publishHotspotStateChanged(boolean enabled) {
+        final int notificationGeneration;
+        synchronized (mHotspotLock) {
+            notificationGeneration = ++mHotspotStateNotificationGeneration;
+        }
+        mHotspotNotificationHandler.post(
+                () -> {
+                    synchronized (mHotspotLock) {
+                        if (notificationGeneration != mHotspotStateNotificationGeneration) return;
+                    }
+                    // A service listener takes the service manager's monitor. Never call it while
+                    // holding mHotspotLock: service cleanup takes those locks in the other order.
+                    super.publishHotspotStateChanged(enabled);
+                });
+    }
+
+    @Override
+    protected void notifyHotspotError(String errorMessage) {
+        int generation = mHotspotGeneration;
+        mHotspotNotificationHandler.post(
+                () -> {
+                    synchronized (mHotspotLock) {
+                        if (generation != mHotspotGeneration) return;
+                    }
+                    super.notifyHotspotError(errorMessage);
+                });
     }
 
     @Override
@@ -258,7 +289,13 @@ public class K900NetworkManager extends BaseNetworkManager {
                 // Radio-off can leave hostapd registered while the AP interface has no address.
                 // Stop the vendor AP before enabling the radio, or ap_start can collide with it.
                 mHotspotStopping = true;
-                onHotspotStopped();
+                // This is reconciliation within one start, not a terminal stop. Keep saved
+                // station networks paused until the AP is ready or this start fails.
+                onHotspotActiveChanged(true);
+                stopInactivityMonitoring();
+                boolean wasEnabled = isHotspotEnabled;
+                clearHotspotState();
+                if (wasEnabled) notifyHotspotStateChanged(false);
                 sendVendorHotspotState(false);
                 waitForVendorHotspotStopped(generation);
             } catch (Exception e) {
@@ -282,7 +319,6 @@ public class K900NetworkManager extends BaseNetworkManager {
                 if (apState == AsgConstants.WIFI_AP_STATE_DISABLED
                         && findLocalHotspotGatewayIp().isEmpty()) {
                     mHotspotStopping = false;
-                    onHotspotStopped();
                     requestVendorHotspot(generation);
                     return;
                 }
@@ -522,6 +558,34 @@ public class K900NetworkManager extends BaseNetworkManager {
             onHotspotStopped();
             notificationManager.showHotspotStateNotification(false);
             Log.i(TAG, "🔥 K900 vendor hotspot stop requested");
+        }
+    }
+
+    @Override
+    public void stopHotspotAndAwaitDisabled() throws Exception {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            throw new IllegalStateException("Hotspot cleanup must run on the OTA worker");
+        }
+        final int generation;
+        synchronized (mHotspotLock) {
+            stopHotspot();
+            generation = mHotspotGeneration;
+        }
+        long deadline =
+                SystemClock.elapsedRealtime() + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
+        while (true) {
+            synchronized (mHotspotLock) {
+                if (generation != mHotspotGeneration) {
+                    throw new java.io.IOException(
+                            "Hotspot cleanup was superseded before APK replacement");
+                }
+                if (readVendorHotspotState() == AsgConstants.WIFI_AP_STATE_DISABLED
+                        && findLocalHotspotGatewayIp().isEmpty()) return;
+            }
+            if (SystemClock.elapsedRealtime() >= deadline) {
+                throw new java.io.IOException("K900 hotspot did not stop before APK replacement");
+            }
+            Thread.sleep(AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
         }
     }
 
@@ -843,6 +907,11 @@ public class K900NetworkManager extends BaseNetworkManager {
             Log.i(TAG, "🔥 Preserving any active K900 hotspot during OTA APK replacement");
         } else {
             stopHotspot();
+        }
+        // Shutdown invalidates queued notifications before clearing service listeners.
+        synchronized (mHotspotLock) {
+            mHotspotStateNotificationGeneration++;
+            mHotspotNotificationHandler.removeCallbacksAndMessages(null);
         }
         unregisterWifiStateReceiver();
         super.shutdown();

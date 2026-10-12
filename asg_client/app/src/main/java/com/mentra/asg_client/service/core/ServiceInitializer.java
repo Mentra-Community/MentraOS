@@ -101,6 +101,7 @@ public final class ServiceInitializer {
         this.responseBuilder = new ResponseBuilder();
         OtaCommandHandler otaCommandHandler =
                 new OtaCommandHandler(otaHelper, communicationManager);
+        otaHelper.setNetworkManager(network);
         otaHelper.setPhoneConnectionProvider((CommunicationManager) communicationManager);
 
         // Create the peripheral event bus and register all MCU event subscribers. Inbound BES/MCU

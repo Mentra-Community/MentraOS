@@ -183,6 +183,11 @@ public abstract class BaseNetworkManager implements INetworkController {
     protected void notifyHotspotStateChanged(boolean isEnabled) {
         Log.d(TAG, "Hotspot state changed: " + (isEnabled ? "enabled" : "disabled"));
         this.isHotspotEnabled = isEnabled;
+        publishHotspotStateChanged(isEnabled);
+    }
+
+    /** Publish a committed state without changing it; subclasses may serialize listener delivery. */
+    protected void publishHotspotStateChanged(boolean isEnabled) {
         HotspotNetworkUtils.notifyHotspotStateChanged(isEnabled);
         for (NetworkStateListener listener : listeners) {
             try {
@@ -857,6 +862,21 @@ public abstract class BaseNetworkManager implements INetworkController {
      * idempotent.
      */
     protected void onHotspotActiveChanged(boolean active) {}
+
+    @Override
+    public void stopHotspotAndAwaitDisabled() throws Exception {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            throw new IllegalStateException("Hotspot cleanup must run on the OTA worker");
+        }
+        stopHotspot();
+        long deadline = SystemClock.elapsedRealtime() + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
+        while (isWifiTetheringActive()) {
+            if (SystemClock.elapsedRealtime() >= deadline) {
+                throw new java.io.IOException("Hotspot did not stop before APK replacement");
+            }
+            Thread.sleep(AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
+        }
+    }
 
     /** Register broadcast receiver for tethering state changes */
     private void registerTetheringStateReceiver() {

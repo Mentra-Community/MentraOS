@@ -46,6 +46,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.DowngradeGate;
 import com.mentra.asg_client.io.ota.utils.MtkOtaSelector;
@@ -130,6 +131,7 @@ public class OtaHelper {
 
     // Provider for phone connection status and messaging
     private PhoneConnectionProvider phoneConnectionProvider;
+    private volatile INetworkManager networkManager;
 
     // Session manager for persisting OTA state across APK restarts
     private volatile OtaSessionManager sessionManager;
@@ -252,11 +254,17 @@ public class OtaHelper {
         }
 
         phoneConnectionProvider = null;
+        networkManager = null;
         // Recovery reconciliation may outlive this service. The application context remains
         // safe to retain until a new helper adopts the in-flight transaction or it settles.
     }
 
     // ========== Phone Connection Provider Methods ==========
+
+    /** Share the service's existing network owner for destructive APK downgrade cleanup. */
+    public void setNetworkManager(INetworkManager manager) {
+        networkManager = manager;
+    }
 
     /**
      * Set the phone connection provider for phone-controlled OTA updates.
@@ -1397,6 +1405,10 @@ public class OtaHelper {
                     return false;
                 }
             }
+            if (!ready.active && !prepareNetworkForDowngrade()) {
+                isUpdating = false;
+                return false;
+            }
             if (!startRecoveryReconciliation()) return false;
             if (!ready.active) {
                 Intent handoff = RecoveryWorkerManager.newRecoveryIntent(OtaConstants.RECOVERY_REQUEST_DOWNGRADE);
@@ -1416,6 +1428,22 @@ public class OtaHelper {
                 if (handoffOwner == this) { scheduleRecoveryReconcile(); return true; }
             }
             isUpdating = false;
+            return false;
+        }
+    }
+
+    boolean prepareNetworkForDowngrade() {
+        var network = networkManager;
+        try {
+            if (network == null) throw new IllegalStateException("Service network owner is unavailable");
+            // Recovery already has all verified bytes. A destructive downgrade kills ASG and
+            // erases its state, so release its SystemUI AP before uninstalling this owner.
+            network.stopHotspotAndAwaitDisabled();
+            return true;
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            lastApkFailureErrorCode = "downgrade_hotspot_cleanup_failed";
+            Log.e(TAG, "Refusing downgrade handoff before native hotspot cleanup", e);
             return false;
         }
     }

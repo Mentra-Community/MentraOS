@@ -1,17 +1,22 @@
 package com.mentra.asg_client.io.network.managers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.robolectric.Shadows.shadowOf;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.net.wifi.WifiManager;
 import android.os.Looper;
 
 import androidx.test.core.app.ApplicationProvider;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.service.system.interfaces.ISystemController;
 
 import org.junit.Before;
@@ -155,6 +160,133 @@ public class K900NetworkManagerHotspotLifecycleTest {
                 .containsExactly(false, false);
         assertThat(wifi.isWifiEnabled()).isFalse();
         assertThat(manager.isHotspotEnabled()).isFalse();
+    }
+
+    @Test
+    public void reconciliationKeepsPreviouslyPausedStationNetworksDisabled() {
+        android.content.pm.PackageInfo info;
+        try {
+            info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+            throw new AssertionError(e);
+        }
+        info.applicationInfo.flags |= ApplicationInfo.FLAG_SYSTEM;
+        shadowOf(context.getPackageManager()).installPackage(info);
+        context.getSharedPreferences("station_autojoin_pause", Context.MODE_PRIVATE)
+                .edit()
+                .putStringSet("paused_network_ids", java.util.Collections.singleton("7"))
+                .commit();
+        manager = new NativeHotspot(context);
+        manager.gateway = "192.168.43.1";
+        manager.startHotspot();
+
+        manager.gateway = "";
+        manager.apState = 13;
+        manager.startHotspot();
+        advance(400);
+        assertThat(
+                        context.getSharedPreferences("station_autojoin_pause", Context.MODE_PRIVATE)
+                                .getStringSet(
+                                        "paused_network_ids", java.util.Collections.emptySet()))
+                .containsExactly("7");
+
+        manager.stopHotspot();
+        assertThat(
+                        context.getSharedPreferences("station_autojoin_pause", Context.MODE_PRIVATE)
+                                .getStringSet(
+                                        "paused_network_ids", java.util.Collections.emptySet()))
+                .isEmpty();
+    }
+
+    @Test
+    public void stopDoesNotHoldLifecycleLockWhileWaitingForServiceListener() throws Exception {
+        Object serviceMonitor = new Object();
+        NetworkStateListener listener = mock(NetworkStateListener.class);
+        doAnswer(
+                        invocation -> {
+                            synchronized (serviceMonitor) {
+                                return null;
+                            }
+                        })
+                .when(listener)
+                .onHotspotStateChanged(false);
+        manager.addWifiListener(listener);
+        manager.gateway = "192.168.43.1";
+        manager.startHotspot();
+        advance(0);
+
+        Thread stop = new Thread(manager::stopHotspot);
+        boolean finished;
+        synchronized (serviceMonitor) {
+            stop.start();
+            stop.join(2000);
+            finished = !stop.isAlive();
+            // Service cleanup can acquire the lifecycle lock while holding this monitor.
+            if (finished) manager.stopHotspot();
+        }
+        stop.join(2000);
+        assertThat(finished).isTrue();
+        advance(0);
+        verify(listener).onHotspotStateChanged(false);
+    }
+
+    @Test
+    public void newerStopCancelsQueuedReadyNotificationWithoutRestoringCachedState() {
+        NetworkStateListener listener = mock(NetworkStateListener.class);
+        manager.addWifiListener(listener);
+        manager.gateway = "192.168.43.1";
+        manager.startHotspot();
+        manager.stopHotspot();
+        advance(0);
+        verify(listener, never()).onHotspotStateChanged(true);
+        verify(listener).onHotspotStateChanged(false);
+        assertThat(manager.isHotspotEnabled()).isFalse();
+    }
+
+    @Test
+    public void nativeCleanupWaitRejectsUnreadableStateWithoutAnotherStart() throws Exception {
+        manager.failStateRead = true;
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Thread worker =
+                new Thread(
+                        () -> {
+                            try {
+                                manager.stopHotspotAndAwaitDisabled();
+                            } catch (Exception e) {
+                                failure.set(e);
+                            }
+                        });
+        worker.start();
+        worker.join(2000);
+        assertThat(worker.isAlive()).isFalse();
+        assertThat(failure.get()).isInstanceOf(IllegalStateException.class);
+        assertThat(commands())
+                .extracting(i -> i.getBooleanExtra("enable", false))
+                .containsExactly(false);
+    }
+
+    @Test
+    public void nativeCleanupRunsOnWorkerAndReturnsOnlyAfterDisabledState() throws Exception {
+        manager.apState = AsgConstants.WIFI_AP_STATE_DISABLED;
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Thread worker =
+                new Thread(
+                        () -> {
+                            try {
+                                manager.stopHotspotAndAwaitDisabled();
+                            } catch (Exception e) {
+                                failure.set(e);
+                            }
+                        });
+        worker.start();
+        worker.join(2000);
+        assertThat(worker.isAlive()).isFalse();
+        assertThat(failure.get()).isNull();
+        assertThat(commands())
+                .extracting(i -> i.getBooleanExtra("enable", false))
+                .containsExactly(false);
     }
 
     private void advance(long millis) {
