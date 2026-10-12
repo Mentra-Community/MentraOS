@@ -28,9 +28,9 @@ top-right corner). `src/ui/App.tsx` shows the expected setup.
   it. Never put buttons or other controls under the capsule menu; taps there
   go to the Mentra App. For a custom header, spread `useCapsuleHeaderStyle()`
   onto it instead.
-- Paint the page background on `html` and `body`, not only on an inner
-  container. That color is what shows behind the status bar and the home
-  indicator.
+- Put the background (a color, gradient or image) on the root element you pad
+  by the insets, and make that element fill the screen. It shows behind the
+  status bar and the home indicator. Use padding, not margin, for the insets.
 - Define both light and dark colors. The status-bar text follows the Mentra
   App's theme, and `<MentraProvider>` mirrors it as `<html class="dark">`.
   Read it in JavaScript with `useColorScheme()`. Do not hardcode a single

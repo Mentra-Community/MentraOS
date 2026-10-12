@@ -164,7 +164,9 @@ The WebView fills the whole screen, so the Mentra App draws no bars of its own.
 Whatever your page paints at its top and bottom edges shows behind the status bar
 and the home indicator.
 
-- Set your background color on `html` and `body`, not only on an inner container.
+- Put your background (a color, gradient or image) on the root element you pad with
+  `insets`, and make that element fill the screen. Padding, unlike margin, keeps the
+  background under the status bar and the home indicator.
 - The status-bar text follows the Mentra App's light or dark theme. Wrap your app in
   `<MentraProvider>`, which mirrors that theme as `<html class="dark">`, and define
   colors for both themes so the status bar stays readable.
@@ -173,7 +175,9 @@ and the home indicator.
 :root { --background: #ffffff; --foreground: #111111; }
 :root.dark { --background: #0b0b0b; --foreground: #f5f5f5; }
 
-html, body {
+.app {
+  box-sizing: border-box; /* keeps the inset padding inside the 100vh */
+  min-height: 100vh;
   background: var(--background);
   color: var(--foreground);
 }
