@@ -86,7 +86,8 @@ export class GithubPrRoutineChecks implements PrRoutineGithub {
         check.head_sha !== payload.head_sha || check.external_id !== payload.external_id || check.status !== payload.status ||
         check.conclusion !== (payload.conclusion ?? null) ||
         (payload.status !== 'completed' ? check.completed_at !== null :
-          !check.completed_at || payload.completed_at && Date.parse(check.completed_at) !== Date.parse(payload.completed_at)))
+          !check.completed_at || payload.completed_at &&
+            Math.floor(Date.parse(check.completed_at) / 1000) !== Math.floor(Date.parse(payload.completed_at) / 1000)))
       throw new TestRunError(503, 'GitHub did not retain the intended routine check state; the same delivery will reconcile')
     return check.id
   }
