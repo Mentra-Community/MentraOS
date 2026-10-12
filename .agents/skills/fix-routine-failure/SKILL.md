@@ -50,6 +50,16 @@ Use existing video when no screenshot was captured, and record missing or failed
 captures. A missing screenshot alone does not justify replaying inputs or asking
 the human for a photo.
 
+For network failures, distinguish glasses station Wi-Fi from the glasses SoftAP,
+phone Internet and host routing. API33 station-Wi-Fi routines declare
+`{kind: 'glasses', capabilities: ['wifi']}`: connect in setup, disconnect in
+teardown even after failure, and use radio-only `enable()` for scanning. The
+provider owns credentials and native settlement. STA cleanup does not prove an
+app-started SoftAP stopped; inspect its owning app/fixture's cleanup evidence.
+For OTA, check the current selected transport marker for each original install
+pass. A passing diagnostic capture can contain a failed short-body download;
+inspect its byte/hash result and preserve the failure without resending inputs.
+
 | Recorded failing build | Destination |
 | --- | --- |
 | Dev | Fix branch and PR targeting `dev`. |
