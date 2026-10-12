@@ -212,3 +212,46 @@ test('a retained historical native ID cannot be patched into the current generat
   await expect(f.github.deliver(99, {...payload, external_id: 'gate-one:2:1'})).rejects.toThrow('ownership differs')
   expect(f.calls.every(call => call.method === 'GET')).toBe(true)
 })
+
+test('paginated native history supports current updates and lost-create reconciliation without another POST', async () => {
+  const history = Array.from({length: 100}, (_, index) => check(index + 1, `gate-one:${index}:1`))
+  let current: ReturnType<typeof check> | undefined, loseCreate = true
+  const f = fixture(call => {
+    if (call.path.startsWith('commits/')) {
+      const page = Number(new URLSearchParams(call.path.split('?')[1]).get('page'))
+      const rows = current ? [...history, current] : history
+      return inventory(rows.slice((page - 1) * 100, page * 100), rows.length)
+    }
+    if (call.method === 'POST') {
+      current = check(101, payload.external_id)
+      if (loseCreate) {loseCreate = false; throw Error('native create committed before connection loss')}
+      throw Error('duplicate create')
+    }
+    expect(call.path).toBe('check-runs/101')
+    if (call.method === 'PATCH') Object.assign(current!, call.body)
+    return reply(current)
+  })
+  await expect(f.github.deliver(undefined, payload, true)).rejects.toThrow('retained operation will reconcile')
+  expect(await f.github.deliver(undefined, payload, false)).toBe(101)
+  expect(await f.github.deliver(101, payload)).toBe(101)
+  expect(f.calls.filter(call => call.method === 'POST')).toHaveLength(1)
+  expect(f.calls.filter(call => call.method === 'PATCH')).toHaveLength(2)
+  expect(f.calls.filter(call => call.path.startsWith('commits/') && call.path.endsWith('page=2'))).toHaveLength(3)
+  expect(history.map(row => row.external_id)).toEqual(Array.from({length: 100}, (_, index) => `gate-one:${index}:1`))
+})
+
+test('duplicate current receipts across pages and changing or oversized history refuse every native write', async () => {
+  const first = Array.from({length: 100}, (_, index) => check(index + 1, `history:${index}`))
+  first[0] = check(1, payload.external_id)
+  const duplicate = fixture(call => inventory(call.path.endsWith('page=1') ? first : [check(101, payload.external_id)], 101))
+  await expect(duplicate.github.deliver(1, payload)).rejects.toThrow('ambiguous')
+  expect(duplicate.calls).toHaveLength(2)
+  const overlapping = fixture(call => inventory(call.path.endsWith('page=1') ? first : [first[0]!], 101))
+  await expect(overlapping.github.deliver(1, payload)).rejects.toThrow('changed during reconciliation')
+  const changing = fixture(call => inventory(call.path.endsWith('page=1') ? first : [check(101, payload.external_id)], call.path.endsWith('page=1') ? 101 : 102))
+  await expect(changing.github.deliver(1, payload)).rejects.toThrow('changed during reconciliation')
+  const oversized = fixture(() => inventory(first, 1001))
+  await expect(oversized.github.deliver(1, payload)).rejects.toThrow('bounded reconciliation inventory')
+  expect(oversized.calls).toHaveLength(1)
+  for (const f of [duplicate, overlapping, changing, oversized]) expect(f.calls.every(call => call.method === 'GET')).toBe(true)
+})

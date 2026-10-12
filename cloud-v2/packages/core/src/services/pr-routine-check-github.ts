@@ -91,13 +91,25 @@ export class GithubPrRoutineChecks implements PrRoutineGithub {
     return check.id
   }
   async findCheck(payload: CheckPayload) {
-    const rows = z.object({total_count: z.number().int().nonnegative(), check_runs: z.array(checkSchema).max(100)}).parse(
-      await this.api(`commits/${payload.head_sha}/check-runs?check_name=${encodeURIComponent(ROUTINE_CHECK_NAME)}&filter=all&per_page=100`))
-    if (rows.total_count !== rows.check_runs.length) throw new TestRunError(503, 'Routine check history is incomplete')
-    const matches = rows.check_runs.filter(row => row.app.id === this.app.applicationId && row.external_id === payload.external_id)
-    if (matches.length > 1) throw new TestRunError(409, 'Routine check creation is ambiguous')
-    if (matches[0] && (matches[0].name !== ROUTINE_CHECK_NAME || matches[0].head_sha !== payload.head_sha)) throw new TestRunError(409, 'Routine check ownership differs from its retained receipt')
-    return matches[0]?.id
+    const schema = z.object({total_count: z.number().int().nonnegative().safe(), check_runs: z.array(checkSchema).max(100)})
+    const seen = new Set<number>(), matches: Array<z.infer<typeof checkSchema>> = [], deadline = Date.now() + 20_000
+    let total: number | undefined
+    for (let page = 1; page <= 10; page++) {
+      const rows = schema.parse(await this.api(`commits/${payload.head_sha}/check-runs?check_name=${encodeURIComponent(ROUTINE_CHECK_NAME)}&filter=all&per_page=100&page=${page}`, {}, 'checks', deadline))
+      if (rows.total_count > 1000) throw new TestRunError(503, 'Routine check history exceeds its bounded reconciliation inventory')
+      if (total !== undefined && rows.total_count !== total) throw new TestRunError(503, 'Routine check history changed during reconciliation')
+      total = rows.total_count
+      for (const row of rows.check_runs) {
+        if (seen.has(row.id)) throw new TestRunError(503, 'Routine check history changed during reconciliation')
+        seen.add(row.id)
+        if (row.app.id === this.app.applicationId && row.external_id === payload.external_id) matches.push(row)
+      }
+      if (matches.length > 1) throw new TestRunError(409, 'Routine check creation is ambiguous')
+      if (matches[0] && (matches[0].name !== ROUTINE_CHECK_NAME || matches[0].head_sha !== payload.head_sha)) throw new TestRunError(409, 'Routine check ownership differs from its retained receipt')
+      if (seen.size === total) return matches[0]?.id
+      if (seen.size > total || rows.check_runs.length < 100) throw new TestRunError(503, 'Routine check history is incomplete')
+    }
+    throw new TestRunError(503, 'Routine check history exceeds its bounded reconciliation inventory')
   }
   async producer(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string) {
     if (!/^[a-f0-9]{64}$/.test(operationId)) throw new TestRunError(400, 'Invalid retained producer operation')
