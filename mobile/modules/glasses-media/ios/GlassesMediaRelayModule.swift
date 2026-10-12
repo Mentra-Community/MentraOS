@@ -9,6 +9,65 @@ public final class GlassesMediaRelayModule: Module {
         Name("MentraGlassesMediaRelay")
         Events("onRelayState")
 
+        OnCreate {
+            // Temporary diagnostic PR: execute once in the normal signed Mac launch.
+            // It does not change the network or product UI; this PR must not be merged.
+            guard ProcessInfo.processInfo.isiOSAppOnMac else { return }
+            let started = ProcessInfo.processInfo.systemUptime
+            let output = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+                .appendingPathComponent("corewlan-readonly-probe.json")
+            let persist: (String) -> Void = { facts in
+                let value: [String: Any] = [
+                    "schemaVersion": 1, "pid": ProcessInfo.processInfo.processIdentifier,
+                    "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+                    "iosOnMac": true, "facts": facts,
+                    "elapsedMs": (ProcessInfo.processInfo.systemUptime - started) * 1000,
+                ]
+                do {
+                    guard let output else { throw CocoaError(.fileNoSuchFile) }
+                    try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]).write(to: output, options: .atomic)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output.path)
+                } catch {
+                    let error = error as NSError
+                    NSLog("COREWLAN_READONLY result_write_failed domain=%@ code=%ld", error.domain, error.code)
+                }
+            }
+            persist("state=entered")
+            var finished = false
+            let report: (String) -> Void = { facts in
+                self.queue.async {
+                    guard !finished else { return }
+                    finished = true
+                    persist(facts)
+                }
+            }
+            self.queue.asyncAfter(deadline: .now() + 3) { report("state=timeout") }
+            DispatchQueue.global(qos: .utility).async {
+                // Documented public framework and selectors only. This probe never scans,
+                // associates, requests permission or reads network identifiers.
+                do {
+                    guard let bundle = Bundle(path: "/System/Library/Frameworks/CoreWLAN.framework") else {
+                        report("state=missing_bundle"); return
+                    }
+                    try bundle.loadAndReturnError()
+                    guard let clientClass = NSClassFromString("CWWiFiClient") as? NSObject.Type,
+                          clientClass.responds(to: NSSelectorFromString("sharedWiFiClient")),
+                          let client = clientClass.perform(NSSelectorFromString("sharedWiFiClient"))?.takeUnretainedValue() as? NSObject,
+                          client.responds(to: NSSelectorFromString("interface"))
+                    else {
+                        report("state=loaded public_client=0"); return
+                    }
+                    let interface = client.perform(NSSelectorFromString("interface"))?.takeUnretainedValue() as? NSObject
+                    let canAssociate = interface?.responds(to: NSSelectorFromString("associateToNetwork:password:error:")) ?? false
+                    report("state=loaded public_client=1 interface=\(interface == nil ? 0 : 1) association_selector=\(canAssociate ? 1 : 0)")
+                } catch {
+                    let error = error as NSError
+                    let domain = error.domain.range(of: "^[A-Za-z0-9_.-]{1,128}$", options: .regularExpression) == nil ? "unavailable" : error.domain
+                    report("state=load_failed domain=\(domain) code=\(error.code)")
+                }
+            }
+        }
+
         AsyncFunction("prepare") { (options: [String: Any], promise: Promise) in
             guard let id = options["attemptId"] as? String,
                   let ingest = options["ingestUrl"] as? String, let url = URL(string: ingest), url.scheme == "https",
