@@ -64,7 +64,7 @@ import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
-import { committedReadWait, getReport, listReports } from "../packages/core/src/services/report.service";
+import { committedReadWait, getReport, incidentReportId, listReports } from "../packages/core/src/services/report.service";
 import {
   createStorageService,
   sha256Hex,
@@ -514,7 +514,9 @@ describe("report idempotency keys", () => {
     const first = await submit(crashReport(INCIDENT_KEY));
     expect(first.status).toBe(200);
     const created = await first.json() as { reportId: string; status: string };
-    expect(created).toEqual({ reportId: expect.stringMatching(/^rep_/), status: "collecting" });
+    expect(created).toEqual({ reportId: incidentReportId(mentraUserId, INCIDENT_KEY), status: "collecting" });
+    // The same ULID alphabet as keyless reports, so tools that resolve full report ids accept it.
+    expect(created.reportId).toMatch(/^rep_[0-9A-HJKMNP-TV-Z]{26}$/);
 
     const second = await submit(crashReport(INCIDENT_KEY));
     expect(second.status).toBe(200);
@@ -593,14 +595,15 @@ describe("report idempotency keys", () => {
     expect(await ReportModel.countDocuments({ incidentKey: INCIDENT_KEY })).toBe(2);
   });
 
-  test("rejects malformed incident keys and keeps the index partial and unique", async () => {
+  test("rejects malformed incident keys and needs no unique index beyond reportId", async () => {
     for (const incidentKey of ["", "has space", "slash/key", "x".repeat(129), 42]) {
       expect((await submit({ ...crashReport(), incidentKey })).status).toBe(400);
     }
     expect(await ReportModel.countDocuments({})).toBe(0);
-    const index = (await ReportModel.collection.indexes()).find(row => row.key.incidentKey === 1);
-    expect(index).toMatchObject({ key: { mentraUserId: 1, incidentKey: 1 }, unique: true,
-      partialFilterExpression: { incidentKey: { $type: "string" } } });
+    // Cosmos DB cannot add a unique index to a collection that already holds
+    // reports, so deduplication rides on the reportId index the collection was created with.
+    const unique = (await ReportModel.collection.indexes()).filter(row => row.unique).map(row => row.key);
+    expect(unique).toEqual([{ reportId: 1 }]);
   });
 
   test("a log upload repeated with the same retry key and bytes is stored once", async () => {
@@ -639,7 +642,7 @@ describe("report idempotency keys", () => {
 
   test("a keyed retry answers a concurrent winner only after its majority commit", async () => {
     // The winner's row is visible to local reads while its majority acknowledgement is pending.
-    await ReportModel.collection.insertOne({ reportId: "rep_PENDINGWINNER", mentraUserId, kind: "automatic",
+    await ReportModel.collection.insertOne({ reportId: incidentReportId(mentraUserId, INCIDENT_KEY), mentraUserId, kind: "automatic",
       incidentKey: INCIDENT_KEY, status: "collecting", artifacts: [], context: {}, createdAt: new Date() });
     let committed = false;
     const fake = hideUncommittedRows(ReportModel, "incidentKey", () => committed);
@@ -648,7 +651,7 @@ describe("report idempotency keys", () => {
       const res = await submit(crashReport(INCIDENT_KEY));
       expect(committed).toBe(true);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ reportId: "rep_PENDINGWINNER", status: "collecting", deduplicated: true });
+      expect(await res.json()).toEqual({ reportId: incidentReportId(mentraUserId, INCIDENT_KEY), status: "collecting", deduplicated: true });
       expect(fake.reads.length).toBeGreaterThan(1);
       expect(fake.reads.every(read => read.level === "majority" && read.mode === "primary")).toBe(true);
     } finally { fake.restore(); }
@@ -656,7 +659,7 @@ describe("report idempotency keys", () => {
   });
 
   test("a keyed retry returns 503, not the winner, when the winner never commits within the bound", async () => {
-    await ReportModel.collection.insertOne({ reportId: "rep_NEVERCOMMITS", mentraUserId, kind: "automatic",
+    await ReportModel.collection.insertOne({ reportId: incidentReportId(mentraUserId, INCIDENT_KEY), mentraUserId, kind: "automatic",
       incidentKey: INCIDENT_KEY, status: "collecting", artifacts: [], context: {}, createdAt: new Date() });
     const fake = hideUncommittedRows(ReportModel, "incidentKey", () => false);
     const savedTimeout = committedReadWait.timeoutMs;
@@ -774,8 +777,8 @@ describe("report idempotency keys", () => {
   });
 
   test("a duplicate-key loser returns 503 within the bound when the winner poll read never answers", async () => {
-    // The pre-check misses (hidden row), creation loses the unique index, and the poll read then stalls.
-    await ReportModel.collection.insertOne({ reportId: "rep_STALLEDPOLL", mentraUserId, kind: "automatic",
+    // The pre-check misses (hidden row), creation collides on the derived reportId, and the poll read then stalls.
+    await ReportModel.collection.insertOne({ reportId: incidentReportId(mentraUserId, INCIDENT_KEY), mentraUserId, kind: "automatic",
       incidentKey: INCIDENT_KEY, status: "collecting", artifacts: [], context: {}, createdAt: new Date() });
     let reads = 0;
     const hidden = hideUncommittedRows(ReportModel, "incidentKey", () => false);
