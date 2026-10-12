@@ -220,4 +220,99 @@ public class BesTraceSessionTest {
         session.markDurable();
         assertEquals(500, session.durableCursor().position);
     }
+
+    // ---- wall-time ordering (OS-1988 trace.txt monotonic) -----------------------------------
+
+    private static void assertMonotonic(java.util.List<BesTraceStore.Line> lines) {
+        long last = -1;
+        for (BesTraceStore.Line line : lines) {
+            assertTrue(line.text + " at " + line.wallMs + " after " + last, line.wallMs >= last);
+            last = line.wallMs;
+        }
+    }
+
+    /** The shape seen on hardware: lines lost, then a cut fragment, then older stamped lines. */
+    private static final String AFTER_GAP = "/D/OTA   /  1 | app_flash_get_dev_id_by_addr(info.startAddr):0\n"
+            + "      6853/I/NONE  /  1 | app_flash_register_module mod:3\n"
+            + "      6853/D/OTA   /  1 | _register_bootinfo_user\n"
+            + "      6900/I/NONE  /  1 | later line\n";
+
+    @Test
+    public void aGapMarkerAndTheFragmentAfterItSortWithTheDataTheyDescribe() throws Exception {
+        BesTraceSession session = new BesTraceSession(new BesTraceStore.Cursor(BID_A, 1, 0x5000));
+        // The reply arrives long after the lines were written: their ages are tens of seconds.
+        BesTraceSession.Reply r = session.parse(withBid(
+                reply(1, 0x5277, 0x9000, 140, AFTER_GAP, 100_000, 104_858), BID_A), RECEIVED);
+        assertTrue(r.valid);
+        assertTrue(r.lines.get(0).text.startsWith("[ASG-BES-GAP]"));
+        assertMonotonic(r.lines);
+        long firstStamped = r.lines.get(2).wallMs;
+        assertTrue("stamped lines are older than the arrival", firstStamped < RECEIVED - 1000);
+        assertEquals("the gap is no later than the first line after it", firstStamped,
+                r.lines.get(0).wallMs);
+        assertEquals("the cut fragment gets the time of the data it is next to", firstStamped,
+                r.lines.get(1).wallMs);
+        assertEquals(r.lines.get(r.lines.size() - 1).wallMs, r.lastWallMs);
+    }
+
+    @Test
+    public void aRebootMarkerSortsWithTheFirstLineOfTheNewBoot() throws Exception {
+        BesTraceSession session = new BesTraceSession(new BesTraceStore.Cursor(BID_A, 3, 5000));
+        session.noteStored(RECEIVED - 40_000);
+        String data = "      200/I/NONE  / 1 | boot a\n      300/I/NONE  / 1 | boot b\n";
+        BesTraceSession.Reply r = session.parse(withBid(
+                reply(3, 0, 80, 0, data, 100_000, 104_858), BID_B), RECEIVED);
+        assertTrue(r.lines.get(0).text.startsWith("[ASG-BES-REBOOT]"));
+        assertMonotonic(r.lines);
+        assertEquals(r.lines.get(1).wallMs, r.lines.get(0).wallMs);
+        assertTrue(r.lines.get(0).wallMs >= RECEIVED - 40_000);
+    }
+
+    @Test
+    public void aBatchStartingWithAContinuationInheritsTheLastStoredTime() throws Exception {
+        BesTraceSession session = new BesTraceSession();
+        BesTraceSession.Reply first = session.parse(reply(3, 0, 200,0,
+                "      5000/I/NONE  / 1 | head\n", 5000, 5000), RECEIVED);
+        session.noteStored(first.lastWallMs);
+        session.commit(first.generation, first.ackPosition);
+        BesTraceSession.Reply second = session.parse(reply(3, first.ackPosition, 300, 0,
+                "02 80 20 0c\n      5001/I/NONE  / 1 | next\n", 5001, 5001), RECEIVED + 10);
+        assertMonotonic(second.lines);
+        assertEquals(first.lastWallMs, second.lines.get(0).wallMs);
+    }
+
+    @Test
+    public void linesNeverStepBackBecausePrefixesOrTheRateJitter() throws Exception {
+        BesTraceSession session = new BesTraceSession();
+        String data = "      5000/I/NONE  / 1 | a\n      4000/I/NONE  / 1 | out of order\n"
+                + "      5100/I/NONE  / 1 | c\n";
+        BesTraceSession.Reply a = session.parse(reply(3, 0, 200, 0, data, 5100, 5100), RECEIVED);
+        assertMonotonic(a.lines);
+        session.noteStored(a.lastWallMs);
+        // A later reply whose lines map slightly earlier than what is already stored.
+        BesTraceSession.Reply b = session.parse(reply(3, 90, 300, 0,
+                "      5099/I/NONE  / 1 | d\n", 5101, 5101), RECEIVED - 500);
+        assertTrue(b.lines.get(0).wallMs >= a.lastWallMs);
+    }
+
+    @Test
+    public void aGapWithNoLinesAfterItSitsAtTheLastStoredTime() throws Exception {
+        BesTraceSession session = new BesTraceSession(new BesTraceStore.Cursor(BID_A, 3, 50));
+        session.noteStored(RECEIVED - 7000);
+        BesTraceSession.Reply r = session.parse(withBid(
+                reply(3, 900, 950, 850, "", 1, 1), BID_A), RECEIVED);
+        assertEquals(1, r.lines.size());
+        assertEquals(RECEIVED - 7000, r.lines.get(0).wallMs);
+    }
+
+    @Test
+    public void aWallClockThatWentBackDoesNotPinNewLinesToTheFuture() throws Exception {
+        BesTraceSession session = new BesTraceSession();
+        session.noteStored(RECEIVED + 3_600_000); // stored while the clock was an hour ahead
+        BesTraceSession.Reply r = session.parse(reply(3, 0, 40, 0,
+                "      5000/I/NONE  / 1 | a\n", 5000, 5000), RECEIVED);
+        assertEquals(RECEIVED, r.lines.get(0).wallMs);
+        session.noteStored(r.lastWallMs);
+        assertEquals(RECEIVED, session.sortableWall(RECEIVED + 1));
+    }
 }

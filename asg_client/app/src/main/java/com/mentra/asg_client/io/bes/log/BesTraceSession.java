@@ -42,6 +42,8 @@ public final class BesTraceSession {
         /** Position to acknowledge once {@link #lines} are persisted. */
         public final long ackPosition;
         public final List<BesTraceStore.Line> lines;
+        /** Wall time of the newest line (markers included) in {@link #lines}; 0 when none. */
+        public final long lastWallMs;
 
         Reply(String error) {
             this.valid = false;
@@ -49,10 +51,11 @@ public final class BesTraceSession {
             this.bid = null;
             this.generation = this.start = this.end = this.commit = this.lost = this.ackPosition = 0;
             this.lines = new ArrayList<>();
+            this.lastWallMs = 0;
         }
 
         Reply(String bid, long generation, long start, long end, long commit, long lost,
-              long ackPosition, List<BesTraceStore.Line> lines) {
+              long ackPosition, List<BesTraceStore.Line> lines, long lastWallMs) {
             this.valid = true;
             this.error = null;
             this.bid = bid;
@@ -63,6 +66,7 @@ public final class BesTraceSession {
             this.lost = lost;
             this.ackPosition = ackPosition;
             this.lines = lines;
+            this.lastWallMs = lastWallMs;
         }
 
         /** Bytes still waiting on the BES after this reply is acknowledged. */
@@ -71,6 +75,11 @@ public final class BesTraceSession {
         }
     }
 
+    /**
+     * Newest wall time written to the store (never rolled back: the lines are on disk even when
+     * the cursor is not). New lines are never stamped earlier, so stored order is time order.
+     */
+    private long mFloorWallMs;
     /** The read cursor: where the next mh_rlog asks from. */
     private boolean mHaveCursor;
     private String mBid;
@@ -170,9 +179,8 @@ public final class BesTraceSession {
         long tp = body.optLong("tp", 0);
         updateRate(t, tp);
 
-        List<BesTraceStore.Line> lines = new ArrayList<>();
+        String reboot = null;
         if (mHaveCursor) {
-            String reboot = null;
             if (bid != null && mBid != null) {
                 if (!bid.equals(mBid)) {
                     reboot = String.format(Locale.US, "[ASG-BES-REBOOT] old_bid=%s new_bid=%s",
@@ -187,24 +195,23 @@ public final class BesTraceSession {
                 reboot = String.format(Locale.US, "[ASG-BES-REBOOT] generation %d -> %d",
                         mGeneration, generation);
             }
-            if (reboot != null) {
-                lines.add(new BesTraceStore.Line(receivedWallMs, generation, start, reboot, bid));
-            }
-        }
-        if (lost > 0) {
-            lines.add(new BesTraceStore.Line(receivedWallMs, generation, start, String.format(
-                    Locale.US, "[ASG-BES-GAP] lost=%d bytes before position %x", lost, start), bid));
         }
 
+        // Split the delivered bytes into lines first: the time of a line without a usable BES
+        // prefix (the fragment after a gap, a continuation) comes from its neighbours, and a
+        // marker takes the time of the data it describes.
         byte[] raw = data.getBytes(StandardCharsets.UTF_8);
         int complete = lastNewline(raw) + 1;
         if (complete == 0 && raw.length >= FULL_READ_BYTES) {
             complete = raw.length; // One full read without a newline cannot be a TRACE line tail.
         }
         long consumed = complete == raw.length ? rawCount : complete;
-        long previousWall = receivedWallMs;
+        List<String> texts = new ArrayList<>();
+        List<Long> positions = new ArrayList<>();
+        List<Long> stamps = new ArrayList<>(); // -1 = no usable prefix
         long position = start;
         int lineStart = 0;
+        long firstStamp = -1;
         for (int i = 0; i < complete; i++) {
             if (raw[i] != '\n' && i != complete - 1) {
                 continue;
@@ -213,13 +220,52 @@ public final class BesTraceSession {
             String text = new String(raw, lineStart, lineEnd - lineStart, StandardCharsets.UTF_8)
                     .replace("\r", "");
             if (!text.trim().isEmpty()) {
-                previousWall = wallTime(text, tp, receivedWallMs, previousWall);
-                lines.add(new BesTraceStore.Line(previousWall, generation, position, text, bid));
+                long stamp = wallTime(text, tp, receivedWallMs);
+                if (stamp >= 0 && firstStamp < 0) {
+                    firstStamp = stamp;
+                }
+                texts.add(text);
+                positions.add(position);
+                stamps.add(stamp);
             }
             position = start + i + 1;
             lineStart = i + 1;
         }
-        return new Reply(bid, generation, start, end, commit, lost, start + consumed, lines);
+
+        long floor = effectiveFloor(receivedWallMs);
+        boolean continuous = lost == 0 && reboot == null;
+        long running;
+        if (continuous && floor > 0) {
+            running = floor; // The first bytes continue the line stored before.
+        } else if (firstStamp >= 0) {
+            running = firstStamp; // After a gap or a reboot: the data that follows sets the time.
+        } else {
+            running = floor > 0 ? floor : receivedWallMs;
+        }
+        running = Math.max(running, floor);
+
+        List<BesTraceStore.Line> lines = new ArrayList<>();
+        List<BesTraceStore.Line> dataLines = new ArrayList<>();
+        for (int i = 0; i < texts.size(); i++) {
+            long stamp = stamps.get(i);
+            running = Math.max(running, stamp >= 0 ? stamp : running);
+            dataLines.add(new BesTraceStore.Line(running, generation, positions.get(i), texts.get(i), bid));
+        }
+        // A marker is never later than the first line after it and never earlier than the last
+        // line stored before it. With no line after it, it sits at the last stored time.
+        long markerWall = !dataLines.isEmpty() ? dataLines.get(0).wallMs
+                : floor > 0 ? floor : receivedWallMs;
+        if (reboot != null) {
+            lines.add(new BesTraceStore.Line(markerWall, generation, start, reboot, bid));
+        }
+        if (lost > 0) {
+            lines.add(new BesTraceStore.Line(markerWall, generation, start, String.format(
+                    Locale.US, "[ASG-BES-GAP] lost=%d bytes before position %x", lost, start), bid));
+        }
+        lines.addAll(dataLines);
+        long lastWall = lines.isEmpty() ? 0 : lines.get(lines.size() - 1).wallMs;
+        return new Reply(bid, generation, start, end, commit, lost, start + consumed, lines,
+                lastWall);
     }
 
     /** Record that everything before {@code position} is persisted (old firmware, no boot id). */
@@ -295,22 +341,56 @@ public final class BesTraceSession {
         }
     }
 
-    private long wallTime(String text, long tp, long receivedWallMs, long fallback) {
+    /** Wall time from the line's BES prefix, or -1 when it has no usable one. */
+    private long wallTime(String text, long tp, long receivedWallMs) {
         Matcher matcher = PREFIX.matcher(text);
         if (!matcher.find() || tp <= 0) {
-            return fallback;
+            return -1;
         }
         long prefix;
         try {
             prefix = Long.parseLong(matcher.group(1));
         } catch (NumberFormatException e) {
-            return fallback;
+            return -1;
         }
         long ageTraceMs = tp - prefix;
         if (ageTraceMs < 0 || ageTraceMs > 24L * 3600 * 1000) {
-            return fallback;
+            return -1;
         }
         return receivedWallMs - Math.round(ageTraceMs / mPrefixRate);
+    }
+
+    /** A wall clock that went back by more than this resets the ordering floor. */
+    static final long CLOCK_STEP_BACK_MS = 60_000;
+
+    private long effectiveFloor(long receivedWallMs) {
+        return mFloorWallMs > receivedWallMs + CLOCK_STEP_BACK_MS ? 0 : mFloorWallMs;
+    }
+
+    /**
+     * The lines of a reply were written to the store: later lines are never stamped earlier than
+     * {@code lastWallMs}. Call after a successful append, whether or not the cursor then moves.
+     */
+    public void noteStored(long lastWallMs) {
+        if (lastWallMs <= 0) {
+            return;
+        }
+        mFloorWallMs = mFloorWallMs > lastWallMs + CLOCK_STEP_BACK_MS
+                ? lastWallMs : Math.max(mFloorWallMs, lastWallMs);
+    }
+
+    /** Start-up: the newest wall time already in the store. */
+    public void seedFloor(long newestStoredWallMs) {
+        mFloorWallMs = Math.max(mFloorWallMs, newestStoredWallMs);
+    }
+
+    /**
+     * The wall time for an ASG line that must sort with the stored lines (the status line of a
+     * hm_rlog_ready): the newest stored time, or {@code receivedWallMs} when none is known.
+     */
+    public long sortableWall(long receivedWallMs) {
+        long floor = effectiveFloor(receivedWallMs);
+        return floor > 0 ? floor : receivedWallMs;
     }
 
     private static int lastNewline(byte[] raw) {

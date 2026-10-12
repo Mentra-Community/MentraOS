@@ -130,6 +130,7 @@ public final class BesTraceTail {
                     AsgConstants.BES_TRACE_SEGMENT_MAX_BYTES, AsgConstants.BES_TRACE_SEGMENT_MAX_AGE_MS);
             mStore.setDuplicateGuard(true);
             mSession = new BesTraceSession(mStore.loadCursor());
+            mSession.seedFloor(mStore.lastWallMs());
             BesOtaStateStore otaStore = new BesOtaStateStore(mContext);
             mOtaStateCheck = () -> otaSnapshotInProgress(otaStore.read());
             mThread = new HandlerThread("bes-trace-tail");
@@ -296,6 +297,7 @@ public final class BesTraceTail {
         mStore = store;
         store.setDuplicateGuard(true);
         mSession = new BesTraceSession(store.loadCursor());
+        mSession.seedFloor(store.lastWallMs());
         mPendingBatches = 0;
     }
 
@@ -454,9 +456,15 @@ public final class BesTraceTail {
         }
         if (body != null && mStore != null) {
             // The BES counters make UART or ring clogging visible in every bug report.
-            mStore.append(java.util.Collections.singletonList(new BesTraceStore.Line(
-                    receivedWallMs, body.optLong("g", 0), mSession.position(),
-                    "[ASG-BES-STATUS] " + body, BesTraceSession.parseBid(body))));
+            // Stamped with the newest stored time, not the arrival time: the backlog that follows
+            // carries older times and stored order must stay time order. The arrival is in the text.
+            long wall = mSession.sortableWall(receivedWallMs);
+            if (mStore.append(java.util.Collections.singletonList(new BesTraceStore.Line(
+                    wall, body.optLong("g", 0), mSession.position(),
+                    "[ASG-BES-STATUS] rx_ms=" + receivedWallMs + " " + body,
+                    BesTraceSession.parseBid(body))))) {
+                mSession.noteStored(wall);
+            }
         }
         mInFlight = false;
         releaseGate();
@@ -520,6 +528,7 @@ public final class BesTraceTail {
             schedule(AsgConstants.BES_TRACE_POLL_IDLE_MS);
             return;
         }
+        mSession.noteStored(reply.lastWallMs);
         long now = SystemClock.elapsedRealtime();
         boolean moved = !mSession.hasCursor() || reply.generation != mSession.generation()
                 || reply.ackPosition != mSession.position()
