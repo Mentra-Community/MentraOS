@@ -33,7 +33,9 @@ export function localNetworkErrorDetails(error: unknown): {
   const details = facts(error)
   const userInfo = (error as {userInfo?: unknown} | null | undefined)?.userInfo
   const underlying = facts(
-    userInfo && typeof userInfo === "object" ? (userInfo as {NSUnderlyingError?: unknown}).NSUnderlyingError : undefined,
+    userInfo && typeof userInfo === "object"
+      ? (userInfo as {NSUnderlyingError?: unknown}).NSUnderlyingError
+      : undefined,
   )
   return Object.keys(underlying).length ? {...details, underlying} : details
 }
@@ -81,7 +83,7 @@ export const localNetworkTransport = {
 
   async disconnect(): Promise<void> {
     if (supportsScopedConnection()) {
-      await otaLocalNetwork.disconnect().catch(() => {})
+      await otaLocalNetwork.disconnect()
     }
     scopedConnectionActive = false
     nativeJobs.clear()
