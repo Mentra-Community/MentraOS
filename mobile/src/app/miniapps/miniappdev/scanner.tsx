@@ -12,6 +12,7 @@ import {decideDevOpenRoute, engine} from "@mentra/engine"
 import {
   assertDevBuildAllowed,
   installMiniappFromJsonUrl,
+  normalizeManifestPermissions,
   registerDevApp,
   type DevAppRecord,
 } from "@mentra/engine-host-internal"
@@ -86,9 +87,9 @@ export default function MiniappDeveloperScannerScreen() {
       await engine.miniapps.refresh()
       const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
       if (!app) return showOnHomeScreen()
+      // Normally a silent pass: the scan already granted what the release
+      // server's manifest declared. Only an installed manifest that differs asks again.
       if (!(await grantRequiredPermissions(app, showOnHomeScreen))) {
-        // Installing over a running copy restarts it (and restores it if the
-        // install fails). Without its permissions, don't leave the new release running.
         if (app.running) await engine.miniapps.stop(packageName)
         return
       }
@@ -115,6 +116,23 @@ export default function MiniappDeveloperScannerScreen() {
         const url = new URL(data)
         const baseUrl = decodeURIComponent(url.searchParams.get("url") || "")
         if (!baseUrl) throw new Error("release QR missing url param")
+
+        // Check the release's own miniapp.json before installing. Installing over
+        // a running copy restarts it, so a check after the install would let the
+        // new release run without its permissions; stopping it first would lose
+        // the installer's restore-on-failure.
+        const manifestRes = await fetch(`${baseUrl.replace(/\/$/, "")}/miniapp.json`)
+        if (!manifestRes.ok) throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)
+        const manifest = (await manifestRes.json()) as Record<string, unknown>
+        const releasePackage = typeof manifest.packageName === "string" ? manifest.packageName : ""
+        const release = {
+          packageName: releasePackage,
+          name: typeof manifest.name === "string" ? manifest.name : releasePackage,
+          permissions: normalizeManifestPermissions(
+            manifest.permissions as Parameters<typeof normalizeManifestPermissions>[0],
+          ),
+        } as unknown as AppletInterface
+        if (!(await grantRequiredPermissions(release, () => setScanned(false)))) return
 
         const res = await installMiniappFromJsonUrl(baseUrl)
         if (res.is_error()) {
