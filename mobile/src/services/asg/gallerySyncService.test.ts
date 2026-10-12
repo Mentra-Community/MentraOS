@@ -1,4 +1,6 @@
+import * as RNFS from "@dr.pogodin/react-native-fs"
 /* eslint-disable no-restricted-imports */
+import {permissions} from "../../../modules/engine/src/facades/permissions"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
 // gallerySyncService + its asg cluster moved into @mentra/engine; this CI-gated jest
@@ -883,6 +885,89 @@ describe("GallerySyncService", () => {
       syncServiceOpenedHotspot: true,
     })
   })
+
+  it.each([false, true])("ignores an old SSID rejection after cleanup (fresh start=%s)", async (fresh) => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotEnabled: true,
+      hotspotSsid: HOTSPOT_INFO.ssid,
+      hotspotPassword: HOTSPOT_INFO.password,
+      hotspotGatewayIp: HOTSPOT_INFO.ip,
+    })
+    let rejectOld!: (error: Error) => void
+    mockGetCurrentWifiSSID.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectOld = reject
+        }),
+    )
+    const oldStart = gallerySyncService.startSync()
+    for (let i = 0; i < 40 && !rejectOld; i++) await Promise.resolve()
+    expect(rejectOld).toBeDefined()
+    await gallerySyncService.cleanup()
+    let releaseFresh!: () => void
+    let freshStart: Promise<void> | undefined
+    if (fresh) {
+      ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseFresh = resolve
+          }),
+      )
+      freshStart = gallerySyncService.startSync()
+      for (let i = 0; i < 20 && !releaseFresh; i++) await Promise.resolve()
+    }
+    const saved = useGallerySyncStore.getState()
+    const resets = (mediaProcessingQueue.reset as jest.Mock).mock.calls.length
+    rejectOld(new Error("Transient SSID read failure"))
+    await oldStart
+    expect(useGallerySyncStore.getState()).toBe(saved)
+    expect(mediaProcessingQueue.reset).toHaveBeenCalledTimes(resets)
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    if (freshStart) {
+      expect(gallerySyncService.isSyncStarting()).toBe(true)
+      await gallerySyncService.cleanup()
+      releaseFresh()
+      await freshStart
+    }
+  })
+
+  it.each(["location", "local_wifi", "storage"])(
+    "ignores a delayed %s pre-flight denial after cleanup",
+    async (gate) => {
+      Object.defineProperty(Platform, "OS", {value: "android", configurable: true, writable: true})
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+      let release!: () => void
+      if (gate === "storage") {
+        ;(RNFS.getFSInfo as jest.Mock).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              release = () => resolve({freeSpace: 0})
+            }),
+        )
+      } else {
+        ;(permissions.check as jest.Mock).mockImplementation(async (feature: string) => {
+          if (feature === gate)
+            return new Promise((resolve) => {
+              release = () => resolve(false)
+            })
+          return true
+        })
+      }
+      const starting = gallerySyncService.startSync()
+      for (let i = 0; i < 40 && !release; i++) await Promise.resolve()
+      expect(release).toBeDefined()
+      await gallerySyncService.cleanup()
+      const saved = useGallerySyncStore.getState()
+      const requests = (permissions.request as jest.Mock).mock.calls.length
+      release()
+      await starting
+      expect(useGallerySyncStore.getState()).toBe(saved)
+      expect(permissions.request).toHaveBeenCalledTimes(requests)
+      expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+      ;(permissions.check as jest.Mock).mockResolvedValue(true)
+    },
+  )
 
   it("does not transfer retained AP ownership to a different pair", async () => {
     useGlassesStore.getState().setGlassesInfo({

@@ -676,9 +676,11 @@ class GallerySyncService {
     // SSID check consult `this.ssidReadable` instead of re-deriving it from a native error.
     console.log("[GallerySyncService]   📍 Checking location permission...")
     const hasLocationPermission = await permissions.check(PermissionFeatures.LOCATION)
+    if (signal.aborted) return
     if (!hasLocationPermission) {
       console.log("[GallerySyncService]   ⚠️ Location permission not granted - requesting...")
       const granted = await permissions.request(PermissionFeatures.LOCATION)
+      if (signal.aborted) return
       this.ssidReadable = granted
       if (!granted) {
         console.warn("[GallerySyncService]   ❌ Location permission denied - skipping all SSID verification")
@@ -698,8 +700,10 @@ class GallerySyncService {
     if (Platform.OS === "android") {
       console.log("[GallerySyncService]   📡 Checking local WiFi permission...")
       const hasLocalWifiPermission = await permissions.check(PermissionFeatures.LOCAL_WIFI)
+      if (signal.aborted) return
       if (!hasLocalWifiPermission) {
         const granted = await permissions.request(PermissionFeatures.LOCAL_WIFI)
+        if (signal.aborted) return
         if (!granted) {
           store.setSyncError("Local WiFi permission is required for gallery sync")
           await gallerySyncNotifications.showSyncError("Allow WiFi access to connect to your glasses")
@@ -719,9 +723,11 @@ class GallerySyncService {
     if (shouldAutoSave) {
       console.log("[GallerySyncService]   📸 Checking camera roll permission...")
       const hasPermission = await MediaLibraryPermissions.checkPermission()
+      if (signal.aborted) return
       if (!hasPermission) {
         console.log("[GallerySyncService]   ⚠️ Camera roll permission not granted - requesting...")
         const granted = await MediaLibraryPermissions.requestPermission()
+        if (signal.aborted) return
         if (!granted) {
           console.warn("[GallerySyncService]   ❌ Camera roll permission denied - auto-save sync cannot continue")
           store.setSyncError("Camera-roll permission required while automatic saving is enabled")
@@ -742,6 +748,7 @@ class GallerySyncService {
     // S1: Disk space check — abort early if insufficient space
     try {
       const fsInfo = await RNFS.getFSInfo()
+      if (signal.aborted) return
       const freeSpaceMB = fsInfo.freeSpace / (1024 * 1024)
       console.log(`[GallerySyncService]   💾 Free disk space: ${freeSpaceMB.toFixed(0)} MB`)
       if (fsInfo.freeSpace < 500 * 1024 * 1024) {
@@ -790,10 +797,12 @@ class GallerySyncService {
       try {
         // Use WifiManager.isEnabled() for accurate WiFi state (NetInfo can be stale)
         const wifiEnabled = await WifiManager.isEnabled()
+        if (signal.aborted) return
         console.log("[GallerySyncService]   📡 WiFi enabled (WifiManager):", wifiEnabled)
 
         // Also log NetInfo for debugging comparison
         const netState = await NetInfo.fetch()
+        if (signal.aborted) return
         console.log("[GallerySyncService]   📡 WiFi enabled (NetInfo):", netState.isWifiEnabled)
         console.log("[GallerySyncService]   📡 Connected:", netState.isConnected)
         console.log("[GallerySyncService]   📡 Internet reachable:", netState.isInternetReachable)
@@ -811,6 +820,7 @@ class GallerySyncService {
           emitGalleryNotice({
             code: "wifi_off",
             ack: () => {
+              if (signal.aborted) return
               this.waitingForWifiRetry = true
               this.wifiSettingsOpenedAt = Date.now()
             },
@@ -842,6 +852,7 @@ class GallerySyncService {
       console.log("[GallerySyncService]   📍 Checking Location Services status...")
       try {
         const locationServicesEnabled = await this.isLocationServicesEnabled()
+        if (signal.aborted) return
         console.log("[GallerySyncService]   📍 Location Services enabled:", locationServicesEnabled)
 
         if (!locationServicesEnabled) {
@@ -924,6 +935,7 @@ class GallerySyncService {
             console.log("[GallerySyncService]   ⚠️ Phone not connected to any WiFi network")
           }
         } catch (error) {
+          if (this.shouldAbortPreFlight(signal)) return
           console.warn("[GallerySyncService]   ⚠️ Could not verify current WiFi SSID:", error)
           isAlreadyConnected = false
           // Permission was granted at pre-flight but the read still hit a wall (revoked
@@ -940,6 +952,8 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ℹ️ Glasses hotspot not currently enabled")
       console.log("[GallerySyncService]   ➡️ Will request hotspot activation")
     }
+
+    if (this.shouldAbortPreFlight(signal)) return
 
     // Every fallible pre-flight gate has passed. It is now safe to replace the previous
     // in-memory queue; startFileDownload immediately recovers its durable ledger work.
