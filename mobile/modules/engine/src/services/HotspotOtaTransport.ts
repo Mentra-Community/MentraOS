@@ -51,6 +51,7 @@ class HotspotOtaTransport {
   private prepared: PreparedOtaArtifact[] = []
   private hotspotRequested = false
   private localNetworkConnected = false
+  private localNetworkRequested = false
   private serverStarted = false
   private teardownPromise: Promise<void> | null = null
   private preparing: Promise<string> | null = null
@@ -64,7 +65,16 @@ class HotspotOtaTransport {
     const ownerRevision = otaDeviceSessionRevision()
     if (this.teardownPromise) await this.teardownPromise
     if (ownerRevision !== otaDeviceSessionRevision()) throw new Error("The OTA glasses have changed")
-    if (this.active || this.preparing) throw new Error("A hotspot OTA transport is already active")
+    if (
+      this.active ||
+      this.preparing ||
+      this.localNetworkRequested ||
+      this.serverStarted ||
+      this.hotspotRequested ||
+      this.prepared.length
+    ) {
+      throw new Error("A hotspot OTA transport is active or still needs cleanup")
+    }
     if (!checkResult.manifestBody) throw new Error("The selected OTA check has no manifest body")
     this.ownerRevision = ownerRevision
     const generation = ++this.generation
@@ -80,7 +90,11 @@ class HotspotOtaTransport {
     } catch (error) {
       // Remove our promise before waiting on teardown, which joins preparation.
       if (this.preparing === preparation) this.preparing = null
-      await this.teardown(ownerRevision === otaDeviceSessionRevision())
+      try {
+        await this.teardown(ownerRevision === otaDeviceSessionRevision())
+      } catch (cleanupError) {
+        console.warn("[OTA_PROGRESS] cleanup failed", localNetworkErrorDetails(cleanupError))
+      }
       throw error
     } finally {
       if (this.preparing === preparation) this.preparing = null
@@ -118,6 +132,7 @@ class HotspotOtaTransport {
       phase = "joining_hotspot"
       onProgress?.({phase: "joining_hotspot"})
       assertCurrent()
+      this.localNetworkRequested = true
       const scopedAddress = await localNetworkTransport.connect(hotspot.ssid, hotspot.password, {
         retryIosInternalError: true,
         assertCurrent,
@@ -203,30 +218,54 @@ class HotspotOtaTransport {
     if (this.teardownPromise) return this.teardownPromise
     this.teardownPromise = (async () => {
       await this.preparing?.catch(() => {})
+      const errors: unknown[] = []
       if (disableGlassesHotspot && this.ownerRevision === otaDeviceSessionRevision() && this.hotspotRequested) {
-        const hotspotStopped = await disableHotspotWithRetry(
-          () =>
-            this.ownerRevision === otaDeviceSessionRevision()
-              ? BluetoothSdk.setHotspotState(false)
-              : Promise.resolve({state: "enabled" as const}),
-          {
-            // A completed APK step has just replaced ASG. Let the new command path
-            // settle before asking it to tear down the SystemUI-owned access point.
-            initialDelayMs: this.serverStarted ? 750 : 0,
-          },
-        )
-        if (!hotspotStopped) {
-          console.warn("[OTA_PROGRESS] glasses hotspot shutdown was not confirmed after bounded retries")
+        try {
+          const hotspotStopped = await disableHotspotWithRetry(
+            () =>
+              this.ownerRevision === otaDeviceSessionRevision()
+                ? BluetoothSdk.setHotspotState(false)
+                : Promise.resolve({state: "enabled" as const}),
+            {
+              // A completed APK step has just replaced ASG. Let the new command path
+              // settle before asking it to tear down the SystemUI-owned access point.
+              initialDelayMs: this.serverStarted ? 750 : 0,
+            },
+          )
+          if (hotspotStopped) this.hotspotRequested = false
+          else errors.push(new Error("The glasses hotspot shutdown was not confirmed"))
+        } catch (error) {
+          errors.push(error)
+        }
+      } else this.hotspotRequested = false
+      if (this.serverStarted) {
+        try {
+          await otaServer.stop()
+          this.serverStarted = false
+        } catch (error) {
+          errors.push(error)
         }
       }
-      if (this.serverStarted) await otaServer.stop().catch(() => {})
-      if (this.localNetworkConnected) await localNetworkTransport.disconnect().catch(() => {})
-      await cleanupArtifacts().catch(() => {})
-      this.prepared = []
+      if (this.localNetworkRequested) {
+        try {
+          await localNetworkTransport.disconnect()
+          this.localNetworkRequested = false
+          this.localNetworkConnected = false
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+      if (!this.serverStarted) {
+        // A server that has not stopped can still read these files.
+        try {
+          await cleanupArtifacts()
+          this.prepared = []
+        } catch (error) {
+          errors.push(error)
+        }
+      }
       this.active = false
-      this.serverStarted = false
-      this.localNetworkConnected = false
-      this.hotspotRequested = false
+      if (errors.length) throw errors[0]
     })()
     try {
       await this.teardownPromise

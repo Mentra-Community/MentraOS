@@ -144,3 +144,63 @@ it("retains terminal native join facts and does not repeat downloads or enable r
   expect(downloader.prepareArtifacts).toHaveBeenCalledTimes(1)
   expect(server.start).not.toHaveBeenCalled()
 })
+
+it("retains failed network cleanup and drains other teardown before retry", async () => {
+  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({
+    type: "hotspot_status",
+    state: "enabled",
+    ssid: "A",
+    password: "password",
+    localIp: "192.168.43.1",
+  })
+  await hotspotOtaTransport.prepare(check)
+  const failure = new Error("Native release did not complete")
+  localNetwork.disconnect.mockRejectedValueOnce(failure)
+  await expect(hotspotOtaTransport.teardown(false)).rejects.toBe(failure)
+  expect(server.stop).toHaveBeenCalledTimes(1)
+  expect(downloader.cleanupArtifacts).toHaveBeenCalledTimes(1)
+  await expect(hotspotOtaTransport.prepare(check)).rejects.toThrow("still needs cleanup")
+  await hotspotOtaTransport.teardown(false)
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(2)
+  expect(server.stop).toHaveBeenCalledTimes(1)
+})
+
+it("preserves the join failure while retaining a rejected connection's cleanup", async () => {
+  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({
+    type: "hotspot_status",
+    state: "enabled",
+    ssid: "A",
+    password: "password",
+    localIp: "192.168.43.1",
+  })
+  localNetwork.connect.mockRejectedValueOnce(new Error("association refused"))
+  localNetwork.disconnect.mockRejectedValueOnce(new Error("release refused"))
+  await expect(hotspotOtaTransport.prepare(check)).rejects.toMatchObject({
+    code: "hotspot_join_failed",
+    message: "association refused",
+  })
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
+  await expect(hotspotOtaTransport.prepare(check)).rejects.toThrow("still needs cleanup")
+  await hotspotOtaTransport.teardown(false)
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(2)
+})
+
+it("retains a failed server stop while still releasing the network", async () => {
+  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({
+    type: "hotspot_status",
+    state: "enabled",
+    ssid: "A",
+    password: "password",
+    localIp: "192.168.43.1",
+  })
+  await hotspotOtaTransport.prepare(check)
+  const failure = new Error("server stop refused")
+  server.stop.mockRejectedValueOnce(failure)
+  await expect(hotspotOtaTransport.teardown(false)).rejects.toBe(failure)
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
+  expect(downloader.cleanupArtifacts).not.toHaveBeenCalled()
+  await hotspotOtaTransport.teardown(false)
+  expect(server.stop).toHaveBeenCalledTimes(2)
+  expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
+  expect(downloader.cleanupArtifacts).toHaveBeenCalledTimes(1)
+})

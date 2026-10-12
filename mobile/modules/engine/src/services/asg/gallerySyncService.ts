@@ -1549,6 +1549,9 @@ class GallerySyncService {
           // iOS: Gives user time to interact with system dialog
           // Android: Gives hotspot time to fully initialize and start broadcasting
           if (attempt < TIMING.IOS_WIFI_MAX_RETRIES) {
+            // A completed join can outlive a failed health/download probe.
+            // Release its owner before admitting another Mac association.
+            if (CrustModule.isIOSAppOnMac) await localNetworkTransport.disconnect()
             const reason =
               Platform.OS === "ios" ? "user may be seeing system dialog" : "hotspot may still be initializing"
             console.log("[GallerySyncService] ----------------------------------------")

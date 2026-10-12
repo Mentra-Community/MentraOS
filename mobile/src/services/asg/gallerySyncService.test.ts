@@ -380,6 +380,34 @@ describe("GallerySyncService", () => {
     expect(releaseSpy).toHaveBeenCalled()
   })
 
+  it("releases the Mac association before retrying after a failed health probe", async () => {
+    Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
+    CrustModule.isIOSAppOnMac = true
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
+    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
+    const events: string[] = []
+    jest.spyOn(localNetworkTransport, "connect").mockImplementation(async () => {
+      events.push("join")
+      return "192.168.43.2"
+    })
+    const releaseSpy = jest.spyOn(localNetworkTransport, "disconnect").mockImplementation(async () => {
+      events.push("leave")
+    })
+    let probes = 0
+    jest.spyOn(localNetworkTransport, "fetch").mockImplementation(async () => {
+      if (++probes <= 20) throw new Error("route not ready")
+      return {status: 200} as Response
+    })
+    const startDownloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
+    const work = (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
+    await jest.advanceTimersByTimeAsync(30_000)
+    await work
+    expect(events).toEqual(["join", "leave", "join", "leave"])
+    expect(releaseSpy).toHaveBeenCalledTimes(2)
+    expect(startDownloadSpy).toHaveBeenCalledTimes(1)
+  })
+
   it("does not tell the user to grant Location when SSID reads fail transiently", async () => {
     // Location IS granted here; the reads just never resolve to a network. The failure
     // must not be attributed to the permission, and the readable-mismatch gate must stay
