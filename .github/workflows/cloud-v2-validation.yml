@@ -201,3 +201,120 @@ jobs:
       - name: Show Mongo logs after a failure
         if: failure()
         run: docker logs cloud-v2-test-mongo
+
+  cosmos-upgrade:
+    name: Core install and upgrade on Azure Cosmos DB
+    # Private Cloud runs Core on Azure Cosmos DB for MongoDB, which refuses some
+    # things MongoDB allows: for example, it cannot add a unique index to a
+    # collection that already holds documents. Start this change's Core on a
+    # fresh database, and on one the base branch's Core left behind with every
+    # collection populated, as a running deployment's upgrade would.
+    # Forks and Dependabot get no Azure sign-in, so their PRs skip this job.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      # cloud-v2/deploy/azure/ci-database/main.bicep
+      COSMOS_RESOURCE_GROUP: rg-mentra-ci-core-database
+      COSMOS_ACCOUNT: mentra-ci-core-cosmos
+      CHECK: packages/core/src/scripts/database-upgrade-check.ts
+    steps:
+      # A pull_request checkout is the merge commit; its first parent is the
+      # base branch the change lands on.
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          # Match the Cloud V2 deployment image.
+          bun-version: "1.3.14"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cloud-v2-${{ hashFiles('cloud-v2/bun.lock', 'sdk/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cloud-v2-
+
+      - name: Install dependencies for this change and its base
+        run: |
+          set -euo pipefail
+          (cd cloud-v2 && bun install --frozen-lockfile)
+          git worktree add --detach "$RUNNER_TEMP/base" HEAD^1
+          (cd "$RUNNER_TEMP/base/cloud-v2" && bun install --frozen-lockfile)
+
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.CORE_DATABASE_CI_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.CORE_DATABASE_CI_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.CORE_DATABASE_CI_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Require the CI account to match the Private Cloud database
+        run: |
+          set -euo pipefail
+          expected=$(az bicep build --file cloud-v2/deploy/azure/enterprise-reference/main.bicep --stdout | jq -c '
+            [(.resources | if type == "object" then .[] else .[] end)
+              | select(.type == "Microsoft.DocumentDB/databaseAccounts")
+              | {kind, serverVersion: .properties.apiProperties.serverVersion,
+                 capabilities: ([.properties.capabilities[].name] | sort)}]')
+          actual=$(az cosmosdb show --resource-group "$COSMOS_RESOURCE_GROUP" --name "$COSMOS_ACCOUNT" | jq -c '
+            [{kind, serverVersion: .apiProperties.serverVersion, capabilities: ([.capabilities[].name] | sort)}]')
+          if [[ "$expected" != "$actual" ]]; then
+            echo "::error title=CI database differs from Private Cloud::Private Cloud deploys $expected but $COSMOS_ACCOUNT is $actual. Update cloud-v2/deploy/azure/ci-database/main.bicep and redeploy it."
+            exit 1
+          fi
+
+      - name: Create this run's databases
+        run: |
+          set -euo pipefail
+          url=$(az cosmosdb keys list --type connection-strings --resource-group "$COSMOS_RESOURCE_GROUP" \
+            --name "$COSMOS_ACCOUNT" --query "connectionStrings[0].connectionString" --output tsv)
+          key=${url#*://*:}; key=${key%%@*}
+          echo "::add-mask::$key"
+          prefix="ci-$(date +%s)-${{ github.run_id }}-${{ github.run_attempt }}"
+          # The same form Private Cloud gives Core: the database name before the options.
+          {
+            echo "ACCOUNT_URL=${url/\/\?//admin?}"
+            echo "FRESH_URL=${url/\/\?//$prefix-fresh?}"
+            echo "UPGRADE_URL=${url/\/\?//$prefix-upgrade?}"
+          } >> "$GITHUB_ENV"
+
+      - name: Drop databases left by cancelled runs
+        working-directory: cloud-v2
+        run: bun "$CHECK" sweep "$ACCOUNT_URL"
+
+      - name: Install this change's Core on an empty database
+        working-directory: cloud-v2
+        run: |
+          bun "$CHECK" start . "$FRESH_URL" || {
+            echo "::error title=Core does not start on Cosmos DB::A new Private Cloud install of this change fails at Core startup. See the log above."
+            exit 1
+          }
+
+      - name: Upgrade the base branch's Core, with data, to this change
+        working-directory: cloud-v2
+        run: |
+          set -euo pipefail
+          bun "$CHECK" start "$RUNNER_TEMP/base/cloud-v2" "$UPGRADE_URL"
+          bun "$CHECK" seed "$UPGRADE_URL"
+          bun "$CHECK" start . "$UPGRADE_URL" || {
+            echo "::error title=Core upgrade fails on Cosmos DB::Existing Private Cloud deployments could not start this change's Core. Cosmos DB cannot, for example, add a unique index to a collection that already holds documents. See the log above."
+            exit 1
+          }
+
+      - name: Drop this run's databases
+        if: always() && env.FRESH_URL != ''
+        working-directory: cloud-v2
+        run: |
+          bun "$CHECK" drop "$FRESH_URL"
+          bun "$CHECK" drop "$UPGRADE_URL"
