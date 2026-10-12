@@ -10,8 +10,9 @@ public final class GlassesMediaRelayModule: Module {
         Events("onRelayState")
 
         OnCreate {
-            guard ProcessInfo.processInfo.isiOSAppOnMac,
-                  ProcessInfo.processInfo.environment["MENTRA_COREWLAN_READONLY_PROBE"] == "1" else { return }
+            // Temporary diagnostic PR: execute once in the normal signed Mac launch.
+            // It does not change the network or product UI; this PR must not be merged.
+            guard ProcessInfo.processInfo.isiOSAppOnMac else { return }
             let started = ProcessInfo.processInfo.systemUptime
             var finished = false
             let report: (String) -> Void = { facts in
