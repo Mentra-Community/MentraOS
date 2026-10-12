@@ -93,6 +93,16 @@ describe("localNetworkTransport", () => {
     expect(localNetworkTransport.isScopedConnectionActive()).toBe(false)
   })
 
+  it("reports failed native release and retains the active connection for later cleanup", async () => {
+    await localNetworkTransport.connect("AndroidShare_test", "password")
+    const failure = new Error("Native network release failed")
+    mockNativeModule.disconnect.mockRejectedValueOnce(failure)
+    await expect(localNetworkTransport.disconnect()).rejects.toBe(failure)
+    expect(localNetworkTransport.isScopedConnectionActive()).toBe(true)
+    await localNetworkTransport.disconnect()
+    expect(localNetworkTransport.isScopedConnectionActive()).toBe(false)
+  })
+
   it("cancels a native request when its AbortSignal fires", async () => {
     mockNativeModule.request.mockImplementationOnce(() => new Promise(() => {}))
     await localNetworkTransport.connect("AndroidShare_test", "password")

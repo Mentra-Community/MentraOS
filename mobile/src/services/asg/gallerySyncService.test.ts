@@ -349,7 +349,7 @@ describe("GallerySyncService", () => {
       `http://${HOTSPOT_INFO.ip}:8089/api/health`,
       expect.objectContaining({method: "GET"}),
     )
-    expect(startDownloadSpy).toHaveBeenCalledWith(HOTSPOT_INFO)
+    expect(startDownloadSpy).toHaveBeenCalledWith(HOTSPOT_INFO, undefined)
     // The whole point of the fix: a permission wall must not cost 30 polls per attempt.
     expect(mockGetCurrentWifiSSID.mock.calls.length).toBeLessThanOrEqual(2)
   })
@@ -538,7 +538,7 @@ describe("GallerySyncService", () => {
   it("still stops its AP when phone routing cleanup fails", async () => {
     useGallerySyncStore.getState().setSyncServiceOpenedHotspot(true)
     jest.spyOn(localNetworkTransport, "disconnect").mockRejectedValueOnce(new Error("Routing release failed"))
-    await gallerySyncService.cleanup()
+    await expect(gallerySyncService.cleanup()).rejects.toThrow("Gallery network cleanup failed")
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(false)
     expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(false)
   })
@@ -557,13 +557,30 @@ describe("GallerySyncService", () => {
     store.setSyncServiceOpenedHotspot(true)
     store.setSyncError("Original transfer failed")
     ;(BluetoothSdk.setHotspotState as jest.Mock).mockRejectedValueOnce(new Error("Disable reply lost"))
-    await gallerySyncService.cleanup()
+    await expect(gallerySyncService.cleanup()).rejects.toThrow("Gallery network cleanup failed")
     expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(true)
     await gallerySyncService.cleanup()
     expect(BluetoothSdk.setHotspotState).toHaveBeenNthCalledWith(1, false)
     expect(BluetoothSdk.setHotspotState).toHaveBeenNthCalledWith(2, false)
     expect(useGallerySyncStore.getState()).toMatchObject({
       syncServiceOpenedHotspot: false,
+      lastError: "Original transfer failed",
+    })
+  })
+
+  it("reports both independent cleanup failures without erasing the original sync failure", async () => {
+    const store = useGallerySyncStore.getState()
+    store.setSyncServiceOpenedHotspot(true)
+    store.setSyncError("Original transfer failed")
+    const routingFailure = new Error("Routing release failed"),
+      stopFailure = new Error("Disable reply lost")
+    jest.spyOn(localNetworkTransport, "disconnect").mockRejectedValueOnce(routingFailure)
+    ;(BluetoothSdk.setHotspotState as jest.Mock).mockRejectedValueOnce(stopFailure)
+    const failure = await gallerySyncService.cleanup().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors).toEqual([routingFailure, stopFailure])
+    expect(useGallerySyncStore.getState()).toMatchObject({
+      syncServiceOpenedHotspot: true,
       lastError: "Original transfer failed",
     })
   })
@@ -613,6 +630,67 @@ describe("GallerySyncService", () => {
     expect(useGallerySyncStore.getState().syncStarting).toBe(false)
   })
 
+  it.each(["explanation", "connection", "preparation"])(
+    "does not resume %s work after cleanup",
+    async (pendingStage) => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+      await gallerySyncService.startSync()
+      const store = useGallerySyncStore.getState()
+      store.setSyncError("Original transfer failed")
+      const saved = {syncState: "error", lastError: "Original transfer failed"}
+      const service = gallerySyncService as unknown as {
+        connectToHotspotWifi(info: typeof HOTSPOT_INFO): Promise<void>
+        startFileDownload(info: typeof HOTSPOT_INFO): Promise<void>
+      }
+      let resume!: () => void
+      const gate = new Promise<void>((resolve) => {
+        resume = resolve
+      })
+      const disconnect = jest.spyOn(localNetworkTransport, "disconnect").mockResolvedValue(undefined)
+      const connect = jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
+      jest
+        .spyOn(
+          service as unknown as {showWifiJoinExplanation(ssid: string): Promise<boolean>},
+          "showWifiJoinExplanation",
+        )
+        .mockImplementation(async () => {
+          if (pendingStage === "explanation") await gate
+          return true
+        })
+      if (pendingStage === "connection")
+        connect.mockImplementationOnce(async () => {
+          await gate
+          return undefined
+        })
+      if (pendingStage === "preparation") {
+        ;(mediaProcessingQueue.retryPending as jest.Mock).mockImplementationOnce(async () => {
+          await gate
+          return {retried: 0, failed: 0}
+        })
+      }
+      const preparing =
+        pendingStage === "preparation"
+          ? service.startFileDownload(HOTSPOT_INFO)
+          : service.connectToHotspotWifi(HOTSPOT_INFO)
+      for (let i = 0; i < 20; i++) await Promise.resolve()
+      await gallerySyncService.cleanup()
+      const stateAfterCleanup = {
+        syncState: useGallerySyncStore.getState().syncState,
+        lastError: useGallerySyncStore.getState().lastError,
+      }
+      const requestsBeforeResume = connect.mock.calls.length
+      resume()
+      await preparing
+      expect(connect).toHaveBeenCalledTimes(requestsBeforeResume)
+      expect(mockSyncWithServer).not.toHaveBeenCalled()
+      expect(asgCameraApi.downloadCapture).not.toHaveBeenCalled()
+      expect(useGallerySyncStore.getState()).toMatchObject(stateAfterCleanup)
+      expect(BluetoothSdk.setHotspotState).toHaveBeenLastCalledWith(false)
+      expect(disconnect).toHaveBeenCalled()
+      if (pendingStage === "explanation") expect(stateAfterCleanup).toEqual(saved)
+    },
+  )
+
   it("stops the owned AP after the glasses publish a hotspot error", async () => {
     gallerySyncService.initialize()
     useGallerySyncStore.getState().setSyncServiceOpenedHotspot(true)
@@ -624,6 +702,34 @@ describe("GallerySyncService", () => {
       syncServiceOpenedHotspot: false,
       lastError: "AP initialization failed",
     })
+  })
+
+  it("ignores a late capture completion after cleanup", async () => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    await gallerySyncService.startSync()
+    const service = gallerySyncService as unknown as {
+      abortController: AbortController
+      executeCaptureDownload(captures: CaptureGroup[], serverTime: number, signal: AbortSignal): Promise<void>
+    }
+    const signal = service.abortController.signal
+    useGallerySyncStore.getState().setSyncError("Original transfer failed")
+    let complete!: () => void
+    ;(asgCameraApi.downloadCapture as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = () => resolve({primaryPath: "/late/video.mp4"})
+        }),
+    )
+    const pending = service.executeCaptureDownload([FAKE_CAPTURE], 2000, signal)
+    for (let i = 0; i < 20 && !complete; i++) await Promise.resolve()
+    expect(asgCameraApi.downloadCapture).toHaveBeenCalledTimes(1)
+    await gallerySyncService.cleanup()
+    const state = useGallerySyncStore.getState()
+    complete()
+    await pending
+    expect(mediaProcessingQueue.enqueue).not.toHaveBeenCalled()
+    expect(localStorageService.updateSyncState).not.toHaveBeenCalled()
+    expect(useGallerySyncStore.getState()).toBe(state)
   })
 
   it("closes the AP even when reporting a failed transfer also rejects", async () => {
@@ -655,7 +761,7 @@ describe("GallerySyncService", () => {
 
     await gallerySyncService.startSync()
 
-    expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO)
+    expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO, expect.any(AbortSignal))
     expect(downloadSpy).not.toHaveBeenCalled()
     expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
   })
@@ -949,7 +1055,7 @@ describe("GallerySyncService", () => {
 
       await startFileDownload()
 
-      expect(executeCaptureDownloadSpy).toHaveBeenCalledWith([FAKE_CAPTURE], 2000)
+      expect(executeCaptureDownloadSpy).toHaveBeenCalledWith([FAKE_CAPTURE], 2000, undefined)
     })
 
     it.each(["request failure", "unresolved inventory"])(
@@ -1008,7 +1114,7 @@ describe("GallerySyncService", () => {
       expect(mockSyncWithServer).toHaveBeenCalledTimes(2)
       expect(mockSyncWithServer).toHaveBeenNthCalledWith(1, "test_client", 1500, false)
       expect(mockSyncWithServer).toHaveBeenNthCalledWith(2, "test_client", 0, false)
-      expect(executeCaptureDownloadSpy).toHaveBeenCalledWith([FAKE_CAPTURE], 2000)
+      expect(executeCaptureDownloadSpy).toHaveBeenCalledWith([FAKE_CAPTURE], 2000, undefined)
       expect(consoleLogSpy).toHaveBeenCalledWith(
         expect.stringContaining("Empty sync but glasses report content — retrying with last_sync_time=0"),
       )
@@ -1106,7 +1212,7 @@ describe("GallerySyncService", () => {
       await startFileDownload()
 
       expect(mockSyncWithServer).toHaveBeenCalledTimes(1)
-      expect(executeCaptureDownloadSpy).toHaveBeenCalledWith([FAKE_CAPTURE], 2000)
+      expect(executeCaptureDownloadSpy).toHaveBeenCalledWith([FAKE_CAPTURE], 2000, undefined)
       expect(consoleWarnSpy).not.toHaveBeenCalledWith(expect.stringContaining("Desync detected"))
     })
 
