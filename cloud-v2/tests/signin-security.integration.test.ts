@@ -294,7 +294,7 @@ describe("S01: Core's logs hold no secrets", () => {
     }
     const coreDatabase = localTestMongoUrl("signin-security-logs")
     const output: string[] = []
-    const core = Bun.spawn(["bun", "packages/core/src/index.ts"], {
+    const core = Bun.spawn([process.execPath, "packages/core/src/index.ts"], {
       cwd: CLOUD_V2,
       env: {
         PATH: process.env.PATH ?? "",
