@@ -204,6 +204,10 @@ review passes, request any missing selected routines using that head's CI
 artifacts through the existing dispatch path. Qualification requires both an
 independent approval and passing routine results for that same head, regardless
 of which finishes first. Never SSH into fixtures to bypass the routine worker.
+For an already implemented, reviewed correction, begin with ordinary full recorded
+replay. Its setup, product assertions and accepted cleanup provide verification
+without another held traversal. Use built-in authoring when the observed failure
+requires editing a saved action or admitting an unpublished candidate.
 Wait for artifacts or a free fixture as a recorded waiting state.
 
 The PR artifact requester and dispatcher accept PRs targeting `dev` or `staging`.
