@@ -32,6 +32,40 @@ export default function MiniappDeveloperScannerScreen() {
     }
   }, [permission, requestPermission])
 
+  // Open a freshly installed release the way a home-tile tap does, so the
+  // developer lands in the miniapp instead of backing out of Settings to find it.
+  const openInstalledRelease = async ({
+    packageName,
+    name,
+    version,
+  }: {
+    packageName: string
+    name: string
+    version: string
+  }) => {
+    const showOnHomeScreen = () =>
+      showAlert(
+        translate("debugSettings:miniappScanInstalledTitle"),
+        translate("debugSettings:miniappScanInstalledBody", {name, version}),
+        [{text: "OK", onPress: () => goBack()}],
+      )
+    let leftScanner = false
+    try {
+      await engine.miniapps.refresh()
+      const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
+      if (!app) return showOnHomeScreen()
+      if ((await checkPermissionsUI(app)).length > 0 && (await askPermissionsUI(app, theme)) !== 1) {
+        return showOnHomeScreen()
+      }
+      clearHistoryAndGoHome()
+      leftScanner = true
+      if (await engine.miniapps.start(app, {skipNavigation: true})) await engine.miniapps.setForeground(packageName)
+    } catch (error) {
+      console.warn(`Failed to open ${packageName} after installing it:`, error)
+      if (!leftScanner) showOnHomeScreen()
+    }
+  }
+
   const handleBarcodeScanned = async ({data}: {data: string}) => {
     if (scanned) return
     setScanned(true)
@@ -54,9 +88,7 @@ export default function MiniappDeveloperScannerScreen() {
           ])
           return
         }
-        showAlert("Installed", `${res.value.name} v${res.value.version} is on your home screen.`, [
-          {text: "OK", onPress: () => goBack()},
-        ])
+        await openInstalledRelease(res.value)
       } catch (err) {
         showAlert("Install failed", String(err), [{text: "OK", onPress: () => setScanned(false)}])
       }

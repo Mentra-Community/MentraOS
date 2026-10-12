@@ -927,6 +927,8 @@ const en = {
     miniappScanInvalidQrBody: "Expected a miniapp:// or http:// URL",
     miniappScanInvalidQrNoUrl: "No URL found in QR code",
     miniappScanLoading: "Loading miniapp…",
+    miniappScanInstalledTitle: "Installed",
+    miniappScanInstalledBody: "{{name}} v{{version}} is on your home screen.",
     miniappDevSignedInstallTitle: "Uninstall required",
     miniappDevSignedInstallBody:
       "{{packageName}} is installed with a publisher signature. Uninstall it before running a development build.",
