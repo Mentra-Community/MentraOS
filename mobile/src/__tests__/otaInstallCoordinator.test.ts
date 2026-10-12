@@ -2015,3 +2015,21 @@ describe("OtaInstallCoordinator paired-device ownership", () => {
     expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
   })
 })
+
+it("BES download completion waits for install and fails as a stall rather than a restart", async () => {
+  setGlassesConnected()
+  otaInstallCoordinator.attach()
+  await flushNativeStartPromise()
+  useGlassesStore.getState().setOtaStatus(
+    inProgressStatus({
+      stepType: "bes",
+      phase: "download",
+      status: "complete",
+      stepPercent: 100,
+      overallPercent: 100,
+    }),
+  )
+  expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+  await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS)
+  expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
+})
