@@ -41,10 +41,21 @@ export async function writeRunEnvelope(payload: RecordedFrameworkRun, payloadSha
 }
 
 /** Completed results own their accepted mapping; pending upload receipts remain ordinary custody. */
+export async function readAcceptedTestAsset(row: {runId: string; payloadSha256: string; detail: unknown; uploadsComplete: boolean},
+  assetId: string, envelope?: FrameworkRunEnvelope): Promise<StoredTestAsset | null> {
+  if (row.uploadsComplete) return (envelope ?? await readStoredRun(row)).acceptedAssets.find(asset => asset.assetId === assetId) ?? null;
+  const receipt = await TestAssetModel.findOne({runId: row.runId, assetId}).read('primary').readConcern('majority').lean();
+  if (receipt) return receipt;
+  // Completion may have moved this same accepted mapping while the pending read was in flight.
+  const completed = await TestRunModel.findOne({resultSchemaVersion: 1, runId: row.runId, payloadSha256: row.payloadSha256, uploadsComplete: true})
+    .select({runId: 1, detail: 1, payloadSha256: 1, uploadsComplete: 1}).read('primary').readConcern('majority').lean();
+  return completed ? (await readStoredRun(completed)).acceptedAssets.find(asset => asset.assetId === assetId) ?? null : null;
+}
+
 export async function findAcceptedTestAsset(runId: string, assetId: string): Promise<StoredTestAsset | null> {
   const row = await TestRunModel.findOne({resultSchemaVersion: 1, runId})
     .select({runId: 1, detail: 1, payloadSha256: 1, uploadsComplete: 1}).read('primary').readConcern('majority').lean();
-  if (row?.uploadsComplete) return (await readStoredRun(row)).acceptedAssets.find(asset => asset.assetId === assetId) ?? null;
+  if (row) return readAcceptedTestAsset(row, assetId);
   return TestAssetModel.findOne({runId, assetId}).read('primary').readConcern('majority').lean();
 }
 

@@ -1,6 +1,5 @@
 import {testWriteConcern} from "../models/test-write-concern";
 import {FailedFrameworkRunReportService} from './failed-framework-run-report.service';
-import {TestAssetModel} from "../models/test-run.model";
 import {TestRunModel} from "../models/test-run.model";
 import type {FrameworkRunPage} from "../types/test-history.types";
 import {z} from "zod";
@@ -16,7 +15,7 @@ import type {RoutineSourceRef} from '../types/framework-version.types';
 import {readFailureScreens} from './framework-failure-screen';
 import {readRunIncident, readRunIncidentCorrelation} from './framework-run-incident';
 import {findTestRunReport, findDeviceIncidentReport, referenceDeviceIncidentDiagnostics} from './report.service';
-import {readStoredRun, writeRunEnvelope, completeStoredRun} from './framework-run-detail.service';
+import {readStoredRun, writeRunEnvelope, completeStoredRun, readAcceptedTestAsset} from './framework-run-detail.service';
 import {RoutineDefinitionService} from './routine-definition.service';
 import {failedRunNeedsReport} from './failed-framework-run-report.service';
 
@@ -100,8 +99,7 @@ const mongoRepository: FrameworkResultRepository = {
     const row = await TestRunModel.findOne({...nativeRunFilter, ...identity}).read('primary').readConcern('majority').lean();
     if (!row) return null;
     const envelope = await readStoredRun(row);
-    const accepted = row.uploadsComplete ? envelope.acceptedAssets.find(asset => asset.assetId === assetId) ?? null
-      : await TestAssetModel.findOne({runId: row.runId, assetId}).read('primary').readConcern('majority').lean();
+    const accepted = await readAcceptedTestAsset(row, assetId, envelope);
     return {runId: row.runId, asset: envelope.payload.assets.find(asset => asset.id === assetId) ?? null, accepted};
   },
 };

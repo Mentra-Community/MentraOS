@@ -1,5 +1,6 @@
 import {expect, spyOn, test} from "bun:test"
 import mongoose from "mongoose"
+import {z} from 'zod'
 import {createHash, randomUUID} from "node:crypto"
 import {mkdtemp, rm} from "node:fs/promises"
 import {tmpdir} from "node:os"
@@ -7,6 +8,8 @@ import {join} from "node:path"
 import {ReportModel} from "../models/report.model"
 import {ReportAssetModel, reconcileReportAssetIndexes} from "../models/report-asset.model"
 import {writeRunEnvelope, completeStoredRun} from "./framework-run-detail.service"
+import {FrameworkResultService} from './framework-result.service'
+import {TestingDetailStorage} from './testing-detail-storage.service'
 import {TestAssetService} from "./test-asset.service"
 import {TestAssetModel, TestRunModel} from "../models/test-run.model"
 import {testFrameworkBinding, testRoutineSource} from "../testing/framework-fixtures"
@@ -153,6 +156,26 @@ const uri = process.env.FAILED_RUN_REPORT_MONGO_URI
         await Promise.all([completeStoredRun(pending, pendingHash), completeStoredRun(pending, pendingHash)])
         expect(await TestAssetModel.countDocuments({runId: pending.result.runId})).toBe(0)
       } finally {updateLost.mockRestore(); deleteLost.mockRestore()}
+      const mediaPending = structuredClone(pending)
+      mediaPending.requestId = mediaPending.result.runId = 'media-completion-race'
+      const mediaHash = requestInputDigest(mediaPending)
+      const mediaDetail = await writeRunEnvelope(mediaPending, mediaHash, [], false)
+      await TestRunModel.collection.insertOne({runId: mediaPending.result.runId, payloadSha256: mediaHash,
+        resultSchemaVersion: 1, detail: mediaDetail, uploadsComplete: false})
+      await TestAssetModel.create({runId: mediaPending.result.runId, assetId: 'setup-diagnostics', storageKey,
+        sha256: digest, sizeBytes: bytes.length})
+      const actualDetailRead = TestingDetailStorage.prototype.read
+      const completionDuringRead = spyOn(TestingDetailStorage.prototype, 'read').mockImplementationOnce(async function <T>(this: TestingDetailStorage, pointer: unknown, schema: z.ZodType<T>): Promise<T> {
+        const envelope = await actualDetailRead.call(this, pointer, schema) as T
+        await completeStoredRun(mediaPending, mediaHash)
+        return envelope
+      })
+      try {
+        const response = await new FrameworkResultService().mediaByRun(mediaPending.result.runId, 'setup-diagnostics',
+          new Request('http://localhost/media'))
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes)
+        expect(await TestAssetModel.countDocuments({runId: mediaPending.result.runId})).toBe(0)
+      } finally {completionDuringRead.mockRestore()}
       const receipts = await Promise.all([service.complete(frozen, hash), service.complete(frozen, hash)])
       expect(receipts[0]?.reportId).toBe(receipts[1]?.reportId)
       const final = await service.complete(frozen, hash)
