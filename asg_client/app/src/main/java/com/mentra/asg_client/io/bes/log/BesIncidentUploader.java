@@ -227,7 +227,13 @@ public final class BesIncidentUploader {
         return true;
     }
 
-    /** BLE file base name the phone and glasses use for this incident's relay body. */
+    /**
+     * BLE file base name the phone and glasses use for this incident's relay body. It is the first
+     * 15 characters of the report id (the K900 file-name limit, shared with the phone's
+     * {@code IncidentLogBleRelayNaming} and released phones), so two report ids that agree on those
+     * characters (the {@code rep_} prefix, a 10-character millisecond timestamp and one random
+     * character) cannot be told apart; {@link #onTransferComplete} then marks neither.
+     */
     public static String relayFileBaseName(String reportId) {
         return IncidentLogBleRelayNaming.bleFileBaseName(reportId, 'B');
     }

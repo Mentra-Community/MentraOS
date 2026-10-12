@@ -90,7 +90,8 @@ export function besCrashTriggerReason(event: Pick<BesCrashDetectedEvent, "incide
 const isoOrUnknown = (ms: number | null | undefined): string =>
   typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : "unknown"
 
-const hex = (value: number | null | undefined): string => (typeof value === "number" ? `0x${value.toString(16)}` : "unknown")
+const hex = (value: number | null | undefined): string =>
+  typeof value === "number" ? `0x${value.toString(16)}` : "unknown"
 
 const yesNo = (value: boolean | undefined): string => (value === undefined ? "unknown" : value ? "yes" : "no")
 
@@ -163,6 +164,16 @@ async function acknowledgeAndUpload(
   return {status: "reported", reportId, submitted}
 }
 
+/** True only when Cloud returns the report for the signed-in user (owner-scoped lookup). */
+async function currentUserOwnsReport(reportId: string): Promise<boolean> {
+  try {
+    const snapshot = await cloudClientService.core.reports.getLogCollection(reportId)
+    return snapshot?.reportId === reportId
+  } catch {
+    return false
+  }
+}
+
 async function processIncident(event: BesCrashDetectedEvent): Promise<BesCrashReportOutcome> {
   const {incidentKey} = event
   if (event.state !== "STORED" && event.state !== "REPORTED") {
@@ -186,12 +197,15 @@ async function processIncident(event: BesCrashDetectedEvent): Promise<BesCrashRe
       return {status: "ignored", reason: "reported_without_report_id"}
     }
     if (storedReportId !== event.reportId) {
-      // Reported by another account (or by a phone that no longer remembers it). A new report
-      // cannot replace the one the glasses hold, so leave this incident to its owner.
-      console.warn(`[${LOG_TAG}] ${incidentKey}: reported under a different owner; deferring`)
-      return {status: "ignored", reason: "reported_by_other_owner"}
+      // No local binding (another account, or a replacement phone that lost its cache): ask Cloud,
+      // which only answers for the signed-in user's own reports, and recover the binding.
+      if (!(await currentUserOwnsReport(event.reportId))) {
+        console.warn(`[${LOG_TAG}] ${incidentKey}: ${event.reportId} is not verifiably this user's report`)
+        return {status: "failed", error: "report_ownership_unverified"}
+      }
+      storeReportId(userId, incidentKey, event.reportId)
     }
-    return acknowledgeAndUpload(incidentKey, storedReportId, false)
+    return acknowledgeAndUpload(incidentKey, event.reportId, false)
   }
   if (storedReportId) return acknowledgeAndUpload(incidentKey, storedReportId, false)
 

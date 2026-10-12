@@ -106,6 +106,11 @@ cloudClientService.syncCoreTokenToBluetooth = mock(async () => {
 cloudClientService.core = {
   reports: {
     submit,
+    // Owner-scoped like Cloud: only the signed-in user's own report resolves.
+    getLogCollection: mock(async (reportId: string) => {
+      if (cloudReports.get(reportId)?.userId !== currentUser) throw new Error("not found")
+      return {reportId, logCollection: {}}
+    }),
     updateLogCollection: mock(async (reportId: string, source: string) => {
       timeline.push(`receipt:${source}:${reportId}`)
     }),
@@ -259,15 +264,35 @@ describe("BesCrashReportService", () => {
     ])
   })
 
-  test("a REPORTED event nobody here owns is deferred without ack, upload or submit", async () => {
+  test("a REPORTED event with an empty phone cache recovers the binding from Cloud", async () => {
+    cloudReports.set("rep_9", {
+      incidentKey: DUMP_KEY,
+      trigger: {reason: "bes_crash"},
+      report: {actualBehavior: ""},
+      userId: "user_a",
+    })
+    await expect(handleBesCrashDetected(dumpEvent({state: "REPORTED", reportId: "rep_9"}))).resolves.toEqual({
+      status: "reported",
+      reportId: "rep_9",
+      submitted: false,
+    })
+    expect(submit).not.toHaveBeenCalled()
+    expect(storedReportId("user_a")).toBe("rep_9")
+    expect(timeline.filter((step) => step.startsWith("ack") || step.startsWith("upload"))).toEqual([
+      `ack:${DUMP_KEY}:rep_9`,
+      "upload:rep_9",
+    ])
+  })
+
+  test("a REPORTED event Cloud does not return for this user is not acked or uploaded", async () => {
     await expect(handleBesCrashDetected(dumpEvent({state: "REPORTED", reportId: "rep_glasses"}))).resolves.toEqual({
-      status: "ignored",
-      reason: "reported_by_other_owner",
+      status: "failed",
+      error: "report_ownership_unverified",
     })
     expect(submit).not.toHaveBeenCalled()
     expect(sendBesCrashReported).not.toHaveBeenCalled()
     expect(sendIncidentId).not.toHaveBeenCalled()
-    expect(timers.size).toBe(0)
+    expect(storedIncidents().size).toBe(0)
   })
 
   test("a failed submit stores nothing and sends no ack", async () => {
@@ -466,13 +491,13 @@ describe("BesCrashReportService user scope", () => {
 
     currentUser = "user_b"
     await expect(handleBesCrashDetected(dumpEvent({state: "REPORTED", reportId: "rep_1"}))).resolves.toEqual({
-      status: "ignored",
-      reason: "reported_by_other_owner",
+      status: "failed",
+      error: "report_ownership_unverified",
     })
     expect(submit).toHaveBeenCalledTimes(1)
     expect(sendBesCrashReported).not.toHaveBeenCalled()
     expect(sendIncidentId).not.toHaveBeenCalled()
-    expect(timers.size).toBe(0)
+    expect(storedReportId("user_b")).toBeUndefined()
 
     currentUser = "user_a"
     await expect(handleBesCrashDetected(dumpEvent({state: "REPORTED", reportId: "rep_1"}))).resolves.toMatchObject({
