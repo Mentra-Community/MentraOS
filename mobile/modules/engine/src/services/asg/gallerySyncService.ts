@@ -156,6 +156,9 @@ class GallerySyncService {
   private lastFullSyncRetryKey: string | null = null
   private wifiSettingsOpenedAt: number | null = null // Timestamp when user was sent to WiFi settings
   private syncStartPromise: Promise<void> | null = null
+  private cleanupPromise: Promise<void> | null = null
+  private cancellationPromise: Promise<void> | null = null
+  private hotspotClosePromise: Promise<Error | null> | null = null
   private startAborted = false
   // Authoritative answer to "can this run read the phone's WiFi SSID?", captured from the
   // Location permission gate in pre-flight. Every SSID comparison below is advisory only:
@@ -208,7 +211,20 @@ class GallerySyncService {
   /**
    * Cleanup - remove event listeners
    */
-  async cleanup(): Promise<void> {
+  cleanup(): Promise<void> {
+    if (this.cleanupPromise) return this.cleanupPromise
+    const cleanup = this.performCleanup().finally(() => {
+      if (this.cleanupPromise === cleanup) this.cleanupPromise = null
+    })
+    this.cleanupPromise = cleanup
+    return cleanup
+  }
+
+  private async performCleanup(): Promise<void> {
+    if (this.cancellationPromise) {
+      // Cancellation retains its own failure; teardown still attempts final cleanup.
+      await this.cancellationPromise.catch(() => undefined)
+    }
     // Engine teardown owns the same Gallery session, including a failed transfer.
     const starting = this.syncStartPromise
     this.syncStartPromise = null
@@ -216,6 +232,9 @@ class GallerySyncService {
     this.abortController?.abort()
     this.abortController = null
     mediaProcessingQueue.abort()
+    // Teardown is terminal for an active attempt. Preserve queue/error evidence,
+    // while letting a later engine session admit a fresh sync.
+    if (this.isSyncing()) useGallerySyncStore.getState().setSyncState("cancelled")
     if (this.hotspotListenerRegistered) {
       GlobalEventEmitter.removeListener("hotspot_status_change", this.handleHotspotStatusChange)
       GlobalEventEmitter.removeListener("hotspot_error", this.handleHotspotError)
@@ -303,7 +322,8 @@ class GallerySyncService {
     }
 
     gallerySyncNotifications.showSyncError("Glasses disconnected")
-    void localNetworkTransport.disconnect().catch((error) => {
+    const cleanup = store.syncServiceOpenedHotspot ? this.closeHotspot() : localNetworkTransport.disconnect()
+    void cleanup.catch((error) => {
       console.error("[GallerySyncService] Failed to release routing after glasses disconnected:", error)
     })
   }
@@ -487,6 +507,14 @@ class GallerySyncService {
    * Start the sync process
    */
   async startSync(): Promise<void> {
+    while (this.cleanupPromise || this.cancellationPromise || this.hotspotClosePromise) {
+      if (this.cleanupPromise) await this.cleanupPromise
+      if (this.cancellationPromise) await this.cancellationPromise
+      if (this.hotspotClosePromise) {
+        const failure = await this.hotspotClosePromise
+        if (failure) throw failure
+      }
+    }
     if (this.syncStartPromise) {
       console.log("[GallerySyncService] ⚠️ Sync start already in progress, joining existing attempt")
       return this.syncStartPromise
@@ -578,9 +606,15 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     const glassesStore = useGlassesStore.getState()
-    if (store.syncServiceOpenedHotspot && !this.sameHotspotOwner()) {
-      this.hotspotOwner = null
-      store.setSyncServiceOpenedHotspot(false)
+    if (store.syncServiceOpenedHotspot) {
+      const ownership = this.hotspotOwnership()
+      if (ownership === "different") {
+        this.hotspotOwner = null
+        store.setSyncServiceOpenedHotspot(false)
+      } else if (ownership === "unknown") {
+        store.setSyncError("Gallery hotspot owner identity is unavailable")
+        return
+      }
     }
     const glassesConnected = isGlassesConnected(glassesStore.connection)
     const glassesHotspot =
@@ -2411,7 +2445,16 @@ class GallerySyncService {
   /**
    * Cancel the current sync
    */
-  async cancelSync(): Promise<void> {
+  cancelSync(): Promise<void> {
+    if (this.cancellationPromise) return this.cancellationPromise
+    const cancellation = this.performCancel().finally(() => {
+      if (this.cancellationPromise === cancellation) this.cancellationPromise = null
+    })
+    this.cancellationPromise = cancellation
+    return cancellation
+  }
+
+  private async performCancel(): Promise<void> {
     console.log("[GallerySyncService] Cancelling sync...")
 
     // Abort any ongoing downloads
@@ -2428,25 +2471,38 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
 
-    // Close hotspot if we opened it
-    if (store.syncServiceOpenedHotspot) {
-      await this.closeHotspot()
-    }
-
-    // Update store
     store.setSyncCancelled()
-
-    // Clear queue
-    await localStorageService.clearSyncQueue()
-
-    // Dismiss notification
-    await gallerySyncNotifications.showSyncCancelled()
+    const failures: unknown[] = []
+    if (store.syncServiceOpenedHotspot) {
+      const failure = await this.closeHotspot()
+      if (failure) failures.push(failure)
+    }
+    try {
+      await localStorageService.clearSyncQueue()
+    } catch (error) {
+      failures.push(error)
+    }
+    try {
+      await gallerySyncNotifications.showSyncCancelled()
+    } catch (error) {
+      failures.push(error)
+    }
+    if (failures.length) throw new AggregateError(failures, "Gallery cancellation cleanup failed", {cause: failures[0]})
   }
 
   /**
    * Close the hotspot
    */
-  private async closeHotspot(): Promise<Error | null> {
+  private closeHotspot(): Promise<Error | null> {
+    if (this.hotspotClosePromise) return this.hotspotClosePromise
+    const closing = this.performHotspotClose().finally(() => {
+      if (this.hotspotClosePromise === closing) this.hotspotClosePromise = null
+    })
+    this.hotspotClosePromise = closing
+    return closing
+  }
+
+  private async performHotspotClose(): Promise<Error | null> {
     const store = useGallerySyncStore.getState()
     const failures: unknown[] = []
     console.log("[GallerySyncService] Closing hotspot...")
@@ -2459,7 +2515,9 @@ class GallerySyncService {
     // Always attempt the owned AP stop even if routing cleanup rejects.
     try {
       // Retained failure ownership cannot authorize a command to another pair.
-      if (this.sameHotspotOwner()) {
+      const ownership = this.hotspotOwnership()
+      if (ownership === "unknown") throw new Error("Gallery hotspot owner identity is unavailable")
+      if (ownership === "same") {
         const stopped = await BluetoothSdk.setHotspotState(false)
         if (stopped.state !== "disabled") throw new Error("Gallery hotspot shutdown was not confirmed")
       }
@@ -2487,8 +2545,14 @@ class GallerySyncService {
         : null
   }
 
-  private sameHotspotOwner(): boolean {
-    return this.hotspotOwner !== null && this.connectedGlassesIdentity() === this.hotspotOwner
+  private hotspotOwnership(): "same" | "different" | "unknown" {
+    const connected = this.connectedGlassesIdentity()
+    // A missing identity or a different identity field cannot prove replacement.
+    // Retain ownership until the original pair can confirm its AP is stopped.
+    if (!this.hotspotOwner || !connected || connected.split(":", 1)[0] !== this.hotspotOwner.split(":", 1)[0]) {
+      return "unknown"
+    }
+    return connected === this.hotspotOwner ? "same" : "different"
   }
 
   /**
