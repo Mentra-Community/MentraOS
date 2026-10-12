@@ -1908,8 +1908,13 @@ class GallerySyncService {
       store.setSyncError(error?.message || "Failed to start download")
       await gallerySyncNotifications.showSyncError("Failed to start download")
     } finally {
-      // Notification/recovery failures must not bypass the AP owner’s teardown.
-      if (!signal?.aborted && useGallerySyncStore.getState().syncServiceOpenedHotspot) await this.closeHotspot()
+      // Every admitted transfer releases phone routing and its reservation,
+      // including shortcuts onto a pre-existing AP. closeHotspot only disables
+      // an AP opened by this Gallery session; failed cleanup retains custody.
+      if (!signal?.aborted) {
+        const failure = await this.closeHotspot()
+        if (failure) throw failure
+      }
     }
   }
 
@@ -2490,14 +2495,10 @@ class GallerySyncService {
     }
 
     if (signal?.aborted) return
-    // Close hotspot if we opened it
+    // Release the admitted phone transport even when the AP pre-existed Gallery.
     const store = useGallerySyncStore.getState()
-    if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
-      console.log("[GallerySyncService]   📡 Closing hotspot (service opened it)...")
-      await this.closeHotspot()
-    } else {
-      console.log("[GallerySyncService]   ℹ️ Hotspot was not opened by service - leaving it enabled")
-    }
+    const failure = await this.closeHotspot()
+    if (failure) throw failure
 
     if (signal?.aborted) return
     // Record a known empty gallery immediately after successful sync.

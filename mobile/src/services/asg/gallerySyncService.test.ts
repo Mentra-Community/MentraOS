@@ -467,6 +467,74 @@ describe("GallerySyncService", () => {
     expect(mockGetCurrentWifiSSID.mock.calls.length).toBeLessThanOrEqual(2)
   })
 
+  it.each([
+    ["ios", "success"],
+    ["ios", "empty"],
+    ["ios", "preparation failure"],
+    ["android", "success"],
+    ["android", "empty"],
+    ["android", "preparation failure"],
+  ])("releases the %s existing-hotspot shortcut after %s without disabling its AP", async (platform, outcome) => {
+    Object.defineProperty(Platform, "OS", {value: platform, configurable: true, writable: true})
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotEnabled: true,
+      hotspotSsid: HOTSPOT_INFO.ssid,
+      hotspotPassword: HOTSPOT_INFO.password,
+      hotspotLocalIp: HOTSPOT_INFO.ip,
+    })
+    useGallerySyncStore.getState().setGlassesGalleryStatus(0, 0, 0, false)
+    mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
+    jest.spyOn(localNetworkTransport, "supportsScopedConnection").mockReturnValue(false)
+    const connect = jest.spyOn(localNetworkTransport, "connect")
+    const disconnect = jest.spyOn(localNetworkTransport, "disconnect").mockResolvedValue(undefined)
+    const execute = jest
+      .spyOn(
+        gallerySyncService as unknown as {
+          executeCaptureDownload(captures: CaptureGroup[], serverTime: number, signal?: AbortSignal): Promise<void>
+        },
+        "executeCaptureDownload",
+      )
+      .mockResolvedValue(undefined)
+    mockGetSyncState.mockResolvedValue({client_id: "test", last_sync_time: 0, total_downloaded: 0, total_size: 0})
+    mockSyncWithServer.mockResolvedValue(outcome === "success" ? CAPTURE_SYNC_RESPONSE : EMPTY_SYNC_RESPONSE)
+    if (outcome === "preparation failure") {
+      ;(mediaProcessingQueue.retryPending as jest.Mock).mockRejectedValueOnce(new Error("Recovery unavailable"))
+    }
+    await gallerySyncService.startSync()
+    expect(connect).not.toHaveBeenCalled()
+    expect(disconnect).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(false)
+    if (outcome === "success") expect(execute).toHaveBeenCalled()
+    if (outcome === "preparation failure") {
+      expect(useGallerySyncStore.getState().lastError).toBe("Recovery unavailable")
+    }
+    const release = acquireGlassesHotspot()
+    release()
+  })
+
+  it("retains a shortcut reservation only until failed phone cleanup can be retried", async () => {
+    Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotEnabled: true,
+      hotspotSsid: HOTSPOT_INFO.ssid,
+      hotspotPassword: HOTSPOT_INFO.password,
+      hotspotLocalIp: HOTSPOT_INFO.ip,
+    })
+    mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
+    jest.spyOn(localNetworkTransport, "supportsScopedConnection").mockReturnValue(false)
+    ;(mediaProcessingQueue.retryPending as jest.Mock).mockRejectedValueOnce(new Error("Recovery unavailable"))
+    jest.spyOn(localNetworkTransport, "disconnect").mockRejectedValueOnce(new Error("Routing release failed"))
+    await expect(gallerySyncService.startSync()).rejects.toThrow("Gallery network cleanup failed")
+    expect(() => acquireGlassesHotspot()).toThrow("already in use")
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    await gallerySyncService.cleanup()
+    const release = acquireGlassesHotspot()
+    release()
+  })
+
   it("uses the shared Mac association owner instead of a legacy SSID shortcut", async () => {
     Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
     Object.defineProperty(CrustModule, "isIOSAppOnMac", {value: true, configurable: true, writable: true})
