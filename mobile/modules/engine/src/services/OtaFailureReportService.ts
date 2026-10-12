@@ -1,7 +1,6 @@
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
 
 import {redactOtaDiagnosticError} from "../utils/otaDiagnosticRedaction"
-import {logAutomaticReportSubmissionStatus, toAutomaticReportSubmissionStatus} from "./AutomaticReportResult"
 
 export type OtaFailureReason =
   | "download_stuck"
@@ -69,7 +68,8 @@ export async function submitOtaFailureReport(evidence: OtaFailureEvidence): Prom
       // Retain recent occurrences across remounts, without an unbounded process-lifetime registry.
       if (submittedOccurrences.size > 128) submittedOccurrences.delete(submittedOccurrences.values().next().value!)
     }
-    logAutomaticReportSubmissionStatus("OtaFailureReport", toAutomaticReportSubmissionStatus(result))
+    if (result.status === "submitted") console.log("[OtaFailureReport] Report filed:", result.reportId)
+    else if (result.status === "failed") console.warn("[OtaFailureReport] submission failed")
   } catch (error) {
     console.warn("[OtaFailureReport] submission failed", error instanceof Error ? error.name : "unknown")
   } finally {
