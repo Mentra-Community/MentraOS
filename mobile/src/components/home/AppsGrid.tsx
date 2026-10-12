@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {Dimensions, FlatList, LayoutChangeEvent, Platform, Pressable, StyleSheet, View} from "react-native"
+import {FlatList, LayoutChangeEvent, Platform, Pressable, StyleSheet, View, useWindowDimensions} from "react-native"
 import Animated, {
   cancelAnimation,
   Easing,
@@ -111,7 +111,7 @@ const AppPopover: React.FC<{
   onClose: () => void
 }> = ({visible, position, actions, onClose}) => {
   const {theme} = useAppTheme()
-  const {width: screenWidth, height: screenHeight} = Dimensions.get("window")
+  const {width: screenWidth, height: screenHeight} = useWindowDimensions()
 
   if (!visible) return null
 
