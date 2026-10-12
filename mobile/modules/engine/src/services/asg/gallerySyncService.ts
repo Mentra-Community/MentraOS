@@ -2050,6 +2050,7 @@ class GallerySyncService {
 
       // Update queue index to final position
       await localStorageService.updateSyncQueueIndex(files.length)
+      if (signal?.aborted) return
 
       // Mark failed files in store
       for (const failedFileName of downloadResult.failed) {
@@ -2292,6 +2293,7 @@ class GallerySyncService {
       }
 
       await localStorageService.updateSyncQueueIndex(captures.length)
+      if (signal?.aborted) return
 
       const downloadDuration = Date.now() - downloadStartTime
       console.log("[GallerySyncService] ========================================")

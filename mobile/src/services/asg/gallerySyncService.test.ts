@@ -1763,6 +1763,47 @@ describe("GallerySyncService", () => {
     })
   })
 
+  it.each(["cleanup", "cancel"])(
+    "does not publish an old final queue-save continuation after %s and fresh start",
+    async (terminal) => {
+      ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockResolvedValue(undefined)
+      ;(gallerySettingsService.getAutoSaveToCameraRoll as jest.Mock).mockResolvedValue(false)
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+      await gallerySyncService.startSync()
+      const signal = (gallerySyncService as unknown as {abortController: AbortController}).abortController.signal
+      const oldFile = {name: "old.jpg", size: 10, modified: 1}
+      ;(asgCameraApi.batchSyncFiles as jest.Mock).mockResolvedValueOnce({
+        downloaded: [],
+        failed: [oldFile.name],
+        total_size: 0,
+      })
+      let releaseSave!: () => void
+      ;(localStorageService.updateSyncQueueIndex as jest.Mock).mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseSave = resolve
+          }),
+      )
+      const old = (
+        gallerySyncService as unknown as {
+          executeDownload(files: unknown[], time: number, signal: AbortSignal): Promise<void>
+        }
+      ).executeDownload([oldFile], 2000, signal)
+      for (let i = 0; i < 20 && !releaseSave; i++) await Promise.resolve()
+      expect(releaseSave).toBeDefined()
+      if (terminal === "cleanup") await gallerySyncService.cleanup()
+      else await gallerySyncService.cancelSync()
+      await gallerySyncService.startSync()
+      const saved = useGallerySyncStore.getState()
+      const drained = (mediaProcessingQueue.waitUntilDrained as jest.Mock).mock.calls.length
+      releaseSave()
+      await old
+      expect(useGallerySyncStore.getState()).toBe(saved)
+      expect(mediaProcessingQueue.waitUntilDrained).toHaveBeenCalledTimes(drained)
+      expect(saved.failedFiles).not.toContain(oldFile.name)
+    },
+  )
+
   it("finishes a successful owned sync once and admits a follow-up after idempotent cleanup", async () => {
     ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockResolvedValue(undefined)
     ;(gallerySettingsService.getAutoSaveToCameraRoll as jest.Mock).mockResolvedValue(false)
