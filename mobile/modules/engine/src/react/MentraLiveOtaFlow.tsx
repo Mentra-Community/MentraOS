@@ -2,6 +2,7 @@
 import React, {useMemo} from "react"
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -76,6 +77,15 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:downloadingToPhone": "Downloading update to phone…",
   "ota:startingGlassesHotspot": "Starting glasses hotspot…",
   "ota:connectingPhoneToGlasses": "Connecting phone to glasses…",
+  "ota:macJoinTitle": "Connect your Mac to the glasses hotspot",
+  "ota:macJoinInstructions":
+    "Open macOS Wi-Fi settings and join the network below. Return to the Mentra App; the update continues automatically after the connection is verified.",
+  "ota:macJoinPassword": "Password: {{password}}",
+  "ota:macJoinOpenSettings": "Open Wi-Fi Settings",
+  "ota:macJoinSettingsUnavailable": "Open System Settings → Wi-Fi to join the network shown above.",
+  "ota:macJoinCancel": "Cancel update",
+  "ota:macJoinLocationPermissionDenied":
+    "Allow Location access for the Mentra App in macOS System Settings so it can verify the glasses Wi-Fi network.",
   "ota:startingHotspotUpdate": "Starting update…",
   "ota:transferringToGlasses": "Transferring update to glasses…",
   "ota:installingOnGlasses": "Installing update on glasses…",
@@ -159,10 +169,48 @@ const componentCopyKey = {
   bes: "ota:componentBes",
 } as const
 
-/**
- * Copy for the failed screen: the translated copy key when the failure maps to one,
- * otherwise the engine's English message (phone-side watchdog and preflight text).
- */
+function MacHotspotJoinPage({
+  colors,
+  credentials,
+  translate,
+  cancel,
+}: {
+  colors: MentraLiveOtaFlowTheme
+  credentials: {ssid: string; password: string}
+  translate: MentraLiveOtaFlowTranslate
+  cancel: () => void
+}) {
+  const [settingsUnavailable, setSettingsUnavailable] = React.useState(false)
+  const openSettings = async () => {
+    try {
+      await Linking.openURL("x-apple.systempreferences:com.apple.wifi-settings-extension")
+    } catch {
+      setSettingsUnavailable(true)
+    }
+  }
+  return (
+    <View testID="ota.hotspot.mac.join-required" style={{flex: 1}}>
+      <FlowPage colors={colors} icon="download" title={translate("ota:macJoinTitle")}>
+        <BodyText colors={colors}>{translate("ota:macJoinInstructions")}</BodyText>
+        <Text testID="ota.hotspot.mac.ssid" selectable style={{color: colors.foreground}}>
+          {credentials.ssid}
+        </Text>
+        <BodyText colors={colors}>{translate("ota:macJoinPassword", {password: credentials.password})}</BodyText>
+        <Pressable testID="ota.hotspot.mac.open-settings" accessibilityRole="button" onPress={openSettings}>
+          <BodyText colors={colors}>{translate("ota:macJoinOpenSettings")}</BodyText>
+        </Pressable>
+        {settingsUnavailable ? (
+          <BodyText colors={colors}>{translate("ota:macJoinSettingsUnavailable")}</BodyText>
+        ) : null}
+        <Pressable accessibilityRole="button" onPress={cancel}>
+          <BodyText colors={colors}>{translate("ota:macJoinCancel")}</BodyText>
+        </Pressable>
+      </FlowPage>
+    </View>
+  )
+}
+
+/** Translate mapped failures; retain the engine message for other preflight errors. */
 function failureMessage(error: MentraLiveOtaError | null, translate: MentraLiveOtaFlowTranslate): string {
   if (!error) return translate("ota:errorGeneric")
   return error.copyKey ? translate(error.copyKey) : error.message
@@ -497,6 +545,17 @@ function OtaFlowContent({
         <BodyText colors={colors}>{translate("ota:versionChangeKeepNearby")}</BodyText>
         <BodyText colors={colors}>{translate("ota:downgradeDuration")}</BodyText>
       </FlowPage>
+    )
+  }
+
+  if (state.screen === "preparing_hotspot" && state.hotspotPhase === "waiting_for_mac_wifi" && state.hotspotMacJoin) {
+    return (
+      <MacHotspotJoinPage
+        colors={colors}
+        credentials={state.hotspotMacJoin}
+        translate={translate}
+        cancel={controller.discard}
+      />
     )
   }
 

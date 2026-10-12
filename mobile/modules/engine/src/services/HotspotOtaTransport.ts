@@ -16,20 +16,31 @@ import {
 } from "./OtaArtifactDownloader"
 import {disableHotspotWithRetry} from "./HotspotShutdown"
 import {
+  isMacLocalNetwork,
+  LocalNetworkPermissionError,
   localNetworkErrorDetails,
+  type MacHotspotJoin,
   localNetworkTransport,
   type LocalNetworkErrorDetails,
 } from "./asg/localNetworkTransport"
 
-export type HotspotOtaPhase = "idle" | "downloading" | "starting_hotspot" | "joining_hotspot" | "serving"
+export type HotspotOtaPhase =
+  | "idle"
+  | "downloading"
+  | "starting_hotspot"
+  | "joining_hotspot"
+  | "waiting_for_mac_wifi"
+  | "serving"
 
 export type HotspotOtaProgress = {
   phase: HotspotOtaPhase
   artifact?: OtaArtifactDownloadProgress
+  macJoin?: MacHotspotJoin
 }
 
 export type HotspotOtaErrorCode =
   | "hotspot_wifi_permission_denied"
+  | "hotspot_location_permission_denied"
   | "hotspot_start_failed"
   | "hotspot_join_failed"
   | "hotspot_server_failed"
@@ -121,11 +132,22 @@ class HotspotOtaTransport {
       const scopedAddress = await localNetworkTransport.connect(hotspot.ssid, hotspot.password, {
         retryIosInternalError: true,
         assertCurrent,
+        ...(isMacLocalNetwork()
+          ? {
+              macJoin: {
+                gateway: hotspot.localIp,
+                onWaiting: (macJoin: MacHotspotJoin) => {
+                  assertCurrent()
+                  onProgress?.({phase: "waiting_for_mac_wifi", macJoin})
+                },
+              },
+            }
+          : {}),
       })
       this.localNetworkConnected = true
       assertCurrent()
       let localAddress = scopedAddress
-      if (Platform.OS === "ios") {
+      if (Platform.OS === "ios" && !isMacLocalNetwork()) {
         try {
           localAddress = await otaServer.waitForWifiAddress(hotspot.localIp, 15_000)
           assertCurrent()
@@ -135,6 +157,15 @@ class HotspotOtaTransport {
             error instanceof Error ? error.message : String(error),
           )
         }
+      }
+      if (isMacLocalNetwork()) {
+        try {
+          localAddress = await localNetworkTransport.verifiedMacAddress()
+        } catch (error) {
+          throw new HotspotOtaTransportError("hotspot_join_failed", error instanceof Error ? error.message : String(error))
+        }
+        assertCurrent()
+        onProgress?.({phase: "joining_hotspot"})
       }
       const artifactPaths = Object.fromEntries(this.prepared.map((artifact) => [artifact.sha256, artifact.filePath]))
       // Start exactly one native listener to learn its selected port, then atomically replace
@@ -153,6 +184,9 @@ class HotspotOtaTransport {
       return published.manifestUrl
     } catch (error) {
       const joined = this.localNetworkConnected
+      if (error instanceof LocalNetworkPermissionError) {
+        throw new HotspotOtaTransportError("hotspot_location_permission_denied", error.message)
+      }
       if (error instanceof OtaArtifactError || error instanceof HotspotOtaTransportError) {
         throw error
       }

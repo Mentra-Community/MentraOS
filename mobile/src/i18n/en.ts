@@ -473,6 +473,15 @@ const en = {
     },
   },
   ota: {
+    macJoinTitle: "Connect your Mac to the glasses hotspot",
+    macJoinInstructions:
+      "Open macOS Wi-Fi settings and join the network below. Return to the Mentra App; the update continues automatically after the connection is verified.",
+    macJoinPassword: "Password: {{password}}",
+    macJoinOpenSettings: "Open Wi-Fi Settings",
+    macJoinSettingsUnavailable: "Open System Settings → Wi-Fi to join the network shown above.",
+    macJoinCancel: "Cancel update",
+    macJoinLocationPermissionDenied:
+      "Allow Location access for the Mentra App in macOS System Settings so it can verify the glasses Wi-Fi network.",
     startingHotspotUpdate: "Starting update…",
     downloadingToPhone: "Downloading update to phone…",
     startingGlassesHotspot: "Starting glasses hotspot…",

@@ -1,8 +1,12 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
+import CrustModule from "@mentra/crust"
+import {glassesHotspot} from "@mentra/glasses-media"
+import * as Location from "expo-location"
 import {otaLocalNetwork, type OtaLocalNetworkDownloadProgress} from "@mentra/bluetooth-sdk/ota-transport"
 import {Buffer} from "buffer"
-import {Platform} from "react-native"
+import {AppState, Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
+import {resolveForegroundLocationPermission} from "../ForegroundLocationPermission"
 import {BgTimer} from "../../utils/timers"
 
 type DownloadOptions = Parameters<typeof RNFS.downloadFile>[0]
@@ -10,9 +14,28 @@ type DownloadHandle = ReturnType<typeof RNFS.downloadFile>
 
 let connectionGeneration = 0
 let scopedConnectionActive = false
+let macAssociationId: string | null = null
 let nextJobId = 1_000_000
 const nativeJobs = new Map<number, string>()
 const cancelledNativeJobs = new Set<number>()
+
+export type MacHotspotJoin = {ssid: string; password: string}
+export type LocalNetworkConnectOptions = {
+  retryIosInternalError?: true
+  assertCurrent: () => void
+  macJoin?: {gateway: string; onWaiting: (credentials: MacHotspotJoin) => void}
+}
+
+export class LocalNetworkPermissionError extends Error {
+  readonly code = "hotspot_location_permission_denied"
+  constructor() {
+    super("Allow Location access to verify the glasses Wi-Fi network on your Mac")
+  }
+}
+
+export function isMacLocalNetwork(): boolean {
+  return Platform.OS === "ios" && CrustModule.isIOSAppOnMac === true
+}
 
 export type LocalNetworkErrorDetails = {
   code?: string | number
@@ -102,19 +125,63 @@ export const localNetworkTransport = {
   supportsScopedConnection: (): boolean => supportsScopedConnection(),
   isScopedConnectionActive: (): boolean => scopedConnectionActive,
 
-  async connect(
-    ssid: string,
-    password: string,
-    options?: {retryIosInternalError: true; assertCurrent: () => void},
-  ): Promise<string | undefined> {
+  async connect(ssid: string, password: string, options?: LocalNetworkConnectOptions): Promise<string | undefined> {
     const generation = ++connectionGeneration
     const assertCurrent = () => {
       if (generation !== connectionGeneration) throw new Error("Local network connection was superseded")
       options?.assertCurrent()
     }
     assertCurrent()
+    // Release a previous observer before handing another session its interface identity.
+    if (macAssociationId) {
+      const previousId = macAssociationId
+      await glassesHotspot.releaseMacAssociation(previousId)
+      if (macAssociationId === previousId) macAssociationId = null
+      assertCurrent()
+    }
     scopedConnectionActive = false
     nativeJobs.clear()
+    if (isMacLocalNetwork()) {
+      if (!options?.macJoin) throw new Error("Join the glasses hotspot using macOS Wi-Fi controls")
+      const permission = await resolveForegroundLocationPermission(Location, () => AppState.currentState)
+      assertCurrent()
+      if (permission.status !== "granted") throw new LocalNetworkPermissionError()
+      options.macJoin.onWaiting({ssid, password})
+      assertCurrent()
+      const id = requestId("mac_hotspot")
+      macAssociationId = id
+      const waiting = glassesHotspot.waitForMacAssociation(id, ssid, options.macJoin.gateway, 60_000)
+      let acquired = false
+      const deadline = Date.now() + 60_000
+      // Native callbacks can arrive after session replacement. Revoke the native observer as
+      // soon as the owner changes; its own deadline also bounds an unanswered OS join.
+      let timer: ReturnType<typeof BgTimer.setTimeout> | undefined
+      const cancellation = new Promise<never>((_resolve, reject) => {
+        const check = () => {
+          try {
+            assertCurrent()
+            if (Date.now() >= deadline) throw new Error("Mac hotspot join timed out")
+          } catch (error) {
+            reject(error)
+            return
+          }
+          timer = BgTimer.setTimeout(check, 250)
+        }
+        timer = BgTimer.setTimeout(check, 250)
+      })
+      try {
+        const address = await Promise.race([waiting, cancellation])
+        assertCurrent()
+        acquired = true
+        return address
+      } finally {
+        if (timer !== undefined) BgTimer.clearTimeout(timer)
+        if (!acquired) {
+          await glassesHotspot.releaseMacAssociation(id)
+          if (macAssociationId === id) macAssociationId = null
+        }
+      }
+    }
     if (!supportsScopedConnection()) {
       // Gallery already owns its retry loop. OTA opts into this same-network
       // policy only with current-attempt authority; never race a pending native call.
@@ -150,8 +217,24 @@ export const localNetworkTransport = {
     return result.localAddress
   },
 
+  async verifiedMacAddress(): Promise<string> {
+    if (!macAssociationId) throw new Error("No verified Mac hotspot session")
+    const id = macAssociationId
+    const generation = connectionGeneration
+    const address = await glassesHotspot.verifiedMacAddress(id)
+    if (id !== macAssociationId || generation !== connectionGeneration)
+      throw new Error("Local network connection was superseded")
+    if (!address) throw new Error("The Mac is no longer connected to the requested glasses hotspot")
+    return address
+  },
+
   async disconnect(): Promise<void> {
     connectionGeneration += 1
+    if (macAssociationId) {
+      const id = macAssociationId
+      await glassesHotspot.releaseMacAssociation(id)
+      if (macAssociationId === id) macAssociationId = null
+    }
     if (supportsScopedConnection()) {
       await otaLocalNetwork.disconnect()
     }

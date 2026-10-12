@@ -22,6 +22,7 @@ import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
+import type {MacHotspotJoin} from "./asg/localNetworkTransport"
 import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import {otaDeviceSessionRevision, subscribeOtaDeviceSession} from "./OtaDeviceSession"
 import {isOtaCheckForCurrentDevice} from "./OtaUpdateCheckService"
@@ -75,6 +76,8 @@ function hotspotPreflightErrorMessage(error: unknown): string {
       return OtaProgressMessages.hotspotArtifactVerifyFailed
     case "hotspot_wifi_permission_denied":
       return OtaProgressMessages.hotspotWifiPermissionDenied
+    case "hotspot_location_permission_denied":
+      return OtaProgressMessages.hotspotLocationPermissionDenied
     case "hotspot_start_failed":
       return OtaProgressMessages.hotspotStartFailed
     case "hotspot_join_failed":
@@ -175,6 +178,8 @@ export interface OtaInstallSnapshot {
   versionChangePhase: "installing" | "restarting" | "verifying" | null
   /** Pre-ota_start phone staging/join state for a hotspot attempt. */
   hotspotPhase: HotspotOtaPhase
+  /** Ephemeral credentials for the user-operated Mac Wi-Fi join; never persisted or logged. */
+  hotspotMacJoin?: MacHotspotJoin | null
   hotspotArtifactPercent: number | null
   hotspotArtifact: OtaArtifactDownloadProgress | null
   /** Known transport for this install; recovered device sessions may not report it. */
@@ -198,6 +203,7 @@ class OtaInstallCoordinator {
       this.observedTransport = null
       this.hotspotManifestUrl = null
       this.hotspotPhase = "idle"
+      this.hotspotMacJoin = null
       this.hotspotArtifactPercent = null
       this.hotspotArtifact = null
       this.resetSessionState()
@@ -215,6 +221,7 @@ class OtaInstallCoordinator {
   private observedTransport: "wifi" | "hotspot" | null = null
   private hotspotManifestUrl: string | null = null
   private hotspotPhase: HotspotOtaPhase = "idle"
+  private hotspotMacJoin: MacHotspotJoin | null = null
   private hotspotArtifactPercent: number | null = null
   private hotspotArtifact: OtaArtifactDownloadProgress | null = null
 
@@ -335,6 +342,7 @@ class OtaInstallCoordinator {
     this.observedTransport = this.selectedTransport
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
+    this.hotspotMacJoin = null
     this.hotspotArtifactPercent = null
     this.hotspotArtifact = null
     this.emitInternalChange()
@@ -492,6 +500,12 @@ class OtaInstallCoordinator {
    * clear the stale build number so the next check re-reads version_info.
    */
   async finish(): Promise<void> {
+    // User cancellation before ota_start revokes this logical owner before joining cleanup.
+    if (this.hotspotPhase === "waiting_for_mac_wifi") {
+      this.otaStartOwnership = null
+      this.hotspotMacJoin = null
+      this.clearPerStepTimers()
+    }
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
       this.observedTransport = null
@@ -551,6 +565,7 @@ class OtaInstallCoordinator {
       versionChangeConverged: this.versionChangeConverged,
       versionChangePhase: this.deriveVersionChangePhase(connected),
       hotspotPhase: this.hotspotPhase,
+      hotspotMacJoin: this.hotspotMacJoin ? {...this.hotspotMacJoin} : null,
       hotspotArtifactPercent: this.hotspotArtifactPercent,
       hotspotArtifact: this.hotspotArtifact ? {...this.hotspotArtifact} : null,
       transport: this.observedTransport,
@@ -1563,6 +1578,7 @@ class OtaInstallCoordinator {
           const manifestUrl = await hotspotOtaTransport.prepare(this.preparedCheckResult, (progress) => {
             if (!isCurrentAttempt()) return
             this.hotspotPhase = progress.phase
+            this.hotspotMacJoin = progress.macJoin ? {...progress.macJoin} : null
             this.hotspotArtifact = progress.artifact ? {...progress.artifact} : null
             this.hotspotArtifactPercent =
               progress.artifact && progress.artifact.contentLength > 0 ? progress.artifact.artifactPercent : null
@@ -1652,6 +1668,7 @@ class OtaInstallCoordinator {
     if (deviceRevision !== otaDeviceSessionRevision()) return
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
+    this.hotspotMacJoin = null
     this.hotspotArtifactPercent = null
     this.hotspotArtifact = null
     this.emitInternalChange()
