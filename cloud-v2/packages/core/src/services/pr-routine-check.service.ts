@@ -54,7 +54,7 @@ export function routineCheckPayload(gate: PrRoutineCheck, now: number): CheckPay
     : gate.selectionError ?? (gate.context.labels.length ? 'Preparing selected routine coverage.' : 'No routine tests requested.')
   const stopping = attempt.cancellation && !done ? '\nCancellation requested; ordinary cleanup and containment are still settling.' : ''
   const summary = [coverage, gate.selectionError ? `Selection failed: ${gate.selectionError}` : '', stopping,
-    rows.length ? '\n| Routine | Platform | Result | Current activity |\n|---|---|---|---|\n' + rows.join('\n') : '',
+    rows.length ? '\n| Routine | Lane | Result | Current activity |\n|---|---|---|---|\n' + rows.join('\n') : '',
     `\nAccepted ${attempt.acceptedAt}; deadline ${attempt.deadline}.`, `\n[Results and diagnostics](${adminUrl(gate)})`].filter(Boolean).join('\n')
   return {name: ROUTINE_CHECK_NAME, head_sha: gate.headSha, external_id: gate.checkExternalId,
     status: done ? 'completed' : attempt.cancellation || attempt.members.some(member => member.progress && !member.waitReason || ['running', 'accepted'].includes(member.status)) ? 'in_progress' : 'queued', ...(attempt.conclusion ? {conclusion: attempt.conclusion} : {}),
