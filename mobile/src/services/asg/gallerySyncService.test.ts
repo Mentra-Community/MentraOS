@@ -1752,6 +1752,54 @@ describe("GallerySyncService", () => {
     },
   )
 
+  it.each(["manifest", "legacy", "capture"])(
+    "does not let an old %s error notification close an ordinary retry AP",
+    async (stage) => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+      ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockResolvedValue(undefined)
+      ;(gallerySettingsService.getAutoSaveToCameraRoll as jest.Mock).mockResolvedValue(false)
+      await gallerySyncService.startSync()
+      const signal = (gallerySyncService as unknown as {abortController: AbortController}).abortController.signal
+      const service = gallerySyncService as unknown as {
+        resolveSyncManifest(client: string, time: number, signal: AbortSignal): Promise<null>
+        executeDownload(files: unknown[], time: number, signal: AbortSignal): Promise<void>
+        executeCaptureDownload(captures: CaptureGroup[], time: number, signal: AbortSignal): Promise<void>
+      }
+      let releaseError!: () => void
+      ;(gallerySyncNotifications.showSyncError as jest.Mock).mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseError = resolve
+          }),
+      )
+      let failed: Promise<void>
+      if (stage === "manifest") {
+        jest.spyOn(service, "resolveSyncManifest").mockResolvedValueOnce(null)
+        failed = startFileDownload()
+      } else {
+        if (stage === "legacy") {
+          ;(asgCameraApi.batchSyncFiles as jest.Mock).mockRejectedValueOnce(new Error("Original failure"))
+        } else {
+          ;(localStorageService.updateSyncQueueIndex as jest.Mock).mockRejectedValueOnce(new Error("Original failure"))
+        }
+        failed =
+          stage === "legacy"
+            ? service.executeDownload([], 2000, signal)
+            : service.executeCaptureDownload([], 2000, signal)
+      }
+      for (let i = 0; i < 30 && !releaseError; i++) await Promise.resolve()
+      expect(releaseError).toBeDefined()
+      await gallerySyncService.startSync()
+      const state = useGallerySyncStore.getState()
+      const calls = (BluetoothSdk.setHotspotState as jest.Mock).mock.calls.length
+      releaseError()
+      await failed
+      expect(BluetoothSdk.setHotspotState).toHaveBeenCalledTimes(calls)
+      expect(useGallerySyncStore.getState()).toBe(state)
+      expect(state.syncServiceOpenedHotspot).toBe(true)
+    },
+  )
+
   it.each([false, true])("supports React Native manifest cancellation (aborted=%s)", async (aborted) => {
     const controller = new ReactNativeAbortController()
     expect("throwIfAborted" in controller.signal).toBe(false)

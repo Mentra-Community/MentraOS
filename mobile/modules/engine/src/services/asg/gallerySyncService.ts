@@ -527,14 +527,32 @@ class GallerySyncService {
       return this.syncStartPromise
     }
 
+    if (this.isSyncing()) return
+    const previous = this.abortController
+    previous?.abort()
+    const signal = (this.abortController = new AbortController()).signal
     useGallerySyncStore.getState().setSyncStarting(true)
-    const starting = this.runStartSync().finally(() => {
+    const starting = this.admitStartSync(previous !== null, signal).finally(() => {
       if (this.syncStartPromise !== starting) return
       this.syncStartPromise = null
       useGallerySyncStore.getState().setSyncStarting(false)
     })
     this.syncStartPromise = starting
     return starting
+  }
+
+  private async admitStartSync(replacingAttempt: boolean, signal: AbortSignal): Promise<void> {
+    if (replacingAttempt) {
+      mediaProcessingQueue.abort()
+      if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
+        const failure = await this.closeHotspot()
+        if (failure) throw failure
+      } else {
+        await localNetworkTransport.disconnect()
+      }
+    }
+    if (signal.aborted) return
+    await this.runStartSync(signal)
   }
 
   /**
@@ -601,7 +619,7 @@ class GallerySyncService {
     return false
   }
 
-  private async runStartSync(): Promise<void> {
+  private async runStartSync(signal: AbortSignal): Promise<void> {
     // Clear stale abort flag — it can persist when a prior pre-flight exited through
     // a non-shouldAbortPreFlight path (e.g. connectivity failed, disk full), which
     // would otherwise cause the next sync attempt to abort spuriously.
@@ -638,8 +656,6 @@ class GallerySyncService {
       console.log(`[GallerySyncService] ⚠️ Already syncing (state: ${store.syncState}), ignoring start request`)
       return
     }
-
-    const signal = (this.abortController = new AbortController()).signal
 
     // Engine-owned pre-flight: glasses reachable + bluetooth adapter on. The host
     // renders the alerts off the structured notices; Android location permission
