@@ -308,12 +308,18 @@ function isMongoTimeout(error: unknown): boolean {
 async function withinDeadline<T>(deadline: number, run: (timeoutMs: number) => PromiseLike<T>): Promise<T> {
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new ReportArtifactError(503, "incident persistence exceeded its deadline");
+  // Attach the catch to the work itself (same as reportUserEmail's lookup): the
+  // timer and the operation share this deadline, so a slow op usually loses the
+  // race and rejects afterwards — the exact Mongo stall this helper survives.
+  // Without an explicit handler that late rejection goes unhandled.
+  const work = Promise.resolve(run(remaining));
+  work.catch(() => {});
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new ReportArtifactError(503, "incident persistence exceeded its deadline")), remaining);
   });
   try {
-    return await Promise.race([Promise.resolve(run(remaining)), expired]);
+    return await Promise.race([work, expired]);
   } catch (error) {
     if (isMongoTimeout(error)) throw new ReportArtifactError(503, "incident persistence exceeded its deadline");
     throw error;
