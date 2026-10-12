@@ -1,6 +1,7 @@
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
 
 import {submitAutomaticReport} from "../facades/reports"
+import {redactOtaDiagnosticError} from "../utils/otaDiagnosticRedaction"
 import {logAutomaticReportSubmissionStatus, toAutomaticReportSubmissionStatus} from "./AutomaticReportResult"
 
 export type OtaFailureReason =
@@ -41,12 +42,11 @@ const inFlight = new Set<string>()
 /** Snapshot synchronously so cleanup, retries and reconnects cannot rewrite failure evidence. */
 export async function submitOtaFailureReport(evidence: OtaFailureEvidence): Promise<void> {
   const snapshot = JSON.parse(JSON.stringify(evidence)) as OtaFailureEvidence
-  // Device error text may contain a URL. Preserve bounded protocol codes only.
-  if (snapshot.otaStatus?.error && !/^[a-zA-Z0-9_:-]{1,100}$/.test(snapshot.otaStatus.error)) {
-    snapshot.otaStatus.error = "[REDACTED]"
+  if (snapshot.otaStatus?.error) {
+    snapshot.otaStatus.error = redactOtaDiagnosticError(snapshot.otaStatus.error) as string
   }
-  if (snapshot.otaProgress?.errorMessage && !/^[a-zA-Z0-9_:-]{1,100}$/.test(snapshot.otaProgress.errorMessage)) {
-    snapshot.otaProgress.errorMessage = "[REDACTED]"
+  if (snapshot.otaProgress?.errorMessage) {
+    snapshot.otaProgress.errorMessage = redactOtaDiagnosticError(snapshot.otaProgress.errorMessage) as string
   }
   const key = `ota_failure:${snapshot.deviceRevision}:${snapshot.otaStatus?.sessionId || snapshot.attemptId}:${snapshot.reason}`
   if (inFlight.has(key)) return

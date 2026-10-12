@@ -13,6 +13,7 @@ import {useGlassesStore} from "../stores/glasses"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {getAppBuildInfo} from "./appBuildInfo"
 import {buildMiniappDiagnosticContext} from "./miniappDiagnostics"
+import {redactOtaDiagnosticError} from "./otaDiagnosticRedaction"
 
 /**
  * Account credentials. The native Bluetooth status snapshot mirrors these same
@@ -35,6 +36,17 @@ function omitSensitiveSettings(values: Record<string, unknown>): Record<string, 
  * strip the password before the state is attached to a report.
  */
 function redactNestedCredentials(glasses: Record<string, unknown>): Record<string, unknown> {
+  glasses = {...glasses}
+  for (const [key, errorKey] of [
+    ["otaStatus", "error"],
+    ["otaProgress", "errorMessage"],
+  ]) {
+    const status = glasses[key]
+    if (status && typeof status === "object" && errorKey in status) {
+      const values = status as Record<string, unknown>
+      glasses[key] = {...values, [errorKey]: redactOtaDiagnosticError(values[errorKey])}
+    }
+  }
   const hotspot = glasses.hotspot
   if (hotspot && typeof hotspot === "object" && "password" in hotspot) {
     const {password: _password, ...rest} = hotspot as Record<string, unknown>
