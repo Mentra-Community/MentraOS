@@ -14,6 +14,7 @@ import {
   type OtaArtifactDownloadProgress,
   type PreparedOtaArtifact,
 } from "./OtaArtifactDownloader"
+import {acquireGlassesHotspot} from "./GlassesHotspotLease"
 import {disableHotspotWithRetry} from "./HotspotShutdown"
 import {
   localNetworkErrorDetails,
@@ -48,6 +49,7 @@ export class HotspotOtaTransportError extends Error {
 /** Owns the single phone-side endpoint and network lease for one hotspot OTA attempt. */
 class HotspotOtaTransport {
   private readonly networkOwner = Symbol("hotspot-ota")
+  private releaseHotspot: (() => void) | null = null
   private active = false
   private prepared: PreparedOtaArtifact[] = []
   private hotspotRequested = false
@@ -67,6 +69,7 @@ class HotspotOtaTransport {
     if (this.teardownPromise) await this.teardownPromise
     if (ownerRevision !== otaDeviceSessionRevision()) throw new Error("The OTA glasses have changed")
     if (
+      this.releaseHotspot ||
       this.active ||
       this.preparing ||
       this.localNetworkRequested ||
@@ -77,6 +80,8 @@ class HotspotOtaTransport {
       throw new Error("A hotspot OTA transport is active or still needs cleanup")
     }
     if (!checkResult.manifestBody) throw new Error("The selected OTA check has no manifest body")
+    // Refusal happens before downloading or changing the glasses AP.
+    this.releaseHotspot = acquireGlassesHotspot()
     this.ownerRevision = ownerRevision
     const generation = ++this.generation
     const assertCurrent = () => {
@@ -218,6 +223,7 @@ class HotspotOtaTransport {
     this.generation += 1
     if (this.teardownPromise) return this.teardownPromise
     this.teardownPromise = (async () => {
+      if (!this.releaseHotspot) return
       await this.preparing?.catch(() => {})
       const errors: unknown[] = []
       if (disableGlassesHotspot && this.ownerRevision === otaDeviceSessionRevision() && this.hotspotRequested) {
@@ -267,6 +273,8 @@ class HotspotOtaTransport {
       }
       this.active = false
       if (errors.length) throw errors[0]
+      this.releaseHotspot()
+      this.releaseHotspot = null
     })()
     try {
       await this.teardownPromise
