@@ -12,8 +12,7 @@ const webhook = z.object({repository: z.object({full_name: z.literal(ROUTINE_CHE
   installation: z.object({id: z.number().int().positive()}), sender: z.object({login: z.string()}),
   action: z.string(), pull_request: z.object({number: z.number().int().positive(), state: z.string(), head: z.object({sha: z.string().regex(/^[a-f0-9]{40}$/), ref: z.string(), repo: z.object({full_name: z.string()}).nullable()}), base: z.object({ref: z.string()}), labels: z.array(z.object({name: z.string()}))}).optional(),
   check_run: z.object({id: z.number().int().positive(), external_id: z.string(), head_sha: z.string().regex(/^[a-f0-9]{40}$/),
-    app: z.object({id: z.number().int().positive()})}).optional(),
-  requested_action: z.object({identifier: z.literal('cancel')}).optional()})
+    app: z.object({id: z.number().int().positive()})}).optional()})
 export function verifyRoutineWebhook(bytes: Uint8Array, signature: string | undefined, secret: string | undefined) {
   if (!secret || secret.length < 32 || !/^sha256=[a-f0-9]{64}$/.test(signature ?? '')) return false
   const expected = createHmac('sha256', secret).update(bytes).digest(), actual = Buffer.from(signature!.slice(7), 'hex')
@@ -42,13 +41,12 @@ export function createPrRoutineCheckApi(service = new PrRoutineCheckService(), a
         headRef: pr.head.ref, baseRef: pr.base.ref, sameRepository: pr.head.repo?.full_name === ROUTINE_CHECK_REPOSITORY,
         open: pr.state === 'open', labels: pr.labels.map(row => row.name).filter(name => name.startsWith('routine:')).sort(), peers: []}))
     }
-    if (event === 'check_run' && ['rerequested', 'requested_action'].includes(payload.action)) {
+    if (event === 'check_run' && payload.action === 'rerequested') {
       const check = payload.check_run
-      if (!check || check.app.id !== appIdentity.applicationId || !check.external_id ||
-          payload.action === 'requested_action' && !payload.requested_action) return c.json({error: 'invalid_check_control'}, 400)
+      if (!check || check.app.id !== appIdentity.applicationId || !check.external_id) return c.json({error: 'invalid_check_control'}, 400)
       return c.json(await service.receiveControl({deliveryId: deliveryId.data, digest,
         gateId: check.external_id.split(':')[0]!, checkId: check.id, externalId: check.external_id,
-        headSha: check.head_sha, actor: payload.sender.login, kind: payload.action === 'rerequested' ? 'rerun' : 'cancel'}))
+        headSha: check.head_sha, actor: payload.sender.login, kind: 'rerun'}))
     }
     return c.json({ignored: true})
   })

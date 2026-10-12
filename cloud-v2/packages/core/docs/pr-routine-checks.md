@@ -18,7 +18,7 @@ The app/ASG workflows accept `routine_pr`, `routine_head_sha`, `routine_base`, a
 
 ## Required-check activation
 
-Verify an installed-App PR check visibly appears on the current head, advances through setup/test/teardown/publication, links to the configured Admin environment, survives a Core restart, and gives correct terminal results. Verify GitHub's native Re-run sends `check_run.rerequested`; the check's Cancel action sends `requested_action` with `cancel`. A cancellation request does not release controller custody. Verify failed-member reruns retain passing members and exact artifacts; a wholly passing rerun executes all members with a new three-hour deadline.
+Verify an installed-App PR check visibly appears on the current head, advances through setup/test/teardown/publication, links to the configured Admin environment, survives a Core restart, and gives correct terminal results. Verify GitHub's native Re-run sends `check_run.rerequested`. Active Cancel is reached through the check's Details link to the authenticated Admin gate view, with coverage/attempt guards and an audited operator identity; GitHub requested-action buttons are documented as available after completion, so no custom Cancel action is configured. A cancellation request does not release controller custody. Verify failed-member reruns retain passing members and exact artifacts; a wholly passing rerun executes all members with a new three-hour deadline.
 
 Only after that verification should an operator require the App-owned `Routine tests` context on intended branches. No ruleset changes are part of this implementation. Labels changed after a green check cannot be atomically fenced against GitHub merging; disable auto-merge before changing coverage on an already green head.
 

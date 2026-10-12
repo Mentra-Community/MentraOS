@@ -6,7 +6,7 @@ import {ROUTINE_CHECK_NAME, ROUTINE_CHECK_REPOSITORY, type CheckPayload, type Pr
 const head = 'a'.repeat(40), otherHead = 'b'.repeat(40), appId = 17
 const payload: CheckPayload = {name: ROUTINE_CHECK_NAME, head_sha: head, external_id: 'gate-one:2',
   status: 'in_progress', started_at: '2026-10-12T00:00:00Z', details_url: 'https://admin.dev.mentraglass.com/?testRuns=1',
-  output: {title: 'Routine tests', summary: 'Waiting for routine results'}}
+  output: {title: 'Routine tests', summary: 'Waiting for routine results'}, actions: []}
 const check = (id = 99, external_id = 'gate-one:1', applicationId = appId, head_sha = head) =>
   ({id, external_id, name: ROUTINE_CHECK_NAME, head_sha, app: {id: applicationId}})
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), {status})

@@ -36,10 +36,12 @@ const adminBase = () => {
   try {const url = new URL(process.env.ADMIN_URL ?? process.env.CLOUD_ADMIN_CONSOLE_URL ?? 'https://admin.mentraglass.com/'); return url.protocol === 'https:' ? url.origin : 'https://admin.mentraglass.com'}
   catch {return 'https://admin.mentraglass.com'}
 }
-const adminUrl = (gate: PrRoutineCheck) => gate.attempt.suiteId
+const resultsUrl = (gate: PrRoutineCheck) => gate.attempt.suiteId
   ? `${adminBase()}/?testSuite=${encodeURIComponent(gate.attempt.suiteId)}`
   : gate.attempt.members[0]?.requestId ? `${adminBase()}/?testRun=${encodeURIComponent(gate.attempt.members[0].requestId)}`
     : `https://github.com/${ROUTINE_CHECK_REPOSITORY}/pull/${gate.context.number}`
+
+const adminUrl = (gate: PrRoutineCheck) => `${adminBase()}/?prCheck=${encodeURIComponent(gate.gateId)}`
 
 export function routineCheckPayload(gate: PrRoutineCheck, now: number): CheckPayload {
   const attempt = gate.attempt, done = !!attempt.conclusion
@@ -55,13 +57,14 @@ export function routineCheckPayload(gate: PrRoutineCheck, now: number): CheckPay
   const stopping = attempt.cancellation && !done ? '\nCancellation requested; ordinary cleanup and containment are still settling.' : ''
   const summary = [coverage, gate.selectionError ? `Selection failed: ${gate.selectionError}` : '', stopping,
     rows.length ? '\n| Routine | Lane | Result | Current activity |\n|---|---|---|---|\n' + rows.join('\n') : '',
-    `\nAccepted ${attempt.acceptedAt}; deadline ${attempt.deadline}.`, `\n[Results and diagnostics](${adminUrl(gate)})`].filter(Boolean).join('\n')
+    `\nAccepted ${attempt.acceptedAt}; deadline ${attempt.deadline}.`, `\n[Results and diagnostics](${resultsUrl(gate)})
+[Open controls](${adminUrl(gate)})`].filter(Boolean).join('\n')
   return {name: ROUTINE_CHECK_NAME, head_sha: gate.headSha, external_id: gate.checkExternalId,
     status: done ? 'completed' : attempt.cancellation || attempt.members.some(member => member.progress && !member.waitReason || ['running', 'accepted'].includes(member.status)) ? 'in_progress' : 'queued', ...(attempt.conclusion ? {conclusion: attempt.conclusion} : {}),
     started_at: attempt.acceptedAt, ...(attempt.finishedAt ? {completed_at: attempt.finishedAt} : {}), details_url: adminUrl(gate),
     output: {title: done ? attempt.conclusion === 'success' ? 'Routine tests passed' : 'Routine tests did not pass' :
       attempt.cancellation ? 'Routine tests are stopping' : 'Routine tests in progress', summary},
-    ...(!done && !attempt.cancellation ? {actions: [{label: 'Cancel', description: 'Request cancellation and ordinary cleanup', identifier: 'cancel' as const}]} : {})}
+    actions: []}
 }
 
 export class PrRoutineCheckService {
@@ -147,6 +150,41 @@ export class PrRoutineCheckService {
     }
     if (!await this.rows.save(claimed, gate, new Date(this.now()))) throw new TestRunError(503, 'Control storage changed; retry the same delivery')
     return {gateId: input.gateId, accepted: true}
+  }
+  async cancelFromAdmin(gateId: string, input: {operationId: string; coverageGeneration: number; attemptGeneration: number}, actor: string) {
+    const row = await this.rows.get(gateId)
+    if (!row || row.payload.coverageGeneration !== input.coverageGeneration || row.payload.attempt.generation !== input.attemptGeneration)
+      throw new TestRunError(409, 'PR check generation changed; refresh before cancelling')
+    const gate = row.payload, eventId = `admin-${input.operationId}`
+    if (gate.controls.some(control => control.id === eventId)) return {accepted: true}
+    const context = await this.github.context(gate.context.number)
+    if (!context.open || context.headSha !== gate.headSha || selectionKey(context) !== gate.selectionKey)
+      throw new TestRunError(409, 'PR check context changed; refresh before cancelling')
+    const claimed = await this.rows.claim(gateId, new Date(this.now()))
+    if (!claimed) throw new TestRunError(503, 'PR check is reconciling; retry the same operation')
+    const current = structuredClone(claimed.payload)
+    if (current.coverageGeneration !== input.coverageGeneration || current.attempt.generation !== input.attemptGeneration) {
+      await this.rows.save(claimed, current, new Date(this.now())); throw new TestRunError(409, 'PR check generation changed')
+    }
+    if (!current.attempt.conclusion && !current.attempt.cancellation) {
+      if (current.controls.length >= 100) throw new TestRunError(409, 'PR control history reached its bound')
+      current.controls.push({id: eventId, kind: 'cancel', generation: current.attempt.generation, actor})
+      current.attempt.cancellation = {kind: 'cancel', requestedAt: iso(this.now())}
+    }
+    if (!await this.rows.save(claimed, current, new Date(this.now()))) throw new TestRunError(503, 'PR control persistence changed; retry the same operation')
+    return {accepted: true}
+  }
+  async adminDetail(gateId: string) {
+    const row = await this.rows.get(gateId)
+    if (!row) throw new TestRunError(404, 'PR check was not found')
+    const gate = row.payload, now = this.now()
+    return {gateId, coverageGeneration: gate.coverageGeneration, attemptGeneration: gate.attempt.generation,
+      canCancel: !gate.attempt.conclusion && !gate.attempt.cancellation, cancelling: !!gate.attempt.cancellation && !gate.attempt.conclusion,
+      check: routineCheckPayload(gate, now), resultsUrl: resultsUrl(gate),
+      members: gate.attempt.members.map(member => ({id: member.memberId, title: member.title, lane: member.laneLabel ?? member.platform,
+        status: member.status, activity: member.waitReason ?? (member.progress && now - Date.parse(member.progress.observedAt) <= 60_000
+          ? member.progress.phase.replace(/-/g, ' ') + (member.progress.currentStep ? `: ${member.stepNames[member.progress.currentStep.index] ?? member.progress.currentStep.id}` : '') : member.settled ? member.status : 'Progress unavailable')})),
+      delivery: {pending: !!gate.reporting.intended, deliveredAt: gate.reporting.deliveredAt, error: gate.reporting.error}}
   }
   private async select(gate: PrRoutineCheck) {
     const context = gate.context
@@ -264,7 +302,7 @@ export class PrRoutineCheckService {
     const sources = new Map<string, Awaited<ReturnType<GithubTestBuildGateway['inventory']>>>()
     for (const member of attempt.members) {
       if (!member.selection) {
-        if (!sources.has(member.platform)) sources.set(member.platform, await this.builds.inventory({channel: 'pr', pr: gate.context.number, platform: member.platform}, true))
+        if (!sources.has(member.platform)) sources.set(member.platform, await this.builds.inventory({channel: 'pr', pr: gate.context.number, platform: member.platform}, true, gate.buildRequests?.[member.platform]?.runId))
         const eligible = sources.get(member.platform)!.filter(build => build.headSha === gate.headSha && build.availability === 'available')
           .sort((a, b) => b.source.buildRunId - a.source.buildRunId)
         if (!eligible[0]) {
@@ -375,6 +413,8 @@ export class PrRoutineCheckService {
         if (member.selection) member.selection = {...member.selection, requestId: member.requestId}
       }
       member.settled = false; member.publicationComplete = false
+      member.status = member.selection ? 'admission pending' : 'waiting for app build'
+      delete member.waitReason; delete member.progress
     }
     if (await this.freezeAdmissions(gate)) return
     await this.admit(gate)

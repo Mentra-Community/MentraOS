@@ -25,8 +25,8 @@ test('actual Hono webhook routes only own App/install controls and hides transpo
   expect((await send({...payload, repository: {full_name: 'external/repository'}})).status).toBe(400)
   expect(controls).toHaveLength(1); expect(intakes).toHaveLength(0)
   const cancel = {...payload, action: 'requested_action', requested_action: {identifier: 'cancel'}}
-  expect((await send(cancel)).status).toBe(200); expect(controls).toHaveLength(2)
-  expect((await send({...cancel, requested_action: {identifier: 'shell'}})).status).toBe(400)
+  expect((await send(cancel)).status).toBe(200); expect(controls).toHaveLength(1)
+  expect((await send({...cancel, requested_action: {identifier: 'shell'}})).status).toBe(200); expect(controls).toHaveLength(1)
 })
 
 test('signed PR intake acknowledges after durable persistence without waiting for metadata or external work', async () => {

@@ -210,7 +210,7 @@ test('queued gate uses configured Admin and stale elapsed stays at the observati
       completedSteps: 0, totalSteps: 2, startedAt: '2026-10-12T00:00:00Z',
       lastProgressAt: '2026-10-12T00:00:10Z', observedAt: '2026-10-12T00:00:30Z'}
     const payload = routineCheckPayload(gate, f.now + 120000)
-    expect(payload.details_url).toBe('https://admin.dev.mentraglass.com/?testRun=run-one')
+    expect(payload.details_url).toBe(`https://admin.dev.mentraglass.com/?prCheck=${gate.gateId}`)
     expect(payload.output.summary).toContain('Progress unavailable: Open account (1/2) · 30s')
   } finally {if (old === undefined) delete process.env.ADMIN_URL; else process.env.ADMIN_URL = old}
 })
@@ -262,3 +262,32 @@ test('signed context intake persists pending state without GitHub metadata, deli
   expect(f.deliveries).toBe(0); expect(f.resolves).toBe(0); expect(f.submissions).toHaveLength(0)
   expect(f.gate().reporting.intended!.payload.status).toBe('queued')
 })
+
+test('producer failure rerun resets unlinked status and actually admits recovered publication', async () => {
+ const f = fixture(); f.dispatchFailure(true); await f.intake(); await f.drain(3);
+ f.receipt({id: 71, failed: true}); await f.drain(2);
+ expect(f.gate().attempt.conclusion).toBe('failure'); expect(f.submissions).toHaveLength(0);
+ f.receipt(undefined); f.dispatchFailure(undefined); await f.service.control(control(f, 'build-failed-rerun')); f.build(); await f.drain(5);
+ expect(f.gate().attempt.generation).toBe(2); expect(f.submissions.length).toBeGreaterThan(0);
+ expect(f.gate().attempt.members[0]!.status).toBe('running');
+ expect(f.gate().attempt.members[0]!.waitReason).toBeUndefined(); expect(f.previews).toHaveLength(0);
+});
+test('terminal and cancelling PATCH projections explicitly remove the Cancel action', async () => {
+ const f = fixture(); await f.intake();
+ expect(routineCheckPayload(f.gate(), f.now).actions).toEqual([]);
+ f.gate().attempt.cancellation = {kind: 'cancel', requestedAt: new Date(f.now).toISOString()};
+ expect(routineCheckPayload(f.gate(), f.now).actions).toEqual([]);
+ f.gate().attempt.conclusion = 'cancelled';
+ expect(routineCheckPayload(f.gate(), f.now).actions).toEqual([]);
+});
+
+test('authenticated Admin cancellation fences head/generations and duplicate operation preserves custody', async () => {
+ const f = fixture(); await f.intake(); f.build(); await f.drain(); const gate = f.gate();
+ const input = {operationId: '00000000-0000-4000-8000-000000000001', coverageGeneration: gate.coverageGeneration, attemptGeneration: gate.attempt.generation};
+ await expect(f.service.cancelFromAdmin(gate.gateId, {...input, coverageGeneration: 99}, 'admin:operator')).rejects.toThrow('generation changed');
+ f.context.baseRef = 'staging'; await expect(f.service.cancelFromAdmin(gate.gateId, input, 'admin:operator')).rejects.toThrow('context changed'); f.context.baseRef = 'dev';
+ await f.service.cancelFromAdmin(gate.gateId, input, 'admin:operator'); await f.service.cancelFromAdmin(gate.gateId, input, 'admin:operator');
+ expect(f.gate().controls.filter(value => value.kind === 'cancel')).toHaveLength(1); expect(f.gate().controls.at(-1)!.actor).toBe('admin:operator');
+ await f.drain(1); expect(f.cancellations).toContain(gate.attempt.members[0]!.requestId!); expect(f.gate().attempt.conclusion).toBeUndefined();
+ const view = await f.service.adminDetail(gate.gateId); expect(view.canCancel).toBe(false); expect(view.cancelling).toBe(true);
+});

@@ -147,18 +147,25 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       .parse(await this.api(`${REPOSITORY}/git/ref/heads/${base}`));
     return ref.object.sha;
   }
-  async inventory(query: TestBuildQuery, allowOriginalBase = false): Promise<TestBuild[]> {
+  async inventory(query: TestBuildQuery, allowOriginalBase = false, producerRunId?: number): Promise<TestBuild[]> {
     const pr = query.channel === "pr" ? await this.pr(query.pr!) : undefined;
     const platform = query.platform;
     const workflow = pr ? prWorkflow(platform) : RELEASE_WORKFLOW;
     const runs: GithubRun[] = [];
     if (pr) {
-      for (let page = 1; page <= 5; page++) {
-        const data = z.object({workflow_runs: z.array(runSchema).max(100)}).parse(
-          await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?&per_page=100&page=${page}`));
-        runs.push(...data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr)));
-        if (data.workflow_runs.length < 100) break;
-        if (page === 5) throw new TestDispatchError(502, 'PR workflow history exceeds its bounded inventory');
+      if (producerRunId) {
+        const retained = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${positive.parse(producerRunId)}`));
+        if (this.matches(retained, query.channel, platform, pr)) runs.push(retained);
+      }
+      // Discovery is a bounded recent inventory, not proof that no publication exists.
+      // Exact producer receipts bypass list age; every selected publication is still verified below.
+      for (const filter of [`event=pull_request&head_sha=${pr.head.sha}`, 'event=workflow_dispatch&branch=dev']) {
+        for (let page = 1; page <= 5; page++) {
+          const data = z.object({workflow_runs: z.array(runSchema).max(100)}).parse(
+            await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?${filter}&per_page=100&page=${page}`));
+          runs.push(...data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr) && !runs.some(value => value.id === run.id)));
+          if (data.workflow_runs.length < 100) break;
+        }
       }
     } else {
       const data = z.object({workflow_runs: z.array(runSchema)}).parse(

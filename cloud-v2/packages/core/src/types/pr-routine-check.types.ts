@@ -38,7 +38,7 @@ export type CheckPayload = {
   status: 'queued' | 'in_progress' | 'completed'; conclusion?: CheckConclusion;
   started_at: string; completed_at?: string; details_url: string;
   output: {title: string; summary: string};
-  actions?: Array<{label: string; description: string; identifier: 'cancel'}>
+  actions: []
 }
 export type PrRoutineCheckRow = {gateId: string; revision: number; payload: PrRoutineCheck; nextAt: Date;
   lease?: {id: string; expiresAt: Date}}
