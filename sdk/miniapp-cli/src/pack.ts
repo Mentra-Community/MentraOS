@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { isAbsolute, resolve, join, relative, sep } from 'path';
 import { buildProduction } from './build.js';
 import { signBundleArchive, verifySignedBundleArchive } from './bundle-signing.js';
+import { warnIfPlaceholderIcon } from './icon.js';
 import { validateManifest } from './manifest.js';
 import { missingSigningKeyError, resolvePackageSigningKey, type PackageSigningKey } from './package-signing-key.js';
 
@@ -151,6 +152,7 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
 
   // Copy icon.png into dist/ if it exists
   if (existsSync(iconSrc)) {
+    warnIfPlaceholderIcon(cwd);
     copyFileSync(iconSrc, join(distDir, 'icon.png'));
   } else if (!opts.silent) {
     console.warn('Warning: icon.png not found in project root, skipping');

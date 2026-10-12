@@ -114,6 +114,13 @@ const hardwareRequirements =
       ];
 
 function renderFile(srcPath: string, destPath: string): void {
+  // Binary assets (icon.png) are copied byte for byte; a UTF-8 round trip
+  // would corrupt them.
+  if (/\.(png|jpe?g|gif|webp|ico)$/i.test(srcPath)) {
+    fs.copyFileSync(srcPath, destPath);
+    return;
+  }
+
   if (path.basename(srcPath) === 'miniapp.json') {
     const raw = fs.readFileSync(srcPath, 'utf-8');
     const manifest = JSON.parse(raw.replace(/\{\{packageName\}\}/g, packageName));
