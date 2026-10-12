@@ -183,15 +183,16 @@ public abstract class BaseNetworkManager implements INetworkController {
     protected void notifyHotspotStateChanged(boolean isEnabled) {
         Log.d(TAG, "Hotspot state changed: " + (isEnabled ? "enabled" : "disabled"));
         this.isHotspotEnabled = isEnabled;
-        publishHotspotStateChanged(isEnabled);
+        publishHotspotStateChanged(new HotspotState(
+                isEnabled, currentHotspotSsid, currentHotspotPassword, currentHotspotGatewayIp));
     }
 
     /** Publish a committed state without changing it; subclasses may serialize listener delivery. */
-    protected void publishHotspotStateChanged(boolean isEnabled) {
-        HotspotNetworkUtils.notifyHotspotStateChanged(isEnabled);
+    protected void publishHotspotStateChanged(HotspotState state) {
+        HotspotNetworkUtils.notifyHotspotStateChanged(state.enabled());
         for (NetworkStateListener listener : listeners) {
             try {
-                listener.onHotspotStateChanged(isEnabled);
+                listener.onHotspotStateChanged(state);
             } catch (Exception e) {
                 Log.e(TAG, "Error notifying listener", e);
             }

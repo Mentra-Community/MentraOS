@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.network.managers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -16,6 +17,7 @@ import android.os.Looper;
 import androidx.test.core.app.ApplicationProvider;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.network.interfaces.HotspotState;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.service.system.interfaces.ISystemController;
 
@@ -209,7 +211,7 @@ public class K900NetworkManagerHotspotLifecycleTest {
                             }
                         })
                 .when(listener)
-                .onHotspotStateChanged(false);
+                .onHotspotStateChanged(argThat(state -> !state.enabled()));
         manager.addWifiListener(listener);
         manager.gateway = "192.168.43.1";
         manager.startHotspot();
@@ -227,7 +229,7 @@ public class K900NetworkManagerHotspotLifecycleTest {
         stop.join(2000);
         assertThat(finished).isTrue();
         advance(0);
-        verify(listener).onHotspotStateChanged(false);
+        verify(listener).onHotspotStateChanged(argThat(state -> !state.enabled()));
     }
 
     @Test
@@ -238,9 +240,41 @@ public class K900NetworkManagerHotspotLifecycleTest {
         manager.startHotspot();
         manager.stopHotspot();
         advance(0);
-        verify(listener, never()).onHotspotStateChanged(true);
-        verify(listener).onHotspotStateChanged(false);
+        verify(listener, never()).onHotspotStateChanged(argThat(state -> state.enabled()));
+        verify(listener).onHotspotStateChanged(argThat(state -> !state.enabled()));
         assertThat(manager.isHotspotEnabled()).isFalse();
+    }
+
+    @Test
+    public void stopDuringReadyDeliveryCannotClearTheCommittedEventCredentials() {
+        NetworkStateListener listener = mock(NetworkStateListener.class);
+        java.util.List<HotspotState> delivered = new java.util.ArrayList<>();
+        doAnswer(
+                        invocation -> {
+                            HotspotState state = invocation.getArgument(0);
+                            if (state.enabled()) {
+                                Thread stop = new Thread(manager::stopHotspot);
+                                stop.start();
+                                stop.join(2000);
+                                assertThat(stop.isAlive()).isFalse();
+                                assertThat(manager.isHotspotEnabled()).isFalse();
+                                assertThat(manager.getHotspotSsid()).isEmpty();
+                            }
+                            // The service consumes the event after stop; it must not reread cleared
+                            // getters.
+                            delivered.add(state);
+                            return null;
+                        })
+                .when(listener)
+                .onHotspotStateChanged(org.mockito.ArgumentMatchers.any());
+        manager.addWifiListener(listener);
+        manager.gateway = "192.168.43.1";
+        manager.startHotspot();
+        advance(0);
+        assertThat(delivered)
+                .containsExactly(
+                        new HotspotState(true, "credential", "credential", "192.168.43.1"),
+                        new HotspotState(false, "", "", AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP));
     }
 
     @Test

@@ -14,6 +14,7 @@ import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
+import com.mentra.asg_client.io.network.interfaces.HotspotState;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.interfaces.WifiForgetOutcome;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
@@ -157,7 +158,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     @Override
-    protected void publishHotspotStateChanged(boolean enabled) {
+    protected void publishHotspotStateChanged(HotspotState state) {
         final int notificationGeneration;
         synchronized (mHotspotLock) {
             notificationGeneration = ++mHotspotStateNotificationGeneration;
@@ -169,7 +170,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                     }
                     // A service listener takes the service manager's monitor. Never call it while
                     // holding mHotspotLock: service cleanup takes those locks in the other order.
-                    super.publishHotspotStateChanged(enabled);
+                    super.publishHotspotStateChanged(state);
                 });
     }
 
