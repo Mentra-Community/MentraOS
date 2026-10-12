@@ -32,6 +32,10 @@ import zlib
 PACKAGE = "com.mentra.asg_client"
 INCIDENT_ROOT = f"/data/data/{PACKAGE}/files/bes_incident"
 KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+# A bundle directory name: <serial>-dump-<dumpId> or <serial>-reset-<bootId>. The store root also
+# holds files (device_id, last_boot, collected.json, evictions.json) that are not bundles.
+BUNDLE_DIR_RE = re.compile(r"^[A-Za-z0-9._:]{1,100}-(dump|reset)-[0-9a-f]{8}-[0-9a-f]{8}$|"
+                           r"^[A-Za-z0-9._:]{1,100}-(dump|reset)-[0-9a-f]{16}$")
 DUMP_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{8}$")
 BOOT_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 ANON_RE = re.compile(r"^anon[0-9a-f]{16}$")
@@ -219,7 +223,7 @@ def pull_device_bundles(keys, dest):
         device_id = out.strip()
     if keys is None:
         code, out = adb_shell(f"run-as {PACKAGE} ls files/bes_incident 2>/dev/null")
-        keys = [k for k in out.split() if k not in ("device_id", "evictions.json")] if code == 0 else []
+        keys = [k for k in out.split() if BUNDLE_DIR_RE.match(k)] if code == 0 else []
     for key in keys:
         local = os.path.join(dest, key)
         os.makedirs(local, exist_ok=True)
@@ -247,7 +251,7 @@ def main(argv=None):
         bundles = [args.dir]
     elif args.root:
         bundles = sorted(os.path.join(args.root, d) for d in os.listdir(args.root)
-                         if os.path.isdir(os.path.join(args.root, d)))
+                         if BUNDLE_DIR_RE.match(d) and os.path.isdir(os.path.join(args.root, d)))
         dev = os.path.join(args.root, "device_id")
         if device_id is None and os.path.isfile(dev):
             device_id = open(dev).read().strip()

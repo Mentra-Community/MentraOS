@@ -523,7 +523,10 @@ public final class BesIncidentStore implements BesIncidentUploadAccess {
             if (overCount) {
                 JSONObject uploaded = firstInState(records, BesIncident.STATE_UPLOADED, null);
                 if (uploaded != null) {
-                    retireReport(uploaded);
+                    if (!retireReport(uploaded)) {
+                        // Never delete a bundle whose report identity could not be saved.
+                        return;
+                    }
                     deleteRecursive(new File(mRoot, uploaded.optString("incidentKey")));
                     continue;
                 }
@@ -552,17 +555,23 @@ public final class BesIncidentStore implements BesIncidentUploadAccess {
             if (victim == null) {
                 return;
             }
-            evict(victim.optString("incidentKey"), "budget", true);
+            if (!evict(victim.optString("incidentKey"), "budget", true)) {
+                return;
+            }
         }
     }
 
     /**
-     * Deletes a bundle and records the eviction. The dump id is remembered as collected so the
-     * still-saved BES dump does not create the incident again.
+     * Records the eviction, then deletes the bundle. The dump id is remembered as collected so the
+     * still-saved BES dump does not create the incident again. The eviction record (including the
+     * retired report id) is persisted <em>before</em> anything is deleted: when it cannot be saved
+     * the bundle stays, so a delayed upload never loses the identity of its report.
+     *
+     * @return {@code true} when the bundle is gone (or never existed)
      */
-    public synchronized void evict(String incidentKey, String reason, boolean markCollected) {
+    public synchronized boolean evict(String incidentKey, String reason, boolean markCollected) {
         if (!BesIncident.isValidKey(incidentKey)) {
-            return;
+            return false;
         }
         File dir = new File(mRoot, incidentKey);
         JSONObject record = readRecord(new File(dir, BesIncident.FILE_RECORD));
@@ -571,7 +580,6 @@ public final class BesIncidentStore implements BesIncidentUploadAccess {
         if (markCollected && BesIncident.isDumpId(dumpId)) {
             markDumpCollected(dumpId);
         }
-        deleteRecursive(dir);
         JSONObject evictions = readEvictions();
         try {
             addRetiredReport(evictions, record);
@@ -593,9 +601,12 @@ public final class BesIncidentStore implements BesIncidentUploadAccess {
             writeAtomic(new File(mRoot, FILE_EVICTIONS),
                     evictions.toString().getBytes(StandardCharsets.UTF_8));
         } catch (JSONException | IOException e) {
-            Log.e(TAG, "Could not persist evictions.json", e);
+            Log.e(TAG, "Could not persist evictions.json; keeping " + incidentKey, e);
+            return false;
         }
+        deleteRecursive(dir);
         Log.w(TAG, "Evicted incident " + incidentKey + " (" + reason + ", " + bytes + " bytes)");
+        return true;
     }
 
     /**
@@ -624,16 +635,18 @@ public final class BesIncidentStore implements BesIncidentUploadAccess {
         return false;
     }
 
-    /** Remembers the record's reportId before its bundle is deleted without an eviction entry. */
-    private void retireReport(JSONObject record) {
+    /** Persists the record's reportId before its bundle is deleted without an eviction entry. */
+    private boolean retireReport(JSONObject record) {
         JSONObject evictions = readEvictions();
         try {
             if (addRetiredReport(evictions, record)) {
                 writeAtomic(new File(mRoot, FILE_EVICTIONS),
                         evictions.toString().getBytes(StandardCharsets.UTF_8));
             }
+            return true;
         } catch (JSONException | IOException e) {
             Log.e(TAG, "Could not persist the retired report id", e);
+            return false;
         }
     }
 

@@ -411,6 +411,29 @@ public class BesIncidentStoreTest {
                 BesIncident.ARTIFACT_RELAY, (dir, record) -> new byte[] {1}));
     }
 
+    @Test
+    public void anEvictionThatCannotBeRecordedKeepsTheBundle() throws Exception {
+        BesIncidentStore store = store();
+        String key = addIncident(store, 1, 1000);
+        assertTrue(store.markReported(key, "rep_01RETIRED"));
+        // evictions.json cannot be replaced: the rename onto a non-empty directory fails.
+        File blocker = new File(mRoot, "evictions.json");
+        assertTrue(blocker.mkdirs());
+        assertTrue(new File(blocker, "x").createNewFile());
+
+        assertFalse(store.evict(key, "budget", true));
+
+        assertNotNull(store.find(key));
+        assertTrue(store.bundleDir(key).isDirectory());
+        assertFalse(store.isRetiredReport("rep_01RETIRED"));
+        // A budget pass in this state gives up instead of deleting or spinning.
+        for (int n = 2; n <= 12; n++) {
+            addIncident(store, n, S);
+        }
+        store.enforceBudget(null);
+        assertNotNull(store.find(key));
+    }
+
     // ---------------------------------------------------- atomic write recovery
 
     @Test

@@ -173,5 +173,42 @@ class VerifyBesIncidentTests(unittest.TestCase):
         self.assertFalse(names["key dumpId == incident.dumpId"])
 
 
+
+class StoreEnumerationTests(unittest.TestCase):
+    """The store root also holds files that are not bundles."""
+
+    def test_device_listing_keeps_only_bundle_directories(self):
+        listing = ("ML395018B-dump-0000002a-1f2e3d4c\nML395018B-reset-9f3a0c1b2d4e5f60\n"
+                   "collected.json\ndevice_id\nevictions.json\nlast_boot\n"
+                   "ML395018B-dump-0000002a-1f2e3d4c.tmp\n")
+        calls = []
+
+        def fake_adb(command):
+            calls.append(command)
+            if "ls files/bes_incident" in command:
+                return 0, listing
+            return 1, ""
+
+        original = v.adb_shell
+        v.adb_shell = fake_adb
+        try:
+            with tempfile.TemporaryDirectory() as dest:
+                keys, _ = v.pull_device_bundles(None, dest)
+        finally:
+            v.adb_shell = original
+        self.assertEqual(keys, ["ML395018B-dump-0000002a-1f2e3d4c",
+                                "ML395018B-reset-9f3a0c1b2d4e5f60"])
+
+    def test_root_mode_skips_store_files_and_stray_directories(self):
+        with tempfile.TemporaryDirectory() as root:
+            write_bundle(root, "ML395018B-dump-0000002a-1f2e3d4c", {"v": 1})
+            os.makedirs(os.path.join(root, "scratch"))
+            for name in ("device_id", "last_boot", "collected.json", "evictions.json"):
+                with open(os.path.join(root, name), "w") as handle:
+                    handle.write("anon0123456789abcdef")
+            names = [d for d in os.listdir(root) if v.BUNDLE_DIR_RE.match(d)]
+            self.assertEqual(names, ["ML395018B-dump-0000002a-1f2e3d4c"])
+
+
 if __name__ == "__main__":
     unittest.main()
