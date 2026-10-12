@@ -42,7 +42,12 @@ final class MacHotspotAssociation {
     /// A connection the user replaced must never be disconnected by our cleanup.
     func leave() throws {
         if let joinedSSID {
-            if try interface?.currentSSID() == joinedSSID { interface?.disassociate() }
+            if try interface?.currentSSID() == joinedSSID {
+                interface?.disassociate()
+                guard try interface?.currentSSID() != joinedSSID else {
+                    throw LocalMediaError("Mac Wi-Fi has not released the glasses hotspot")
+                }
+            }
         }
         interface = nil
         joinedSSID = nil

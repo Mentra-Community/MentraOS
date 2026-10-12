@@ -3,6 +3,7 @@ import {AbortController as ReactNativeAbortController} from "abort-controller/di
 /* eslint-disable no-restricted-imports */
 import {permissions} from "../../../modules/engine/src/facades/permissions"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import CrustModule from "@mentra/crust"
 
 // gallerySyncService + its asg cluster moved into @mentra/engine; this CI-gated jest
 // test stays in the host tree and imports them by relative path so it keeps running
@@ -319,6 +320,7 @@ describe("GallerySyncService", () => {
     // in tests that don't explicitly want to trigger clock-skew recovery.
     jest.useFakeTimers({now: 2000})
     jest.clearAllMocks()
+    CrustModule.isIOSAppOnMac = false
     mockGetCurrentWifiSSID.mockResolvedValue("")
     mockIsWifiEnabled.mockResolvedValue(true)
     useGallerySyncStore.getState().reset()
@@ -349,7 +351,7 @@ describe("GallerySyncService", () => {
 
     await (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
 
-    expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO.ssid, HOTSPOT_INFO.password)
+    expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO.ssid, HOTSPOT_INFO.password, {gateway: HOTSPOT_INFO.ip})
     expect(fetchSpy).toHaveBeenCalledWith(
       `http://${HOTSPOT_INFO.ip}:8089/api/health`,
       expect.objectContaining({method: "GET"}),
@@ -357,6 +359,25 @@ describe("GallerySyncService", () => {
     expect(startDownloadSpy).toHaveBeenCalledWith(HOTSPOT_INFO, undefined)
     // The whole point of the fix: a permission wall must not cost 30 polls per attempt.
     expect(mockGetCurrentWifiSSID.mock.calls.length).toBeLessThanOrEqual(2)
+  })
+
+  it("uses the shared Mac association owner instead of a legacy SSID shortcut", async () => {
+    Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
+    CrustModule.isIOSAppOnMac = true
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
+    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
+    const connectSpy = jest.spyOn(localNetworkTransport, "connect").mockResolvedValue("192.168.43.2")
+    jest.spyOn(localNetworkTransport, "fetch").mockResolvedValue({status: 200} as Response)
+    const releaseSpy = jest.spyOn(localNetworkTransport, "disconnect").mockResolvedValue(undefined)
+    const startDownloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
+
+    await (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
+
+    expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO.ssid, HOTSPOT_INFO.password, {gateway: HOTSPOT_INFO.ip})
+    expect(mockGetCurrentWifiSSID).toHaveBeenCalledTimes(1)
+    expect(startDownloadSpy).toHaveBeenCalledWith(HOTSPOT_INFO, undefined)
+    expect(releaseSpy).toHaveBeenCalled()
   })
 
   it("does not tell the user to grant Location when SSID reads fail transiently", async () => {

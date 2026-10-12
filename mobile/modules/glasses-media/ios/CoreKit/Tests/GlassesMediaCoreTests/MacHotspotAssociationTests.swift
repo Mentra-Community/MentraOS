@@ -10,6 +10,7 @@ final class MacHotspotAssociationTests: XCTestCase {
         var beforeJoin: (() -> Void)?
         var onScan: (() -> Void)?
         var unreadable = false
+        var releasesNetwork = true
         func name() throws -> String {
             "en1"
         }
@@ -28,7 +29,8 @@ final class MacHotspotAssociationTests: XCTestCase {
         }
 
         func disassociate() {
-            leaves += 1; ssid = nil
+            leaves += 1
+            if releasesNetwork { ssid = nil }
         }
     }
 
@@ -80,6 +82,17 @@ final class MacHotspotAssociationTests: XCTestCase {
         wifi.unreadable = false
         try join.leave()
         XCTAssertEqual(wifi.leaves, 1)
+    }
+
+    func testUnfinishedDisassociationRejectsAndCanBeRetried() throws {
+        let wifi = Wifi()
+        let join = MacHotspotAssociation { wifi }
+        _ = try join.associate(ssid: "glasses", password: "private")
+        wifi.releasesNetwork = false
+        XCTAssertThrowsError(try join.leave())
+        wifi.releasesNetwork = true
+        try join.leave()
+        XCTAssertEqual(wifi.leaves, 2)
     }
 
     func testCancelDuringScanPreventsLaterAssociation() {
