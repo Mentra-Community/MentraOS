@@ -65,6 +65,7 @@ export type {
 
 export type {
   AddReportArtifactsResult,
+  AddReportLogsOptions,
   ReportAttachmentInput,
   ReportContext,
   ReportDetails,

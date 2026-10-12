@@ -62,29 +62,43 @@ export interface ReportContext extends Record<string, unknown> {
   settings?: Record<string, unknown>;
 }
 
-export type SubmitReportInput =
-  | {
+interface IncidentKeyInput {
+  /**
+   * Identity of one bug or automatic event (`^[A-Za-z0-9._:-]{1,128}$`).
+   * Resubmitting the same key returns the caller's existing report. A Cloud
+   * that predates the field ignores it and creates a new report.
+   */
+  incidentKey?: string;
+}
+
+export type SubmitReportInput = (
+  | ({
       kind: "bug";
       trigger: ReportTrigger;
       report: ReportDetails;
       context: ReportContext;
-    }
-  | {
+    } & IncidentKeyInput)
+  | ({
       kind: "automatic";
       automationCorrelation?: ReportAutomationCorrelation;
       trigger: Extract<ReportTrigger, { type: "automatic" }>;
       report: ReportDetails;
       context: ReportContext;
-    }
+    } & IncidentKeyInput)
   | {
       kind: "feedback";
+      /** Feedback notifies at creation and cannot be safely deduplicated by key. */
+      incidentKey?: never;
       feedback: string | Record<string, unknown>;
       context: ReportContext;
-    };
+    }
+);
 
 export interface SubmitReportResult {
   reportId: string;
   status: ReportStatus;
+  /** True only when Cloud returned an existing report for `incidentKey`. */
+  deduplicated?: true;
 }
 
 export interface ReportLogEntry {
@@ -103,6 +117,17 @@ export interface ReportAttachmentInput {
 
 export interface AddReportArtifactsResult {
   stored: number;
+  /** Returned for a log upload sent with a `retryKey`. */
+  receipt?: { artifactId: string; sha256: string; sizeBytes: number };
+}
+
+export interface AddReportLogsOptions {
+  /**
+   * Artifact identity (`^[A-Za-z0-9._:-]{1,128}$`). Repeating it with identical
+   * entries is idempotent; different entries under the same key fail with
+   * HTTP 409. A Cloud that predates the field ignores it and stores a new artifact.
+   */
+  retryKey?: string;
 }
 
 export interface ReportsDeps {
@@ -167,6 +192,7 @@ export class Reports {
     reportId: string,
     source: string,
     entries: ReportLogEntry[],
+    options: AddReportLogsOptions = {},
   ): Promise<AddReportArtifactsResult> {
     return await this.http.post<AddReportArtifactsResult>(
       `${REPORTS_PATH}/${encodeURIComponent(reportId)}/artifacts`,
@@ -174,6 +200,7 @@ export class Reports {
         type: "logs",
         source,
         entries,
+        ...(options.retryKey !== undefined ? { retryKey: options.retryKey } : {}),
       },
     );
   }

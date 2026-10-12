@@ -62,32 +62,41 @@ export interface ReportDetails {
 
 export interface ReportContext extends Record<string, unknown> {}
 
-export type SubmitReportInput =
-  | {
+interface IncidentKeyInput {
+  /** Device identity of one bug or automatic event; repeats return the user's existing report. */
+  incidentKey?: string;
+}
+
+export type SubmitReportInput = (
+  | ({
       mentraUserId: string;
       kind: "bug";
       trigger: ReportTrigger;
       report: ReportDetails;
       context: ReportContext;
-    }
-  | {
+    } & IncidentKeyInput)
+  | ({
       mentraUserId: string;
       kind: "automatic";
       automationCorrelation?: ReportAutomationCorrelation;
       trigger: Extract<ReportTrigger, { type: "automatic" }>;
       report: ReportDetails;
       context: ReportContext;
-    }
+    } & IncidentKeyInput)
   | {
       mentraUserId: string;
       kind: "feedback";
+      incidentKey?: never;
       feedback: string | Record<string, unknown>;
       context: ReportContext;
-    };
+    }
+);
 
 export interface SubmitReportResult {
   reportId: string;
   status: ReportStatus;
+  /** Present only when an existing report for the incident key was returned. */
+  deduplicated?: true;
 }
 
 export interface ReportLogEntry {
@@ -202,11 +211,23 @@ async function lookupUserEmail(mentraUserId: string): Promise<string | null> {
 }
 
 export async function submitReport(input: SubmitReportInput): Promise<SubmitReportResult> {
+  // Keep the service boundary safe for untyped/internal JavaScript callers too;
+  // the HTTP schema independently rejects this combination with a 400.
+  if (input.kind === "feedback" && "incidentKey" in input)
+    throw new TypeError("feedback reports do not accept incidentKey");
   const rawCorrelation = 'automationCorrelation' in input ? input.automationCorrelation : undefined;
   const correlation = rawCorrelation === undefined ? null : reportAutomationCorrelation(rawCorrelation);
   if (rawCorrelation !== undefined && (!correlation || input.kind !== 'automatic'
     || input.trigger.source !== REPORT_TESTING_SOURCE || input.trigger.reason !== 'incident_report_requested'))
     throw new ReportArtifactError(409, 'Invalid automated incident correlation');
+  const {incidentKey} = input;
+  // Every Mongo read and write of a keyed submission runs under a bound: an
+  // unresponsive primary must surface temporarily_unavailable, not hang.
+  if (incidentKey !== undefined) {
+    const existing = await withinDeadline(Date.now() + committedReadWait.timeoutMs,
+      timeoutMs => findIncidentKeyReport(input.mentraUserId, incidentKey, timeoutMs));
+    if (existing) return existing;
+  }
   const reportId = `rep_${ulid()}`;
   const status: ReportStatus = input.kind === "feedback" ? "ready" : "collecting";
   const feedback = "feedback" in input
@@ -223,14 +244,31 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     feedback,
     context: input.context,
     ...(correlation ? {automationCorrelation: correlation} : {}),
+    ...(incidentKey !== undefined ? {incidentKey} : {}),
     artifacts: [],
     ...(input.kind !== 'feedback' ? {logCollection: initialReportLogCollection(new Date())} : {}),
     status,
   };
-  // The recovery reader requires majority visibility. A correlated creation
-  // must not be acknowledged before its binding is committed at that level.
-  if (correlation) await ReportModel.create([document], {writeConcern: attachmentWriteConcern});
-  else await ReportModel.create(document);
+  // The creation (and the wait on a concurrent winner) gets its own full bound, so a
+  // slow pre-check cannot turn a write that would have committed into a spurious 503.
+  const deadline = Date.now() + committedReadWait.timeoutMs;
+  try {
+    // The recovery reader requires majority visibility. A correlated creation
+    // must not be acknowledged before its binding is committed at that level.
+    // A keyed creation is held to the same bar, since its key may be answered
+    // to a retry as an existing report.
+    if (incidentKey !== undefined)
+      await withinDeadline(deadline, timeoutMS => ReportModel.create([document], {writeConcern: attachmentWriteConcern, timeoutMS}));
+    else if (correlation) await ReportModel.create([document], {writeConcern: attachmentWriteConcern});
+    else await ReportModel.create(document);
+  } catch (error) {
+    // A concurrent submission with the same incident key won the unique index.
+    // Its write may still be pending or roll back, so answer only once it is committed.
+    if (incidentKey === undefined || (error as {code?: number}).code !== 11000) throw error;
+    const existing = await awaitCommitted(deadline, timeoutMs => findIncidentKeyReport(input.mentraUserId, incidentKey, timeoutMs));
+    if (!existing) throw new ReportArtifactError(503, "incident report is not committed yet");
+    return existing;
+  }
 
   // Feedback reports are complete as submitted, so they notify here;
   // bug/automatic reports notify from markReportReady once artifact
@@ -252,6 +290,63 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
   }
 
   return { reportId, status };
+}
+
+async function findIncidentKeyReport(mentraUserId: string, incidentKey: string, timeoutMs: number): Promise<SubmitReportResult | null> {
+  // serverSelectionTimeoutMS bounds only connection setup, not an in-flight
+  // query, so carry the remaining deadline onto the operation itself.
+  const row = await ReportModel.findOne({mentraUserId, incidentKey}, {_id: 0, reportId: 1, status: 1})
+    .read('primary').readConcern('majority').setOptions({timeoutMS: timeoutMs})
+    .lean<{reportId: string; status: ReportStatus}>();
+  return row ? {reportId: row.reportId, status: row.status, deduplicated: true} : null;
+}
+
+/** Bound for waiting on a concurrent winner's majority commit; matches its write timeout. */
+export const committedReadWait = {timeoutMs: attachmentWriteConcern.wtimeout, pollMs: 100};
+
+/** An exhausted operation deadline surfaces as maxTimeMS (code 50), the driver's client-side
+ * operation timeout, or an unmet write concern (code 64). On a keyed path all of them mean
+ * the outcome is unknown but retry-safe, so callers observe temporarily_unavailable. */
+function isMongoTimeout(error: unknown): boolean {
+  const {code, name} = error as {code?: number; name?: string};
+  return code === 50 || code === 64 || name === "MongoOperationTimeoutError" || name === "MongoWriteConcernError";
+}
+
+/** Run one Mongo operation inside the time left before `deadline` (epoch ms). The remaining
+ * time is passed to the operation as its server-side `timeoutMS`, and also enforced here so
+ * a read that never answers (or ignores its limit) still ends in a 503 at the deadline
+ * instead of preventing the deadline check. */
+async function withinDeadline<T>(deadline: number, run: (timeoutMs: number) => PromiseLike<T>): Promise<T> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new ReportArtifactError(503, "incident persistence exceeded its deadline");
+  // Attach the catch to the work itself (same as reportUserEmail's lookup): the
+  // timer and the operation share this deadline, so a slow op usually loses the
+  // race and rejects afterwards — the exact Mongo stall this helper survives.
+  // Without an explicit handler that late rejection goes unhandled.
+  const work = Promise.resolve(run(remaining));
+  work.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ReportArtifactError(503, "incident persistence exceeded its deadline")), remaining);
+  });
+  try {
+    return await Promise.race([work, expired]);
+  } catch (error) {
+    if (isMongoTimeout(error)) throw new ReportArtifactError(503, "incident persistence exceeded its deadline");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Poll a majority read until a concurrent winner's row is visible, or `deadline` passes (null). */
+async function awaitCommitted<T>(deadline: number, read: (timeoutMs: number) => PromiseLike<T | null>): Promise<T | null> {
+  for (;;) {
+    const row = await withinDeadline(deadline, read);
+    const remaining = deadline - Date.now();
+    if (row || remaining <= 0) return row;
+    await new Promise(resolve => setTimeout(resolve, Math.min(committedReadWait.pollMs, remaining)));
+  }
 }
 
 /** Exact durable device-report link only. No collection-success inference and no
@@ -405,30 +500,41 @@ export async function referenceDeviceIncidentDiagnostics(reportId: string, corre
   return referenceTestRunDiagnostics({reportId: row.reportId, mentraUserId: row.mentraUserId}, run);
 }
 
-/** Worker retry path through the same report/asset models and blob provider. Reserve the
- * digest before writing: a concurrent different body cannot overwrite the winning blob.
+/** Keyed retry path through the same report/asset models and blob provider. Reserve the
+ * digest and source before writing: a concurrent different body or source cannot
+ * overwrite the winning blob or publish a second artifact under the same key.
  * Interrupted uploads keep their reservation so an identical retry can finish it. */
 async function addRetryableLogArtifact(input: {
   mentraUserId: string; reportId: string; source: string; entries: ReportLogEntry[];
 }, key: string, storage: StorageService): Promise<AddReportArtifactsResult | null> {
   const { reportId, mentraUserId } = input;
-  if (!await ReportModel.exists({ reportId, mentraUserId })) return null;
+  // Every Mongo read and write of the reservation phase shares one bound.
+  const deadline = Date.now() + committedReadWait.timeoutMs;
+  if (!await withinDeadline(deadline, timeoutMS => ReportModel.exists({ reportId, mentraUserId })
+    .setOptions({ timeoutMS }))) return null;
   const bytes = Buffer.from(JSON.stringify({ entries: input.entries }), "utf8");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const artifactId = stableReportId("art", `${reportId}\n${key}`);
   const storageKey = `reports/${reportId}/${artifactId}`, contentType = "application/json";
   try {
-    await ReportAssetModel.create([{ artifactId, reportId, mentraUserId, storageKey, fileName: null,
-      contentType, sizeBytes: bytes.byteLength, sha256 }], { writeConcern: attachmentWriteConcern });
+    await withinDeadline(deadline, timeoutMS => ReportAssetModel.create([{ artifactId, reportId, mentraUserId, storageKey,
+      fileName: null, contentType, sizeBytes: bytes.byteLength, sha256, source: input.source }],
+    { writeConcern: attachmentWriteConcern, timeoutMS }));
   } catch (error) { if ((error as { code?: number }).code !== 11000) throw error; }
-  const asset = await ReportAssetModel.findOne({ artifactId }).lean();
-  if (!asset || asset.reportId !== reportId || asset.mentraUserId !== mentraUserId || asset.storageKey !== storageKey
-    || asset.sha256 !== sha256 || asset.sizeBytes !== bytes.byteLength || asset.contentType !== contentType)
+  // Bind only against a committed reservation: a concurrent winner's may still roll back.
+  // Carry the remaining deadline onto the lookup so a stalled primary cannot hang the upload.
+  const asset = await awaitCommitted(deadline, timeoutMs => ReportAssetModel.findOne({ artifactId })
+    .read("primary").readConcern("majority").setOptions({timeoutMS: timeoutMs}).lean());
+  if (!asset) throw new ReportArtifactError(503, "attachment reservation is not committed yet");
+  // Reservations made before sources were bound carry none.
+  if (asset.reportId !== reportId || asset.mentraUserId !== mentraUserId || asset.storageKey !== storageKey
+    || asset.sha256 !== sha256 || asset.sizeBytes !== bytes.byteLength || asset.contentType !== contentType
+    || (asset.source != null && asset.source !== input.source))
     throw new ReportArtifactError(409, "attachment key already binds different content");
   // Published metadata proves an earlier verified write. A retry only reads it;
   // an unavailable/corrupt completed object must not trigger a destructive rewrite.
-  const completed = await ReportModel.exists({ reportId, mentraUserId, "artifacts.artifactId": artifactId })
-    .read("primary").readConcern("majority");
+  const completed = await withinDeadline(deadline, timeoutMS => ReportModel.exists({ reportId, mentraUserId, "artifacts.artifactId": artifactId })
+    .read("primary").readConcern("majority").setOptions({ timeoutMS }));
   if (!completed) {
     const object = await storage.putObject({ key: storageKey, body: bytes, contentType });
     if (object.key !== storageKey || object.sha256 !== sha256 || object.sizeBytes !== bytes.byteLength || object.contentType !== contentType)
@@ -440,9 +546,21 @@ async function addRetryableLogArtifact(input: {
   const metadata = { artifactId, type: "logs", source: input.source, filename: null, contentType,
     sizeBytes: bytes.byteLength, createdAt: asset.createdAt };
   // Same reservation timestamp means concurrent/repeated metadata writes are identical.
-  const result = await ReportModel.updateOne({ reportId, mentraUserId }, { $addToSet: { artifacts: metadata } },
-    { writeConcern: attachmentWriteConcern });
+  // Blob I/O above is unbounded here, so the publication writes get their own full bound.
+  const publishDeadline = Date.now() + committedReadWait.timeoutMs;
+  const result = await withinDeadline(publishDeadline, timeoutMS => ReportModel.updateOne({ reportId, mentraUserId },
+    { $addToSet: { artifacts: metadata } }, { writeConcern: attachmentWriteConcern, timeoutMS }));
   if (result.matchedCount !== 1) return null;
+  if (isReportLogSource(input.source)) {
+    const receipt = `logCollection.${input.source}`;
+    // The first accepted artifact for a source owns its receipt; identical retries leave it unchanged.
+    const marked = await withinDeadline(publishDeadline, timeoutMS => ReportModel.updateOne({ reportId, mentraUserId, [`${receipt}.state`]: { $ne: "received" } }, {
+      $set: { [`${receipt}.state`]: "received", [`${receipt}.receivedAt`]: new Date().toISOString(),
+        [`${receipt}.artifactId`]: artifactId, [`${receipt}.entryCount`]: input.entries.length },
+      $unset: { [`${receipt}.reason`]: "", [`${receipt}.leaseUntil`]: "" },
+    }, { writeConcern: attachmentWriteConcern, timeoutMS }));
+    if (marked.modifiedCount) logger.info({ reportId, mentraUserId, source: input.source, artifactId, sizeBytes: bytes.byteLength }, "Report log artifact received");
+  }
   return { stored: 1, receipt: { artifactId, sha256, sizeBytes: bytes.byteLength } };
 }
 

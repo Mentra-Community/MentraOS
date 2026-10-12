@@ -46,6 +46,28 @@ function fakeHttp(calls: Array<{ method: string; path: string; body?: unknown }>
 }
 
 describe("Core reports client", () => {
+  test("types allow incident keys only on bug and automatic reports", () => {
+    const keyedBug: SubmitReportInput = {...bugReportInput, incidentKey: "manual-bug-1"};
+    const keyedAutomatic: SubmitReportInput = {
+      kind: "automatic",
+      incidentKey: "automatic-1",
+      trigger: {type: "automatic", source: "watchdog", reason: "runtime_failure"},
+      report: {actualBehavior: "Runtime stopped"},
+      context: {},
+    };
+    const keylessFeedback: SubmitReportInput = {kind: "feedback", feedback: "More controls", context: {}};
+    const keyedFeedbackCandidate = {...keylessFeedback, incidentKey: "feedback-1"};
+    // @ts-expect-error Feedback is complete at creation and cannot carry an incident key.
+    const keyedFeedback: SubmitReportInput = keyedFeedbackCandidate;
+
+    expect([keyedBug.kind, keyedAutomatic.kind, keylessFeedback.kind, keyedFeedback.kind]).toEqual([
+      "bug",
+      "automatic",
+      "feedback",
+      "feedback",
+    ]);
+  });
+
   test("passes the exact typed automation correlation through the existing submission route", async () => {
     const calls: Array<{method: string; path: string; body?: unknown}> = [];
     const input: SubmitReportInput = {kind: "automatic", trigger: {type: "automatic", source: "mentra_automated_testing",
@@ -129,6 +151,34 @@ describe("Core reports client", () => {
           source: "phone",
           entries: [{ timestamp: 1, level: "info", message: "hello" }],
         },
+      },
+    ]);
+  });
+
+  test("sends bug and automatic incident keys plus a retry key through the bound Core API", async () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const core = new Core({ http: fakeHttp(calls) });
+    const bugInput: SubmitReportInput = {...bugReportInput, incidentKey: "manual-bug-1"};
+    const automaticInput: SubmitReportInput = {
+      kind: "automatic",
+      incidentKey: "ML395018B-dump-0000002a-1f2e3d4c",
+      trigger: { type: "automatic", source: "glasses_firmware_crash", reason: "bes_crash" },
+      report: { actualBehavior: "BES crashed", systemPriority: "critical" },
+      context: {},
+    };
+    const entries = [{ timestamp: 1, level: "error", message: "[CRASH-CONTEXT] v=2", source: "BES_CRASH" }];
+
+    await core.reports.submit(bugInput);
+    await core.reports.submit(automaticInput);
+    await core.reports.addLogs("rep_123", "glasses_firmware", entries, { retryKey: "glasses_firmware:full" });
+
+    expect(calls).toEqual([
+      { method: "POST", path: "/api/client/reports", body: bugInput },
+      { method: "POST", path: "/api/client/reports", body: automaticInput },
+      {
+        method: "POST",
+        path: "/api/client/reports/rep_123/artifacts",
+        body: { type: "logs", source: "glasses_firmware", entries, retryKey: "glasses_firmware:full" },
       },
     ]);
   });

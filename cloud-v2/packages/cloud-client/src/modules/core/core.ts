@@ -20,6 +20,7 @@ import type { HttpClient } from "../../http";
 import {
   Reports,
   type AddReportArtifactsResult,
+  type AddReportLogsOptions,
   type ReportAttachmentInput,
   type ReportLogEntry,
   type ReportLogCollectionUpdate,
@@ -37,6 +38,7 @@ import {
 
 export type {
   AddReportArtifactsResult,
+  AddReportLogsOptions,
   ReportAttachmentInput,
   ReportContext,
   ReportDetails,
@@ -161,6 +163,7 @@ export class Core {
       reportId: string,
       source: string,
       entries: ReportLogEntry[],
+      options?: AddReportLogsOptions,
     ): Promise<AddReportArtifactsResult>;
     addScreenshots(
       reportId: string,
