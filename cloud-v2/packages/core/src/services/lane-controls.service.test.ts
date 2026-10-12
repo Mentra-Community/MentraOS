@@ -1,0 +1,98 @@
+import {expect, test} from 'bun:test'
+import {randomUUID} from 'node:crypto'
+import {LaneControlsService, type LaneControlHost, type LaneControlRepository} from './lane-controls.service'
+import type {LaneControlInput, LaneControlReceipt, LaneControlRecord} from '../types/lane-control.types'
+import {requestInputDigest} from './test-request.service'
+function fixture() {
+  const now = Date.now()
+  let collisions = 0
+  let host: LaneControlHost = {hostId: 'air', laneControlVersion: 0, laneControls: [],
+    observedAt: new Date(now), receivedAt: new Date(now), snapshot: {laneControls: {schemaVersion: 1, receipts: []}, lanes: [{id: 'phone', dispatchMode: 'automatic'}]}}
+  const repository: LaneControlRepository = {async get(id) {return id === host.hostId ? structuredClone(host) : null},
+    async replace(id, version, records) {if (collisions-- > 0 || id !== host.hostId || version !== host.laneControlVersion) return false
+      host = {...host, laneControls: structuredClone(records), laneControlVersion: version + 1}; return true}}
+  const service = new LaneControlsService(repository, () => now)
+  const input = (action: LaneControlInput['action'], more: Partial<LaneControlInput> = {}): LaneControlInput =>
+    ({operationId: randomUUID(), expiresAt: now + 120000, hostId: 'air', laneId: 'phone', action, ...more})
+  const rows = () => host.laneControls as LaneControlRecord[]
+  const receipt = (input: LaneControlInput, result: LaneControlReceipt['result']): LaneControlReceipt => ({operationId: input.operationId,
+    hostId: input.hostId, laneId: input.laneId, inputSha256: requestInputDigest(rows().find(row => row.command.operationId === input.operationId)!.command),
+    completedAt: new Date(now).toISOString(), result})
+  return {service, input, rows, receipt, host: () => host, collide() {collisions = 1}, now}
+}
+test('submission keeps exact identity through CAS and lost responses and derives owner from the signed-in operator', async () => {
+  const f = fixture(), pause = f.input('pause'); f.collide()
+  const accepted = await f.service.submit(pause, 'alice')
+  expect(await f.service.submit(pause, 'alice')).toEqual(accepted)
+  expect(f.rows()).toHaveLength(1); expect(f.rows()[0]!.command.operatorId).toMatch(/^[a-f0-9]{64}$/)
+  await expect(f.service.submit(pause, 'bob')).rejects.toThrow('identity changed')
+  await expect(f.service.submit({...pause, action: 'resume'}, 'alice')).rejects.toThrow('identity changed')
+  await expect(f.service.submit(f.input('resume', {hostId: 'other'}), 'alice')).rejects.toThrow('not found')
+  await expect(f.service.submit(f.input('resume', {laneId: 'other'}), 'alice')).rejects.toThrow('not found')
+  await expect(f.service.submit(f.input('resume', {expiresAt: f.now - 1}), 'alice')).rejects.toThrow('expired')
+  expect((await f.service.list('air', 'bob')).controls).toEqual([])
+})
+test('accepted waiting reserve can be cancelled by its owner; release requires exact lane and generation', async () => {
+  const f = fixture(), reserve = f.input('reserve', {purpose: 'Manual work'})
+  await f.service.submit(reserve, 'alice')
+  const waiting = {id: 'reservation', laneId: 'phone', generation: 0, state: 'waiting' as const, purpose: 'Manual work', requestedAt: new Date(f.now).toISOString()}
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [f.receipt(reserve, {status: 'accepted', reservation: waiting})]})
+  const release = f.input('release', {reservation: {id: waiting.id, generation: 0}})
+  await expect(f.service.submit(release, 'bob')).rejects.toThrow('your current')
+  await expect(f.service.submit({...release, reservation: {id: waiting.id, generation: 1}}, 'alice')).rejects.toThrow('your current')
+  expect((await f.service.submit(release, 'alice')).action).toBe('release')
+  expect(f.rows()).toHaveLength(2)
+})
+test('receipts fence wrong host, action and identity and older reservation observations never resurrect ownership', async () => {
+  const f = fixture(), reserve = f.input('reserve', {purpose: 'Manual work'})
+  await f.service.submit(reserve, 'alice')
+  const reservation = {id: 'reservation', laneId: 'phone', generation: 1, state: 'granted' as const, purpose: 'Manual work', requestedAt: new Date(f.now).toISOString()}
+  const original = f.receipt(reserve, {status: 'accepted', reservation})
+  await expect(f.service.exchange('air', {schemaVersion: 1, receipts: [{...original, hostId: 'other'}]})).rejects.toThrow('differs')
+  await expect(f.service.exchange('air', {schemaVersion: 1, receipts: [f.receipt(reserve, {status: 'accepted', mode: 'paused'})]})).rejects.toThrow('requested action')
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [original]})
+  await expect(f.service.exchange('air', {schemaVersion: 1, receipts: [{...original, result: {status: 'accepted', reservation: {...reservation, id: 'other'}}}]})).rejects.toThrow('identity')
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [{...original, result: {status: 'accepted', reservation: {...reservation, state: 'released'}}}]})
+  await f.service.exchange('air', {schemaVersion: 1, receipts: [original]})
+  expect(f.rows()[0]!.receipt!.result).toMatchObject({reservation: {state: 'released'}})
+})
+test('delivery retention is bounded and new work does not get blocked by terminal history', async () => {
+  const f = fixture()
+  for (let i = 0; i < 105; i++) {
+    const pause = f.input('pause'); await f.service.submit(pause, 'alice')
+    await f.service.exchange('air', {schemaVersion: 1, receipts: [f.receipt(pause, {status: 'accepted', mode: 'paused'})]})
+  }
+  expect(f.rows()).toHaveLength(100)
+  f.host().receivedAt = new Date(f.now - 120001)
+  expect((await f.service.list('air', 'alice')).fresh).toBe(false)
+  await expect(f.service.submit(f.input('resume'), 'alice')).rejects.toThrow('Refresh lane status')
+})
+
+test('existing authenticated host-report route returns only that host controls and keeps the shared exchange strict', async()=>{
+ const {createTestHostStateApi} = await import('../api/internal/test-host-state.api')
+ const {TestHostStateService} = await import('./test-host-state.service')
+ const f=fixture(), pause=f.input('pause');await f.service.submit(pause,'alice')
+ class State extends TestHostStateService {override async report(input: unknown, hostId: string) {
+  const {hostStateSchema}=await import('./test-host-state.service');const parsed=hostStateSchema.parse(input)
+  if(parsed.hostId!==hostId) throw new Error('Wrong host')
+  return {hostId,incarnation:parsed.incarnation,incarnationGeneration:parsed.incarnationGeneration,sequence:parsed.sequence}
+ }}
+ const token='a'.repeat(32), api=createTestHostStateApi(new State(),()=>JSON.stringify({air:token}),f.service)
+ const value={hostId:'air',incarnation:'boot',incarnationGeneration:1,sequence:1,observedAt:new Date(f.now).toISOString(),
+  lanes:[{id:'phone',platform:'android',dispatchMode:'automatic',state:'idle',resources:[]}],laneControls:{schemaVersion:1,receipts:[]}}
+ const post=(body:unknown,authorization:string|null=token)=>api.request('/',{method:'POST',headers:{'Content-Type':'application/json',...(authorization?{Authorization:`Bearer ${authorization}`}:{})},body:JSON.stringify(body)})
+ expect((await post(value,null)).status).toBe(401)
+ const response=await post(value);expect(response.status).toBe(200)
+ expect((await response.json() as {laneControls:{commands:unknown[]}}).laneControls.commands).toEqual([f.rows()[0]!.command])
+ expect((await post({...value,laneControls:{schemaVersion:1,receipts:[],method:'lane.reset'}})).status).toBe(400)
+})
+
+test('returned reservation in a release receipt cannot be resurrected by an older retained reserve receipt', async()=>{
+ const f=fixture(), reserve=f.input('reserve',{purpose:'Manual work'});await f.service.submit(reserve,'alice')
+ const held={id:'held',laneId:'phone',generation:1,state:'granted' as const,purpose:'Manual work',requestedAt:new Date(f.now).toISOString()}
+ await f.service.exchange('air',{schemaVersion:1,receipts:[f.receipt(reserve,{status:'accepted',reservation:held})]})
+ const release=f.input('release',{reservation:{id:'held',generation:1}});await f.service.submit(release,'alice')
+ await f.service.exchange('air',{schemaVersion:1,receipts:[f.receipt(release,{status:'accepted',reservation:{...held,state:'released'}})]})
+ const newReserve=f.input('reserve',{purpose:'New work'})
+ expect((await f.service.submit(newReserve,'alice')).operationId).toBe(newReserve.operationId)
+})
