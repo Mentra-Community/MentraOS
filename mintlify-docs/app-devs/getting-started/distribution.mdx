@@ -53,7 +53,13 @@ installed. This is intended for local testing, demos, and dogfooding; it is not
 a supported distribution channel.
 
 Each install is logged in your terminal, and the server stays up so multiple
-devices can install from the same QR.
+devices can install from the same QR. The miniapp opens on the phone as soon as
+it installs.
+
+A release install is a fixed snapshot, like a React Native release build. After
+each change, run `mentra-miniapp release` again and rescan. While you develop,
+use `mentra-miniapp dev` instead: scan once, and every saved change reloads on
+the phone.
 
 ## Future distribution
 

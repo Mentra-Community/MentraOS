@@ -1,6 +1,6 @@
 {
   "name": "@mentra/miniapp-cli",
-  "version": "0.1.0-dev.1",
+  "version": "0.1.0-dev.2",
   "description": "Dev tools for MentraOS miniapps",
   "type": "module",
   "bin": {

@@ -26,6 +26,7 @@ import {readFileSync, existsSync, statSync, readdirSync, unlinkSync} from 'fs'
 import os from 'os'
 import {resolve, join} from 'path'
 import {buildProduction} from './build.js'
+import {warnIfPlaceholderIcon} from './icon.js'
 import {verifySignedBundleArchive, verifyUnsignedBundleArchive} from './bundle-signing.js'
 import {pack} from './pack.js'
 import {printQR, writeQRPng} from './qr.js'
@@ -75,6 +76,8 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const packageName = manifest.packageName as string
   const version = manifest.version as string
   const name = (manifest.name as string) ?? packageName
+
+  warnIfPlaceholderIcon(cwd)
 
   // ---- 2. Build (or skip via cache) -----------------------------------
   const cacheDir = resolve(cwd, 'build')
@@ -173,16 +176,20 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const qrUrl = `miniapp://release?url=${encodeURIComponent(baseUrl)}&package=${encodeURIComponent(packageName)}&version=${encodeURIComponent(version)}&name=${encodeURIComponent(name)}`
 
   console.log('\n╔══════════════════════════════════════════════════════════════╗')
-  console.log('║  Install your mini app on a phone:                           ║')
+  console.log('║  Install your miniapp on a phone:                            ║')
   console.log('║                                                              ║')
-  console.log('║    1. Open the Mentra app                                    ║')
-  console.log('║    2. Settings → Developer settings                          ║')
-  console.log('║    3. Under "Mini App Development", tap                      ║')
-  console.log('║       "Scan Mini App QR Code" and scan the QR below          ║')
+  console.log('║    1. Open the Mentra App                                    ║')
+  console.log('║    2. Settings → Miniapp Developer Settings                  ║')
+  console.log('║    3. Tap "Scan Miniapp QR Code" and scan the QR below       ║')
   console.log('║                                                              ║')
   console.log('║  Phone must be on the same Wi-Fi as this computer.           ║')
   console.log('║  This server stays up — install on multiple phones, then     ║')
   console.log('║  Ctrl+C to stop.                                             ║')
+  console.log('║                                                              ║')
+  console.log('║  This installs a fixed snapshot. After each change, run      ║')
+  console.log('║  release again and rescan. While developing, use             ║')
+  console.log('║    bun run dev                                               ║')
+  console.log('║  which reloads every saved change without a rescan.          ║')
   console.log('╚══════════════════════════════════════════════════════════════╝\n')
 
   const defaultQrPath = join(os.tmpdir(), `mentra-release-qr-${packageName}.png`)

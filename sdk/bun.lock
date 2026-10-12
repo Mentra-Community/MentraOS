@@ -433,7 +433,7 @@
     },
     "create-mentra-miniapp": {
       "name": "create-mentra-miniapp",
-      "version": "0.1.0-dev.1",
+      "version": "0.1.0-dev.2",
       "bin": {
         "create-mentra-miniapp": "./bin/index.ts",
       },
@@ -501,7 +501,7 @@
     },
     "miniapp-cli": {
       "name": "@mentra/miniapp-cli",
-      "version": "0.1.0-dev.1",
+      "version": "0.1.0-dev.2",
       "bin": {
         "mentra-miniapp": "./src/index.ts",
       },
