@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { WORKSPACE_ROLES } from "@mentra/workspace-contract";
-import { assignableRoles, can, canCreateCredentials, effectiveRole, roleOptions } from "./roles";
+import { capabilitiesForRole, WORKSPACE_ROLES } from "@mentra/workspace-contract";
+import { actsAsOrganizationAdmin, assignableRoles, can, canCreateCredentials, effectiveRole, roleOptions } from "./roles";
 import { detailFor, organizationAdminDetail } from "./test-fixtures";
 
 describe("effectiveRole", () => {
@@ -69,5 +69,29 @@ describe("canCreateCredentials", () => {
     expect(canCreateCredentials({ ...organizationAdminDetail(), membership: { membershipId: "wm_1", role: "member" } })).toBe(false);
     expect(canCreateCredentials({ ...organizationAdminDetail(), membership: { membershipId: "wm_1", role: "developer" } })).toBe(true);
     expect(canCreateCredentials(undefined)).toBe(false);
+  });
+});
+
+describe("actsAsOrganizationAdmin", () => {
+  const owner = [...capabilitiesForRole("owner")];
+  test("an Organization Admin whose membership grants less, or who has none, acts as one", () => {
+    expect(actsAsOrganizationAdmin({ capabilities: owner, membership: { membershipId: "wm_1", role: "member" }, organizationAdmin: true })).toBe(true);
+    expect(actsAsOrganizationAdmin({ capabilities: owner, membership: null, organizationAdmin: true })).toBe(true);
+  });
+
+  test("an owner's powers are their own, and nobody else's come from the organization", () => {
+    expect(actsAsOrganizationAdmin({ capabilities: owner, membership: { membershipId: "wm_1", role: "owner" }, organizationAdmin: true })).toBe(false);
+    expect(
+      actsAsOrganizationAdmin({
+        capabilities: [...capabilitiesForRole("member")],
+        membership: { membershipId: "wm_1", role: "member" },
+        organizationAdmin: false,
+      }),
+    ).toBe(false);
+  });
+
+  test("without the flag (an older server) only owner capabilities with no membership say so", () => {
+    expect(actsAsOrganizationAdmin({ capabilities: owner, membership: null })).toBe(true);
+    expect(actsAsOrganizationAdmin({ capabilities: [...capabilitiesForRole("admin")], membership: { membershipId: "wm_1", role: "admin" } })).toBe(false);
   });
 });

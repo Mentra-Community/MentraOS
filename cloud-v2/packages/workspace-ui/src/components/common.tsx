@@ -204,6 +204,7 @@ export function Badge({ children, className }: { children: ReactNode; className?
 export function ConfirmButton({
   label,
   ariaLabel,
+  ariaDescribedBy,
   prompt,
   confirmLabel,
   disabled,
@@ -212,6 +213,8 @@ export function ConfirmButton({
 }: {
   label: string;
   ariaLabel: string;
+  /** The id of text that explains the action (or why it is disabled). */
+  ariaDescribedBy?: string;
   prompt: string;
   confirmLabel: string;
   disabled?: boolean;
@@ -241,6 +244,7 @@ export function ConfirmButton({
         variant="destructive-secondary"
         size={outline ? "default" : "sm"}
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         disabled={disabled}
         onClick={() => setConfirming(true)}
       >
