@@ -1733,9 +1733,6 @@ class GallerySyncService {
         const syncErrorMessage = "Could not sync gallery — try again"
         store.setSyncError(syncErrorMessage)
         await gallerySyncNotifications.showSyncError(syncErrorMessage)
-        if (store.syncServiceOpenedHotspot) {
-          await this.closeHotspot()
-        }
         return
       }
 
@@ -2140,7 +2137,7 @@ class GallerySyncService {
         await gallerySyncNotifications.showSyncError(error?.message || "Download failed")
       }
 
-      if (store.syncServiceOpenedHotspot) {
+      if (!signal?.aborted && store.syncServiceOpenedHotspot) {
         await this.closeHotspot()
       }
     }
@@ -2360,7 +2357,7 @@ class GallerySyncService {
         await gallerySyncNotifications.showSyncError(error?.message || "Download failed")
       }
 
-      if (store.syncServiceOpenedHotspot) {
+      if (!signal?.aborted && store.syncServiceOpenedHotspot) {
         await this.closeHotspot()
       }
     }
