@@ -21,6 +21,7 @@ export type BesCrashReason = "bes_crash" | "bes_unexpected_reset"
 export type BesCrashReportOutcome =
   | {status: "reported"; reportId: string; submitted: boolean}
   | {status: "ack_failed"; reportId: string; error: string}
+  | {status: "dispatch_failed"; reportId: string; error: string}
   | {status: "failed"; error: string}
   | {status: "ignored"; reason: string}
 
@@ -152,6 +153,13 @@ async function acknowledgeAndUpload(
   console.log(
     `[${LOG_TAG}] ${incidentKey}: ${reportId} acknowledged; log upload ${dispatch.state} (${dispatch.reason})`,
   )
+  // requestGlassesReportLogs reports token-sync failures, SDK send failures, and dispatch
+  // timeouts as dispatch.state === "failed" instead of throwing. The incident is REPORTED but
+  // upload_incident_logs never reached the glasses, so surface a retryable failure (keeping the
+  // reportId) rather than "reported", which would cancel retries and strand the artifacts.
+  if (dispatch.state === "failed") {
+    return {status: "dispatch_failed", reportId, error: `log_dispatch_${dispatch.reason}`}
+  }
   return {status: "reported", reportId, submitted}
 }
 
@@ -239,7 +247,8 @@ function runFlow(event: BesCrashDetectedEvent): Promise<BesCrashReportOutcome> {
     .then((outcome) => {
       inFlight.delete(incidentKey)
       if (startedGeneration !== generation) return outcome
-      if (outcome.status === "failed" || outcome.status === "ack_failed") scheduleRetry(event)
+      if (outcome.status === "failed" || outcome.status === "ack_failed" || outcome.status === "dispatch_failed")
+        scheduleRetry(event)
       else cancelRetry(incidentKey)
       return outcome
     })

@@ -499,7 +499,7 @@ public class BesTraceTailTest {
     }
 
     @Test
-    public void aBusyGateDefersTheReadAndATimeoutDoesNotAcquireTwice() throws Exception {
+    public void aBusyGateDefersTheReadAndATimeoutReacquiresTheGate() throws Exception {
         RecordingGate gate = new RecordingGate();
         gate.sent = mSent;
         gate.allow = false;
@@ -510,9 +510,14 @@ public class BesTraceTailTest {
         gate.allow = true;
         advance(1000);
         assertEquals(1, count("mh_rlog"));
-        advance(1200); // no reply: re-read inside the same held window
+        // No reply: the read window ends and the gate is released and reacquired before retrying,
+        // so a cached ownership cannot outlive the shared BesLogTransferLock.
+        advance(1200);
         assertTrue(count("mh_rlog") >= 2);
-        assertEquals(1, gate.events.stream().filter("acquire"::equals).count());
+        assertTrue("released before the retry reacquired",
+                gate.events.indexOf("release") < gate.events.lastIndexOf("acquire"));
+        assertTrue("reacquired for the retry",
+                gate.events.stream().filter("acquire"::equals).count() >= 2);
         mTail.setEnabled(false);
         idle();
         assertEquals("released when the tail is disabled", "release",

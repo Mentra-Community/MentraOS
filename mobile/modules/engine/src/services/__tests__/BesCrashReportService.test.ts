@@ -336,6 +336,23 @@ describe("BesCrashReportService retries", () => {
     expect(timers.size).toBe(0)
   })
 
+  test("a failed log dispatch keeps the reportId and retries", async () => {
+    sendIncidentId.mockImplementationOnce(async () => {
+      throw new Error("sendIncidentId failed")
+    })
+    await expect(handleBesCrashDetected(dumpEvent())).resolves.toMatchObject({
+      status: "dispatch_failed",
+      reportId: "rep_1",
+    })
+    expect(storedReportId("user_a")).toBe("rep_1")
+
+    expect(await fireRetry()).toBe(30_000)
+
+    expect(submit).toHaveBeenCalledTimes(1)
+    expect(sendIncidentId).toHaveBeenCalledTimes(2)
+    expect(timers.size).toBe(0)
+  })
+
   test("a failed ack retries from the cache and stops after success", async () => {
     sendBesCrashReported.mockImplementationOnce(async () => {
       throw new Error("bes_crash_reported_ack timeout")

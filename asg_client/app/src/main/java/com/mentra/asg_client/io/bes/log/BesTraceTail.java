@@ -400,9 +400,17 @@ public final class BesTraceTail {
                 releaseGate();
             }
         }
-        if (mInFlight && now - mRequestedAtMs < AsgConstants.BES_TRACE_REPLY_TIMEOUT_MS) {
-            schedule(AsgConstants.BES_TRACE_REPLY_TIMEOUT_MS - (now - mRequestedAtMs));
-            return;
+        if (mInFlight) {
+            if (now - mRequestedAtMs < AsgConstants.BES_TRACE_REPLY_TIMEOUT_MS) {
+                schedule(AsgConstants.BES_TRACE_REPLY_TIMEOUT_MS - (now - mRequestedAtMs));
+                return;
+            }
+            // The reply window elapsed. End it and drop the gate before retrying: the shared
+            // BesLogTransferLock expires an un-released owner after BES_LOG_LOCK_MAX_HOLD_MS, so a
+            // cached mGateHeld must not keep sending mh_rlog once a crash pull can own the channel.
+            // Re-acquiring forces a fresh ownership check against the live lock.
+            mInFlight = false;
+            releaseGate();
         }
         if (!acquireGate()) {
             schedule(AsgConstants.BES_TRACE_POLL_IDLE_MS);
