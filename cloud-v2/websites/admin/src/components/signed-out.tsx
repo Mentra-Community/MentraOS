@@ -3,8 +3,9 @@ import mentraLogo from "../assets/mentra-logo.svg";
 
 /**
  * After signing out of the admin portal. The admin portal session has ended;
- * the Mentra account (or the company's identity provider) may still be signed
- * in, so its sign-out is offered as a separate link when Core provides one.
+ * the person may still be signed in to Mentra on this browser, at Core's
+ * sign-in server, so its sign-out (the end-session endpoint) is offered as a
+ * separate link when Core provides one.
  */
 export function SignedOutScreen({ signOutUrl }: { signOutUrl: string | null }) {
   return (

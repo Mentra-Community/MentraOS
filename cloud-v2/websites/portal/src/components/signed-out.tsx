@@ -3,8 +3,9 @@ import { BrandPage } from "./brand";
 
 /**
  * After signing out of the workspace portal. The workspace portal session has ended;
- * the Mentra account (or the company's identity provider) may still be signed
- * in, so its sign-out is offered as a separate link when Core provides one: that
+ * the person may still be signed in to Mentra on this browser, at Core's
+ * sign-in server, so its sign-out (the end-session endpoint) is offered as a
+ * separate link when Core provides one: that
  * is how a person switches accounts. Signing in again returns to `signInHref`
  * (the pending invitation, when one is waiting for the other account).
  */
