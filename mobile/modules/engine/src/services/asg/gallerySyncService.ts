@@ -128,6 +128,13 @@ const TIMING = {
   LOCATION_SERVICES_CHECK_TIMEOUT_MS: 5000,
 } as const
 
+function assertSyncNotAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  const error = new Error("Gallery sync aborted")
+  error.name = "AbortError"
+  throw error
+}
+
 type SyncManifestData = {
   api_version?: number
   client_id: string
@@ -1578,12 +1585,12 @@ class GallerySyncService {
     lastSyncTime: number,
     signal?: AbortSignal,
   ): Promise<SyncManifestData> {
-    signal?.throwIfAborted()
+    assertSyncNotAborted(signal)
     const v3 = typeof asgCameraApi.getV3Manifest === "function" ? await asgCameraApi.getV3Manifest() : null
-    signal?.throwIfAborted()
+    assertSyncNotAborted(signal)
     if (v3) {
       const downloadedFiles = await localStorageService.getDownloadedFiles()
-      signal?.throwIfAborted()
+      assertSyncNotAborted(signal)
       await localStorageService.reconcileRemoteCaptures(
         v3.captures.map((capture) => capture.capture_id),
         downloadedFiles,
@@ -1607,7 +1614,7 @@ class GallerySyncService {
     // Old firmware remains on the exact v2 endpoint/schema. Avoid expensive inline thumbnails;
     // video thumbnails are fetched as small side downloads with their primary media.
     const syncResponse = await asgCameraApi.syncWithServer(clientId, lastSyncTime, false)
-    signal?.throwIfAborted()
+    assertSyncNotAborted(signal)
     const data = (syncResponse.data || syncResponse) as SyncManifestData
     if (data.captures) {
       data.captures = data.captures.filter((capture) => !galleryTransferLedger.isLocallyCommitted(capture.capture_id))
@@ -1633,7 +1640,7 @@ class GallerySyncService {
     const skewOnFirst = detectClockSkew(Date.now(), syncData.server_time, lastSyncTime)
     if (skewOnFirst.skewed) {
       clockFixed = await fixGlassesClockIfSkewed(syncData.server_time, lastSyncTime)
-      signal?.throwIfAborted()
+      assertSyncNotAborted(signal)
       if (clockFixed) {
         console.log("[GallerySyncService]   🔄 Retrying /api/sync with last_sync_time=0 after clock fix")
         syncData = await this.fetchSyncManifest(clientId, 0, signal)

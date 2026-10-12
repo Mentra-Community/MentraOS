@@ -1,4 +1,5 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
+import {AbortController as ReactNativeAbortController} from "abort-controller/dist/abort-controller"
 /* eslint-disable no-restricted-imports */
 import {permissions} from "../../../modules/engine/src/facades/permissions"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
@@ -1666,6 +1667,42 @@ describe("GallerySyncService", () => {
         expect.stringContaining("already retried this watermark, skipping to avoid re-download loop"),
       )
     })
+  })
+
+  it.each([false, true])("supports React Native manifest cancellation (aborted=%s)", async (aborted) => {
+    const controller = new ReactNativeAbortController()
+    expect("throwIfAborted" in controller.signal).toBe(false)
+    if (aborted) controller.abort()
+    const service = gallerySyncService as unknown as {
+      fetchSyncManifest(clientId: string, lastSyncTime: number, signal: AbortSignal): Promise<unknown>
+    }
+    const pending = service.fetchSyncManifest("c1", 0, controller.signal as AbortSignal)
+    if (aborted) {
+      await expect(pending).rejects.toMatchObject({name: "AbortError"})
+      expect(mockGetV3Manifest).not.toHaveBeenCalled()
+    } else {
+      await expect(pending).resolves.toMatchObject({changed_files: []})
+      expect(mockGetV3Manifest).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it("stops React Native manifest continuation when its request settles after abort", async () => {
+    const controller = new ReactNativeAbortController()
+    let release!: () => void
+    mockGetV3Manifest.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(null)
+        }),
+    )
+    const service = gallerySyncService as unknown as {
+      fetchSyncManifest(clientId: string, lastSyncTime: number, signal: AbortSignal): Promise<unknown>
+    }
+    const pending = service.fetchSyncManifest("c1", 0, controller.signal as AbortSignal)
+    controller.abort()
+    release()
+    await expect(pending).rejects.toMatchObject({name: "AbortError"})
+    expect(mockSyncWithServer).not.toHaveBeenCalled()
   })
 
   describe("resolveSyncManifest (clock skew)", () => {
