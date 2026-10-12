@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+
 import com.mentra.asg_client.service.system.interfaces.ISystemController;
 import com.mentra.asg_client.service.utils.SysProp;
 
@@ -15,6 +16,8 @@ public class MentraLiveSystemController implements ISystemController {
     private static final String VERSION_CUSTOM = "ro.custom.ota.version";
 
     private final Context context;
+    private final Handler mWifiConnectionHandler = new Handler(Looper.getMainLooper());
+    private int mWifiConnectionGeneration;
 
     public MentraLiveSystemController(Context context) {
         this.context = context;
@@ -97,7 +100,11 @@ public class MentraLiveSystemController implements ISystemController {
         if (ver == null || ver.length() < 8) {
             // Report unknown honestly instead of the bare-date sentinel K900 vendor code
             // used ("20241130") - the phone treats an empty version as "no MTK update".
-            Log.w(TAG, "System OTA version unavailable (property missing or malformed: '" + ver + "')");
+            Log.w(
+                    TAG,
+                    "System OTA version unavailable (property missing or malformed: '"
+                            + ver
+                            + "')");
             return "";
         }
         return ver;
@@ -121,48 +128,66 @@ public class MentraLiveSystemController implements ISystemController {
     }
 
     @Override
-    public void connectToWifiWithCredentialRefresh(String ssid, String password) {
+    public synchronized void connectToWifiWithCredentialRefresh(String ssid, String password) {
+        cancelPendingWifiConnection();
         if (ssid == null || ssid.isEmpty()) {
             Log.e(TAG, "Cannot connect to WiFi with empty SSID");
             return;
         }
         Log.d(TAG, "Connecting to WiFi with credential refresh: " + ssid);
+        int generation = mWifiConnectionGeneration;
         connectToWifi(ssid, password);
-        new Handler(Looper.getMainLooper())
-                .postDelayed(
-                        () -> {
-                            Log.d(TAG, "Clearing cached credentials for: " + ssid);
-                            disconnectFromWifi(ssid);
-                            new Handler(Looper.getMainLooper())
-                                    .postDelayed(
-                                            () -> {
-                                                Log.d(
-                                                        TAG,
-                                                        "Reconnecting with fresh credentials: "
-                                                                + ssid);
-                                                connectToWifi(ssid, password);
-                                            },
-                                            500);
-                        },
-                        300);
+        mWifiConnectionHandler.postDelayed(
+                () -> {
+                    synchronized (MentraLiveSystemController.this) {
+                        if (generation != mWifiConnectionGeneration) {
+                            return;
+                        }
+                        Log.d(TAG, "Clearing cached credentials for: " + ssid);
+                        sendWifiDisconnect(ssid);
+                        mWifiConnectionHandler.postDelayed(
+                                () -> {
+                                    synchronized (MentraLiveSystemController.this) {
+                                        if (generation != mWifiConnectionGeneration) {
+                                            return;
+                                        }
+                                        Log.d(TAG, "Reconnecting with fresh credentials: " + ssid);
+                                        connectToWifi(ssid, password);
+                                    }
+                                },
+                                500);
+                    }
+                },
+                300);
     }
 
     @Override
-    public void disconnectFromWifi() {
+    public synchronized void cancelPendingWifiConnection() {
+        mWifiConnectionGeneration++;
+        mWifiConnectionHandler.removeCallbacksAndMessages(null);
+    }
+
+    @Override
+    public synchronized void disconnectFromWifi() {
+        cancelPendingWifiConnection();
         Log.d(TAG, "Disconnecting from WiFi");
-        Intent nn = new Intent("com.xy.xsetting.action");
-        nn.setPackage("com.android.systemui");
-        nn.putExtra("cmd", "disconnectwifi");
-        context.sendBroadcast(nn);
+        sendWifiDisconnect(null);
     }
 
     @Override
-    public void disconnectFromWifi(String ssid) {
+    public synchronized void disconnectFromWifi(String ssid) {
+        cancelPendingWifiConnection();
         Log.d(TAG, "Disconnecting from WiFi SSID: " + ssid);
+        sendWifiDisconnect(ssid);
+    }
+
+    private void sendWifiDisconnect(String ssid) {
         Intent nn = new Intent("com.xy.xsetting.action");
         nn.setPackage("com.android.systemui");
         nn.putExtra("cmd", "disconnectwifi");
-        nn.putExtra("ssid", ssid);
+        if (ssid != null) {
+            nn.putExtra("ssid", ssid);
+        }
         context.sendBroadcast(nn);
     }
 

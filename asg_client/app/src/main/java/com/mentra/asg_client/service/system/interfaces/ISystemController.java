@@ -48,6 +48,9 @@ public interface ISystemController {
 
     void connectToWifiWithCredentialRefresh(String ssid, String password);
 
+    /** Cancel queued credential-refresh work without disconnecting the current WiFi link. */
+    default void cancelPendingWifiConnection() {}
+
     void disconnectFromWifi();
 
     void disconnectFromWifi(String ssid);

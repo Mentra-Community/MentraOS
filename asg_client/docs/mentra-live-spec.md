@@ -291,6 +291,16 @@ Camera and streaming features must leave LEDs in a safe state on stop, error, se
 
 The phone can configure WiFi behavior through `asg_client`. Mentra Live-specific network managers should be used when platform APIs are required; generic Android fallbacks exist for non-K900 paths.
 
+Station WiFi provisioning first uses the native, scan-derived security configuration on
+system-app installs. If the framework rejects configuration, enablement, or reconnection,
+or throws before dispatch completes, ASG falls back to the K900 SystemUI credential-refresh
+path with the same SSID and password. An accepted native request does not trigger that
+refresh. Neither dispatch path proves association: the existing link/status and
+authentication checks still determine the phone-facing connection result.
+Delayed vendor credential refreshes are cancelled before a newer join (including a
+native join), disconnect, forget, hotspot start, or network-manager shutdown, so an
+old attempt cannot reconnect its SSID after the user has moved on.
+
 The phone can request saved SSIDs with a correlated request/response and can ask the glasses to forget a network. Modern commands require the complete `protocolVersion: 1`, nonempty `requestId`, and current process `sid` tuple. Partial, malformed, and future versions are rejected before a backend read or mutation. Legacy forget commands omit all three fields. Native SDKs negotiate from `version_info_1` under one bounded request deadline; modern operations never fall back to `wifi_status`. Legacy requests resolve immediately as `legacy_unverified` once an active native transport accepts dispatch, without waiting for a link-state change. K900's current vendor API only dispatches an asynchronous SystemUI broadcast: its correlated forget outcome is `dispatched`, not verified credential removal. The current WiFi link snapshot is included separately because Android may propagate disconnection later. K900 saved-network enumeration is explicitly unsupported until the vendor API exposes a response path; do not substitute the potentially empty/stale framework configured-network list.
 
 When the phone requests the Mentra Live hotspot, `asg_client` starts the K900 firmware hotspot through the SmartXY `ap_start` intent. It waits for the AP gateway and firmware-configured SSID/password before returning them to the phone over BLE. Clients must use the latest BLE status rather than assume fixed credentials. The hotspot remains active while the local HTTP server is receiving requests or streaming response data, or while a hotspot-local stream owns an active session. Stream activity is refreshed locally, independently of phone/cloud heartbeats. It automatically stops after 120 seconds without any of those activity signals.
