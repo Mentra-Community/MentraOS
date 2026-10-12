@@ -700,6 +700,131 @@ describe("report idempotency keys", () => {
     expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(0);
   });
 
+  test("a keyed submission returns 503 within the bound when the dedup read never answers", async () => {
+    const fake = stallRows(ReportModel, "findOne", "incidentKey", "hang");
+    const savedTimeout = committedReadWait.timeoutMs;
+    committedReadWait.timeoutMs = 300;
+    try {
+      const started = Date.now();
+      const res = await submit(crashReport(INCIDENT_KEY));
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+      expect(fake.timeouts.length).toBe(1);
+      expect(fake.timeouts[0]).toBeGreaterThan(0);
+      expect(fake.timeouts[0]).toBeLessThanOrEqual(300);
+    } finally {
+      committedReadWait.timeoutMs = savedTimeout;
+      fake.restore();
+    }
+    expect(await ReportModel.countDocuments({})).toBe(0);
+  });
+
+  test("a keyed submission returns 503 when the dedup read hits MaxTimeMSExpired", async () => {
+    const fake = stallRows(ReportModel, "findOne", "incidentKey", "maxTimeMS");
+    try {
+      const res = await submit(crashReport(INCIDENT_KEY));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+    } finally { fake.restore(); }
+    expect(await ReportModel.countDocuments({})).toBe(0);
+  });
+
+  test("a keyed submission returns 503 within the bound when the majority creation never answers", async () => {
+    const fake = stallRows(ReportModel, "create", null, "hang");
+    const savedTimeout = committedReadWait.timeoutMs;
+    committedReadWait.timeoutMs = 300;
+    try {
+      const started = Date.now();
+      const res = await submit(crashReport(INCIDENT_KEY));
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+    } finally {
+      committedReadWait.timeoutMs = savedTimeout;
+      fake.restore();
+    }
+  });
+
+  test("a duplicate-key loser returns 503 within the bound when the winner poll read never answers", async () => {
+    // The pre-check misses (hidden row), creation loses the unique index, and the poll read then stalls.
+    await ReportModel.collection.insertOne({ reportId: "rep_STALLEDPOLL", mentraUserId, kind: "automatic",
+      incidentKey: INCIDENT_KEY, status: "collecting", artifacts: [], context: {}, createdAt: new Date() });
+    let reads = 0;
+    const hidden = hideUncommittedRows(ReportModel, "incidentKey", () => false);
+    const fake = stallRows(ReportModel, "findOne", "incidentKey", "hang", () => ++reads > 1);
+    const savedTimeout = committedReadWait.timeoutMs;
+    committedReadWait.timeoutMs = 400;
+    try {
+      const started = Date.now();
+      const res = await submit(crashReport(INCIDENT_KEY));
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+    } finally {
+      committedReadWait.timeoutMs = savedTimeout;
+      fake.restore();
+      hidden.restore();
+    }
+    expect(reads).toBeGreaterThan(1);
+  });
+
+  test("a keyed upload returns 503 within the bound when the reservation read never answers", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:full" };
+    const fake = stallRows(ReportAssetModel, "findOne", "artifactId", "hang");
+    const savedTimeout = committedReadWait.timeoutMs;
+    committedReadWait.timeoutMs = 300;
+    try {
+      const started = Date.now();
+      const res = await uploadLogs(reportId, body);
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "temporarily_unavailable" });
+      expect(fake.timeouts.every(timeoutMS => timeoutMS > 0 && timeoutMS <= 300)).toBe(true);
+    } finally {
+      committedReadWait.timeoutMs = savedTimeout;
+      fake.restore();
+    }
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(0);
+  });
+
+  test("a keyed upload returns 503 within the bound when the report existence check never answers", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:full" };
+    const fake = stallRows(ReportModel, "exists", "reportId", "hang");
+    const savedTimeout = committedReadWait.timeoutMs;
+    committedReadWait.timeoutMs = 300;
+    try {
+      const started = Date.now();
+      const res = await uploadLogs(reportId, body);
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(res.status).toBe(503);
+    } finally {
+      committedReadWait.timeoutMs = savedTimeout;
+      fake.restore();
+    }
+  });
+
+  test("a keyed upload returns 503 within the bound when the completed-artifact check never answers", async () => {
+    const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
+    const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "glasses_firmware:full" };
+    // Only the majority check carries this field; the first plain existence check passes.
+    const fake = stallRows(ReportModel, "exists", "artifacts.artifactId", "hang");
+    const savedTimeout = committedReadWait.timeoutMs;
+    committedReadWait.timeoutMs = 300;
+    try {
+      const started = Date.now();
+      const res = await uploadLogs(reportId, body);
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(res.status).toBe(503);
+    } finally {
+      committedReadWait.timeoutMs = savedTimeout;
+      fake.restore();
+    }
+    expect(((await ReportModel.collection.findOne({ reportId }))?.artifacts ?? [])).toHaveLength(0);
+  });
+
   test("a retry key reused for another source returns 409 without a second artifact or receipt", async () => {
     const { reportId } = await (await submit(crashReport(INCIDENT_KEY))).json() as { reportId: string };
     const body = { type: "logs", source: "glasses_firmware", entries: crashEntries, retryKey: "shared-key" };
@@ -1070,6 +1195,48 @@ function timeoutUncommittedRows(model: { findOne: unknown }, field: string) {
     return query;
   };
   return { timeouts, restore: () => { model.findOne = original; } };
+}
+
+/**
+ * Make `model[method]` stall: a matching call (filter containing `field`, or any
+ * call when `field` is null) either never settles ("hang") or rejects with
+ * MongoDB's MaxTimeMSExpired ("maxTimeMS"), as a primary that stops responding
+ * would. `when` limits which matching calls stall. Records the `timeoutMS` each
+ * stalled query carried so tests can assert the operation itself was bounded.
+ */
+function stallRows(model: object, method: "findOne" | "exists" | "create", field: string | null,
+  mode: "hang" | "maxTimeMS", when: () => boolean = () => true) {
+  type FakeQuery = {
+    exec: () => Promise<unknown>;
+    getFilter: () => Record<string, unknown>;
+    getOptions: () => { timeoutMS?: number };
+  };
+  const target = model as Record<string, (...args: unknown[]) => unknown>;
+  const original = target[method];
+  const timeouts: number[] = [];
+  const stall = (): Promise<never> => {
+    if (mode === "hang") return new Promise<never>(() => {});
+    return Promise.reject(Object.assign(new Error("operation exceeded time limit"), { code: 50, codeName: "MaxTimeMSExpired" }));
+  };
+  target[method] = function (this: unknown, ...args: unknown[]) {
+    if (method === "create") {
+      if (!when()) return original.apply(this, args);
+      const options = args[1] as { timeoutMS?: number } | undefined;
+      if (typeof options?.timeoutMS === "number") timeouts.push(options.timeoutMS);
+      return stall();
+    }
+    const query = original.apply(this, args) as FakeQuery;
+    if (field !== null && !(field in query.getFilter())) return query;
+    const exec = query.exec.bind(query);
+    query.exec = () => {
+      if (!when()) return exec();
+      const timeoutMS = query.getOptions().timeoutMS;
+      if (typeof timeoutMS === "number") timeouts.push(timeoutMS);
+      return stall();
+    };
+    return query;
+  };
+  return { timeouts, restore: () => { target[method] = original; } };
 }
 
 /** Let the first blob write succeed and fail the second one. */
