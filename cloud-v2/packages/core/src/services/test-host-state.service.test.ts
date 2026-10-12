@@ -85,13 +85,18 @@ const runningSnapshot = (sequence = 1) => {
     currentStep: {id: 'verify-login', index: 1}, completedSteps: 1, totalSteps: 3,
     startedAt: '2026-10-03T00:58:00Z', lastProgressAt: '2026-10-03T00:59:00Z', observedAt: value.observedAt}}]}
 }
-function acceptedRequestLookup(found = true) {
+function acceptedRequestLookup(found: boolean | Record<string, unknown> = true) {
   const queries: Record<string, unknown>[] = [], projections: unknown[] = [], settings: unknown[] = []
   const find = spyOn(TestRequestModel, 'findOne').mockImplementation(((query: Record<string, unknown>) => {
     queries.push(query)
     const chain = {select(value: unknown) {projections.push(value); return chain},
       read(value: unknown) {settings.push(value); return chain}, readConcern(value: unknown) {settings.push(value); return chain},
-      setOptions(value: unknown) {settings.push(value); return chain}, async lean() {return found ? {requestId: 'run-one'} : null}}
+      setOptions(value: unknown) {settings.push(value); return chain}, async lean() {
+        if (typeof found === 'boolean') return found ? {requestId: 'run-one'} : null
+        const field = (path: string) => path.split('.').reduce<unknown>((value, key) =>
+          value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined, found)
+        return Object.entries(query).every(([path, value]) => field(path) === value) ? {requestId: found.requestId} : null
+      }}
     return chain
   }) as any)
   return {queries, projections, settings, stop() {find.mockRestore()}}
@@ -103,7 +108,8 @@ test('optional live progress persists only from the exact accepted request and h
     const first = runningSnapshot()
     await f.service.report(first, 'mini')
     expect((await f.service.get('mini'))!.lanes[0]!.progress).toEqual(routineProgressSchema.parse(first.lanes[0]!.progress))
-    expect(lookup.queries[0]).toEqual({requestId: 'run-one', hostId: 'mini', inputSha256: 'a'.repeat(64), 'input.laneId': 'mac'})
+    expect(lookup.queries[0]).toEqual({requestId: 'run-one', hostId: 'mini', inputSha256: 'a'.repeat(64), 'input.laneId': 'mac',
+      'hostReceipt.requestId': 'run-one', 'hostReceipt.hostId': 'mini', 'hostReceipt.inputSha256': 'a'.repeat(64)})
     expect(lookup.projections).toEqual([{requestId: 1}])
     expect(lookup.settings).toEqual(['primary', 'majority', {timeoutMS: 10000}])
     const heartbeat = runningSnapshot(2), observedAt = '2026-10-03T01:00:15Z'
@@ -161,6 +167,31 @@ test('unrecognized accepted request or digest cannot update the host or another 
     await expect(f.service.report(runningSnapshot(2), 'another-host')).rejects.toThrow('authenticated controller')
     expect(lookup.queries).toHaveLength(2)
   } finally {lookup.stop(); f.stop()}
+})
+
+test('routed queued, rejected and cancelled requests need a matching acceptance receipt while accepted terminal publication remains valid', async () => {
+  const routed = {requestId: 'run-one', hostId: 'mini', inputSha256: 'a'.repeat(64), input: {laneId: 'mac'}}
+  const receipt = {requestId: 'run-one', hostId: 'mini', inputSha256: 'a'.repeat(64), acceptedAt: '2026-10-03T00:58:00Z'}
+  const cases = [{...routed, state: 'queued'}, {...routed, state: 'terminal', terminalStatus: 'not-run', hostRejection: receipt},
+    {...routed, state: 'terminal', terminalStatus: 'cancelled', hostCancellation: receipt},
+    {...routed, state: 'accepted', hostReceipt: {...receipt, requestId: 'other-run'}},
+    {...routed, state: 'accepted', hostReceipt: {...receipt, hostId: 'other-host'}},
+    {...routed, state: 'accepted', hostReceipt: {...receipt, inputSha256: 'b'.repeat(64)}},
+    {...routed, state: 'accepted', hostReceipt: receipt}, {...routed, state: 'running', hostReceipt: receipt},
+    {...routed, state: 'terminal', terminalStatus: 'fail', hostReceipt: receipt}]
+  for (const row of cases) {
+    const f = fixture(), lookup = acceptedRequestLookup(row), allowed = row.hostReceipt === receipt
+    try {
+      const value = runningSnapshot()
+      if (row.state === 'terminal') {value.lanes[0]!.progress.phase = 'publication'; delete (value.lanes[0]!.progress as Record<string, unknown>).currentStep}
+      const token = 'acceptance-test-credential'.repeat(2), api = createTestHostStateApi(f.service, () => JSON.stringify({mini: token}))
+      const response = await api.request('/', {method: 'POST', headers: {Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'}, body: JSON.stringify(value)})
+      expect(response.status).toBe(allowed ? 200 : 409)
+      expect(f.writes()).toBe(allowed ? 1 : 0)
+      if (allowed) expect((await f.service.get('mini'))!.lanes[0]!.progress?.requestId).toBe('run-one')
+    } finally {lookup.stop(); f.stop()}
+  }
 })
 
 test('actual host-state HTTP admission distinguishes malformed progress, missing accepted request and authenticated observation', async () => {

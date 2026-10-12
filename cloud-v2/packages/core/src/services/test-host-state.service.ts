@@ -221,7 +221,9 @@ export class TestHostStateService {
     if (snapshot.hostId !== hostId) throw new TestRunError(409, "Host snapshot differs from authenticated controller")
     for (const lane of snapshot.lanes) if (lane.progress) {
       const request = await TestRequestModel.findOne({requestId: lane.progress.requestId, hostId,
-        inputSha256: lane.progress.requestDigest, 'input.laneId': lane.id}).select({requestId: 1})
+        inputSha256: lane.progress.requestDigest, 'input.laneId': lane.id,
+        'hostReceipt.requestId': lane.progress.requestId, 'hostReceipt.hostId': hostId,
+        'hostReceipt.inputSha256': lane.progress.requestDigest}).select({requestId: 1})
         .read('primary').readConcern('majority').setOptions({timeoutMS: 10_000}).lean()
       if (!request) throw new TestRunError(409, 'Routine progress differs from its authenticated accepted request')
     }
