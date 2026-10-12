@@ -1,7 +1,9 @@
 import {expect, spyOn, test} from "bun:test"
 import {createTestHostStateApi} from '../api/internal/test-host-state.api'
 import {TestHostStateModel} from "../models/test-host-state.model"
-import {TestHostStateService} from "./test-host-state.service"
+import {TestRequestModel} from '../models/test-request.model'
+import {hostStateSchema, TestHostStateService} from "./test-host-state.service"
+import {routineProgressSchema} from '../types/routine-progress.types'
 
 function fixture() {
   let row: Record<string, any> | null = null,
@@ -73,6 +75,147 @@ const snapshot = (
   sequence,
   observedAt,
   lanes: [{id: "mac", platform: "ios-on-mac", dispatchMode: "automatic", state: "idle", resources: []}],
+})
+
+const runningSnapshot = (sequence = 1) => {
+  const value = snapshot(1, sequence), requestId = 'run-one'
+  return {...value, lanes: [{...value.lanes[0], state: 'running', activity: {generation: 7,
+    owner: {kind: 'run', id: requestId, requestId}}, progress: {requestId, requestDigest: 'a'.repeat(64),
+    ownerGeneration: 7, controllerIncarnation: value.incarnation, sequence, phase: 'test',
+    currentStep: {id: 'verify-login', index: 1}, completedSteps: 1, totalSteps: 3,
+    startedAt: '2026-10-03T00:58:00Z', lastProgressAt: '2026-10-03T00:59:00Z', observedAt: value.observedAt}}]}
+}
+function acceptedRequestLookup(found: boolean | Record<string, unknown> = true) {
+  const queries: Record<string, unknown>[] = [], projections: unknown[] = [], settings: unknown[] = []
+  const find = spyOn(TestRequestModel, 'findOne').mockImplementation(((query: Record<string, unknown>) => {
+    queries.push(query)
+    const chain = {select(value: unknown) {projections.push(value); return chain},
+      read(value: unknown) {settings.push(value); return chain}, readConcern(value: unknown) {settings.push(value); return chain},
+      setOptions(value: unknown) {settings.push(value); return chain}, async lean() {
+        if (typeof found === 'boolean') return found ? {requestId: 'run-one'} : null
+        const field = (path: string) => path.split('.').reduce<unknown>((value, key) =>
+          value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined, found)
+        return Object.entries(query).every(([path, value]) => field(path) === value) ? {requestId: found.requestId} : null
+      }}
+    return chain
+  }) as any)
+  return {queries, projections, settings, stop() {find.mockRestore()}}
+}
+
+test('optional live progress persists only from the exact accepted request and heartbeat never invents advancement', async () => {
+  const f = fixture(), lookup = acceptedRequestLookup()
+  try {
+    const first = runningSnapshot()
+    await f.service.report(first, 'mini')
+    expect((await f.service.get('mini'))!.lanes[0]!.progress).toEqual(routineProgressSchema.parse(first.lanes[0]!.progress))
+    expect(lookup.queries[0]).toEqual({requestId: 'run-one', hostId: 'mini', inputSha256: 'a'.repeat(64), 'input.laneId': 'mac',
+      'hostReceipt.requestId': 'run-one', 'hostReceipt.hostId': 'mini', 'hostReceipt.inputSha256': 'a'.repeat(64)})
+    expect(lookup.projections).toEqual([{requestId: 1}])
+    expect(lookup.settings).toEqual(['primary', 'majority', {timeoutMS: 10000}])
+    const heartbeat = runningSnapshot(2), observedAt = '2026-10-03T01:00:15Z'
+    heartbeat.observedAt = observedAt; heartbeat.lanes[0]!.progress.observedAt = observedAt
+    f.advance(15000); await f.service.report(heartbeat, 'mini')
+    expect((await f.service.get('mini'))!.lanes[0]!.progress).toMatchObject({observedAt, lastProgressAt: first.lanes[0]!.progress.lastProgressAt})
+    await f.service.report({...snapshot(1, 3), observedAt}, 'mini')
+    expect((await f.service.get('mini'))!.lanes[0]!.progress).toBeUndefined()
+    expect(lookup.queries).toHaveLength(2)
+  } finally {lookup.stop(); f.stop()}
+})
+
+test('live progress rejects stale custody, private fields, inconsistent counts and a different host observation', () => {
+  const original = runningSnapshot()
+  expect(hostStateSchema.safeParse(original).success).toBe(true)
+  const invalid: Array<(value: ReturnType<typeof runningSnapshot>) => void> = [
+    value => {value.lanes[0]!.state = 'idle'},
+    value => {value.lanes[0]!.activity.owner.id = 'different-run'},
+    value => {value.lanes[0]!.activity.generation++},
+    value => {value.lanes[0]!.progress.ownerGeneration++},
+    value => {value.lanes[0]!.progress.controllerIncarnation = 'previous-controller'},
+    value => {value.lanes[0]!.progress.sequence++},
+    value => {value.lanes[0]!.progress.observedAt = '2026-10-03T01:00:01Z'},
+    value => {value.lanes[0]!.progress.requestDigest = 'bad'},
+    value => {value.lanes[0]!.progress.completedSteps = 4},
+    value => {value.lanes[0]!.progress.currentStep.index = 3},
+    value => {value.lanes[0]!.progress.phase = 'framework-teardown'},
+    value => {value.lanes[0]!.progress.lastProgressAt = '2026-10-03T00:57:00Z'},
+    value => {value.lanes[0]!.progress.lastProgressAt = '2026-10-03T01:00:01Z'},
+    value => {Object.assign(value.lanes[0]!.progress, {privateError: 'private phone data'})},
+    value => {Object.assign(value.lanes[0]!.progress.currentStep, {name: 'private step name'})},
+    value => {value.lanes[0]!.progress.currentStep.id = '/private/path'},
+  ]
+  for (const change of invalid) {const value = structuredClone(original); change(value); expect(hostStateSchema.safeParse(value).success).toBe(false)}
+  const author = structuredClone(original)
+  Object.assign(author.lanes[0]!.activity.owner, {kind: 'authoring'}); delete (author.lanes[0]!.activity.owner as Record<string, unknown>).requestId
+  expect(hostStateSchema.safeParse(author).success).toBe(false)
+  const preparation = structuredClone(original)
+  Object.assign(preparation.lanes[0]!.progress, {phase: 'preparation', completedSteps: 0, totalSteps: 0})
+  delete (preparation.lanes[0]!.progress as Record<string, unknown>).currentStep
+  expect(hostStateSchema.safeParse(preparation).success).toBe(true)
+})
+
+test('unrecognized accepted request or digest cannot update the host or another lane', async () => {
+  const f = fixture(), lookup = acceptedRequestLookup(false)
+  try {
+    await f.service.report(snapshot(1, 1), 'mini')
+    for (const requestDigest of ['a'.repeat(64), 'b'.repeat(64)]) {
+      const value = runningSnapshot(2); value.lanes[0]!.progress.requestDigest = requestDigest
+      await expect(f.service.report(value, 'mini')).rejects.toThrow('authenticated accepted request')
+    }
+    expect(f.writes()).toBe(1)
+    expect((await f.service.get('mini'))!.lanes[0]!.progress).toBeUndefined()
+    expect(lookup.queries.map(query => query.inputSha256)).toEqual(['a'.repeat(64), 'b'.repeat(64)])
+    await expect(f.service.report(runningSnapshot(2), 'another-host')).rejects.toThrow('authenticated controller')
+    expect(lookup.queries).toHaveLength(2)
+  } finally {lookup.stop(); f.stop()}
+})
+
+test('routed queued, rejected and cancelled requests need a matching acceptance receipt while accepted terminal publication remains valid', async () => {
+  const routed = {requestId: 'run-one', hostId: 'mini', inputSha256: 'a'.repeat(64), input: {laneId: 'mac'}}
+  const receipt = {requestId: 'run-one', hostId: 'mini', inputSha256: 'a'.repeat(64), acceptedAt: '2026-10-03T00:58:00Z'}
+  const cases = [{...routed, state: 'queued'}, {...routed, state: 'terminal', terminalStatus: 'not-run', hostRejection: receipt},
+    {...routed, state: 'terminal', terminalStatus: 'cancelled', hostCancellation: receipt},
+    {...routed, state: 'accepted', hostReceipt: {...receipt, requestId: 'other-run'}},
+    {...routed, state: 'accepted', hostReceipt: {...receipt, hostId: 'other-host'}},
+    {...routed, state: 'accepted', hostReceipt: {...receipt, inputSha256: 'b'.repeat(64)}},
+    {...routed, state: 'accepted', hostReceipt: receipt}, {...routed, state: 'running', hostReceipt: receipt},
+    {...routed, state: 'terminal', terminalStatus: 'fail', hostReceipt: receipt}]
+  for (const row of cases) {
+    const f = fixture(), lookup = acceptedRequestLookup(row), allowed = 'hostReceipt' in row && row.hostReceipt === receipt
+    try {
+      const value = runningSnapshot()
+      if (row.state === 'terminal') {value.lanes[0]!.progress.phase = 'publication'; delete (value.lanes[0]!.progress as Record<string, unknown>).currentStep}
+      const token = 'acceptance-test-credential'.repeat(2), api = createTestHostStateApi(f.service, () => JSON.stringify({mini: token}))
+      const response = await api.request('/', {method: 'POST', headers: {Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'}, body: JSON.stringify(value)})
+      expect(response.status).toBe(allowed ? 200 : 409)
+      expect(f.writes()).toBe(allowed ? 1 : 0)
+      if (allowed) expect((await f.service.get('mini'))!.lanes[0]!.progress?.requestId).toBe('run-one')
+    } finally {lookup.stop(); f.stop()}
+  }
+})
+
+test('actual host-state HTTP admission distinguishes malformed progress, missing accepted request and authenticated observation', async () => {
+  const f = fixture(), lookup = acceptedRequestLookup()
+  try {
+    const token = 'host-test-credential'.repeat(3), api = createTestHostStateApi(f.service, () => JSON.stringify({mini: token}))
+    const post = (value: unknown, credential = token) => api.request('/', {method: 'POST',
+      headers: {Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json'}, body: JSON.stringify(value)})
+    expect((await post(runningSnapshot())).status).toBe(200)
+    const malformed = runningSnapshot(2); Object.assign(malformed.lanes[0]!.progress, {rawError: 'private device text'})
+    expect((await post(malformed)).status).toBe(400)
+    expect((await post({...runningSnapshot(2), hostId: 'other-host'})).status).toBe(409)
+    expect((await post(runningSnapshot(2), 'wrong-credential')).status).toBe(401)
+    expect(f.writes()).toBe(1); expect(lookup.queries).toHaveLength(1)
+  } finally {lookup.stop(); f.stop()}
+  const missing = fixture(), refused = acceptedRequestLookup(false)
+  try {
+    const token = 'host-test-credential'.repeat(3), api = createTestHostStateApi(missing.service, () => JSON.stringify({mini: token}))
+    const response = await api.request('/', {method: 'POST', headers: {Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'}, body: JSON.stringify(runningSnapshot())})
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({error: 'host_state_conflict', message: 'Routine progress differs from its authenticated accepted request'})
+    expect(missing.writes()).toBe(0)
+  } finally {refused.stop(); missing.stop()}
 })
 
 test("server receipt freshness is independent of clocks and duplicates cannot extend it", async () => {
