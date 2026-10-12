@@ -102,6 +102,13 @@ The `dev` coordinated release:
 Mentra Cloud's existing deployment job is unchanged. The reference stack has no
 independent push trigger, so it cannot drift from the coordinated `dev` release.
 
+To hold the demo on its current release, for example during a week of sales
+demos, set the `ENTERPRISE_DEMO_FROZEN` repository variable to `true`
+(`gh variable set ENTERPRISE_DEMO_FROZEN --body true`). Dev releases then skip
+the reference deployment, and the Private Cloud download channel stays on the
+last release the stack verified. Delete the variable to resume; the next `dev`
+push deploys that release.
+
 The `ghcr.io/mentra-community/mentra-cloud` package is public, so customer registries import
 releases anonymously; no registry credential is needed.
 
