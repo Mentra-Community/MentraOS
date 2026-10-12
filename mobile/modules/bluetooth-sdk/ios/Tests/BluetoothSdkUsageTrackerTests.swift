@@ -261,14 +261,6 @@ final class BluetoothSdkUsageTrackerTests: XCTestCase {
         XCTAssertNil(capped.requestTimedOut(operation: "start stream"))
     }
 
-    func testButtonPressesCarryTheGalleryMode() {
-        let event = tracker.buttonPressed(buttonId: "camera", pressType: "long", galleryModeEnabled: true)
-        XCTAssertEqual(event.name, "bluetooth_sdk_button_pressed")
-        XCTAssertEqual(event.properties["button_id"] as? String, "camera")
-        XCTAssertEqual(event.properties["press_type"] as? String, "long")
-        XCTAssertEqual(event.properties["gallery_mode_enabled"] as? Bool, true)
-    }
-
     func testDetailsAreSanitizedAndCapped() {
         XCTAssertNil(BluetoothSdkUsageTracker.sanitizedDetail("   "))
         XCTAssertEqual(BluetoothSdkUsageTracker.sanitizedDetail(String(repeating: "x", count: 500))?.count, 200)

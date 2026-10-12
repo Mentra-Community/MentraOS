@@ -2614,12 +2614,6 @@ public final class MentraBluetoothSDK {
                 pressType: data["pressType"] as? String ?? "",
                 timestamp: intValue(data["timestamp"])
             )
-            if analytics.isEnabled {
-                let galleryMode = bluetoothStatus.galleryModeEnabled
-                analytics.recordUsage {
-                    $0.buttonPressed(buttonId: event.buttonId, pressType: event.pressType, galleryModeEnabled: galleryMode)
-                }
-            }
             delegate?.mentraBluetoothSDK(self, didReceive: .buttonPress(event))
         case "touch_event":
             delegate?.mentraBluetoothSDK(self, didReceive: .touch(TouchEvent(values: data)))

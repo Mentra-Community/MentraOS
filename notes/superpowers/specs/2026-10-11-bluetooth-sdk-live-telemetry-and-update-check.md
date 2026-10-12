@@ -19,9 +19,9 @@ The customer is identified by `app_identifier` (Android package name, iOS
 bundle identifier), which every SDK event already carries.
 
 Scope is Mentra Live and the SDK only; the glasses software is unchanged.
-Camera, stream, Wi-Fi, hotspot and OTA events only occur on Live. Connection,
-mic and button events fire for whichever glasses are connected and carry
-`glasses_model`. No display telemetry is added.
+Camera, stream, Wi-Fi, hotspot and OTA events only occur on Live. Connection
+and mic events fire for whichever glasses are connected and carry
+`glasses_model`. No display or button-press telemetry is added.
 
 ## Two channels
 
@@ -175,7 +175,6 @@ Each event is one occurrence. Nothing is aggregated on the device.
 | --- | --- | --- |
 | `bluetooth_sdk_photo_taken` | An API `requestPhoto` settles, or a button photo fails on the glasses (`photo_response` with `requestId: "local"`) | `trigger` (`api` / `button`), `success`, `error_code`, `latency_ms` (API only), `photo_size`, `photo_mode`, `compress`, `save_to_gallery`, `transfer_method`, `file_size_bytes` (when the response carries it) |
 | `bluetooth_sdk_video_recorded` | A recording ends (`recording_stopped`) or fails (failure `video_recording_status`) | `trigger` (`api` / `button`), `success`, `error_code`, `duration_ms`, `width`, `height`, `fps` (API overrides only), `save_to_gallery`, `max_duration_minutes`, `stopped_by_app` |
-| `bluetooth_sdk_button_pressed` | The glasses report a button press | `button_id`, `press_type`, `gallery_mode_enabled` |
 | `bluetooth_sdk_stream_started` | `startStream` resolves or rejects | `success`, `error_code`, `protocol` (`rtmp` / `srt` / `whip` / `unknown`), `width`, `height`, `fps`, `bitrate`, `capture_audio`, `glasses_network` (`wifi` / `hotspot`), `latency_ms` |
 | `bluetooth_sdk_stream_ended` | The terminal `stream_status` for that stream | `protocol`, `duration_ms`, `end_state` (`stopped` / `reconnect_failed` / `error`), `stopped_by_app`, `reconnect_attempts`, `error_code`, plus the last `bitrate`, `fps`, `dropped_frames` and `temperature_c` when the stream reported stats |
 | `bluetooth_sdk_glasses_disconnected` | A connection that emitted `bluetooth_sdk_glasses_connected` ends | `session_duration_ms`, `disconnect_reason` (`user_disconnect` / `forget` / `cancel` / `bluetooth_off` / `link_lost`), `battery_level_at_connect`, `battery_level_at_disconnect`, `charging` |
@@ -271,8 +270,8 @@ The analytics flag is described as controlling usage telemetry.
   - Status for each channel and the minimum-version tier.
   - The PostHog capture payload, using mocked `fetch`.
 - **React Native (Jest):** `sdk_update_notice` produces one `console.warn`.
-- **Device:** a Mentra Live run covering an API photo, a camera button press, a
-  video recording, a stream start and stop, and a disconnect. Each expected event is
+- **Device:** a Mentra Live run covering an API photo, a video recording, a
+  stream start and stop, and a disconnect. Each expected event is
   confirmed in PostHog.
 
 ## Rollout prerequisites

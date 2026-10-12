@@ -11,7 +11,6 @@ import Foundation
 struct BluetoothSdkUsageTracker {
     static let eventPhotoTaken = "bluetooth_sdk_photo_taken"
     static let eventVideoRecorded = "bluetooth_sdk_video_recorded"
-    static let eventButtonPressed = "bluetooth_sdk_button_pressed"
     static let eventStreamStarted = "bluetooth_sdk_stream_started"
     static let eventStreamEnded = "bluetooth_sdk_stream_ended"
     static let eventMicSession = "bluetooth_sdk_mic_session"
@@ -109,17 +108,6 @@ struct BluetoothSdkUsageTracker {
         var properties: [String: Any] = ["trigger": Self.triggerButton]
         Self.putOutcome(&properties, errorCode ?? "photo_request_failed")
         return AnalyticsEvent(name: Self.eventPhotoTaken, properties: properties)
-    }
-
-    func buttonPressed(buttonId: String, pressType: String, galleryModeEnabled: Bool) -> AnalyticsEvent {
-        AnalyticsEvent(
-            name: Self.eventButtonPressed,
-            properties: [
-                "button_id": buttonId,
-                "press_type": pressType,
-                "gallery_mode_enabled": galleryModeEnabled,
-            ]
-        )
     }
 
     /// Records the API parameters of a recording so its end event can report them.

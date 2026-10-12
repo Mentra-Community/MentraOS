@@ -1849,19 +1849,16 @@ class MentraBluetoothSdk private constructor(
     private fun dispatchBridgeEvent(eventName: String, data: Map<String, Any>) {
         when (eventName) {
             "log" -> dispatchToListeners { it.onLog(data["message"] as? String ?: data.toString()) }
-            "button_press" -> {
-                val event =
-                    ButtonPressEvent(
-                        buttonId = data["buttonId"] as? String ?: "",
-                        pressType = data["pressType"] as? String ?: "",
-                        timestamp = (data["timestamp"] as? Number)?.toLong(),
+            "button_press" ->
+                dispatchToListeners {
+                    it.onButtonPress(
+                        ButtonPressEvent(
+                            buttonId = data["buttonId"] as? String ?: "",
+                            pressType = data["pressType"] as? String ?: "",
+                            timestamp = (data["timestamp"] as? Number)?.toLong(),
+                        )
                     )
-                if (analytics.isEnabled) {
-                    val galleryMode = getRawBluetoothStatus().galleryModeEnabled
-                    analytics.recordUsage { buttonPressed(event.buttonId, event.pressType, galleryMode) }
                 }
-                dispatchToListeners { it.onButtonPress(event) }
-            }
             "touch_event" -> {
                 val event = TouchEvent(data)
                 dispatchToListeners { it.onTouch(event) }

@@ -85,16 +85,6 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
             },
         )
 
-    fun buttonPressed(buttonId: String, pressType: String, galleryModeEnabled: Boolean): AnalyticsEvent =
-        AnalyticsEvent(
-            EVENT_BUTTON_PRESSED,
-            mapOf(
-                "button_id" to buttonId,
-                "press_type" to pressType,
-                "gallery_mode_enabled" to galleryModeEnabled,
-            ),
-        )
-
     /** Records the API parameters of a recording so its end event can report them. */
     fun videoRequested(requestId: String, width: Int, height: Int, fps: Int, save: Boolean, maxDurationMinutes: Int) {
         recordings[requestId] =
@@ -348,7 +338,6 @@ internal class BluetoothSdkUsageTracker(private val maxRequestTimeouts: Int = MA
     companion object {
         const val EVENT_PHOTO_TAKEN = "bluetooth_sdk_photo_taken"
         const val EVENT_VIDEO_RECORDED = "bluetooth_sdk_video_recorded"
-        const val EVENT_BUTTON_PRESSED = "bluetooth_sdk_button_pressed"
         const val EVENT_STREAM_STARTED = "bluetooth_sdk_stream_started"
         const val EVENT_STREAM_ENDED = "bluetooth_sdk_stream_ended"
         const val EVENT_MIC_SESSION = "bluetooth_sdk_mic_session"

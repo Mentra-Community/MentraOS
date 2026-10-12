@@ -245,8 +245,6 @@ Each usage occurrence below is one event, sent when it happens:
   or failed. Carries `trigger`, `success`, `error_code`, `duration_ms` (phone
   clock, start to stop status), the requested resolution and frame rate,
   gallery save, maximum duration, and `stopped_by_app`.
-- `bluetooth_sdk_button_pressed`: `button_id`, `press_type`, and
-  `gallery_mode_enabled`.
 - `bluetooth_sdk_stream_started` / `bluetooth_sdk_stream_ended`: a
   `startStream` call settled, and that stream later ended. `protocol` comes
   from the URL scheme only (`rtmp`, `srt`, `whip`, or `unknown`). The start

@@ -243,14 +243,6 @@ class BluetoothSdkUsageTrackerTest {
         assertThat(capped.requestTimedOut("start stream")).isNull()
     }
 
-    @Test
-    fun `button presses carry the gallery mode`() {
-        assertThat(tracker.buttonPressed("camera", "long", galleryModeEnabled = true).properties)
-            .containsEntry("button_id", "camera")
-            .containsEntry("press_type", "long")
-            .containsEntry("gallery_mode_enabled", true)
-    }
-
     private fun stream(
         state: String,
         terminal: Boolean? = null,
