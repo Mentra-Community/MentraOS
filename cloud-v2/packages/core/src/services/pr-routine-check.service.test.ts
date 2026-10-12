@@ -26,7 +26,7 @@ function fixture() {
     async predecessors(number, except) {return [...stored.values()].filter(row => row.payload.context.number === number && row.gateId !== except).map(row => row.gateId)},
     async eventsDue() {return []}, async eventSettled() {}, async event(id, hash) {if (events.has(id) && events.get(id) !== hash) throw Error('conflict'); events.set(id, hash)},
   }
-  let builds: any[] = [], history: any[] = [], failSubmit = false, dispatchFailure: boolean | undefined
+  let builds: any[] = [], history: any[] = [], failSubmit = false, failHistory = false, failCancellation: string | undefined, holdCancellation: Promise<void> | undefined, dispatchFailure: boolean | undefined
   const buildCalls: string[] = []
   let producerReceipt: {id: number; failed: boolean} | undefined, findCalls = 0
   const previews: any[] = [], rerunSubmits: any[] = []
@@ -41,18 +41,18 @@ function fixture() {
       if (!requests.has(selection.requestId)) requests.set(selection.requestId, {requestId: selection.requestId, fleetSelection: selection,
         fleetBinding: {hostId: 'testing-air-1', laneId: 'android'}, state: 'running'})
       return requests.get(selection.requestId)},
-    async cancel(id) {cancellations.push(id); return {} as any},
+    async cancel(id) {cancellations.push(id); if (holdCancellation) await holdCancellation; if (id === failCancellation) throw Error('provider-sensitive-cancel-error'); return {} as any},
   }, {async catalog(revision) {return {routineRevision: revision!, routines: [{routineId: 'login', platforms: ['android']}]}}},
   {async getExact() {return {routineId: 'login', platform: 'android', definitionRevision: 'a'.repeat(40), definitionSha256: requestInputDigest(definition),
     routineSource: testRoutineSource(), definition} as any}}, {async inventory() {return structuredClone(builds)}},
   {async get(id) {return requests.get(id) ?? null}}, {async summary(id) {if (!results.has(id)) throw new TestRunError(404, 'missing'); return results.get(id)}},
   {async create() {return {} as any}, async bind() {return {} as any}, async complete() {return {} as any}},
-  {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async history() {return {original: {} as any, attempts: history, nextBefore: null}}},
+  {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
   {async get() {return null}}, () => now, {async resolve() {resolveCount++; return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
   return {get service() {return service}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
-    failSubmit(value = true) {failSubmit = value}, history(value: any[]) {history = value},
+    failSubmit(value = true) {failSubmit = value}, failHistory(value = true) {failHistory = value}, failCancellation(value?: string) {failCancellation = value}, holdCancellation(value?: Promise<void>) {holdCancellation = value}, history(value: any[]) {history = value},
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
     get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
     inventory(value: any[]) {builds = value},
@@ -188,6 +188,64 @@ test('timeout ends check but unsettled custody blocks the next rerun', async () 
   expect(f.gate().attempt.conclusion).toBe('timed_out'); expect(f.gate().attempt.members[0]!.settled).toBe(false)
   await expect(f.service.control(control(f, 'unsafe-rerun'))).rejects.toThrow('ownership is still settling')
   expect(f.gate().attempt.generation).toBe(1)
+})
+test('timeout remains terminal across cancellation/history errors and restart while ordinary containment retries', async () => {
+  for (const failure of ['cancel', 'history'] as const) {
+    const f = fixture(); await f.intake(); f.build(); await f.drain(); const requestId = f.gate().attempt.members[0]!.requestId!;
+    if (failure === 'cancel') f.failCancellation(requestId); else f.failHistory();
+    f.outage(); f.advance(3 * 3600000); await f.service.tick();
+    expect(f.gate().attempt.conclusion).toBe('timed_out'); expect(f.gate().attempt.members[0]!.settled).toBe(false);
+    expect(f.gate().reporting.intended!.payload).toMatchObject({status: 'completed', conclusion: 'timed_out'});
+    expect(JSON.stringify(f.gate().reporting.intended!.payload)).not.toContain('provider-sensitive');
+    const first = f.cancellations.length; f.restart(); f.outage(false); await f.drain(2);
+    expect(f.cancellations.length).toBeGreaterThan(first); expect(f.checkPayloads.at(-1)!.conclusion).toBe('timed_out');
+    expect(f.checkPayloads.at(-1)!.output.summary).toContain('containment must settle before a rerun');
+    f.failCancellation(); f.failHistory(false);
+    await expect(f.service.control(control(f, `unsafe-${failure}-rerun`))).rejects.toThrow('ownership is still settling');
+    expect(f.gate().attempt.generation).toBe(1);
+  }
+})
+
+test('deadline verdict and public intent persist before an outstanding cancellation await', async () => {
+  const f = fixture(); await f.intake(); f.build(); await f.drain();
+  let release!: () => void; f.holdCancellation(new Promise<void>(resolve => {release = resolve})); f.advance(3 * 3600000);
+  const reconcile = f.service.reconcile(f.gate().gateId);
+  try {
+    for (let i = 0; i < 20 && !f.cancellations.length; i++) await Promise.resolve();
+    expect(f.cancellations.length).toBeGreaterThan(0);
+    expect(f.gate().attempt.conclusion).toBe('timed_out'); expect(f.checkPayloads.at(-1)!.conclusion).toBe('timed_out');
+    expect(f.gate().attempt.members[0]!.settled).toBe(false);
+  } finally {release(); await reconcile}
+})
+
+test('coverage replacement settles never-admitted members but keeps mixed admitted custody fenced', async () => {
+  for (const mixed of [false, true]) {
+    const f = fixture(); await f.intake(); await f.drain(2);
+    if (mixed) {f.build(); await f.drain(4); const member = structuredClone(f.gate().attempt.members[0]!);
+      delete member.requestId; delete member.originalRequestId; delete member.selection; member.memberId = 'waiting.android'; member.routineId = 'waiting'; member.status = 'waiting for app build'; member.settled = false;
+      f.gate().attempt.members.push(member);
+    }
+    f.context.baseRef = 'staging'; await f.drain(2);
+    const retired = f.gate().retired[0]!;
+    expect(retired.members.filter(member => !member.requestId).every(member => member.settled && member.status === 'not-run')).toBe(true);
+    if (mixed) {
+      expect(retired.members.find(member => member.requestId)!.settled).toBe(false);
+      expect(f.gate().attempt.members).toHaveLength(0);
+      const request = f.requests.get(retired.members.find(member => member.requestId)!.requestId!); request.state = 'terminal'; request.terminalStatus = 'cancelled'; request.dispatchCompletion = {disposition: 'clean'};
+    }
+    f.build(); await f.drain(5); expect(f.gate().coverageGeneration).toBe(2);
+    expect(f.gate().attempt.members).toHaveLength(1); expect(f.gate().attempt.members[0]!.requestId).toBeDefined();
+    expect(f.submissions.some(value => value.selection.requestId === f.gate().attempt.members[0]!.requestId)).toBe(true);
+  }
+})
+
+test('cancellation failure on one linked child does not starve the other children or original', async () => {
+  const f = fixture(); await f.intake(); f.build(); await f.drain(); const requestId = f.gate().attempt.members[0]!.requestId!;
+  for (const child of ['child-a', 'child-b']) f.requests.set(child, {requestId: child, fleetBinding: {hostId: 'testing-air-1'}, state: 'running'});
+  f.history([{requestId: 'child-a', attemptNumber: 1}, {requestId: 'child-b', attemptNumber: 2}]); f.failCancellation('child-a');
+  await f.service.control(control(f, 'cancel-independent-children', 'cancel')); await f.drain(1);
+  expect(f.cancellations).toContain('child-a'); expect(f.cancellations).toContain('child-b'); expect(f.cancellations).toContain(requestId);
+  expect(f.gate().attempt.conclusion).toBeUndefined(); expect(f.gate().attempt.members[0]!.settled).toBe(false);
 })
 test('cancel reaches linked child and requires its independent custody receipt', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f)

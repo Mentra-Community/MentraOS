@@ -54,7 +54,7 @@ export function routineCheckPayload(gate: PrRoutineCheck, now: number): CheckPay
   })
   const coverage = attempt.members.length ? `Selected ${attempt.members.length} routine/platform member(s) at ${gate.routineRevision ?? 'pending source'}.`
     : gate.selectionError ?? (gate.context.labels.length ? 'Preparing selected routine coverage.' : 'No routine tests requested.')
-  const stopping = attempt.cancellation && !done ? '\nCancellation requested; ordinary cleanup and containment are still settling.' : ''
+  const stopping = attempt.cancellation && (!done || attempt.conclusion === 'timed_out') ? '\nCancellation requested; ordinary cleanup and containment must settle before a rerun.' : ''
   const summary = [coverage, gate.selectionError ? `Selection failed: ${gate.selectionError}` : '', stopping,
     rows.length ? '\n| Routine | Lane | Result | Current activity |\n|---|---|---|---|\n' + rows.join('\n') : '',
     `\nAccepted ${attempt.acceptedAt}; deadline ${attempt.deadline}.`, `\n[Results and diagnostics](${resultsUrl(gate)})
@@ -127,7 +127,7 @@ export class PrRoutineCheckService {
       if (input.kind === 'cancel' && !gate.attempt.conclusion) gate.attempt.cancellation ??= {kind: 'cancel', requestedAt: iso(this.now())}
       if (input.kind === 'rerun' && gate.attempt.conclusion) {
         await this.latestMembers(gate.attempt)
-        if (gate.attempt.members.some(member => member.requestId && !member.settled)) {
+        if (gate.attempt.members.some(member => member.containmentPending || member.requestId && !member.settled)) {
           gate.controls = gate.controls.filter(control => control.id !== input.deliveryId)
           await this.rows.save(claimed, gate, new Date(this.now()))
           throw new TestRunError(409, 'Previous routine ownership is still settling')
@@ -269,32 +269,38 @@ export class PrRoutineCheckService {
   }
   private async cancel(attempt: PrRoutineAttempt) {
     for (const member of attempt.members) delete member.containmentPending
+    let failed = false
+    const contain = async (member: PrRoutineMember, operation: () => Promise<void>) => {
+      try {await operation()} catch {member.containmentPending = true; failed = true}
+    }
     // Cancel every accepted linked child, including one admitted outside this check.
-    for (const member of attempt.members.filter(member => member.originalRequestId)) {
+    await Promise.all(attempt.members.filter(member => member.originalRequestId).map(member => contain(member, async () => {
       const parent = attempt.suiteId ? {suiteId: attempt.suiteId} : {requestId: member.originalRequestId!}
       let before: number | undefined
       for (let page = 0; page < 4; page++) {
         const history = await this.reruns.history(parent, attempt.suiteId ? member.memberId : member.originalRequestId!, before, 25)
-        for (const child of history.attempts) if (child.requestId && child.requestId !== member.requestId) {
-          await this.jobs.cancel(child.requestId, {reason: `PR routine check ${attempt.cancellation!.kind}`})
-          const request = await this.requests.get(child.requestId) as unknown as StoredRoutineJob | null
-          if (request && !request.dispatchCompletion && !!request.fleetBinding && !request.hostRejection && !request.preparationCancellation && !request.preparationRejection)
+        for (const child of history.attempts) if (child.requestId && child.requestId !== member.requestId) await contain(member, async () => {
+          await this.jobs.cancel(child.requestId!, {reason: `PR routine check ${attempt.cancellation!.kind}`})
+          const request = await this.requests.get(child.requestId!) as unknown as StoredRoutineJob | null
+          if (request && !request.dispatchCompletion && !!request.fleetBinding && !(request.hostRejection && !request.hostReceipt) && !request.preparationCancellation && !request.preparationRejection)
             member.containmentPending = true
-        }
+        })
         if (!history.nextBefore) break
         if (page === 3) throw new TestRunError(503, 'Linked cancellation history exceeds its bounded page')
         before = history.nextBefore
       }
-    }
-    for (const member of attempt.members) if (member.requestId && !member.settled) {
-      try {await this.jobs.cancel(member.requestId, {reason: `PR routine check ${attempt.cancellation!.kind}`})}
+    })))
+    await Promise.all(attempt.members.filter(member => member.requestId && !member.settled).map(member => contain(member, async () => {
+      try {await this.jobs.cancel(member.requestId!, {reason: `PR routine check ${attempt.cancellation!.kind}`})}
       catch (error) {if (!(error instanceof TestRunError && error.status === 404)) throw error}
       await this.observe(member)
-    }
-    for (const member of attempt.members) {
-      if (member.requestId && !await this.requests.get(member.requestId)) {member.settled = true; member.status = 'not-run'}
+    })))
+    await Promise.all(attempt.members.map(member => contain(member, async () => {
+      if (!member.requestId || !await this.requests.get(member.requestId)) {member.settled = true; member.status = 'not-run'}
       if (member.containmentPending) member.settled = false
-    }
+    })))
+    for (const member of attempt.members) if (member.containmentPending) member.settled = false
+    if (failed) throw new TestRunError(503, 'Ordinary cancellation or custody observation is unavailable; containment will retry')
   }
   private async freezeAdmissions(gate: PrRoutineCheck) {
     const attempt = gate.attempt
@@ -424,10 +430,26 @@ export class PrRoutineCheckService {
   async reconcile(gateId: string, suppliedContext?: PrRoutineContext) {
     const row = await this.rows.claim(gateId, new Date(this.now()))
     if (!row) return
-    const gate = structuredClone(row.payload)
+    let gate = structuredClone(row.payload)
     let nextAt = this.now() + 15_000
+    const expire = () => {
+      if (!gate.attempt.conclusion && this.now() >= Date.parse(gate.attempt.deadline)) {
+        gate.attempt.cancellation ??= {kind: 'timeout', requestedAt: iso(this.now())}
+        gate.attempt.conclusion = 'timed_out'; gate.attempt.finishedAt = iso(this.now())
+        return true
+      }
+      return false
+    }
+    if (expire()) {
+      const payload = routineCheckPayload(gate, this.now())
+      gate.reporting.intended = {revision: row.revision + 1, payload, digest: digest(payload)}
+      if (!await this.rows.save(row, gate, new Date(this.now()))) return
+      await this.deliver(gateId)
+      const retained = await this.rows.claim(gateId, new Date(this.now()))
+      if (!retained) return
+      Object.assign(row, retained); gate = structuredClone(retained.payload)
+    }
     try {
-      if (!gate.attempt.conclusion && this.now() >= Date.parse(gate.attempt.deadline)) gate.attempt.cancellation ??= {kind: 'timeout', requestedAt: iso(this.now())}
       let context = gate.context
       try {context = suppliedContext ?? await this.github.context(gate.context.number)} catch (error) {if (!gate.attempt.cancellation) throw error}
       if (context.headSha !== gate.headSha || !context.open) {
@@ -483,22 +505,25 @@ export class PrRoutineCheckService {
             if (gate.attempt.members.every(member => member.settled && terminalStatuses.includes(member.status) &&
                 (member.status !== 'pass' || member.publicationComplete))) {
               if (gate.attempt.suiteId && !gate.attempt.rerun) await this.suites.complete(gate.attempt.suiteId, {finishedAt: iso(this.now())})
-              gate.attempt.conclusion = gate.attempt.members.every(member => member.status === 'pass' && member.publicationComplete) ? 'success' : 'failure'
-              gate.attempt.finishedAt = iso(this.now())
+              if (!expire()) {
+                gate.attempt.conclusion = gate.attempt.members.every(member => member.status === 'pass' && member.publicationComplete) ? 'success' : 'failure'
+                gate.attempt.finishedAt = iso(this.now())
+              }
             }
           }
         }
       }
-      const payload = routineCheckPayload(gate, this.now()), hash = digest(payload)
-      if (gate.reporting.deliveredDigest !== hash && (this.now() >= Date.parse(gate.reporting.nextAt) || gate.attempt.conclusion || gate.attempt.cancellation)) {
-        gate.reporting.intended = {revision: row.revision + 1, payload, digest: hash}
-        // Save intent before external delivery; a restarted Core retries the same identity/payload.
-        if (!await this.rows.save(row, gate, new Date(this.now()))) return
-        return this.deliver(gateId)
-      }
     } catch (error) {
       gate.reporting.error = 'Routine check reconciliation is unavailable; retained work will retry.'
       nextAt = this.now() + 30_000
+    }
+    expire()
+    const payload = routineCheckPayload(gate, this.now()), hash = digest(payload)
+    if (gate.reporting.deliveredDigest !== hash && (this.now() >= Date.parse(gate.reporting.nextAt) || gate.attempt.conclusion || gate.attempt.cancellation)) {
+      gate.reporting.intended = {revision: row.revision + 1, payload, digest: hash}
+      // Save reporting intent even when containment observation failed. A deadline never releases native custody.
+      if (!await this.rows.save(row, gate, new Date(this.now()))) return
+      return this.deliver(gateId)
     }
     await this.rows.save(row, gate, new Date(nextAt))
   }
