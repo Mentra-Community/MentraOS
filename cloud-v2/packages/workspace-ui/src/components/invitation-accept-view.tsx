@@ -13,7 +13,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { InvitationPreview } from "@mentra/workspace-contract";
 import { CircleAlert, MailIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { AcceptedInvitation, WorkspaceApi } from "../api";
 import { errorMessage, isInvitationGone, WorkspaceApiError } from "../errors";
 import { formatDate } from "../lib/format";
@@ -96,6 +96,11 @@ export function InvitationAcceptView({
 }) {
   const preview = useQuery(invitationPreviewQuery(api, token));
   const accept = useAcceptInvitation(api, { token }, { onAccepted: (accepted) => onAccepted(accepted.workspaceId), onGone });
+  // The look-up can say so too: tell the host once per answer, so it can forget the link.
+  const lookupGone = preview.isError && isInvitationGone(preview.error) ? preview.error : null;
+  useEffect(() => {
+    if (lookupGone) onGone?.();
+  }, [lookupGone]);
 
   return (
     <InvitationAcceptCard

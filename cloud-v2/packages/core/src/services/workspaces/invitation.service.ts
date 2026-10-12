@@ -89,6 +89,9 @@ const INVITATIONS_PER_PERSON_PER_HOUR = 100
 const MAX_PENDING_INVITATIONS = 200
 /** The most invitations listed to the person they are addressed to (one per workspace can be pending). */
 const MAX_INVITATIONS_FOR_PERSON = 100
+/** Pending rows read per batch while looking for those; and the most read in all, so one request stays bounded. */
+const INVITATION_SCAN_BATCH = 100
+const MAX_INVITATIONS_SCANNED = 1000
 
 /** An invitation as listed to administrators. It never includes the token or its hash. */
 export interface InvitationRow {
@@ -297,7 +300,8 @@ export async function peekInvitation(token: string): Promise<InvitationPreview |
 /**
  * The invitations addressed to the signed-in person that they can accept now, newest first: pending,
  * not expired, to an active workspace they are not already in, from an inviter whose authority still
- * grants the role. Matched on the person's verified email, case aside; never carries a token.
+ * grants the role. Matched on the person's verified email, case aside; never carries a token. At most
+ * 100, found among the newest 1,000 pending rows for the address.
  *
  * Refused like accepting: a key or an actor with no id (`forbidden`), an unverified or missing email
  * (`email_unverified`), a deleted account (`account_deleted`).
@@ -310,30 +314,56 @@ export async function listInvitationsForPerson(actor: Actor & {kind: "user"}): P
   }
   if (await isDeletedAccountId(actor.mentraUserId)) fail("account_deleted", "this account is deleted")
 
-  const rows = await WorkspaceInvitationModel.find({email, status: "pending", expiresAt: {$gt: new Date()}})
-    .sort({_id: -1})
-    .limit(MAX_INVITATIONS_FOR_PERSON)
-    .lean<WorkspaceInvitationRow[]>()
-  if (rows.length === 0) return []
+  // Read newest first in batches and keep what can be accepted: the cap applies to those, so unusable
+  // rows (a deleted workspace, one they are in, a lapsed inviter) never crowd out older usable ones.
+  const now = new Date()
+  const live: Array<{row: WorkspaceInvitationRow; workspaceName: string}> = []
+  let before: unknown = null
+  for (let scanned = 0; scanned < MAX_INVITATIONS_SCANNED && live.length < MAX_INVITATIONS_FOR_PERSON; ) {
+    const filter: Record<string, unknown> = {email, status: "pending", expiresAt: {$gt: now}}
+    if (before !== null) filter._id = {$lt: before}
+    const rows = await WorkspaceInvitationModel.find(filter)
+      .sort({_id: -1})
+      .limit(INVITATION_SCAN_BATCH)
+      .lean<Array<WorkspaceInvitationRow & {_id: unknown}>>()
+    if (rows.length === 0) break
+    scanned += rows.length
+    before = rows[rows.length - 1]!._id
+    for (const entry of await acceptableFor(actor.mentraUserId, rows)) {
+      if (live.length < MAX_INVITATIONS_FOR_PERSON) live.push(entry)
+    }
+    if (rows.length < INVITATION_SCAN_BATCH) break
+  }
+  const inviters = await inviterEmails(live.map(entry => entry.row))
+  return live.map(({row, workspaceName}) => toPreview(row, workspaceName, inviters.get(row.invitationId) ?? null))
+}
+
+/**
+ * Of `rows` (pending, unexpired, addressed to the person), in order, those they can accept: the
+ * workspace is active, they are not already in it, and the inviter's authority still grants the role.
+ */
+async function acceptableFor(
+  mentraUserId: string,
+  rows: WorkspaceInvitationRow[],
+): Promise<Array<{row: WorkspaceInvitationRow; workspaceName: string}>> {
   const workspaceIds = [...new Set(rows.map(row => row.workspaceId))]
   const [workspaces, memberships] = await Promise.all([
     WorkspaceModel.find({workspaceId: {$in: workspaceIds}, status: "active"}).select({workspaceId: 1, name: 1}).lean(),
-    WorkspaceMembershipModel.find({workspaceId: {$in: workspaceIds}, mentraUserId: actor.mentraUserId, status: "active"})
+    WorkspaceMembershipModel.find({workspaceId: {$in: workspaceIds}, mentraUserId, status: "active"})
       .select({workspaceId: 1})
       .lean(),
   ])
   const names = new Map(workspaces.map(workspace => [workspace.workspaceId, workspace.name]))
   // Accepting into a workspace they are already in is refused (`already_member`), so it is not offered.
   const joined = new Set(memberships.map(membership => membership.workspaceId))
-  const live: Array<{row: WorkspaceInvitationRow; workspaceName: string}> = []
+  const acceptable: Array<{row: WorkspaceInvitationRow; workspaceName: string}> = []
   for (const row of rows) {
     const workspaceName = names.get(row.workspaceId)
     if (workspaceName === undefined || joined.has(row.workspaceId)) continue
     if (!(await inviterStillAuthorizes(null, row))) continue
-    live.push({row, workspaceName})
+    acceptable.push({row, workspaceName})
   }
-  const inviters = await inviterEmails(live.map(entry => entry.row))
-  return live.map(({row, workspaceName}) => toPreview(row, workspaceName, inviters.get(row.invitationId) ?? null))
+  return acceptable
 }
 
 /**

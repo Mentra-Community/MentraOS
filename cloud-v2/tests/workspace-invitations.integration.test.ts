@@ -1451,6 +1451,32 @@ describe("listInvitationsForPerson", () => {
     expect(items.map(item => item.invitationId)).toEqual([kept.invitationId])
   })
 
+  test("unusable newer rows never crowd out an older usable one: the cap applies after filtering", async () => {
+    const ws = await newWorkspace("Older but valid")
+    const valid = await invite(ws, "dev@example.test")
+    // 150 newer pending rows for the same address, to workspaces that no longer exist: more than a batch,
+    // and more than the cap.
+    await WorkspaceInvitationModel.insertMany(
+      Array.from({length: 150}, (_, i) => ({
+        invitationId: `winv_gone_${i}`,
+        workspaceId: `ws_gone_${i}`,
+        email: "dev@example.test",
+        role: "member",
+        tokenHash: sha256(`gone-${i}`),
+        status: "pending",
+        invitedByAuthority: "system",
+        invitedByMembershipId: null,
+        invitedByMentraUserId: null,
+        invitedByEmail: null,
+        expiresAt: new Date(Date.now() + DAY_MS),
+      })),
+    )
+
+    const items = await listInvitationsForPerson(user("mu_dev", {email: "dev@example.test"}))
+
+    expect(items.map(item => item.invitationId)).toEqual([valid.invitationId])
+  })
+
   test("an inviter whose role no longer grants the invited role is left out, as peek and accept refuse it", async () => {
     const ws = await newWorkspace()
     const adminMembership = (await getActiveMembership(ws, "mu_admin"))!.membershipId
