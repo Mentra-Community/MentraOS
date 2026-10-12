@@ -12,8 +12,9 @@
  * - `kind`: `admin_portal`, `workspace_portal`, `console` (confidential
  *   clients that authenticate with `client_secret_post`) or `cli` (a public
  *   client with loopback redirects). At most one client of each kind.
- * - `secretEnv`: the variable holding a confidential client's secret (at
- *   least 32 characters). Secrets never sit in the JSON itself.
+ * - `secretEnv`: the variable holding a confidential client's secret, named
+ *   `CLOUD_CORE_OIDC_<CLIENT>_CLIENT_SECRET` (at least 32 characters).
+ *   Secrets never sit in the JSON itself.
  * - `redirectUris`: matched exactly. `postLogoutRedirectUris` is optional.
  * - The Developer Console and the CLI get refresh tokens; the portals do not.
  *
@@ -35,7 +36,8 @@ const DEFAULT_NAMES: Record<ClientKind, string> = {
 }
 
 const CLIENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
-const ENV_NAME = /^[A-Z][A-Z0-9_]{0,127}$/
+/** Client secrets live in variables named `CLOUD_CORE_OIDC_<CLIENT>_CLIENT_SECRET`, which the configuration contract classifies. */
+const ENV_NAME = /^CLOUD_CORE_OIDC_[A-Z0-9_]{1,64}_CLIENT_SECRET$/
 const MIN_SECRET_LENGTH = 32
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"])
 
@@ -101,7 +103,7 @@ function parseClient(value: unknown, index: number): OidcClient {
 
   let secretEnv: string | null = null
   if (confidential) {
-    if (typeof entry.secretEnv !== "string" || !ENV_NAME.test(entry.secretEnv)) fail(`${label} secretEnv must name an environment variable`)
+    if (typeof entry.secretEnv !== "string" || !ENV_NAME.test(entry.secretEnv)) fail(`${label} secretEnv must name a CLOUD_CORE_OIDC_<CLIENT>_CLIENT_SECRET variable`)
     secretEnv = entry.secretEnv
   } else if (entry.secretEnv !== undefined) {
     fail(`${label} is a public client and takes no secretEnv`)

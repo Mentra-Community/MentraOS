@@ -31,6 +31,7 @@ import type {KoaContextWithOIDC} from "oidc-provider"
 import Provider, {errors, interactionPolicy} from "oidc-provider"
 
 import {loadAccount} from "./account"
+import {findClient} from "./clients"
 import {CORE_API_RESOURCE, OIDC_ROUTES, OIDC_SCOPES} from "./config"
 import {OIDC_TOKEN_ALG, oidcSigningJwk} from "./keys"
 import {MongoAdapter} from "./mongo-adapter"
@@ -63,6 +64,37 @@ const ERROR_TEXT: Record<string, string> = {
   invalid_redirect_uri: "This site is not registered to sign in with Mentra.",
   invalid_request: "The sign-in request was not valid. Start again from the site you were using.",
   session_not_found: "This sign-in has expired. Start again from the site you were using.",
+}
+
+/** The scopes Core grants a first-party client: what it asked for, among the scopes Core knows. */
+const GRANTABLE_SCOPES = new Set(["openid", "email", "profile"])
+
+/**
+ * The grant for this authorization. A grant the person already has is reused.
+ * A first-party client is granted the scopes it asked for without a consent
+ * screen; any other client gets no implicit grant, so the consent prompt runs.
+ */
+export async function firstPartyGrant(ctx: KoaContextWithOIDC) {
+  const {oidc} = ctx
+  const clientId = oidc.client!.clientId
+  const existingId = (oidc.result?.consent as {grantId?: string} | undefined)?.grantId || oidc.session!.grantIdFor(clientId)
+  if (existingId) {
+    const existing = await oidc.provider.Grant.find(existingId)
+    if (existing) return existing
+  }
+  const client = await findClient(clientId)
+  if (!client?.firstParty || !oidc.session?.accountId) return undefined
+  const requested = String(oidc.params?.scope ?? "")
+    .split(" ")
+    .filter(scope => GRANTABLE_SCOPES.has(scope))
+    .join(" ")
+  const grant = new oidc.provider.Grant({accountId: oidc.session.accountId, clientId})
+  if (requested) {
+    grant.addOIDCScope(requested)
+    grant.addResourceScope(CORE_API_RESOURCE, requested)
+  }
+  await grant.save()
+  return grant
 }
 
 /** The provider's configuration (exported for tests that inspect it). */
@@ -156,6 +188,7 @@ export async function providerConfiguration(settings: ProviderSettings) {
         },
       },
     },
+    loadExistingGrant: firstPartyGrant,
     rotateRefreshToken: true,
     issueRefreshToken: async (_ctx: unknown, client: {grantTypeAllowed(type: string): boolean}) => client.grantTypeAllowed("refresh_token"),
     // Refresh tokens outlive the sign-in site's session: signing out there leaves every site and the CLI signed in.
