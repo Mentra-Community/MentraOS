@@ -1,6 +1,8 @@
 /* eslint-disable no-restricted-imports -- Exercise the real engine report path, not the mocked public facade. */
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
+import {submitOtaFailureReport} from "../../../modules/engine/src/services/OtaFailureReportService"
+import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import {reports} from "../../../modules/engine/src/facades/reports"
 import {cloudClientService} from "../../../modules/engine/src/services/CloudClientService"
 import {
@@ -142,6 +144,65 @@ describe("report diagnostic context redaction", () => {
     useCoreStore.getState().reset()
     useSettingsStore.setState({settings: originalSettings})
     useConnectionStore.setState(originalConnection)
+  })
+
+  it("redacts OTA device errors in both the failure snapshot and collected glasses context", async () => {
+    const otaStatus = {
+      sessionId: "redaction-test",
+      totalSteps: 2,
+      currentStep: 2,
+      stepType: "bes" as const,
+      phase: "download" as const,
+      stepPercent: 0,
+      overallPercent: 20,
+      status: "failed" as const,
+      error: "https://cdn.example/firmware?token=OTA_SECRET_SENTINEL",
+    }
+    const otaProgress = {
+      stage: "download" as const,
+      status: "FAILED" as const,
+      progress: 20,
+      bytesDownloaded: 0,
+      totalBytes: 0,
+      currentUpdate: "bes",
+      errorMessage: otaStatus.error,
+    }
+    useGlassesStore.getState().setOtaStatus(otaStatus)
+    useGlassesStore.getState().setOtaProgress(otaProgress)
+    try {
+      await submitOtaFailureReport({
+        attemptId: "redaction-attempt",
+        deviceRevision: 1,
+        reason: "device_failed",
+        transport: "wifi",
+        hotspotPhase: "idle",
+        connected: false,
+        wifiState: "connected",
+        buildNumber: "123",
+        besFirmwareVersion: "26.9.17.1",
+        mtkFirmwareVersion: "20260709",
+        targetBesVersion: "26.10.5.1",
+        targetRelease: "3.2.1",
+        targetBuild: 456,
+        updates: ["apk", "bes"],
+        retryCount: 0,
+        sawReconnectEdge: false,
+        besRestartExpected: false,
+        besRestartDisconnectObserved: false,
+        versionChangeInstallStarted: false,
+        otaStatus,
+        otaProgress,
+      })
+      const submitted = submitMock.mock.calls[0][0]
+      expect(JSON.stringify(submitted)).not.toContain("OTA_SECRET_SENTINEL")
+      expect(submitted.context.glasses.otaStatus.error).toBe("[REDACTED]")
+      expect(submitted.context.glasses.otaProgress.errorMessage).toBe("[REDACTED]")
+      expect(submitted.context.otaFailure.otaStatus.error).toBe("[REDACTED]")
+      expect(useGlassesStore.getState().otaStatus?.error).toBe(otaStatus.error)
+    } finally {
+      useGlassesStore.getState().setOtaStatus(null)
+      useGlassesStore.getState().setOtaProgress(null)
+    }
   })
 
   it("omits native and settings account credentials from a submitted bug report", async () => {
