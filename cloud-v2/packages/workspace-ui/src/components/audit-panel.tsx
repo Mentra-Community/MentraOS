@@ -3,6 +3,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type { AuditEventView } from "@mentra/workspace-contract";
 import type { WorkspaceApi } from "../api";
+import { actorLabel, describeAuditEvent, rawLines, type AuditText } from "../lib/audit";
 import { formatDateTime } from "../lib/format";
 import { auditQuery, workspaceDetailQuery } from "../queries";
 import { can } from "../roles";
@@ -11,60 +12,6 @@ import { LoadError, Panel, QueryGate, Restricted } from "./common";
 
 const TITLE = "Audit log";
 const DESCRIPTION = "Who changed what in this workspace, newest first.";
-
-const ACTION_LABELS: Record<string, string> = {
-  "workspace.created": "Workspace created",
-  "workspace.renamed": "Workspace renamed",
-  "workspace.deleted": "Workspace deleted",
-  "membership.added": "Member added",
-  "membership.role_changed": "Role changed",
-  "membership.removed": "Member removed",
-  "membership.left": "Member left",
-  "membership.ownership_recovered": "Ownership recovered",
-  "membership.merged_duplicate": "Duplicate membership merged",
-  "membership.claimed": "Migrated membership claimed at sign-in",
-  "invitation.created": "Invitation created",
-  "invitation.accepted": "Invitation accepted",
-  "invitation.revoked": "Invitation revoked",
-  "credential.created": "Credential created",
-  "credential.revoked": "Credential revoked",
-};
-
-/** A readable name for an audit action; an action this UI does not know yet shows as its raw name. */
-export function actionLabel(action: string): string {
-  return ACTION_LABELS[action] ?? action;
-}
-
-const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
-
-/** Who did it, in words. */
-export function actorLabel(actor: AuditEventView["actor"]): string {
-  switch (actor.kind) {
-    case "user":
-      return actor.email ?? "A user";
-    case "credential":
-      return actor.credentialId ? `Credential ${actor.credentialId}` : "A credential";
-    case "service":
-      return actor.service ? `${capitalize(actor.service)} service` : "A service";
-    case "system":
-      return "System";
-  }
-}
-
-const show = (value: unknown) => {
-  if (value === null || value === undefined) return "none";
-  return typeof value === "object" ? JSON.stringify(value) : String(value);
-};
-
-/** What changed, as `field: before → after` lines for each field whose value differs. */
-export function changeLines(event: Pick<AuditEventView, "before" | "after">): string[] {
-  const before = event.before ?? {};
-  const after = event.after ?? {};
-  const fields = [...new Set([...Object.keys(before), ...Object.keys(after)])];
-  return fields
-    .filter((field) => show(before[field]) !== show(after[field]))
-    .map((field) => `${field}: ${show(before[field])} → ${show(after[field])}`);
-}
 
 export function WorkspaceAuditPanel({ api, workspaceId }: { api: WorkspaceApi; workspaceId: string }) {
   const detailResult = useQuery(workspaceDetailQuery(api, workspaceId));
@@ -119,27 +66,57 @@ export function WorkspaceAuditPanel({ api, workspaceId }: { api: WorkspaceApi; w
   );
 }
 
+function AuditSentence({ text }: { text: AuditText }) {
+  return (
+    <>
+      {text.map((run, index) =>
+        typeof run === "string" ? (
+          run
+        ) : (
+          <strong key={index} className="font-semibold">
+            {run.strong}
+          </strong>
+        ),
+      )}
+    </>
+  );
+}
+
 function AuditEntry({ event }: { event: AuditEventView }) {
-  const changes = changeLines(event);
+  const { summary, notes } = describeAuditEvent(event);
+  const details = rawLines(event);
   return (
     <li className="flex gap-3 py-3.5 text-sm first:pt-0 last:pb-0">
       <span aria-hidden="true" className="bg-brand mt-[7px] size-2 shrink-0 rounded-full" />
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
-          <span className="text-[15px] font-semibold">{actionLabel(event.action)}</span>
+          <span className="min-w-0 text-[15px] [overflow-wrap:anywhere]">
+            <AuditSentence text={summary} />
+          </span>
           <time dateTime={event.occurredAt} className="text-muted-foreground text-xs whitespace-nowrap">
             {formatDateTime(event.occurredAt)}
           </time>
         </div>
-        <div className="text-muted-foreground text-xs">by {actorLabel(event.actor)}</div>
-        {changes.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5 pt-0.5">
-            {changes.map((line) => (
-              <code key={line} className="bg-surface rounded-[8px] px-2 py-1 font-mono text-xs break-all">
-                {line}
-              </code>
-            ))}
-          </div>
+        <div className="text-muted-foreground text-xs [overflow-wrap:anywhere]">by {actorLabel(event.actor)}</div>
+        {notes.map((note) => (
+          <p key={note} className="text-muted-foreground text-xs [overflow-wrap:anywhere]">
+            {note}
+          </p>
+        ))}
+        {details.length > 0 ? (
+          <details className="group pt-0.5">
+            <summary className="text-muted-foreground hover:text-foreground w-fit cursor-pointer list-none text-xs font-semibold select-none [&::-webkit-details-marker]:hidden">
+              <span className="group-open:hidden">Show details</span>
+              <span className="hidden group-open:inline">Hide details</span>
+            </summary>
+            <div className="flex flex-wrap gap-1.5 pt-1.5">
+              {details.map((line) => (
+                <code key={line} className="bg-surface rounded-[8px] px-2 py-1 font-mono text-xs break-all">
+                  {line}
+                </code>
+              ))}
+            </div>
+          </details>
         ) : null}
       </div>
     </li>

@@ -4,9 +4,11 @@ import { BrandPage } from "./brand";
 /**
  * After signing out of the workspace portal. The workspace portal session has ended;
  * the Mentra account (or the company's identity provider) may still be signed
- * in, so its sign-out is offered as a separate link when Core provides one.
+ * in, so its sign-out is offered as a separate link when Core provides one: that
+ * is how a person switches accounts. Signing in again returns to `signInHref`
+ * (the pending invitation, when one is waiting for the other account).
  */
-export function SignedOutScreen({ signOutUrl }: { signOutUrl: string | null }) {
+export function SignedOutScreen({ signOutUrl, signInHref = "/" }: { signOutUrl: string | null; signInHref?: string }) {
   return (
     <BrandPage title="Signed out of the workspace portal">
       <p className="text-muted-foreground mb-7">
@@ -20,7 +22,7 @@ export function SignedOutScreen({ signOutUrl }: { signOutUrl: string | null }) {
             Sign out of your Mentra account
           </a>
         ) : null}
-        <a className={buttonVariants({ variant: "secondary", size: "lg", className: "w-full" })} href="/">
+        <a className={buttonVariants({ variant: "secondary", size: "lg", className: "w-full" })} href={signInHref}>
           Sign in again
         </a>
       </div>

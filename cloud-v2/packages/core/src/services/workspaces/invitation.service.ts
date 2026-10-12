@@ -18,6 +18,12 @@
  * Expiry is evaluated when an invitation is read (`expiresAt` against now);
  * nothing flips a stored status when time passes, and peeking never writes.
  *
+ * An invitation is found one of two ways: by the token in its link (`peek`,
+ * `accept`), or, for the person it is addressed to, by their verified email
+ * (`listInvitationsForPerson`, then `acceptInvitationById`), as people who sign
+ * in without the link expect. Both ways accept through one function with the
+ * same checks; only how the pending invitation is looked up differs.
+ *
  * An invitation is only as good as the authority it was sent with, recorded on
  * it (`invitedByAuthority`) and checked again when it is peeked at or accepted:
  * the inviter's membership must still grant the role, or the inviter must still
@@ -26,13 +32,18 @@
  *
  * The email is sent after the transaction commits, never inside the retried
  * callback, and a failed send never fails the invitation: the caller also gets
- * the link back.
+ * the link back. It names the inviter by their email address (`invitation-email`).
+ *
+ * Every audit event about an invitation names the invited address in its
+ * target (`target.email`), and the membership an accepted invitation starts
+ * names the member's, so the audit log can say whose invitation or membership
+ * it was without another lookup.
  */
 
 import {createHash, randomBytes} from "node:crypto"
 
 import {createLogger} from "@mentra/cloud-shared"
-import {canChangeRole, type WorkspaceRole} from "@mentra/workspace-contract"
+import {canChangeRole, type InvitationPreview, type WorkspaceRole} from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
 import {ulid} from "ulid"
 import {withTransaction} from "../../connections/mongo.connection"
@@ -47,7 +58,9 @@ import {WorkspaceModel} from "../../models/workspace.model"
 import {isOrganizationAdminEmail} from "../admin-email-policy"
 import {sendEmail} from "../email/email.service"
 import {consumeRateLimit} from "../signin/rate-limit.service"
+import {isDeletedAccountId} from "../user.service"
 import {recordWorkspaceEvent} from "./audit.service"
+import {invitationEmail} from "./invitation-email"
 import {
   auditActor,
   bumpRevision,
@@ -74,6 +87,11 @@ const TOKEN_PLACEHOLDER = "{token}"
 const INVITATIONS_PER_PERSON_PER_HOUR = 100
 /** Pending invitations one workspace may hold at once. */
 const MAX_PENDING_INVITATIONS = 200
+/** The most invitations listed to the person they are addressed to (one per workspace can be pending). */
+const MAX_INVITATIONS_FOR_PERSON = 100
+/** Pending rows read per batch while looking for those; and the most read in all, so one request stays bounded. */
+const INVITATION_SCAN_BATCH = 100
+const MAX_INVITATIONS_SCANNED = 1000
 
 /** An invitation as listed to administrators. It never includes the token or its hash. */
 export interface InvitationRow {
@@ -173,7 +191,7 @@ export async function createInvitation(
         workspaceId,
         action: "invitation.revoked",
         actor: auditActor(actor),
-        target: {invitationId: superseded.invitationId},
+        target: {invitationId: superseded.invitationId, email: superseded.email},
         before: {status: "pending", role: superseded.role},
         after: {status: "revoked", reason: "superseded", supersededBy: invitationId},
       })
@@ -182,14 +200,21 @@ export async function createInvitation(
       workspaceId,
       action: "invitation.created",
       actor: auditActor(actor),
-      target: {invitationId},
+      target: {invitationId, email},
       after: {email, role, expiresAt},
     })
     return {invitationId, workspaceName: workspace.name, template}
   })
 
   const inviteUrl = created.template.split(TOKEN_PLACEHOLDER).join(token)
-  await sendInvitationEmail({to: email, workspaceName: created.workspaceName, role, inviteUrl, expiresAt})
+  await sendInvitationEmail({
+    to: email,
+    workspaceName: created.workspaceName,
+    role,
+    inviteUrl,
+    expiresAt,
+    invitedBy: inviterAddress(actor),
+  })
   return {invitationId: created.invitationId, inviteUrl, expiresAt}
 }
 
@@ -243,7 +268,7 @@ export async function revokeInvitation(actor: Actor, workspaceId: string, invita
       workspaceId,
       action: "invitation.revoked",
       actor: auditActor(actor),
-      target: {invitationId},
+      target: {invitationId, email: invitation.email},
       before: {status: "pending", role},
       after: {status: "revoked"},
     })
@@ -251,14 +276,11 @@ export async function revokeInvitation(actor: Actor, workspaceId: string, invita
 }
 
 /**
- * What an invitation link is for, so the page can say who is being invited to
- * what before asking them to sign in. Null for an unknown, expired, used or
- * revoked token, when the workspace is gone, and when the inviter's authority no
- * longer grants the role. Read-only.
+ * What an invitation link is for, so the page can say who invited whom to what before asking them to
+ * sign in. Null for an unknown, expired, used or revoked token, when the workspace is gone, and when the
+ * inviter's authority no longer grants the role. Read-only.
  */
-export async function peekInvitation(
-  token: string,
-): Promise<{workspaceName: string; email: string; role: WorkspaceRole} | null> {
+export async function peekInvitation(token: string): Promise<InvitationPreview | null> {
   const tokenHash = hashTokenIfPlausible(token)
   if (!tokenHash) return null
   const invitation = await WorkspaceInvitationModel.findOne({
@@ -272,7 +294,76 @@ export async function peekInvitation(
     .lean()
   if (!workspace) return null
   if (!(await inviterStillAuthorizes(null, invitation))) return null
-  return {workspaceName: workspace.name, email: invitation.email, role: invitation.role as WorkspaceRole}
+  return toPreview(invitation, workspace.name, (await inviterEmails([invitation])).get(invitation.invitationId) ?? null)
+}
+
+/**
+ * The invitations addressed to the signed-in person that they can accept now, newest first: pending,
+ * not expired, to an active workspace they are not already in, from an inviter whose authority still
+ * grants the role. Matched on the person's verified email, case aside; never carries a token. At most
+ * 100, found among the newest 1,000 pending rows for the address.
+ *
+ * Refused like accepting: a key or an actor with no id (`forbidden`), an unverified or missing email
+ * (`email_unverified`), a deleted account (`account_deleted`).
+ */
+export async function listInvitationsForPerson(actor: Actor & {kind: "user"}): Promise<InvitationPreview[]> {
+  if (actor?.kind !== "user" || !isId(actor.mentraUserId)) fail("forbidden", "a signed-in user is required")
+  const email = normalizeAddress(actor.email)
+  if (actor.emailVerified !== true || !email) {
+    fail("email_unverified", "verify your email address to see the invitations sent to it")
+  }
+  if (await isDeletedAccountId(actor.mentraUserId)) fail("account_deleted", "this account is deleted")
+
+  // Read newest first in batches and keep what can be accepted: the cap applies to those, so unusable
+  // rows (a deleted workspace, one they are in, a lapsed inviter) never crowd out older usable ones.
+  const now = new Date()
+  const live: Array<{row: WorkspaceInvitationRow; workspaceName: string}> = []
+  let before: unknown = null
+  for (let scanned = 0; scanned < MAX_INVITATIONS_SCANNED && live.length < MAX_INVITATIONS_FOR_PERSON; ) {
+    const filter: Record<string, unknown> = {email, status: "pending", expiresAt: {$gt: now}}
+    if (before !== null) filter._id = {$lt: before}
+    const rows = await WorkspaceInvitationModel.find(filter)
+      .sort({_id: -1})
+      .limit(INVITATION_SCAN_BATCH)
+      .lean<Array<WorkspaceInvitationRow & {_id: unknown}>>()
+    if (rows.length === 0) break
+    scanned += rows.length
+    before = rows[rows.length - 1]!._id
+    for (const entry of await acceptableFor(actor.mentraUserId, rows)) {
+      if (live.length < MAX_INVITATIONS_FOR_PERSON) live.push(entry)
+    }
+    if (rows.length < INVITATION_SCAN_BATCH) break
+  }
+  const inviters = await inviterEmails(live.map(entry => entry.row))
+  return live.map(({row, workspaceName}) => toPreview(row, workspaceName, inviters.get(row.invitationId) ?? null))
+}
+
+/**
+ * Of `rows` (pending, unexpired, addressed to the person), in order, those they can accept: the
+ * workspace is active, they are not already in it, and the inviter's authority still grants the role.
+ */
+async function acceptableFor(
+  mentraUserId: string,
+  rows: WorkspaceInvitationRow[],
+): Promise<Array<{row: WorkspaceInvitationRow; workspaceName: string}>> {
+  const workspaceIds = [...new Set(rows.map(row => row.workspaceId))]
+  const [workspaces, memberships] = await Promise.all([
+    WorkspaceModel.find({workspaceId: {$in: workspaceIds}, status: "active"}).select({workspaceId: 1, name: 1}).lean(),
+    WorkspaceMembershipModel.find({workspaceId: {$in: workspaceIds}, mentraUserId, status: "active"})
+      .select({workspaceId: 1})
+      .lean(),
+  ])
+  const names = new Map(workspaces.map(workspace => [workspace.workspaceId, workspace.name]))
+  // Accepting into a workspace they are already in is refused (`already_member`), so it is not offered.
+  const joined = new Set(memberships.map(membership => membership.workspaceId))
+  const acceptable: Array<{row: WorkspaceInvitationRow; workspaceName: string}> = []
+  for (const row of rows) {
+    const workspaceName = names.get(row.workspaceId)
+    if (workspaceName === undefined || joined.has(row.workspaceId)) continue
+    if (!(await inviterStillAuthorizes(null, row))) continue
+    acceptable.push({row, workspaceName})
+  }
+  return acceptable
 }
 
 /**
@@ -293,13 +384,34 @@ export async function acceptInvitation(
   actor: Actor & {kind: "user"},
   token: string,
 ): Promise<{workspaceId: string; membershipId: string}> {
+  const tokenHash = hashTokenIfPlausible(token)
+  return acceptPendingInvitation(actor, tokenHash ? {tokenHash} : null)
+}
+
+/**
+ * Accept the invitation `invitationId` as `actor`, the person it is addressed to: what the invitations
+ * listed by `listInvitationsForPerson` offer. Exactly the checks, order and outcome of
+ * {@link acceptInvitation}; only the lookup differs. The verified-email match is what authorizes it, as
+ * it is for a token.
+ */
+export async function acceptInvitationById(
+  actor: Actor & {kind: "user"},
+  invitationId: string,
+): Promise<{workspaceId: string; membershipId: string}> {
+  return acceptPendingInvitation(actor, isId(invitationId) ? {invitationId} : null)
+}
+
+/** Accept the pending invitation `lookup` finds (none: `invitation_not_found`). See {@link acceptInvitation}. */
+async function acceptPendingInvitation(
+  actor: Actor & {kind: "user"},
+  lookup: {tokenHash: string} | {invitationId: string} | null,
+): Promise<{workspaceId: string; membershipId: string}> {
   // An actor with no usable id would get a membership nobody can ever be matched to.
   if (actor?.kind !== "user" || !isId(actor.mentraUserId)) fail("forbidden", "a signed-in user is required")
-  const tokenHash = hashTokenIfPlausible(token)
-  if (!tokenHash) fail("invitation_not_found", "invitation not found")
+  if (!lookup) fail("invitation_not_found", "invitation not found")
 
   return withTransaction(async session => {
-    const invitation = await WorkspaceInvitationModel.findOne({tokenHash, status: "pending"})
+    const invitation = await WorkspaceInvitationModel.findOne({...lookup, status: "pending"})
       .session(session)
       .lean<WorkspaceInvitationRow>()
     if (!invitation) fail("invitation_not_found", "invitation not found")
@@ -326,6 +438,7 @@ export async function acceptInvitation(
 
     const membershipId = `wm_${ulid()}`
     const role = invitation.role as WorkspaceRole
+    const memberEmail = actor.email?.trim() || null
     const claimed = await WorkspaceInvitationModel.updateOne(
       {invitationId: invitation.invitationId, status: "pending"},
       {$set: {status: "accepted", acceptedMembershipId: membershipId}},
@@ -340,7 +453,7 @@ export async function acceptInvitation(
           membershipId,
           workspaceId: invitation.workspaceId,
           mentraUserId: actor.mentraUserId,
-          email: actor.email?.trim() || null,
+          email: memberEmail,
           role,
           roleHistory: [roleEntry(role, now, updated.authorizationRevision)],
           status: "active",
@@ -354,7 +467,7 @@ export async function acceptInvitation(
       workspaceId: invitation.workspaceId,
       action: "invitation.accepted",
       actor: auditActor(actor),
-      target: {invitationId: invitation.invitationId, membershipId},
+      target: {invitationId: invitation.invitationId, membershipId, email: invitation.email},
       before: {status: "pending"},
       after: {status: "accepted"},
     })
@@ -362,7 +475,7 @@ export async function acceptInvitation(
       workspaceId: invitation.workspaceId,
       action: "membership.added",
       actor: auditActor(actor),
-      target: {membershipId, mentraUserId: actor.mentraUserId},
+      target: {membershipId, mentraUserId: actor.mentraUserId, email: memberEmail},
       before: {role: null},
       after: {role},
     })
@@ -398,7 +511,7 @@ export async function revokeInvitationsSentBy(
       workspaceId: invitation.workspaceId,
       action: "invitation.revoked",
       actor: auditActor(actor),
-      target: {invitationId: invitation.invitationId},
+      target: {invitationId: invitation.invitationId, email: invitation.email},
       before: {status: "pending", role: invitation.role},
       after: {status: "revoked", reason},
     })
@@ -498,6 +611,38 @@ async function inviterStillAuthorizes(
   }
 }
 
+/** An invitation as the person it is addressed to sees it. Never the token or its hash. */
+function toPreview(row: WorkspaceInvitationRow, workspaceName: string, invitedByEmail: string | null): InvitationPreview {
+  return {
+    invitationId: row.invitationId,
+    workspaceId: row.workspaceId,
+    workspaceName,
+    email: row.email,
+    role: row.role as WorkspaceRole,
+    invitedByEmail,
+    expiresAt: row.expiresAt.toISOString(),
+  }
+}
+
+/**
+ * The address each invitation names as its inviter, by invitation id: the Organization Admin's recorded
+ * email, or the display email of the membership it was sent from. None for the system, or once account
+ * deletion has cleared it.
+ */
+async function inviterEmails(rows: WorkspaceInvitationRow[]): Promise<Map<string, string | null>> {
+  const membershipIds = [...new Set(rows.map(row => row.invitedByMembershipId).filter(isId))]
+  const memberships = membershipIds.length
+    ? await WorkspaceMembershipModel.find({membershipId: {$in: membershipIds}}).select({membershipId: 1, email: 1}).lean()
+    : []
+  const byMembership = new Map(memberships.map(membership => [membership.membershipId, membership.email ?? null]))
+  return new Map(
+    rows.map(row => [
+      row.invitationId,
+      row.invitedByEmail ?? (isId(row.invitedByMembershipId) ? (byMembership.get(row.invitedByMembershipId) ?? null) : null),
+    ]),
+  )
+}
+
 function normalizeAddress(email: unknown): string {
   return typeof email === "string" ? email.trim().toLowerCase() : ""
 }
@@ -565,6 +710,11 @@ function defaultInviteUrlTemplate(): string {
   }
 }
 
+/** The inviter the email names: a person's (verified) address; nobody when the system invites. */
+function inviterAddress(actor: Actor): string | null {
+  return actor.kind === "user" ? actor.email?.trim() || null : null
+}
+
 /** Best effort: log and carry on, so a mail outage never blocks inviting. */
 async function sendInvitationEmail(args: {
   to: string
@@ -572,32 +722,13 @@ async function sendInvitationEmail(args: {
   role: WorkspaceRole
   inviteUrl: string
   expiresAt: Date
+  invitedBy: string | null
 }): Promise<void> {
-  const {to, workspaceName, role, inviteUrl, expiresAt} = args
   try {
-    const name = escapeHtml(workspaceName)
-    const link = escapeHtml(inviteUrl)
-    const result = await sendEmail({
-      to,
-      subject: `You're invited to join ${workspaceName} on Mentra`,
-      html:
-        `<p>You've been invited to join the <strong>${name}</strong> workspace as ${escapeHtml(role)}.</p>` +
-        `<p><a href="${link}">Accept the invitation</a></p>` +
-        `<p>Or open this link: ${link}</p>` +
-        `<p>Sign in with this email address (${escapeHtml(to)}) to accept. The invitation expires on ` +
-        `${escapeHtml(expiresAt.toUTCString())}.</p>`,
-    })
+    const {subject, html, text} = invitationEmail(args)
+    const result = await sendEmail({to: args.to, subject, html, text})
     if (!result.ok && !result.skipped) logger.warn("invitation email was not sent")
   } catch (err) {
     logger.warn({err}, "invitation email failed")
   }
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;")
 }

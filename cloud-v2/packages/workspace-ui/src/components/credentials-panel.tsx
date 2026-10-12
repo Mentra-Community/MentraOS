@@ -19,7 +19,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { ConfirmButton, CopyButton, ErrorNotice, Panel, QueryGate, Restricted } from "./common";
 
-const TITLE = "Credentials";
+const TITLE = "Keys";
 const DESCRIPTION = "Keys that let CI and tools publish miniapps for this workspace. A key acts as the person who created it.";
 
 // --- The one-time secret -----------------------------------------------------
@@ -118,7 +118,7 @@ export function CredentialsScreen({
         <QueryGate result={detailResult}>
           {(detail) =>
             !can(detail, "miniapps.credentials.create") ? (
-              <Restricted>Credentials are available to developers, admins and owners.</Restricted>
+              <Restricted>Keys are available to developers, admins and owners.</Restricted>
             ) : (
               <QueryGate result={listResult}>
                 {(credentials) => (
@@ -228,24 +228,24 @@ function CredentialsContent({ credentials, canCreate, busy, onCreate, onRevoke }
             />
           </div>
           <Button type="submit" disabled={busy || name.trim() === ""}>
-            Create credential
+            Create key
           </Button>
         </form>
       ) : (
         <Restricted>
-          Only members of this workspace with the developer role or above can create credentials, because a credential
-          acts as the member who created it.
+          Only members of this workspace with the developer role or above can create keys, because a key acts as the
+          member who created it.
         </Restricted>
       )}
 
       {credentials.length === 0 ? (
-        <Restricted>No credentials yet.</Restricted>
+        <Restricted>No keys yet.</Restricted>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="text-muted-foreground text-xs">
               <tr>
-                <th className="py-3 pr-4 font-semibold">Credential</th>
+                <th className="py-3 pr-4 font-semibold">Key</th>
                 <th className="py-3 pr-4 font-semibold">Packages</th>
                 <th className="py-3 pr-4 font-semibold">Expires</th>
                 <th className="py-3 pr-4 font-semibold">Last used</th>
@@ -338,15 +338,15 @@ export function SecretDialog({ name, token, onDone }: { name: string; token: str
         className="bg-background text-foreground rounded-card w-full max-w-lg space-y-5 p-6 shadow-dialog sm:p-7"
       >
         <h2 id={titleId} className="text-xl leading-tight font-semibold">
-          Copy your new credential
+          Copy your new key
         </h2>
         <p className="text-muted-foreground text-sm">
-          <strong>{name}</strong> is ready. This credential is shown only once and cannot be shown again. Store it
-          somewhere safe before you close this dialog.
+          <strong>{name}</strong> is ready. This key is shown only once and cannot be shown again. Store it somewhere
+          safe before you close this dialog.
         </p>
         <code className="rounded-notice bg-surface block border p-3 font-mono text-xs break-all select-all">{token}</code>
         <div className="flex justify-end gap-2.5">
-          <CopyButton text={token} label="Copy credential" size="default" />
+          <CopyButton text={token} label="Copy key" size="default" />
           <Button type="button" onClick={onDone}>
             Done
           </Button>

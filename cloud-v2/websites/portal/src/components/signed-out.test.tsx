@@ -14,3 +14,8 @@ test("a null signOutUrl shows no Mentra sign-out link", () => {
   expect(html).toContain("Signed out of the workspace portal");
   expect(html).not.toContain("Sign out of your Mentra account");
 });
+
+test("signing in again returns to a waiting invitation, so switching accounts lands back on it", () => {
+  expect(renderToStaticMarkup(<SignedOutScreen signOutUrl={null} />)).toContain('href="/"');
+  expect(renderToStaticMarkup(<SignedOutScreen signOutUrl={null} signInHref="/invitation" />)).toContain('href="/invitation"');
+});

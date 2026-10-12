@@ -4,7 +4,13 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createWorkspaceApi } from "./api";
 import { WorkspaceApiError } from "./errors";
-import { InvitationAcceptCard, InvitationAcceptView, type InvitationLoad } from "./components/invitation-accept-view";
+import {
+  acceptErrorMessage,
+  InvitationAcceptCard,
+  InvitationAcceptView,
+  isInvitationForOtherAccount,
+  type InvitationLoad,
+} from "./components/invitation-accept-view";
 import { WorkspaceAuditPanel } from "./components/audit-panel";
 import {
   InviteDialogBody,
@@ -19,7 +25,7 @@ import { ROLE_DESCRIPTIONS } from "./roles";
 import { QueryGate } from "./components/common";
 import { WorkspaceMembersPanel } from "./components/members-panel";
 import { WorkspacePicker } from "./components/workspace-picker";
-import { WorkspaceSettingsPanel } from "./components/settings-panel";
+import { DeleteSection, LeaveSection, WorkspaceSettingsPanel } from "./components/settings-panel";
 import { invitationPreviewQuery } from "./queries";
 import {
   AUDIT_EVENTS,
@@ -316,7 +322,7 @@ describe("a failed background refetch keeps what was already loaded", () => {
       { detail: admin, audit: { items: AUDIT_EVENTS, next: null } },
       ["detail", "audit"],
     );
-    expect(audit).toContain("Role changed");
+    expect(audit).toContain(">dana@acme.test</strong> from");
 
     const settings = await failed(
       <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />,
@@ -405,6 +411,48 @@ describe("settings panel", () => {
     expect(markup).toContain("Delete workspace");
     expect(markup).not.toContain("Leave workspace");
   });
+
+  test("the only owner cannot leave: Leave is disabled and says why", () => {
+    const { api } = offlineApi();
+    const owner = detailFor("owner");
+    const onlyOwner = renderSeeded(
+      api,
+      { detail: owner, members: membersFor(owner).filter((member) => member.membershipId === "wm_self" || member.role !== "owner") },
+      <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />,
+    );
+    expect(onlyOwner).toContain("You&#x27;re the only owner, so you can&#x27;t leave. Make someone else an owner first.");
+    expect(onlyOwner).toMatch(/<button[^>]*aria-label="Leave workspace"[^>]*aria-describedby="[^"]+"[^>]*disabled=""/);
+    // With another owner, Leave is offered.
+    const twoOwners = renderSeeded(api, { detail: owner, members: membersFor(owner) }, <WorkspaceSettingsPanel api={api} workspaceId={WORKSPACE_ID} />);
+    expect(twoOwners).not.toContain("only owner");
+    expect(twoOwners).not.toMatch(/<button[^>]*aria-label="Leave workspace"[^>]*disabled=""/);
+    // A member is never the only owner.
+    expect(render(detailFor("member"))).not.toMatch(/<button[^>]*aria-label="Leave workspace"[^>]*disabled=""/);
+  });
+
+  test("a refused leave or delete says why next to its own button, not at the bottom of the card", () => {
+    const lastOwner = new WorkspaceApiError(409, "last_owner", "a workspace must keep at least one owner");
+    const leave = renderToStaticMarkup(
+      <LeaveSection workspaceName={WORKSPACE_NAME} onlyOwner={false} busy={false} error={lastOwner} onConfirm={() => {}} />,
+    );
+    expect(leave).toMatch(/<section aria-label="Leave workspace"[\s\S]*Leave workspace<\/button>[\s\S]*role="alert"[^>]*>A workspace must keep at least one owner<\/p>[\s\S]*<\/section>$/);
+    const deleted = renderToStaticMarkup(
+      <DeleteSection workspaceName={WORKSPACE_NAME} busy={false} error={new WorkspaceApiError(403, "forbidden", "forbidden")} onDelete={() => {}} />,
+    );
+    expect(deleted).toMatch(/Delete workspace<\/button><\/form><p role="alert"[^>]*>You do not have permission to do that.<\/p><\/section>$/);
+  });
+
+  test("every field has an accessible name: the name field and the delete confirmation", () => {
+    const markup = render(detailFor("owner"));
+    for (const input of markup.match(/<input[^>]*>/g) ?? []) {
+      const id = /id="([^"]+)"/.exec(input)?.[1];
+      expect(id).toBeTruthy();
+      expect(markup).toContain(`for="${id}"`);
+    }
+    const confirm = /<input[^>]*aria-labelledby="([^"]+)"[^>]*>/.exec(markup);
+    expect(confirm).not.toBeNull();
+    expect(markup).toMatch(new RegExp(`<label[^>]*id="${confirm![1]}"[^>]*>.*to confirm</span></label>`));
+  });
 });
 
 describe("audit panel", () => {
@@ -415,10 +463,18 @@ describe("audit panel", () => {
       { detail: detailFor("admin"), audit: { items: AUDIT_EVENTS, next: "evt_1" } },
       <WorkspaceAuditPanel api={api} workspaceId={WORKSPACE_ID} />,
     );
-    expect(markup).toContain("Role changed");
-    expect(markup).toContain("Credential created");
-    expect(markup).toContain("olivia@acme.test");
-    expect(markup).toContain("Store service");
+    // Each event is a sentence about what happened, with who did it beside it.
+    expect(markup).toContain("Changed <strong");
+    expect(markup).toContain(">dana@acme.test</strong> from <strong");
+    expect(markup).toContain(">Developer</strong>");
+    expect(markup).toContain("Created the key <strong");
+    expect(markup).toContain(">CI publisher</strong> (com.acme.scanner)");
+    expect(markup).toContain("by olivia@acme.test");
+    expect(markup).toContain("by Store service, for dana@acme.test");
+    // The raw record stays one click away, closed.
+    expect(markup).toContain("<details");
+    expect(markup).not.toContain("<details open");
+    expect(markup).toContain("Show details");
     expect(markup).toContain("role: member → developer");
     expect(markup).toContain("Load more");
   });
@@ -437,7 +493,7 @@ describe("audit panel", () => {
       <WorkspaceAuditPanel api={api} workspaceId={WORKSPACE_ID} />,
     );
     expect(developer).toContain("Only workspace admins can see the audit log.");
-    expect(developer).not.toContain("Role changed");
+    expect(developer).not.toContain("dana@acme.test");
   });
 });
 
@@ -468,11 +524,30 @@ describe("workspace picker", () => {
 
 describe("invitation accept view", () => {
   const TOKEN = "invite-token-never-shown";
-  const preview = { workspaceName: WORKSPACE_NAME, email: "newbie@acme.test", role: "developer" as const };
+  const preview = {
+    invitationId: "winv_1",
+    workspaceId: WORKSPACE_ID,
+    workspaceName: WORKSPACE_NAME,
+    email: "newbie@acme.test",
+    role: "developer" as const,
+    invitedByEmail: "olivia@acme.test",
+    expiresAt: "2026-10-26T01:25:48.000Z",
+  };
 
-  const card = (load: InvitationLoad, acceptError: unknown = null) =>
+  const card = (
+    load: InvitationLoad,
+    acceptError: unknown = null,
+    extra: Partial<Parameters<typeof InvitationAcceptCard>[0]> = {},
+  ) =>
     renderToStaticMarkup(
-      <InvitationAcceptCard load={load} onRetry={() => {}} onAccept={() => {}} accepting={false} acceptError={acceptError} />,
+      <InvitationAcceptCard
+        load={load}
+        onRetry={() => {}}
+        onAccept={() => {}}
+        accepting={false}
+        acceptError={acceptError}
+        {...extra}
+      />,
     );
 
   test("tells the invitee what they are joining, as whom, and never echoes the token", () => {
@@ -509,11 +584,52 @@ describe("invitation accept view", () => {
   });
 
   test("an unknown, used, revoked or expired invitation is one honest dead end", () => {
-    for (const status of [404, 410]) {
-      const markup = card({ status: "error", error: new WorkspaceApiError(status, "invitation_not_found", "invitation not found") });
+    for (const error of [
+      new WorkspaceApiError(404, "invitation_not_found", "invitation not found"),
+      new WorkspaceApiError(410, "invitation_expired", "this invitation has expired"),
+    ]) {
+      const markup = card({ status: "error", error });
       expect(markup).toContain("This invitation is no longer valid");
       expect(markup).not.toContain("Accept invitation");
     }
+    // A 404 that is not Core saying so (a proxy's error page) says nothing about the invitation.
+    const proxy = card({ status: "error", error: new WorkspaceApiError(404, "http_404", "Not Found") });
+    expect(proxy).not.toContain("no longer valid");
+    expect(proxy).toContain("Try again");
+  });
+
+  test("says who sent it, and to whom", () => {
+    const signedIn = card({ status: "ready", preview }, null, { viewerEmail: "Newbie@Acme.test" });
+    expect(signedIn).toContain(">olivia@acme.test</strong> invited you to join <strong");
+    expect(signedIn).toContain("as Developer.");
+    expect(signedIn).toContain("Sent to newbie@acme.test");
+    expect(signedIn).toContain("Accept invitation");
+    // No inviter recorded (the system sent it).
+    expect(card({ status: "ready", preview: { ...preview, invitedByEmail: null } })).toContain("You have been invited to join");
+  });
+
+  test("an invitation for another account says so up front and offers Switch account instead of Accept", () => {
+    expect(isInvitationForOtherAccount(preview, "sam@acme.test")).toBe(true);
+    expect(isInvitationForOtherAccount(preview, " NEWBIE@acme.test ")).toBe(false);
+    expect(isInvitationForOtherAccount(preview, null)).toBe(false);
+    expect(isInvitationForOtherAccount({ email: "" }, "sam@acme.test")).toBe(false);
+
+    const markup = card({ status: "ready", preview }, null, {
+      viewerEmail: "sam@acme.test",
+      onSwitchAccount: () => {},
+      onDismiss: () => {},
+    });
+    expect(markup).toContain("This invitation is for <strong");
+    expect(markup).toContain(">newbie@acme.test</strong>. You&#x27;re signed in as <strong");
+    expect(markup).toContain(">sam@acme.test</strong>.");
+    expect(markup).toContain(">olivia@acme.test</strong> invited <strong");
+    expect(markup).toContain(">Switch account<");
+    expect(markup).toContain(">Dismiss<");
+    expect(markup).not.toContain("Accept invitation");
+    // Without a way to switch, it still never offers an Accept the server would refuse.
+    const noSwitch = card({ status: "ready", preview }, null, { viewerEmail: "sam@acme.test" });
+    expect(noSwitch).not.toContain("Accept invitation");
+    expect(noSwitch).toContain("Sign in with that account to accept it.");
   });
 
   test("asks a signed-out visitor to sign in, and lets them retry once they have", () => {
@@ -523,12 +639,19 @@ describe("invitation accept view", () => {
     expect(markup).not.toContain("Accept invitation");
   });
 
-  test("an accept refused by the server shows the server's reason", () => {
+  test("an accept refused by the server says why, plainly", () => {
     const markup = card(
       { status: "ready", preview },
       new WorkspaceApiError(403, "email_mismatch", "sign in with the verified email address this invitation was sent to"),
     );
-    expect(markup).toContain("Sign in with the verified email address this invitation was sent to");
+    expect(markup).toContain("This invitation is for newbie@acme.test. To accept it, sign in with that address and make sure it");
+    expect(acceptErrorMessage(new WorkspaceApiError(410, "invitation_expired", "x"), "a@b.test")).toStartWith(
+      "This invitation is no longer valid.",
+    );
+    expect(acceptErrorMessage(new WorkspaceApiError(409, "already_member", "x"), "a@b.test")).toBe("You're already in this workspace.");
+    expect(acceptErrorMessage(new WorkspaceApiError(500, "server_error", "server_error"), "a@b.test")).toBe(
+      "The server ran into a problem. Try again.",
+    );
   });
 });
 
@@ -698,7 +821,15 @@ describe("members panel: count and invitation card dismiss", () => {
   });
 
   test("the invitation card offers Dismiss only when the host passes it", () => {
-    const preview = { workspaceName: WORKSPACE_NAME, email: "newbie@acme.test", role: "member" as const };
+    const preview = {
+      invitationId: "winv_1",
+      workspaceId: WORKSPACE_ID,
+      workspaceName: WORKSPACE_NAME,
+      email: "newbie@acme.test",
+      role: "member" as const,
+      invitedByEmail: null,
+      expiresAt: "2026-10-26T01:25:48.000Z",
+    };
     const render = (onDismiss?: () => void) =>
       renderToStaticMarkup(
         <InvitationAcceptCard

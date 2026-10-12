@@ -3,15 +3,16 @@
  *
  * Rename needs `workspace.settings.manage`, delete needs `workspace.delete` and the workspace's name
  * typed back, and leaving is offered to anyone who is a member (an organization admin acting from
- * outside the workspace has nothing to leave). A host adds what deleting means in its context with
- * `deleteNotice`.
+ * outside the workspace has nothing to leave). The only owner cannot leave, so for them Leave is
+ * disabled and says why. A host adds what deleting means in its context with `deleteNotice`. A refused
+ * action says why next to the control that caused it.
  */
 
 import { useQuery } from "@tanstack/react-query";
 import type { WorkspaceDetail } from "@mentra/workspace-contract";
 import { useId, useState, type FormEvent, type ReactNode } from "react";
 import type { WorkspaceApi } from "../api";
-import { useWorkspaceMutation, workspaceDetailQuery } from "../queries";
+import { membersQuery, useWorkspaceMutation, workspaceDetailQuery } from "../queries";
 import { can } from "../roles";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
@@ -50,9 +51,7 @@ function SettingsForms({
   detail,
 }: SettingsPanelProps & { detail: WorkspaceDetail }) {
   const [name, setName] = useState(detail.name);
-  const [confirmName, setConfirmName] = useState("");
   const nameId = useId();
-  const confirmId = useId();
 
   const rename = useWorkspaceMutation(api, workspaceId, (next: { name: string; expectedRevision: number }) =>
     api.renameWorkspace(workspaceId, next.name, next.expectedRevision),
@@ -67,6 +66,10 @@ function SettingsForms({
   const canRename = can(detail, "workspace.settings.manage");
   const canDelete = can(detail, "workspace.delete");
   const isMember = detail.membership !== null;
+  // An owner may read the member list, so whether they are its only owner is known before they try.
+  const isOwner = detail.membership?.role === "owner";
+  const members = useQuery({ ...membersQuery(api, workspaceId), enabled: isOwner });
+  const onlyOwner = isOwner && members.data !== undefined && members.data.filter((m) => m.role === "owner").length === 1;
   const busy = rename.isPending || leave.isPending || remove.isPending;
   const trimmed = name.trim();
 
@@ -76,14 +79,6 @@ function SettingsForms({
     leave.reset();
     remove.reset();
     rename.mutate({ name: trimmed, expectedRevision: detail.authorizationRevision });
-  }
-
-  function submitDelete(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (confirmName !== detail.name) return;
-    rename.reset();
-    leave.reset();
-    remove.mutate(confirmName, { onSuccess: () => onDeleted?.() });
   }
 
   return (
@@ -136,75 +131,145 @@ function SettingsForms({
           </CardHeader>
           <CardContent className="divide-y px-0">
             {isMember ? (
-              <section className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
-                <div className="max-w-xl space-y-1">
-                  <h3 className="text-[15px] font-semibold">Leave workspace</h3>
-                  <p className="text-muted-foreground text-sm">
-                    You lose access to this workspace. The last owner cannot leave: make someone else an owner first.
-                  </p>
-                </div>
-                <ConfirmButton
-                  label="Leave workspace"
-                  ariaLabel="Leave workspace"
-                  prompt={`Leave ${detail.name}?`}
-                  confirmLabel="Confirm leave"
-                  disabled={busy}
-                  outline
-                  onConfirm={() => {
-                    rename.reset();
-                    remove.reset();
-                    leave.mutate(undefined, { onSuccess: () => onLeft?.() });
-                  }}
-                />
-              </section>
+              <LeaveSection
+                workspaceName={detail.name}
+                onlyOwner={onlyOwner}
+                busy={busy}
+                error={leave.error}
+                onConfirm={() => {
+                  rename.reset();
+                  remove.reset();
+                  leave.mutate(undefined, { onSuccess: () => onLeft?.() });
+                }}
+              />
             ) : null}
 
             {canDelete ? (
-              <section className="space-y-4 px-6 py-5">
-                <div className="max-w-xl space-y-1">
-                  <h3 className="text-[15px] font-semibold">Delete workspace</h3>
-                  <p className="text-muted-foreground text-sm">
-                    Deleting a workspace ends every membership and invitation and revokes every credential. It cannot
-                    be undone.
-                  </p>
-                </div>
-                {deleteNotice ? (
-                  <div
-                    role="note"
-                    className="rounded-notice bg-error text-error-foreground max-w-xl px-4 py-3 text-sm"
-                  >
-                    {deleteNotice}
-                  </div>
-                ) : null}
-                <form onSubmit={submitDelete} className="flex flex-wrap items-end gap-3">
-                  <div className="grid gap-2">
-                    <Label htmlFor={confirmId}>
-                      <span className="font-normal">
-                        Type <strong className="font-semibold">{detail.name}</strong> to confirm
-                      </span>
-                    </Label>
-                    <Input
-                      id={confirmId}
-                      autoComplete="off"
-                      className="w-72"
-                      value={confirmName}
-                      onChange={(event) => setConfirmName(event.target.value)}
-                    />
-                  </div>
-                  <Button type="submit" variant="destructive" disabled={busy || confirmName !== detail.name}>
-                    Delete workspace
-                  </Button>
-                </form>
-              </section>
-            ) : null}
-            {leave.error || remove.error ? (
-              <div className="px-6 py-4">
-                <ErrorNotice error={leave.error ?? remove.error} />
-              </div>
+              <DeleteSection
+                workspaceName={detail.name}
+                deleteNotice={deleteNotice}
+                busy={busy}
+                error={remove.error}
+                onDelete={(typed) => {
+                  rename.reset();
+                  leave.reset();
+                  remove.mutate(typed, { onSuccess: () => onDeleted?.() });
+                }}
+              />
             ) : null}
           </CardContent>
         </Card>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Leaving: behind a confirm step, and disabled (saying why) for the workspace's only owner. A refusal
+ * shows right under the button.
+ */
+export function LeaveSection({
+  workspaceName,
+  onlyOwner,
+  busy,
+  error,
+  onConfirm,
+}: {
+  workspaceName: string;
+  onlyOwner: boolean;
+  busy: boolean;
+  error: unknown;
+  onConfirm(): void;
+}) {
+  const noteId = useId();
+  return (
+    <section aria-label="Leave workspace" className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+      <div className="max-w-xl space-y-1">
+        <h3 className="text-[15px] font-semibold">Leave workspace</h3>
+        <p id={noteId} className="text-muted-foreground text-sm">
+          {onlyOwner
+            ? "You're the only owner, so you can't leave. Make someone else an owner first."
+            : "You lose access to this workspace. The last owner cannot leave: make someone else an owner first."}
+        </p>
+      </div>
+      <ConfirmButton
+        label="Leave workspace"
+        ariaLabel="Leave workspace"
+        ariaDescribedBy={onlyOwner ? noteId : undefined}
+        prompt={`Leave ${workspaceName}?`}
+        confirmLabel="Confirm leave"
+        disabled={busy || onlyOwner}
+        outline
+        onConfirm={onConfirm}
+      />
+      {error ? (
+        <div className="basis-full">
+          <ErrorNotice error={error} />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** Deleting: the workspace's name typed back, then the button. A refusal shows right under the form. */
+export function DeleteSection({
+  workspaceName,
+  deleteNotice,
+  busy,
+  error,
+  onDelete,
+}: {
+  workspaceName: string;
+  deleteNotice?: ReactNode;
+  busy: boolean;
+  error: unknown;
+  onDelete(typedName: string): void;
+}) {
+  const [confirmName, setConfirmName] = useState("");
+  const confirmId = useId();
+  const labelId = useId();
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (confirmName !== workspaceName) return;
+    onDelete(confirmName);
+  }
+
+  return (
+    <section aria-label="Delete workspace" className="space-y-4 px-6 py-5">
+      <div className="max-w-xl space-y-1">
+        <h3 className="text-[15px] font-semibold">Delete workspace</h3>
+        <p className="text-muted-foreground text-sm">
+          Deleting a workspace ends every membership and invitation and revokes every key. It cannot be undone.
+        </p>
+      </div>
+      {deleteNotice ? (
+        <div role="note" className="rounded-notice bg-error text-error-foreground max-w-xl px-4 py-3 text-sm">
+          {deleteNotice}
+        </div>
+      ) : null}
+      <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
+        <div className="grid gap-2">
+          <Label id={labelId} htmlFor={confirmId}>
+            <span className="font-normal">
+              Type <strong className="font-semibold">{workspaceName}</strong> to confirm
+            </span>
+          </Label>
+          {/* Named by its label twice over (for and labelledby), so every assistive tool finds it. */}
+          <Input
+            id={confirmId}
+            aria-labelledby={labelId}
+            autoComplete="off"
+            className="w-72"
+            value={confirmName}
+            onChange={(event) => setConfirmName(event.target.value)}
+          />
+        </div>
+        <Button type="submit" variant="destructive" disabled={busy || confirmName !== workspaceName}>
+          Delete workspace
+        </Button>
+      </form>
+      <ErrorNotice error={error} />
+    </section>
   );
 }

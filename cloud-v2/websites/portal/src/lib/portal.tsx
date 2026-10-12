@@ -1,10 +1,11 @@
 /**
  * What every screen of the workspace portal shares: Core's workspace API at `/api/portal/workspaces`
- * (which this portal's session authenticates), the signed-in person, and the invitation this tab holds.
+ * (which this portal's session authenticates), the signed-in person, and the invitations they can act on.
  */
 
 import { createWorkspaceApi } from "@mentra/workspace-ui";
 import { createContext, useContext } from "react";
+import type { LinkInvitation, PendingInvitation } from "./invitations";
 
 /** Core's workspace API, reached with this portal's session. */
 export const portalWorkspaceApi = createWorkspaceApi({ basePath: "/api/portal/workspaces" });
@@ -31,15 +32,23 @@ export function creationNotice(creation: WorkspaceCreation): string | null {
 }
 
 export interface PortalSession {
+  /** The signed-in person, for display ("Signed in" when Core has no address for them). */
   userEmail: string;
+  /** The signed-in person's email address as Core has it, or null: what an invitation is matched against. */
+  accountEmail: string | null;
   creation: WorkspaceCreation;
+  /** The invitation link this tab holds (lib/workspace-invite), once looked up. */
+  link: LinkInvitation;
   /**
-   * The invitation this tab holds, from an invitation link (lib/workspace-invite). Core has no list of
-   * the invitations addressed to a person, so this is the one pending invitation the portal knows about.
+   * The valid invitations the person can act on: the link's and those addressed to their verified email,
+   * each once, dismissed ones left out (lib/invitations). Undefined while they are being looked up.
    */
-  inviteToken: string | null;
-  /** The invitation was accepted or dismissed: forget it. */
-  forgetInvite(): void;
+  invitations: PendingInvitation[] | undefined;
+  /**
+   * Stop offering an invitation: it was accepted, dismissed (remembered in this browser), or Core said it
+   * is no longer valid. Forgets this tab's link when it is that invitation's.
+   */
+  forgetInvitation(invitation: { invitationId: string | null; token: string | null }, reason: "accepted" | "dismissed" | "gone"): void;
   signOut(): void;
   signingOut: boolean;
 }

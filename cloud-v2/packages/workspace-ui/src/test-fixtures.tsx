@@ -110,7 +110,7 @@ export const AUDIT_EVENTS: AuditEventView[] = [
     eventId: "evt_2",
     action: "membership.role_changed",
     actor: { kind: "user", email: "olivia@acme.test", credentialId: null, service: null },
-    target: { membershipId: "wm_dev", mentraUserId: "u_3" },
+    target: { membershipId: "wm_dev", mentraUserId: "u_3", email: "dana@acme.test" },
     before: { role: "member" },
     after: { role: "developer" },
     occurredAt: "2026-09-02T10:00:00.000Z",
@@ -118,10 +118,16 @@ export const AUDIT_EVENTS: AuditEventView[] = [
   {
     eventId: "evt_1",
     action: "credential.created",
-    actor: { kind: "service", email: null, credentialId: null, service: "store" },
-    target: { credentialId: "cred_ci" },
+    actor: { kind: "service", email: "dana@acme.test", credentialId: null, service: "store" },
+    target: { credentialId: "cred_ci", prefix: "msk", credentialKind: "workspace", workspaceId: WORKSPACE_ID, name: "CI publisher" },
     before: null,
-    after: null,
+    after: {
+      scopes: ["miniapps.publish"],
+      packageNames: ["com.acme.scanner"],
+      expiresAt: null,
+      createdByMembershipId: null,
+      issuedByService: "store",
+    },
     occurredAt: "2026-09-01T10:00:00.000Z",
   },
 ];

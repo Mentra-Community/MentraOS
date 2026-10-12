@@ -130,8 +130,15 @@ export const USER_NOT_FOUND_ERROR = "user_not_found"
 
 /** A workspace, the caller's membership in it (null for an Organization Admin who is not a member) and what the caller may do there. */
 export interface WorkspaceDetail extends WorkspaceSummary {
+  /** The caller's own membership, null when they have none. Their role is this, whatever `capabilities` say. */
   membership: MembershipSummary | null
   capabilities: WorkspaceCapability[]
+  /**
+   * Whether the caller is an Organization Admin, who acts as an Owner in every workspace: when their
+   * membership's role grants less (or they have none), that is where `capabilities` come from.
+   * Optional for servers that predate it.
+   */
+  organizationAdmin?: boolean
 }
 
 /** One row of a workspace's member list. `email` is display-only and never an authorization. */
@@ -152,11 +159,21 @@ export interface InvitationView {
   invitedByMembershipId: string | null
 }
 
-/** What an invitation link is for, shown to the invitee before they accept. */
+/**
+ * An invitation as the invitee sees it before accepting: what an invitation link is for
+ * (`POST /invitations/peek`), and each of the invitations addressed to the signed-in person
+ * (`GET /invitations/mine`). It never carries the token or its hash.
+ */
 export interface InvitationPreview {
+  invitationId: string
+  workspaceId: string
   workspaceName: string
+  /** The invited address. */
   email: string
   role: WorkspaceRole
+  /** Who sent it, by email address; null when the system did, or the address is no longer known. */
+  invitedByEmail: string | null
+  expiresAt: string
 }
 
 /** A credential as shown to people (a workspace `msk_` key or an organization `mak_` operator key). It never includes the token or its hash. */

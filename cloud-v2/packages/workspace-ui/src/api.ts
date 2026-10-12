@@ -32,7 +32,7 @@ export interface CreatedInvitation {
   expiresAt: string;
 }
 
-/** What an invitation link is for, before the invitee accepts. */
+/** An invitation as the invitee sees it: what a link is for, or one addressed to the signed-in person. */
 export type { InvitationPreview };
 
 export interface AcceptedInvitation {
@@ -86,6 +86,10 @@ export interface WorkspaceApi {
   /** Looks an invitation up by its token. The token travels in the body, never the URL. */
   peekInvitation(token: string): Promise<InvitationPreview>;
   acceptInvitation(token: string): Promise<AcceptedInvitation>;
+  /** The invitations addressed to the signed-in person's verified email that they can accept now. */
+  listMyInvitations(): Promise<InvitationPreview[]>;
+  /** Accepts one of `listMyInvitations` by its id: the same checks as accepting by token. */
+  acceptInvitationById(invitationId: string): Promise<AcceptedInvitation>;
 
   listCredentials(workspaceId: string): Promise<CredentialView[]>;
   createCredential(workspaceId: string, input: CreateCredentialInput): Promise<CreatedCredential>;
@@ -167,6 +171,8 @@ export function createWorkspaceApi(opts: {
       empty("DELETE", `${workspace(workspaceId)}/invitations/${id(invitationId)}`),
     peekInvitation: (token) => json("POST", "/invitations/peek", { token }),
     acceptInvitation: (token) => json("POST", "/invitations/accept", { token }),
+    listMyInvitations: async () => (await json<{ items: InvitationPreview[] }>("GET", "/invitations/mine")).items,
+    acceptInvitationById: (invitationId) => json("POST", "/invitations/accept", { invitationId }),
 
     listCredentials: async (workspaceId) =>
       (await json<{ items: CredentialView[] }>("GET", `${workspace(workspaceId)}/credentials`)).items,

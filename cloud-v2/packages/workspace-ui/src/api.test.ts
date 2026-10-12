@@ -124,6 +124,19 @@ describe("createWorkspaceApi: routes", () => {
     for (const call of rec.calls) expect(call.url).not.toContain("secret-token");
   });
 
+  test("lists the invitations addressed to the signed-in person, and accepts one by its id in the body", async () => {
+    const mine = { invitationId: "winv_1", workspaceId: "ws_1", workspaceName: "Acme", email: "a@b.test", role: "member" };
+    const accepted = { workspaceId: "ws_1", membershipId: "wm_2" };
+    const rec = recordingFetch(Response.json({ items: [mine] }), Response.json(accepted));
+    const api = createWorkspaceApi({ basePath: "/api/portal/workspaces", fetch: rec.fetch });
+    expect(await api.listMyInvitations()).toEqual([mine] as never);
+    expect(await api.acceptInvitationById("winv_1")).toEqual(accepted);
+    expect(rec.calls).toMatchObject([
+      { url: "/api/portal/workspaces/invitations/mine", method: "GET" },
+      { url: "/api/portal/workspaces/invitations/accept", method: "POST", body: { invitationId: "winv_1" } },
+    ]);
+  });
+
   test("lists, creates and revokes credentials", async () => {
     const created = { credential: { credentialId: "cred_1" }, token: "msk_prod_X.secret" };
     const rec = recordingFetch(Response.json({ items: [] }), Response.json(created, { status: 201 }), Response.json(created), noContent());

@@ -1,6 +1,6 @@
 # @mentra/workspace-ui
 
-Shared React screens for Core workspaces: a picker, members, invitations, credentials,
+Shared React screens for Core workspaces: a picker, members, invitations, keys,
 settings, an audit log and the invitation-accept page. The workspace portal and the admin
 portal use it directly; the Developer Console vendors it. All of them call the same JSON
 API, so the package only needs to know where that API is mounted.
@@ -48,18 +48,20 @@ screens a second React (and every hook a null dispatcher). Each site's
 | `WorkspaceInvitationsPanel` | Invite by email, and the pending invitations with Resend and Revoke, in one card |
 | `WorkspaceInviteDialog` (`open`, `onClose`) | Invite by email and role in a dialog; the link is shown once after sending |
 | `WorkspacePendingInvitationsPanel` | The pending invitations alone (Resend, Revoke), for a member page that invites through the dialog; renders nothing when none are pending |
-| `WorkspaceCredentialsPanel` | `msk_` credentials; the token is shown once, with a copy button |
+| `WorkspaceCredentialsPanel` | The workspace's `msk_` keys; the token is shown once, with a copy button |
 | `WorkspaceSettingsPanel` (`onDeleted?`, `onLeft?`) | Name and workspace ID (with copy), then a danger zone to leave or delete |
-| `WorkspaceAuditPanel` | The workspace's audit log, paged |
-| `InvitationAcceptView` (`token`, `onAccepted(workspaceId)`, `onDismiss?`) | What an invitation link opens |
+| `WorkspaceAuditPanel` | The workspace's audit log, paged: each event a sentence ("Changed priya@… from Member to Developer"), with the raw record behind Show details |
+| `InvitationAcceptView` (`token`, `onAccepted(workspaceId)`, `onDismiss?`, `viewerEmail?`, `onSwitchAccount?`, `onGone?`) | What an invitation link opens; for someone else's invitation it says so and offers Switch account instead of Accept |
+| `InvitationAcceptCard`, `useAcceptInvitation(api, {token} \| {invitationId}, …)`, `isInvitationForOtherAccount` | The same card for an invitation the host already has (one of `myInvitationsQuery`), and accepting it |
+| `describeAuditEvent`, `plainText` | An audit event as a sentence, for other screens |
 | `SecretDialog` (`name`, `token`, `onDone`) | The show-once dialog for a new credential, for other screens that mint one (the admin portal's operator keys) |
 | `ConfirmButton` (`label`, `ariaLabel`, `prompt`, `confirmLabel`, `onConfirm`) | A destructive action behind an inline confirm step |
 | `Button`, `buttonVariants`, `Input`, `Label`, `NativeSelect` | Mentra's controls, for a host's own screens: one pill button system (`default`, `secondary`, `destructive-secondary`, `destructive`, `ghost`, `link`), pill inputs, and native selects drawn to match |
 | `Avatar`, `WorkspaceAvatar`, `Count`, `Spinner` | A person's initials, a workspace's letter tile, a count beside a heading, the loading spinner |
 | `expiryFromDateInput` | The end of a `<input type="date">` day as an ISO string, or null |
-| `effectiveRole`, `assignableRoles`, `can`, `ROLE_LABELS`, `ROLE_DESCRIPTIONS` | The capability helpers the panels use, and a one-line description of each role |
-| `workspaceListQuery`, `workspaceDetailQuery`, `invitationPreviewQuery`, `workspaceKeys` | Query options and keys, for a host that shows the same data (a workspace switcher) |
-| `errorMessage`, `isWorkspaceChangedError`, `WORKSPACE_CHANGED_MESSAGE` | Error text, and the 409 handling |
+| `effectiveRole`, `actsAsOrganizationAdmin`, `assignableRoles`, `can`, `ROLE_LABELS`, `ROLE_DESCRIPTIONS` | The capability helpers the panels use, whether an Organization Admin's powers go beyond their membership, and a one-line description of each role |
+| `workspaceListQuery`, `workspaceDetailQuery`, `invitationPreviewQuery`, `myInvitationsQuery`, `workspaceKeys` | Query options and keys, for a host that shows the same data (a workspace switcher) |
+| `errorMessage`, `isInvitationGone`, `isWorkspaceChangedError`, `WORKSPACE_CHANGED_MESSAGE` | Error text, whether an invitation can never be accepted, and the 409 handling |
 
 ## Behavior worth knowing
 
@@ -75,9 +77,10 @@ screens a second React (and every hook a null dispatcher). Each site's
 - **Stale views end in a refetch.** Changes carry the workspace revision the viewer last
   saw. On a 409 `membership_changed` the workspace is refetched and the panel says
   "This workspace changed. Review and try again."
-- **Destructive actions ask twice**: removing a member, revoking a credential or an
+- **Destructive actions ask twice**: removing a member, revoking a key or an
   invitation, leaving a workspace (an inline confirm step), and deleting one (type the
-  workspace name).
+  workspace name). The only owner cannot leave: Leave is disabled and says why. A
+  refused action says why next to its own control.
 - **Resend is a new invitation.** It sends the same address the same role again; Core
   supersedes the pending invitation, so only the newest link works.
 - **Dialogs are the platform's `<dialog>`**, opened with `showModal()`: the page behind is

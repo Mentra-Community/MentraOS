@@ -454,7 +454,7 @@ describe("changeRole", () => {
     expect(events[0]).toMatchObject({
       action: "membership.role_changed",
       actor: {kind: "user", mentraUserId: "mu_owner"},
-      target: {membershipId: memberId, mentraUserId: "mu_member"},
+      target: {membershipId: memberId, mentraUserId: "mu_member", email: "mu_member@example.test"},
       before: {role: "member"},
       after: {role: "developer"},
     })
@@ -613,7 +613,7 @@ describe("removeMember", () => {
     expect(events[0]).toMatchObject({
       action: "membership.removed",
       actor: {kind: "user", mentraUserId: "mu_owner"},
-      target: {membershipId: memberId, mentraUserId: "mu_member"},
+      target: {membershipId: memberId, mentraUserId: "mu_member", email: "mu_member@example.test"},
       before: {role: "developer", status: "active"},
       after: {status: "ended", endedReason: "removed"},
     })
@@ -694,7 +694,7 @@ describe("leaveWorkspace", () => {
     expect((await listWorkspaceAudit(ws, {limit: 1}))[0]).toMatchObject({
       action: "membership.left",
       actor: {kind: "user", mentraUserId: "mu_member"},
-      target: {membershipId: memberId, mentraUserId: "mu_member"},
+      target: {membershipId: memberId, mentraUserId: "mu_member", email: "mu_member@example.test"},
       after: {status: "ended", endedReason: "left", revokedCredentialIds: [key]},
     })
     expect(await listWorkspacesForUser("mu_member")).toEqual([])
@@ -793,7 +793,8 @@ describe("recoverOwnership", () => {
     expect((await listWorkspaceAudit(ws, {limit: 1}))[0]).toMatchObject({
       action: "membership.ownership_recovered",
       actor: {kind: "user", mentraUserId: "mu_org_admin"},
-      target: {membershipId: membership!.membershipId, mentraUserId: "mu_new_owner"},
+      // Named by id only, a new membership has no address to show.
+      target: {membershipId: membership!.membershipId, mentraUserId: "mu_new_owner", email: null},
       before: {role: null},
       after: {role: "owner"},
     })
@@ -816,6 +817,8 @@ describe("recoverOwnership", () => {
     expect((await listWorkspaceAudit(ws, {limit: 1}))[0]).toMatchObject({
       action: "membership.ownership_recovered",
       actor: {kind: "system"},
+      // An existing membership keeps, and the event names, the address it records.
+      target: {membershipId: memberId, mentraUserId: "mu_member", email: "mu_member@example.test"},
       before: {role: "member"},
       after: {role: "owner"},
     })

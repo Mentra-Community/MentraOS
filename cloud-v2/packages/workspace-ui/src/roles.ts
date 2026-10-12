@@ -19,7 +19,7 @@ export const ROLE_LABELS: Record<WorkspaceRole, string> = {
 /** What each role may do, in one line, for role pickers. Each role also holds everything of the roles before it. */
 export const ROLE_DESCRIPTIONS: Record<WorkspaceRole, string> = {
   member: "Can see the workspace and use its miniapps.",
-  developer: "Can also publish miniapps and create credentials.",
+  developer: "Can also publish miniapps and create keys.",
   admin: "Can also manage members, settings and the audit log.",
   owner: "Full control, including admins, owners and deleting the workspace.",
 };
@@ -40,6 +40,20 @@ export function effectiveRole(detail: Pick<WorkspaceDetail, "capabilities">): Wo
     if ([...capabilitiesForRole(role)].every((capability) => held.has(capability))) return role;
   }
   return null;
+}
+
+/**
+ * Whether the viewer's powers here come from being an Organization Admin rather than from their own
+ * membership: they are one, and their membership (if any) is not already Owner. Their role is still
+ * their membership's; this is what explains holding more than it grants. A server that predates the
+ * `organizationAdmin` flag is read from the one case it can show: owner capabilities with no membership.
+ */
+export function actsAsOrganizationAdmin(
+  detail: Pick<WorkspaceDetail, "capabilities" | "membership" | "organizationAdmin">,
+): boolean {
+  if (detail.membership?.role === "owner") return false;
+  if (detail.organizationAdmin !== undefined) return detail.organizationAdmin;
+  return detail.membership === null && effectiveRole(detail) === "owner";
 }
 
 /** The roles `viewer` may move someone from `from` (null: not yet a member) to, other than `from` itself. */

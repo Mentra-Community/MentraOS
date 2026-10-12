@@ -35,6 +35,8 @@ export const workspaceKeys = {
   audit: (api: ApiScope, workspaceId: string) => [...workspaceKeys.workspace(api, workspaceId), "audit"] as const,
   invitationPreview: (api: ApiScope, token: string) =>
     [...workspaceKeys.root(api), "invitation-preview", token] as const,
+  /** The invitations addressed to the signed-in person. */
+  myInvitations: (api: ApiScope) => [...workspaceKeys.root(api), "my-invitations"] as const,
 };
 
 /**
@@ -96,6 +98,18 @@ export const invitationPreviewQuery = (api: WorkspaceApi, token: string) =>
     queryFn: () => api.peekInvitation(token),
     retry: shouldRetry,
     gcTime: 0,
+    refetchOnWindowFocus: false,
+  });
+
+/**
+ * The invitations addressed to the signed-in person's verified email. Refusals (4xx: an unverified
+ * email, signed out) are not retried; a host that only offers what it can show treats them as none.
+ */
+export const myInvitationsQuery = (api: WorkspaceApi) =>
+  queryOptions({
+    queryKey: workspaceKeys.myInvitations(api),
+    queryFn: () => api.listMyInvitations(),
+    retry: shouldRetry,
     refetchOnWindowFocus: false,
   });
 
