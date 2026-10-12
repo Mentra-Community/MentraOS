@@ -71,14 +71,19 @@ protocol MacWifiInterface: AnyObject {
     func disassociate()
 }
 
+enum MacWifiInvocation {
+    // Objective-C NSError** parameters use autoreleasing writeback. Strong
+    // pointer storage would over-release errors when the native pool drains.
+    typealias Scan = @convention(c) (AnyObject, Selector, NSData, AutoreleasingUnsafeMutablePointer<NSError?>) -> Unmanaged<NSSet>?
+    typealias Associate = @convention(c) (AnyObject, Selector, AnyObject, NSString, AutoreleasingUnsafeMutablePointer<NSError?>) -> Bool
+}
+
 /// CoreWLAN is a public macOS framework. Foundation loads it only in the Mac
 /// process; Apple dyld permits macOS frameworks in iOS-on-Mac. The checked
 /// Objective-C signatures below are the public CWInterface SDK declarations.
 private final class PublicCoreWlanInterface: MacWifiInterface {
     private let bundle: Bundle
     private let interface: NSObject
-    private typealias Scan = @convention(c) (AnyObject, Selector, NSData, UnsafeMutablePointer<NSError?>) -> Unmanaged<NSSet>?
-    private typealias Associate = @convention(c) (AnyObject, Selector, AnyObject, NSString, UnsafeMutablePointer<NSError?>) -> Bool
     private typealias Disassociate = @convention(c) (AnyObject, Selector) -> Void
 
     init() throws {
@@ -119,7 +124,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
 
     func network(ssid: String) throws -> NSObject {
         let selector = NSSelectorFromString("scanForNetworksWithSSID:error:")
-        let invoke = unsafeBitCast(interface.method(for: selector), to: Scan.self)
+        let invoke = unsafeBitCast(interface.method(for: selector), to: MacWifiInvocation.Scan.self)
         var error: NSError?
         guard let networks = invoke(interface, selector, NSData(data: Data(ssid.utf8)), &error)?.takeUnretainedValue() else {
             throw Self.failure("scan", error)
@@ -137,7 +142,7 @@ private final class PublicCoreWlanInterface: MacWifiInterface {
 
     func associate(network: NSObject, password: String) throws {
         let selector = NSSelectorFromString("associateToNetwork:password:error:")
-        let invoke = unsafeBitCast(interface.method(for: selector), to: Associate.self)
+        let invoke = unsafeBitCast(interface.method(for: selector), to: MacWifiInvocation.Associate.self)
         var error: NSError?
         guard invoke(interface, selector, network, password as NSString, &error) else { throw Self.failure("association", error) }
     }
