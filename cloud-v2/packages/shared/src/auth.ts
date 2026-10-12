@@ -31,8 +31,8 @@ const CORE_NON_RUNTIME_KIDS: ReadonlySet<string> = new Set([ACCESS_TOKEN_KID, "m
  * sign-in server's `at+jwt` access tokens, are never accepted as phone or
  * runtime tokens.
  */
-function isPlainJwtType(typ: string | undefined): boolean {
-  return typ === undefined || typ.toUpperCase() === "JWT"
+function isPlainJwtType(typ: unknown): boolean {
+  return typ === undefined || (typeof typ === "string" && typ.toUpperCase() === "JWT")
 }
 
 function protectedHeader(token: string, label: string): jose.ProtectedHeaderParameters {

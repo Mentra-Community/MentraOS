@@ -293,6 +293,20 @@ describe("token type and key pinning", () => {
     await expect(auth.verifyToken(token)).rejects.toThrow("unexpected token type");
   });
 
+  test.each([1, {}])("a non-string typ (%p) is refused, never a TypeError", async (typ) => {
+    const privateKey = await jose.importPKCS8(privatePem, "EdDSA");
+    const token = await new jose.SignJWT({ tenantId: "test-oem" })
+      .setProtectedHeader({ alg: "EdDSA", kid: "mentra-miniapp-1", typ } as unknown as jose.JWTHeaderParameters)
+      .setIssuer(TEST_ISSUER)
+      .setAudience(TEST_PACKAGE)
+      .setSubject("user_123")
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(privateKey);
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl: urlA });
+    await expect(auth.verifyToken(token)).rejects.toThrow("unexpected token type");
+  });
+
   test("keyIds widens the accepted key IDs for a rotation", async () => {
     const token = await mintWithKey(privatePem, TEST_PACKAGE, { kid: "mentra-oidc-1" });
     const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl: urlA, keyIds: ["mentra-miniapp-1", "mentra-oidc-1"] });

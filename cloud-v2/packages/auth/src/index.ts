@@ -209,7 +209,9 @@ export class MentraAuth {
     if (header.kid === undefined || !this.keyIds.has(header.kid)) {
       throw new MentraAuthError("miniapp token rejected: unexpected key ID");
     }
-    if (header.typ !== undefined && header.typ.toUpperCase() !== "JWT") {
+    // The header is caller-controlled JSON: `typ` may be any type.
+    const typ: unknown = header.typ;
+    if (typ !== undefined && (typeof typ !== "string" || typ.toUpperCase() !== "JWT")) {
       throw new MentraAuthError("miniapp token rejected: unexpected token type");
     }
     const verifyOptions = {

@@ -57,7 +57,9 @@ export async function verifyCoreAccessToken(token: string, opts: {now?: Date} = 
   } catch {
     return null
   }
-  if (header.alg !== OIDC_TOKEN_ALG || header.kid !== OIDC_TOKEN_KID || header.typ?.toLowerCase() !== ACCESS_TOKEN_TYP) return null
+  // The header is caller-controlled JSON: `typ` may be any type.
+  const typ: unknown = header.typ
+  if (header.alg !== OIDC_TOKEN_ALG || header.kid !== OIDC_TOKEN_KID || typeof typ !== "string" || typ.toLowerCase() !== ACCESS_TOKEN_TYP) return null
 
   const now = opts.now ?? new Date()
   let payload: jose.JWTPayload

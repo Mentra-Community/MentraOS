@@ -332,7 +332,8 @@ export async function verifyPortalIdToken(pc: PortalClient, idToken: string | un
   let payload: jose.JWTPayload
   try {
     const header = jose.decodeProtectedHeader(idToken)
-    if (header.kid !== OIDC_TOKEN_KID || (header.typ !== undefined && header.typ.toUpperCase() !== "JWT")) {
+    const typ: unknown = header.typ
+    if (header.kid !== OIDC_TOKEN_KID || (typ !== undefined && (typeof typ !== "string" || typ.toUpperCase() !== "JWT"))) {
       throw new SignInRefused("ID token header refused")
     }
     ;({payload} = await jose.jwtVerify(idToken, await oidcVerificationKey(), {

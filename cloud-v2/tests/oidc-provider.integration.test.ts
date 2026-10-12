@@ -421,6 +421,9 @@ describe("verifyCoreAccessToken (L07)", () => {
       await signWithCoreKey({...header, typ: "JWT"}, base),
       await signWithCoreKey({alg: "EdDSA", kid: "mentra-oidc-1"}, base),
       await signWithCoreKey({...header, kid: "mentra-access-1"}, base),
+      // The header is caller-controlled JSON: a non-string typ is refused, never a TypeError.
+      await signWithCoreKey({...header, typ: 1} as unknown as jose.JWTHeaderParameters, base),
+      await signWithCoreKey({...header, typ: {}} as unknown as jose.JWTHeaderParameters, base),
       await signWithCoreKey(header, base, "-1m"),
       tokens.id_token!,
     ]) {

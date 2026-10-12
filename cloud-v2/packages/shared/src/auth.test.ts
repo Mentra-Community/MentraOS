@@ -64,6 +64,9 @@ describe("phone access token verification pins the key and type", () => {
     ["an at+jwt access token", {alg: "EdDSA", kid: "mentra-access-1", typ: "at+jwt"}],
     ["the runtime kid", {alg: "EdDSA", kid: "cloud-core-runtime-1"}],
     ["no kid", {alg: "EdDSA"}],
+    // The header is caller-controlled JSON: a non-string typ is refused, never a TypeError.
+    ["a numeric typ", {alg: "EdDSA", kid: "mentra-access-1", typ: 1}],
+    ["an object typ", {alg: "EdDSA", kid: "mentra-access-1", typ: {}}],
   ])("a token with matching claims but %s is refused", async (_label, header) => {
     const keypair = useCoreKey()
     const token = await signWithCoreKey(keypair.privateKey, header as jose.JWTHeaderParameters)
@@ -95,6 +98,20 @@ describe("runtime token verification pins the key and type", () => {
     const key = await jose.importPKCS8(`-----BEGIN PRIVATE KEY-----\n${keypair.privateKey}\n-----END PRIVATE KEY-----`, "EdDSA")
     const token = await new jose.SignJWT({tenant_id: "t"})
       .setProtectedHeader({alg: "EdDSA", kid: "cloud-core-runtime-1", typ: "at+jwt"})
+      .setIssuer("test-runtime")
+      .setAudience("cloud-runtime")
+      .setSubject("u")
+      .setIssuedAt()
+      .setExpirationTime("60s")
+      .sign(key)
+    await expect(verifyRuntimeToken(token)).rejects.toThrow("not a runtime token")
+  })
+
+  test.each([1, {}])("a non-string typ (%p) is refused, never a TypeError", async (typ) => {
+    const keypair = configure()
+    const key = await jose.importPKCS8(`-----BEGIN PRIVATE KEY-----\n${keypair.privateKey}\n-----END PRIVATE KEY-----`, "EdDSA")
+    const token = await new jose.SignJWT({tenant_id: "t"})
+      .setProtectedHeader({alg: "EdDSA", kid: "cloud-core-runtime-1", typ} as unknown as jose.JWTHeaderParameters)
       .setIssuer("test-runtime")
       .setAudience("cloud-runtime")
       .setSubject("u")

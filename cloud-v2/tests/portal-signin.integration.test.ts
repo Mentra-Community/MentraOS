@@ -342,6 +342,7 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
       ["an expired token", {exp: now() - 600}, {}],
       ["an access token's type", {}, {typ: "at+jwt"}],
       ["another key ID", {}, {kid: "mentra-access-1"}],
+      ["a non-string type", {}, {typ: 1}],
     ])("refuses %s", async (_label, claims, header) => {
       const sub = await signedIn()
       await expect(verifyPortalIdToken(portalClient("admin"), await sign({sub, ...claims}, header), "n-1")).rejects.toBeInstanceOf(SignInRefused)
