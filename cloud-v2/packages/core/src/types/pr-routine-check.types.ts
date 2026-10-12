@@ -26,9 +26,9 @@ export type PrRoutineCheck = {
   coverageGeneration: number; routineRevision?: string; attempt: PrRoutineAttempt;
   selectionComplete?: boolean;
   retired: PrRoutineAttempt[]; controls: Array<{id: string; kind: 'rerun' | 'cancel'; generation: number; actor: string}>;
-  checkId?: number; checkExternalId: string; createAttempted?: boolean;
+  checkId?: number; checkExternalId: string; creation?: {attemptedAt: string; absenceObservedAt?: string; attempts: number};
   selectionError?: string;
-  buildRequests?: Partial<Record<'android' | 'ios-on-mac', {state: 'intended' | 'answered'; requestedAt: string}>>;
+  buildRequests?: Partial<Record<'android' | 'ios-on-mac' | 'asg', {state: 'intended' | 'uncertain' | 'answered'; requestedAt: string; attempts?: number; lastAttemptAt?: string; absenceObservedAt?: string; operationId?: string; runId?: number; error?: string}>>;
   predecessors?: string[];
   reporting: {nextAt: string; intended?: {revision: number; payload: CheckPayload; digest: string};
     deliveredDigest?: string; deliveredAt?: string; error?: string}

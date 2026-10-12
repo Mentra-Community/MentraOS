@@ -12,7 +12,7 @@ test('webhook signature authenticates exact raw bytes and rejects absent/malform
 })
 test('actual Hono webhook routes only own App/install controls and hides transport errors', async () => {
   const controls: unknown[] = [], intakes: unknown[] = []
-  const app = createPrRoutineCheckApi({async control(value: unknown) {controls.push(value); return {accepted: true}},
+  const app = createPrRoutineCheckApi({async receiveControl(value: unknown) {controls.push(value); return {accepted: true}},
     async intake(...value: unknown[]) {intakes.push(value); return {accepted: true}}} as any,
     {applicationId: 17, installationId: 19} as any, () => secret)
   const payload = {repository: {full_name: 'Mentra-Community/MentraOS'}, installation: {id: 19}, sender: {login: 'employee'},
@@ -27,4 +27,13 @@ test('actual Hono webhook routes only own App/install controls and hides transpo
   const cancel = {...payload, action: 'requested_action', requested_action: {identifier: 'cancel'}}
   expect((await send(cancel)).status).toBe(200); expect(controls).toHaveLength(2)
   expect((await send({...cancel, requested_action: {identifier: 'shell'}})).status).toBe(400)
+})
+
+test('signed PR intake acknowledges after durable persistence without waiting for metadata or external work', async () => {
+  let received: any[] = []
+  const app = createPrRoutineCheckApi({async intake(...value: any[]) {received = value; return {accepted: true}}} as any,
+    {applicationId: 17, installationId: 19} as any, () => secret)
+  const body = JSON.stringify({repository: {full_name: 'Mentra-Community/MentraOS'}, installation: {id: 19}, sender: {login: 'employee'}, action: 'opened', pull_request: {number: 12, state: 'open', head: {sha: 'a'.repeat(40), ref: 'feature', repo: {full_name: 'Mentra-Community/MentraOS'}}, base: {ref: 'dev'}, labels: [{name: 'routine:login'}, {name: 'bug'}]}})
+  expect((await app.request('/webhook', {method: 'POST', body, headers: {'x-github-event': 'pull_request', 'x-github-delivery': 'event-pr', 'x-hub-signature-256': sign(body)}})).status).toBe(200)
+  expect(received[3]).toMatchObject({headSha: 'a'.repeat(40), labels: ['routine:login'], peers: []})
 })

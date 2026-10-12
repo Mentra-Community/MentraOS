@@ -1,5 +1,5 @@
 name: MentraOS ASG Client Build
-run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}', inputs.routine_pr, inputs.routine_head_sha, inputs.routine_base) || '' }}"
+run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}{3}', inputs.routine_pr, inputs.routine_head_sha, inputs.routine_base, inputs.routine_operation && format(' {0}', inputs.routine_operation) || '') || '' }}"
 
 # Pull requests: publish the ASG client a PR mobile build pins for glasses OTA.
 #
@@ -97,6 +97,10 @@ on:
         description: Trusted routine coverage PR number
         type: string
         required: false
+      routine_operation:
+        description: Retained Core producer correlation ID
+        required: false
+        type: string
       routine_head_sha:
         description: Exact selected PR head
         type: string
@@ -110,7 +114,7 @@ on:
 # Scoped per-ref so branches never cancel each other; frees the shared Mac
 # runners from superseded builds.
 concurrency:
-  group: asg-client-build-${{ github.workflow }}-${{ inputs.routine_pr && format('refs/pull/{0}/merge', inputs.routine_pr) || github.ref }}
+  group: asg-client-build-${{ github.workflow }}-${{ inputs.routine_pr && format('routine-pr-{0}-{1}', inputs.routine_pr, inputs.routine_base) || github.ref }}
   cancel-in-progress: true
 
 permissions:

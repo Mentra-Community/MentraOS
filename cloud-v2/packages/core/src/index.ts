@@ -85,8 +85,8 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const routineAuthors = new RoutineWorkService()
   const nightlyRoutines = new NightlyRoutineService()
   const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, 15_000, async () => {
-    await Promise.allSettled([reportNotifications.tick(), reportServerLogs.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending(), prRoutineChecks.tick()])
-  })
+    await Promise.allSettled([reportNotifications.tick(), reportServerLogs.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending()])
+  }, () => prRoutineChecks.tick())
 
   logger.info({port: boundPort}, "cloud-v2 core listening")
 

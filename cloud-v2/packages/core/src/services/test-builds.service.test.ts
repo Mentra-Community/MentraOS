@@ -68,7 +68,7 @@ test("wrong archive size and moved PR base cannot become newly selectable", asyn
   const f = fixture();
   if (kind === "size") f.rows.set(`HEAD ${CDN}pr-builds/${f.receipt.artifacts.mac.name}`, new Response(null, {headers: {"Content-Length": "99"}}));
   else f.rows.set(`${API}/git/ref/heads/dev`, {ref: "refs/heads/dev", object: {type: "commit", sha: "e".repeat(40)}});
-  f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=10`, {workflow_runs: [run()]});
+  f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=100&page=1`, {workflow_runs: [run()]});
   expect((await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"}))[0]!.availability).toBe("unavailable");
  }
 });
@@ -94,7 +94,7 @@ test("an immutable Android publication verifies its recorded base after dev adva
  const f = fixture(), name = `mentra-android-pr-12-${HEAD}-50-1`;
  const androidRun = run({path: ".github/workflows/mentra-app-android-build.yml"});
  f.rows.set(`${API}/actions/runs/50/attempts/1`, androidRun);
- f.rows.set(`${API}/actions/workflows/mentra-app-android-build.yml/runs?&per_page=10`, {workflow_runs: [androidRun]});
+ f.rows.set(`${API}/actions/workflows/mentra-app-android-build.yml/runs?&per_page=100&page=1`, {workflow_runs: [androidRun]});
  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{...jobs[0]!,
   steps: [{name: "Upload APK to the public artifact CDN", status: "completed", conclusion: "success"}]}]});
  const receipt = {schemaVersion: 1, pr: 12, headSha: HEAD, baseSha: BASE, buildSha: MERGE, runId: 50, runAttempt: 1,
@@ -127,7 +127,7 @@ test("an immutable Android publication verifies its recorded base after dev adva
 
 test("PR inventory exposes only the current same-repository head with verified published artifacts", async () => {
  const f = fixture();
- f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=10`, {
+ f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=100&page=1`, {
   workflow_runs: [run(), run({id: 51, head_sha: BASE}), run({id: 52, head_repository: {full_name: "external/fork"}})],
  });
  const builds = await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"});
@@ -136,6 +136,82 @@ test("PR inventory exposes only the current same-repository head with verified p
   source: {channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}});
  expect(builds[0]!.archive?.url).toBe(`${CDN}pr-builds/${f.receipt.artifacts.mac.name}`);
  expect(f.calls.some(call => /actions\/runs\/(51|52)\//.test(call.url))).toBe(false);
+});
+
+test("PR inventory finds the current publication beyond a full first page", async () => {
+ const f = fixture(), inventory = `${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=100&page=`;
+ f.rows.set(`${inventory}1`, {workflow_runs: Array.from({length: 100}, (_, index) => run({id: 1000 + index, head_sha: BASE}))});
+ f.rows.set(`${inventory}2`, {workflow_runs: [run()]});
+ const builds = await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"});
+ expect(builds).toHaveLength(1);
+ expect(builds[0]).toMatchObject({availability: "available", headSha: HEAD,
+  source: {channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}});
+ expect(f.calls.filter(call => call.url.startsWith(inventory)).map(call => call.url)).toEqual([`${inventory}1`, `${inventory}2`]);
+ expect(f.calls.some(call => /actions\/runs\/10\d\d\//.test(call.url))).toBe(false);
+});
+
+test("PR inventory refuses a full bounded history instead of selecting a partial current-head result", async () => {
+ const f = fixture(), inventory = `${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=100&page=`;
+ for (let page = 1; page <= 5; page++) {
+  const workflowRuns = Array.from({length: 100}, (_, index) => run({id: page * 1000 + index, head_sha: BASE}));
+  if (page === 1) workflowRuns[0] = run();
+  f.rows.set(`${inventory}${page}`, {workflow_runs: workflowRuns});
+ }
+ await expect(f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"})).rejects.toMatchObject({
+  status: 502, message: "PR workflow history exceeds its bounded inventory",
+ });
+ expect(f.calls.filter(call => call.url.startsWith(inventory)).map(call => call.url))
+  .toEqual(Array.from({length: 5}, (_, index) => `${inventory}${index + 1}`));
+ expect(f.calls.some(call => call.url.includes("/actions/runs/") || call.init?.method === "HEAD")).toBe(false);
+});
+
+test("trusted PR dispatch inventory binds its exact title and verifies the published PR merge", async () => {
+ const f = fixture(), inventory = `${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=100&page=1`;
+ const dispatched = run({event: "workflow_dispatch", head_branch: "dev", head_sha: BASE,
+  display_title: `Routine PR #12 ${HEAD} dev`});
+ f.rows.set(inventory, {workflow_runs: [dispatched,
+  run({...dispatched, id: 51, display_title: `Routine PR #13 ${HEAD} dev`}),
+  run({...dispatched, id: 52, display_title: `Routine PR #12 ${BASE} dev`}),
+  run({...dispatched, id: 53, display_title: `Routine PR #12 ${HEAD} staging`}),
+  run({...dispatched, id: 54, head_branch: "candidate"}),
+  run({...dispatched, id: 55, head_repository: {full_name: "external/fork"}})]});
+ expect(await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"})).toMatchObject([
+  {availability: "available", headSha: HEAD, source: {channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}},
+ ]);
+ expect(f.calls.some(call => /actions\/runs\/5[1-5]\//.test(call.url))).toBe(false);
+ f.rows.set(`${API}/commits/${MERGE}`, {sha: MERGE, parents: [{sha: BASE}, {sha: BASE}]});
+ expect((await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"}))[0]).toMatchObject({
+  availability: "unavailable", reason: "Mac build does not contain the selected PR head and base",
+ });
+});
+
+test("trusted PR dispatch inventory accepts only an exact retained correlation suffix or the exact manual title", async () => {
+ for (const title of [`Routine PR #12 ${HEAD} dev`, `Routine PR #12 ${HEAD} dev ${HASH}`]) {
+  const f = fixture(), dispatched = run({event: "workflow_dispatch", head_branch: "dev", head_sha: BASE, display_title: title});
+  f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=100&page=1`, {workflow_runs: [dispatched,
+   run({...dispatched, id: 51, display_title: `Routine PR #12 ${HEAD} dev ${HASH.slice(1)}`}),
+   run({...dispatched, id: 52, display_title: `Routine PR #12 ${HEAD} dev ${"g".repeat(64)}`}),
+   run({...dispatched, id: 53, display_title: `Routine PR #12 ${HEAD} dev ${HASH} trailing`}),
+   run({...dispatched, id: 54, display_title: `Routine PR #12 ${HEAD} dev ${HASH.toUpperCase()}`})]});
+  const builds = await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"});
+  expect(builds).toHaveLength(1);
+  expect(builds[0]).toMatchObject({availability: "available", source: {buildRunId: 50}, headSha: HEAD});
+  expect(f.calls.some(call => /actions\/runs\/5[1-4]\//.test(call.url))).toBe(false);
+ }
+});
+
+test("an unavailable requested PR producer distinguishes a terminal failure from an active build", async () => {
+ for (const active of [false, true]) {
+  const f = fixture(), producer = run({event: "workflow_dispatch", head_branch: "dev", head_sha: BASE,
+   display_title: `Routine PR #12 ${HEAD} dev`, status: active ? "in_progress" : "completed", conclusion: active ? null : "failure"});
+  f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=100&page=1`, {workflow_runs: [producer]});
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1,
+   jobs: [{...jobs[0]!, status: producer.status, conclusion: producer.conclusion}]});
+  const builds = await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"});
+  expect(builds).toHaveLength(1);
+  expect(builds[0]).toMatchObject({availability: "unavailable", producerStatus: active ? "pending" : "failed",
+   source: {channel: "pr", prNumber: 12, buildRunId: 50, publicationAttempt: 1}, reason: "Build or Mac publication has not succeeded"});
+ }
 });
 
 test("dev inventory distinguishes a newer unpublished build from the previous immutable Mac release", async () => {

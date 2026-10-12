@@ -42,7 +42,7 @@ test('lost create acknowledgement reconciles the same owned gate by read and pat
   })
   await expect(f.github.deliver(undefined, payload, true)).rejects.toThrow('retained operation will reconcile')
   expect(await f.github.deliver(undefined, {...payload, external_id: 'gate-one:3'}, false)).toBe(99)
-  expect(f.calls.map(call => call.method)).toEqual(['GET', 'POST', 'GET', 'GET', 'GET', 'PATCH'])
+  expect(f.calls.map(call => call.method)).toEqual(['GET', 'POST', 'GET', 'GET', 'GET', 'GET', 'PATCH'])
   expect(f.calls.filter(call => call.method === 'POST')).toHaveLength(1)
   expect(f.calls.at(-1)!.body).toMatchObject({external_id: 'gate-one:3', output: payload.output})
   expect(f.scopes.every(scope => scope === 'checks')).toBe(true)
@@ -72,7 +72,7 @@ test('checks from other Apps are ignored without adopting their IDs', async () =
 test('retained check IDs require the exact App, name and current head before update', async () => {
   for (const value of [check(99, payload.external_id, 18), check(99, payload.external_id, appId, otherHead),
     {...check(99, payload.external_id), name: 'A different check'}]) {
-    const f = fixture(() => reply(value))
+    const f = fixture(call => call.path.startsWith('commits/') ? inventory([value]) : reply(value))
     await expect(f.github.deliver(99, payload)).rejects.toThrow('ownership differs')
     expect(f.calls.every(call => call.method === 'GET')).toBe(true)
   }
@@ -111,15 +111,14 @@ test('permission validation refuses malformed actors without requests and only a
 })
 
 test('build requests pin both existing producers to the authenticated PR while using only source scope', async () => {
-  for (const platform of ['android', 'ios-on-mac'] as const) {
+  for (const platform of ['android', 'ios-on-mac', 'asg'] as const) {
     const f = fixture(() => new Response(null, {status: 204}))
     const context: PrRoutineContext = {number: 12, headSha: head, baseRef: 'staging', headRef: 'feature',
       sameRepository: true, open: true, labels: [], peers: [12]}
-    await f.github.requestBuild(platform, context)
-    expect(f.calls.map(call => call.path)).toEqual(['actions/workflows/mentra-asg-client-build.yml/dispatches',
-      `actions/workflows/mentra-app-${platform === 'android' ? 'android' : 'ios'}-build.yml/dispatches`])
-    expect(f.scopes).toEqual(['source', 'source'])
-    for (const call of f.calls) expect(call.body).toEqual({ref: 'dev', inputs: {routine_pr: '12', routine_head_sha: head, routine_base: 'staging'}})
+    await f.github.requestBuild(platform, context, 'c'.repeat(64))
+    expect(f.calls.map(call => call.path)).toEqual([platform === 'asg' ? 'actions/workflows/mentra-asg-client-build.yml/dispatches' : `actions/workflows/mentra-app-${platform === 'android' ? 'android' : 'ios'}-build.yml/dispatches`])
+    expect(f.scopes).toEqual(['source'])
+    for (const call of f.calls) expect(call.body).toEqual({ref: 'dev', inputs: {routine_pr: '12', routine_head_sha: head, routine_base: 'staging', routine_operation: 'c'.repeat(64)}})
   }
 })
 
@@ -128,4 +127,18 @@ test('transport failure never leaks provider text or falls through to a write', 
   try {await f.github.deliver(undefined, payload, true); throw Error('unexpected success')}
   catch (error) {expect(String(error)).toContain('delivery is unavailable'); expect(String(error)).not.toContain('provider-sensitive-diagnostic')}
   expect(f.calls.map(call => call.method)).toEqual(['GET'])
+})
+
+test('producer reconciliation uses exact operation/title/repository and refuses incomplete or duplicate history', async () => {
+  const operation = 'c'.repeat(64), context: PrRoutineContext = {number: 12, headSha: head, baseRef: 'dev', headRef: 'feature', sameRepository: true, open: true, labels: [], peers: [12]}
+  const row = {id: 44, display_title: `Routine PR #12 ${head} dev ${operation}`, path: '.github/workflows/mentra-asg-client-build.yml', event: 'workflow_dispatch', head_branch: 'dev', status: 'completed', conclusion: 'failure', repository: {full_name: ROUTINE_CHECK_REPOSITORY}, head_repository: {full_name: ROUTINE_CHECK_REPOSITORY}}
+  const f = fixture(() => reply({workflow_runs: [row, {...row, id: 45, display_title: row.display_title + 'bad'}]}))
+  expect(await f.github.producer('asg', context, operation)).toEqual({id: 44, failed: true})
+  expect(f.calls.every(call => call.method === 'GET')).toBe(true); expect(f.scopes).toEqual(['source'])
+  const duplicate = fixture(() => reply({workflow_runs: [row, {...row, id: 45}]}))
+  await expect(duplicate.github.producer('asg', context, operation)).rejects.toThrow('ambiguous')
+  let page = 0
+  const capped = fixture(() => reply({workflow_runs: Array.from({length: 100}, (_, index) => ({...row, id: ++page * 100 + index, display_title: 'unrelated'}))}))
+  await expect(capped.github.producer('asg', context, operation)).rejects.toThrow('bounded')
+  expect(capped.calls).toHaveLength(5)
 })

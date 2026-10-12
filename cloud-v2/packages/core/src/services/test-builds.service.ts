@@ -151,12 +151,22 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const pr = query.channel === "pr" ? await this.pr(query.pr!) : undefined;
     const platform = query.platform;
     const workflow = pr ? prWorkflow(platform) : RELEASE_WORKFLOW;
-    const filter = pr ? '' : `branch=${query.channel}`;
-    const data = z.object({ workflow_runs: z.array(runSchema) }).parse(
-      await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?${filter}&per_page=10`));
+    const runs: GithubRun[] = [];
+    if (pr) {
+      for (let page = 1; page <= 5; page++) {
+        const data = z.object({workflow_runs: z.array(runSchema).max(100)}).parse(
+          await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?&per_page=100&page=${page}`));
+        runs.push(...data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr)));
+        if (data.workflow_runs.length < 100) break;
+        if (page === 5) throw new TestDispatchError(502, 'PR workflow history exceeds its bounded inventory');
+      }
+    } else {
+      const data = z.object({workflow_runs: z.array(runSchema)}).parse(
+        await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?branch=${query.channel}&per_page=10`));
+      runs.push(...data.workflow_runs.filter(run => this.matches(run, query.channel, platform)));
+    }
     const base = pr && !allowOriginalBase ? await this.baseSha(pr) : undefined;
-    return Promise.all(data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr)).map(run =>
-      this.describe(run, query.channel, platform, pr, base)));
+    return Promise.all(runs.map(run => this.describe(run, query.channel, platform, pr, base)));
   }
   /** Latest immutable dev publication at the occurrence boundary. Incomplete history never selects an older build. */
   async latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null> {
@@ -200,7 +210,8 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       && run.path === `.github/workflows/${pr ? prWorkflow(platform) : RELEASE_WORKFLOW}`
       && (pr ? (run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref ||
         run.event === 'workflow_dispatch' && run.head_branch === 'dev' &&
-          run.display_title === `Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref}`)
+          (run.display_title === `Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref}` ||
+          run.display_title.startsWith(`Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref} `) && /^[a-f0-9]{64}$/.test(run.display_title.slice(`Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref} `.length))))
         : ["push", "workflow_dispatch"].includes(run.event) && run.head_branch === channel);
   }
   async resolve(source: TestBuildSource, platform: TestBuildPlatform): Promise<TestBuild> {

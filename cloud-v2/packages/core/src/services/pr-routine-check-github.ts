@@ -11,12 +11,17 @@ const prSchema = z.object({number: positive, state: z.string(), head: z.object({
   labels: z.array(z.object({name: z.string()}))})
 const checkSchema = z.object({id: positive, name: z.string(), head_sha: sha, external_id: z.string().nullable(),
   app: z.object({id: positive})})
+export class PrBuildDispatchFailure extends Error {
+  constructor(readonly uncertain: boolean) {super(uncertain ? 'Producer dispatch acceptance is uncertain; reconcile existing runs' : 'Producer dispatch was rejected before acceptance')}
+}
 export interface PrRoutineGithub {
   context(number: number): Promise<PrRoutineContext>
   permission(actor: string): Promise<boolean>
   ownedCheck(id: number, headSha: string, externalId: string): Promise<boolean>
   deliver(checkId: number | undefined, payload: CheckPayload, allowCreate?: boolean): Promise<number>
-  requestBuild(platform: 'android' | 'ios-on-mac', context: PrRoutineContext): Promise<void>
+  findCheck(payload: CheckPayload): Promise<number | undefined>
+  producer(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string): Promise<{id: number; failed: boolean} | undefined>
+  requestBuild(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string): Promise<void>
 }
 /** All writes use the existing testing App, constrained to this repository. */
 export class GithubPrRoutineChecks implements PrRoutineGithub {
@@ -61,6 +66,8 @@ export class GithubPrRoutineChecks implements PrRoutineGithub {
   }
   async deliver(checkId: number | undefined, payload: CheckPayload, allowCreate = false): Promise<number> {
     if (checkId) {
+      const owned = await this.findCheck(payload)
+      if (owned && owned !== checkId) throw new TestRunError(409, 'Routine check receipt differs from its retained owner')
       if (!await this.ownedCheck(checkId, payload.head_sha, payload.external_id)) {
         // External IDs advance at the generation fence; ownership must still be the same App/name/head.
         const check = checkSchema.parse(await this.api(`check-runs/${checkId}`))
@@ -70,23 +77,56 @@ export class GithubPrRoutineChecks implements PrRoutineGithub {
       const {head_sha: _, ...update} = payload
       return checkSchema.parse(await this.api(`check-runs/${checkId}`, {method: 'PATCH', body: JSON.stringify(update)})).id
     }
-    // Reconcile a lost create acknowledgement before attempting the same intended create.
+    const existing = await this.findCheck(payload)
+    if (existing) return this.deliver(existing, payload)
+    if (!allowCreate) throw new TestRunError(503, 'An uncertain check creation has no visible receipt; it will reconcile without repeating the create')
+    return checkSchema.parse(await this.api('check-runs', {method: 'POST', body: JSON.stringify(payload)})).id
+  }
+  async findCheck(payload: CheckPayload) {
     const rows = z.object({total_count: z.number().int().nonnegative(), check_runs: z.array(checkSchema).max(100)}).parse(
       await this.api(`commits/${payload.head_sha}/check-runs?check_name=${encodeURIComponent(ROUTINE_CHECK_NAME)}&filter=all&per_page=100`))
     if (rows.total_count !== rows.check_runs.length) throw new TestRunError(503, 'Routine check history is incomplete')
     const matches = rows.check_runs.filter(row => row.app.id === this.app.applicationId && row.external_id?.split(':')[0] === payload.external_id.split(':')[0])
     if (matches.length > 1) throw new TestRunError(409, 'Routine check creation is ambiguous')
-    if (matches[0]) return this.deliver(matches[0].id, payload)
-    if (!allowCreate) throw new TestRunError(503, 'An uncertain check creation has no visible receipt; it will reconcile without repeating the create')
-    return checkSchema.parse(await this.api('check-runs', {method: 'POST', body: JSON.stringify(payload)})).id
+    if (matches[0] && (matches[0].name !== ROUTINE_CHECK_NAME || matches[0].head_sha !== payload.head_sha)) throw new TestRunError(409, 'Routine check ownership differs from its retained receipt')
+    return matches[0]?.id
   }
-  async requestBuild(platform: 'android' | 'ios-on-mac', context: PrRoutineContext) {
-    // The existing ASG producer owns the matching immutable OTA manifest.
-    await this.api('actions/workflows/mentra-asg-client-build.yml/dispatches', {
-      method: 'POST', body: JSON.stringify({ref: 'dev', inputs: {routine_pr: String(context.number),
-        routine_head_sha: context.headSha, routine_base: context.baseRef}})}, 'source')
-    await this.api(`actions/workflows/${platform === 'android' ? 'mentra-app-android-build.yml' : 'mentra-app-ios-build.yml'}/dispatches`, {
-      method: 'POST', body: JSON.stringify({ref: 'dev', inputs: {routine_pr: String(context.number),
-        routine_head_sha: context.headSha, routine_base: context.baseRef}})}, 'source')
+  async producer(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string) {
+    if (!/^[a-f0-9]{64}$/.test(operationId)) throw new TestRunError(400, 'Invalid retained producer operation')
+    const name = platform === 'asg' ? 'mentra-asg-client-build.yml' : platform === 'android' ? 'mentra-app-android-build.yml' : 'mentra-app-ios-build.yml'
+    const title = `Routine PR #${context.number} ${context.headSha} ${context.baseRef} ${operationId}`
+    const schema = z.object({id: positive, display_title: z.string(), path: z.string(), event: z.string(), head_branch: z.string(),
+      status: z.string(), conclusion: z.string().nullable(), repository: z.object({full_name: z.string()}), head_repository: z.object({full_name: z.string()})})
+    const matches: Array<z.infer<typeof schema>> = [], seen = new Set<number>(), deadline = Date.now() + 90_000
+    for (let page = 1; page <= 5; page++) {
+      const rows = z.object({workflow_runs: z.array(schema).max(100)}).parse(await this.api(`actions/workflows/${name}/runs?event=workflow_dispatch&branch=dev&per_page=100&page=${page}`, {}, 'source', deadline)).workflow_runs
+      for (const row of rows) {
+        if (seen.has(row.id)) throw new TestRunError(503, 'Producer history changed during reconciliation')
+        seen.add(row.id)
+        if (row.display_title === title && row.path === `.github/workflows/${name}` && row.event === 'workflow_dispatch' && row.head_branch === 'dev' &&
+          row.repository.full_name === ROUTINE_CHECK_REPOSITORY && row.head_repository.full_name === ROUTINE_CHECK_REPOSITORY) matches.push(row)
+      }
+      if (matches.length > 1) throw new TestRunError(409, 'Producer dispatch receipts are ambiguous')
+      if (rows.length < 100) return matches[0] ? {id: matches[0].id, failed: matches[0].status === 'completed' && matches[0].conclusion !== 'success'} : undefined
+    }
+    throw new TestRunError(503, 'Producer history exceeds its bounded reconciliation inventory')
+  }
+  async requestBuild(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string) {
+    if (!/^[a-f0-9]{64}$/.test(operationId)) throw new TestRunError(400, 'Invalid retained producer operation')
+    // Each native producer has its own retained dispatch intent. No second builder.
+    for (const name of [platform === 'asg' ? 'mentra-asg-client-build.yml' : platform === 'android' ? 'mentra-app-android-build.yml' : 'mentra-app-ios-build.yml']) {
+      let token: string
+      try {token = await this.app.token('source')} catch {throw new PrBuildDispatchFailure(false)}
+      let response: Response
+      try {
+        response = await this.transport(`https://api.github.com/repos/${ROUTINE_CHECK_REPOSITORY}/actions/workflows/${name}/dispatches`, {
+          method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20_000), headers: {
+            Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json',
+            'X-GitHub-Api-Version': '2022-11-28'}, body: JSON.stringify({ref: 'dev', inputs: {
+              routine_pr: String(context.number), routine_head_sha: context.headSha, routine_base: context.baseRef, routine_operation: operationId}}),
+        })
+      } catch {throw new PrBuildDispatchFailure(true)}
+      if (![202, 204].includes(response.status)) throw new PrBuildDispatchFailure(response.status >= 500)
+    }
   }
 }

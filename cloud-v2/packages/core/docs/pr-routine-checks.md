@@ -14,7 +14,7 @@ Grant the installed App Checks **write** on MentraOS. Keep the existing Actions 
 
 The staging service mounts the same path, but subscribing both environments to the same repository would admit duplicate independent routine jobs. The endpoint authenticates the exact body with GitHub's SHA-256 signature, then verifies installation, repository, check identity and actor write permission.
 
-The app/ASG workflows accept `routine_pr`, `routine_head_sha`, and `routine_base` only on a trusted `dev` workflow dispatch. They re-read the open same-repository PR, validate the exact head and dev/staging base, check out its synthetic merge, and publish through existing signed artifact/provenance paths. Ordinary PR comments and manual exact-build requests remain available. Automatic PR originals are admitted by the check service; publication callbacks reconcile it rather than creating parallel requests.
+The app/ASG workflows accept `routine_pr`, `routine_head_sha`, `routine_base`, and Core `routine_operation` correlation only on a trusted `dev` workflow dispatch. They re-read the open same-repository PR, validate the exact head and dev/staging base, check out its synthetic merge, and publish through existing signed artifact/provenance paths. Ordinary PR comments and manual exact-build requests remain available. Automatic PR originals are admitted by the check service; publication callbacks reconcile it rather than creating parallel requests.
 
 ## Required-check activation
 
@@ -24,6 +24,6 @@ Only after that verification should an operator require the App-owned `Routine t
 
 ## Delivery recovery
 
-`GET /api/admin/test-runs/pr-checks/:gateId` exposes the safe check projection and retained pending/delivered/error status to Admin callers. Delivery errors do not create another routine request. An uncertain initial GitHub create reconciles the App-owned gate receipt on the same head and never repeats the POST. If no receipt becomes visible, the retained delivery remains blocked for operator reconciliation; absence from an eventually consistent list cannot prove that a create did not occur.
+`GET /api/admin/test-runs/pr-checks/:gateId` exposes the safe check projection and retained pending/delivered/error status to Admin callers. Delivery errors do not create another routine request. An uncertain initial GitHub create reconciles the App-owned gate receipt on the same head. Each producer has a retained correlation in the native run title. After the 20-second call budget, two complete absence reads at least 30 seconds apart and at least two minutes after the call boundary permit bounded retry. A visible receipt is adopted without repeating the call. GitHub has no atomic create/dispatch idempotency key; a late duplicate is possible, so duplicate exact-identity histories block qualification and require operator reconciliation. Reporting retries remain independent of cancellation/deadline processing. Signed webhook intake persists state before acknowledgment; existing timer reconciliation validates controls and does external work.
 
 A timeout completes the check as `timed_out` and continues ordinary cancellation/containment. Re-run remains blocked until previous custody has settled. Stale controller progress says `Progress unavailable` and freezes its elapsed observation; it does not imply a device stop or release.

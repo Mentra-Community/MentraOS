@@ -17,5 +17,8 @@ const events = new Schema({
   digest: {type: String, required: true},
   gateId: {type: String, required: true},
   control: {type: Schema.Types.Mixed},
+  nextAt: {type: Date},
+  processed: {type: Boolean},
 }, {collection: 'pr_routine_check_events', timestamps: true})
+events.index({processed: 1, nextAt: 1})
 export const PrRoutineCheckEventModel = registerModel('PrRoutineCheckEvent', events)

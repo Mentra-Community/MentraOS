@@ -14,7 +14,7 @@ import {TestRunError} from './test-result-error'
 import {frameworkRequestInputSchema} from '../types/framework-request.types'
 import type {StoredRoutineJob} from '../types/routine-job.types'
 import {GithubRoutineSourceGateway} from './routine-source-selection.service'
-import {GithubPrRoutineChecks, type PrRoutineGithub} from './pr-routine-check-github'
+import {PrBuildDispatchFailure, GithubPrRoutineChecks, type PrRoutineGithub} from './pr-routine-check-github'
 import {prRoutineCheckRepository, type PrRoutineCheckRepository} from './pr-routine-check.repository'
 
 const digest = (value: unknown) => requestInputDigest(value)
@@ -82,19 +82,21 @@ export class PrRoutineCheckService {
     const acceptedAt = iso(this.now())
     return {generation, acceptedAt, deadline: iso(this.now() + 3 * 3600_000), members: []}
   }
-  async intake(number: number, deliveryId: string, eventDigest: string) {
-    const context = await this.github.context(number), gateId = prRoutineGateId(context.headSha)
-    await this.rows.event(deliveryId, eventDigest, gateId)
+  async intake(number: number, deliveryId: string, eventDigest: string, receivedContext?: PrRoutineContext) {
+    const context = receivedContext ?? await this.github.context(number), gateId = prRoutineGateId(context.headSha)
+    await this.rows.event(deliveryId, eventDigest, gateId, {kind: 'intake', number, context})
     const attempt = this.attempt(1), key = selectionKey(context), predecessors = await this.rows.predecessors(number, gateId)
     const value: PrRoutineCheck = {gateId, headSha: context.headSha, context, selectionKey: key, coverageGeneration: 1,
       attempt, retired: [], controls: [], predecessors, checkExternalId: `${gateId}:1:1`, reporting: {nextAt: iso(this.now())}}
     const pending = routineCheckPayload(value, this.now())
     value.reporting.intended = {revision: 0, payload: pending, digest: digest(pending)}
     await this.rows.insert(value, new Date(this.now()))
-    await this.deliver(gateId)
-    await Promise.allSettled(predecessors.map(id => this.reconcile(id)))
-    await this.reconcile(gateId, context)
-    return {gateId}
+    return {gateId, accepted: true}
+  }
+  async receiveControl(input: {deliveryId: string; digest: string; gateId: string; checkId: number; externalId: string;
+    headSha: string; kind: 'rerun' | 'cancel'; actor: string}) {
+    await this.rows.event(input.deliveryId, input.digest, input.gateId, input)
+    return {gateId: input.gateId, accepted: true}
   }
   async control(input: {deliveryId: string; digest: string; gateId: string; checkId: number; externalId: string;
     headSha: string; kind: 'rerun' | 'cancel'; actor: string}) {
@@ -132,6 +134,7 @@ export class PrRoutineCheckService {
           members: gate.attempt.members.map(member => ({...member, progress: undefined}))}
         gate.checkExternalId = externalId(gate)
         delete gate.reporting.intended; delete gate.reporting.deliveredDigest
+        delete gate.buildRequests
         const previous = gate.retired.at(-1)!
         const all = previous.conclusion === 'success'
         gate.attempt.rerun = {id: `pr-rerun-${digest({gateId: gate.gateId, generation: gate.attempt.generation})}`,
@@ -143,8 +146,6 @@ export class PrRoutineCheckService {
       gate.reporting.intended = {revision: claimed.revision + 1, payload: pending, digest: digest(pending)}
     }
     if (!await this.rows.save(claimed, gate, new Date(this.now()))) throw new TestRunError(503, 'Control storage changed; retry the same delivery')
-    await this.deliver(input.gateId)
-    await this.reconcile(input.gateId)
     return {gateId: input.gateId, accepted: true}
   }
   private async select(gate: PrRoutineCheck) {
@@ -207,7 +208,7 @@ export class PrRoutineCheckService {
       if (host && progress && lane!.activity?.owner.kind === 'run' && lane!.activity.owner.id === member.requestId &&
           progress.requestId === member.requestId && progress.requestDigest === request.inputSha256 &&
           progress.ownerGeneration === lane!.activity.generation && progress.controllerIncarnation === host.incarnation &&
-          progress.sequence === host.sequence && progress.totalSteps === member.stepIds.length &&
+          progress.sequence === host.sequence && (progress.totalSteps === member.stepIds.length || progress.phase === 'preparation' && progress.totalSteps === 0) &&
           (!progress.currentStep || member.stepIds[progress.currentStep.index] === progress.currentStep.id)) member.progress = progress
     }
   }
@@ -269,10 +270,12 @@ export class PrRoutineCheckService {
         if (!eligible[0]) {
           const newest = sources.get(member.platform)!.filter(build => build.headSha === gate.headSha && build.source.channel === 'pr')
             .sort((a, b) => b.source.buildRunId - a.source.buildRunId)[0]
-          if (newest?.producerStatus === 'failed' && !gate.buildRequests?.[member.platform]) {
+          if (newest?.producerStatus === 'failed' && (!gate.buildRequests?.[member.platform] || Date.parse(newest.createdAt) >= Date.parse(gate.buildRequests[member.platform]!.requestedAt))) {
             member.status = 'not-run'; member.settled = true; member.waitReason = 'App build failed or was cancelled'; continue
           }
           gate.buildRequests ??= {}
+          if (!gate.buildRequests.asg) gate.buildRequests.asg = {state: 'intended', requestedAt: iso(this.now())}
+          if (gate.buildRequests[member.platform]?.error) member.waitReason = gate.buildRequests[member.platform]!.error
           if (!gate.buildRequests[member.platform]) {
             gate.buildRequests[member.platform] = {state: 'intended', requestedAt: iso(this.now())}; changed = true
           }
@@ -285,6 +288,47 @@ export class PrRoutineCheckService {
       }
     }
     return changed
+  }
+  private async dispatchBuilds(row: PrRoutineCheckRow, gate: PrRoutineCheck) {
+    for (const platform of ['asg', 'android', 'ios-on-mac'] as const) {
+      const dispatch = gate.buildRequests?.[platform]
+      if (!dispatch || !gate.attempt.members.some(member => !member.selection && !member.settled && (platform === 'asg' || member.platform === platform))) continue
+      if (dispatch.operationId) {
+        const receipt = await this.github.producer(platform, gate.context, dispatch.operationId)
+        if (receipt) {
+          dispatch.state = 'answered'; dispatch.runId = receipt.id; delete dispatch.error; delete dispatch.absenceObservedAt
+          if (receipt.failed) for (const member of gate.attempt.members.filter(member => !member.selection && (platform === 'asg' || member.platform === platform))) {
+            member.status = 'not-run'; member.settled = true; member.waitReason = `${platform === 'asg' ? 'Glasses' : 'App'} build failed or was cancelled`
+          }
+          continue
+        }
+      }
+      if (dispatch.state !== 'intended') {
+        // Two complete, separated absence reads after the 20s POST budget recover a crash before the call.
+        // GitHub has no atomic idempotency key; a late duplicate is detected by its same correlation ID.
+        if (!dispatch.lastAttemptAt || this.now() - Date.parse(dispatch.lastAttemptAt) < 120_000) continue
+        if (!dispatch.absenceObservedAt) {dispatch.absenceObservedAt = iso(this.now()); continue}
+        if (this.now() - Date.parse(dispatch.absenceObservedAt) < 30_000) continue
+        dispatch.state = 'intended'
+      }
+      if ((dispatch.attempts ?? 0) >= 20 || dispatch.lastAttemptAt && this.now() - Date.parse(dispatch.lastAttemptAt) < 30_000) continue
+      dispatch.operationId ??= digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: gate.attempt.generation, platform})
+      dispatch.state = 'uncertain'; dispatch.attempts = (dispatch.attempts ?? 0) + 1; dispatch.lastAttemptAt = iso(this.now()); delete dispatch.absenceObservedAt
+      if (!await this.rows.save(row, gate, new Date(this.now()))) return true
+      let state: 'intended' | 'uncertain' | 'answered' = 'answered'
+      try {await this.github.requestBuild(platform, gate.context, dispatch.operationId)} catch (error) {
+        state = error instanceof PrBuildDispatchFailure && !error.uncertain ? 'intended' : 'uncertain'
+      }
+      const retained = await this.rows.claim(gate.gateId, new Date(this.now()))
+      if (retained && retained.payload.coverageGeneration === gate.coverageGeneration && retained.payload.attempt.generation === gate.attempt.generation) {
+        const value = structuredClone(retained.payload), intent = value.buildRequests![platform]!
+        intent.state = state
+        if (state !== 'answered') intent.error = state === 'intended' ? 'Producer dispatch rejected; retained intent will retry' : 'Producer acceptance uncertain; reconciling its exact run history'
+        await this.rows.save(retained, value, new Date(this.now() + 15_000))
+      }
+      return true
+    }
+    return false
   }
   private async admit(gate: PrRoutineCheck) {
     const attempt = gate.attempt
@@ -324,9 +368,12 @@ export class PrRoutineCheckService {
       await this.reruns.submit({rerunId: plan.id, previewDigest: plan.previewDigest})
     }
     for (const member of selected.filter(member => !plan.linkedMemberIds?.includes(member.memberId) && !member.originalRequestId)) {
-      if (member.requestId && await this.requests.get(member.requestId)) {member.originalRequestId = member.requestId; await this.observe(member); return}
+      if (member.requestId && await this.requests.get(member.requestId)) {member.originalRequestId = member.requestId; await this.observe(member); continue}
       // A new attempt gets a new immutable request identity; failed pre-admission is not a linked original.
-      if (member.requestId && member.requestId !== id(gate, member.memberId)) {delete member.requestId; delete member.selection}
+      if (member.requestId && member.requestId !== id(gate, member.memberId)) {
+        member.requestId = id(gate, member.memberId)
+        if (member.selection) member.selection = {...member.selection, requestId: member.requestId}
+      }
       member.settled = false; member.publicationComplete = false
     }
     if (await this.freezeAdmissions(gate)) return
@@ -339,7 +386,9 @@ export class PrRoutineCheckService {
     const gate = structuredClone(row.payload)
     let nextAt = this.now() + 15_000
     try {
-      const context = suppliedContext ?? await this.github.context(gate.context.number)
+      if (!gate.attempt.conclusion && this.now() >= Date.parse(gate.attempt.deadline)) gate.attempt.cancellation ??= {kind: 'timeout', requestedAt: iso(this.now())}
+      let context = gate.context
+      try {context = suppliedContext ?? await this.github.context(gate.context.number)} catch (error) {if (!gate.attempt.cancellation) throw error}
       if (context.headSha !== gate.headSha || !context.open) {
         gate.attempt.cancellation ??= {kind: context.open ? 'superseded' : 'closed', requestedAt: iso(this.now())}
         if (gate.attempt.conclusion && gate.attempt.conclusion !== 'timed_out') {gate.attempt.conclusion = 'cancelled'; gate.attempt.finishedAt = iso(this.now())}
@@ -385,15 +434,9 @@ export class PrRoutineCheckService {
           if (gate.selectionError) {gate.attempt.conclusion = 'failure'; gate.attempt.finishedAt = iso(this.now())}
           else if (!gate.attempt.members.length) {gate.attempt.conclusion = 'success'; gate.attempt.finishedAt = iso(this.now())}
           else if (predecessorsSettled && !gate.retired.some(attempt => attempt.cancellation && attempt.members.some(member => !member.settled))) {
-            if (gate.attempt.rerun) await this.rerun(gate); else {
+            if (gate.attempt.rerun) {await this.rerun(gate); if (await this.dispatchBuilds(row, gate)) return} else {
               if (await this.freezeAdmissions(gate)) {await this.rows.save(row, gate, new Date(this.now())); return}
-              for (const platform of ['android', 'ios-on-mac'] as const) if (gate.buildRequests?.[platform]?.state === 'intended') {
-                // One durable dispatch intent. An uncertain acknowledgement is reconciled by publication history, never blindly resent.
-                gate.buildRequests[platform]!.state = 'answered'
-                if (!await this.rows.save(row, gate, new Date(this.now()))) return
-                await this.github.requestBuild(platform, gate.context)
-                return
-              }
+              if (await this.dispatchBuilds(row, gate)) return
               await this.admit(gate)
             }
             if (gate.attempt.members.every(member => member.settled && terminalStatuses.includes(member.status) &&
@@ -418,16 +461,11 @@ export class PrRoutineCheckService {
     }
     await this.rows.save(row, gate, new Date(nextAt))
   }
-  private async deliver(gateId: string, allowCreate = false) {
+  private async deliver(gateId: string) {
     const row = await this.rows.claim(gateId, new Date(this.now()))
     if (!row) return
     const gate = structuredClone(row.payload), intended = gate.reporting.intended
     if (!intended) {await this.rows.save(row, gate, new Date(this.now() + 15_000)); return}
-    if (!gate.checkId && !gate.createAttempted) {
-      gate.createAttempted = true
-      if (await this.rows.save(row, gate, new Date(this.now()))) await this.deliver(gateId, true)
-      return
-    }
     try {
       if (intended.payload.conclusion === 'success') {
         const context = await this.github.context(gate.context.number)
@@ -439,6 +477,32 @@ export class PrRoutineCheckService {
       }
       if (row.lease && this.now() > new Date(row.lease.expiresAt).getTime() - 90_000)
         throw new TestRunError(503, 'GitHub delivery exceeded its retained lease budget')
+      let allowCreate = false
+      if (!gate.checkId) {
+        gate.checkId = await this.github.findCheck(intended.payload)
+        if (!gate.checkId) {
+          const creation = gate.creation
+          if (creation) {
+            if (this.now() - Date.parse(creation.attemptedAt) < 120_000) throw new TestRunError(503, 'Check create is reconciling')
+            if (!creation.absenceObservedAt) {
+              creation.absenceObservedAt = iso(this.now())
+              await this.rows.save(row, gate, new Date(this.now() + 30_000)); return
+            }
+            if (this.now() - Date.parse(creation.absenceObservedAt) < 30_000) throw new TestRunError(503, 'Check absence confirmation is pending')
+            if (creation.attempts >= 20) throw new TestRunError(503, 'Check creation reached its retry bound; operator reconciliation required')
+          }
+          gate.creation = {attemptedAt: iso(this.now()), attempts: (creation?.attempts ?? 0) + 1}
+          // Release/reclaim the durable lease after saving the call boundary. The next process can recover this exact intent.
+          if (!await this.rows.save(row, gate, new Date(this.now()))) return
+          const retained = await this.rows.claim(gateId, new Date(this.now()))
+          if (!retained) return
+          if (retained.payload.checkExternalId !== gate.checkExternalId || retained.payload.reporting.intended?.digest !== intended.digest) {
+            await this.rows.save(retained, retained.payload, new Date(this.now())); return
+          }
+          Object.assign(row, retained)
+          allowCreate = true
+        }
+      }
       gate.checkId = await this.github.deliver(gate.checkId, intended.payload, allowCreate)
       gate.reporting.deliveredDigest = intended.digest; gate.reporting.deliveredAt = iso(this.now())
       gate.reporting.nextAt = iso(this.now() + 15_000); delete gate.reporting.intended; delete gate.reporting.error
@@ -446,12 +510,25 @@ export class PrRoutineCheckService {
     await this.rows.save(row, gate, new Date(this.now() + 15_000))
   }
   async tick() {
-    const due = await this.rows.due(new Date(this.now()))
-    await Promise.allSettled(due.map(async gateId => {
-      const row = await this.rows.get(gateId)
-      if (row?.payload.reporting.intended) await this.deliver(gateId)
-      else await this.reconcile(gateId)
-    }))
+    const [events, due] = await Promise.all([this.rows.eventsDue(new Date(this.now())), this.rows.due(new Date(this.now()))])
+    await Promise.allSettled([
+      ...events.map(async event => {
+        try {
+          const input = event.control as {kind?: string; number?: number; context?: PrRoutineContext}
+          if (input.kind === 'intake') await this.intake(input.number!, event.deliveryId, event.digest, input.context!)
+          else await this.control(event.control as Parameters<PrRoutineCheckService['control']>[0])
+          await this.rows.eventSettled(event.deliveryId)
+        }
+        catch (error) {await this.rows.eventSettled(event.deliveryId, error instanceof TestRunError && error.status === 409 ? undefined : new Date(this.now() + 30_000))}
+      }),
+      ...due.map(async gateId => {
+        const row = await this.rows.get(gateId)
+        await this.reconcile(gateId)
+        await this.deliver(gateId)
+        for (const predecessor of row?.payload.predecessors ?? []) await this.reconcile(predecessor)
+      }),
+    ])
   }
+
   async detail(gateId: string) {return this.rows.get(gateId)}
 }
