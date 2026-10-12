@@ -181,7 +181,9 @@ def configure(output, keychain):
                       "signingCertificate": certificate, "teamID": team,
                       "provisioningProfiles": {BUNDLE_ID: profile["UUID"]},
                       "thinning": "<none>", "manageAppVersionAndBuildNumber": False,
-                      "uploadSymbols": False}, stream)
+                      # Re-export preserves compiled code, including its symbols.
+                      # Xcode otherwise defaults to another Swift symbol strip.
+                      "stripSwiftSymbols": False, "uploadSymbols": False}, stream)
     print(f"Validated ad hoc profile {profile['Name']}, expires {profile['ExpirationDate']}, {len(profile['ProvisionedDevices'])} devices")
 
 
