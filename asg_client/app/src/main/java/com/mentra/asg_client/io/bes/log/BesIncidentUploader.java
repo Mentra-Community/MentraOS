@@ -93,6 +93,21 @@ public final class BesIncidentUploader {
         }
     }
 
+    /** The report's incident was evicted or deleted: there is nothing to upload and no other BES
+     *  data may stand in for it. */
+    public boolean isRetiredReport(String reportId) {
+        BesIncidentUploadAccess access = mAccess.get();
+        if (access == null || reportId == null || reportId.isEmpty()) {
+            return false;
+        }
+        try {
+            return access.isRetiredReport(reportId);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "isRetiredReport failed for " + reportId, e);
+            return false;
+        }
+    }
+
     /** Only STORED and REPORTED incidents are uploaded. */
     public static boolean isUploadable(JSONObject record) {
         if (record == null || record.optBoolean("uploaded", false)) {

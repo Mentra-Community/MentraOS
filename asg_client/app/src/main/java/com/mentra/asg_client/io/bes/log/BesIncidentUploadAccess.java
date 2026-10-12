@@ -10,6 +10,11 @@ public interface BesIncidentUploadAccess {
     /** Record for the incident whose persisted reportId equals reportId, or null. */
     JSONObject findByReportId(String reportId);
 
+    /** True when the incident of this report existed here but its bundle was evicted or deleted
+     *  (bounded memory). Such a report has no BES data to upload, and must not be given the
+     *  current BES log instead. */
+    boolean isRetiredReport(String reportId);
+
     JSONObject find(String incidentKey);
 
     File bundleDir(String incidentKey);

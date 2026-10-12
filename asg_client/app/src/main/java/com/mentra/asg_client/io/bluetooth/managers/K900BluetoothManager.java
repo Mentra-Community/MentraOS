@@ -500,8 +500,22 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /** BES TRACE delivery: the normal write safety path without per-frame logging. */
     private boolean sendQuietCommand(String json) {
+        return transportCoordinator.runNormalWrite(quietWrite(json));
+    }
+
+    /**
+     * Same write, bounded: for callers that run on a deadline-driven thread (the crash pull). It
+     * gives up after {@link AsgConstants#BES_INCIDENT_SEND_TIMEOUT_MS} and the request is then
+     * never sent.
+     */
+    private boolean sendBoundedQuietCommand(String json) {
+        return transportCoordinator.runNormalWrite(
+                quietWrite(json), AsgConstants.BES_INCIDENT_SEND_TIMEOUT_MS);
+    }
+
+    private BesUartTransportCoordinator.WriteAction quietWrite(String json) {
         byte[] payload = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        return transportCoordinator.runNormalWrite(() -> {
+        return () -> {
             if (!linkState.isSerialOpen()) {
                 return false;
             }
@@ -512,7 +526,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 BesLivenessMonitor.get().onOutboundWrite();
             }
             return sent;
-        });
+        };
     }
 
     private boolean sendMessageInternalLocked(byte[] data) {
@@ -1551,7 +1565,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 // OS-1988: a BES with wire_caps.crash_pull reports its boot and
                                 // saved crash dump here; the collector ignores any other BES.
                                 BesCrashDumpCollector.get()
-                                        .onSystemVersion(json, this::sendQuietCommand);
+                                        .onSystemVersion(json, this::sendBoundedQuietCommand);
                                 JSONObject caps = json.optJSONObject("wire_caps");
                                 I2sReadyGate.setSupported(caps != null && caps.optInt("i2s_ready", 0) == 1);
                                 BesTraceTail.get().onWireCaps(caps);

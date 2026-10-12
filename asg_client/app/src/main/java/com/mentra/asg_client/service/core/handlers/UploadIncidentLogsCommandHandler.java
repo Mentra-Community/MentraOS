@@ -262,7 +262,11 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     private FirmwareSource firmwareSourceFor(String reportId) {
         JSONObject incident = mIncidentUploader.findByReportId(reportId);
         if (incident == null) {
-            return FirmwareSource.LEGACY;
+            // An evicted or already-deleted incident has no data left; the BES ring now holds
+            // something else, so it is not uploaded in its place.
+            return mIncidentUploader.isRetiredReport(reportId)
+                    ? FirmwareSource.NONE
+                    : FirmwareSource.LEGACY;
         }
         return BesIncidentUploader.isUploadable(incident)
                 ? FirmwareSource.INCIDENT

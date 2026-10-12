@@ -11,7 +11,7 @@ from a local directory. Implements exactly these contract rules:
   dump text      [CRASH-TAIL] captured == bytes between it and [CRASH-TAIL-END] (4)
   trace.txt      monotonic wallMs; [ASG-BES-GAP] count == traceGaps;
                  [ASG-BES-REBOOT] counted (6, 7)
-  incidentKey    == <serial|anon>-dump-<dumpId> / -reset-<bootId>; ids well-formed (1)
+  incidentKey    == <serial|anon>-dump-<dumpId> / -reset-<observedBootId>; ids well-formed (1)
 
 Prints PASS/FAIL per check and exits nonzero if any check FAILs.
 
@@ -113,8 +113,10 @@ def verify_bundle(path, device_id=None):
         checks.check("kind matches key form", kind == "reset", "key has -reset-")
         ok = bool(BOOT_ID_RE.match(tail)) and tail != "0" * 16
         checks.check("reset key bootId 16 hex nonzero", ok, tail)
-        checks.check("key bootId == incident.bootId", tail == incident.get("bootId"),
-                     f"{tail} vs {incident.get('bootId')}")
+        # The reset key names the boot that observed the reset; incident.bootId is the boot
+        # that reset (the previous one).
+        checks.check("key bootId == incident.observedBootId", tail == incident.get("observedBootId"),
+                     f"{tail} vs {incident.get('observedBootId')}")
     else:
         checks.check("incidentKey has -dump-/-reset-", False, key)
 

@@ -79,6 +79,40 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void boundedNormalWriteGivesUpBehindABlockedLaneAndNeverRunsLater() throws Exception {
+        coordinator.onSerialReady(host.session);
+        systemVersion("17.26.7.4");
+        flushIoLane();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        java.util.concurrent.atomic.AtomicBoolean ran = new java.util.concurrent.atomic.AtomicBoolean();
+        try {
+            Future<Boolean> blocker = caller.submit(() -> coordinator.runNormalWrite(() -> {
+                started.countDown();
+                try { return release.await(5, TimeUnit.SECONDS); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
+            }));
+            assertThat(started.await(1, TimeUnit.SECONDS)).isTrue();
+
+            long begin = System.nanoTime();
+            boolean sent = coordinator.runNormalWrite(() -> { ran.set(true); return true; }, 150);
+
+            assertThat(sent).isFalse();
+            assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - begin)).isLessThan(2000);
+            release.countDown();
+            blocker.get(2, TimeUnit.SECONDS);
+            flushIoLane();
+            assertThat(ran.get()).isFalse(); // the abandoned request is not sent late
+            // A write that fits the window still goes out.
+            assertThat(coordinator.runNormalWrite(() -> true, 2000)).isTrue();
+        } finally {
+            release.countDown();
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
     public void admittedStatusRefreshPrecedesLaterFileOwnershipBarrier() throws Exception {
         assertQueuedStatusRefreshBeforeFileBarrier(false);
     }

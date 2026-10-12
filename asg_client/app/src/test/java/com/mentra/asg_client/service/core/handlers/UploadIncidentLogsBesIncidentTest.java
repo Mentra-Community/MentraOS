@@ -215,6 +215,20 @@ public class UploadIncidentLogsBesIncidentTest {
     }
 
     @Test
+    public void anEvictedIncidentIsNotAnsweredWithTheCurrentBesLog() throws Exception {
+        access.evict(KEY);
+
+        handler.relayLogsViaBle(REPORT);
+        handler.uploadIncidentFirmwareOverHttp(REPORT, API);
+
+        // Only the Java logs go out; the BES ring now holds something else and is not read.
+        verify(bes, never()).requestBesLogs(anyString(), any(), any(), any(Consumer.class));
+        assertThat(postedBodies).isEmpty();
+        assertThat(sentNames).hasSize(1);
+        assertThat(sentNames.get(0)).startsWith("L");
+    }
+
+    @Test
     public void userBugReportKeepsTheLegacyMhLogsPath() throws Exception {
         handler.relayLogsViaBle("rep_user_bug_report");
 

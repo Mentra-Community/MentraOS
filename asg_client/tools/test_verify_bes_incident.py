@@ -106,20 +106,30 @@ class VerifyBesIncidentTests(unittest.TestCase):
         self.assertTrue(checks.passed, checks.render())
 
     def test_reset_incident_passes(self):
-        boot = "1a2b3c4d5e6f7081"
-        incident = {"v": 1, "incidentKey": f"ML395018B-reset-{boot}", "kind": "reset",
+        boot, observed = "1a2b3c4d5e6f7081", "5566778899aabbcc"   # the reset boot, the boot that saw it
+        incident = {"v": 1, "incidentKey": f"ML395018B-reset-{observed}", "kind": "reset",
                     "reason": "bes_unexpected_reset", "state": "STORED", "attribution": "older",
-                    "bootId": boot, "observedBootId": boot, "traceGaps": 1, "uploaded": False}
+                    "bootId": boot, "observedBootId": observed, "traceGaps": 1, "uploaded": False}
         trace = "10\t1\t0\tboot\n20\t1\t1\t[ASG-BES-GAP] missed\n30\t1\t2\t[ASG-BES-REBOOT] old_bid=a new_bid=b\n"
         write_bundle(self.tmp, incident["incidentKey"], incident, None, trace)
         checks = self.verify(incident["incidentKey"])
         self.assertTrue(checks.passed, checks.render())
 
-    def test_trace_gap_count_mismatch_fails(self):
-        boot = "1a2b3c4d5e6f7081"
+    def test_reset_key_must_name_the_observing_boot(self):
+        boot, observed = "1a2b3c4d5e6f7081", "5566778899aabbcc"
         incident = {"v": 1, "incidentKey": f"ML395018B-reset-{boot}", "kind": "reset",
                     "reason": "bes_unexpected_reset", "state": "STORED", "attribution": "older",
-                    "bootId": boot, "observedBootId": boot, "traceGaps": 5, "uploaded": False}
+                    "bootId": boot, "observedBootId": observed, "traceGaps": 0, "uploaded": False}
+        write_bundle(self.tmp, incident["incidentKey"], incident, None, "10\t1\t0\tboot\n")
+        checks = self.verify(incident["incidentKey"])
+        names = {n: ok for n, ok, _ in checks.results}
+        self.assertFalse(names["key bootId == incident.observedBootId"])
+
+    def test_trace_gap_count_mismatch_fails(self):
+        boot, observed = "1a2b3c4d5e6f7081", "5566778899aabbcc"   # the reset boot, the boot that saw it
+        incident = {"v": 1, "incidentKey": f"ML395018B-reset-{observed}", "kind": "reset",
+                    "reason": "bes_unexpected_reset", "state": "STORED", "attribution": "older",
+                    "bootId": boot, "observedBootId": observed, "traceGaps": 5, "uploaded": False}
         trace = "10\t1\t0\tboot\n20\t1\t1\t[ASG-BES-GAP] missed\n"
         write_bundle(self.tmp, incident["incidentKey"], incident, None, trace)
         checks = self.verify(incident["incidentKey"])
@@ -127,10 +137,10 @@ class VerifyBesIncidentTests(unittest.TestCase):
         self.assertFalse(names["[ASG-BES-GAP] count == traceGaps"])
 
     def test_nonmonotonic_trace_fails(self):
-        boot = "1a2b3c4d5e6f7081"
-        incident = {"v": 1, "incidentKey": f"ML395018B-reset-{boot}", "kind": "reset",
+        boot, observed = "1a2b3c4d5e6f7081", "5566778899aabbcc"   # the reset boot, the boot that saw it
+        incident = {"v": 1, "incidentKey": f"ML395018B-reset-{observed}", "kind": "reset",
                     "reason": "bes_unexpected_reset", "state": "STORED", "attribution": "unknown",
-                    "bootId": boot, "observedBootId": boot, "traceGaps": 0, "uploaded": False}
+                    "bootId": boot, "observedBootId": observed, "traceGaps": 0, "uploaded": False}
         trace = "200\t1\t0\tlate\n100\t1\t1\tearlier\n"
         write_bundle(self.tmp, incident["incidentKey"], incident, None, trace)
         checks = self.verify(incident["incidentKey"])

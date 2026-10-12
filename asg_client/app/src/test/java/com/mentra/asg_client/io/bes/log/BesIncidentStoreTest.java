@@ -269,6 +269,30 @@ public class BesIncidentStoreTest {
     }
 
     @Test
+    public void anEvictedReportIsRememberedAcrossRestartsAndBounded() throws Exception {
+        BesIncidentStore store = store();
+        String key = addIncident(store, 1, 1000);
+        assertTrue(store.markReported(key, "rep_1"));
+        assertFalse(store.isRetiredReport("rep_1"));
+
+        store.evict(key, "budget", true);
+
+        assertNull(store.findByReportId("rep_1"));
+        assertTrue(store.isRetiredReport("rep_1"));
+        assertFalse(store.isRetiredReport("rep_other"));
+        assertTrue(store().isRetiredReport("rep_1")); // a new store over the same directory
+
+        // The memory is bounded and keeps the newest.
+        for (int n = 2; n <= AsgConstants.BES_INCIDENT_RETIRED_REPORT_RING + 5; n++) {
+            String next = addIncident(store, n, 1000);
+            assertTrue(store.markReported(next, "rep_" + n));
+            store.evict(next, "budget", true);
+        }
+        assertFalse(store.isRetiredReport("rep_1"));
+        assertTrue(store.isRetiredReport("rep_" + (AsgConstants.BES_INCIDENT_RETIRED_REPORT_RING + 5)));
+    }
+
+    @Test
     public void evictionRecordKeepsTheLatestSixteenAndATotalCount() throws Exception {
         BesIncidentStore store = store();
         for (int n = 1; n <= 20; n++) {

@@ -469,6 +469,7 @@ public final class BesIncidentStore implements BesIncidentUploadAccess {
             if (overCount) {
                 JSONObject uploaded = firstInState(records, BesIncident.STATE_UPLOADED, null);
                 if (uploaded != null) {
+                    retireReport(uploaded);
                     deleteRecursive(new File(mRoot, uploaded.optString("incidentKey")));
                     continue;
                 }
@@ -519,6 +520,7 @@ public final class BesIncidentStore implements BesIncidentUploadAccess {
         deleteRecursive(dir);
         JSONObject evictions = readEvictions();
         try {
+            addRetiredReport(evictions, record);
             JSONArray old = evictions.optJSONArray("recent");
             JSONArray next = new JSONArray();
             int start = old == null ? 0
@@ -548,6 +550,61 @@ public final class BesIncidentStore implements BesIncidentUploadAccess {
      */
     public synchronized JSONObject evictionSummary() {
         return readEvictions();
+    }
+
+    /**
+     * True when the incident of {@code reportId} was evicted or deleted. Persisted in
+     * {@code evictions.json}, bounded by {@link AsgConstants#BES_INCIDENT_RETIRED_REPORT_RING}.
+     */
+    @Override
+    public synchronized boolean isRetiredReport(String reportId) {
+        if (reportId == null || reportId.isEmpty()) {
+            return false;
+        }
+        JSONArray reports = readEvictions().optJSONArray("reports");
+        for (int i = 0; reports != null && i < reports.length(); i++) {
+            if (reportId.equals(reports.optString(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Remembers the record's reportId before its bundle is deleted without an eviction entry. */
+    private void retireReport(JSONObject record) {
+        JSONObject evictions = readEvictions();
+        try {
+            if (addRetiredReport(evictions, record)) {
+                writeAtomic(new File(mRoot, FILE_EVICTIONS),
+                        evictions.toString().getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (JSONException | IOException e) {
+            Log.e(TAG, "Could not persist the retired report id", e);
+        }
+    }
+
+    /** Appends the record's reportId to {@code evictions.reports} (newest last, bounded). */
+    private static boolean addRetiredReport(JSONObject evictions, JSONObject record)
+            throws JSONException {
+        if (record == null || record.isNull("reportId")) {
+            return false;
+        }
+        String reportId = record.optString("reportId", "");
+        if (reportId.isEmpty()) {
+            return false;
+        }
+        JSONArray old = evictions.optJSONArray("reports");
+        JSONArray next = new JSONArray();
+        int start = old == null ? 0
+                : Math.max(0, old.length() + 1 - AsgConstants.BES_INCIDENT_RETIRED_REPORT_RING);
+        for (int i = start; old != null && i < old.length(); i++) {
+            if (!reportId.equals(old.optString(i))) {
+                next.put(old.get(i));
+            }
+        }
+        next.put(reportId);
+        evictions.put("reports", next);
+        return true;
     }
 
     private JSONObject readEvictions() {

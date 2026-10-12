@@ -12,6 +12,8 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONObject;
 
 /**
@@ -739,6 +741,66 @@ public final class BesUartTransportCoordinator {
     }
 
     public boolean runNormalWrite(WriteAction action) {
+        Future<Boolean> write = submitNormalWrite(action);
+        return write != null && awaitBoolean(write, "normal write");
+    }
+
+    private static final int WRITE_PENDING = 0;
+    private static final int WRITE_STARTED = 1;
+    private static final int WRITE_EXPIRED = 2;
+
+    /**
+     * A normal write that gives up after {@code timeoutMs} and then never runs. The caller of a
+     * deadline-driven operation (the BES crash pull) must not wait behind an OTA, a file transfer
+     * or a stuck lane: the write is cancelled and its action will not execute later, so a request
+     * the caller has abandoned cannot reach the BES after its own timeout fired.
+     */
+    public boolean runNormalWrite(WriteAction action, long timeoutMs) {
+        if (action == null) {
+            return false;
+        }
+        AtomicInteger phase = new AtomicInteger(WRITE_PENDING);
+        Future<Boolean> write =
+                submitNormalWrite(
+                        () -> phase.compareAndSet(WRITE_PENDING, WRITE_STARTED) && action.write());
+        if (write == null) {
+            return false;
+        }
+        try {
+            return Boolean.TRUE.equals(write.get(timeoutMs, TimeUnit.MILLISECONDS));
+        } catch (TimeoutException e) {
+            if (phase.compareAndSet(WRITE_PENDING, WRITE_EXPIRED)) {
+                write.cancel(false);
+                Log.w(TAG, "Bounded normal write expired after " + timeoutMs + " ms; not sent");
+                return false;
+            }
+            // The write already started: it is the single UART write itself, so wait for its
+            // own outcome once more rather than report a send that is happening as a failure.
+            try {
+                return Boolean.TRUE.equals(write.get(timeoutMs, TimeUnit.MILLISECONDS));
+            } catch (TimeoutException | ExecutionException | CancellationException late) {
+                Log.w(TAG, "Bounded normal write did not finish after starting", late);
+                return false;
+            } catch (InterruptedException late) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            if (phase.compareAndSet(WRITE_PENDING, WRITE_EXPIRED)) {
+                write.cancel(false);
+            }
+            return false;
+        } catch (ExecutionException e) {
+            Log.e(TAG, "UART lane failed during bounded normal write", e.getCause());
+        } catch (CancellationException e) {
+            Log.w(TAG, "UART lane cancelled bounded normal write");
+        }
+        return false;
+    }
+
+    /** Queues a normal write (now, or behind the running operation); null when rejected. */
+    private Future<Boolean> submitNormalWrite(WriteAction action) {
         Future<Boolean> write;
         synchronized (monitor) {
             SafetyPolicy policy = safetyState.currentPolicy();
@@ -750,7 +812,7 @@ public final class BesUartTransportCoordinator {
                     || action == null
                     || (policy != SafetyPolicy.NORMAL && !otaOwnedDeferral)) {
                 Log.w(TAG, "Rejecting normal write state=" + state + " operation=" + operation);
-                return false;
+                return null;
             }
             if (operation == Operation.NONE) {
                 write = ioLane.submit(action::write);
@@ -766,7 +828,7 @@ public final class BesUartTransportCoordinator {
                                 + deferredNormalWrites.size());
             }
         }
-        return awaitBoolean(write, "normal write");
+        return write;
     }
 
     /** Raw BES protocol query outside an OTA transfer. */

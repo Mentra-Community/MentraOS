@@ -560,6 +560,19 @@ public class AsgConstants {
     /** Latest evictions kept in evictions.json (the counter keeps the total). */
     public static final int BES_INCIDENT_EVICTION_RING = 16;
 
+    /**
+     * How long the crash collector waits for the UART lane to take its cs_log request. The
+     * collector's timers run on the same thread, so the wait must end well before them; a request
+     * that missed the window is cancelled and never sent later.
+     */
+    public static final long BES_INCIDENT_SEND_TIMEOUT_MS = 2000;
+
+    /**
+     * Report ids whose incident bundle was evicted or deleted, remembered in evictions.json (oldest
+     * dropped first). A report on this list is never answered with the current BES log.
+     */
+    public static final int BES_INCIDENT_RETIRED_REPORT_RING = 256;
+
     /** Most incident bundles kept at once, so per-incident metadata cannot grow without bound. */
     public static final int BES_INCIDENT_MAX_BUNDLES = 32;
 

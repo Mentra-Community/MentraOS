@@ -92,6 +92,21 @@ public final class FileBackedBesIncidentAccess implements BesIncidentUploadAcces
     }
 
     @Override
+    public synchronized boolean isRetiredReport(String reportId) {
+        File[] dirs = mRoot.listFiles(File::isDirectory);
+        for (int i = 0; dirs != null && i < dirs.length; i++) {
+            JSONObject record = find(dirs[i].getName());
+            if (record != null
+                    && "EVICTED".equals(record.optString("state"))
+                    && !record.isNull("reportId")
+                    && reportId.equals(record.optString("reportId"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
     public synchronized JSONObject findByReportId(String reportId) {
         File[] dirs = mRoot.listFiles(File::isDirectory);
         if (dirs == null) {
@@ -100,6 +115,7 @@ public final class FileBackedBesIncidentAccess implements BesIncidentUploadAcces
         for (File dir : dirs) {
             JSONObject record = find(dir.getName());
             if (record != null
+                    && !"EVICTED".equals(record.optString("state"))
                     && !record.isNull("reportId")
                     && reportId.equals(record.optString("reportId"))) {
                 return record;
