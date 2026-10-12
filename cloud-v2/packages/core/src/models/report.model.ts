@@ -62,7 +62,9 @@ const ReportSchema = new Schema(
     context: { type: Schema.Types.Mixed, required: true },
     automationCorrelation: {type: AutomationCorrelationSchema},
     // Device-chosen identity of one reported event; a resubmission returns the
-    // existing report. Absent on reports filed without one.
+    // existing report. Absent on reports filed without one. The reportId is
+    // derived from it (incidentReportId), so the unique reportId index is what
+    // keeps one report per user and key.
     incidentKey: {type: String},
     // Native completion retries own notification delivery; no separate worker or queue.
     slackDelivery: { type: Schema.Types.Mixed },
@@ -82,9 +84,6 @@ ReportSchema.index({ mentraUserId: 1, createdAt: -1 });
 // Nonunique on purpose: duplicate requests remain visible and recovery refuses
 // ambiguous bindings instead of selecting an arbitrary report or account.
 ReportSchema.index({'automationCorrelation.testRunId': 1, 'automationCorrelation.alertId': 1});
-// Partial so reports without an incident key stay out of the index entirely.
-ReportSchema.index({mentraUserId: 1, incidentKey: 1},
-  {unique: true, partialFilterExpression: {incidentKey: {$type: 'string'}}});
 // Admin triage lists reports newest-first across all users.
 ReportSchema.index({ createdAt: -1 });
 ReportSchema.index({ "slackDelivery.nextAttemptAt": 1 });
