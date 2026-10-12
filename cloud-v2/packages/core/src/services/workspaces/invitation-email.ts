@@ -1,5 +1,5 @@
 /**
- * @fileoverview The workspace invitation email: who invited whom to which workspace, as what, and until when.
+ * @fileoverview The workspace invitation email: who invited whom to which workspace, as what, and for how long.
  *
  * Built here as data (subject, HTML and plain text) so its wording is tested without sending anything;
  * `invitation.service` sends it. The workspace name and the inviter's address are user-controlled text
@@ -17,8 +17,16 @@ const ROLES: Record<WorkspaceRole, {article: string; label: string}> = {
   owner: {article: "an", label: "Owner"},
 }
 
-/** "October 26, 2026": the day in UTC, the zone Core keeps time in, with no time of day. */
-const EXPIRY_DATE = new Intl.DateTimeFormat("en-US", {dateStyle: "long", timeZone: "UTC"})
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * "in 14 days": how long the invitation lasts from when it was sent. A duration reads the same in every
+ * time zone; a calendar date in an email cannot match the reader's local date in the portal.
+ */
+function expiresIn(expiresAt: Date, sentAt: Date): string {
+  const days = Math.max(1, Math.round((expiresAt.getTime() - sentAt.getTime()) / DAY_MS))
+  return days === 1 ? "in 1 day" : `in ${days} days`
+}
 
 export interface InvitationEmailInput {
   /** The invited address. */
@@ -27,6 +35,8 @@ export interface InvitationEmailInput {
   role: WorkspaceRole
   inviteUrl: string
   expiresAt: Date
+  /** When the email is sent; defaults to now. */
+  sentAt?: Date
   /** The inviter's email address; null when the system sent it. */
   invitedBy: string | null
 }
@@ -43,7 +53,7 @@ export function invitationEmail(input: InvitationEmailInput): InvitationEmail {
   const invitedBy = input.invitedBy?.trim() || null
   const {article, label} = ROLES[role] ?? {article: "a", label: role}
   const rolePhrase = `${article} ${label}`
-  const expires = EXPIRY_DATE.format(expiresAt)
+  const expires = expiresIn(expiresAt, input.sentAt ?? new Date())
   const subject = `You're invited to join ${workspaceName} on Mentra`
   const heading = `Join ${workspaceName} on Mentra`
   const ignore = "If you weren't expecting this invitation, you can ignore this email. Nothing changes unless you accept it."
@@ -64,7 +74,7 @@ export function invitationEmail(input: InvitationEmailInput): InvitationEmail {
         : `You've been invited to join ${strong(workspaceName)} on Mentra as ${article} ${strong(label)}.`,
     ],
     action: {label: "Accept invitation", url: inviteUrl},
-    notesHtml: [`To accept, sign in to Mentra with ${strong(to)}. This invitation expires on ${escapeHtml(expires)}.`],
+    notesHtml: [`To accept, sign in to Mentra with ${strong(to)}. This invitation expires ${expires}.`],
     footer: ignore,
   })
 
@@ -76,7 +86,7 @@ export function invitationEmail(input: InvitationEmailInput): InvitationEmail {
     "Accept the invitation:",
     inviteUrl,
     "",
-    `To accept, sign in to Mentra with ${to}. This invitation expires on ${expires}.`,
+    `To accept, sign in to Mentra with ${to}. This invitation expires ${expires}.`,
     "",
     ignore,
     "",
