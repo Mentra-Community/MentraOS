@@ -2476,6 +2476,13 @@ class GallerySyncService {
     if (store.syncServiceOpenedHotspot) {
       const failure = await this.closeHotspot()
       if (failure) failures.push(failure)
+    } else {
+      // Phone transport belongs to this sync even when the AP pre-existed it.
+      try {
+        await localNetworkTransport.disconnect()
+      } catch (error) {
+        failures.push(error)
+      }
     }
     try {
       await localStorageService.clearSyncQueue()

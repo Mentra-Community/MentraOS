@@ -608,6 +608,65 @@ describe("GallerySyncService", () => {
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
   })
 
+  it.each(["pending", "established"])(
+    "releases an unowned AP's %s phone connection on cancellation without stopping that AP",
+    async (stage) => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+      await gallerySyncService.startSync()
+      Object.defineProperty(Platform, "OS", {value: "android", configurable: true, writable: true})
+      useGallerySyncStore.getState().setSyncServiceOpenedHotspot(false)
+      ;(BluetoothSdk.setHotspotState as jest.Mock).mockClear()
+      let releaseConnection!: () => void, releaseTransfer!: () => void
+      const connect = jest.spyOn(localNetworkTransport, "connect").mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseConnection = () => resolve(undefined)
+          }),
+      )
+      const disconnect = jest.spyOn(localNetworkTransport, "disconnect").mockResolvedValue(undefined)
+      const service = gallerySyncService as unknown as {
+        connectToHotspotWifi(info: typeof HOTSPOT_INFO): Promise<void>
+        showWifiJoinExplanation(ssid: string): Promise<boolean>
+        startFileDownload(info: typeof HOTSPOT_INFO): Promise<void>
+      }
+      jest.spyOn(service, "showWifiJoinExplanation").mockResolvedValue(true)
+      jest.spyOn(service, "startFileDownload").mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseTransfer = resolve
+          }),
+      )
+      const connection = service.connectToHotspotWifi(HOTSPOT_INFO)
+      for (let i = 0; i < 20 && !releaseConnection; i++) await Promise.resolve()
+      expect(connect).toHaveBeenCalledTimes(1)
+      if (stage === "established") {
+        releaseConnection()
+        for (let i = 0; i < 20 && !releaseTransfer; i++) await Promise.resolve()
+        expect(releaseTransfer).toBeDefined()
+      }
+      await gallerySyncService.cancelSync()
+      expect(disconnect).toHaveBeenCalledTimes(1)
+      expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+      if (stage === "pending") releaseConnection()
+      else releaseTransfer()
+      await connection
+      expect(disconnect).toHaveBeenCalledTimes(1)
+      expect(useGallerySyncStore.getState().syncState).toBe("cancelled")
+    },
+  )
+
+  it("continues unowned-AP cancellation when phone routing release fails", async () => {
+    const failure = new Error("Phone routing release failed")
+    jest.spyOn(localNetworkTransport, "disconnect").mockRejectedValueOnce(failure)
+    const result = await gallerySyncService.cancelSync().catch((error: unknown) => error)
+    expect(result).toBeInstanceOf(AggregateError)
+    expect((result as AggregateError).errors).toEqual([failure])
+    expect(localStorageService.clearSyncQueue).toHaveBeenCalled()
+    expect(gallerySyncNotifications.showSyncCancelled).toHaveBeenCalled()
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    expect(useGallerySyncStore.getState().syncState).toBe("cancelled")
+  })
+
   it("attempts all cancellation cleanup before rejecting and admitting later work", async () => {
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     await gallerySyncService.startSync()
