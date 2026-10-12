@@ -8,7 +8,7 @@ const payload: CheckPayload = {name: ROUTINE_CHECK_NAME, head_sha: head, externa
   status: 'in_progress', started_at: '2026-10-12T00:00:00Z', details_url: 'https://admin.dev.mentraglass.com/?testRuns=1',
   output: {title: 'Routine tests', summary: 'Waiting for routine results'}, actions: []}
 const check = (id = 99, external_id = 'gate-one:1', applicationId = appId, head_sha = head) =>
-  ({id, external_id, name: ROUTINE_CHECK_NAME, head_sha, app: {id: applicationId}})
+  ({id, external_id, name: ROUTINE_CHECK_NAME, head_sha, app: {id: applicationId}, status: 'in_progress', conclusion: null, completed_at: null})
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), {status})
 type Call = {path: string; method: string; init: RequestInit; body?: Record<string, unknown>}
 function fixture(respond: (call: Call) => Response | Promise<Response>) {
@@ -41,10 +41,10 @@ test('lost create acknowledgement reconciles the same owned gate by read and pat
     return reply(created)
   })
   await expect(f.github.deliver(undefined, payload, true)).rejects.toThrow('retained operation will reconcile')
-  expect(await f.github.deliver(undefined, {...payload, external_id: 'gate-one:3'}, false)).toBe(99)
-  expect(f.calls.map(call => call.method)).toEqual(['GET', 'POST', 'GET', 'GET', 'GET', 'GET', 'PATCH'])
+  expect(await f.github.deliver(undefined, payload, false)).toBe(99)
+  expect(f.calls.map(call => call.method)).toEqual(['GET', 'POST', 'GET', 'GET', 'GET', 'PATCH'])
   expect(f.calls.filter(call => call.method === 'POST')).toHaveLength(1)
-  expect(f.calls.at(-1)!.body).toMatchObject({external_id: 'gate-one:3', output: payload.output})
+  expect(f.calls.at(-1)!.body).toMatchObject({external_id: payload.external_id, output: payload.output})
   expect(f.scopes.every(scope => scope === 'checks')).toBe(true)
 })
 
@@ -55,7 +55,7 @@ test('uncertain creation with no visible receipt cannot repeat POST', async () =
 })
 
 test('duplicate own-gate receipts and incomplete history block writes', async () => {
-  for (const response of [() => inventory([check(1), check(2)]), () => inventory([check(1)], 2)]) {
+  for (const response of [() => inventory([check(1, payload.external_id), check(2, payload.external_id)]), () => inventory([check(1)], 2)]) {
     const f = fixture(response)
     await expect(f.github.deliver(undefined, payload, true)).rejects.toThrow()
     expect(f.calls.map(call => call.method)).toEqual(['GET'])
@@ -141,4 +141,117 @@ test('producer reconciliation uses exact operation/title/repository and refuses 
   const capped = fixture(() => reply({workflow_runs: Array.from({length: 100}, (_, index) => ({...row, id: ++page * 100 + index, display_title: 'unrelated'}))}))
   await expect(capped.github.producer('asg', context, operation)).rejects.toThrow('bounded')
   expect(capped.calls).toHaveLength(5)
+})
+
+// GitHub retains omitted terminal fields on PATCH and a conclusion keeps the run completed.
+function nativeFixture() {
+  const checks: Array<ReturnType<typeof check>> = []
+  let lost = false
+  const f = fixture(call => {
+    if (call.path.startsWith('commits/')) return inventory(checks)
+    if (call.method === 'POST') {
+      const row = {...check(99 + checks.length, String(call.body!.external_id)), ...call.body!}
+      if (row.conclusion) row.status = 'completed'
+      checks.push(row)
+      if (lost) {lost = false; throw Error('create committed before connection loss')}
+      return reply(row, 201)
+    }
+    const row = checks.find(row => call.path === `check-runs/${row.id}`)!
+    if (call.method === 'PATCH') {
+      Object.assign(row, call.body)
+      if (row.conclusion) row.status = 'completed'
+    }
+    return reply(row)
+  })
+  return {...f, checks, loseCreate() {lost = true}}
+}
+
+test('new coverage and native rerun get one pending native check each while terminal history is unchanged', async () => {
+  const f = nativeFixture(), finished = '2026-10-12T00:00:01Z'
+  const empty: CheckPayload = {...payload, external_id: 'gate-one:1:1', status: 'completed', conclusion: 'success', completed_at: finished}
+  expect(await f.github.deliver(undefined, empty, true)).toBe(99)
+  const old = structuredClone(f.checks[0])
+  const queued: CheckPayload = {...payload, external_id: 'gate-one:2:1', status: 'queued'}
+  expect(await f.github.deliver(undefined, queued, true)).toBe(100)
+  expect(f.checks[1]).toMatchObject({status: 'queued', conclusion: null, completed_at: null, external_id: queued.external_id})
+  expect(f.checks[0]).toEqual(old)
+  expect(await f.github.deliver(100, {...queued, status: 'in_progress'})).toBe(100)
+  expect(await f.github.deliver(100, {...queued, status: 'completed', conclusion: 'failure', completed_at: finished})).toBe(100)
+  const rerun: CheckPayload = {...queued, external_id: 'gate-one:2:2'}
+  f.loseCreate()
+  await expect(f.github.deliver(undefined, rerun, true)).rejects.toThrow('delivery is unavailable')
+  expect(await f.github.deliver(undefined, rerun, false)).toBe(101)
+  expect(f.checks).toHaveLength(3)
+  expect(f.calls.filter(call => call.method === 'POST')).toHaveLength(3)
+  expect(f.checks[2]).toMatchObject({status: 'queued', conclusion: null, completed_at: null})
+  expect(f.checks[0]).toEqual(old)
+})
+
+test('sticky terminal native state is not acknowledged as a pending delivery', async () => {
+  const f = nativeFixture(), completed: CheckPayload = {...payload, status: 'completed', conclusion: 'success', completed_at: '2026-10-12T00:00:01Z'}
+  await f.github.deliver(undefined, completed, true)
+  await expect(f.github.deliver(99, payload)).rejects.toThrow('did not retain the intended')
+  expect(f.checks[0]).toMatchObject({status: 'completed', conclusion: 'success', completed_at: completed.completed_at})
+  expect(f.calls.filter(call => call.method === 'POST')).toHaveLength(1)
+})
+
+test('delivery receipt must retain exact native state and ownership before acknowledgement', async () => {
+  for (const changed of [{id: 101}, {external_id: 'other'}, {head_sha: otherHead}, {app: {id: 18}},
+    {status: 'completed'}, {conclusion: 'success'}, {completed_at: '2026-10-12T00:00:01Z'}]) {
+    const f = fixture(call => call.method === 'PATCH' ? reply({...check(99, payload.external_id), ...payload, ...changed}) :
+      call.path.startsWith('commits/') ? inventory([check(99, payload.external_id)]) : reply(check(99, payload.external_id)))
+    await expect(f.github.deliver(99, payload)).rejects.toThrow('did not retain the intended')
+    expect(f.calls.filter(call => call.method === 'POST')).toHaveLength(0)
+  }
+  const missing = fixture(call => call.method === 'POST' ? reply({id: 99}) : inventory([]))
+  await expect(missing.github.deliver(undefined, payload, true)).rejects.toThrow()
+})
+
+test('a retained historical native ID cannot be patched into the current generation', async () => {
+  const f = fixture(call => call.path.startsWith('commits/') ? inventory([check(99, 'gate-one:1:1')]) : reply(check(99, 'gate-one:1:1')))
+  await expect(f.github.deliver(99, {...payload, external_id: 'gate-one:2:1'})).rejects.toThrow('ownership differs')
+  expect(f.calls.every(call => call.method === 'GET')).toBe(true)
+})
+
+test('paginated native history supports current updates and lost-create reconciliation without another POST', async () => {
+  const history = Array.from({length: 100}, (_, index) => check(index + 1, `gate-one:${index}:1`))
+  let current: ReturnType<typeof check> | undefined, loseCreate = true
+  const f = fixture(call => {
+    if (call.path.startsWith('commits/')) {
+      const page = Number(new URLSearchParams(call.path.split('?')[1]).get('page'))
+      const rows = current ? [...history, current] : history
+      return inventory(rows.slice((page - 1) * 100, page * 100), rows.length)
+    }
+    if (call.method === 'POST') {
+      current = check(101, payload.external_id)
+      if (loseCreate) {loseCreate = false; throw Error('native create committed before connection loss')}
+      throw Error('duplicate create')
+    }
+    expect(call.path).toBe('check-runs/101')
+    if (call.method === 'PATCH') Object.assign(current!, call.body)
+    return reply(current)
+  })
+  await expect(f.github.deliver(undefined, payload, true)).rejects.toThrow('retained operation will reconcile')
+  expect(await f.github.deliver(undefined, payload, false)).toBe(101)
+  expect(await f.github.deliver(101, payload)).toBe(101)
+  expect(f.calls.filter(call => call.method === 'POST')).toHaveLength(1)
+  expect(f.calls.filter(call => call.method === 'PATCH')).toHaveLength(2)
+  expect(f.calls.filter(call => call.path.startsWith('commits/') && call.path.endsWith('page=2'))).toHaveLength(3)
+  expect(history.map(row => row.external_id)).toEqual(Array.from({length: 100}, (_, index) => `gate-one:${index}:1`))
+})
+
+test('duplicate current receipts across pages and changing or oversized history refuse every native write', async () => {
+  const first = Array.from({length: 100}, (_, index) => check(index + 1, `history:${index}`))
+  first[0] = check(1, payload.external_id)
+  const duplicate = fixture(call => inventory(call.path.endsWith('page=1') ? first : [check(101, payload.external_id)], 101))
+  await expect(duplicate.github.deliver(1, payload)).rejects.toThrow('ambiguous')
+  expect(duplicate.calls).toHaveLength(2)
+  const overlapping = fixture(call => inventory(call.path.endsWith('page=1') ? first : [first[0]!], 101))
+  await expect(overlapping.github.deliver(1, payload)).rejects.toThrow('changed during reconciliation')
+  const changing = fixture(call => inventory(call.path.endsWith('page=1') ? first : [check(101, payload.external_id)], call.path.endsWith('page=1') ? 101 : 102))
+  await expect(changing.github.deliver(1, payload)).rejects.toThrow('changed during reconciliation')
+  const oversized = fixture(() => inventory(first, 1001))
+  await expect(oversized.github.deliver(1, payload)).rejects.toThrow('bounded reconciliation inventory')
+  expect(oversized.calls).toHaveLength(1)
+  for (const f of [duplicate, overlapping, changing, oversized]) expect(f.calls.every(call => call.method === 'GET')).toBe(true)
 })

@@ -11,6 +11,8 @@ const prSchema = z.object({number: positive, state: z.string(), head: z.object({
   labels: z.array(z.object({name: z.string()}))})
 const checkSchema = z.object({id: positive, name: z.string(), head_sha: sha, external_id: z.string().nullable(),
   app: z.object({id: positive})})
+const deliveredCheckSchema = checkSchema.extend({status: z.enum(['queued', 'in_progress', 'completed']),
+  conclusion: z.string().nullable(), completed_at: z.string().datetime().nullable()})
 export class PrBuildDispatchFailure extends Error {
   constructor(readonly uncertain: boolean) {super(uncertain ? 'Producer dispatch acceptance is uncertain; reconcile existing runs' : 'Producer dispatch was rejected before acceptance')}
 }
@@ -68,28 +70,46 @@ export class GithubPrRoutineChecks implements PrRoutineGithub {
     if (checkId) {
       const owned = await this.findCheck(payload)
       if (owned && owned !== checkId) throw new TestRunError(409, 'Routine check receipt differs from its retained owner')
-      if (!await this.ownedCheck(checkId, payload.head_sha, payload.external_id)) {
-        // External IDs advance at the generation fence; ownership must still be the same App/name/head.
-        const check = checkSchema.parse(await this.api(`check-runs/${checkId}`))
-        if (check.app.id !== this.app.applicationId || check.name !== ROUTINE_CHECK_NAME || check.head_sha !== payload.head_sha)
-          throw new TestRunError(409, 'Routine check ownership differs from its retained receipt')
-      }
+      if (!await this.ownedCheck(checkId, payload.head_sha, payload.external_id))
+        throw new TestRunError(409, 'Routine check ownership differs from its retained receipt')
       const {head_sha: _, ...update} = payload
-      return checkSchema.parse(await this.api(`check-runs/${checkId}`, {method: 'PATCH', body: JSON.stringify(update)})).id
+      return this.deliveryReceipt(await this.api(`check-runs/${checkId}`, {method: 'PATCH', body: JSON.stringify(update)}), payload, checkId)
     }
     const existing = await this.findCheck(payload)
     if (existing) return this.deliver(existing, payload)
     if (!allowCreate) throw new TestRunError(503, 'An uncertain check creation has no visible receipt; it will reconcile without repeating the create')
-    return checkSchema.parse(await this.api('check-runs', {method: 'POST', body: JSON.stringify(payload)})).id
+    return this.deliveryReceipt(await this.api('check-runs', {method: 'POST', body: JSON.stringify(payload)}), payload)
+  }
+  private deliveryReceipt(value: unknown, payload: CheckPayload, checkId?: number) {
+    const check = deliveredCheckSchema.parse(value)
+    if ((checkId && check.id !== checkId) || check.app.id !== this.app.applicationId || check.name !== payload.name ||
+        check.head_sha !== payload.head_sha || check.external_id !== payload.external_id || check.status !== payload.status ||
+        check.conclusion !== (payload.conclusion ?? null) ||
+        (payload.status !== 'completed' ? check.completed_at !== null :
+          !check.completed_at || payload.completed_at && Date.parse(check.completed_at) !== Date.parse(payload.completed_at)))
+      throw new TestRunError(503, 'GitHub did not retain the intended routine check state; the same delivery will reconcile')
+    return check.id
   }
   async findCheck(payload: CheckPayload) {
-    const rows = z.object({total_count: z.number().int().nonnegative(), check_runs: z.array(checkSchema).max(100)}).parse(
-      await this.api(`commits/${payload.head_sha}/check-runs?check_name=${encodeURIComponent(ROUTINE_CHECK_NAME)}&filter=all&per_page=100`))
-    if (rows.total_count !== rows.check_runs.length) throw new TestRunError(503, 'Routine check history is incomplete')
-    const matches = rows.check_runs.filter(row => row.app.id === this.app.applicationId && row.external_id?.split(':')[0] === payload.external_id.split(':')[0])
-    if (matches.length > 1) throw new TestRunError(409, 'Routine check creation is ambiguous')
-    if (matches[0] && (matches[0].name !== ROUTINE_CHECK_NAME || matches[0].head_sha !== payload.head_sha)) throw new TestRunError(409, 'Routine check ownership differs from its retained receipt')
-    return matches[0]?.id
+    const schema = z.object({total_count: z.number().int().nonnegative().safe(), check_runs: z.array(checkSchema).max(100)})
+    const seen = new Set<number>(), matches: Array<z.infer<typeof checkSchema>> = [], deadline = Date.now() + 20_000
+    let total: number | undefined
+    for (let page = 1; page <= 10; page++) {
+      const rows = schema.parse(await this.api(`commits/${payload.head_sha}/check-runs?check_name=${encodeURIComponent(ROUTINE_CHECK_NAME)}&filter=all&per_page=100&page=${page}`, {}, 'checks', deadline))
+      if (rows.total_count > 1000) throw new TestRunError(503, 'Routine check history exceeds its bounded reconciliation inventory')
+      if (total !== undefined && rows.total_count !== total) throw new TestRunError(503, 'Routine check history changed during reconciliation')
+      total = rows.total_count
+      for (const row of rows.check_runs) {
+        if (seen.has(row.id)) throw new TestRunError(503, 'Routine check history changed during reconciliation')
+        seen.add(row.id)
+        if (row.app.id === this.app.applicationId && row.external_id === payload.external_id) matches.push(row)
+      }
+      if (matches.length > 1) throw new TestRunError(409, 'Routine check creation is ambiguous')
+      if (matches[0] && (matches[0].name !== ROUTINE_CHECK_NAME || matches[0].head_sha !== payload.head_sha)) throw new TestRunError(409, 'Routine check ownership differs from its retained receipt')
+      if (seen.size === total) return matches[0]?.id
+      if (seen.size > total || rows.check_runs.length < 100) throw new TestRunError(503, 'Routine check history is incomplete')
+    }
+    throw new TestRunError(503, 'Routine check history exceeds its bounded reconciliation inventory')
   }
   async producer(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string) {
     if (!/^[a-f0-9]{64}$/.test(operationId)) throw new TestRunError(400, 'Invalid retained producer operation')
