@@ -1,3 +1,4 @@
+import {LaneControlsService} from '../../services/lane-controls.service'
 import {TestPendingQueueService} from "../../services/test-pending-queue.service";
 import {z} from "zod";
 import {frameworkBodyLimit, frameworkJson} from "../internal/framework-json";
@@ -19,10 +20,11 @@ import {LaneRestorationService} from "../../services/lane-restoration.service";
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
 export function createTestRunAdminApi(health = new TestHostHealthService(), history = new TestHistoryService(),
-  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService()) {
+  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService()) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
+    if (error instanceof z.ZodError) return c.json({error: "invalid_lane_control", message: "Invalid lane control request"}, 400);
     if (error instanceof TestRunError || error instanceof TestHostHealthError)
       return c.json({error: "test_run_error", message: error.message}, error.status);
     c.var.logger?.error({errorName: error.name}, "test result query failed");
@@ -42,6 +44,14 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     .read("primary").readConcern("majority").lean().then(rows => rows.map(row => displayRequest(row as StoredRequest)))}));
   app.get("/health", async c => c.json(await health.list()));
   app.get("/health/:hostId", async c => c.json(await health.history(c.req.param("hostId"), c.req.query("days"))));
+  app.get('/lanes/:hostId/controls', async c => {
+    if (!c.var.developer?.developerId) return c.json({error: 'testing_operator_required'}, 403)
+    return c.json(await controls.list(c.req.param('hostId'), c.var.developer.developerId))
+  })
+  app.post('/lanes/controls', frameworkBodyLimit(4096), async c => {
+    if (!c.var.developer?.developerId) return c.json({error: 'testing_operator_required'}, 403)
+    return c.json(await controls.submit(await frameworkJson(c), c.var.developer.developerId), 202)
+  })
   app.get("/lanes/overview", async c => c.json(await restoration.overview()));
   app.get("/restoration/list", async c => c.json(await restoration.list(c.req.query('hostId'))));
   app.get('/pr-checks/:gateId', async c => {
