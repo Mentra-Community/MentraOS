@@ -11,6 +11,7 @@ const values = new Map<string, unknown>()
 const installationValues = new Map<string, string>()
 let candidateFingerprint: string | undefined
 let developmentAllowed = true
+let installedAllowed = (_identity: MiniappReleaseIdentity | null) => true
 mock.module("../../utils/storage/storage", () => ({
   storage: {
     load: (key: string) => (values.has(key) ? Res.ok(values.get(key)) : Res.error(new Error("Missing key"))),
@@ -35,7 +36,8 @@ mock.module("../../runtime/bootstrap", () => ({
   assertMiniappDevelopmentAllowed: () => {},
   getConfigValues: () => ({}),
   isDevMiniappAllowed: () => developmentAllowed,
-  isInstalledMiniappAllowed: () => true,
+  isInstalledMiniappAllowed: (_pkg: string, _version: string, identity: MiniappReleaseIdentity | null) =>
+    installedAllowed(identity),
   isOfflineSystemMiniappAllowed: () => true,
   isMiniappAvailable: () => true,
 }))
@@ -162,6 +164,7 @@ beforeEach(() => {
   installationValues.clear()
   candidateFingerprint = undefined
   developmentAllowed = true
+  installedAllowed = () => true
   extractions = 0
 })
 
@@ -261,8 +264,8 @@ describe("dev snapshots are installs like any other", () => {
   })
 })
 
-describe("the active version follows the deployment's development policy", () => {
-  test("a release-QR install yields to the workspace release while development is off", async () => {
+describe("the active version follows the deployment's policy", () => {
+  test("the newest allowed release wins once development is off", async () => {
     const workspaceRelease: MiniappReleaseIdentity = {
       source: "deployment_manifest",
       bundleSha256: "abc",
@@ -271,16 +274,23 @@ describe("the active version follows the deployment's development policy", () =>
     }
     install("1.2.0", workspaceRelease)
     install("1.3.0", {source: "direct_download"})
-    const versions = spyOn(registry, "getInstalledVersions").mockReturnValue(["1.2.0", "1.3.0"])
+    install("1.4.0", {source: "store", storePackageName: "com.mentra.store"})
+    // The workspace allows its managed release, and release-QR installs only while development is on.
+    installedAllowed = (identity) =>
+      identity?.source === "deployment_manifest" || (developmentAllowed && identity?.source === "direct_download")
+    const versions = spyOn(registry, "getInstalledVersions").mockReturnValue(["1.2.0", "1.3.0", "1.4.0"])
+    let notified = 0
+    const unsubscribe = registry.subscribe(() => notified++)
     try {
       values.set(`${packageName}_active_version`, "1.3.0")
+      expect(await registry.getActiveVersion(packageName)).toBe("1.3.0")
       developmentAllowed = false
       expect(await registry.getActiveVersion(packageName)).toBe("1.2.0")
-      // The pointer is kept, so allowing development again restores that install.
-      expect(values.get(`${packageName}_active_version`)).toBe("1.3.0")
-      developmentAllowed = true
-      expect(await registry.getActiveVersion(packageName)).toBe("1.3.0")
+      // Selecting it refreshes cached app lists that still hold the release-QR version.
+      expect(values.get(`${packageName}_active_version`)).toBe("1.2.0")
+      expect(notified).toBeGreaterThan(0)
     } finally {
+      unsubscribe()
       versions.mockRestore()
     }
   })

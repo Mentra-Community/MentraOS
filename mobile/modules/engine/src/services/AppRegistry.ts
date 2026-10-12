@@ -1570,8 +1570,8 @@ class AppRegistry {
   public async getActiveVersion(packageName: string): Promise<string | undefined> {
     let versions = this.getInstalledVersions(packageName)
     // A developer build only stands in while the deployment allows development.
-    // Leaving the stored pointer alone lets re-allowing it bring that build
-    // back; until then the released version stays on screen.
+    // A stored dev snapshot pointer is left alone so re-allowing it brings that
+    // scan back; until then a released version stays on screen.
     const devAllowed = isDevMiniappAllowed(packageName)
     const selectedSnapshot = devAllowed ? this.getSelectedDevSnapshot(packageName) : null
     if (selectedSnapshot) return selectedSnapshot
@@ -1596,13 +1596,16 @@ class AppRegistry {
         return devVersions[0]
       }
     }
-    versions = versions.filter((v) => semver.valid(v) && (devAllowed || !this.isDeveloperVersion(packageName, v)))
+    versions = versions.filter((v) => semver.valid(v))
     versions.sort((a, b) => semver.rcompare(a, b))
     if (!versions.length) return undefined
-    if (!(res.is_ok() && this.isDeveloperVersion(packageName, res.value))) {
-      this.setActiveVersion(packageName, versions[0])
-    }
-    return versions[0]
+    // The newest release the deployment allows, e.g. a workspace's managed
+    // release over a newer release-QR or Store install that it does not.
+    const active =
+      versions.find((v) => isInstalledMiniappAllowed(packageName, v, this.getReleaseIdentity(packageName, v))) ??
+      versions[0]
+    if (!(res.is_ok() && res.value.startsWith("dev-"))) this.setActiveVersion(packageName, active)
+    return active
   }
 
   public setActiveVersion(packageName: string, version: string): Result<void, Error> {
