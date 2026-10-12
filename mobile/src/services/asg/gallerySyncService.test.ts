@@ -1278,6 +1278,69 @@ describe("GallerySyncService", () => {
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
   })
 
+  it.each(["cleanup", "cancel", "fresh start"])(
+    "does not resume an old foreground WiFi check after %s",
+    async (terminal) => {
+      Object.defineProperty(Platform, "OS", {value: "android", configurable: true, writable: true})
+      ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockResolvedValue(undefined)
+      mockIsWifiEnabled.mockResolvedValue(false)
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+      let acknowledge!: () => void
+      const unsubscribe = onGalleryNotice((notice) => {
+        if (notice.code === "wifi_off") acknowledge = notice.ack!
+      })
+      try {
+        await gallerySyncService.startSync()
+      } finally {
+        unsubscribe()
+      }
+      expect(acknowledge).toBeDefined()
+      acknowledge()
+      let releaseCheck!: () => void
+      mockIsWifiEnabled.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseCheck = () => resolve(true)
+          }),
+      )
+      const foreground = (
+        gallerySyncService as unknown as {
+          handleAppStateChange(state: string): Promise<void>
+        }
+      ).handleAppStateChange("active")
+      await jest.advanceTimersByTimeAsync(1000)
+      expect(releaseCheck).toBeDefined()
+      if (terminal === "cancel") await gallerySyncService.cancelSync()
+      else await gallerySyncService.cleanup()
+      if (terminal === "fresh start") {
+        mockIsWifiEnabled.mockResolvedValue(true)
+        await gallerySyncService.startSync()
+      }
+      const saved = useGallerySyncStore.getState()
+      const calls = (BluetoothSdk.setHotspotState as jest.Mock).mock.calls.length
+      releaseCheck()
+      await foreground
+      expect(useGallerySyncStore.getState()).toBe(saved)
+      expect(BluetoothSdk.setHotspotState).toHaveBeenCalledTimes(calls)
+    },
+  )
+
+  it("does not resume a saved queue whose lookup settles after cleanup", async () => {
+    let releaseQueue!: () => void
+    ;(localStorageService.getSyncQueue as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseQueue = () => resolve({files: [{}], currentIndex: 0, startedAt: Date.now()})
+        }),
+    )
+    const resume = gallerySyncService.resumeSync()
+    await gallerySyncService.cleanup()
+    releaseQueue()
+    await resume
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    expect(localStorageService.clearSyncQueue).not.toHaveBeenCalled()
+  })
+
   it("makes sync tappable and uses native WiFi state after returning from settings", async () => {
     Object.defineProperty(Platform, "OS", {value: "android", configurable: true, writable: true})
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})

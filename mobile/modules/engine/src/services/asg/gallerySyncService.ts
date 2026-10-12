@@ -352,6 +352,8 @@ class GallerySyncService {
       return
     }
 
+    const signal = this.abortController?.signal
+    if (signal?.aborted) return
     console.log("[GallerySyncService] App returned to foreground - checking if WiFi is enabled")
 
     const store = useGallerySyncStore.getState()
@@ -385,10 +387,12 @@ class GallerySyncService {
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
           await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), RETRY_DELAY_MS))
+          if (signal?.aborted) return
 
           // NetInfo can remain stale after Android's WiFi settings close. Use
           // the same native source as the normal sync preflight.
           const wifiEnabled = await WifiManager.isEnabled()
+          if (signal?.aborted) return
           console.log(`[GallerySyncService] WiFi check attempt ${attempt}/${MAX_RETRIES}: enabled=${wifiEnabled}`)
 
           if (wifiEnabled) {
@@ -400,11 +404,13 @@ class GallerySyncService {
             return
           }
         } catch (error) {
+          if (signal?.aborted) return
           console.warn(`[GallerySyncService] Failed to check WiFi status on attempt ${attempt}:`, error)
           // Continue to next retry
         }
       }
 
+      if (signal?.aborted) return
       console.log("[GallerySyncService] WiFi not detected after retries - leaving sync available for manual retry")
       this.waitingForWifiRetry = false
       this.wifiSettingsOpenedAt = null
@@ -476,8 +482,8 @@ class GallerySyncService {
     }
 
     this.hotspotConnectionTimeout = BgTimer.setTimeout(() => {
-      this.hotspotConnectionTimeout = null
       if (signal?.aborted) return
+      this.hotspotConnectionTimeout = null
       // Pre-flight: abort if Bluetooth disconnected during the wait
       const stillConnected = isGlassesConnected(useGlassesStore.getState().connection)
       if (!stillConnected) {
@@ -2629,7 +2635,10 @@ class GallerySyncService {
    * Resume a previously interrupted sync
    */
   async resumeSync(): Promise<void> {
+    const signal = (this.abortController ??= new AbortController()).signal
+    if (signal.aborted) return
     const queue = await localStorageService.getSyncQueue()
+    if (signal.aborted) return
 
     if (!queue || queue.currentIndex >= queue.files.length) {
       console.log("[GallerySyncService] No queue to resume")
