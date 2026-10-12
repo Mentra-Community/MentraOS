@@ -6,7 +6,8 @@
  *   *    /interaction/*                       the provider's sign-in steps
  *   GET|POST /oidc/me                         userinfo, answered by Core itself
  *
- * Everything but userinfo is relayed to the provider's own listener
+ * The token and revocation endpoints are rate-limited per client and IP
+ * (120 a minute). Everything but userinfo is relayed to the provider's own listener
  * (`services/oidc/bridge.ts`). The relay builds the request for the
  * configured issuer: `Host` and `X-Forwarded-Proto` come from
  * `CLOUD_CORE_OIDC_ISSUER`, and the client's forwarding headers are dropped.
@@ -26,11 +27,30 @@ import {BRIDGE_SECRET_HEADER, oidcBridge} from "../../services/oidc/bridge"
 import {OIDC_DISCOVERY_PATH, OIDC_ROUTES} from "../../services/oidc/config"
 import {verifyCoreAccessToken} from "../../services/oidc/core-access-token"
 import {bearerToken} from "../../services/signin/principal.service"
+import {consumeRateLimit} from "../../services/signin/rate-limit.service"
 import type {AppEnv} from "../../types/hono.types"
 // The sign-in steps run inside the provider; importing them installs them.
 import "./interaction.api"
 
 const logger = createLogger("core").child({service: "oidc-relay"})
+
+const TOKEN_LIMIT_PER_MINUTE = 120
+const RATE_LIMITED_PATHS: ReadonlySet<string> = new Set([OIDC_ROUTES.token, OIDC_ROUTES.revocation])
+
+/** The client a token or revocation request names: `client_id` in the form, or the Basic credential's user. */
+function requestClientId(body: ArrayBuffer, authorization: string | undefined): string {
+  const fromForm = new URLSearchParams(new TextDecoder().decode(body)).get("client_id")
+  if (fromForm) return fromForm.slice(0, 64)
+  if (authorization?.startsWith("Basic ")) {
+    try {
+      const decoded = atob(authorization.slice(6))
+      return decodeURIComponent(decoded.slice(0, decoded.indexOf(":"))).slice(0, 64)
+    } catch {
+      return "invalid"
+    }
+  }
+  return "none"
+}
 
 /** Request headers never passed to the provider: hop-by-hop, and anything describing the client's view of the host. */
 const DROPPED_REQUEST_HEADERS = [
@@ -64,14 +84,23 @@ async function relay(c: Context<AppEnv>): Promise<Response> {
   headers.set("x-forwarded-proto", issuer.protocol.slice(0, -1))
   headers.set(BRIDGE_SECRET_HEADER, bridge.secret)
   const method = c.req.method
+  const body = method === "GET" || method === "HEAD" ? undefined : await c.req.raw.arrayBuffer()
+  if (body && RATE_LIMITED_PATHS.has(source.pathname)) {
+    const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"
+    const key = `oidc-token:${requestClientId(body, c.req.header("authorization"))}:ip:${ip}`
+    try {
+      if (!(await consumeRateLimit(key, TOKEN_LIMIT_PER_MINUTE, 60))) {
+        c.header("cache-control", "no-store")
+        return c.json({error: "too_many_requests", error_description: "too many requests"}, 429)
+      }
+    } catch (err) {
+      logger.error({errorName: (err as Error)?.name}, "sign-in server rate limit unavailable")
+      return unavailable(c)
+    }
+  }
   let response: Response
   try {
-    response = await fetch(`${bridge.origin}${source.pathname}${source.search}`, {
-      method,
-      headers,
-      body: method === "GET" || method === "HEAD" ? undefined : await c.req.raw.arrayBuffer(),
-      redirect: "manual",
-    })
+    response = await fetch(`${bridge.origin}${source.pathname}${source.search}`, {method, headers, body, redirect: "manual"})
   } catch (err) {
     logger.error({errorName: (err as Error)?.name}, "sign-in server relay failed")
     return unavailable(c)

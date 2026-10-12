@@ -101,11 +101,20 @@ interface StoredCookie {
   secure: boolean
 }
 
-/** A browser for one person: a cookie jar per origin, manual redirects, everything sent to Core's app. */
+type Send = (url: string, init: RequestInit) => Promise<Response>
+
+/**
+ * A browser for one person: a cookie jar per origin and manual redirects.
+ * Requests go to Core's app in-process, or through `send` (for a Core in
+ * another process).
+ */
 export class Browser {
   readonly jar = new Map<string, Map<string, StoredCookie>>()
+  private readonly send: Send
 
-  constructor(private readonly app: Hono<any>) {}
+  constructor(target: Hono<any> | Send) {
+    this.send = typeof target === "function" ? target : (url, init) => target.request(url, init)
+  }
 
   cookies(origin: string): Map<string, StoredCookie> {
     let cookies = this.jar.get(origin)
@@ -127,7 +136,7 @@ export class Browser {
       .join("; ")
     const headers = new Headers(init.headers)
     if (cookies) headers.set("cookie", cookies)
-    const response = await this.app.request(target.href, {...init, headers, redirect: "manual"})
+    const response = await this.send(target.href, {...init, headers, redirect: "manual"})
     for (const line of response.headers.getSetCookie()) {
       const [pair, ...attributes] = line.split(";").map(part => part.trim())
       const name = pair!.slice(0, pair!.indexOf("="))

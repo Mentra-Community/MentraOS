@@ -151,7 +151,8 @@ follow [entra-setup.md](./entra-setup.md). The helper provisions:
 - a single-tenant Core API exposing `mentra.session`, which is also the admin
   portal's sign-in client (the `email` ID token claim, the Microsoft Graph
   `openid`, `email` and `profile` permissions, and the
-  `https://<core host>/api/admin/auth/callback` redirect URI); and
+  `https://<core host>/interaction/callback/workforce` redirect URI, where Entra
+  returns people to Core's sign-in server); and
 - an assignment-required public Mobile client with Core and ACS delegated
   permissions and official binary redirects.
 

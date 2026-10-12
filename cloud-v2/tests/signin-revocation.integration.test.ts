@@ -3,13 +3,19 @@
  * Review Focus 5).
  *
  * For each of `revokeAllSessionsForUser`, `confirmAccountDeletion` and
- * `resetPassword`: the person's admin portal session ends on its next request;
- * a Supabase token from a session that started before the revocation is
- * refused, even refreshed after it, while one from a later session is
- * accepted; and Core ends every Supabase session of the person with one
- * `POST /auth/v1/logout?scope=global` whose bearer it signed.
+ * `resetPassword`:
+ *  - the person's admin portal session ends on its next request;
+ *  - their sessions and grants at Core's sign-in server end: the sign-in site
+ *    asks for credentials again, and the Developer Console's refresh fails;
+ *  - a Core access token issued before the revocation is refused, while one
+ *    from a later sign-in is accepted;
+ *  - the sign-in page's hand-off refuses a Supabase session that started
+ *    before the revocation, even refreshed after it;
+ *  - Core ends every Supabase session of the person with one
+ *    `POST /auth/v1/logout?scope=global` whose bearer it signed.
  *
- * GoTrue is the fake identity provider (fetch interception).
+ * GoTrue is the fake identity provider (fetch interception); Core's sign-in
+ * server runs in-process, its issuer's origin routed to Core's app.
  *
  * Safety: `localTestMongoUrl` (loopback only, random database, ignores
  * `MONGO_URL`); the database is dropped afterwards.
@@ -21,6 +27,7 @@ import crypto from "node:crypto"
 
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test} from "bun:test"
 import * as jose from "jose"
+import * as client from "openid-client"
 
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/core/src/connections/mongo.connection"
@@ -30,6 +37,7 @@ import {OemModel} from "../packages/core/src/models/oem.model"
 import {RefreshTokenModel} from "../packages/core/src/models/refresh-token.model"
 import {SeenJtiModel} from "../packages/core/src/models/seen-jti.model"
 import {SupportProfileModel} from "../packages/core/src/models/support-profile.model"
+import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {
   confirmAccountDeletion,
@@ -40,18 +48,24 @@ import {
   startAccountDeletionCompletion,
 } from "../packages/core/src/services/account/account.service"
 import {refreshSession, revokeAllSessionsForUser} from "../packages/core/src/services/session.service"
+import {stopOidcBridge} from "../packages/core/src/services/oidc/bridge"
+import {verifyCoreAccessToken} from "../packages/core/src/services/oidc/core-access-token"
+import {ensureOidcCollections} from "../packages/core/src/services/oidc/mongo-adapter"
 import {createPortalSession} from "../packages/core/src/services/signin/browser-session.service"
-import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
+import {resetIdpTokenCaches, verifySupabaseHandoffToken} from "../packages/core/src/services/signin/idp-tokens"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {resetCoreKeyCaches} from "./support/key-caches"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {Browser, CLIENT_SECRETS, CONSOLE_CALLBACK, finishInteraction, routeOriginsToApp, signedInPerson} from "./support/oidc-harness"
 import {
   ADMIN_COOKIE,
   ADMIN_EMAIL,
   ADMIN_ORIGIN,
   applyEnv,
+  coreAccessToken,
   HOSTED_ENV,
+  OIDC_ISSUER,
   SUPABASE_ISSUER,
   SUPABASE_JWKS,
   SUPABASE_PROJECT,
@@ -86,17 +100,22 @@ let restoreEnv: () => void = () => {}
 const SUB = "supa-revoked"
 const PASSWORD = "old-password-1"
 const nowSec = () => Math.floor(Date.now() / 1000)
-const MODELS = [UserModel, BrowserSessionModel, RefreshTokenModel, AccountCodeModel, OemModel, SeenJtiModel, SupportProfileModel]
+const MODELS = [UserModel, BrowserSessionModel, RefreshTokenModel, AccountCodeModel, OemModel, SeenJtiModel, SupportProfileModel, SigninIdentityModel]
 
 beforeAll(async () => {
   await connectMongo(databaseUrl)
   assertConnectedTo(databaseUrl, UserModel.db.name)
   verified = true
-  await Promise.all(MODELS.map(model => model.syncIndexes()))
+  await Promise.all([...MODELS.map(model => model.syncIndexes()), ensureOidcCollections()])
   app = createApp({readinessChecks: [mongoReadinessCheck]})
+  restoreFetch = routeOriginsToApp(app, [OIDC_ISSUER])
 })
 
+let restoreFetch: () => void = () => {}
+
 afterAll(async () => {
+  restoreFetch()
+  await stopOidcBridge()
   if (verified) {
     assertConnectedTo(databaseUrl, UserModel.db.name)
     await UserModel.db.dropDatabase()
@@ -127,9 +146,36 @@ afterEach(() => {
   resetCoreKeyCaches()
 })
 
-/** A person signed in before the revocation: a portal session, a Console token, and live Supabase sessions. */
+/** The Developer Console as a client of Core's sign-in server. */
+async function consoleClient(): Promise<client.Configuration> {
+  const secret = CLIENT_SECRETS.CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET
+  return client.discovery(new URL(OIDC_ISSUER), "console", {client_secret: secret, id_token_signed_response_alg: "EdDSA"}, client.ClientSecretPost(secret))
+}
+
+/** An authorization request for the Console in `browser`; where the provider sends it first. */
+async function authorizeConsole(browser: Browser) {
+  const config = await consoleClient()
+  const verifier = client.randomPKCECodeVerifier()
+  const url = client.buildAuthorizationUrl(config, {
+    redirect_uri: CONSOLE_CALLBACK,
+    scope: "openid email profile",
+    code_challenge: await client.calculatePKCECodeChallenge(verifier),
+    code_challenge_method: "S256",
+    state: "s",
+  })
+  const step = await browser.follow(url.href, location => location.pathname.startsWith("/interaction/") || location.href.startsWith(CONSOLE_CALLBACK))
+  if (!("stoppedAt" in step)) throw new Error("no redirect")
+  return {config, verifier, stoppedAt: step.stoppedAt}
+}
+
+/**
+ * A person signed in everywhere before the revocation: an admin portal session,
+ * a session at Core's sign-in server, the Developer Console's grant (access and
+ * refresh tokens), and a live Supabase session (the Mentra App's).
+ */
 async function signedInEverywhere() {
   const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: SUB})
+  await signedInPerson({subject: SUB, email: ADMIN_EMAIL, emailVerified: true})
   const {cookieValue} = await createPortalSession("admin", {
     mentraUserId: user.mentraUserId,
     tenantId: "mentra",
@@ -140,23 +186,28 @@ async function signedInEverywhere() {
     authTime: new Date(),
   })
   const sessionStart = nowSec() - 600
-  const signInPage = idp.startSession(SUB, null, sessionStart)
-  const console = idp.startSession(SUB, "console-client", sessionStart)
-  const consoleToken = await bearerToken(sessionStart, console.sessionId)
-  expect((await adminMe(`Bearer ${consoleToken}`)).status).toBe(200)
+  const appSession = idp.startSession(SUB, null, sessionStart)
+  const browser = new Browser(app)
+  const first = await authorizeConsole(browser)
+  const resume = await finishInteraction(first.stoppedAt, user.mentraUserId, {consent: false})
+  const back = await browser.follow(resume.href, location => location.href.startsWith(CONSOLE_CALLBACK))
+  if (!("stoppedAt" in back)) throw new Error("no code")
+  const tokens = await client.authorizationCodeGrant(first.config, back.stoppedAt, {pkceCodeVerifier: first.verifier, expectedState: "s"})
+  expect(tokens.refresh_token).toBeTruthy()
+  expect((await adminMe(`Bearer ${tokens.access_token}`)).status).toBe(200)
   expect((await adminMe(undefined, cookieValue)).status).toBe(200)
-  return {user, cookieValue, sessionStart, signInPage, console}
+  return {user, cookieValue, sessionStart, appSession, browser, config: first.config, tokens}
 }
 
-function bearerToken(sessionStart: number, sessionId: string, iat = nowSec()) {
+/** The sign-in page's hand-off of a Supabase session that started at `sessionStart`. */
+async function handoffToken(sessionStart: number, iat = nowSec()) {
   return idp.mint({
     sub: SUB,
     aud: "authenticated",
-    client_id: "console-client",
     email: ADMIN_EMAIL,
-    session_id: sessionId,
+    session_id: "page-session",
     iat,
-    amr: [{method: "oauth_provider/authorization_code", timestamp: sessionStart}],
+    amr: [{method: "password", timestamp: sessionStart}],
   })
 }
 
@@ -170,16 +221,20 @@ function adminMe(authorization?: string, cookie?: string) {
 async function expectRevokedEverywhere(before: Awaited<ReturnType<typeof signedInEverywhere>>) {
   // The portal session's next request is refused.
   expect((await adminMe(undefined, before.cookieValue)).status).toBe(401)
-  // A token from a session that started before the revocation is refused, also one refreshed after it.
+  // The Console's Core access token from before the revocation is refused; one from a later sign-in is accepted.
+  expect(await verifyCoreAccessToken(before.tokens.access_token)).toBeNull()
+  expect((await adminMe(`Bearer ${before.tokens.access_token}`)).status).toBe(401)
+  expect((await adminMe(`Bearer ${await coreAccessToken({sub: SUB, email: ADMIN_EMAIL, iat: nowSec() + 2})}`)).status).toBe(200)
+  // The Console's refresh fails: the grant has ended.
+  await expect(client.refreshTokenGrant(before.config, before.tokens.refresh_token!)).rejects.toMatchObject({error: "invalid_grant"})
+  // The sign-in site asks for credentials again.
+  expect((await authorizeConsole(before.browser)).stoppedAt.pathname.startsWith("/interaction/")).toBe(true)
+  // The hand-off refuses a Supabase session that started before the revocation, also refreshed after it.
   resetIdpTokenCaches()
-  expect((await adminMe(`Bearer ${await bearerToken(before.sessionStart, before.console.sessionId)}`)).status).toBe(401)
-  expect((await adminMe(`Bearer ${await bearerToken(before.sessionStart, before.console.sessionId, nowSec() + 5)}`)).status).toBe(401)
-  // A session that started after the revocation is accepted.
-  const later = nowSec() + 2
-  expect((await adminMe(`Bearer ${await bearerToken(later, "later-session", later)}`)).status).toBe(200)
-  // Every Supabase session of the person has ended, the sign-in page's included.
-  expect(before.signInPage.endedAt).not.toBeNull()
-  expect(before.console.endedAt).not.toBeNull()
+  expect(await verifySupabaseHandoffToken(await handoffToken(before.sessionStart))).toBeNull()
+  expect(await verifySupabaseHandoffToken(await handoffToken(before.sessionStart, nowSec() + 5))).toBeNull()
+  // Every Supabase session of the person has ended.
+  expect(before.appSession.endedAt).not.toBeNull()
 }
 
 /** Make the account directory's admin API answer 503 for `methods` on this person, until the returned function runs. */
@@ -255,9 +310,11 @@ describe("confirmAccountDeletion", () => {
     await confirmAccountDeletion(before.user.mentraUserId, SUB, code)
     await expectOneGlobalLogout()
     expect((await adminMe(undefined, before.cookieValue)).status).toBe(401)
-    resetIdpTokenCaches()
-    expect((await adminMe(`Bearer ${await bearerToken(before.sessionStart, before.console.sessionId)}`)).status).toBe(401)
-    expect(before.signInPage.endedAt).not.toBeNull()
+    expect((await adminMe(`Bearer ${before.tokens.access_token}`)).status).toBe(401)
+    await expect(client.refreshTokenGrant(before.config, before.tokens.refresh_token!)).rejects.toMatchObject({error: "invalid_grant"})
+    expect(before.appSession.endedAt).not.toBeNull()
+    // How the person signed in to Core's sign-in server, email included, is gone with the account.
+    expect(await SigninIdentityModel.countDocuments({mentraUserId: before.user.mentraUserId})).toBe(0)
   })
 
   test("with the account directory down, a confirmed deletion is accepted and the account is no principal; Core finishes it later", async () => {
@@ -283,10 +340,10 @@ describe("confirmAccountDeletion", () => {
     await expect(login(ADMIN_EMAIL, PASSWORD)).rejects.toMatchObject({code: "invalid_grant"})
     // So is refreshing the phone session it had (deletion also revoked it).
     await expect(refreshSession({refreshToken: phone.refresh_token})).rejects.toMatchObject({code: "invalid_grant"})
-    // A Supabase sign-in that started after the revocation is refused too.
+    // A Supabase sign-in that started after the revocation is refused at the hand-off too.
     resetIdpTokenCaches()
     const later = nowSec() + 2
-    expect((await adminMe(`Bearer ${await bearerToken(later, "later-session", later)}`)).status).toBe(401)
+    expect(await verifySupabaseHandoffToken(await handoffToken(later, later))).toBeNull()
     // As is a portal session, should one be created now.
     const {cookieValue} = await createPortalSession("admin", {
       mentraUserId: before.user.mentraUserId,
@@ -371,12 +428,30 @@ describe("resetPassword", () => {
     await expectOneGlobalLogout()
     await expectRevokedEverywhere(before)
   })
+
+  test("from the sign-in page, revokes every web surface and mints no phone session", async () => {
+    const before = await signedInEverywhere()
+    const code = await otc.issueEmailCode({purpose: "password_reset", subject: ADMIN_EMAIL, ttlSec: 900, payload: {userId: SUB}})
+    const response = await app.request(`${OIDC_ISSUER}/api/account/password/reset`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({email: ADMIN_EMAIL, code, newPassword: "new-password-3", signIn: false}),
+    })
+    expect(response.status).toBe(200)
+    expect(response.headers.get("cache-control")).toBe("no-store")
+    expect(await response.json()).toEqual({status: "password_updated"})
+    expect(await RefreshTokenModel.countDocuments({mentraUserId: before.user.mentraUserId})).toBe(0)
+    await expectOneGlobalLogout()
+    await expectRevokedEverywhere(before)
+  })
 })
 
 describe("configuration", () => {
-  test("removing the sign-in source from configuration ends its portal sessions on their next request", async () => {
+  test("removing the sign-in source from configuration ends its people's portal sessions, tokens and refreshes on their next request", async () => {
     const before = await signedInEverywhere()
     delete process.env.CLOUD_CORE_SUPABASE_ISSUER
     expect((await adminMe(undefined, before.cookieValue)).status).toBe(401)
+    expect((await adminMe(`Bearer ${before.tokens.access_token}`)).status).toBe(401)
+    await expect(client.refreshTokenGrant(before.config, before.tokens.refresh_token!)).rejects.toMatchObject({error: "invalid_grant"})
   })
 })

@@ -122,7 +122,7 @@ export async function verifySupabaseHandoffToken(token: string, opts: {now?: Dat
   const user = await findOrCreateUser({tenantId: provider.tenantId, tenantUserId: subject})
   if (isDeletedAccount(user)) return null
   const revokedAt = (user as {webSignInsRevokedAt?: Date | null}).webSignInsRevokedAt
-  if (revokedAt && sessionStart < Math.floor(revokedAt.getTime() / 1000)) return null
+  if (revokedAt && sessionStart * 1000 < revokedAt.getTime()) return null
 
   let email: string | null
   let emailConfirmed = false

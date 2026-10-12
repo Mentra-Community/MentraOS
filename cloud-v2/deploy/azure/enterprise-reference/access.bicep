@@ -26,7 +26,7 @@ var coreSecrets = concat([
   'mentra-jwt-public-key'
   'miniapp-jwt-private-key'
   'miniapp-jwt-public-key'
-], adminPortalSignIn ? ['entra-browser-client-secret'] : [])
+], adminPortalSignIn ? ['entra-browser-client-secret', 'oidc-cookie-keys', 'oidc-admin-portal-client-secret'] : [])
 var runtimeSecrets = concat(
   empty(teamsGraphClientId) ? [] : ['teams-graph-client-secret-${teamsGraphClientId}'],
   cloudSpeechAndPhotos ? ['soniox-api-key', 'elevenlabs-api-key'] : []

@@ -259,13 +259,18 @@ export async function coreAccessToken(person: {
   )
   const key = await jose.importPKCS8(`-----BEGIN PRIVATE KEY-----\n${process.env.MENTRA_JWT_PRIVATE_KEY}\n-----END PRIVATE KEY-----`, "EdDSA")
   const iat = person.iat ?? Math.floor(Date.now() / 1000)
-  return new jose.SignJWT({client_id: person.clientId ?? "console", scope: "openid email profile", ...person.claims})
+  // `claims` override any standard claim (for example `aud`, to shape an ID token).
+  return new jose.SignJWT({
+    iss: process.env.CLOUD_CORE_OIDC_ISSUER ?? OIDC_ISSUER,
+    aud: "urn:mentra:core",
+    sub: user.mentraUserId,
+    jti: randomUUID(),
+    iat,
+    exp: iat + 3600,
+    client_id: person.clientId ?? "console",
+    scope: "openid email profile",
+    ...person.claims,
+  })
     .setProtectedHeader({alg: "EdDSA", kid: "mentra-oidc-1", typ: "at+jwt"})
-    .setIssuer(process.env.CLOUD_CORE_OIDC_ISSUER ?? OIDC_ISSUER)
-    .setAudience("urn:mentra:core")
-    .setSubject(user.mentraUserId)
-    .setJti(randomUUID())
-    .setIssuedAt(iat)
-    .setExpirationTime(iat + 3600)
     .sign(key)
 }

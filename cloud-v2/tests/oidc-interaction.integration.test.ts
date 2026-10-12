@@ -161,7 +161,7 @@ describe("hosted Core: the sign-in page's hand-off", () => {
   let supabase: FakeIdp
 
   beforeEach(async () => {
-    restoreMode = applyEnv({...HOSTED_ENV, CLOUD_CORE_WEB_CLIENT_IDS: undefined})
+    restoreMode = applyEnv({...HOSTED_ENV, ...providerEnv()})
     await clean()
     supabase = await installFakeIdp({issuer: SUPABASE_ISSUER, jwksUrl: SUPABASE_JWKS, hs256Secret: SUPABASE_SECRET, projectUrl: SUPABASE_PROJECT})
     restoreFetch = routeOriginsToApp(app, [OIDC_ISSUER])
@@ -375,7 +375,8 @@ describe("a Private Cloud: the customer's Entra behind Core's provider", () => {
   const ENTRA_CALLBACK = `${OIDC_ISSUER}/interaction/callback/workforce`
 
   beforeEach(async () => {
-    restoreMode = applyEnv({...PRIVATE_CLOUD_ENV, CLOUD_CORE_IDP_SIGNOUT_URL: undefined})
+    // The Private Cloud shape, with this suite's issuer and clients (portal-signin covers Core's one host).
+    restoreMode = applyEnv({...PRIVATE_CLOUD_ENV, ...providerEnv()})
     await clean()
     entra = await installFakeIdp({
       issuer: ENTRA_ISSUER,

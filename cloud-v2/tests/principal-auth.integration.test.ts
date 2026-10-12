@@ -39,6 +39,7 @@ import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {
+  coreAccessToken,
   ADMIN_COOKIE,
   ADMIN_EMAIL,
   ADMIN_ORIGIN,
@@ -115,13 +116,18 @@ const adminMe = (headers: Record<string, string>) => app.request(`${ADMIN_ORIGIN
 const portalMe = (headers: Record<string, string>) => app.request(`${PORTAL_ORIGIN}/api/portal/me`, {headers})
 
 function supabaseToken(claims: Record<string, unknown> = {}) {
-  return idp.mint({sub: "supa-admin", aud: "authenticated", client_id: "console-client", email: ADMIN_EMAIL, ...claims})
+  return idp.mint({sub: "supa-admin", aud: "authenticated", email: ADMIN_EMAIL, ...claims})
 }
 
-describe("identity-provider bearers", () => {
-  test("a Supabase access token is a bearer on the admin and enterprise portal APIs", async () => {
+/** A Core access token for the admin, as Core's sign-in server issues it. */
+function adminAccessToken(overrides: Partial<Parameters<typeof coreAccessToken>[0]> = {}) {
+  return coreAccessToken({sub: "supa-admin", email: ADMIN_EMAIL, emailVerified: true, ...overrides})
+}
+
+describe("Core access token bearers", () => {
+  test("a Core access token is a bearer on the admin and workspace portal APIs", async () => {
     const phoneUser = await findOrCreateUser({tenantId: "mentra", tenantUserId: "supa-admin"})
-    const token = await supabaseToken()
+    const token = await adminAccessToken()
     const admin = await adminMe({authorization: `Bearer ${token}`})
     expect(admin.status).toBe(200)
     expect(((await admin.json()) as {user: {mentraUserId: string}}).user.mentraUserId).toBe(phoneUser.mentraUserId)
@@ -143,21 +149,29 @@ describe("identity-provider bearers", () => {
     expect((await portalMe({authorization: `Bearer ${coreToken}`})).status).toBe(401)
   })
 
-  test("a Supabase ID token is refused (L07)", async () => {
-    const idToken = await supabaseToken({aud: "console-client"})
-    expect((await adminMe({authorization: `Bearer ${idToken}`})).status).toBe(401)
+  test("Supabase tokens, Core's own ID tokens and another environment's Core access tokens are refused (L07)", async () => {
+    const supabaseAccess = await supabaseToken()
+    const supabaseOAuth = await supabaseToken({client_id: "console-client"})
+    const restore = applyEnv({CLOUD_CORE_OIDC_ISSUER: "https://account.staging.test"})
+    const otherEnvironment = await adminAccessToken()
+    restore()
+    const idTokenShaped = await adminAccessToken({claims: {aud: "admin-portal"}})
+    for (const token of [supabaseAccess, supabaseOAuth, otherEnvironment, idTokenShaped]) {
+      expect((await adminMe({authorization: `Bearer ${token}`})).status).toBe(401)
+    }
+  })
+
+  test("a token from before the person's revocation is refused, and one from after is accepted (L07)", async () => {
+    const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: "supa-admin"})
+    const before = await adminAccessToken({iat: Math.floor(Date.now() / 1000) - 120})
+    await UserModel.updateOne({mentraUserId: user.mentraUserId}, {$set: {webSignInsRevokedAt: new Date(Date.now() - 60_000)}})
+    expect((await adminMe({authorization: `Bearer ${before}`})).status).toBe(401)
+    expect((await adminMe({authorization: `Bearer ${await adminAccessToken()}`})).status).toBe(200)
   })
 
   test("an invalid bearer never falls back to a valid cookie", async () => {
     const {cookieValue: session} = await createPortalSession("admin", adminIdentity)
     expect((await adminMe({authorization: "Bearer not-a-token", cookie: `${ADMIN_COOKIE}=${session}`})).status).toBe(401)
-  })
-
-  test("an identity provider outage answers 503, never success", async () => {
-    const token = await idp.mint({sub: "supa-admin", aud: "authenticated", client_id: "console-client"}, {alg: "ES256"})
-    idp.outage = true
-    const response = await adminMe({authorization: `Bearer ${token}`})
-    expect(response.status).toBe(503)
   })
 })
 
@@ -176,9 +190,9 @@ describe("portal cookies authenticate only their own route group (L05, Review Fo
     expect((await adminMe({cookie: `${ADMIN_COOKIE}=${session}`})).status).toBe(401)
   })
 
-  test("a cookie named like Supabase's authenticates nothing, even holding a valid token", async () => {
-    const token = await supabaseToken()
-    const cookie = `sb-access-token=${token}; sb-signin-auth-token=${token}`
+  test("a cookie named like Supabase's, or the sign-in server's own, authenticates nothing, even holding a valid token", async () => {
+    const token = await adminAccessToken()
+    const cookie = `sb-access-token=${token}; sb-signin-auth-token=${token}; __Host-mentra_oidc_session=${token}`
     expect((await adminMe({cookie})).status).toBe(401)
     expect((await portalMe({cookie})).status).toBe(401)
   })
@@ -279,8 +293,8 @@ describe("the workspace API under each route group", () => {
     }
   })
 
-  test("an identity-provider access token works under every group", async () => {
-    const bearer = {authorization: `Bearer ${await supabaseToken()}`}
+  test("a Core access token works under every group", async () => {
+    const bearer = {authorization: `Bearer ${await adminAccessToken()}`}
     expect((await list(ADMIN_ORIGIN, "/api/workspaces", bearer)).status).toBe(200)
     expect((await list(PORTAL_ORIGIN, "/api/portal/workspaces", bearer)).status).toBe(200)
     expect((await list(ADMIN_ORIGIN, "/api/admin/workspaces", bearer)).status).toBe(200)

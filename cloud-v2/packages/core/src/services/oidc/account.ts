@@ -12,9 +12,13 @@ import {UserModel} from "../../models/user.model"
 import {isSourceEnabled} from "../signin/config"
 import {isDeletedAccount} from "../user.service"
 
-/** Whether a sign-in at `authTime` (seconds) came before the person's revocation. Sub-second precision is not kept in tokens. */
+/**
+ * Whether a sign-in or token at `authTimeSec` (whole seconds, as tokens carry
+ * it) came before the person's revocation. Read strictly: anything from the
+ * revocation's own second is treated as before it.
+ */
 export function signedInBeforeRevocation(revokedAt: Date | null | undefined, authTimeSec: number): boolean {
-  return Boolean(revokedAt) && authTimeSec < Math.floor(revokedAt!.getTime() / 1000)
+  return Boolean(revokedAt) && authTimeSec * 1000 < revokedAt!.getTime()
 }
 
 /**
