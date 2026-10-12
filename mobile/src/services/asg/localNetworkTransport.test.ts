@@ -9,6 +9,11 @@ jest.mock("@dr.pogodin/react-native-fs", () => ({
   stopDownload: jest.fn(),
 }))
 
+jest.mock("@mentra/glasses-media", () => ({
+  glassesHotspot: {join: jest.fn(async () => "192.168.43.2"), leave: jest.fn(async () => {})},
+}))
+jest.mock("@mentra/crust", () => ({__esModule: true, default: {isIOSAppOnMac: false}}))
+
 import {
   localNetworkErrorDetails,
   localNetworkTransport,
@@ -17,6 +22,82 @@ import {
 import {Platform} from "react-native"
 import {emitLocalNetworkEvent, mentraLocalNetworkMock as mockNativeModule} from "../../test-utils/mockBluetoothSdk"
 const mockLegacyConnect = jest.requireMock("react-native-wifi-reborn").default.connectToProtectedSSID as jest.Mock
+const mockMacHotspot = jest.requireMock("@mentra/glasses-media").glassesHotspot as {join: jest.Mock; leave: jest.Mock}
+const mockCrust = jest.requireMock("@mentra/crust").default
+
+describe("Mac hotspot ownership", () => {
+  beforeEach(async () => {
+    mockMacHotspot.leave.mockResolvedValue(undefined)
+    await localNetworkTransport.disconnect()
+    jest.clearAllMocks()
+    mockCrust.isIOSAppOnMac = true
+    Platform.OS = "ios"
+  })
+  afterEach(async () => {
+    mockMacHotspot.leave.mockResolvedValue(undefined)
+    await localNetworkTransport.disconnect()
+    mockCrust.isIOSAppOnMac = false
+    Platform.OS = "android"
+  })
+
+  it("returns the actual Mac Wi-Fi address without using the iPhone join", async () => {
+    await expect(localNetworkTransport.connect("glasses", "private", {gateway: "192.168.43.1"})).resolves.toBe(
+      "192.168.43.2",
+    )
+    expect(mockMacHotspot.join).toHaveBeenCalledWith(expect.any(String), "glasses", "private", "192.168.43.1")
+    expect(mockLegacyConnect).not.toHaveBeenCalled()
+  })
+
+  it("rejects overlap without invalidating the admitted connection", async () => {
+    let finish!: (address: string) => void
+    mockMacHotspot.join.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const first = localNetworkTransport.connect("glasses", "private")
+    await expect(localNetworkTransport.connect("other", "private")).rejects.toThrow("not been released")
+    finish("192.168.43.2")
+    await expect(first).resolves.toBe("192.168.43.2")
+    expect(mockMacHotspot.join).toHaveBeenCalledTimes(1)
+  })
+
+  it("retains custody until late native completion has been released", async () => {
+    let finish!: (address: string) => void
+    let released!: () => void
+    mockMacHotspot.join.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    mockMacHotspot.leave.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          released = resolve
+        }),
+    )
+    const connection = localNetworkTransport.connect("glasses", "private")
+    const failure = expect(connection).rejects.toThrow("superseded")
+    const leaving = localNetworkTransport.disconnect()
+    await expect(localNetworkTransport.connect("other", "private")).rejects.toThrow("not been released")
+    finish("192.168.43.2")
+    released()
+    await leaving
+    await failure
+  })
+
+  it("preserves the original association error when cleanup also fails", async () => {
+    const original = new Error("association refused")
+    mockMacHotspot.join.mockRejectedValueOnce(original)
+    mockMacHotspot.leave.mockRejectedValueOnce(new Error("cleanup refused"))
+    await expect(localNetworkTransport.connect("glasses", "private")).rejects.toBe(original)
+    await expect(localNetworkTransport.connect("other", "private")).rejects.toThrow("not been released")
+    await localNetworkTransport.disconnect()
+    await expect(localNetworkTransport.connect("glasses", "private")).resolves.toBe("192.168.43.2")
+  })
+})
 
 describe("localNetworkErrorDetails", () => {
   it("preserves bridged domain and underlying code without a native stack or private userInfo", () => {

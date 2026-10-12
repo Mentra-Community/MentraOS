@@ -139,6 +139,7 @@ it("retains terminal native join facts and does not repeat downloads or enable r
   expect(localNetwork.connect).toHaveBeenCalledWith("A", "password", {
     retryIosInternalError: true,
     assertCurrent: expect.any(Function),
+    gateway: "192.168.43.1",
   })
   expect(downloader.prepareArtifacts).toHaveBeenCalledTimes(1)
   expect(server.start).not.toHaveBeenCalled()

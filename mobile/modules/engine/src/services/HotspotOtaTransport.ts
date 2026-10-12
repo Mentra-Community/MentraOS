@@ -121,11 +121,12 @@ class HotspotOtaTransport {
       const scopedAddress = await localNetworkTransport.connect(hotspot.ssid, hotspot.password, {
         retryIosInternalError: true,
         assertCurrent,
+        gateway: hotspot.localIp,
       })
       this.localNetworkConnected = true
       assertCurrent()
       let localAddress = scopedAddress
-      if (Platform.OS === "ios") {
+      if (Platform.OS === "ios" && !localAddress) {
         try {
           localAddress = await otaServer.waitForWifiAddress(hotspot.localIp, 15_000)
           assertCurrent()

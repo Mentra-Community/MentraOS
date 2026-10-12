@@ -1,5 +1,7 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {otaLocalNetwork, type OtaLocalNetworkDownloadProgress} from "@mentra/bluetooth-sdk/ota-transport"
+import CrustModule from "@mentra/crust"
+import {glassesHotspot} from "@mentra/glasses-media"
 import {Buffer} from "buffer"
 import {Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
@@ -13,6 +15,7 @@ let scopedConnectionActive = false
 let nextJobId = 1_000_000
 const nativeJobs = new Map<number, string>()
 const cancelledNativeJobs = new Set<number>()
+let macHotspotOwner: string | null = null
 
 export type LocalNetworkErrorDetails = {
   code?: string | number
@@ -105,16 +108,36 @@ export const localNetworkTransport = {
   async connect(
     ssid: string,
     password: string,
-    options?: {retryIosInternalError: true; assertCurrent: () => void},
+    options?: {retryIosInternalError?: true; assertCurrent?: () => void; gateway?: string},
   ): Promise<string | undefined> {
+    const isMac = Platform.OS === "ios" && CrustModule.isIOSAppOnMac === true
+    if (isMac && macHotspotOwner) throw new Error("Previous Mac hotspot session has not been released")
     const generation = ++connectionGeneration
     const assertCurrent = () => {
       if (generation !== connectionGeneration) throw new Error("Local network connection was superseded")
-      options?.assertCurrent()
+      options?.assertCurrent?.()
     }
     assertCurrent()
     scopedConnectionActive = false
     nativeJobs.clear()
+    if (isMac) {
+      const owner = requestId("mac_hotspot")
+      macHotspotOwner = owner
+      try {
+        const address = await glassesHotspot.join(owner, ssid, password, options?.gateway)
+        assertCurrent()
+        return address
+      } catch (error) {
+        try {
+          await glassesHotspot.leave(owner)
+        } catch (cleanupError) {
+          console.warn("[LocalNetworkTransport] Mac hotspot cleanup failed", localNetworkErrorDetails(cleanupError))
+          throw error
+        }
+        if (macHotspotOwner === owner) macHotspotOwner = null
+        throw error
+      }
+    }
     if (!supportsScopedConnection()) {
       // Gallery already owns its retry loop. OTA opts into this same-network
       // policy only with current-attempt authority; never race a pending native call.
@@ -152,6 +175,11 @@ export const localNetworkTransport = {
 
   async disconnect(): Promise<void> {
     connectionGeneration += 1
+    if (macHotspotOwner) {
+      const owner = macHotspotOwner
+      await glassesHotspot.leave(owner)
+      if (macHotspotOwner === owner) macHotspotOwner = null
+    }
     if (supportsScopedConnection()) {
       await otaLocalNetwork.disconnect()
     }

@@ -1004,7 +1004,10 @@ class GallerySyncService {
       const hotspotInfo: HotspotInfo = currentGlassesHotspot
       store.setHotspotInfo(hotspotInfo)
       store.setSyncState("connecting_wifi")
-      if (localNetworkTransport.supportsScopedConnection() && !localNetworkTransport.isScopedConnectionActive()) {
+      if (
+        CrustModule.isIOSAppOnMac ||
+        (localNetworkTransport.supportsScopedConnection() && !localNetworkTransport.isScopedConnectionActive())
+      ) {
         console.log("[GallerySyncService] 📡 System SSID matches; establishing scoped glasses transport")
         await this.connectToHotspotWifi(hotspotInfo, signal)
       } else {
@@ -1185,7 +1188,11 @@ class GallerySyncService {
               console.log(`[GallerySyncService] 📡 Current WiFi SSID: "${preConnectSSID}"`)
 
               // Check if already connected (shouldn't happen, but good to verify)
-              if (!localNetworkTransport.supportsScopedConnection() && preConnectSSID === hotspotInfo.ssid) {
+              if (
+                !CrustModule.isIOSAppOnMac &&
+                !localNetworkTransport.supportsScopedConnection() &&
+                preConnectSSID === hotspotInfo.ssid
+              ) {
                 console.log("[GallerySyncService] ✅ Already connected to target SSID! Proceeding to download.")
                 appStateSubscription.remove()
 
@@ -1222,7 +1229,9 @@ class GallerySyncService {
           appBackgroundTime = null
 
           if (signal?.aborted) return
-          await localNetworkTransport.connect(hotspotInfo.ssid, hotspotInfo.password)
+          const joinedAddress = await localNetworkTransport.connect(hotspotInfo.ssid, hotspotInfo.password, {
+            gateway: hotspotInfo.ip,
+          })
           if (signal?.aborted) return
 
           const connectCallDuration = Date.now() - connectCallStartTime
@@ -1240,7 +1249,10 @@ class GallerySyncService {
           // The poll below is a second opinion, not the primary gate — never fail on it
           // when the SSID simply cannot be read.
 
-          if (Platform.OS === "ios" && !this.ssidReadable) {
+          if (Platform.OS === "ios" && joinedAddress) {
+            // The shared native owner already verified association, interface and DHCP.
+            console.log("[GallerySyncService] Native hotspot association verified")
+          } else if (Platform.OS === "ios" && !this.ssidReadable) {
             console.log(
               `[GallerySyncService] 🍎 Skipping SSID verification (Location denied) - using glasses connectivity probe`,
             )
@@ -1324,7 +1336,7 @@ class GallerySyncService {
             console.log("[GallerySyncService] 📶 Skipping final SSID check (Location denied)")
           } else {
             try {
-              finalSSID = localNetworkTransport.isScopedConnectionActive()
+              finalSSID = joinedAddress || localNetworkTransport.isScopedConnectionActive()
                 ? hotspotInfo.ssid
                 : await WifiManager.getCurrentWifiSSID()
               console.log(`[GallerySyncService] 📶 Final SSID check before download: "${finalSSID}"`)
