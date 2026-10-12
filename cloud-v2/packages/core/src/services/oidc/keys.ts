@@ -7,10 +7,10 @@
  * (`/.well-known/jwks.json`), the same key set the Store and miniapp backends
  * read, and the provider's discovery names that key set as `jwks_uri`.
  *
- * Tokens from the provider and Core's phone tokens never pass for each other:
- * they carry different issuers (`CLOUD_CORE_OIDC_ISSUER` against
- * `CLOUD_CORE_ISSUER`), audiences and key IDs, and every verifier pins all
- * three.
+ * Tokens from the provider and Core's other tokens never pass for each other,
+ * even on a Private Cloud where the provider's issuer and `CLOUD_CORE_ISSUER`
+ * are both Core's own host: every verifier pins the key ID and the token type
+ * as well as the issuer and audience.
  */
 
 import * as jose from "jose"

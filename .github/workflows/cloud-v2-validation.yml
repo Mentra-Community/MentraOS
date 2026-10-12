@@ -182,6 +182,7 @@ jobs:
             tests/idp-tokens.integration.test.ts \
             tests/oidc-provider.integration.test.ts \
             tests/oidc-clients.integration.test.ts \
+            tests/oidc-interaction.integration.test.ts \
             tests/signin-sessions.integration.test.ts \
             tests/portal-signin.integration.test.ts \
             tests/principal-auth.integration.test.ts \

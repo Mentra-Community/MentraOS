@@ -27,6 +27,8 @@ import {OIDC_DISCOVERY_PATH, OIDC_ROUTES} from "../../services/oidc/config"
 import {verifyCoreAccessToken} from "../../services/oidc/core-access-token"
 import {bearerToken} from "../../services/signin/principal.service"
 import type {AppEnv} from "../../types/hono.types"
+// The sign-in steps run inside the provider; importing them installs them.
+import "./interaction.api"
 
 const logger = createLogger("core").child({service: "oidc-relay"})
 

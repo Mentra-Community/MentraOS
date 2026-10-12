@@ -56,7 +56,6 @@ describe("Core's sign-in server configuration", () => {
   test.each([
     ["an issuer with a path", {CLOUD_CORE_OIDC_ISSUER: "https://account.test/oidc"}, "no path"],
     ["an HTTP issuer on a deployed Core", {CLOUD_CORE_OIDC_ISSUER: "http://127.0.0.1:4000"}, "HTTPS"],
-    ["the phone tokens' issuer", {CLOUD_CORE_ISSUER: "https://account.dev.mentraglass.com"}, "must differ from CLOUD_CORE_ISSUER"],
     ["no cookie keys", {CLOUD_CORE_OIDC_COOKIE_KEYS: undefined}, "CLOUD_CORE_OIDC_COOKIE_KEYS must be set"],
     ["a short cookie key", {CLOUD_CORE_OIDC_COOKIE_KEYS: `${"a".repeat(32)},short`}, "at least 32 characters"],
     ["no signing key", {MENTRA_JWT_PRIVATE_KEY: undefined}, "MENTRA_JWT_PRIVATE_KEY"],
@@ -64,6 +63,11 @@ describe("Core's sign-in server configuration", () => {
     set(env)
     expect(() => assertOidcIssuerConfiguration()).toThrow(ConfigurationError)
     expect(() => assertOidcIssuerConfiguration()).toThrow(message)
+  })
+
+  test("a Private Cloud's issuer may equal CLOUD_CORE_ISSUER, its own host: token types are kept apart by key ID, type and audience", () => {
+    set({CLOUD_CORE_OIDC_ISSUER: "https://mentra.contoso.com", CLOUD_CORE_ISSUER: "https://mentra.contoso.com"})
+    expect(() => assertOidcIssuerConfiguration()).not.toThrow()
   })
 
   test("a loopback HTTP issuer is allowed only on an undeployed Core", () => {

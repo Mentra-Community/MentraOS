@@ -87,10 +87,6 @@ export function assertOidcIssuerConfiguration(): void {
   if (url.protocol !== "https:" && !allowsInsecureIssuer(issuer)) {
     throw new ConfigurationError("CLOUD_CORE_OIDC_ISSUER must be an HTTPS URL")
   }
-  // The phone's access tokens carry CLOUD_CORE_ISSUER; the two kinds must never share an issuer.
-  if (clean(process.env.CLOUD_CORE_ISSUER).replace(/\/+$/, "") === issuer) {
-    throw new ConfigurationError("CLOUD_CORE_OIDC_ISSUER must differ from CLOUD_CORE_ISSUER")
-  }
   const keys = oidcCookieKeys()
   if (keys.length === 0) throw new ConfigurationError("CLOUD_CORE_OIDC_COOKIE_KEYS must be set when CLOUD_CORE_OIDC_ISSUER is set")
   if (keys.some(key => key.length < MIN_COOKIE_KEY_LENGTH)) {

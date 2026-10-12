@@ -1,7 +1,9 @@
 /**
- * @fileoverview `login_transactions`: a portal sign-in in progress.
+ * @fileoverview `login_transactions`: a sign-in in progress: a portal's, or
+ * Core's sign-in server's at the customer's identity provider (`provider`,
+ * with the provider interaction it completes).
  *
- * Created when a portal starts the authorization code flow and consumed once,
+ * Created when the authorization code flow starts and consumed once,
  * atomically, by its callback. The browser holds an opaque cookie value; only
  * its SHA-256 is stored. Rows expire (TTL) ten minutes after they start.
  */
@@ -13,7 +15,9 @@ import {registerModel} from "./register-model"
 const LoginTransactionSchema = new Schema(
   {
     txHash: {type: String, required: true, unique: true},
-    portal: {type: String, enum: PORTAL_KINDS, required: true},
+    portal: {type: String, enum: [...PORTAL_KINDS, "provider"], required: true},
+    /** `provider` transactions: the sign-in server's interaction this sign-in completes. */
+    interactionUid: {type: String, default: null},
     state: {type: String, required: true},
     nonce: {type: String, required: true},
     pkceVerifier: {type: String, required: true},

@@ -467,6 +467,20 @@ describe("verifyCoreAccessToken (L07)", () => {
 })
 
 describe("Core's other verifiers refuse the provider's tokens", () => {
+  test("with the Private Cloud shape (CLOUD_CORE_ISSUER equal to the provider's issuer), phone and provider tokens still never pass for each other", async () => {
+    const {mentraUserId} = await person()
+    const tokens = await redeem(await authorize({mentraUserId}))
+    restoreCase = applyEnv({CLOUD_CORE_ISSUER: OIDC_ISSUER})
+    resetCoreKeyCaches()
+    for (const token of [tokens.access_token, tokens.id_token!]) await expect(verifyAccessToken(token)).rejects.toThrow()
+    const phone = await signWithCoreKey(
+      {alg: "EdDSA", kid: "mentra-access-1"},
+      {iss: OIDC_ISSUER, aud: "cloud-core", sub: mentraUserId, tenant_id: "mentra", session_id: "sess_1", jti: "jti_1"},
+    )
+    expect(await verifyAccessToken(phone)).toMatchObject({mentraUserId})
+    expect(await verifyCoreAccessToken(phone)).toBeNull()
+  })
+
   test("the phone access token check and the account API refuse provider access and ID tokens", async () => {
     const {mentraUserId} = await person()
     const tokens = await redeem(await authorize({mentraUserId}))

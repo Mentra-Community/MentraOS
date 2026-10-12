@@ -37,11 +37,11 @@ export interface OidcBridge {
 }
 
 type ProviderExtension = (provider: Provider) => void
-const extensions: ProviderExtension[] = []
+const extensions = new Set<ProviderExtension>()
 
 /** Add middleware to every provider this bridge builds (the interaction routes). */
 export function extendProvider(extension: ProviderExtension): void {
-  extensions.push(extension)
+  extensions.add(extension)
 }
 
 let current: {fingerprint: string; bridge: Promise<OidcBridge>; server: Promise<http.Server>} | null = null
@@ -95,7 +95,8 @@ async function closeServer(server: Promise<http.Server>): Promise<void> {
     const listener = await server
     const closed = new Promise<void>(resolve => listener.close(() => resolve()))
     listener.closeAllConnections?.()
-    await closed
+    // Never let a lingering connection hold Core's shutdown.
+    await Promise.race([closed, new Promise<void>(resolve => setTimeout(resolve, 2_000).unref?.())])
   } catch {
     // It never started.
   }
