@@ -72,6 +72,15 @@ let installSnapshot: OtaInstallSnapshot = {
   transport: "hotspot" as const,
 }
 
+let deviceRevision = 0
+const deviceListeners = new Set<() => void>()
+mock.module("../../services/OtaDeviceSession", () => ({
+  otaDeviceSessionRevision: () => deviceRevision,
+  subscribeOtaDeviceSession: (listener: () => void) => {
+    deviceListeners.add(listener)
+    return () => deviceListeners.delete(listener)
+  },
+}))
 const otaListeners = new Set<() => void>()
 const installListeners = new Set<() => void>()
 const prepare = mock(() => "hotspot" as const)
@@ -179,6 +188,8 @@ async function renderProbe(initialPage: "check" | "progress" = "progress") {
 
 describe("useMentraLiveOta", () => {
   beforeEach(() => {
+    deviceRevision = 0
+    deviceListeners.clear()
     otaListeners.clear()
     installListeners.clear()
     prepare.mockClear()
@@ -189,7 +200,7 @@ describe("useMentraLiveOta", () => {
     discard.mockClear()
     getReleaseChangelogs.mockClear()
     getReleaseChangelogs.mockImplementation(() => [{version: "3.1.0", markdown: "Release notes"}])
-    fakeOta.checkForUpdates.mockClear()
+    fakeOta.checkForUpdates.mockReset().mockImplementation(() => Promise.resolve(currentCheckResult))
     beginAutoChain.mockClear()
     stopAutoChain.mockClear()
     advanceAutoChain.mockClear()
@@ -677,6 +688,38 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
+  test("does not check a converged APK before its new wire session becomes ready", async () => {
+    autoChainActive = true
+    const renderer = await renderProbe()
+
+    // Native reports the replacement build while retaining the BLE connection,
+    // with readiness pending until the returning glasses_ready resets the wire.
+    otaSnapshot = {...otaSnapshot, buildNumber: "302010070", connected: true, ready: false}
+    installSnapshot = {...installSnapshot, displayState: "complete", connected: true}
+    await act(async () => {
+      otaListeners.forEach((listener) => listener())
+      installListeners.forEach((listener) => listener())
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    })
+
+    expect(finish).toHaveBeenCalledTimes(1)
+    expect(fakeOta.checkForUpdates).not.toHaveBeenCalled()
+    expect(latestController.state.connected).toBe(true)
+    expect(latestController.state.screen).toBe("finishing")
+
+    otaSnapshot = {...otaSnapshot, ready: true}
+    await act(async () => {
+      otaListeners.forEach((listener) => listener())
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+
+    expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(finish).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
   test("keeps continuation checking visible until hotspot teardown finishes", async () => {
     autoChainActive = true
     let resolveFinish!: () => void
@@ -707,6 +750,62 @@ describe("useMentraLiveOta", () => {
 
     expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
     expect(renderedScreens.slice(screenCountBeforeReturn)).not.toContain("update_available")
+    await act(async () => renderer.unmount())
+  })
+  test("checks the new pair without retaining the failed pair's release range or approval", async () => {
+    autoChainActive = true
+    autoChainRange = {fromVersion: "3.3.0", toVersion: "3.2.1", releaseVersion: "3.2.1-beta.522"}
+    installSnapshot = {...installSnapshot, displayState: "failed", errorMsg: "downgrade_handoff_failed"}
+    const renderer = await renderProbe()
+    otaSnapshot = {...otaSnapshot, appVersion: "staging.20260625", hotspotOtaVersion: 0, wifiConnected: false}
+    currentCheckResult = {...checkResult, releaseVersion: "3.2.1-beta.522"}
+    await act(async () => {
+      deviceRevision += 1
+      // The real chain lazily drops approval when its ownership revision changes.
+      autoChainActive = false
+      autoChainRange = null
+      deviceListeners.forEach((listener) => listener())
+      otaListeners.forEach((listener) => listener())
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+    expect(latestController.state.screen).toBe("wifi_required")
+    expect(latestController.state.releaseTransition).toEqual({
+      fromVersion: "staging.20260625",
+      toVersion: "3.2.1-beta.522",
+    })
+    expect(latestController.state.completedUpdate).toBe(false)
+    expect(advanceAutoChain).not.toHaveBeenCalled()
+    expect(prepare).not.toHaveBeenCalled()
+    expect(detach).toHaveBeenCalled()
+    await act(async () => renderer.unmount())
+  })
+
+  test("ignores an old pair's deferred check and blocks its retained install callback", async () => {
+    let resolveOld!: (result: OtaCheckCurrentGlassesResult) => void
+    fakeOta.checkForUpdates.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOld = resolve
+        }),
+    )
+    const renderer = await renderProbe("check")
+    const oldInstall = latestController.install
+    currentCheckResult = {...checkResult, releaseVersion: "new-pin"}
+    otaSnapshot = {...otaSnapshot, appVersion: "new-pair"}
+    await act(async () => {
+      deviceRevision += 1
+      deviceListeners.forEach((listener) => listener())
+      otaListeners.forEach((listener) => listener())
+      oldInstall()
+    })
+    await act(async () => {
+      resolveOld({...checkResult, releaseVersion: "old-pin"})
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+    expect(latestController.state.releaseTransition).toEqual({fromVersion: "new-pair", toVersion: "new-pin"})
+    expect(prepare).not.toHaveBeenCalled()
     await act(async () => renderer.unmount())
   })
 })

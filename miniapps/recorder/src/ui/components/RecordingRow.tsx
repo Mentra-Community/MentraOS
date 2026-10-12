@@ -12,6 +12,7 @@ interface Props {
   shareFailed: boolean
   onPlay: () => void
   onStopPlay: () => void
+  onSeek: (positionMs: number) => void
   onExport: () => void
   onExportTranscript: () => void
   onDelete: () => void
@@ -28,6 +29,7 @@ export function RecordingRow({
   shareFailed,
   onPlay,
   onStopPlay,
+  onSeek,
   onExport,
   onExportTranscript,
   onDelete,
@@ -63,36 +65,69 @@ export function RecordingRow({
           )}
         </button>
 
-        <button type="button" onClick={() => setOpen((o) => !o)} className="min-w-0 flex-1 text-left active:opacity-80">
-          <div className="flex items-center gap-2">
-            <span className="text-[15px] font-semibold truncate" style={{color: "var(--text)"}}>
-              {item.title ?? item.name}
-            </span>
-            {item.truncated ? (
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
-                style={{background: "var(--rec)", color: "#fff"}}>
-                capped
+        <div className="min-w-0 flex-1">
+          <button type="button" onClick={() => setOpen((o) => !o)} className="w-full text-left active:opacity-80">
+            <div className="flex items-center gap-2">
+              <span className="text-[15px] font-semibold truncate" style={{color: "var(--text)"}}>
+                {item.title ?? item.name}
               </span>
-            ) : null}
-            <ChevronDown
-              className="w-4 h-4 ml-auto shrink-0 transition-transform duration-300"
-              style={{color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "none"}}
-            />
-          </div>
-          <div className="text-[12px] truncate mt-0.5" style={{color: "var(--text-muted)"}}>
-            {fmtRelative(item.createdAt)}
-          </div>
-          <div className="mt-2.5">
-            <div className="h-1 w-full rounded-full overflow-hidden" style={{background: "var(--border)"}}>
-              <div
-                className="h-full rounded-full"
-                style={{
-                  width: `${Math.max(progress * 100, playing ? 2 : 0)}%`,
-                  background: "var(--green-grad)",
-                  transition: "width 0.18s linear",
-                }}
+              {item.truncated ? (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+                  style={{background: "var(--rec)", color: "#fff"}}>
+                  capped
+                </span>
+              ) : null}
+              <ChevronDown
+                className="w-4 h-4 ml-auto shrink-0 transition-transform duration-300"
+                style={{color: "var(--text-muted)", transform: open ? "rotate(180deg)" : "none"}}
               />
+            </div>
+            <div className="text-[12px] truncate mt-0.5" style={{color: "var(--text-muted)"}}>
+              {fmtRelative(item.createdAt)}
+            </div>
+          </button>
+          <div className="mt-2.5">
+            <div
+              role="slider"
+              tabIndex={0}
+              aria-label="Playback position"
+              aria-valuemin={0}
+              aria-valuemax={item.durationMs}
+              aria-valuenow={elapsed}
+              className="w-full py-3 cursor-pointer"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect()
+                if (rect.width > 0)
+                  onSeek(Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) * item.durationMs)
+              }}
+              onKeyDown={(event) => {
+                const position =
+                  event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                    ? item.durationMs
+                    : event.key === "ArrowRight"
+                    ? elapsed + 5000
+                    : event.key === "ArrowLeft"
+                    ? elapsed - 5000
+                    : null
+                if (position === null) return
+                event.preventDefault()
+                onSeek(Math.max(0, Math.min(item.durationMs, position)))
+              }}>
+              <div className="h-1 w-full rounded-full overflow-hidden" style={{background: "var(--border)"}}>
+                {playing && (
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${Math.max(progress * 100, playing ? 2 : 0)}%`,
+                      background: "var(--green-grad)",
+                      transition: "width 0.18s linear",
+                    }}
+                  />
+                )}
+              </div>
             </div>
             <div className="mt-1.5 flex justify-between text-[11px] tabular-nums" style={{color: "var(--text-muted)"}}>
               {unavailable ? (
@@ -105,7 +140,7 @@ export function RecordingRow({
               <span>{fmtDuration(item.durationMs)}</span>
             </div>
           </div>
-        </button>
+        </div>
 
         <button
           type="button"

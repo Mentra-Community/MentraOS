@@ -118,9 +118,12 @@ tracked by the module so `stop()` can tear it down too.
 
 ### `setVoiceActivityDetectionEnabled(enabled)` — `Promise<void>`
 
-Temporarily override glasses-side voice activity detection (GX8002) for this
-miniapp's lifetime. The Mentra App's configured value is restored when the
-miniapp disconnects.
+Request glasses-side voice activity detection (GX8002) for this miniapp's
+lifetime. Enabling is subject to the user's **Allow voice activity detection**
+setting and continuous-audio requirements from other consumers. When the user
+turns that setting off, a miniapp cannot enable VAD. When it is on, miniapps can
+request VAD, but raw-audio consumers such as Recorder still keep it disabled.
+The request is released when the miniapp disconnects.
 
 When VAD is disabled, mic gating falls back to the loudness gate only (if
 that gate is enabled). With VAD disabled and the loudness gate enabled, Mentra

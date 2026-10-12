@@ -13,6 +13,7 @@ export const nimo: Capabilities = {
   camera: null,
   hasDisplay: true,
   display: {
+    position: {depth: {min: 0, max: 10}, height: {min: 0, max: 10}},
     count: 2,
     isColor: false,
     color: "green",
@@ -45,7 +46,7 @@ export const nimo: Capabilities = {
   hasSpeaker: false,
   speaker: null,
   hasIMU: true,
-  imu: null,
+  imu: {headUpAngle: {min: 0, max: 90}},
   hasButton: true,
   button: {
     count: 2,

@@ -9,10 +9,50 @@ jest.mock("@/utils/auth/authClient", () => ({AuthClient: class {}}))
 
 import {AccountAuthProvider} from "./accountClient"
 import {storage} from "@/utils/storage"
+import {isDuplicateSignupError, mapAuthError} from "@/utils/auth/authErrors"
 
 type TestableProvider = {
   performRefresh(refresh: string): Promise<{access: string; refresh: string} | null>
 }
+
+describe("AccountAuthProvider signup", () => {
+  const originalFetch = global.fetch
+  const fetchMock = jest.fn()
+
+  beforeEach(() => {
+    fetchMock.mockReset()
+    global.fetch = fetchMock as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+  })
+
+  it("preserves the conflict code so signup can offer sign-in instead of verification", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: "email_taken",
+        error_description: "This email is already registered. Please sign in.",
+      }),
+    })
+    const result = await new AccountAuthProvider().signUp({email: "returning@example.test", password: "new-password"})
+    expect(result.is_error()).toBe(true)
+    if (!result.is_error()) throw new Error("Expected a signup conflict")
+    expect(result.error).toMatchObject({code: "email_taken"})
+    expect(isDuplicateSignupError(result.error)).toBe(true)
+    expect(mapAuthError(result.error)).toBe("login:errors.emailAlreadyRegistered")
+  })
+
+  it("new signup remains a successful verification flow", async () => {
+    fetchMock.mockResolvedValue({ok: true, status: 202, json: async () => ({status: "verification_sent"})})
+    const result = await new AccountAuthProvider().signUp({email: "new@example.test", password: "new-password"})
+    expect(result.is_ok()).toBe(true)
+    if (!result.is_ok()) throw result.error
+    expect(result.value).toEqual({session: null, user: null})
+  })
+})
 
 describe("AccountAuthProvider refresh requests", () => {
   const originalFetch = global.fetch
@@ -71,4 +111,87 @@ describe("AccountAuthProvider refresh requests", () => {
 
     await expect(provider.performRefresh("dead-refresh")).resolves.toBeNull()
   })
+})
+
+describe("AccountAuthProvider signup verification", () => {
+  const originalFetch = global.fetch
+  const fetchMock = jest.fn()
+  const verifiedUser = {mentraUserId: "new-user", email: "new@example.test", name: "New account"}
+  let provider: AccountAuthProvider
+  let listener: jest.Mock
+  let unsubscribe: () => void
+
+  const stored = (key: string) => {
+    const result = storage.load(key)
+    if (result.is_error()) throw result.error
+    return result.value
+  }
+
+  const response = (status: number, body: unknown) => ({ok: status < 400, status, json: async () => body})
+
+  beforeEach(() => {
+    storage.clearAll()
+    storage.save("mentra.account.accessToken", "previous-access")
+    storage.save("mentra.account.refreshToken", "previous-refresh")
+    storage.save("mentra.account.userProfile", JSON.stringify({id: "previous-user"}))
+    fetchMock.mockReset()
+    global.fetch = fetchMock as unknown as typeof fetch
+    provider = new AccountAuthProvider()
+    listener = jest.fn()
+    const sub = provider.onAuthStateChange(listener)
+    if (sub.is_error()) throw sub.error
+    unsubscribe = sub.value.unsubscribe
+  })
+
+  afterEach(() => {
+    unsubscribe()
+    global.fetch = originalFetch
+  })
+
+  it("exchanges the provider token and publishes the new account before resolving", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(200, {access_token: "mentra-access", refresh_token: "mentra-refresh"}))
+      .mockResolvedValueOnce(response(200, verifiedUser))
+    const result = await provider.completeSignupVerification("provider-token")
+    expect(result.is_ok()).toBe(true)
+    const [url, request] = fetchMock.mock.calls[0]
+    expect(url).toBe("https://core.example.test/api/client/auth/exchange")
+    expect(request.headers).toEqual({"content-type": "application/x-www-form-urlencoded"})
+    expect(typeof request.body).toBe("string")
+    expect(Object.fromEntries(new URLSearchParams(request.body))).toEqual({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+      subject_token: "provider-token",
+    })
+    expect(fetchMock.mock.calls[1]).toEqual([
+      "https://core.example.test/api/account/me",
+      {headers: {authorization: "Bearer mentra-access"}},
+    ])
+    expect(stored("mentra.account.accessToken")).toBe("mentra-access")
+    expect(stored("mentra.account.refreshToken")).toBe("mentra-refresh")
+    expect(listener).toHaveBeenCalledWith("SIGNED_IN", {
+      token: "mentra-access",
+      user: {id: "new-user", email: verifiedUser.email, name: verifiedUser.name},
+    })
+  })
+
+  it.each(["rejected", "network", "missing tokens", "profile rejected", "profile unavailable", "missing account"])(
+    "preserves the previous account and emits no sign-in when %s",
+    async (failure) => {
+      if (failure === "network") fetchMock.mockRejectedValueOnce(new Error("offline"))
+      else if (failure === "rejected") fetchMock.mockResolvedValueOnce(response(400, {error: "invalid_grant"}))
+      else if (failure === "missing tokens") fetchMock.mockResolvedValueOnce(response(200, {}))
+      else {
+        fetchMock.mockResolvedValueOnce(response(200, {access_token: "mentra-access", refresh_token: "mentra-refresh"}))
+        if (failure === "profile unavailable") fetchMock.mockRejectedValueOnce(new Error("offline"))
+        else fetchMock.mockResolvedValueOnce(response(failure === "profile rejected" ? 403 : 200, {}))
+      }
+      const result = await provider.completeSignupVerification("provider-token")
+      expect(result.is_error()).toBe(true)
+      expect(stored("mentra.account.accessToken")).toBe("previous-access")
+      expect(stored("mentra.account.refreshToken")).toBe("previous-refresh")
+      expect(stored("mentra.account.userProfile")).toBe(JSON.stringify({id: "previous-user"}))
+      expect(listener).not.toHaveBeenCalled()
+    },
+  )
 })

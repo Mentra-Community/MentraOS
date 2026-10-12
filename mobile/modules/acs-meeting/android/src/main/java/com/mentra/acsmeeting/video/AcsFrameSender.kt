@@ -103,6 +103,18 @@ class AcsFrameSender(
 
   fun isReady(): Boolean = stream.get() != null && running.get() && format.get() != null
 
+  /**
+   * The size ACS currently expects, or null before the first negotiated format arrives.
+   *
+   * [sendPlanes] drops any frame whose dimensions differ from this, so a hold that renders to the
+   * profile ceiling instead of this size is dropped whenever ACS negotiates below it.
+   */
+  fun negotiatedSize(): TargetSize? {
+    val fmt = format.get() ?: return null
+    if (fmt.width <= 0 || fmt.height <= 0) return null
+    return TargetSize(fmt.width, fmt.height)
+  }
+
   /** True when the frame was submitted to ACS; false when a readiness, size, pacing or busy gate dropped it. */
   fun sendPlanes(planes: I420Planes): Boolean {
     val out = stream.get()

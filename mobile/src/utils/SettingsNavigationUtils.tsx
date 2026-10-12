@@ -1,4 +1,3 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk"
 import CrustModule from "@mentra/crust"
 import {Linking, Platform} from "react-native"
 
@@ -26,9 +25,11 @@ export class SettingsNavigationUtils {
         // Use native module for direct Bluetooth settings access
         await CrustModule.openBluetoothSettings()
       } else if (Platform.OS === "ios") {
-        // iOS doesn't have direct Bluetooth settings access, open general settings
-        await this.openIosSettings()
-        // await Linking.openURL("App-prefs:")
+        if (CrustModule.isIOSAppOnMac) {
+          await Linking.openURL("x-apple.systempreferences:com.apple.Bluetooth")
+        } else {
+          await this.openIosSettings()
+        }
       }
       return true
     } catch (error) {

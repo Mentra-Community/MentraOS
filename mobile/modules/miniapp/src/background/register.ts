@@ -14,6 +14,8 @@
  *      are registered before any host events fan out.
  *   3. Call `session.connect()` so the host receives CONNECT and the
  *      first CONNECT_ACK populates `userId`, `capabilities`, etc.
+ *   4. Send READY once the handler's returned promise settles. Hosts that
+ *      advertise `hostFeatures.initReady` keep the UI closed until then.
  *
  * The handler runs once per spawn. If the host kills + respawns the
  * JSContext (crash recovery, dev reload), the polyfill + bundle are
@@ -44,6 +46,10 @@ interface InitGlobals {
  * vast majority of setup should live inside the handler so it can run
  * with a connected session.
  *
+ * Return the handler's startup promise (don't `void` it): the Mentra App
+ * shows its splash and holds UI requests until it settles, so register
+ * `session.ui.handle` handlers before any slow await.
+ *
  * @example
  *   registerMiniapp((session) => {
  *     session.transcription.on((tx) => {
@@ -56,23 +62,39 @@ export function registerMiniapp<TChannels extends object = Record<string, unknow
   options: MiniappSessionOptions = {},
 ): void {
   const g = globalThis as unknown as InitGlobals
-  g.__mentraInitCallback = (_sessionId: string) => {
+  g.__mentraInitCallback = (sessionId: string) => {
     const session = new MiniappSession<TChannels>(options)
+    // The handler's returned promise defines readiness: the host keeps the UI
+    // closed until it settles, so handlers registered after an await still
+    // exist before the first UI request arrives.
+    session.announceInitReady(sessionId)
+    let initSettled: Promise<void> = Promise.resolve()
     // Fire the user handler first so any session.* subscriptions get
     // registered before the CONNECT_ACK fan-out lands.
     try {
       const result = handler(session)
       if (result && typeof (result as Promise<void>).then === "function") {
-        ;(result as Promise<void>).catch((err: unknown) => {
-          // eslint-disable-next-line no-console
-          console.error("[mentra-miniapp] registerMiniapp handler rejected:", err)
-        })
+        initSettled = (result as Promise<void>).then(
+          () => undefined,
+          (err: unknown) => {
+            // eslint-disable-next-line no-console
+            console.error("[mentra-miniapp] registerMiniapp handler rejected:", err)
+          },
+        )
       }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("[mentra-miniapp] registerMiniapp handler threw:", err)
     }
-    session.connect().catch((err: unknown) => {
+    const connected = session.connect()
+    // A failed handler still reports READY: its UI must not stay closed.
+    void Promise.all([connected, initSettled]).then(
+      () => session.reportInitReady(),
+      () => {
+        /* connect failure is reported below */
+      },
+    )
+    connected.catch((err: unknown) => {
       // eslint-disable-next-line no-console
       console.error("[mentra-miniapp] session.connect() rejected:", err)
       // Surface to the host's crash controller as a structured uncaught

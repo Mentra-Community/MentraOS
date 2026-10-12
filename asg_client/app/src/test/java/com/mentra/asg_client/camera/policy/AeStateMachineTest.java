@@ -194,6 +194,44 @@ public class AeStateMachineTest {
     }
 
     @Test
+    public void aeStateForWait_flashRequiredOnRunningCamera_countsAsConverged() {
+        assertThat(AeStateMachine.aeStateForWait(
+                CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED, true))
+                .isEqualTo(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+    }
+
+    @Test
+    public void atExposureLimitSinceLastShot_armedOnlyByShotAtLimitAndClearedByOtherStates() {
+        AeStateMachine sm = new AeStateMachine();
+        assertThat(sm.atExposureLimitSinceLastShot()).isFalse();
+
+        // Ending a wait (preview restore, cancel) does not arm it; neither does a bright shot.
+        sm.clearWaitFlags();
+        assertThat(sm.atExposureLimitSinceLastShot()).isFalse();
+        sm.noteShotFired(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+        assertThat(sm.atExposureLimitSinceLastShot()).isFalse();
+
+        sm.noteShotFired(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        sm.noteHalAeState(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        sm.noteHalAeState(null);
+        assertThat(sm.atExposureLimitSinceLastShot()).isTrue();
+
+        sm.noteHalAeState(CaptureResult.CONTROL_AE_STATE_SEARCHING);
+        sm.noteHalAeState(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        assertThat(sm.atExposureLimitSinceLastShot()).isFalse();
+    }
+
+    @Test
+    public void aeStateForWait_coldOpenOrOtherStates_unchanged() {
+        assertThat(AeStateMachine.aeStateForWait(
+                CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED, false))
+                .isEqualTo(CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED);
+        assertThat(AeStateMachine.aeStateForWait(CaptureResult.CONTROL_AE_STATE_SEARCHING, true))
+                .isEqualTo(CaptureResult.CONTROL_AE_STATE_SEARCHING);
+        assertThat(AeStateMachine.aeStateForWait(null, true)).isNull();
+    }
+
+    @Test
     public void shotStateEnum_valuesUnchanged() {
         assertThat(AeStateMachine.ShotState.values())
                 .containsExactly(

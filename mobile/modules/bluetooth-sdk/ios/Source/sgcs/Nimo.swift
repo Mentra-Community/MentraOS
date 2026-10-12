@@ -20,10 +20,6 @@ enum NimoBLE {
     static let CHAR_RX = CBUUID(string: "00002022-0000-1000-8000-00805F9B34FB")
     static let CHAR_MIC = CBUUID(string: "00002025-0000-1000-8000-00805F9B34FB")
 
-    static let NAME_PREFIX = "nimo"
-    /// iOS ANCS side-channel devices advertise "<name>_ble" — never the data channel.
-    static let BLE_NAME_SUFFIX = "_ble"
-
     static let CHUNK_SIZE = 501
     static let INTER_FRAME_DELAY_MS = 5
 }
@@ -44,6 +40,8 @@ enum NimoProtocol {
     static let CMD_SET_PARAMETER = 0x03
     static let CMD_INSTRUCTION_REPORT = 0x06
     static let CMD_CONTROL_INSTRUCTION = 0x07
+    static let CMD_CONTROL_FACTORY = 0x08
+    static let FACTORY_RECOVER = 0x03
     static let CMD_CONTROL_NOTIFICATION = 0x09
 
     // get parameter keys
@@ -62,6 +60,9 @@ enum NimoProtocol {
     static let SET_DISPLAY_OFF = 0x0F
     static let SET_PHONE_TYPE = 0x14
     static let SET_HEIGHT_LEVEL = 0x17
+    // Dynamic-v1 firmware: 1-based UI locale; 1 selects English.
+    static let SET_SYSTEM_LANGUAGE = 0x24
+    static let LANGUAGE_ENGLISH: UInt8 = 0x01
 
     // control instruction keys
     static let CTRL_ENTER_APP = 0x01
@@ -591,6 +592,27 @@ class Nimo: NSObject, SGCManager {
     private var rxChar: CBCharacteristic?
     private var micChar: CBCharacteristic?
     private var isDisconnecting = false
+    private var scanRequested = false
+    private lazy var discovery = NimoDiscovery<CBPeripheral>(
+        register: { [weak self] in
+            #if os(iOS)
+                self?.centralManager?.registerForConnectionEvents(options: [.serviceUUIDs: [NimoBLE.SERVICE_UUID]])
+            #endif
+        }, connected: { [weak self] in
+            self?.centralManager?.retrieveConnectedPeripherals(withServices: [NimoBLE.SERVICE_UUID]) ?? []
+        }, scan: { [weak self] in
+            self?.centralManager?.scanForPeripherals(
+                withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+            )
+        }, stop: { [weak self] in
+            self?.centralManager?.stopScan()
+            #if os(iOS)
+                self?.centralManager?.registerForConnectionEvents(options: [:])
+            #endif
+        }, name: { $0.name }, found: { [weak self] peripheral, name, rssi in
+            self?.onDeviceFound(peripheral, name: name, rssi: rssi)
+        }
+    )
 
     /// Device search
     private var DEVICE_SEARCH_ID = "NOT_SET"
@@ -680,6 +702,8 @@ class Nimo: NSObject, SGCManager {
     func findCompatibleDevices() {
         Bridge.log("NIMO: findCompatibleDevices()")
         DEVICE_SEARCH_ID = "NOT_SET"
+        isDisconnecting = false
+        scanRequested = true
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.SCANNING)
         startScan()
     }
@@ -687,6 +711,7 @@ class Nimo: NSObject, SGCManager {
     func connectById(_ id: String) {
         Bridge.log("NIMO: connectById(\(id))")
         DEVICE_SEARCH_ID = id
+        scanRequested = true
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTING)
         isDisconnecting = false
         startPairingTimeout()
@@ -694,7 +719,8 @@ class Nimo: NSObject, SGCManager {
     }
 
     func stopScan() {
-        centralManager?.stopScan()
+        scanRequested = false
+        discovery.cancel()
     }
 
     func disconnect() {
@@ -719,6 +745,27 @@ class Nimo: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "connected", false)
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
+    }
+
+    /// Explicit Unpair only; passive forget/cleanup must never reset the glasses.
+    func resetForUnpair(onResult: @escaping (Bool) -> Void) {
+        guard peripheral != nil, txChar != nil, handshakeState == .ready else {
+            Bridge.log("NIMO: unpair while offline; remote reset unavailable")
+            onResult(false)
+            return
+        }
+        isDisconnecting = true
+        stopTimers()
+        Task { await reconnectionManager.stop() }
+        canvasEncoder.invalidate()
+        canvas.disconnected()
+        Bridge.log("NIMO: sending factory reset for explicit Unpair")
+        sendAwaitingAck(cmd: NimoProtocol.CMD_CONTROL_FACTORY, key: NimoProtocol.FACTORY_RECOVER,
+                        payload: Data())
+        { success in
+            Bridge.log("NIMO: factory reset acknowledged=\(success)")
+            onResult(success)
+        }
     }
 
     func forget() {
@@ -1061,13 +1108,9 @@ class Nimo: NSObject, SGCManager {
 
     // MARK: - BLE Scanning
 
-    private func isNimoMainDevice(_ name: String) -> Bool {
-        let lower = name.lowercased()
-        return lower.hasPrefix(NimoBLE.NAME_PREFIX) && !lower.hasSuffix(NimoBLE.BLE_NAME_SUFFIX)
-    }
-
     @discardableResult
     private func startScan() -> Bool {
+        guard scanRequested, !isDisconnecting else { return false }
         Bridge.log("NIMO: startScan()")
         if centralManager == nil {
             centralManager = CBCentralManager(
@@ -1083,17 +1126,32 @@ class Nimo: NSObject, SGCManager {
 
         // Fast path: reconnect to the cached peripheral UUID.
         if connectByUUID() {
+            stopScan()
             return true
         }
 
-        centralManager!.scanForPeripherals(
-            withServices: nil,
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
-        )
+        // NIMO's Companion service is GATT over BR/EDR. The main device must
+        // first be paired in Settings; it does not appear in a BLE-only scan.
+        discovery.start()
         return true
     }
 
+    private func onDeviceFound(_ peripheral: CBPeripheral, name: String, rssi: Int?) {
+        Bridge.log("NIMO: found Companion device: \(name)")
+        Bridge.sendDiscoveredDevice(DeviceTypes.NIMO, name, rssi: rssi)
+        guard DEVICE_SEARCH_ID != "NOT_SET", name == DEVICE_SEARCH_ID,
+              self.peripheral == nil else { return }
+        Bridge.log("NIMO: Connecting to \(name)")
+        stopScan()
+        lastDeviceName = name
+        lastDeviceUUID = peripheral.identifier.uuidString
+        self.peripheral = peripheral
+        peripheral.delegate = self
+        centralManager?.connect(peripheral, options: nil)
+    }
+
     private func connectByUUID() -> Bool {
+        guard peripheral == nil else { return false }
         guard DEVICE_SEARCH_ID != "NOT_SET", !DEVICE_SEARCH_ID.isEmpty else { return false }
         guard lastDeviceName == DEVICE_SEARCH_ID,
               let uuidString = lastDeviceUUID,
@@ -1255,6 +1313,9 @@ class Nimo: NSObject, SGCManager {
                 needsAck: false
             )
         )
+        // Optional setting: older firmware may reject it without preventing connection.
+        sendFrame(NimoFrameCodec.encodeFrame(cmd: NimoProtocol.CMD_SET_PARAMETER,
+                                             key: NimoProtocol.SET_SYSTEM_LANGUAGE, payload: Data([NimoProtocol.LANGUAGE_ENGLISH])))
         getBatteryStatus()
         requestVersionInfo()
 
@@ -1264,7 +1325,10 @@ class Nimo: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "fullyBooted", true)
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTED)
         startTimers()
-        canvas.readiness(twsConnected && peerCompanionReady == true)
+        // The Launch ACK validates peer readiness without waiting for the first
+        // unsolicited heartbeat (which can arrive a minute after connection).
+        canvas.activate()
+        canvas.readiness(twsConnected && peerCompanionReady != false)
     }
 
     private func handshakeFailed() {
@@ -1299,7 +1363,8 @@ class Nimo: NSObject, SGCManager {
                 }
                 Bridge.log("NIMO: Attempting reconnection...")
                 await MainActor.run {
-                    self.isDisconnecting = false
+                    guard !self.isDisconnecting else { return }
+                    self.scanRequested = true
                     self.startScan()
                 }
                 return false
@@ -1332,6 +1397,7 @@ class Nimo: NSObject, SGCManager {
     private func handleRxPacket(_ packet: Data) {
         if packet.count >= 10, packet[8] == 7, [1, 3, 4].contains(packet[9]) {
             if let response = NimoCanvasCodec.response(packet) {
+                if response.key == 1 { Bridge.log("NIMO: canvas Launch response status=\(response.payload.first.map(Int.init) ?? -1)") }
                 canvas.response(key: response.key, payload: response.payload)
             }
             return
@@ -1365,9 +1431,9 @@ class Nimo: NSObject, SGCManager {
                 Bridge.log("NIMO: app state report appId=\(appId) phase=\(phase)")
                 switch phase {
                 case NimoProtocol.STATE_ENTER:
-                    if canvas.nativeApp(appId, entered: true) { canvasEncoder.invalidate() }
+                    canvas.nativeApp(appId, entered: true)
                 case NimoProtocol.STATE_EXIT:
-                    if canvas.nativeApp(appId, entered: false) { canvasEncoder.invalidate() }
+                    canvas.nativeApp(appId, entered: false)
                 default:
                     break
                 }
@@ -1397,7 +1463,7 @@ class Nimo: NSObject, SGCManager {
                 peerCompanionReady = v[9] != 0
                 onTwsState(Int(v[8]) >= 1)
                 if handshakeState == .ready {
-                    canvas.readiness(twsConnected && peerCompanionReady == true, confirmed: true)
+                    canvas.readiness(twsConnected && peerCompanionReady != false, confirmed: true)
                 }
             }
         case NimoProtocol.BUSINESS_BATTERY:
@@ -1420,7 +1486,7 @@ class Nimo: NSObject, SGCManager {
         if !connected, handshakeState == .ready {
             Bridge.log("NIMO: TWS service dropped mid-session (arm removed/off?)")
         }
-        if handshakeState == .ready { canvas.readiness(connected && peerCompanionReady == true) }
+        if handshakeState == .ready { canvas.readiness(connected && peerCompanionReady != false) }
     }
 
     private func handleInputEvent(_ code: Int) {
@@ -1456,6 +1522,9 @@ class Nimo: NSObject, SGCManager {
     }
 
     private func handleResponse(cmd: Int, key: Int, statusCode: Int, data: Data) {
+        if cmd == NimoProtocol.CMD_SET_PARAMETER, key == NimoProtocol.SET_SYSTEM_LANGUAGE {
+            Bridge.log("NIMO: English menu setting acknowledged=\(statusCode == 0) status=\(statusCode)")
+        }
         resolvePendingAck(cmd: cmd, key: key, success: statusCode == 0)
 
         guard cmd == NimoProtocol.CMD_GET_PARAMETER, statusCode == 0 else { return }
@@ -1543,7 +1612,7 @@ class Nimo: NSObject, SGCManager {
         guard let opusDecoder else { return }
         for opusFrame in packet.opusFrames {
             if let pcm = opusDecoder.decode(opusFrame), !pcm.isEmpty {
-                DeviceManager.shared.handlePcm(pcm)
+                DeviceManager.shared.handleGlassesPcm(pcm)
             }
         }
     }
@@ -1564,36 +1633,28 @@ extension Nimo: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
-        _ central: CBCentralManager,
+        _: CBCentralManager,
         didDiscover peripheral: CBPeripheral,
         advertisementData: [String: Any],
         rssi: NSNumber
     ) {
-        guard
-            let name = peripheral.name
-            ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
-        else { return }
+        let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let rssiValue = rssi.intValue
-
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard self.isNimoMainDevice(name) else { return }
-
-            Bridge.sendDiscoveredDevice(DeviceTypes.NIMO, name, rssi: rssiValue)
-
-            guard self.DEVICE_SEARCH_ID != "NOT_SET" else { return }
-            guard name == self.DEVICE_SEARCH_ID else { return }
-            guard self.peripheral == nil else { return }
-
-            Bridge.log("NIMO: Connecting to \(name)")
-            self.stopScan()
-            self.lastDeviceName = name
-            self.lastDeviceUUID = peripheral.identifier.uuidString
-            self.peripheral = peripheral
-            peripheral.delegate = self
-            central.connect(peripheral, options: nil)
+            self?.discovery.receive(peripheral, advertisedName: advertisedName, rssi: rssiValue)
         }
     }
+
+    #if os(iOS)
+        nonisolated func centralManager(
+            _: CBCentralManager, connectionEventDidOccur event: CBConnectionEvent, for peripheral: CBPeripheral
+        ) {
+            guard event == .peerConnected else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.discovery.receive(peripheral)
+            }
+        }
+    #endif
 
     nonisolated func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         DispatchQueue.main.async { [weak self] in

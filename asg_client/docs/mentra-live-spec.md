@@ -187,6 +187,16 @@ Camera-device loss after opening is a terminal device failure, not a network rec
 Its callback reaches the stream owner off the Camera2 callback thread, and callbacks from a
 closed or replaced camera session cannot terminate the current publisher.
 
+Conditional cleanup supplies the original `streamId`, `controllerId`, current `sid` and
+`revision`, and a fresh `request_id` to `stop_stream`. Comparison and stop happen together
+on the existing lifecycle dispatcher. A changed snapshot, foreign owner, or any pending
+admission refuses mutation. Every accepted active start increases the retained revision,
+even when public IDs are reused. The correlated `stop_ack` is followed by a fresh terminal
+query to prove settlement. Pending admission must settle normally or retain custody; no
+public-ID-only cancellation is used. Query snapshots report pending admission and active
+controller identity and the existing start revision. The caller binds that start revision
+to reject a later same-ID incarnation, then compares the latest revision atomically. Normal user stop retains its intentional current-stream behavior.
+
 The OS-1937 streaming lifecycle is owned by the phone's explicit start/stop commands, not by
 cloud-era per-stream keep-alives. A stream may otherwise end on terminal publisher or device
 failure, or after sustained loss of the controlling phone. BES phone BLE presence is authoritative;
@@ -222,6 +232,13 @@ platforms, and short BLE outages before release; native callback wake behavior i
 unit tests.
 
 WHIP streams seed WebRTC with an explicit initial send bitrate capped by the caller's configured maximum. Congestion control remains enabled so the sender can still reduce bitrate on constrained networks instead of treating the configured bitrate as a fixed rate.
+
+A full-size photo can be taken during a WHIP stream on the glasses hotspot without ending it. The
+phone requests it with `take_photo` whose upload target is its own local `/photo/<id>` endpoint on
+the WHIP listener. The WHIP capturer lends Camera2 to the still while black substitute frames keep
+the track flowing, reopens as soon as the JPEG is in memory, and the JPEG is uploaded to the phone
+over the hotspot. A watchdog returns the camera to the stream regardless of the photo's outcome. Any
+other photo request during a stream is still rejected as camera busy.
 
 Streaming endpoints on the active Mentra Live hotspot subnet are reachable without a separate STA WiFi connection. `asg_client` derives that subnet from the live hotspot interface rather than assuming fixed client addresses. For WHIP, the WebRTC network inventory must also expose the hotspot interface so ICE can gather a directly reachable local candidate.
 
@@ -265,6 +282,10 @@ Camera and streaming features must leave LEDs in a safe state on stop, error, se
 - Touch/swipe events are forwarded to the phone as status or input events.
 - Power-button short press can trigger battery-level audio feedback.
 - Power-button hold/graceful shutdown should finalize active recordings before powering down to avoid corrupt media.
+- Automated device setup can explicitly disable BES's unworn auto power-off using
+  `disable_unworn_auto_power_off`. ASG waits for the current UART session's persisted-switch
+  acknowledgment and exposes a correlated result for either phone platform's shared setup.
+  This command has no app UI, retry, reset, or firmware update side effects.
 
 ### WiFi and hotspot management
 
@@ -291,6 +312,22 @@ through coordinated releases. For supported releases, a higher installed ASG ver
 which the phone offers a downgrade already supports the downgrade/recovery contract and
 has the downgrade floor enabled. Phone-side availability checks therefore rely on this
 release invariant rather than a separate minimum-installed-version or capability gate.
+
+Recovery worker v11 adds a permission-protected readiness/status query before staging
+an APK downgrade. The updater checks the worker package, signature, permissions and
+receiver availability, then observes its durable transaction identity. An existing
+transaction cannot be replaced by Retry. ASG persists its pending handoff before
+sending it and resumes reconciliation on startup without another phone install request. A missing acknowledgement retains admission
+until recovery confirms it is idle; a verified unclaimed APK can then be reused. A
+disabled or incompatible worker needs a specific support repair, not an instruction
+that promises reboot will fix it. Older source builds need the signed worker repair
+or a source-side bridge release before they can benefit from the new updater.
+
+OTA HTTP requests distinguish DNS, connect, response timeout, HTTP and TLS failures.
+Every request closes its streams and connection on failure. A bounded, credential-free
+request history joins incident logs and survives ordinary ASG process restarts; like
+other ASG preferences, it is reset by the uninstall used for an APK downgrade. Network
+validation is diagnostic, not an admission requirement for phone-local hotspot OTA.
 
 The shipped downgrade floor must never decrease. It may increase to retire older targets,
 but any increase must be coordinated across ASG, the recovery worker, Engine, and the Swift
@@ -335,7 +372,7 @@ updater reports a terminal result (or the process/device restarts), preventing a
 retry from replacing its staged ZIP. Release packaging checks declared full-OTA
 size against the same bytes whose SHA-256 is verified.
 
-The MTK↔BES UART always starts at 460800 baud. Firmware that supports the negotiated fast link may upgrade to 1152000 only after reporting a compatible current firmware version. At startup, `asg_client` retries discovery at 460800 before making one bounded probe at 1152000, then returns to 460800 if neither rate answers. The alternate probe does not depend on app-local cached state, so an APK reinstall can recover a BES that survived at the negotiated rate. Once traffic confirms a negotiated 1152000 link, BES keeps that baud across UART driver restarts and Android sleep; ordinary phone heartbeats and expected MTK sleep silence must not return one endpoint to 460800. If an older BES nevertheless falls back or reboots while ASG remains alive, several small unframed reads or an idle-link health probe cause `asg_client` to verify 1152000, probe 460800, and renegotiate the fast link after finding BES at the rendezvous rate. If neither rate answers, ASG remains at 460800 and retries the two-rate scan with capped exponential backoff so a later BES boot cannot leave the endpoints split indefinitely. Each scan is bounded and recovery is suppressed during BES OTA, file transfer, and active baud transitions. After a successful BES OTA, BES reboots at 460800, so `asg_client` explicitly reopens the rendezvous baud, rediscovers the new firmware version, and negotiates again when supported. Older firmware on either side remains at 460800.
+The MTK↔BES UART always starts at 460800 baud. Firmware that supports the negotiated fast link may upgrade to 1152000 only after reporting a compatible current firmware version. At startup, `asg_client` retries discovery at 460800 before making one bounded probe at 1152000, then returns to 460800 if neither rate answers. The alternate probe does not depend on app-local cached state, so an APK reinstall can recover a BES that survived at the negotiated rate. Once traffic confirms a negotiated 1152000 link, BES keeps that baud across UART driver restarts and Android sleep; ordinary phone heartbeats and expected MTK sleep silence must not return one endpoint to 460800. If an older BES nevertheless falls back or reboots while ASG remains alive, several small unframed reads or an idle-link health probe cause `asg_client` to verify 1152000, probe 460800, and renegotiate the fast link after finding BES at the rendezvous rate. If neither rate answers, ASG remains at 460800 and retries the two-rate scan with capped exponential backoff so a later BES boot cannot leave the endpoints split indefinitely. Each scan is bounded and recovery is suppressed during BES OTA, file transfer, and active baud transitions. After a successful BES OTA, BES reboots at 460800, so `asg_client` explicitly reopens the rendezvous baud, rediscovers the new firmware version, and negotiates again when supported. Older firmware on either side remains at 460800. BLE file frames run at line rate only when BES advertises `wire_caps.uart_rx_pos`; with older BES, `asg_client` paces them to 35 KB/s, because that firmware's UART RX DMA loses phase when a phone A2DP stream start delays its interrupt past a 2 KB half, corrupting every later frame until RX is re-armed.
 
 ### Diagnostics and reporting
 
@@ -352,6 +389,13 @@ current-session BES UART version diagnostics include `elapsed_realtime_ms`, samp
 from Android's monotonic elapsed realtime before reading OTA state. Phone clock
 synchronization does not change these freshness signals. Neither field starts an
 update or changes stream state; clients omitting the request ID retain existing behavior.
+
+`request_version` may opt into `fresh_bes: true` to request one fresh `cs_syvr`
+snapshot through the same guarded UART coordinator. It does not reset the phone
+handshake, wait/retry, or interrupt file/OTA/baud ownership. Immediate correlated
+version chunks still contain cached BES values; fresh evidence requires an actual
+current-session BES reply, whose existing diagnostic records its receive elapsed
+time. A refused or unanswered probe remains unknown to a bounded observer.
 
 Mentra Live's canonical product serial is provisioned by the Android firmware in
 `ro.serialno`. `asg_client` reads that property directly and forwards a valid

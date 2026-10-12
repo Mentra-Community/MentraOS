@@ -19,14 +19,15 @@ function summary(reportId: string, createdAt = "2026-07-01T00:00:00.000Z"): Repo
     trigger: null,
     report: null,
     feedback: null,
-    artifacts: [],
+    artifactCount: 0,
     createdAt,
     updatedAt: createdAt,
   };
 }
 
 function detail(reportId: string): ReportDetail {
-  return { ...summary(reportId), context: {} };
+  const {artifactCount: _count, ...row} = summary(reportId);
+  return { ...row, artifacts: [], context: {} };
 }
 
 interface MockCalls {

@@ -339,7 +339,7 @@ export const pairing = {
    * failed attempt can't leave a default identity with no paired device behind.
    */
   pair: async (device: Device, options?: ConnectOptions): Promise<void> => {
-    await pushAllBluetoothSettings()
+    await pushAllBluetoothSettings(device.model)
     return BluetoothSdk.connect(device, {...options, saveAsDefault: false})
   },
   /** Set a device as the default for subsequent `glasses.connectDefault()`. */

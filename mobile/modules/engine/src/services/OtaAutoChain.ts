@@ -1,9 +1,11 @@
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
+import {otaDeviceSessionRevision} from "./OtaDeviceSession"
 
 export const MAX_OTA_AUTO_CHAIN_PASSES = 8
 export const OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS = 120_000
 
 type OtaAutoChainSession = {
+  deviceRevision: number
   approvedDowngrade: boolean
   passCount: number
   releaseRange: OtaAutoChainReleaseRange
@@ -23,6 +25,11 @@ export type OtaAutoChainAdvanceResult =
   | {advance: false; reason: "inactive" | "duplicate" | "max_passes" | "downgrade_not_approved"}
 
 let session: OtaAutoChainSession | null = null
+
+function currentSession(): OtaAutoChainSession | null {
+  if (session && session.deviceRevision !== otaDeviceSessionRevision()) session = null
+  return session
+}
 
 /**
  * Identify the exact update offer that produced one OTA pass. Including the
@@ -56,6 +63,7 @@ export function beginOtaAutoChain(
   releaseRange: OtaAutoChainReleaseRange,
 ): void {
   session = {
+    deviceRevision: otaDeviceSessionRevision(),
     approvedDowngrade,
     passCount: 1,
     releaseRange: {...releaseRange},
@@ -65,10 +73,11 @@ export function beginOtaAutoChain(
 }
 
 export function isOtaAutoChainActive(): boolean {
-  return session !== null
+  return currentSession() !== null
 }
 
 export function otaAutoChainReleaseRange(): OtaAutoChainReleaseRange | null {
+  currentSession()
   return session ? {...session.releaseRange} : null
 }
 
@@ -82,6 +91,7 @@ export function stopOtaAutoChain(): void {
  * passes. Re-renders must not extend the original deadline indefinitely.
  */
 export function otaAutoChainReconnectWaitRemaining(now = performance.now()): number | null {
+  currentSession()
   if (!session) return null
 
   session.reconnectDeadline ??= now + OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS
@@ -90,6 +100,7 @@ export function otaAutoChainReconnectWaitRemaining(now = performance.now()): num
 
 /** A successful reconnect allows a future pass to establish a fresh wait. */
 export function clearOtaAutoChainReconnectWait(): void {
+  currentSession()
   if (session) session.reconnectDeadline = null
 }
 
@@ -103,6 +114,7 @@ export function tryAdvanceOtaAutoChain(
   targetVersion: string | null,
   releaseVersion: string | null = null,
 ): OtaAutoChainAdvanceResult {
+  currentSession()
   if (!session) {
     return {advance: false, reason: "inactive"}
   }

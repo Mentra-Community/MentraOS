@@ -17,7 +17,7 @@ Store the token there; it does not need a repository-secret slot. Allow the
 `dev` and `staging` branches. Leave required reviewers and wait timers off for
 unattended notifications.
 
-Three GitHub-hosted jobs select this environment: `coordinated-release.yml`'s
+Three Linux jobs on ephemeral Blacksmith runners select this environment: `coordinated-release.yml`'s
 `notify-slack`, and `notify-release-routine.yml`'s `resolve` and `update`. The
 resolver needs it because it checks token availability before producing work.
 These are ordinary jobs, not `workflow_call` jobs: GitHub resolves the secret
@@ -32,8 +32,8 @@ their existing workflows and webhook configuration.
 
 Invite that bot to both existing channels. The same bot must author and update
 the post. Do not use the reports bot merely because its token already exists.
-No Slack history permission is required. The token is used only by GitHub-hosted
-notification jobs, never by the hardware worker.
+No Slack history permission is required. The token is used only by those ephemeral cloud
+notification jobs, never by the hardware worker or a self-hosted machine.
 
 Without this configuration, the existing incoming webhook still delivers the
 release post and says **Terminal Slack updates unavailable; use the results
@@ -66,11 +66,16 @@ configuration. See [PR result history](../../.github/DEVICE-ROUTINES.md#results-
 
 One exception has no receipt by construction: a request cancelled while queued.
 The private callback forwards a cancelled `device-routine.yml` attempt only when
-its single job has no runner and no steps. The public resolver then re-proves it
-from GitHub metadata:
+its device job has explicitly empty runner fields and no steps. It accepts the
+legacy single-job layout or exactly one successful Blacksmith `runner-preflight`
+alongside `prepared-mac-routine`. The public resolver then re-proves it from
+GitHub metadata:
 
 - the exact private `main` attempt completed as cancelled with no terminal
-  artifact; its only job has no runner or step;
+  artifact; its device job completed as cancelled with explicitly empty runner
+  fields and zero steps. In the two-job layout, the preflight and its availability
+  check succeeded, both jobs match the run/attempt/revision, and the preflight has
+  only the Blacksmith label. Any other layout or possible device execution is refused;
 - private `main` makes GitHub derive the run name from the `request_run_id` and
   `request_attempt` inputs and the job labels from `routine_id`. These name the
   candidate request, which must be the trusted successful dev request with its

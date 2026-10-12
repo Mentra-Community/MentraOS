@@ -1,251 +1,226 @@
-import {waitFor} from "@testing-library/react-native"
-import {Platform} from "react-native"
-
 import {
-  startSubmitIncidentReportService,
-  stopSubmitIncidentReportService,
+  IncidentReportError,
   submitIncidentReport,
 } from "../../../modules/engine/src/services/SubmitIncidentReportService"
-import {submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
-import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
-
-jest.mock("@mentra/crust", () => {
-  const {crustModuleMock} = require("@/test-utils/mockCrustModule")
-  return {
-    __esModule: true,
-    default: crustModuleMock,
-  }
-})
+import {ReportCollectionError, reports, submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
+import {projectPairingIdentity} from "../../../modules/engine/src/services/PairingIdentity"
+import {useSettingsStore} from "../../../modules/engine/src/stores/settings"
 
 jest.mock("../../../modules/engine/src/facades/reports", () => ({
   submitAutomaticReport: jest.fn(),
+  reports: {waitForCollection: jest.fn()},
+  ReportCollectionError: class ReportCollectionError extends Error {
+    collection: unknown
+    constructor(value: unknown) {
+      super("Report log collection did not complete")
+      this.collection = value
+    }
+  },
 }))
+jest.mock("../../../modules/engine/src/services/PairingIdentity", () => ({projectPairingIdentity: jest.fn()}))
+jest.mock("../../../modules/engine/src/stores/settings", () => ({
+  useSettingsStore: {getState: () => ({loadAllSettings: mockLoadSettings})},
+}))
+jest.mock("../../../modules/engine/src/types", () => ({DeviceTypes: {LIVE: "Mentra Live"}}))
+const mockLoadSettings = jest.fn()
 
-describe("SubmitIncidentReportService", () => {
-  let logSpy: jest.SpyInstance
-  let errorSpy: jest.SpyInstance
+beforeEach(() => {
+  jest.clearAllMocks()
+  mockLoadSettings.mockResolvedValue({is_error: () => false})
+  jest.mocked(projectPairingIdentity).mockReturnValue({kind: "paired", model: "Mentra Live", name: "Mentra_Live_test"})
+  jest
+    .mocked(submitAutomaticReport)
+    .mockResolvedValue({status: "submitted", reportId: "rep_test", reportStatus: "ready"})
+  jest.mocked(reports.waitForCollection).mockResolvedValue({reportId: "rep_test", state: "complete", logCollection: {}})
+})
 
-  beforeEach(() => {
-    resetCrustModuleMock()
-    ;(submitAutomaticReport as jest.Mock).mockClear()
-    ;(submitAutomaticReport as jest.Mock).mockResolvedValue({
-      status: "submitted",
-      reportId: "report-1",
-      reportStatus: "ready",
-    })
-    logSpy = jest.spyOn(console, "log").mockImplementation(() => {})
-    errorSpy = jest.spyOn(console, "error").mockImplementation(() => {})
-    startSubmitIncidentReportService()
+it("files a requested incident and awaits all paired Mentra Live device logs", async () => {
+  const result = await submitIncidentReport({
+    alert_id: "test-1",
+    failure_code: "search_failed",
+    failure_message: "No results",
   })
-
-  afterEach(() => {
-    stopSubmitIncidentReportService()
-    jest.restoreAllMocks()
+  expect(result).toMatchObject({alert_id: "test-1", status: "filed", report_id: "rep_test"})
+  expect(submitAutomaticReport).toHaveBeenCalledWith(
+    expect.objectContaining({trigger: expect.objectContaining({reason: "incident_report_requested"})}),
+  )
+  expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {
+    sources: ["phone", "glasses", "glasses_firmware"],
+    timeoutMs: 20_000,
   })
+})
 
-  it("files broadcast incidents through the existing automatic-report pipeline", async () => {
-    emitCrustEvent("submit_incident_report", {
-      failure_code: "stale_transcript",
-      failure_message: "Transcript stayed stale",
-      test_run_id: "run-1",
-      scenario_name: "live_words",
-      alert_id: "alert-1",
-      dashboard_url: "https://captions.example.test",
-      source: "captions_tester",
-    })
-
-    await waitFor(() => {
-      expect(submitAutomaticReport).toHaveBeenCalledWith(
-        expect.objectContaining({
-          kind: "automatic",
-          trigger: {
-            type: "automatic",
-            source: "captions_tester",
-            reason: "incident_report_requested",
-          },
-          throttleKey: "captions_tester|stale_transcript|live_words|alert-1",
-        }),
-      )
-    })
-
-    const submitInput = (submitAutomaticReport as jest.Mock).mock.calls[0][0]
-    expect(submitInput.report.actualBehavior).toContain("Transcript stayed stale")
-    expect(submitInput.report.expectedBehavior).toContain("https://captions.example.test")
-
-    const markerCall = logSpy.mock.calls.find(([message]) => String(message).startsWith("INCIDENT_REPORT_RESULT "))
-    expect(markerCall).toBeTruthy()
-
-    const payload = JSON.parse(String(markerCall?.[0]).replace("INCIDENT_REPORT_RESULT ", ""))
-    expect(payload).toMatchObject({
-      alert_id: "alert-1",
-      test_run_id: "run-1",
-      failure_code: "stale_transcript",
-      scenario_name: "live_words",
-      status: "filed",
-      report_id: "report-1",
-      incident_id: "report-1",
-    })
-    expect(errorSpy).not.toHaveBeenCalled()
+it("persists validated automation correlation in report creation before strict collection completes", async () => {
+  const collection = {reportId: "rep_test", state: "failed" as const, logCollection: {}}
+  jest.mocked(reports.waitForCollection).mockRejectedValueOnce(new ReportCollectionError(collection))
+  await expect(submitIncidentReport({source: "mentra_automated_testing", alert_id: "exact-alert",
+    test_run_id: "exact-run", failure_code: "original_failure"})).rejects.toMatchObject({
+    result: {status: "failed", report_id: "rep_test", collection},
   })
+  expect(submitAutomaticReport).toHaveBeenCalledWith(expect.objectContaining({
+    automationCorrelation: {alertId: "exact-alert", testRunId: "exact-run"},
+  }))
+  expect(submitAutomaticReport).toHaveBeenCalledTimes(1)
+})
 
-  it("returns the same correlated result for an explicit incident request", async () => {
-    const result = await submitIncidentReport({
-      alert_id: "ota-failure-1",
-      test_run_id: "ota-run",
-      failure_code: "update_failed",
-      source: "mentra_automated_testing",
-      expected_behavior: "All versions match the selected manifest",
-    })
-    expect(result).toMatchObject({
-      alert_id: "ota-failure-1",
-      test_run_id: "ota-run",
-      status: "filed",
-      report_id: "report-1",
-    })
-    expect(submitAutomaticReport).toHaveBeenCalledWith(
-      expect.objectContaining({
-        trigger: {type: "automatic", source: "mentra_automated_testing", reason: "incident_report_requested"},
-        report: expect.objectContaining({expectedBehavior: "All versions match the selected manifest"}),
+it.each([undefined, " ", "r".repeat(161)])("rejects an invalid automation run ID before submission: %s", async test_run_id => {
+  await expect(submitIncidentReport({source: "mentra_automated_testing", alert_id: "exact-alert",
+    test_run_id, failure_code: "original_failure"})).rejects.toBeInstanceOf(IncidentReportError)
+  expect(submitAutomaticReport).not.toHaveBeenCalled()
+})
+
+it.each([undefined, "bad/id", "a".repeat(161)])("requires the original valid automation alert ID: %s", async alert_id => {
+  await expect(submitIncidentReport({source: "mentra_automated_testing", alert_id,
+    test_run_id: "exact-run", failure_code: "original_failure"})).rejects.toBeInstanceOf(IncidentReportError)
+  expect(submitAutomaticReport).not.toHaveBeenCalled()
+})
+
+it.each([
+  {kind: "none"} as const,
+  {kind: "pending", model: "Mentra Live"} as const,
+  {kind: "paired", model: "Even Realities G1", name: "G1"} as const,
+  {kind: "paired", model: "Simulated Glasses", name: "Simulated Glasses"} as const,
+])("requires only phone logs when no Mentra Live is paired: %j", async (identity) => {
+  jest.mocked(projectPairingIdentity).mockReturnValue(identity)
+  await expect(submitIncidentReport({failure_code: "entry_failed"})).resolves.toMatchObject({status: "filed"})
+  expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {sources: ["phone"], timeoutMs: 20_000})
+})
+
+it("does not drop paired glasses requirements if pairing identity changes during submission", async () => {
+  jest.mocked(submitAutomaticReport).mockImplementationOnce(async () => {
+    jest.mocked(projectPairingIdentity).mockReturnValue({kind: "none"})
+    return {status: "submitted", reportId: "rep_test", reportStatus: "ready"}
+  })
+  await submitIncidentReport({failure_code: "disconnected"})
+  expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {
+    sources: ["phone", "glasses", "glasses_firmware"],
+    timeoutMs: 20_000,
+  })
+})
+
+it("loads pairing settings before deciding which sources are required at cold start", async () => {
+  jest.mocked(projectPairingIdentity).mockReturnValue({kind: "none"})
+  mockLoadSettings.mockImplementationOnce(async () => {
+    jest
+      .mocked(projectPairingIdentity)
+      .mockReturnValue({kind: "paired", model: "Mentra Live", name: "Mentra_Live_test"})
+    return {is_error: () => false}
+  })
+  await submitIncidentReport({failure_code: "cold_start"})
+  expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {
+    sources: ["phone", "glasses", "glasses_firmware"],
+    timeoutMs: 20_000,
+  })
+  expect(useSettingsStore.getState().loadAllSettings).toHaveBeenCalledTimes(1)
+})
+
+it("does not claim a device is unpaired when loading its identity fails", async () => {
+  mockLoadSettings.mockResolvedValueOnce({is_error: () => true, error: new Error("read failed")})
+  await expect(submitIncidentReport({failure_code: "entry_failed"})).rejects.toMatchObject({result: {status: "failed"}})
+  expect(submitAutomaticReport).not.toHaveBeenCalled()
+})
+
+it("rejects with a correlated failure when submission fails", async () => {
+  jest.mocked(submitAutomaticReport).mockRejectedValue(new Error("Bearer PRIVATE_TOKEN"))
+  await expect(submitIncidentReport({alert_id: "test-2", failure_code: "search_failed"})).rejects.toMatchObject({
+    name: "IncidentReportError",
+    result: {alert_id: "test-2", status: "failed", error: "Incident report submission failed"},
+  })
+  expect(reports.waitForCollection).not.toHaveBeenCalled()
+})
+
+it("does not expose the final filed receipt while device log collection is pending", async () => {
+  let finish!: (value: Awaited<ReturnType<typeof reports.waitForCollection>>) => void
+  jest.mocked(reports.waitForCollection).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
       }),
-    )
-    expect(logSpy).toHaveBeenCalledWith(`INCIDENT_REPORT_RESULT ${JSON.stringify(result)}`)
+  )
+  const logged = jest.spyOn(console, "log").mockImplementation(() => {})
+  const pending = submitIncidentReport({alert_id: "test-wait", failure_code: "original_failure"})
+  let settled = false
+  void pending.then(() => {
+    settled = true
   })
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(settled).toBe(false)
+  expect(logged.mock.calls.some(([value]) => String(value).startsWith("INCIDENT_REPORT_RESULT"))).toBe(false)
+  finish({reportId: "rep_test", state: "complete", logCollection: {}})
+  await expect(pending).resolves.toMatchObject({status: "filed", collection: {state: "complete"}})
+  expect(submitAutomaticReport).toHaveBeenCalledTimes(1)
+  logged.mockRestore()
+})
 
-  it("uses distinct throttle keys for distinct request IDs in the same test run", async () => {
-    for (const alert_id of ["request-1", "request-2"])
-      await submitIncidentReport({alert_id, test_run_id: "same-run", failure_code: "update_failed"})
-    const keys = (submitAutomaticReport as jest.Mock).mock.calls.map(([input]) => input.throttleKey)
-    expect(keys).toEqual([
-      "external_trigger|update_failed|unknown|request-1",
-      "external_trigger|update_failed|unknown|request-2",
-    ])
-  })
-
-  it.each([
-    [
-      {status: "skipped", reason: "throttled_within_window"},
-      {status: "skipped", reason: "throttled_within_window"},
-    ],
-    [
-      {status: "failed", error: "Not signed in"},
-      {status: "failed", error: "Not signed in"},
-    ],
-  ])("returns an observable non-success outcome: %j", async (submission, expected) => {
-    ;(submitAutomaticReport as jest.Mock).mockResolvedValueOnce(submission)
-    expect(await submitIncidentReport({alert_id: "request-1", test_run_id: "run-1"})).toMatchObject({
-      ...expected,
-      alert_id: "request-1",
-      test_run_id: "run-1",
+it.each(["failed", "timed-out", "unavailable"] as const)(
+  "rejects and preserves the created incident when required collection is %s",
+  async (state) => {
+    const collection = {reportId: "rep_test", state, logCollection: {}}
+    jest.mocked(reports.waitForCollection).mockRejectedValueOnce(new ReportCollectionError(collection))
+    const pending = submitIncidentReport({alert_id: `test-${state}`, failure_code: "original_failure"})
+    await expect(pending).rejects.toBeInstanceOf(IncidentReportError)
+    await expect(pending).rejects.toMatchObject({
+      result: {
+        status: "failed",
+        report_id: "rep_test",
+        incident_id: "rep_test",
+        failure_code: "original_failure",
+        collection,
+      },
     })
-  })
+    expect(submitAutomaticReport).toHaveBeenCalledTimes(1)
+  },
+)
 
-  it("turns submission exceptions into a correlated failed receipt", async () => {
-    ;(submitAutomaticReport as jest.Mock).mockRejectedValueOnce(new Error("Connection lost"))
-    expect(await submitIncidentReport({alert_id: "request-1"})).toMatchObject({
-      alert_id: "request-1",
+it("preserves successful phone and ASG receipts when firmware collection fails", async () => {
+  const collection = {
+    reportId: "rep_test",
+    state: "failed" as const,
+    logCollection: {
+      phone: {
+        state: "received" as const,
+        artifactId: "art_phone",
+        requestedAt: "2026-10-09T00:00:00.000Z",
+        deadlineAt: "2026-10-09T00:00:20.000Z",
+      },
+      glasses_firmware: {
+        state: "failed" as const,
+        reason: "firmware_read_failed",
+        requestedAt: "2026-10-09T00:00:00.000Z",
+        deadlineAt: "2026-10-09T00:00:20.000Z",
+      },
+    },
+  }
+  jest.mocked(reports.waitForCollection).mockRejectedValueOnce(new ReportCollectionError(collection))
+  await expect(submitIncidentReport({failure_code: "original_failure"})).rejects.toMatchObject({result: {collection}})
+})
+
+it("rejects with the report ID and a safe message after an unexpected collection read failure", async () => {
+  jest.mocked(reports.waitForCollection).mockRejectedValueOnce(new Error("Bearer PRIVATE_TOKEN"))
+  await expect(
+    submitIncidentReport({alert_id: "test-read-error", failure_code: "original_failure"}),
+  ).rejects.toMatchObject({
+    result: {
       status: "failed",
-      error: "Connection lost",
-    })
+      report_id: "rep_test",
+      collection: {state: "unavailable"},
+      error: "Required incident log collection did not complete",
+    },
   })
+  expect(submitAutomaticReport).toHaveBeenCalledTimes(1)
+})
 
-  it.each([null, [], "not-an-object"])("rejects malformed requests without submitting: %j", async (request) => {
-    expect(await submitIncidentReport(request)).toMatchObject({status: "failed"})
-    expect(submitAutomaticReport).not.toHaveBeenCalled()
+it.each([
+  {status: "skipped", reason: "throttled_within_window"} as const,
+  {status: "failed", error: "upload_failed"} as const,
+])("rejects an incomplete submission without starting collection: %j", async (result) => {
+  jest.mocked(submitAutomaticReport).mockResolvedValueOnce(result)
+  await expect(
+    submitIncidentReport({alert_id: "test-skipped", failure_code: "original_failure"}),
+  ).rejects.toMatchObject({
+    result: {status: result.status, failure_code: "original_failure"},
   })
-
-  it("does not receive or replay a request emitted before the service subscribes", async () => {
-    stopSubmitIncidentReportService()
-    logSpy.mockClear()
-
-    // Crust exists natively, but engine.start() has not subscribed yet.
-    emitCrustEvent("submit_incident_report", {alert_id: "early-1", test_run_id: "run-1"})
-    startSubmitIncidentReportService()
-    await Promise.resolve()
-
-    expect(submitAutomaticReport).not.toHaveBeenCalled()
-    expect(logSpy.mock.calls.some(([message]) => String(message).startsWith("INCIDENT_REPORT_RESULT "))).toBe(false)
-  })
-
-  describe("Android native readiness", () => {
-    beforeEach(() => {
-      stopSubmitIncidentReportService()
-      crustModuleMock.setIncidentReportServiceReady.mockClear()
-      jest.replaceProperty(Platform, "OS", "android")
-    })
-
-    it("reports ready only after subscribing, and not ready before unsubscribing", () => {
-      startSubmitIncidentReportService()
-      expect(crustModuleMock.setIncidentReportServiceReady).toHaveBeenCalledWith(true)
-      expect(crustModuleMock.addListener.mock.invocationCallOrder[0]).toBeLessThan(
-        crustModuleMock.setIncidentReportServiceReady.mock.invocationCallOrder[0],
-      )
-
-      emitCrustEvent("submit_incident_report", {failure_code: "update_failed", test_run_id: "run-1"})
-      stopSubmitIncidentReportService()
-      expect(crustModuleMock.setIncidentReportServiceReady).toHaveBeenLastCalledWith(false)
-      expect(submitAutomaticReport).toHaveBeenCalledTimes(1)
-    })
-
-    it("re-reports readiness once per stop/restart and ignores duplicate calls", () => {
-      startSubmitIncidentReportService()
-      startSubmitIncidentReportService()
-      stopSubmitIncidentReportService()
-      stopSubmitIncidentReportService()
-      startSubmitIncidentReportService()
-      expect(crustModuleMock.setIncidentReportServiceReady.mock.calls).toEqual([[true], [false], [true]])
-    })
-
-    it("keeps the listener when native readiness cannot be updated", async () => {
-      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {})
-      crustModuleMock.setIncidentReportServiceReady.mockImplementationOnce(() => {
-        throw new Error("native unavailable")
-      })
-      expect(() => startSubmitIncidentReportService()).not.toThrow()
-      expect(warnSpy).toHaveBeenCalledWith(
-        "SubmitIncidentReport: could not update native readiness:",
-        "native unavailable",
-      )
-      emitCrustEvent("submit_incident_report", {alert_id: "request-1"})
-      await waitFor(() => expect(submitAutomaticReport).toHaveBeenCalledTimes(1))
-    })
-  })
-
-  it("does not report native readiness outside Android", () => {
-    stopSubmitIncidentReportService()
-    crustModuleMock.setIncidentReportServiceReady.mockClear()
-    jest.replaceProperty(Platform, "OS", "ios")
-    startSubmitIncidentReportService()
-    stopSubmitIncidentReportService()
-    expect(crustModuleMock.setIncidentReportServiceReady).not.toHaveBeenCalled()
-  })
-
-  it("sends a same-ID retransmit through the existing throttle with a correlated receipt", async () => {
-    ;(submitAutomaticReport as jest.Mock)
-      .mockResolvedValueOnce({status: "submitted", reportId: "report-1", reportStatus: "ready"})
-      .mockResolvedValueOnce({status: "skipped", reason: "throttled_within_window"})
-    const request = {alert_id: "request-1", test_run_id: "run-1", failure_code: "update_failed"}
-    const first = await submitIncidentReport(request)
-    const retransmit = await submitIncidentReport(request)
-
-    const keys = (submitAutomaticReport as jest.Mock).mock.calls.map(([input]) => input.throttleKey)
-    expect(keys).toEqual([
-      "external_trigger|update_failed|unknown|request-1",
-      "external_trigger|update_failed|unknown|request-1",
-    ])
-    expect(first).toMatchObject({alert_id: "request-1", test_run_id: "run-1", status: "filed", report_id: "report-1"})
-    expect(retransmit).toMatchObject({alert_id: "request-1", test_run_id: "run-1", status: "skipped"})
-    expect(retransmit.report_id).toBeUndefined()
-  })
-
-  it("removes the Crust listener when stopped", async () => {
-    stopSubmitIncidentReportService()
-
-    emitCrustEvent("submit_incident_report", {
-      failure_code: "stale_transcript",
-      test_run_id: "run-1",
-    })
-
-    await Promise.resolve()
-    expect(submitAutomaticReport).not.toHaveBeenCalled()
-  })
+  expect(reports.waitForCollection).not.toHaveBeenCalled()
 })

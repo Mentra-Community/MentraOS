@@ -14,21 +14,21 @@
 #   --json           Print the raw report JSON to stdout, skip artifact downloads
 #   --env ENV        prod | staging | dev (default: auto-discover)
 #   --kind KIND      (--list) bug | feedback | automatic
+#   --category CAT   (--list) bug | feedback | internal | testing | automatic
 #   --status STATUS  (--list) collecting | ready | closed
 #   --limit N        (--list) max reports to return (1-200, default 50)
 #
 # Environment variables:
 #   MENTRA_ADMIN_TOKEN  (required) Bearer token for the admin API: an org API
 #                       key (msk_...) whose synthetic email is allowlisted in
-#                       CLOUD_CORE_ADMIN_EMAILS, or a WorkOS access token of
-#                       an admin user.
+#                       CLOUD_CORE_ADMIN_EMAILS.
 #   MENTRA_CORE_URL     (optional) Core API base URL; disables auto-discovery
 #                       and overrides --env.
 
 set -euo pipefail
 
 usage() {
-  sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 
@@ -44,6 +44,7 @@ MODE="fetch"
 ENV_NAME=""
 ENV_EXPLICIT=0
 LIST_KIND=""
+LIST_CATEGORY=""
 LIST_STATUS=""
 LIST_LIMIT=""
 
@@ -54,6 +55,7 @@ while [ $# -gt 0 ]; do
     -o|--out) OUT_DIR="${2:?--out requires a directory}"; shift ;;
     --env) ENV_NAME="${2:?--env requires prod|staging|dev}"; ENV_EXPLICIT=1; shift ;;
     --kind) LIST_KIND="${2:?--kind requires a value}"; shift ;;
+    --category) LIST_CATEGORY="${2:?--category requires a value}"; shift ;;
     --status) LIST_STATUS="${2:?--status requires a value}"; shift ;;
     --limit) LIST_LIMIT="${2:?--limit requires a number}"; shift ;;
     -h|--help) usage ;;
@@ -112,8 +114,7 @@ if [ -z "${MENTRA_ADMIN_TOKEN:-}" ]; then
   err "MENTRA_ADMIN_TOKEN environment variable not set"
   note ""
   note "The admin reports API needs a bearer token with admin access:"
-  note "  - an org API key (msk_...) allowlisted via CLOUD_CORE_ADMIN_EMAILS, or"
-  note "  - a WorkOS access token of an admin user"
+  note "  an org API key (msk_...) allowlisted via CLOUD_CORE_ADMIN_EMAILS"
   note ""
   note "  export MENTRA_ADMIN_TOKEN=msk_..."
   exit 1
@@ -179,6 +180,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 if [ "$MODE" = "list" ]; then
   QUERY=""
   [ -n "$LIST_KIND" ] && QUERY="$QUERY&kind=$LIST_KIND"
+  [ -n "$LIST_CATEGORY" ] && QUERY="$QUERY&category=$LIST_CATEGORY"
   [ -n "$LIST_STATUS" ] && QUERY="$QUERY&status=$LIST_STATUS"
   [ -n "$LIST_LIMIT" ] && QUERY="$QUERY&limit=$LIST_LIMIT"
   QUERY="${QUERY#&}"

@@ -20,6 +20,7 @@ import {miniappLauncher} from "./MiniappLauncher"
 import {MentraJSCrashController} from "./MentraJSCrashController"
 import {MentraJSRouter, type MentraJSCrustBinding} from "./MentraJSRouter"
 import {MentraUIRouter} from "./MentraUIRouter"
+import {BgTimer} from "../utils/timers"
 
 export interface MiniappEngine {
   router: MentraJSRouter
@@ -45,10 +46,13 @@ function wireDevServerRespawnBackground(router: MentraJSRouter, uiRouter: Mentra
       }
       // Force a respawn (kill + spawn) rather than launcher.ensureRunning,
       // which is idempotent and would no-op an already-registered context.
+      const projectRunning = router.isProjectedRunning(packageName)
       await router.unregister(packageName)
       const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
         permissions: resolved.declaredPermissions,
         installedManifest: resolved.installedManifest,
+        hostTrustedSystem: resolved.hostTrustedSystem,
+        projectRunning,
       })
       if (!ok) {
         console.warn(`MentraJS: respawn-bg failed for ${packageName}`)
@@ -95,6 +99,7 @@ export function ensureMiniappEngine(): MiniappEngine {
   const router = new MentraJSRouter(localMiniappRuntime, crust)
   router.crashController = crashController
   router.uiRouter = uiRouter
+  router.timer = BgTimer
 
   // Hand the router to the engine MiniappLauncher so headless launch/teardown
   // (apps.ts start/stop, the action broker, the WebView mount path) all spawn

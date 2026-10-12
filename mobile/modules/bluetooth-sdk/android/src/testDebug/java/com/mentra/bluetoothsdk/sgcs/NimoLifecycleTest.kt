@@ -1,5 +1,8 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothGattCharacteristic
+import org.robolectric.shadows.ShadowBluetoothGatt
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.ContextWrapper
@@ -132,6 +135,97 @@ class NimoLifecycleTest {
     NimoDiagnostics::class.java.getDeclaredMethod("start", String::class.java)
       .apply { isAccessible = true }.invoke(diagnostics, "capture")
     assertEquals(1, writes)
+  }
+
+  @Test fun resetForUnpairOfflineDoesNotSendFactoryCommand() {
+    val results = mutableListOf<Boolean>()
+    nimo.resetForUnpair { results.add(it) }
+    assertEquals(listOf(false), results)
+  }
+
+  @Test fun explicitResetWaitsForMatchingAckAndCompletesOnlyOnce() {
+    val frames = readyForReset()
+    val results = mutableListOf<Boolean>()
+    nimo.resetForUnpair { results.add(it) }
+    Shadows.shadowOf(Looper.getMainLooper()).idle()
+    assertTrue(results.isEmpty())
+    assertArrayEquals(byteArrayOf(8, 3, 0, 0), frames.single().drop(8).toByteArray())
+    assertEquals(2, frames.single()[1].toInt())
+    respond(3, 1, 0)
+    assertTrue(results.isEmpty())
+    respond(8, 3, 0)
+    respond(8, 3, 0)
+    assertEquals(listOf(true), results)
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(6, TimeUnit.SECONDS)
+    assertEquals(listOf(true), results)
+  }
+
+  @Test fun resetTimeoutCompletesRatherThanLeavingUnpairWaitingForever() {
+    readyForReset()
+    val results = mutableListOf<Boolean>()
+    nimo.resetForUnpair { results.add(it) }
+    Shadows.shadowOf(Looper.getMainLooper()).idleFor(6, TimeUnit.SECONDS)
+    assertEquals(listOf(false), results)
+    respond(8, 3, 0)
+    assertEquals(listOf(false), results)
+  }
+
+  @Test fun passiveForgetNeverSendsFactoryReset() {
+    val frames = readyForReset()
+    nimo.forget()
+    assertTrue(frames.isEmpty())
+  }
+
+  @Test fun unbondTargetsOnlyTheSelectedNimo() {
+    val adapter = BluetoothAdapter.getDefaultAdapter()
+    val selected = adapter.getRemoteDevice("00:11:22:33:44:55")
+    val other = adapter.getRemoteDevice("00:11:22:33:44:66")
+    Shadows.shadowOf(selected).setCreatedBond(true)
+    Shadows.shadowOf(other).setCreatedBond(true)
+    Nimo.removeBluetoothBond(selected.address)
+    // Robolectric tracks removeBond through this flag, independently of bondState.
+    assertFalse(selected.createBond())
+    assertTrue(other.createBond())
+  }
+
+  private fun readyForReset(): MutableList<ByteArray> {
+    val frames = mutableListOf<ByteArray>()
+    val device = BluetoothAdapter.getDefaultAdapter().getRemoteDevice("00:11:22:33:44:55")
+    val gatt = ShadowBluetoothGatt.newInstance(device)
+    setField("gatt", gatt)
+    setField("txChar", BluetoothGattCharacteristic(NimoBLE.CHAR_TX, 8, 16))
+    val state = Nimo::class.java.getDeclaredField("handshakeState")
+    setField("handshakeState", state.type.enumConstants.single { it.toString() == "READY" })
+    lateinit var queue: NimoGattQueue<BluetoothGattCharacteristic>
+    queue = NimoGattQueue(
+      NimoScheduler { delay, task ->
+        val handler = Handler(Looper.getMainLooper())
+        val pending = Runnable { task() }
+        handler.postDelayed(pending, delay)
+        val cancel: () -> Unit = { handler.removeCallbacks(pending) }
+        cancel
+      },
+      { characteristic, bytes ->
+        frames.add(bytes.copyOf())
+        Handler(Looper.getMainLooper()).post { queue.written(gatt, characteristic, true) }
+        true
+      },
+      { fail(it) },
+      NimoBLE.INTER_FRAME_DELAY_MS,
+    )
+    queue.connected(gatt)
+    setField("writes", queue)
+    return frames
+  }
+
+  private fun setField(name: String, value: Any) {
+    Nimo::class.java.getDeclaredField(name).apply { isAccessible = true }.set(nimo, value)
+  }
+
+  private fun respond(cmd: Int, key: Int, status: Int) {
+    Nimo::class.java.getDeclaredMethod("handleResponse", Int::class.javaPrimitiveType,
+      Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, ByteArray::class.java)
+      .apply { isAccessible = true }.invoke(nimo, cmd, key, status, byteArrayOf())
   }
 
   private fun runOffMain(operation: () -> Unit) {

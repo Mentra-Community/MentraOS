@@ -1,7 +1,7 @@
 import Foundation
 
 enum DashboardContentFormatter {
-    static let statusHeader = "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS$"
+    static let statusHeader = "$TIME12$ $DATE$ $GBATT$"
 
     static func template(for content: String) -> String {
         content.isEmpty ? statusHeader : statusHeader + "\n\n" + content

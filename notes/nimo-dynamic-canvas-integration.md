@@ -46,14 +46,25 @@ Bluetooth SDK podspec. Both platforms require a native app rebuild.
   because every Update replaces the canvas, including text/image transitions.
 - Launch, Update, and Exit use app ID `0xFD`. Frame fragments fit the negotiated
   characteristic write capacity, including the eight-byte transport header.
-- Canvas commands wait for the normal connection handshake and a heartbeat
-  confirming both TWS and the peer Companion connection. Status 7 waits for
-  fresh readiness; retries are bounded. Status 8 blocks until reconnect.
+- Each completed connection handshake requests the canvas immediately, restoring
+  the newest retained scene or an empty canvas if no miniapp has submitted one.
+  An unknown peer-Companion state no longer waits for the firmware's first
+  unsolicited heartbeat (observed 60 seconds after reconnect). Launch itself
+  validates TWS/peer readiness in firmware; its ACK must precede Update. A known
+  disconnected peer still blocks transmission.
+- Explicit status 7 (NOT_READY) allows up to three Launch retries, one second
+  apart, while the transport remains ready. Fresh heartbeats retain their
+  separate bounded recovery budget. Exit, disconnect and known readiness loss
+  cancel pending probes. Status 8 blocks until reconnect; ambiguous/missing ACKs
+  still retire the transport.
 - A business ACK confirms command acceptance, not optical rendering. It cannot
   advance the command state until the last GATT write completes. Ambiguous
   timeouts/errors retire the connection rather than reusing the command key.
-- The most recent desired scene survives a link reconnect. Scene changes, Exit,
-  disconnect, and native app takeover invalidate stale image encoding results.
+- The most recent desired scene survives reconnect and stock-UI reports. While
+  Mentra owns the display, native app entry/canvas exit requests a serialized
+  re-Launch and scene replay, even without another miniapp render call. These
+  reports do not discard pending encoding. Explicit host Exit clears ownership;
+  scene changes, Exit and disconnect still invalidate stale encoding results.
 - NIMO opts out of temporary welcome and brightness text so delayed clears cannot
   erase the active scene. Hidden dashboard updates never clear the visible view.
 - Images are bounded before decoding, resized to their destination, composited
@@ -68,6 +79,29 @@ Bluetooth SDK podspec. Both platforms require a native app rebuild.
   use the remaining budget. Native retains its final validation.
 
 ## Validation and remaining device acceptance
+
+### iOS discovery prerequisite
+
+NIMO serves Companion service `7033` over classic Bluetooth (BR/EDR). Pair the
+main NIMO device in **iPhone Settings → Bluetooth** first, wait for **Connected**,
+then return to the Mentra App. The separate name ending in `_BLE` is the ANCS
+side channel and does not expose the Companion data service. The iOS driver
+enumerates system-connected devices and registers for service connection events,
+so both an existing connection and pairing in Settings during discovery are handled.
+See Apple's [Core Bluetooth BR/EDR walkthrough](https://developer.apple.com/videos/play/wwdc2019/901/).
+
+For physical-iPhone acceptance, start with the NIMO app closed and a recorded
+app/OS/firmware version. Verify the preparation instruction, pair the main device
+in Settings, return, select it in the Mentra App, and reach a completed handshake.
+Repeat with a device already connected before scanning, and with Settings pairing
+after scanning starts. Verify `_BLE` never appears as a selectable data device,
+cancel scanning before connecting in Settings to check no unsolicited connection,
+then explicitly retry. Reconnect and run Captions to verify the data path. Restore
+the fixture's original pairing state and retain timestamps/logs for failed steps.
+These physical checks remain required; simulated discovery tests are not device
+acceptance. No currently registered device routine covers NIMO iPhone pairing.
+
+### Canvas acceptance
 
 Automated coverage includes the vendor's exact packet examples, both command
 and transport lifecycles, image compression round trips, scene handoff,
@@ -129,3 +163,16 @@ For acceptance, also check caption line-count/width/top-bottom settings with
 interim speech, transcript previews, Teleprompter voice-follow and timed play,
 manual forward/back steps, its timecode footer, final-page behavior, and changing
 glasses during a read. Automated checks do not replace these hardware tests.
+
+### Immediate canvas reconnect regression
+
+On stock dynamic-v1 firmware, keep the Mac disconnected and use the paired
+physical Android phone. Record the handshake, canvas Launch response and app
+state `0xFD` entry timestamps. A cold app launch with no active miniapp must
+enter an empty canvas promptly, before the first minute heartbeat. Run Captions,
+confirm visible glasses text, then disconnect/reconnect with the miniapp still
+running. Confirm the retained scene returns without waiting for new speech.
+Exercise a glasses gesture that returns to stock UI and confirm Mentra restores
+its canvas while it owns a scene. An explicit host Exit must remain exited.
+Save logs and wearer confirmation; a successful business ACK alone is not proof
+of visible rendering. Repeat on a physical iPhone when available.

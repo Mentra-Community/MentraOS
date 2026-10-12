@@ -33,6 +33,7 @@ import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
+import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
 import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {storage} from "@/utils/storage"
@@ -260,6 +261,8 @@ interface AppsGridProps {
   showAllApps?: boolean
   onOpenApp?: (app: ClientApp) => void
   onAddToHome?: (app: ClientApp) => void
+  homePackageNames?: readonly string[]
+  onHomeAppsChange?: (packageNames: string[]) => void
   searchQuery?: string
   showPlaceholders?: boolean
   /**
@@ -282,6 +285,8 @@ export function AppsGrid({
   showAllApps = false,
   onOpenApp,
   onAddToHome,
+  homePackageNames = [],
+  onHomeAppsChange,
   searchQuery,
   showPlaceholders = false,
   gateOnIconsReady = false,
@@ -479,6 +484,15 @@ export function AppsGrid({
     [gridData, showAllApps, showPlaceholders],
   )
 
+  useEffect(() => {
+    if (showAllApps || !onHomeAppsChange) return
+    // Share the rendered Home slots so the drawer also accounts for overflow,
+    // empty slots, and apps that have not yet been assigned a saved position.
+    onHomeAppsChange(
+      visibleGridData.filter((app) => !app.packageName.startsWith("@empty")).map((app) => app.packageName),
+    )
+  }, [onHomeAppsChange, showAllApps, visibleGridData])
+
   // The remote icon URLs we need decoded before revealing the grid. Dummy
   // (@empty) slots, apps that render a React iconComponent, and non-remote
   // sources don't participate — they have nothing to fetch.
@@ -604,6 +618,8 @@ export function AppsGrid({
 
   const openApp = useCallback(
     async (app: ClientApp) => {
+      // An updating miniapp explains itself instead of opening or queueing a launch.
+      if (blockUpdatingMiniapp(app.packageName)) return
       if (app.compatibility?.isCompatible === false) {
         await showCompatibilityAlert(app)
         return
@@ -737,15 +753,17 @@ export function AppsGrid({
             }
           },
         },
-        showAllApps && {
-          label: translate("appInfo:addToHome"),
-          icon: "plus",
-          onPress: () => {
-            if (liveSelectedApp) {
-              placeAppOnHome(liveSelectedApp)
-            }
+        showAllApps &&
+          liveSelectedApp &&
+          !homePackageNames.includes(liveSelectedApp.packageName) && {
+            label: translate("appInfo:addToHome"),
+            icon: "plus",
+            onPress: () => {
+              if (liveSelectedApp) {
+                placeAppOnHome(liveSelectedApp)
+              }
+            },
           },
-        },
         !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
           label: translate("appInfo:uninstall"),
           icon: "trash",
@@ -757,12 +775,13 @@ export function AppsGrid({
           },
         },
       ].filter(Boolean) as PopoverAction[],
-    [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push],
+    [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push, homePackageNames],
   )
 
   const handlePress = useCallback(
     async (app: ClientApp) => {
       if (app.packageName.includes("@empty")) return // ignore dummy apps
+      if (blockUpdatingMiniapp(app.packageName)) return
       if (await showCompatibilityAlert(app)) return
 
       // Check permissions before foregrounding the overlay.
@@ -874,7 +893,8 @@ export function AppsGrid({
             itemRefs.current[item.packageName] = ref
           }}
           accessibilityRole="button"
-          accessibilityLabel={item.name}
+          accessibilityLabel={item.updating ? translate("home:miniappUpdatingLabel", {app: item.name}) : item.name}
+          accessibilityState={{busy: Boolean(item.updating)}}
           testID={`${showAllApps ? "allApps" : "home"}.miniapp.${item.packageName}`}
           onAccessibilityTap={() => {
             void handlePress(item)
@@ -909,10 +929,11 @@ export function AppsGrid({
                 textShadowOffset: {width: 0, height: 0},
                 textShadowRadius: 30,
               }}
-              numberOfLines={2}
+              numberOfLines={item.updating ? 1 : 2}
               ellipsizeMode="tail"
               text={item.name}
             />
+            {item.updating && <Text className="text-muted-foreground text-[10px]" tx="home:miniappUpdating" />}
           </View>
         </Pressable>
       )

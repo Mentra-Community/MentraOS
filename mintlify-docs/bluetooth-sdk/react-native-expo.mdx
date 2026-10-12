@@ -101,7 +101,9 @@ Configure permissions in the same root Expo app config. If your app already has 
 
 ## Background Operation On iOS
 
-If your React Native app needs BLE to keep running while the phone is locked or the app is backgrounded, add `bluetooth-central` to `ios.infoPlist.UIBackgroundModes`. If the app also keeps microphone capture or an audio session active in the background, add `audio` too:
+The SDK config plugin adds `bluetooth-central` to `UIBackgroundModes` during prebuild, merging it with any modes your app already declares. You do not need to add it yourself. It lets iOS keep delivering BLE events and reconnect to the glasses while the phone is locked, including when the glasses restart their Bluetooth chip during a software update.
+
+If the app also keeps microphone capture or an audio session active in the background, add `audio` yourself:
 
 ```json
 {
@@ -109,7 +111,6 @@ If your React Native app needs BLE to keep running while the phone is locked or 
     "ios": {
       "infoPlist": {
         "UIBackgroundModes": [
-          "bluetooth-central",
           "audio"
         ],
         "NSBluetoothAlwaysUsageDescription": "This app connects to your smart glasses over Bluetooth.",

@@ -12,6 +12,7 @@ import {
   publishR2Artifact,
   readArtifactIndex,
   readPublicIndex,
+  releaseBodyUpdate,
   releaseDownloadBody,
   resolveArtifactUrl,
   sha256File,
@@ -98,6 +99,7 @@ async function fixture(t) {
     store,
     updateRelease: false,
     log() {},
+    phaseLog() {},
     verify: async () => {},
     wait: async () => {},
   }
@@ -236,6 +238,74 @@ test("an upload-completion response lost after commit reconciles and publishes v
       .length,
     1,
   )
+})
+
+test("publication identifies pending verification before any index commit", async (t) => {
+  const options = await fixture(t)
+  const messages = []
+  options.phaseLog = (message) => messages.push(message)
+  let finishVerification
+  let enteredVerification
+  const entered = new Promise((resolve) => {
+    enteredVerification = resolve
+  })
+  options.verify = () => {
+    enteredVerification()
+    return new Promise((resolve) => {
+      finishVerification = resolve
+    })
+  }
+  const publication = publishR2Artifact(options)
+  await entered
+  assert.match(messages.at(-1), /verify public bytes attempt 1: started$/)
+  assert.equal(await options.store.read(`${repository}/releases/${release.tag_name}/_assets.json`), null)
+  finishVerification()
+  await publication
+  assert.ok(messages.some((message) => /verify public bytes attempt 1: completed$/.test(message)))
+  assert.ok(messages.some((message) => /commit index: completed$/.test(message)))
+  assert.match(messages.at(-1), /write download page: completed$/)
+})
+
+test("publication logs the failing phase without logging or replacing its error", async (t) => {
+  const options = await fixture(t)
+  const messages = []
+  options.phaseLog = (message) => messages.push(message)
+  const error = new Error("private request credentials")
+  options.store.read = async () => {
+    throw error
+  }
+  await assert.rejects(publishR2Artifact(options), (actual) => actual === error)
+  assert.match(messages.at(-1), /commit index: failed$/)
+  assert.ok(!messages.some((message) => message.includes(error.message)))
+  assert.ok(!messages.some((message) => /write download page/.test(message)))
+})
+
+test("recovery identifies public verification and reuses committed bytes without another upload", async (t) => {
+  const options = await fixture(t)
+  await publishR2Artifact(options)
+  options.store.values.delete(`${repository}/releases/${release.tag_name}/_assets.json`)
+  const messages = []
+  options.phaseLog = (message) => messages.push(message)
+  const recovered = await readArtifactIndex(repository, release.tag_name, options)
+  assert.equal(options.store.uploads, 1)
+  assert.equal(recovered.assets.length, 1)
+  assert.ok(messages.some((message) => /recovery verify public bytes file.apk: started$/.test(message)))
+  assert.ok(messages.some((message) => /recovery verify public bytes file.apk: completed$/.test(message)))
+  assert.ok(messages.some((message) => /recovery commit recovered index: completed$/.test(message)))
+})
+
+test("default recovery diagnostics use stderr and leave JSON stdout clean", async (t) => {
+  const options = await fixture(t)
+  await publishR2Artifact(options)
+  options.store.values.delete(`${repository}/releases/${release.tag_name}/_assets.json`)
+  delete options.phaseLog
+  const stderr = []
+  const stdout = []
+  t.mock.method(console, "error", (message) => stderr.push(message))
+  t.mock.method(console, "log", (message) => stdout.push(message))
+  await readArtifactIndex(repository, release.tag_name, options)
+  assert.ok(stderr.length > 0)
+  assert.deepEqual(stdout, [])
 })
 
 test("a retry verifies and reuses the existing object without uploading it again", async (t) => {
@@ -405,6 +475,14 @@ test("rolling PR artifacts can be replaced atomically and keep their mobile reus
   assert.equal(options.store.uploads, 2)
   assert.equal(result.label, `mobile-v1:${digest}:${result.digest.slice(7)}`)
   await assert.rejects(publishR2Artifact({...options, release}), /Replacement is only allowed/)
+})
+
+test("release body updates keep a draft's tag", () => {
+  assert.deepEqual(releaseBodyUpdate({draft: true}, "mentra-v3.2.1", "notes"), {
+    body: "notes",
+    tag_name: "mentra-v3.2.1",
+  })
+  assert.deepEqual(releaseBodyUpdate({draft: false}, "mentra-v3.2.1", "notes"), {body: "notes"})
 })
 
 test("release notes retain existing text and add one CDN download index link", () => {

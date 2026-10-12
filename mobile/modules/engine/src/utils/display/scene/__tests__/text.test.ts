@@ -1,4 +1,7 @@
 import {describe, expect, test} from "bun:test"
+import {TextMeasurer} from "../../measurer/TextMeasurer"
+import {TextWrapper} from "../../wrapper/TextWrapper"
+import {normalizeNimoDisplayText} from "../../normalization"
 import {processText, sourceLines} from "../text"
 import {processScene} from "../process"
 import {degradeTextScene} from "../degrade"
@@ -21,6 +24,46 @@ const caps: SceneDisplayCapabilities = {
 const box = {x: 0, y: 0, w: 500, h: 220}
 
 describe("render text selection", () => {
+  test("NIMO Latin fallback preserves other scripts, their marks and original syllable widths", () => {
+    const otherScripts = "ありがとう が パ カ\u3099 한국어 한\u302E Α\u0301 مُرَحَّبًا शि ❤️"
+    expect(normalizeNimoDisplayText(`${otherScripts} café—Æ\u0301`)).toBe(`${otherScripts} cafe-AE`)
+    for (const text of ["한".repeat(31), "が".repeat(31)]) {
+      const result = processText(text, {...box, h: 20}, {maxLines: 1}, NIMO_PROFILE)
+      expect(result.text).toBe(text)
+      expect(result.degraded).toBe(false)
+      expect(result.layout.lines).toEqual([{text, start: 0, end: 31}])
+    }
+  })
+  test("normalizes NIMO text before legacy and scene wrapping can truncate it", () => {
+    const text = "—".repeat(32)
+    const wrapper = new TextWrapper(new TextMeasurer(NIMO_PROFILE))
+    const wrapped = wrapper.wrap(text, {maxWidthPx: 500, maxLines: 1})
+    expect(wrapped.lines).toEqual(["-".repeat(32)])
+    expect(wrapped.truncated).toBe(false)
+    expect(wrapped.maxLineWidthPx).toBe(256)
+    expect(wrapped.originalText).toBe(text)
+    for (const style of [undefined, {maxLines: 1}]) {
+      const scene = processScene(
+        [{type: "text", id: "text", box: {...box, h: 20}, text, style}],
+        caps,
+        NIMO_PROFILE,
+        true,
+      )
+      expect(scene.elements[0].text).toBe("-".repeat(32))
+      expect(scene.degraded).toBe(false)
+      expect(scene.textLayout?.text.lines).toEqual([{text: "-".repeat(32), start: 0, end: 32}])
+    }
+  })
+  test("Latin expansions and removed accents retain original scene source offsets", () => {
+    const text = "Æé—\nCafe\u0301"
+    expect(sourceLines(text, 500, {}, NIMO_PROFILE)).toEqual([
+      {text: "AEe-", start: 0, end: 3},
+      {text: "Cafe", start: 4, end: 9},
+    ])
+    const tail = processText(text, box, {maxLines: 1, textWindow: "end"}, NIMO_PROFILE)
+    expect(tail.layout.lines).toEqual([{text: "Cafe", start: 4, end: 9}])
+    expect(processText("é—Æ", box, {maxLines: 1}, G2_PROFILE).text).toBe("é—Æ")
+  })
   test("feedback does not change legacy positioned text or box-height behavior", () => {
     const elements = [{type: "text" as const, id: "text", box: {...box, h: 10}, text: "one\ntwo"}]
     const without = processScene(elements, caps, G2_PROFILE)

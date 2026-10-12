@@ -2,7 +2,7 @@
  * @fileoverview Single HTTP byte ranges for private media responses.
  *
  * Shared by the test-run asset route (streamed from storage) and the incident
- * report artifact route (a bounded in-memory payload). Multipart ranges are
+ * report artifact route (also streamed from storage). Multipart ranges are
  * deliberately unsupported.
  */
 
@@ -32,13 +32,17 @@ export function parseSingleByteRange(header: string | null, size: number): ByteR
 }
 
 /**
- * Respond with an in-memory payload, honoring one Range (206, or 416 with
+ * Stream a stat-verified object, honoring one Range (206, or 416 with
  * `bytes *\/size`), If-Range against the strong `ETag` in `headers`, and HEAD.
- * Any other If-Range value serves the full payload. `headers` carries the
- * caller's content and security headers; lengths are always exact.
+ * HEAD and invalid ranges do not open a body. `headers` carries the caller's
+ * content and security headers; lengths are always exact.
  */
-export function bufferedRangeResponse(request: Request, bytes: Uint8Array, headers: Headers): Response {
-  const size = bytes.byteLength;
+export async function streamedRangeResponse(
+  request: Request,
+  size: number,
+  headers: Headers,
+  stream: (range?: ByteRange) => Promise<ReadableStream<Uint8Array> | Blob>,
+): Promise<Response> {
   const out = new Headers(headers);
   out.set("accept-ranges", "bytes");
   const ifRange = request.headers.get("if-range");
@@ -51,23 +55,14 @@ export function bufferedRangeResponse(request: Request, bytes: Uint8Array, heade
     out.set("content-range", `bytes */${size}`);
     return new Response(null, { status: 416, headers: out });
   }
-  const start = range?.start ?? 0;
   const length = range ? range.end - range.start + 1 : size;
   out.set("content-length", String(length));
   if (range) out.set("content-range", `bytes ${range.start}-${range.end}/${size}`);
-  return new Response(request.method === "HEAD" ? null : bodyView(bytes, start, length), { status: range ? 206 : 200, headers: out });
-}
-
-/**
- * The requested bytes as a view over a plain ArrayBuffer, which a Response
- * body accepts. A view over an ArrayBuffer is reused at its own offset
- * without copying; any other backing store (e.g. SharedArrayBuffer) is
- * copied into a new ArrayBuffer.
- */
-function bodyView(bytes: Uint8Array, start: number, length: number): Uint8Array<ArrayBuffer> {
-  const { buffer } = bytes;
-  if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer, bytes.byteOffset + start, length);
-  const copy = new Uint8Array(length);
-  copy.set(bytes.subarray(start, start + length));
-  return copy;
+  let body = request.method === "HEAD" ? null : await stream(range);
+  if (!range && request.headers.has("range") && body instanceof Blob) {
+    // Bun otherwise applies the original Range again to a full-file Blob,
+    // overriding the 200 required when If-Range did not match. Keep it lazy.
+    body = body.stream().pipeThrough(new TransformStream());
+  }
+  return new Response(body, { status: range ? 206 : 200, headers: out });
 }

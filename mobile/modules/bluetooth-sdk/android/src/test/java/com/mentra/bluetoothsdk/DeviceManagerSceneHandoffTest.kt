@@ -25,6 +25,110 @@ class DeviceManagerSceneHandoffTest {
     @Before fun setup() { Bridge.initialize(ApplicationProvider.getApplicationContext()) }
 
     @Test @LooperMode(LooperMode.Mode.PAUSED)
+    fun delayedReconnectReplayPreservesNimoDepthEndpoints() {
+        for (depth in listOf(0, 10)) {
+            withReadyRecordingDevice { manager, device, _ ->
+                DeviceStore.set("bluetooth", "dashboard_height", 7)
+                DeviceStore.set("bluetooth", "dashboard_depth", depth)
+                manager.handleDeviceReady()
+                assertTrue(device.positions.isEmpty())
+                Shadows.shadowOf(Looper.getMainLooper()).idleFor(2, TimeUnit.SECONDS)
+                assertEquals(listOf(7 to depth), device.positions)
+            }
+        }
+    }
+
+    @Test @LooperMode(LooperMode.Mode.PAUSED)
+    fun reconnectRestoresUnchangedAudioRequests() {
+        for (request in listOf("should_send_lc3", "should_send_pcm", "should_send_transcript", "local_stt_fallback_active")) {
+            withReadyRecordingDevice { manager, original, _ ->
+                for (key in listOf("should_send_lc3", "should_send_pcm", "should_send_transcript", "local_stt_fallback_active")) {
+                    DeviceStore.set("bluetooth", key, key == request)
+                }
+                DeviceStore.set("bluetooth", "micRanking", listOf("glasses"))
+                DeviceStore.set("glasses", "micEnabled", false)
+                original.hasMic = true
+                manager.setMicState()
+                assertEquals(true, DeviceStore.get("bluetooth", "micEnabled"))
+                assertEquals(true, DeviceStore.get("glasses", "micEnabled"))
+
+                repeat(3) {
+                    manager.disconnect()
+                    assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
+                    assertEquals(false, DeviceStore.get("glasses", "micEnabled"))
+                    assertEquals(true, DeviceStore.get("bluetooth", request))
+                    val replacement = NimoRecordingSGC().apply { hasMic = true }
+                    manager.sgc = replacement
+
+                    // No test reset of glasses.micEnabled: production teardown must
+                    // clear it. Replaying the same consumer request is deduplicated.
+                    DeviceStore.apply("bluetooth", request, true)
+                    assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
+                    DeviceStore.apply("glasses", "fullyBooted", true)
+
+                    assertEquals("Reconnect must restore $request", true, DeviceStore.get("bluetooth", "micEnabled"))
+                    assertEquals(listOf(true), replacement.micChanges)
+                    assertEquals("glasses", manager.activeMicSource())
+                }
+            }
+        }
+    }
+
+    @Test @LooperMode(LooperMode.Mode.PAUSED)
+    fun linkDisconnectRetainsIntentForTheSameCommunicator() {
+        withReadyRecordingDevice { manager, original, _ ->
+            original.hasMic = true
+            DeviceStore.set("bluetooth", "micRanking", listOf("glasses"))
+            DeviceStore.set("glasses", "micEnabled", false)
+            DeviceStore.set("bluetooth", "should_send_lc3", true)
+            manager.setMicState()
+            assertEquals(listOf(true), original.micChanges)
+            DeviceStore.set("glasses", "fullyBooted", true)
+            DeviceStore.apply("glasses", "fullyBooted", false)
+            assertSame(original, manager.sgc)
+            assertEquals(true, DeviceStore.get("bluetooth", "should_send_lc3"))
+            assertEquals(true, DeviceStore.get("glasses", "micEnabled"))
+        }
+    }
+
+    @Test @LooperMode(LooperMode.Mode.PAUSED)
+    fun discardingCommunicatorInvalidatesMicCache() {
+        withReadyRecordingDevice { manager, original, _ ->
+            original.hasMic = true
+            DeviceStore.set("bluetooth", "micRanking", listOf("glasses"))
+            DeviceStore.set("glasses", "micEnabled", false)
+            DeviceStore.set("bluetooth", "should_send_lc3", true)
+            manager.setMicState()
+            manager.initSGC(original.type)
+            assertEquals(true, DeviceStore.get("glasses", "micEnabled"))
+
+            // An unsupported model exercises disposal without starting real BLE.
+            manager.initSGC("Unavailable test glasses")
+            assertNull(manager.sgc)
+            assertEquals(false, DeviceStore.get("glasses", "micEnabled"))
+            assertEquals(true, DeviceStore.get("bluetooth", "should_send_lc3"))
+        }
+    }
+
+    @Test @LooperMode(LooperMode.Mode.PAUSED)
+    fun reconnectWithoutAudioRequestsLeavesMicrophoneOff() {
+        withReadyRecordingDevice { manager, _, _ ->
+            for (key in listOf("should_send_lc3", "should_send_pcm", "should_send_transcript", "local_stt_fallback_active")) {
+                DeviceStore.set("bluetooth", key, false)
+            }
+            DeviceStore.set("glasses", "micEnabled", true)
+            manager.disconnect()
+            assertEquals(false, DeviceStore.get("glasses", "micEnabled"))
+            val replacement = NimoRecordingSGC().apply { hasMic = true }
+            manager.sgc = replacement
+            DeviceStore.apply("glasses", "fullyBooted", true)
+            assertEquals(false, DeviceStore.get("bluetooth", "micEnabled"))
+            assertEquals("", manager.activeMicSource())
+            assertTrue(replacement.micChanges.isEmpty())
+        }
+    }
+
+    @Test @LooperMode(LooperMode.Mode.PAUSED)
     fun nimoBrightnessChangesDoNotReplaceTheSelectedScene() {
         for (headUp in listOf(false, true)) for ((key, value) in brightnessChanges()) {
             withSharedRecordingDevice { manager, device ->
@@ -499,8 +603,10 @@ class DeviceManagerSceneHandoffTest {
     }
 
     private open class RecordingSGC(override val sceneHandoffRequiresClear: Boolean) : SGCManager() {
+        val micChanges = mutableListOf<Boolean>()
         val calls = CopyOnWriteArrayList<String>()
         val brightnessCalls = mutableListOf<String>()
+        val positions = mutableListOf<Pair<Int, Int>>()
         val textSent = CountDownLatch(1)
         var lastTextNanos = 0L
         var lastClearNanos = 0L
@@ -511,7 +617,10 @@ class DeviceManagerSceneHandoffTest {
         override fun sendTextWall(text: String) { lastTextNanos = System.nanoTime(); calls += "text:$text"; textSent.countDown() }
         override fun disconnect() { calls += "disconnect" }
         override fun cleanup() { calls += "cleanup" }
-        override fun setMicEnabled(enabled: Boolean) {}
+        override fun setMicEnabled(enabled: Boolean) {
+            micChanges += enabled
+            DeviceStore.set("glasses", "micEnabled", enabled)
+        }
         override fun sortMicRanking(list: MutableList<String>) = list
         override fun requestPhoto(request: PhotoRequest) {}
         override fun startStream(message: MutableMap<String, Any>) {}
@@ -528,7 +637,7 @@ class DeviceManagerSceneHandoffTest {
         override fun sendDoubleTextWall(top: String, bottom: String) {}
         override fun displayBitmap(base64ImageData: String, x: Int?, y: Int?, width: Int?, height: Int?) = true
         override fun showDashboard() {}
-        override fun setDashboardPosition(height: Int, depth: Int) {}
+        override fun setDashboardPosition(height: Int, depth: Int) { positions += height to depth }
         override fun setHeadUpAngle(angle: Int) {}
         override fun getBatteryStatus() {}
         override fun setSilentMode(enabled: Boolean) {}

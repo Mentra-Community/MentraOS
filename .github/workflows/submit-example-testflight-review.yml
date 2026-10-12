@@ -27,7 +27,7 @@ env:
 jobs:
   submit:
     name: Submit exact example build for external review
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4

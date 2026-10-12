@@ -20,6 +20,7 @@ export const evenRealitiesG1: Capabilities = {
   // Display capabilities - G1 has a green monochrome display
   hasDisplay: true,
   display: {
+    position: {depth: {min: 1, max: 3}, height: {min: 1, max: 8}},
     count: 2,
     isColor: false,
     color: "green",
@@ -47,7 +48,7 @@ export const evenRealitiesG1: Capabilities = {
 
   // IMU capabilities - G1 has IMU for head-up/down detection but raw data not exposed to apps
   hasIMU: true,
-  imu: null,
+  imu: {headUpAngle: {min: 0, max: 60}},
 
   // Button capabilities - G1 does not have buttons
   hasButton: false,

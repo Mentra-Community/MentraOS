@@ -16,3 +16,4 @@ export * from "./audio";
 export * from "./languages";
 export * from "./camera";
 export * from "./maps";
+export * from "./report-automation";

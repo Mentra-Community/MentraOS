@@ -1,18 +1,28 @@
+import {LoadingIndicator} from "./components/loading-indicator";
+import {TestRunsTabs} from "./pages/test-runs-tabs";
+import {TestRerunPage, readRerunId} from "./pages/test-reruns";
+import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
 import { api, ApiError } from "./lib/api";
+import { loginHref, signOutOfAdminPortal } from "./lib/session";
+import { SignedOutScreen } from "./components/signed-out";
 import {
-  readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
+  hasInvalidTestRunListScope, readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
-import { TestRunsPage } from "./pages/test-runs";
+import { RoutineCatalogPage, FrameworkRunsPage, FrameworkRunPage } from "./pages/routine-catalog";
+import { SystemHealthPage, SystemHealthSummary } from "./pages/system-health";
+import {readLaneSelection} from "./lib/lane-links";
+import {readSystemHealthTab, systemHealthLocation, type SystemHealthTab} from "./lib/system-health-links";
+import { RecordingVideo } from "./components/recording-video";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs";
+type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "routine-catalog" | "system-health";
 type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
 
 interface AdminUser {
@@ -90,13 +100,15 @@ interface ReportSummary {
   } | null;
   report: ({ actualBehavior?: string; expectedBehavior?: string; userSeverity?: number; contactEmail?: string } & Record<string, unknown>) | null;
   feedback: Record<string, unknown> | null;
-  artifacts: ReportArtifact[];
+  artifactCount: number;
   createdAt: string | null;
   updatedAt: string | null;
 }
 
 interface ReportDetailResponse {
-  report: ReportSummary & { context: Record<string, unknown> };
+  report: Omit<ReportSummary, "artifactCount"> & { artifacts: ReportArtifact[]; context: Record<string, unknown>; logCollection?: Record<string, {
+    state: 'requested' | 'received' | 'failed' | 'unavailable' | 'timed-out'; reason?: string; entryCount?: number;
+  }> };
   assets: Array<{
     artifactId: string;
     fileName: string | null;
@@ -130,6 +142,8 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "audit", label: "Audit log", icon: History },
   { key: "incidents", label: "Incident system", icon: Bug },
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
+  { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
+  { key: "system-health", label: "System health", icon: ShieldCheck },
 ];
 
 /**
@@ -160,31 +174,40 @@ export function App() {
 // out the param must stay in the address bar so LoginGate's return_to brings
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
+const initialTestRunsPage = new URLSearchParams(window.location.search).get("testRuns") === "1";
+const initialRerunId = readRerunId(window.location.search);
+const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
 const initialTestRunListScope = readTestRunListScope(window.location.search);
+const initialSystemHealth = new URLSearchParams(window.location.search).get("systemHealth") === "1";
+const initialHealthTab = readSystemHealthTab(window.location.search);
+const initialRoutineCatalog = new URLSearchParams(window.location.search).get("routineCatalog") === "1";
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
   const [page, setPage] = useState<AdminPageKey>(
-    initialTestRunLink || initialTestRunListScope ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home",
+    initialSystemHealth ? "system-health" : initialRerunId || initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
   );
+  const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
+  const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
+  const [healthTab, setHealthTab] = useState(initialHealthTab);
+  const [laneSelection, setLaneSelection] = useState(() => readLaneSelection(window.location.search));
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
   const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
+  const [invalidTestRunListScope, setInvalidTestRunListScope] = useState(() => hasInvalidTestRunListScope(window.location.search));
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [signedOut, setSignedOut] = useState<{ signOutUrl: string | null } | null>(null);
 
   async function signOut() {
     setSigningOut(true);
-    try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; reload still drops us at the login gate
-    }
-    window.location.reload();
+    const result = await signOutOfAdminPortal();
+    qc.clear();
+    setSignedOut(result);
   }
 
   const me = useQuery({
@@ -206,45 +229,64 @@ function AdminPage() {
   }, [me.isSuccess]);
   useEffect(() => {
     const restore = () => {
+      const search = new URLSearchParams(window.location.search);
+      setHealthTab(readSystemHealthTab(window.location.search));
+      setLaneSelection(readLaneSelection(window.location.search));
+      if (search.get("systemHealth") === "1") { setPage("system-health"); return; }
+      const rerun = readRerunId(window.location.search);
+      setRerunId(rerun);
+      const suite = readSuiteId(window.location.search);
+      setSuiteId(suite);
       const selection = readTestRunLink(window.location.search);
       const scope = readTestRunListScope(window.location.search);
       setTestRunLink(selection);
       setTestRunListScope(scope);
-      if (selection || scope) setPage("test-runs");
+      setInvalidTestRunListScope(hasInvalidTestRunListScope(window.location.search));
+      if (rerun || suite || selection || scope || new URLSearchParams(window.location.search).get("testRuns") === "1") setPage("test-runs");
+      else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
   }, []);
 
+  function selectHealthTab(tab: SystemHealthTab) {
+    setHealthTab(tab);
+    setLaneSelection(null);
+    window.history.pushState(null, "", systemHealthLocation(window.location.href, tab));
+  }
+
   function selectTestRun(selection: TestRunLink | null, replace = false) {
+    setRerunId(null);
+    setSuiteId(null);
     setTestRunLink(selection);
     window.history[replace ? "replaceState" : "pushState"](null, "", testRunLocation(window.location.href, selection));
   }
 
   function clearTestRunListScope() {
     setTestRunListScope(null);
+    setInvalidTestRunListScope(false);
     window.history.replaceState(null, "", testRunListLocation(window.location.href, null));
   }
 
   const submissions = useQuery({
     queryKey: ["admin-submissions"],
     queryFn: () => api<{ submissions: ReleaseSummary[] }>("/api/admin/submissions"),
-    enabled: me.isSuccess,
+    enabled: me.isSuccess && (["home", "review"].includes(page) || detailReleaseId !== null),
   });
   const registries = useQuery({
     queryKey: ["admin-registries"],
     queryFn: () => api<{ registries: Registry[] }>("/api/admin/preinstalled/registries"),
-    enabled: me.isSuccess,
+    enabled: me.isSuccess && ["home", "preinstalled"].includes(page),
   });
   const releases = useQuery({
     queryKey: ["admin-releases"],
     queryFn: () => api<{ releases: ReleaseSummary[] }>("/api/admin/preinstalled/releases"),
-    enabled: me.isSuccess,
+    enabled: me.isSuccess && (page === "preinstalled" || detailReleaseId !== null),
   });
   const audit = useQuery({
     queryKey: ["admin-audit"],
     queryFn: () => api<{ events: AuditEvent[] }>("/api/admin/audit-log"),
-    enabled: me.isSuccess,
+    enabled: me.isSuccess && ["home", "audit"].includes(page),
   });
   const activeRegistry = useMemo(
     () => registries.data?.registries.find(registry => registry.environment === env && registry.name === "default"),
@@ -253,7 +295,7 @@ function AdminPage() {
   const revisions = useQuery({
     queryKey: ["admin-revisions", activeRegistry?.id],
     queryFn: () => api<{ revisions: RegistryRevision[] }>(`/api/admin/preinstalled/registries/${activeRegistry?.id}/revisions`),
-    enabled: Boolean(activeRegistry?.id),
+    enabled: me.isSuccess && ["home", "preinstalled"].includes(page) && Boolean(activeRegistry?.id),
   });
 
   // Review decisions carry the reviewer's typed notes. "Request changes" is a
@@ -340,13 +382,22 @@ function AdminPage() {
     audit: { title: "Audit log", body: "Every admin mutation: who approved, rejected, published, or promoted something." },
     incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
+    "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
+    "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
   };
 
+  if (signedOut) return <SignedOutScreen signOutUrl={signedOut.signOutUrl} />;
   if (me.isLoading) return <Splash label="Checking admin session" />;
   if (me.isError) {
-    // A 403 means the Mentra login itself worked but the account isn't on the
-    // admin allowlist; offering the login button again would be misleading.
-    return <LoginGate denied={me.error instanceof ApiError && me.error.status === 403} />;
+    // A 403 means the sign-in itself worked but the account isn't an
+    // Organization Admin; offering the sign-in button again would be misleading.
+    return (
+      <LoginGate
+        denied={me.error instanceof ApiError && me.error.status === 403}
+        onSignOut={signOut}
+        signingOut={signingOut}
+      />
+    );
   }
 
   return (
@@ -358,13 +409,20 @@ function AdminPage() {
       activeKey={page}
       onSelect={key => {
         setPage(key as AdminPageKey);
+        setHealthTab("lanes");
+        const location = new URL(window.location.href);
+        for (const param of ["systemHealth", "healthTab", "restoration", "hostId", "laneId", "routineCatalog", "routine", "platform", "frameworkRun", "testSuite"]) location.searchParams.delete(param);
+        window.history.replaceState(null, "", location.pathname + location.search);
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
         setDeepLinkReportId(null);
-        if (key !== "test-runs") {
-          selectTestRun(null, true);
-          clearTestRunListScope();
-        }
+        selectTestRun(null, true);
+        clearTestRunListScope();
+        if (key === "test-runs") window.history.replaceState(null, "", "/?testRuns=1");
+        setLaneSelection(null);
+        if (key === "system-health") window.history.replaceState(null, "", "/?systemHealth=1");
+        setSuiteId(null);
+        if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
       }}
       title={pageMeta[page].title}
       description={pageMeta[page].body}
@@ -422,11 +480,28 @@ function AdminPage() {
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
-      {page === "test-runs" ? (
-        <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
-          scope={testRunListScope} onClearScope={clearTestRunListScope} />
+      <div className={["test-runs", "routine-catalog", "system-health"].includes(page) ? "testing-workspace" : undefined}>
+      {page === "test-runs" ? <SystemHealthSummary /> : null}
+      {page === "system-health" ? <SystemHealthPage tab={healthTab} lane={laneSelection} onTabChange={selectHealthTab} /> : null}
+      {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
+      {page === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
+      {page === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
+      {page === "test-runs" && !rerunId && !suiteId ? (
+        testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <TestRunsTabs>
+          {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
+            <h2 className="font-semibold">Results for the selected build</h2>
+            <p className="mt-2">{testRunListScope.repository} · {testRunListScope.channel} · <code>{testRunListScope.headSha}</code> · {testRunListScope.routineId} · {testRunListScope.platform}</p>
+            <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
+          </section>}
+          {invalidTestRunListScope ? <section role="alert" className="rounded-2xl border border-[#e0e4de] bg-white p-5">
+            <h2 className="font-semibold">This test-results filter is unavailable</h2>
+            <p className="mt-2">The link has missing or unsupported build details. Open a current result link, or choose all test runs.</p>
+            <button className="mt-3 underline" onClick={() => {clearTestRunListScope(); window.history.replaceState(null, "", "/?testRuns=1");}}>Show all test runs</button>
+          </section> : <FrameworkRunsPage scope={testRunListScope ? Object.fromEntries(Object.entries(testRunListScope).map(([key, value]) => [key === "pr" ? "prNumber" : key, value])) : undefined} />}
+        </TestRunsTabs>
       ) : null}
 
+      </div>
       {detailRelease ? (
         <SubmissionDetail
           release={detailRelease}
@@ -888,15 +963,15 @@ function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boo
 }
 
 function ReportsPage({ initialReportId = null }: { initialReportId?: string | null }) {
-  const [kind, setKind] = useState<"all" | ReportKind>("all");
+  const [category, setCategory] = useState<"all" | ReportKind | "internal" | "testing">("bug");
   const [status, setStatus] = useState<"all" | ReportStatus>("all");
   const [detailId, setDetailId] = useState<string | null>(initialReportId);
 
   const reports = useQuery({
-    queryKey: ["admin-reports", kind, status],
+    queryKey: ["admin-reports", category, status],
     queryFn: () => {
       const params = new URLSearchParams();
-      if (kind !== "all") params.set("kind", kind);
+      if (category !== "all") params.set("category", category);
       if (status !== "all") params.set("status", status);
       const qs = params.toString();
       return api<{ reports: ReportSummary[] }>(`/api/admin/reports${qs ? `?${qs}` : ""}`);
@@ -911,14 +986,14 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
           <div>
             <h2 className="text-xl font-bold">User reports</h2>
             <p className="mt-1 text-sm text-[#68746d]">
-              Everything filed through the Mentra App reporting flow — open a report for its context, screenshots, and logs.
+              Internal contains bugs and feedback from admin accounts. Testing contains harness reports; other automatic reports stay in Automatic.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <FilterPills
-              value={kind}
-              onChange={setKind}
-              options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["automatic", "Automatic"]]}
+              value={category}
+              onChange={setCategory}
+              options={[["all", "All kinds"], ["bug", "Bug"], ["feedback", "Feedback"], ["internal", "Internal"], ["testing", "Testing"], ["automatic", "Automatic"]]}
             />
             <FilterPills
               value={status}
@@ -942,7 +1017,7 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
         ) : reports.isError ? (
           <div className="p-5"><ErrorText error={reports.error} /></div>
         ) : rows.length === 0 ? (
-          <EmptyState title="No reports" body="Bug reports and feedback submitted from the Mentra App will appear here." />
+          <EmptyState title="No reports" body={category === "internal" ? "Bugs and feedback submitted by admin accounts will appear here." : category === "testing" ? "Reports submitted by the automated testing harness will appear here." : "Reports matching these filters will appear here."} />
         ) : (
           <div className="divide-y divide-[#eceeeb]">
             {rows.map(report => (
@@ -955,9 +1030,9 @@ function ReportsPage({ initialReportId = null }: { initialReportId?: string | nu
                   <div className="flex flex-wrap items-center gap-2">
                     <ReportKindTag kind={report.kind} />
                     <ReportStatusTag status={report.status} />
-                    {report.artifacts.length > 0 ? (
+                    {report.artifactCount > 0 ? (
                       <span className="rounded-full bg-[#f0f2ef] px-2.5 py-0.5 text-xs font-semibold text-[#4f5d54]">
-                        {report.artifacts.length} artifact{report.artifacts.length === 1 ? "" : "s"}
+                        {report.artifactCount} artifact{report.artifactCount === 1 ? "" : "s"}
                       </span>
                     ) : null}
                   </div>
@@ -991,12 +1066,12 @@ function FilterPills<T extends string>(props: {
   options: ReadonlyArray<readonly [T, string]>;
 }) {
   return (
-    <div className="flex h-9 items-center gap-1 rounded-full border border-[#e0e4de] bg-[#f7f8f6] p-1">
+    <div className="flex min-h-9 flex-wrap items-center gap-1 rounded-[18px] border border-[#e0e4de] bg-[#f7f8f6] p-1">
       {props.options.map(([value, label]) => (
         <button
           key={value}
           onClick={() => props.onChange(value)}
-          className={`h-7 rounded-full px-3 text-xs font-semibold ${
+          className={`h-7 whitespace-nowrap rounded-full px-3 text-xs font-semibold ${
             props.value === value ? "bg-white text-[#14151b] shadow-sm" : "text-[#68746d] hover:text-[#14151b]"
           }`}
         >
@@ -1032,6 +1107,22 @@ function ReportDetailDrawer(props: { reportId: string; onClose: () => void }) {
           {detail.isError ? <ErrorText error={detail.error} /> : null}
           {report ? (
             <>
+              {report.logCollection ? (
+                <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
+                  <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Log collection</div>
+                  <table className="mt-3 w-full text-left text-sm">
+                    <thead><tr className="text-[#68746d]"><th className="py-2 font-medium">Source</th><th className="py-2 font-medium">Status</th><th className="py-2 font-medium">Details</th></tr></thead>
+                    <tbody>{Object.entries(report.logCollection).map(([source, result]) => (
+                      <tr key={source} className="border-t border-[#e0e4de]">
+                        <td className="py-2">{source.replaceAll('_', ' ')}</td>
+                        <td className={`py-2 ${result.state === 'received' ? 'text-green-700' : result.state === 'requested' ? 'text-[#68746d]' : 'text-amber-700'}`}>{result.state}</td>
+                        <td className="py-2 text-[#68746d]">{result.state === 'received' ? `${result.entryCount ?? 0} entries` : result.reason ?? 'Waiting for upload'}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              ) : null}
+
               <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
                 <div className="flex flex-wrap items-center gap-2">
                   <ReportKindTag kind={report.kind} />
@@ -1137,12 +1228,9 @@ export function ReportArtifactView({ reportId, artifact }: { reportId: string; a
     return (
       <div className="rounded-[14px] bg-[#f5f7f4] p-3">
         {header}
-        <video
+        <RecordingVideo
           src={url}
-          controls
-          playsInline
-          preload="metadata"
-          className="mt-2 max-h-96 w-full rounded-[10px] border border-[#e0e4de] bg-black"
+          className="mt-2 border border-[#e0e4de]"
         />
         <a className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-[#087d50]" href={url} download>
           <FileText className="size-4" /> Download payload
@@ -1219,7 +1307,7 @@ function ReportStatusTag({ status }: { status: ReportStatus }) {
   return <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-[0.08em] ${tone[status]}`}>{status}</span>;
 }
 
-function reportSummaryText(report: ReportSummary): string {
+function reportSummaryText(report: Pick<ReportSummary, "report" | "feedback" | "trigger">): string {
   if (report.report?.actualBehavior) return String(report.report.actualBehavior);
   if (report.feedback) {
     if (typeof report.feedback.message === "string" && report.feedback.message) return report.feedback.message;
@@ -1303,19 +1391,10 @@ function formatDate(value: string | null | undefined): string {
   return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-function LoginGate({ denied = false }: { denied?: boolean }) {
-  // The full URL preserves report and testRun/step deep links through the
-  // login round-trip; safeReturnTo on Core validates the origin either way.
-  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
-
-  async function signOutAndReload() {
-    try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; the reload lands back on this gate either way
-    }
-    window.location.reload();
-  }
+export function LoginGate({ denied = false, onSignOut, signingOut = false }: { denied?: boolean; onSignOut?: () => void; signingOut?: boolean }) {
+  // The relative path and query preserve report and testRun/step deep links
+  // through the sign-in round trip; Core accepts only a relative return_to.
+  const loginUrl = loginHref();
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8f6_100%)] px-5 py-10 text-[#14141a]">
@@ -1342,7 +1421,7 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
             <div className="h-2.5" />
             <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
               {denied
-                ? "You're signed in, but this account isn't on the admin allowlist. Switch accounts, or ask for your email to be added to the Core admin allowlist."
+                ? "You're signed in, but this account isn't an admin. Admin access needs a verified email on the Core admin allowlist. Switch accounts, or ask for your email to be added."
                 : "Review miniapp releases, publish preinstalled registries, and manage internal operations."}
             </p>
 
@@ -1351,7 +1430,8 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
               <button
                 type="button"
                 className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
-                onClick={signOutAndReload}
+                onClick={onSignOut}
+                disabled={signingOut}
               >
                 Sign out and switch account
               </button>
@@ -1360,7 +1440,7 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
                 className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
                 href={loginUrl}
               >
-                Continue with Mentra login
+                Sign in
               </a>
             )}
 
@@ -1379,20 +1459,14 @@ function Splash(props: { label: string }) {
   return (
     <main className="grid min-h-screen place-items-center bg-[#f5f7f4]">
       <div className="flex items-center gap-3 rounded-full bg-white px-5 py-3 shadow-sm ring-1 ring-black/10">
-        <Loader2 className="size-5 animate-spin text-[#038755]" />
-        <span>{props.label}</span>
+        <LoadingIndicator inline label={props.label} />
       </div>
     </main>
   );
 }
 
 function InlineLoading(props: { label: string }) {
-  return (
-    <div className="flex items-center gap-3 rounded-[18px] bg-[#f5f7f4] px-5 py-4 text-[#68746d]">
-      <Loader2 className="size-5 animate-spin" />
-      {props.label}
-    </div>
-  );
+  return <LoadingIndicator label={props.label} />;
 }
 
 function ErrorText({ error }: { error: unknown }) {

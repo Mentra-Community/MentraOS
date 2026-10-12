@@ -27,10 +27,12 @@
     "build:console": "bun --cwd websites/console build",
     "build:admin": "bun --cwd websites/admin build",
     "build:portal": "bun --cwd websites/portal build",
+    "build:account": "bun --cwd websites/account build",
     "deploy:pages": "bun scripts/deploy-pages.ts",
     "typecheck:console": "bun --cwd websites/console typecheck",
     "typecheck:admin": "bun --cwd websites/admin typecheck",
     "typecheck:portal": "bun --cwd websites/portal typecheck",
+    "typecheck:account": "bun --cwd websites/account typecheck",
     "fault:e2e": "bun scripts/audio-fault-e2e.ts",
     "typecheck": "tsc -b",
     "test": "bun test"
@@ -39,5 +41,8 @@
     "@types/bun": "latest",
     "jose": "^5.9.6",
     "typescript": "^5.7.0"
+  },
+  "patchedDependencies": {
+    "@soniox/node@2.3.0": "patches/@soniox%2Fnode@2.3.0.patch"
   }
 }

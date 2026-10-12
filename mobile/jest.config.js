@@ -15,6 +15,7 @@ module.exports = {
     "^@mentra/engine-host-internal$": "<rootDir>/modules/engine-host-internal/src/index.ts",
     "^@mentra/engine-host-internal/devtools$": "<rootDir>/modules/engine-host-internal/src/devtools.ts",
     "^@mentra/engine/ota$": "<rootDir>/modules/engine/src/react/index.ts",
+    "^@mentra/cloud-protocol/(.*)$": "<rootDir>/../cloud-v2/packages/protocol/src/$1.ts",
     "^expo/virtual/env$": "<rootDir>/src/test-utils/expoVirtualEnvMock.ts",
     "^react-native$": "<rootDir>/node_modules/react-native",
     "^crust$": "<rootDir>/modules/crust/src",

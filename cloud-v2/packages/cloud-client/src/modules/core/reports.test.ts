@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { HttpClient } from "../../http";
 import { Reports, type SubmitReportInput } from "./reports";
+import { Core } from "./core";
 
 const bugReportInput: SubmitReportInput = {
   kind: "bug",
@@ -45,6 +46,35 @@ function fakeHttp(calls: Array<{ method: string; path: string; body?: unknown }>
 }
 
 describe("Core reports client", () => {
+  test("passes the exact typed automation correlation through the existing submission route", async () => {
+    const calls: Array<{method: string; path: string; body?: unknown}> = [];
+    const input: SubmitReportInput = {kind: "automatic", trigger: {type: "automatic", source: "mentra_automated_testing",
+      reason: "incident_report_requested"}, report: {actualBehavior: "Original failure"}, context: {},
+      automationCorrelation: {alertId: "exact-alert", testRunId: "exact-run"}};
+    await new Reports({http: fakeHttp(calls)}).submit(input);
+    expect(calls).toEqual([{method: "POST", path: "/api/client/reports", body: input}]);
+  });
+  test("reads source receipts through the bound Core API with caller cancellation", async () => {
+    const signal = new AbortController().signal;
+    const calls: unknown[] = [];
+    const receipt = {state: "received" as const, requestedAt: "2026-10-09T00:00:00Z", deadlineAt: "2026-10-09T00:04:00Z", artifactId: "art_phone", entryCount: 0};
+    const http = {...fakeHttp([]), get: async <T>(path: string, opts?: unknown): Promise<T> => {
+      calls.push({path, opts});
+      return {reportId: "rep_/123", logCollection: {phone: {...receipt, context: "private"}, unrelated: {token: "private"}}, context: "private"} as T;
+    }};
+    const core = new Core({http});
+    await expect(core.reports.getLogCollection("rep_/123", signal)).resolves.toEqual({reportId: "rep_/123", logCollection: {phone: receipt}});
+    expect(calls).toEqual([{path: "/api/client/reports/rep_%2F123/log-collection", opts: {signal}}]);
+  });
+
+  test("rejects malformed source receipts and another report's response", async () => {
+    for (const snapshot of [null, {reportId: "other", logCollection: {}}, {reportId: "rep_test", logCollection: []},
+      {reportId: "rep_test", logCollection: {phone: {state: "ready"}}}]) {
+      const http = {...fakeHttp([]), get: async <T>(): Promise<T> => snapshot as T};
+      await expect(new Reports({http}).getLogCollection("rep_test")).rejects.toThrow("Invalid report collection");
+    }
+  });
+
   test("submits bug reports through the Cloud V2 reports route", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const reports = new Reports({ http: fakeHttp(calls) });
@@ -99,6 +129,24 @@ describe("Core reports client", () => {
           source: "phone",
           entries: [{ timestamp: 1, level: "info", message: "hello" }],
         },
+      },
+    ]);
+  });
+
+  test("records a source collection attempt without claiming artifact receipt", async () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const reports = new Reports({ http: fakeHttp(calls) });
+
+    await reports.updateLogCollection("rep_/123", "glasses_firmware", {
+      state: "unavailable",
+      reason: "glasses_disconnected",
+    });
+
+    expect(calls).toEqual([
+      {
+        method: "POST",
+        path: "/api/client/reports/rep_%2F123/log-collection/glasses_firmware",
+        body: { state: "unavailable", reason: "glasses_disconnected" },
       },
     ]);
   });

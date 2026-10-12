@@ -9,7 +9,7 @@
  *
  * All routes sit behind the core adminAuth gate; requests authenticate with
  * "Authorization: Bearer <MENTRA_ADMIN_TOKEN>" (org msk_ API key allowlisted
- * via CLOUD_CORE_ADMIN_EMAILS, or a WorkOS admin access token).
+ * via CLOUD_CORE_ADMIN_EMAILS).
  */
 
 import type { ConsoleMcpConfig } from "../config";
@@ -37,12 +37,13 @@ export interface ReportSummary {
   trigger: Record<string, unknown> | null;
   report: Record<string, unknown> | null;
   feedback: unknown;
-  artifacts: ReportArtifactMeta[];
+  artifactCount: number;
   createdAt: string | null;
   updatedAt: string | null;
 }
 
-export interface ReportDetail extends ReportSummary {
+export interface ReportDetail extends Omit<ReportSummary, "artifactCount"> {
+  artifacts: ReportArtifactMeta[];
   context: Record<string, unknown>;
 }
 
@@ -66,6 +67,7 @@ export interface ReportLogEntry {
 
 export interface ListReportsFilter {
   kind?: ReportKind;
+  category?: ReportKind | "internal" | "testing";
   status?: ReportStatus;
   limit?: number;
   before?: string;
@@ -108,6 +110,7 @@ export function createAdminReportsClient(config: ConsoleMcpConfig) {
     listReports: (filter: ListReportsFilter = {}) => {
       const query: Record<string, string> = {};
       if (filter.kind) query.kind = filter.kind;
+      if (filter.category) query.category = filter.category;
       if (filter.status) query.status = filter.status;
       if (filter.limit !== undefined) query.limit = String(filter.limit);
       if (filter.before) query.before = filter.before;

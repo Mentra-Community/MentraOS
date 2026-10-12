@@ -25,21 +25,10 @@ await rm(distDir, {recursive: true, force: true})
 const miniapp = (await import("./miniapp.json")) as {version?: string}
 const appVersion = miniapp.version ?? "0.0.0"
 
-// The GCP key now feeds ONLY the Maps JavaScript API (ui/lib/googleMaps.ts),
-// which loads Google's script directly in the WebView and therefore can't be
-// proxied — it stays in the UI bundle (public by necessity; lock it down
-// GCP-side: restrict to Maps JS API + referrer + quota cap). Places (New) no
-// longer reads this key at all; the background talks to the secret-proxy
-// Worker instead, which holds the key server-side. So this key is injected
-// into the UI bundle ONLY, never the background bundle.
-const navKey = process.env.PUBLIC_MAP_NAV_VIEWER ?? ""
-if (!navKey) console.warn("WARN: PUBLIC_MAP_NAV_VIEWER is not set — maps will fail to load.")
-
-// Mapbox GL JS token (pk.…) for the front-end map (Mapbox migration). Same
-// public token as mobile's EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN. Injected into the
-// UI bundle only (the background bundle never renders a map). Replaces
-// PUBLIC_MAP_NAV_VIEWER once NavMap.tsx is ported to Mapbox GL JS; kept
-// alongside it during the transition so both map paths can build.
+// Mapbox GL JS needs a public tiles token in the UI bundle. The native app's
+// EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is a fallback for bundled builds. Mobile CI
+// ships the already-packed ZIP, so rotating its native token does not change
+// the token embedded here; rebuild and repack the miniapp after a rotation.
 const mapboxToken = resolveMapboxBuildToken(process.env)
 if (!mapboxToken) console.warn("WARN: No public Mapbox token is set — Mapbox GL JS map will fail to load.")
 
@@ -59,7 +48,6 @@ const backgroundDefine: Record<string, string> = {
 // UI: needs the public map-render tokens client-side (GL JS can't proxy tile
 // fetches). These are public, render-only tokens — not provider secrets.
 const uiDefine: Record<string, string> = {
-  "process.env.PUBLIC_MAP_NAV_VIEWER": JSON.stringify(navKey),
   "process.env.PUBLIC_MAPBOX_TOKEN": JSON.stringify(mapboxToken),
   "process.env.NODE_ENV": JSON.stringify(nodeEnv),
   "process.env.APP_VERSION": JSON.stringify(appVersion),

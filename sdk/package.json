@@ -1,5 +1,8 @@
 {
   "private": true,
+  "patchedDependencies": {
+    "@soniox/node@2.3.0": "../cloud-v2/patches/@soniox%2Fnode@2.3.0.patch"
+  },
   "workspaces": [
     "create-mentra-miniapp",
     "example-oem-app",

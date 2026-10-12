@@ -78,12 +78,7 @@ export function DeviceSettingsSection() {
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
   const otaProgress = otaSnapshot.legacyProgress
-  const isAr99Family =
-    isAr99Identifier(defaultWearable) ||
-    isAr99Identifier(glassesInfo.model) ||
-    isAr99Identifier(glassesInfo.bluetoothName)
-  const isMentraLive =
-    defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)
+  const isMentraLive = defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)
   const showAr99OtaEntry =
     deploymentStore.getActive().kind === "consumer" &&
     glassesConnected &&
@@ -108,7 +103,7 @@ export function DeviceSettingsSection() {
       return
     }
     try {
-      await engine.glasses.forget()
+      await engine.glasses.unpair()
       await engine.settings.set(SETTINGS.default_wearable.key, "", false)
       await engine.settings.set(SETTINGS.device_name.key, "", false)
       await engine.settings.set(SETTINGS.device_address.key, "", false)
@@ -160,8 +155,8 @@ export function DeviceSettingsSection() {
       {!glassesConnected && <ConnectDeviceButton />}
       {!glassesConnected && <NotConnectedInfo />}
 
-      {/* Display position — binocular glasses only */}
-      {defaultWearable && !isAr99Family && (features?.display?.count ?? 0) > 1 && (
+      {/* Display position — models with physical display adjustment */}
+      {defaultWearable && features?.display?.position && (
         <RouteButton
           icon={<Icon name="locate" size={24} color={theme.colors.secondary_foreground} />}
           label={translate("settings:positionSettings")}

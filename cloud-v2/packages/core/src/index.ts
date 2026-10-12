@@ -20,7 +20,16 @@ import {createLogger} from "@mentra/cloud-shared"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/mongo.connection"
 import {createApp} from "./api/app"
 import {runStartupMigrations} from "./migrations/startup.migrations"
-import {startTestFailureDelivery} from "./services/test-failure-delivery.service"
+import {createCoreStop, serveCore} from "./http-server"
+import {startFrameworkRunSummaryBackfill} from "./services/framework-run-summary.service"
+import {startRoutineWorkReporting} from "./services/routine-work-notification"
+import {RoutineJobService} from './services/routine-job.service'
+import {RoutineWorkService} from './services/routine-work.service'
+import {NightlyRoutineService} from "./services/nightly-routine.service"
+import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
+import {ReportServerLogCollectionService} from './services/report-server-log-collection.service'
+import {assertSupabaseApiKeys} from "./services/account/gotrue.client"
+import {assertSigninConfiguration} from "./services/signin/config"
 
 const logger = createLogger("core")
 
@@ -42,33 +51,45 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const port = opts.port ?? Number.parseInt(process.env.PORT ?? "3000", 10)
   const mongoUrl = opts.mongoUrl ?? process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2"
 
+  assertSupabaseApiKeys()
   await connectMongo(mongoUrl)
   try {
     await runStartupMigrations()
+    // Refuse sign-in configuration that is incomplete or would let one source
+    // vouch for another's people. With none of it set, Core starts as before.
+    await assertSigninConfiguration()
   } catch (error) {
     // Disconnect best-effort: a secondary disconnect failure must not mask the
-    // original migration error, which is what we rethrow.
+    // original startup error, which is what we rethrow.
     await disconnectMongo().catch((disconnectError) => {
-      logger.warn({disconnectError}, "failed to disconnect mongo after migration failure")
+      logger.warn({disconnectError}, "failed to disconnect mongo after startup failure")
     })
     throw error
   }
 
   const app = createApp({readinessChecks: [mongoReadinessCheck]})
-  const server = Bun.serve({port, fetch: app.fetch})
-  const stopFailureDelivery = startTestFailureDelivery()
+  const server = serveCore(app.fetch, port)
   const boundPort = server.port!
+  const stopSummaryBackfill = startFrameworkRunSummaryBackfill()
+  const reportNotifications = new ReportSlackDeliveryService()
+  const reportServerLogs = new ReportServerLogCollectionService()
+  const routineJobs = new RoutineJobService()
+  const routineAuthors = new RoutineWorkService()
+  const nightlyRoutines = new NightlyRoutineService()
+  const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, undefined, async () => {
+    await Promise.allSettled([reportNotifications.tick(), reportServerLogs.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending()])
+  })
 
   logger.info({port: boundPort}, "cloud-v2 core listening")
 
   return {
     port: boundPort,
     url: `http://localhost:${boundPort}`,
-    async stop() {
-      server.stop()
-      await stopFailureDelivery()
+    stop: createCoreStop(server, async () => {
+      await stopSummaryBackfill()
+      await stopRoutineWorkReporting()
       await disconnectMongo()
-    },
+    }),
   }
 }
 

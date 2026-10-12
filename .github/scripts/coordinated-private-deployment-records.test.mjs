@@ -25,7 +25,7 @@ function runtimeImage(status = "published") {
     digest: status === "published" ? `sha256:${"b".repeat(64)}` : undefined,
   }
 }
-const workspaceOrigin = "https://mentra.acmeworkspace.com"
+const workspaceOrigin = "https://demo.acmeworkspace.com"
 const coreHostname = "ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io"
 const coreOrigin = `https://${coreHostname}`
 
@@ -149,7 +149,7 @@ test("rejects deployed evidence with the wrong workspace origin", () => {
     () =>
       createPrivateDeploymentRecord({
         ...deploymentArgs(),
-        workspaceOrigin: "https://mentra.acmeworkspace.com.evil.example",
+        workspaceOrigin: "https://demo.acmeworkspace.com.evil.example",
       }),
     /wrong workspace origin/,
   )

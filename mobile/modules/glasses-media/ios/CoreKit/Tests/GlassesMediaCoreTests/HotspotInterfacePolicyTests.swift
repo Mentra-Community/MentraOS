@@ -14,8 +14,12 @@ final class HotspotInterfacePolicyTests: XCTestCase {
         HotspotInterfaceReport(name: "lo0", index: 1, isWifi: false),
     ]
 
+    /// Wi-Fi and wired Ethernet are both `IFT_ETHER`; loopback, tunnels and cellular are not.
+    private let ethernetNames: Set<String> = ["en0", "en1", "en2", "bridge100"]
+
     private func snapshot(_ rows: [HotspotInterfaceAddress], links: [String: Int]? = nil) -> HotspotInterfaceSnapshot {
-        HotspotInterfaceSnapshot(links: links ?? macLinks, addresses: rows)
+        let links = links ?? macLinks
+        return HotspotInterfaceSnapshot(links: links, addresses: rows, ethernetLinks: ethernetNames.intersection(links.keys))
     }
 
     private func identity(_ reports: [HotspotInterfaceReport]...) -> HotspotWifiIdentity {
@@ -82,17 +86,78 @@ final class HotspotInterfacePolicyTests: XCTestCase {
         XCTAssertTrue(intact(wifiBinding, snapshot([ethernet, wifi]), &session))
     }
 
-    func testNoTrustedWifiIdentityInTheSessionFailsClosed() {
-        // The correct DHCP address is present, but Network framework never called en1 Wi-Fi.
+    func testWithoutAnyWifiReportOnlyTheUniqueHotspotClientOnAnEthernetLinkQualifies() {
+        // Network framework never called en1 Wi-Fi, but it holds the exact glasses client address.
         var session = HotspotWifiIdentity()
         session.observe([HotspotInterfaceReport(name: "en0", index: 4, isWifi: false)])
         session.observe([])
-        XCTAssertNil(select(snapshot([ethernet, wifi]), &session))
-        XCTAssertNil(select([ethernet, wifi], []))
-        // A report without a kernel index or name cannot establish identity.
-        XCTAssertNil(select([ethernet, wifi], [HotspotInterfaceReport(name: "en1", index: 0, isWifi: true)]))
+        XCTAssertEqual(select(snapshot([ethernet, wifi]), &session), wifiBinding)
+        XCTAssertEqual(select([ethernet, wifi], []), wifiBinding)
+        // Without the BLE gateway there is no hotspot client evidence.
+        XCTAssertNil(select([ethernet, wifi], [], gateway: nil))
+        // An address that is not a client of the glasses /24 is never evidence.
+        XCTAssertNil(select([ethernet, HotspotInterfaceAddress(name: "en1", isUp: true, ipv4: "192.168.1.31")], []))
+        // A report without a kernel index or name cannot establish report identity.
         XCTAssertTrue(identity([HotspotInterfaceReport(name: "en1", index: 0, isWifi: true)]).trusted.isEmpty)
         XCTAssertTrue(identity([HotspotInterfaceReport(name: "", index: 6, isWifi: true)]).trusted.isEmpty)
+        // A link the kernel does not type as Ethernet never qualifies without a report.
+        XCTAssertNil(HotspotInterfacePolicy.select(snapshot: HotspotInterfaceSnapshot(links: macLinks, addresses: [ethernet, wifi]),
+                                                   identity: HotspotWifiIdentity(), gateway: gateway))
+    }
+
+    func testIphoneThatStartedOnCellularBindsTheGlassesClientAddressOnEn0() {
+        // rep_01M4PBCT38SXKQ2V3GZ2EX33W2: cellular was the default path, the Wi-Fi-constrained
+        // path stayed empty after association, and the join failed with no Wi-Fi interface.
+        let links = ["lo0": 1, "pdp_ip0": 2, "en0": 5, "utun0": 9]
+        let cellular = HotspotInterfaceAddress(name: "pdp_ip0", isUp: true, ipv4: "10.44.5.6")
+        let hotspot = HotspotInterfaceAddress(name: "en0", isUp: true, ipv4: "192.168.43.77")
+        let expected = HotspotInterfaceBinding(interface: "en0", index: 5, address: "192.168.43.77")
+        var session = HotspotWifiIdentity()
+        session.observe([HotspotInterfaceReport(name: "pdp_ip0", index: 2, isWifi: false)])
+        session.observe([])
+        XCTAssertNil(select(snapshot([cellular], links: links), &session), "no address before DHCP")
+        XCTAssertNil(select(snapshot([cellular, HotspotInterfaceAddress(name: "en0", isUp: true, ipv4: "169.254.7.7")], links: links), &session))
+        XCTAssertEqual(select(snapshot([cellular, hotspot], links: links), &session), expected)
+
+        // Once adopted, the pin behaves like a reported Wi-Fi binding.
+        session.adopt(expected)
+        XCTAssertEqual(session.trusted, ["en0": 5])
+        session.observe([HotspotInterfaceReport(name: "pdp_ip0", index: 2, isWifi: false)])
+        session.observe([])
+        XCTAssertTrue(intact(expected, snapshot([cellular, hotspot], links: links), &session))
+        XCTAssertFalse(intact(expected, snapshot([cellular, HotspotInterfaceAddress(name: "en0", isUp: true, ipv4: "192.168.43.78")], links: links), &session))
+        var contrary = session
+        contrary.observe([HotspotInterfaceReport(name: "en0", index: 5, isWifi: false)])
+        XCTAssertFalse(intact(expected, snapshot([cellular, hotspot], links: links), &contrary))
+        var detached = session
+        XCTAssertFalse(intact(expected, snapshot([cellular], links: ["lo0": 1, "pdp_ip0": 2]), &detached))
+        XCTAssertFalse(intact(expected, snapshot([cellular, hotspot], links: links), &detached))
+        // A detached or rejected name cannot be adopted again in the same session.
+        detached.adopt(expected)
+        XCTAssertNil(detached.trusted["en0"])
+        contrary.adopt(expected)
+        XCTAssertNil(contrary.trusted["en0"])
+    }
+
+    func testHotspotClientEvidenceExcludesReportedTunneledAndAmbiguousLinks() {
+        // Cellular, VPN and loopback links on the glasses /24 never qualify by address.
+        for (name, index) in [("pdp_ip0", 2), ("utun3", 20), ("lo0", 1)] {
+            let row = HotspotInterfaceAddress(name: name, isUp: true, ipv4: "192.168.43.50")
+            var links = macLinks
+            links[name] = index
+            var unknown = HotspotWifiIdentity()
+            XCTAssertNil(select(snapshot([row], links: links), &unknown), name)
+        }
+        // A link any path reported as non-Wi-Fi never qualifies, even when it is the only candidate.
+        XCTAssertNil(select([HotspotInterfaceAddress(name: "en0", isUp: true, ipv4: "192.168.43.50")],
+                            [HotspotInterfaceReport(name: "en0", index: 4, isWifi: false)]))
+        // Two Ethernet-type links with glasses client addresses are ambiguous.
+        XCTAssertNil(select([HotspotInterfaceAddress(name: "en0", isUp: true, ipv4: "192.168.43.50"), wifi], []))
+        // With any trusted Wi-Fi interface in the session, only that interface can be selected.
+        var reported = identity([HotspotInterfaceReport(name: "en1", index: 6, isWifi: true)])
+        XCTAssertNil(select(snapshot([HotspotInterfaceAddress(name: "en0", isUp: true, ipv4: "192.168.43.50")]), &reported))
+        // Down links never qualify.
+        XCTAssertNil(select([ethernet, HotspotInterfaceAddress(name: "en1", isUp: false, ipv4: "192.168.43.20")], []))
     }
 
     func testNonWifiReportRejectsTheNameForTheRestOfTheSession() {
@@ -144,8 +209,11 @@ final class HotspotInterfacePolicyTests: XCTestCase {
         var first = identity(macReports)
         XCTAssertEqual(select(snapshot([ethernet, wifi]), &first), wifiBinding)
         var rejoin = HotspotWifiIdentity()
-        XCTAssertNil(select(snapshot([ethernet, wifi]), &rejoin))
+        XCTAssertTrue(rejoin.trusted.isEmpty)
         XCTAssertFalse(intact(wifiBinding, snapshot([ethernet, wifi]), &rejoin))
+        // The new session can rediscover the link only from its own hotspot client evidence.
+        var reportless = HotspotWifiIdentity()
+        XCTAssertNil(select(snapshot([ethernet, wifi]), &reportless, gateway: nil))
         // Contrary evidence from an earlier session does not leak into the next one either.
         var rejected = identity([HotspotInterfaceReport(name: "en1", index: 6, isWifi: false)])
         XCTAssertNil(select(snapshot([ethernet, wifi]), &rejected))
@@ -157,12 +225,14 @@ final class HotspotInterfacePolicyTests: XCTestCase {
         // Ethernet, VPN, bridge and loopback addresses on the hotspot /24 are not the hotspot link.
         for name in ["en0", "utun3", "bridge100", "lo0"] {
             let row = HotspotInterfaceAddress(name: name, isUp: true, ipv4: "192.168.43.50")
+            let index = macLinks[name] ?? 20
             var links = macLinks
-            links[name] = links[name] ?? 20
-            var session = identity(macReports + [HotspotInterfaceReport(name: name, index: links[name]!, isWifi: false)])
+            links[name] = index
+            var session = identity(macReports + [HotspotInterfaceReport(name: name, index: index, isWifi: false)])
             XCTAssertNil(select(snapshot([row], links: links), &session), name)
-            var unknown = HotspotWifiIdentity()
-            XCTAssertNil(select(snapshot([row], links: links), &unknown), name)
+            // Contrary evidence without any Wi-Fi report still excludes it.
+            var contrary = identity([HotspotInterfaceReport(name: name, index: index, isWifi: false)])
+            XCTAssertNil(select(snapshot([row], links: links), &contrary), name)
         }
         // A stale Wi-Fi address cannot be replaced by an Ethernet address on the glasses subnet.
         let staleWifi = HotspotInterfaceAddress(name: "en1", isUp: true, ipv4: "192.168.1.30")

@@ -125,13 +125,10 @@ dependencies {
   // for installing Kotlin lambdas as JS globals via `JS_SetPropertyStr`.
   // Mirrors iOS Apple JSC's `setObject(_, forKeyedSubscript:)` pattern.
   //
-  // Version pin: this Expo SDK 55 build uses Kotlin 2.1.20, which can read
-  // metadata up to 2.2.0. dokar3 1.0.1+ ships classes with metadata 2.3.0
-  // (compiled with Kotlin 2.3.x) and is unreadable here. 1.0.0-alpha13 is
-  // the last release compiled with Kotlin 2.0 (metadata 2.0.0) — its API
-  // (`QuickJs.create`, `evaluate`, `function` extension) matches 1.0.5 1:1.
-  // Bump only when the host Kotlin compiler clears 2.3.0 metadata.
-  implementation 'io.github.dokar3:quickjs-kt-android:1.0.0-alpha13'
+  // 1.0.15 is compiled with Kotlin 2.4.10. The crust config plugin raises the
+  // host to Kotlin 2.3.0, which reads one metadata version ahead. The AAR ships
+  // its own 16 KB-aligned JNI libraries and R8 keep rules.
+  implementation 'io.github.dokar3:quickjs-kt-android:1.0.15'
 
   // OkHttp for fetch / WebSocket — already used elsewhere in MentraOS;
   // pinned here so the gradle plugin doesn't downgrade us.
@@ -144,12 +141,21 @@ dependencies {
 
   // Kotlin coroutines: dokar3's `evaluate()` is suspend; we bridge it via
   // `runBlocking(dispatcher)` from the per-miniapp single-thread executor.
-  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1'
-  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0'
 }
 
 // Notification lifecycle tests run against Android APIs without a device.
 dependencies {
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.robolectric:robolectric:4.11.1'
+}
+
+// A desktop JVM cannot load the Android QuickJS library, so local unit tests
+// run the same QuickJS build through its desktop JVM artifact.
+configurations.matching { it.name.endsWith('UnitTestRuntimeClasspath') }.configureEach {
+  resolutionStrategy.dependencySubstitution {
+    substitute(module('io.github.dokar3:quickjs-kt-android'))
+      .using(module('io.github.dokar3:quickjs-kt-jvm:1.0.15'))
+  }
 }

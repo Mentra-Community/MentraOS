@@ -24,6 +24,7 @@ import {execFileSync} from "node:child_process"
 export const CHANNEL_MANIFESTS = {
   "@mentra/miniapp-cli": "sdk/miniapp-cli/package.json",
   "create-mentra-miniapp": "sdk/create-mentra-miniapp/package.json",
+  "@mentra/miniapp-tools": "cloud-v2/packages/miniapp-tools/package.json",
   "@mentra/auth": "cloud-v2/packages/auth/package.json",
   "@mentra/cli": "cloud-v2/packages/cli/package.json",
 }

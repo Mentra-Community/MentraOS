@@ -9,6 +9,10 @@
  *                                 miniapp-token
  *   /api/client/reports/*       — device-filed reports
  *   /api/agent/reports/*        — read-only private dev-agent access
+ *   /api/admin/auth/*, /api/portal/auth/*
+ *                               — portal sign-in (the deployment's identity provider)
+ *   everything else (GET)       — the admin portal's files, when
+ *                                 CLOUD_CORE_ADMIN_STATIC_DIR is set (Private Cloud)
  *
  * Caller convention (auth/spec.md): /api/client/* is device-called and
  * /api/oem/* is reserved for the OEM's backend. The token exchange + refresh
@@ -28,10 +32,19 @@ import { AccountError } from "../services/account/account-error";
 import { requestContext } from "./middleware/context.middleware";
 import adminPreinstalled from "./admin/preinstalled.api";
 import reportAgent from "./agent/reports.api";
-import testFailureAgent from "./agent/test-failures.api";
+import {createTestRequestsApi} from "./internal/test-requests.api";
+import {createFrameworkResultsApi} from "./internal/framework-results.api";
+import {createTestHostStateApi} from "./internal/test-host-state.api";
+import {createRoutineDefinitionsApi} from "./internal/routine-definitions.api";
+import {createNightlyRoutinesApi} from "./internal/nightly-routines.api";
+import {createStateRepairDiagnosticsApi} from "./internal/state-repair-diagnostics.api";
+import {createTestRerunsApi} from "./internal/test-reruns.api";
+import {createRoutineJobsApi, createRoutineJobBindingApi} from './internal/routine-jobs.api';
+import {createTestingDispatchApi} from './internal/testing-dispatch.api';
+import {createRoutineDispatchesApi} from "./internal/routine-dispatches.api";
+import {createRoutineWorkIntakeApi, createRoutineWorkDeliveriesApi} from "./internal/routine-work.api";
 import testRunIngest from "./internal/test-runs.api";
-import testRunClaims from "./internal/test-run-claims.api";
-import testResourceObservations from "./internal/test-resource-observations.api";
+import testHostObservations from "./internal/test-host-observations.api";
 import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
@@ -41,6 +54,7 @@ import accountOauth from "./account/oauth.api";
 import consoleAuth from "./console/cli-auth.api";
 import portalEnterprise from "./portal/enterprise.api";
 import wellKnown from "./well-known.api";
+import { createAdminStaticApp } from "./admin-static";
 
 const logger = createLogger("core").child({ service: "app" });
 
@@ -87,16 +101,32 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
   app.route("/api/agent/reports", reportAgent);
-  app.route("/api/agent/test-failures", testFailureAgent);
+  app.route("/api/internal/test-requests", createRoutineJobBindingApi());
+  app.route("/api/internal/test-requests", createTestRequestsApi());
+  app.route("/api/internal/routine-jobs", createRoutineJobsApi());
+  app.route("/api/internal/testing/dispatch", createTestingDispatchApi());
+  app.route("/api/internal/framework-results", createFrameworkResultsApi());
+  app.route("/api/internal/test-host-state", createTestHostStateApi());
+  app.route("/api/internal/routine-definitions", createRoutineDefinitionsApi());
+  app.route("/api/internal/nightly-routines", createNightlyRoutinesApi());
+  app.route("/api/internal/test-repairs", createStateRepairDiagnosticsApi());
+  app.route("/api/internal", createRoutineDispatchesApi());
+  app.route("/api/internal/test-reruns", createTestRerunsApi());
+  app.route("/api/internal/routine-work", createRoutineWorkIntakeApi());
+  app.route("/api/internal/routine-work-deliveries", createRoutineWorkDeliveriesApi());
   app.route("/api/internal/test-runs", testRunIngest);
-  app.route("/api/internal/test-run-claims", testRunClaims);
-  app.route("/api/internal/test-resource-observations", testResourceObservations);
+  app.route("/api/internal/test-host-observations", testHostObservations);
   app.route("/api/client/miniapps", clientMiniapps);
   app.route("/api/account", accountApi);
   app.route("/api/account/oauth", accountOauth);
   app.route("/api/console", consoleAuth);
   app.route("/api/portal", portalEnterprise);
   app.route("/api/admin", adminPreinstalled);
+
+  // A Private Cloud serves the admin portal from Core itself, on Core's host.
+  // Mounted last: it answers only GET/HEAD outside /api and /.well-known.
+  const adminStaticDir = process.env.CLOUD_CORE_ADMIN_STATIC_DIR?.trim();
+  if (adminStaticDir) app.route("/", createAdminStaticApp(adminStaticDir));
 
   // Global error translator.
   app.onError((err, c) => {

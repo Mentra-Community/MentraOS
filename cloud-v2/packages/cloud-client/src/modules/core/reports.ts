@@ -7,11 +7,31 @@
  */
 
 import type { HttpClient } from "../../http";
+import type {ReportAutomationCorrelation} from '@mentra/cloud-protocol/report-automation';
 
 const REPORTS_PATH = "/api/client/reports";
 
 export type ReportKind = "bug" | "feedback" | "automatic";
 export type ReportStatus = "collecting" | "ready" | "closed";
+export type ReportLogSource = "phone" | "glasses" | "glasses_firmware" | "cloud" | "miniapp_server";
+/** Core storage receipts, independent of the report's UI readiness status. */
+export interface ReportLogCollection {
+  state: "requested" | "received" | "unavailable" | "failed" | "timed-out";
+  requestedAt: string;
+  deadlineAt: string;
+  reason?: string;
+  receivedAt?: string;
+  artifactId?: string;
+  entryCount?: number;
+}
+export interface ReportLogCollectionSnapshot {
+  reportId: string;
+  logCollection: Partial<Record<ReportLogSource, ReportLogCollection>>;
+}
+export interface ReportLogCollectionUpdate {
+  state: "requested" | "unavailable" | "failed";
+  reason?: string;
+}
 export type ReportSystemPriority = "low" | "medium" | "high" | "critical";
 
 interface BaseReportTrigger {
@@ -51,6 +71,7 @@ export type SubmitReportInput =
     }
   | {
       kind: "automatic";
+      automationCorrelation?: ReportAutomationCorrelation;
       trigger: Extract<ReportTrigger, { type: "automatic" }>;
       report: ReportDetails;
       context: ReportContext;
@@ -97,6 +118,49 @@ export class Reports {
 
   submit(input: SubmitReportInput): Promise<SubmitReportResult> {
     return this.http.post<SubmitReportResult>(REPORTS_PATH, input);
+  }
+
+  /** Read the current source receipts with the same user session used to submit. */
+  async getLogCollection(reportId: string, signal?: AbortSignal): Promise<ReportLogCollectionSnapshot> {
+    const snapshot = await this.http.get<ReportLogCollectionSnapshot>(
+      `${REPORTS_PATH}/${encodeURIComponent(reportId)}/log-collection`,
+      {signal},
+    );
+    if (!snapshot || snapshot.reportId !== reportId || !snapshot.logCollection ||
+      typeof snapshot.logCollection !== "object" || Array.isArray(snapshot.logCollection)) {
+      throw new Error("Invalid report collection response");
+    }
+    const logCollection: ReportLogCollectionSnapshot["logCollection"] = {};
+    for (const source of ["phone", "glasses", "glasses_firmware", "cloud", "miniapp_server"] as const) {
+      const receipt = snapshot.logCollection[source];
+      if (receipt === undefined) continue;
+      if (!receipt || !["requested", "received", "unavailable", "failed", "timed-out"].includes(receipt.state) ||
+        typeof receipt.requestedAt !== "string" || typeof receipt.deadlineAt !== "string") {
+        throw new Error("Invalid report collection receipt");
+      }
+      logCollection[source] = {
+        state: receipt.state,
+        requestedAt: receipt.requestedAt,
+        deadlineAt: receipt.deadlineAt,
+        ...(typeof receipt.reason === "string" ? {reason: receipt.reason.slice(0, 500)} : {}),
+        ...(typeof receipt.receivedAt === "string" ? {receivedAt: receipt.receivedAt} : {}),
+        ...(typeof receipt.artifactId === "string" ? {artifactId: receipt.artifactId} : {}),
+        ...(typeof receipt.entryCount === "number" ? {entryCount: receipt.entryCount} : {}),
+      };
+    }
+    return {reportId: snapshot.reportId, logCollection};
+  }
+
+  /** Record a local collection attempt; only Core artifact storage confirms receipt. */
+  updateLogCollection(
+    reportId: string,
+    source: ReportLogSource,
+    update: ReportLogCollectionUpdate,
+  ): Promise<void> {
+    return this.http.post<void>(
+      `${REPORTS_PATH}/${encodeURIComponent(reportId)}/log-collection/${source}`,
+      update,
+    );
   }
 
   async addLogs(

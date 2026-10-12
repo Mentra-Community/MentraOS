@@ -127,7 +127,7 @@ private struct InstallerCoreTests {
             let candidate = VerifiedBuild(directory: fixture.temporary, manifest: manifest, codeRequirement: "test")
             var quit = false, launch = false
             do {
-                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true })
+                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true; return nil })
                 throw TestFailure(description: "Installer took an active worker's app")
             } catch let error as InstallerError {
                 try expect(error.localizedDescription.contains("Mentra is owned"), "Did not reject at the app ownership boundary")
@@ -162,7 +162,7 @@ private struct InstallerCoreTests {
             let fixture = try Fixture()
             defer { fixture.clean() }
             let path = fixture.temporary.appendingPathComponent(".cache/mentra-e2e/com.mentra.mentra.lock")
-            try await withAppOwnership(homeDirectory: fixture.temporary) {
+            try await withAppOwnership(homeDirectory: fixture.temporary) { _ in
                 // Simulates awaiting the normal NSWorkspace launch completion.
                 await Task.yield()
                 try rejects("Mentra is owned") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
@@ -171,7 +171,7 @@ private struct InstallerCoreTests {
                 try expect(!InstallerFiles.exists(path), "Completed launch retained ownership")
             }
             do {
-                try await withAppOwnership(homeDirectory: fixture.temporary) {
+                try await withAppOwnership(homeDirectory: fixture.temporary) { _ in
                     throw InstallerError.recovery("rollback or transaction cleanup failed")
                 }
             } catch let error as InstallerError {
@@ -220,7 +220,7 @@ private struct InstallerCoreTests {
             var opened = false
             do {
                 // Open Mentra uses this same wrapper around its launch closure.
-                try await withAppOwnership(homeDirectory: fixture.temporary) { opened = true }
+                try await withAppOwnership(homeDirectory: fixture.temporary) { _ in opened = true }
                 throw TestFailure(description: "Open took a retained lifecycle reservation")
             } catch let error as InstallerError {
                 try expect(error.localizedDescription.contains("Mentra is owned"), "Open bypassed retained app ownership")
@@ -232,7 +232,7 @@ private struct InstallerCoreTests {
             let candidate = VerifiedBuild(directory: fixture.temporary, manifest: manifest, codeRequirement: "test")
             var quit = false, launch = false
             do {
-                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true })
+                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true; return nil })
                 throw TestFailure(description: "Installer took a retained lifecycle reservation")
             } catch let error as InstallerError {
                 try expect(error.localizedDescription.contains("Mentra is owned"), "Install bypassed retained app ownership")
@@ -245,6 +245,286 @@ private struct InstallerCoreTests {
                 try expect(InstallerFiles.read(path) == contents, "Install changed the retained reservation")
                 try expect(!InstallerFiles.exists(folder.appendingPathComponent("com.mentra.mentra.lock.reclaim")), "Installer left an acquisition guard")
             }
+        }
+
+        do {
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            try InstallerFiles.manager.removeItem(at: fixture.lock)
+            try InstallerFiles.manager.removeItem(at: fixture.staging)
+            let beforeEntries = try InstallerFiles.manager.contentsOfDirectory(atPath: fixture.root.path).sorted()
+            let folder = fixture.temporary.appendingPathComponent(".cache/mentra-e2e")
+            let appLock = folder.appendingPathComponent("com.mentra.mentra.lock")
+            let glassesLease = folder.appendingPathComponent("glasses/unit-060b/com.mentra.mentra.lock")
+            // Glasses owner first: an Android run's retained lease on one pair, written by the shared JS implementation.
+            let holderCode = """
+            const {acquireAppOwnership} = await import(process.argv[1]);
+            await acquireAppOwnership(process.argv[2] + "/glasses/unit-060b", {reservation: {runID: "android-060b",
+              runDirectory: process.argv[2] + "/android-run", fixtureID: "android-060b"}});
+            """
+            let (holder, _) = try node(holderCode, fixture.temporary)
+            holder.waitUntilExit()
+            try expect(holder.terminationStatus == 0, "JS glasses owner did not take its lease")
+            let held = try InstallerFiles.read(glassesLease)
+            let candidate = VerifiedBuild(directory: fixture.temporary, manifest: manifest, codeRequirement: "test")
+            var quit = false, launch = false, opened = false
+            do {
+                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true; return nil })
+                throw TestFailure(description: "Install & Open ignored a held glasses lease")
+            } catch let error as InstallerError {
+                try expect(error.localizedDescription.contains("Physical glasses are held"), "Unexpected refusal: \(error)")
+            }
+            do {
+                try await withAppOwnership(homeDirectory: fixture.temporary) { _ in opened = true }
+                throw TestFailure(description: "Open Mentra ignored a held glasses lease")
+            } catch let error as InstallerError {
+                try expect(error.localizedDescription.contains("Physical glasses are held"), "Unexpected refusal: \(error)")
+            }
+            try test("a held glasses lease prevents native install-and-open and Open before any app mutation") {
+                try expect(!quit && !launch && !opened, "Installer quit, launched or opened Mentra")
+                try expect(fixture.text("Mentra.app/binary") == "old", "App was replaced")
+                try expect(InstallerFiles.manager.contentsOfDirectory(atPath: fixture.root.path).sorted() == beforeEntries, "Installer created transaction files")
+                try expect(!InstallerFiles.exists(appLock), "Refused installer kept its app lease")
+                try expect(InstallerFiles.read(glassesLease) == held, "Installer changed the glasses lease")
+            }
+            do {
+                _ = try await install(candidate, homeDirectory: fixture.temporary, opensApp: false, quit: { quit = true })
+                throw TestFailure(description: "The synthetic package unexpectedly verified")
+            } catch {
+                try test("a file-only install needs no glasses and reaches package verification beside a held lease") {
+                    try expect(!error.localizedDescription.contains("Physical glasses"), "File-only install was refused for glasses")
+                    try expect(!InstallerFiles.exists(appLock), "File-only install kept its app lease")
+                    try expect(InstallerFiles.read(glassesLease) == held, "Installer changed the glasses lease")
+                }
+            }
+            try InstallerFiles.manager.removeItem(at: glassesLease)
+            try InstallerFiles.manager.createSymbolicLink(atPath: glassesLease.path,
+                                                          withDestinationPath: fixture.temporary.appendingPathComponent("missing-target").path)
+            do {
+                try await withAppOwnership(homeDirectory: fixture.temporary) { _ in opened = true }
+                throw TestFailure(description: "Open Mentra ignored a dangling glasses lease")
+            } catch let error as InstallerError {
+                try expect(error.localizedDescription.contains("Physical glasses are held"), "Unexpected refusal: \(error)")
+            }
+            do {
+                _ = try await install(candidate, homeDirectory: fixture.temporary, opensApp: false, quit: { quit = true })
+                throw TestFailure(description: "The synthetic package unexpectedly verified")
+            } catch {
+                try test("a dangling glasses lease symlink refuses Open; a file-only install still reaches verification") {
+                    try expect(!opened, "Open entered its launch closure")
+                    try expect(!error.localizedDescription.contains("Physical glasses"), "File-only install was refused for glasses")
+                    try expect(!InstallerFiles.exists(appLock), "Installer kept its app lease")
+                }
+            }
+            try InstallerFiles.manager.removeItem(at: glassesLease)
+            try await withAppOwnership(homeDirectory: fixture.temporary) { _ in opened = true }
+            try test("Open proceeds once no glasses lease is held") { try expect(opened, "Open did not run") }
+        }
+        do {
+            // Stands in for the opened Mentra: a real temporary process that outlives the installer's open call.
+            func launchedApp() throws -> Process {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+                process.arguments = ["60"]
+                try process.run()
+                return process
+            }
+            func sharedState(_ fixture: Fixture) throws -> String {
+                let probe = """
+                const {readLockState} = await import(process.argv[1]);
+                process.stdout.write(JSON.stringify(await readLockState(process.argv[2])));
+                """
+                let (process, output) = try node(probe, fixture.temporary)
+                process.waitUntilExit()
+                return String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            }
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            let path = fixture.temporary.appendingPathComponent(".cache/mentra-e2e/com.mentra.mentra.lock")
+            let app = try launchedApp()
+            defer { if app.isRunning { app.terminate() } }
+            try await withAppOwnership(homeDirectory: fixture.temporary) { lease in try lease.handOff(to: app.processIdentifier) }
+            let owner = try InstallerFiles.dictionary(InstallerFiles.read(path))
+            try test("Open hands the app lease to the opened process, which holds it after the installer returns") {
+                try expect(owner["pid"] as? Int == Int(app.processIdentifier) && owner["launchedApp"] as? Bool == true, "Lease not handed to the app: \(owner)")
+                try expect(owner["retainOnExit"] == nil && owner["reservation"] == nil, "Handed-off lease is retained or reserved")
+                try expect(try sharedState(fixture) == "{\"state\":\"held\",\"pid\":\(app.processIdentifier)}", "A glasses owner would not see the app lease held")
+            }
+            try test("a test owner cannot take over the running app's lease; it must wait for a normal quit") {
+                let probe = """
+                import assert from "node:assert/strict";
+                const {acquireAppOwnership} = await import(process.argv[1]);
+                await assert.rejects(acquireAppOwnership(process.argv[2], {reservation: {runID: "mac-03be",
+                  runDirectory: process.argv[2] + "/run", fixtureID: "mac-03be"}}), /quit Mentra normally/);
+                """
+                let (process, _) = try node(probe, fixture.temporary)
+                process.waitUntilExit()
+                try expect(process.terminationStatus == 0, "A test owner took over a running launched app")
+                try expect(InstallerFiles.dictionary(InstallerFiles.read(path))["pid"] as? Int == Int(app.processIdentifier), "The app's lease changed")
+            }
+            app.terminate()
+            app.waitUntilExit()
+            try test("the app lease is released normally once the opened process exits") {
+                try expect(try sharedState(fixture) == "{\"state\":\"reclaimable\"}", "Exited app still holds the lease")
+                let probe = """
+                const {acquireAppOwnership} = await import(process.argv[1]);
+                await (await acquireAppOwnership(process.argv[2]))();
+                """
+                let (process, _) = try node(probe, fixture.temporary)
+                process.waitUntilExit()
+                try expect(process.terminationStatus == 0 && !InstallerFiles.exists(path), "The next owner could not take the released lease")
+            }
+            let running = try launchedApp()
+            defer { if running.isRunning { running.terminate() } }
+            try await withAppOwnership(homeDirectory: fixture.temporary) { lease in try lease.handOff(to: running.processIdentifier) }
+            try test("a new installer adopts a running launched app under broad custody and hands it back if it was not quit") {
+                let successor = try AppOwnershipLease(homeDirectory: fixture.temporary)
+                let adopting = try InstallerFiles.dictionary(InstallerFiles.read(path))
+                try expect(adopting["pid"] as? Int == Int(getpid()) && adopting["retainOnExit"] as? Bool == true && adopting["reservation"] == nil, "Installer did not adopt with broad custody")
+                try successor.release()
+                let restored = try InstallerFiles.dictionary(InstallerFiles.read(path))
+                try expect(restored["pid"] as? Int == Int(running.processIdentifier) && restored["launchedApp"] as? Bool == true, "Running app lost its lease: \(restored)")
+            }
+            do {
+                try await withAppOwnership(homeDirectory: fixture.temporary, opensApp: false) { _ in throw InstallerError.invalid("fake failed installation") }
+            } catch let error as InstallerError {
+                guard case .invalid = error else { throw error }
+            }
+            try test("an installation that adopts a running app and fails before quitting it hands the lease back") {
+                try expect(InstallerFiles.dictionary(InstallerFiles.read(path))["pid"] as? Int == Int(running.processIdentifier), "Running app lost its lease")
+            }
+            running.terminate()
+            running.waitUntilExit()
+            try test("once the adopted app has quit, the installer releases the lease normally") {
+                let successor = try AppOwnershipLease(homeDirectory: fixture.temporary)
+                try successor.release()
+                try expect(!InstallerFiles.exists(path), "Lease of an exited app was not released")
+            }
+            do {
+                try await withAppOwnership(homeDirectory: fixture.temporary) { lease in try lease.handOff(to: getpid()) }
+                throw TestFailure(description: "A hand-off to the installer itself was accepted")
+            } catch let error as InstallerError {
+                guard case .recovery = error else { throw error }
+            }
+            try test("a hand-off that cannot identify the opened process retains the installer's lease for recovery") {
+                let kept = try InstallerFiles.dictionary(InstallerFiles.read(path))
+                try expect(kept["pid"] as? Int == Int(getpid()) && kept["retainOnExit"] as? Bool == true && kept["launchedApp"] == nil, "Lease was not retained: \(kept)")
+                try rejects("Mentra is owned") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
+            }
+            try InstallerFiles.manager.removeItem(at: path)
+            let reservation = ["runID": "x", "runDirectory": "/tmp/x", "fixtureID": "x"]
+            for record: [String: Any] in [["pid": 99_999_999, "token": "t", "launchedApp": "yes"],
+                                          ["pid": 99_999_999, "token": "t", "launchedApp": true, "retainOnExit": true],
+                                          ["pid": 99_999_999, "token": "t", "launchedApp": true, "retainOnExit": true, "reservation": reservation],
+                                          ["pid": 99_999_999, "launchedApp": true]] {
+                let contents = try encode(record)
+                try contents.write(to: path)
+                try test("an invalid launched-app record is never taken over: \(record.keys.sorted())") {
+                    try rejects("Mentra is owned") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
+                    try expect(InstallerFiles.read(path) == contents, "Invalid record changed")
+                }
+                try InstallerFiles.manager.removeItem(at: path)
+            }
+        }
+        do {
+            // A concurrent glasses owner (the shared JS readLockState, as Android admission uses) polls the app lock
+            // while the native installer repeatedly adopts a running app's lease and hands it back.
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            let folder = fixture.temporary.appendingPathComponent(".cache/mentra-e2e")
+            try InstallerFiles.manager.createDirectory(at: folder, withIntermediateDirectories: true)
+            let path = folder.appendingPathComponent("com.mentra.mentra.lock")
+            let app = Process()
+            app.executableURL = URL(fileURLWithPath: "/bin/sleep")
+            app.arguments = ["60"]
+            try app.run()
+            defer { if app.isRunning { app.terminate() } }
+            try encode(["pid": Int(app.processIdentifier), "token": "app-token", "launchedApp": true]).write(to: path, options: .atomic)
+            let poller = """
+            import {existsSync, writeFileSync} from "node:fs";
+            const {readLockState} = await import(process.argv[1]);
+            const folder = process.argv[2];
+            let reads = 0, free = [];
+            writeFileSync(folder + "/../poller-ready", "");
+            while (!existsSync(folder + "/../poller-stop")) {
+              let state;
+              try { state = (await readLockState(folder)).state } catch { state = "unverifiable" }
+              reads++;
+              if (state === "absent" || state === "reclaimable") free.push(state);
+            }
+            process.stdout.write(JSON.stringify({reads, free: free.length}));
+            """
+            let (reader, output) = try node(poller, fixture.temporary)
+            defer { if reader.isRunning { reader.terminate() } }
+            let ready = fixture.temporary.appendingPathComponent(".cache/poller-ready")
+            for _ in 0..<500 where !InstallerFiles.exists(ready) { usleep(10_000) }
+            try expect(InstallerFiles.exists(ready), "The concurrent reader did not start")
+            for _ in 0..<300 {
+                let lease = try AppOwnershipLease(homeDirectory: fixture.temporary)
+                try lease.release() // the app was not quit, so it gets its lease back
+            }
+            try Data().write(to: fixture.temporary.appendingPathComponent(".cache/poller-stop"))
+            reader.waitUntilExit()
+            let seen = try JSONSerialization.jsonObject(with: output.fileHandleForReading.readDataToEndOfFile()) as? [String: Int]
+            try test("native takeover of a running app's lease never exposes it as absent to a concurrent glasses owner") {
+                try expect((seen?["reads"] ?? 0) > 0 && seen?["free"] == 0, "A concurrent reader saw the running app's lock free: \(String(describing: seen))")
+                try expect(InstallerFiles.dictionary(InstallerFiles.read(path))["pid"] as? Int == Int(app.processIdentifier), "The app lost its lease")
+                try expect(try InstallerFiles.manager.contentsOfDirectory(atPath: folder.path) == ["com.mentra.mentra.lock"], "Takeover left files behind")
+            }
+        }
+        try test("installer first: a glasses owner reading the native lease finds an owner without a reservation") {
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            let lease = try AppOwnershipLease(homeDirectory: fixture.temporary)
+            let probe = """
+            import assert from "node:assert/strict";
+            const {readLockState} = await import(process.argv[1]);
+            const state = await readLockState(process.argv[2]);
+            assert.equal(state.state, "held");
+            assert.equal(state.reservation, undefined);
+            """
+            let (process, _) = try node(probe, fixture.temporary)
+            process.waitUntilExit()
+            try expect(process.terminationStatus == 0, "The native lease is not a held owner without a reservation")
+            try lease.release()
+        }
+        try test("malformed, live or retained glasses leases are held exactly as the shared JS reader decides") {
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            let root = fixture.temporary.appendingPathComponent(".cache/mentra-e2e/glasses")
+            let deadPID = 99_999_999
+            let reservation = ["runID": "x", "runDirectory": "/tmp/x", "fixtureID": "x"]
+            let cases: [(String, Data)] = try [
+                ("null", Data("null".utf8)), ("false", Data("false".utf8)), ("zero", Data("0".utf8)), ("array", Data("[]".utf8)),
+                ("unreadable", Data("{".utf8)), ("pid-string", encode(["pid": "1", "token": "t"])),
+                ("pid-bool", encode(["pid": true, "token": "t"])), ("no-token", encode(["pid": deadPID])),
+                ("empty-token", encode(["pid": deadPID, "token": ""])), ("retain-string", encode(["pid": deadPID, "token": "t", "retainOnExit": "no"])),
+                ("retain-zero", encode(["pid": deadPID, "token": "t", "retainOnExit": 0])),
+                ("reserved", encode(["pid": deadPID, "token": "t", "reservation": reservation])),
+                ("retained", encode(["pid": deadPID, "token": "t", "retainOnExit": true])),
+                ("live", encode(["pid": Int(getpid()), "token": "t"])),
+                ("exited", encode(["pid": deadPID, "token": "t"])), ("exited-unretained", encode(["pid": deadPID, "token": "t", "retainOnExit": false])),
+            ]
+            for (name, contents) in cases {
+                try InstallerFiles.manager.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+                try contents.write(to: root.appendingPathComponent("\(name)/com.mentra.mentra.lock"))
+            }
+            // A lease entry that is a dangling symlink exists and is held; only a missing entry ("acquiring") is absent.
+            try InstallerFiles.manager.createDirectory(at: root.appendingPathComponent("dangling"), withIntermediateDirectories: true)
+            try InstallerFiles.manager.createSymbolicLink(atPath: root.appendingPathComponent("dangling/com.mentra.mentra.lock").path,
+                                                          withDestinationPath: root.appendingPathComponent("missing-target").path)
+            try InstallerFiles.manager.createDirectory(at: root.appendingPathComponent("acquiring"), withIntermediateDirectories: true)
+            try Data().write(to: root.appendingPathComponent(".DS_Store"))
+            let native = try heldGlassesLeases(homeDirectory: fixture.temporary)
+            try expect(native == (cases.map(\.0).filter { !$0.hasPrefix("exited") } + ["dangling"]).sorted(), "Unexpected held leases: \(native)")
+            let probe = """
+            const {heldGlassesLeases} = await import(process.argv[1]);
+            process.stdout.write(JSON.stringify(await heldGlassesLeases(process.argv[2] + "/glasses")));
+            """
+            let (process, output) = try node(probe, fixture.temporary)
+            process.waitUntilExit()
+            let shared = try JSONSerialization.jsonObject(with: output.fileHandleForReading.readDataToEndOfFile()) as? [String]
+            try expect(process.terminationStatus == 0 && shared == native, "JS and native readers disagree: \(String(describing: shared))")
         }
 
         try test("bind the chosen package to the signed installer's exact manifest") {

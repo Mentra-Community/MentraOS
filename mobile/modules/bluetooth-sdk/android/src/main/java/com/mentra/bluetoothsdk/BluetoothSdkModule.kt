@@ -404,7 +404,6 @@ class BluetoothSdkModule : Module() {
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
-            "submit_incident_report",
             "extraction_progress",
         )
 
@@ -550,6 +549,8 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("forget") { -> sdk?.forget() }
 
+        SdkCoroutineFunction("unpair") { -> deviceManager?.unpair() }
+
         AsyncFunction("connectDefaultController") { deviceManager?.connectDefaultController() }
 
         AsyncFunction("disconnectController") { deviceManager?.disconnectController() }
@@ -616,7 +617,7 @@ class BluetoothSdkModule : Module() {
         // MARK: - Incident Reporting
 
         SdkAsyncFunction("sendIncidentId") { incidentId: String, apiBaseUrl: String? ->
-            sdk?.sendIncidentId(incidentId, apiBaseUrl)
+            requireSdk().sendIncidentId(incidentId, apiBaseUrl)
         }
 
         // MARK: - Native Notification Centre

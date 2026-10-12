@@ -15,6 +15,7 @@ import {DevIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
+import {showMiniappUpdatingAlert} from "@/utils/miniappUpdatingAlert"
 import {useNavigationStore} from "@/stores/navigation"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 
@@ -60,6 +61,7 @@ class BuiltInMiniappCatalog {
     }
 
     installAppStoreHooks({
+      onUpdateBlocked: showMiniappUpdatingAlert,
       onIncompatibleBlocked: (app) => this.showIncompatibleAlert(app),
       onOpenRequested: (app, opts) => {
         const nav = useNavigationStore.getState()
@@ -80,7 +82,7 @@ class BuiltInMiniappCatalog {
     }
     syncMiniappDeveloperVisibility(Boolean(engine.settings.get(SETTINGS.miniapp_dev_mode.key)))
     engine.settings.onChanged<boolean>(SETTINGS.miniapp_dev_mode.key, syncMiniappDeveloperVisibility)
-    for (const key of [SETTINGS.show_mentra_call_ios.key, SETTINGS.show_notify_ios.key]) {
+    for (const key of [SETTINGS.show_notify_ios.key]) {
       engine.settings.onChanged(key, () => {
         void this.syncGlassesMenuApps()
       })

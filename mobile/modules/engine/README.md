@@ -110,6 +110,54 @@ disabled unless an Expo/React Native host explicitly sets
 debug `setOtaVersionUrl` surface. Pre-39 glasses retain their separate legacy
 path because those clients ignore the URL sent by the phone.
 
+## Incident reports and collection completion
+
+`submitIncidentReport(event)` is the shared Promise entrypoint for Android intent
+and Mac app incident requests. It files once, submits phone diagnostics, asks the
+paired Mentra Live for ASG/BES logs, then waits for their Core storage receipts
+before returning the final `INCIDENT_REPORT_RESULT`. The testing framework awaits
+that receipt before ordinary teardown; it does not need report-reader credentials.
+
+The Promise resolves only when every required log source is `received` with a stored
+artifact ID. Without a paired Mentra Live, only phone logs are required. Requirements
+are captured before submission; a subsequent disconnect does not drop glasses logs.
+A source failure, unavailability or the 20-second collection deadline rejects with
+`IncidentReportError.result`, retaining the created report ID and partial receipts.
+The host catches that error to show the failed receipt; the testing framework records
+it and continues every teardown step and the next independent test. It never re-files
+the incident or changes the original test failure. Cloud and miniapp server
+collection continue independently because they do not need a live glasses connection.
+
+Automated requests (`source: "mentra_automated_testing"`) require valid `alert_id`
+and `test_run_id`. The engine sends their exact typed
+`automationCorrelation: {alertId, testRunId}` with report creation, so Core stores
+the binding before collection finishes. Existing authenticated run completion can
+return `deviceIncident: {reportId, correlation}` after reading the unique,
+hash-verified `incident-report/request.json` asset. This is a report link, even
+when the native transport lost its final receipt or collection failed; it never
+changes the original failed result or asserts successful uploads. Core refuses
+duplicate bindings across reports or accounts. No worker report-reader credential
+or repeated incident intent is needed. Older reports without this structured
+binding cannot be recovered through this path.
+
+`engine.reports.submit` creates a report and starts collection. Feedback uses this
+surface without waiting for glasses uploads. Hosts needing completion can await the
+separate storage receipt, whose failure rejects with `ReportCollectionError.collection`:
+
+```ts
+const submitted = await engine.reports.submit(report)
+if (submitted.status === "submitted") {
+  const collection = await engine.reports.waitForCollection(submitted.reportId, {
+    sources: ["phone", "glasses", "glasses_firmware"],
+    timeoutMs: 20_000,
+  })
+}
+```
+
+Bluetooth owns command delivery; Engine owns submission and collection completion;
+Core owns artifact storage and source receipts. Readiness of a report is separate
+from receipt of every log source.
+
 ## Imports
 
 Inside `mobile/modules/engine/src/`, use **relative paths** (`./services/...`,

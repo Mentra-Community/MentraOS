@@ -68,26 +68,32 @@ export default function IncidentReportRequest({
     }
   }, [authenticated, input, scope])
 
+  useEffect(() => {
+    if (result) console.log(`INCIDENT_REPORT_RESULT ${JSON.stringify(result)}`)
+  }, [result])
+
   return (
     <Modal visible animationType="none" onRequestClose={onDismiss}>
       <Screen preset="fixed" safeAreaEdges={["bottom"]}>
         <Header titleTx="incidentAutomation:title" leftIcon="chevron-left" onLeftPress={onDismiss} />
-        <ScrollView>
+        <ScrollView className="flex-1">
           <View className="gap-4 px-4 py-3">
             <Text
               tx={
                 !authenticated
                   ? "incidentAutomation:signInRequired"
                   : result
-                  ? "incidentAutomation:finished"
-                  : "incidentAutomation:submitting"
+                    ? "incidentAutomation:finished"
+                    : "incidentAutomation:submitting"
               }
             />
             <Text selectable testID="incident-report-state" text={JSON.stringify(state)} />
             {result && <Text selectable testID="incident-report-result" text={JSON.stringify(result)} />}
-            <Button testID="incident-report-done" tx="common:done" onPress={onDismiss} />
           </View>
         </ScrollView>
+        <View className="shrink-0 px-4 py-3">
+          <Button testID="incident-report-done" tx="common:done" onPress={onDismiss} />
+        </View>
       </Screen>
     </Modal>
   )

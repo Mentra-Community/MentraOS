@@ -23,6 +23,7 @@ import {
 } from "../services/OtaErrorMapping"
 import type {OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
 import type {OtaCheckCurrentGlassesResult} from "../services/OtaUpdateCheckService"
+import {otaDeviceSessionRevision, subscribeOtaDeviceSession} from "../services/OtaDeviceSession"
 import type {ReleaseChangelog} from "../facades/ota"
 import {useEngineSnapshot} from "./useEngineSnapshot"
 
@@ -232,6 +233,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     onOpenWifiSetup,
   } = options
   const otaSnapshot = useEngineSnapshot(ota.snapshot, ota.onSnapshot)
+  const deviceRevision = useEngineSnapshot(otaDeviceSessionRevision, subscribeOtaDeviceSession)
   const installSnapshot = useEngineSnapshot(ota.installSession.snapshot, ota.installSession.onSnapshot)
   const [page, setPage] = useState<MentraLiveOtaFlowPage>(initialPage)
   const [runtimeReady, setRuntimeReady] = useState(!initializeRuntime)
@@ -255,6 +257,8 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const checkStartedRef = useRef(false)
   const checkCompletedRef = useRef(false)
   const selectedCheckResultRef = useRef<OtaCheckCurrentGlassesResult | null>(null)
+  const selectedCheckDeviceRef = useRef(deviceRevision)
+  const previousDeviceRef = useRef(deviceRevision)
   const autoChainAdvancedRef = useRef(false)
   const installActionPendingRef = useRef(false)
   const onFinishedRef = useRef(onFinished)
@@ -294,6 +298,21 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     setCheckGeneration((generation) => generation + 1)
   }, [])
 
+  useEffect(() => {
+    if (previousDeviceRef.current === deviceRevision) return
+    previousDeviceRef.current = deviceRevision
+    performCheckGenerationRef.current += 1
+    selectedCheckResultRef.current = null
+    setUpdateFingerprint(null)
+    setOfferedReleaseTransition(null)
+    setCompletedReleaseTransition(null)
+    setCompletedUpdate(false)
+    setCompletedChangelogs([])
+    setBatteryBlocked(false)
+    setIsVersionChange(false)
+    returnToCheck()
+  }, [deviceRevision, returnToCheck])
+
   const navigateToProgress = useCallback(() => {
     installActionPendingRef.current = true
     ota.clearProgress()
@@ -302,6 +321,8 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
 
   const continueApprovedChain = useCallback(
     (result: OtaCheckCurrentGlassesResult): boolean => {
+      if (deviceRevision !== otaDeviceSessionRevision() || selectedCheckDeviceRef.current !== deviceRevision)
+        return false
       if (installActionPendingRef.current || !isOtaAutoChainActive() || !result.updateInfo) return false
       const snapshot = ota.snapshot()
       if (!snapshot.wifiStatusKnown || (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1)) return false
@@ -319,7 +340,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       navigateToProgress()
       return true
     },
-    [navigateToProgress],
+    [deviceRevision, navigateToProgress],
   )
 
   useEffect(() => {
@@ -332,7 +353,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     }
     const MIN_DISPLAY_TIME_MS = 1100
     const MAX_WAIT_FOR_VERSION_INFO_MS = 10_000
-    const checkKey = String(checkGeneration)
+    const checkKey = `${deviceRevision}:${checkGeneration}`
     if (activeCheckKeyRef.current !== checkKey) {
       performCheckGenerationRef.current += 1
       activeCheckKeyRef.current = checkKey
@@ -356,7 +377,12 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         if (remainingMs === null) return
         const reconnectGeneration = performCheckGenerationRef.current
         reconnectTimeout = setTimeout(() => {
-          if (!mountedRef.current || reconnectGeneration !== performCheckGenerationRef.current || ota.snapshot().ready)
+          if (
+            !mountedRef.current ||
+            deviceRevision !== otaDeviceSessionRevision() ||
+            reconnectGeneration !== performCheckGenerationRef.current ||
+            ota.snapshot().ready
+          )
             return
           stopOtaAutoChain()
           checkCompletedRef.current = true
@@ -382,6 +408,10 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       clearOtaAutoChainReconnectWait()
       checkStartedRef.current = true
       const myGeneration = ++performCheckGenerationRef.current
+      const isCurrentCheck = () =>
+        mountedRef.current &&
+        myGeneration === performCheckGenerationRef.current &&
+        deviceRevision === otaDeviceSessionRevision()
       const startTime = Date.now()
       try {
         const checkOptions = {
@@ -393,16 +423,17 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
           fixClockBeforeCheck: false,
         }
         let result = await ota.checkForUpdates(checkOptions)
-        if (!mountedRef.current || myGeneration !== performCheckGenerationRef.current) return
+        if (!isCurrentCheck()) return
         if (!result.hasCheckCompleted && result.checkFailureReason === "network" && isOtaAutoChainActive()) {
           await new Promise((resolve) => setTimeout(resolve, AUTO_CHAIN_NETWORK_RETRY_DELAY_MS))
-          if (!mountedRef.current || myGeneration !== performCheckGenerationRef.current) return
+          if (!isCurrentCheck()) return
           result = await ota.checkForUpdates(checkOptions)
         }
-        if (!mountedRef.current || myGeneration !== performCheckGenerationRef.current) return
+        if (!isCurrentCheck()) return
         selectedCheckResultRef.current = result
+        selectedCheckDeviceRef.current = deviceRevision
         await new Promise((resolve) => setTimeout(resolve, Math.max(0, MIN_DISPLAY_TIME_MS - (Date.now() - startTime))))
-        if (!mountedRef.current || myGeneration !== performCheckGenerationRef.current) return
+        if (!isCurrentCheck()) return
 
         if (result.skippedReason === "disconnected") {
           stopOtaAutoChain()
@@ -475,7 +506,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       } catch (error) {
         console.error("OTA check failed:", error)
         await new Promise((resolve) => setTimeout(resolve, Math.max(0, MIN_DISPLAY_TIME_MS - (Date.now() - startTime))))
-        if (!mountedRef.current || myGeneration !== performCheckGenerationRef.current) return
+        if (!isCurrentCheck()) return
         stopOtaAutoChain()
         checkCompletedRef.current = true
         setErrorKind("network")
@@ -489,6 +520,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     }
   }, [
     checkGeneration,
+    deviceRevision,
     continueApprovedChain,
     otaSnapshot.connected,
     otaSnapshot.ready,
@@ -558,13 +590,14 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       return
     }
     const timeout = setTimeout(async () => {
-      if (!isOtaAutoChainActive()) return
+      if (deviceRevision !== otaDeviceSessionRevision() || !isOtaAutoChainActive()) return
       autoChainAdvancedRef.current = true
       await ota.installSession.finish()
+      if (deviceRevision !== otaDeviceSessionRevision()) return
       returnToCheck()
     }, AUTO_CHAIN_COMPLETE_DELAY_MS)
     return () => clearTimeout(timeout)
-  }, [installSnapshot.connected, installSnapshot.displayState, page, returnToCheck])
+  }, [deviceRevision, installSnapshot.connected, installSnapshot.displayState, page, returnToCheck])
 
   const check = useCallback(() => {
     setBatteryBlocked(false)
@@ -579,6 +612,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
 
   const install = useCallback(() => {
     if (installActionPendingRef.current || page !== "check") return
+    if (deviceRevision !== otaDeviceSessionRevision() || selectedCheckDeviceRef.current !== deviceRevision) return
     const result = selectedCheckResultRef.current
     if (!result) {
       setErrorKind("network")
@@ -613,7 +647,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       })
     }
     navigateToProgress()
-  }, [check, isVersionChange, navigateToProgress, offeredReleaseTransition, page, updateFingerprint])
+  }, [check, deviceRevision, isVersionChange, navigateToProgress, offeredReleaseTransition, page, updateFingerprint])
 
   useEffect(() => {
     if (
@@ -625,12 +659,13 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   }, [batteryBlocked, otaSnapshot.batteryLevel])
 
   const retryInstall = useCallback(() => {
-    if (page !== "progress") return
+    if (deviceRevision !== otaDeviceSessionRevision() || page !== "progress") return
     onFirmwareRestartingChangeRef.current?.(false, true)
     ota.installSession.retry()
-  }, [page])
+  }, [deviceRevision, page])
 
   const finish = useCallback(async () => {
+    if (deviceRevision !== otaDeviceSessionRevision()) return
     if (page === "check") {
       onFinishedRef.current?.()
       return
@@ -647,15 +682,18 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     )
     if (requiresGlassesReboot) stopOtaAutoChain()
     await ota.installSession.finish()
+    if (deviceRevision !== otaDeviceSessionRevision()) return
     returnToCheck()
-  }, [installSnapshot, page, returnToCheck])
+  }, [deviceRevision, installSnapshot, page, returnToCheck])
 
   const discard = useCallback(async () => {
+    if (deviceRevision !== otaDeviceSessionRevision()) return
     if (page !== "progress") return
     stopOtaAutoChain()
     await ota.installSession.discard()
+    if (deviceRevision !== otaDeviceSessionRevision()) return
     returnToCheck()
-  }, [page, returnToCheck])
+  }, [deviceRevision, page, returnToCheck])
 
   const openWifiSetup = useCallback(() => {
     if (page === "progress") stopOtaAutoChain()
@@ -881,6 +919,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     offeredReleaseTransition,
     page,
     runtimeReady,
+    deviceRevision,
   ])
 
   return useMemo(

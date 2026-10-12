@@ -54,10 +54,11 @@ export class MicModule {
   }
 
   /**
-   * Temporarily override glasses-side voice activity detection (GX8002) for
-   * this miniapp's lifetime. When disabled, mic gating falls back to the
-   * loudness gate only (if it is enabled). The Mentra App's configured value
-   * is restored when this miniapp disconnects.
+   * Request glasses-side voice activity detection (GX8002) for this miniapp's
+   * lifetime. Enabling is subject to the user's "Allow voice activity detection"
+   * setting and continuous-audio requirements from other consumers. When disabled,
+   * audio frames continue; the independent loudness gate can still silence quiet
+   * input. The request is released when this miniapp disconnects.
    *
    * Requires `MICROPHONE` in the miniapp manifest.
    */

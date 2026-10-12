@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 /**
  * SherpaOnnxTranscriber handles real-time audio transcription using Sherpa-ONNX.
@@ -11,24 +10,30 @@ class SherpaOnnxTranscriber {
     private static let TAG = "SherpaOnnxTranscriber"
 
     private static let SAMPLE_RATE = 16000 // Sherpa-ONNX model's required sample rate
-    private static let QUEUE_CAPACITY = 100 // Max number of audio buffers to keep in queue
+    private final class Session {
+        let recognizer: SherpaOnnxRecognizer
+        var lastPartialResult = ""
 
-    private let pcmQueue = DispatchQueue(label: "com.augmentos.sherpaonnx.pcmQueue", qos: .userInteractive)
-    private var pcmBuffers = [Data]()
-    private var isRunning = false
-    private var processingQueue: DispatchQueue?
-    private var processingTask: DispatchWorkItem?
+        init(_ recognizer: SherpaOnnxRecognizer) {
+            self.recognizer = recognizer
+        }
+    }
 
-    /// The underlying Sherpa-ONNX objects
-    private var recognizer: SherpaOnnxRecognizer?
+    private lazy var worker = DemandDrivenAudioWorker<Session>(
+        makeProcessor: { Self.makeRecognizer().map(Session.init) },
+        process: { [weak self] session, data, generation in
+            self?.process(session, data: data, generation: generation)
+        }
+    )
 
-    private var lastPartialResult = ""
+    /// Construct the worker on the manager's actor before audio can arrive.
+    init() {
+        _ = worker
+    }
 
-    /// Parent context
-    private weak var context: UIViewController?
-
-    /// Session start time for relative timestamps
-    private var transcriptionSessionStart: Date
+    func setActive(_ active: Bool) {
+        worker.setActive(active)
+    }
 
     /// Dynamic model path support
     private static var customModelPath: String? {
@@ -65,23 +70,9 @@ class SherpaOnnxTranscriber {
         return nil
     }
 
-    /**
-     * Constructor that accepts a UIViewController to load model assets.
-     */
-    init(context: UIViewController) {
-        self.context = context
-        transcriptionSessionStart = Date()
-    }
-
-    deinit {
-        shutdown()
-    }
-
-    /**
-     * Initialize the Sherpa-ONNX recognizer.
-     * Loads models and configuration, sets up processing thread.
-     */
-    func initialize() {
+    /// Runs exclusively on the worker queue, never on the main/audio delivery thread.
+    private static func makeRecognizer() -> SherpaOnnxRecognizer? {
+        var recognizer: SherpaOnnxRecognizer?
         do {
             var tokensPath: String
             var modelType = "unknown"
@@ -201,30 +192,26 @@ class SherpaOnnxTranscriber {
                 Bridge.log("No Sherpa ONNX model available. Transcription will be disabled.")
                 Bridge.log("Please download a model using the model downloader in settings.")
                 recognizer = nil
-                isRunning = false
-                return
+                return nil
             }
 
             if recognizer == nil {
                 throw NSError(domain: "SherpaOnnxTranscriber", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create recognizer"])
             }
 
-            startProcessingTask()
-            isRunning = true
-
             Bridge.log("Sherpa-ONNX ASR initialized successfully with \(modelType) model")
+            return recognizer
 
         } catch {
             Bridge.log("Failed to initialize Sherpa-ONNX: \(error.localizedDescription)")
+            return nil
         }
     }
 
-    /**
-     * Handle transcription results - send only to delegate
-     */
-    private func handleTranscriptionResult(text: String, isFinal: Bool) {
-        // Forward to delegate if set
+    private func handleTranscriptionResult(text: String, isFinal: Bool, generation: UInt64) {
         DispatchQueue.main.async { [weak self] in
+            // A decode or main-queue delivery may finish after stop/model replacement.
+            guard let self, self.worker.isCurrent(generation) else { return }
             if isFinal {
                 STTTools.didReceiveFinalTranscription(text)
             } else {
@@ -233,123 +220,30 @@ class SherpaOnnxTranscriber {
         }
     }
 
-    /**
-     * Feed PCM audio data (16-bit little endian) into the transcriber.
-     * This method should be called continuously with short chunks (e.g., 100-300ms).
-     *
-     * Audio is queued directly; microphone VAD gating is not applied in the SDK.
-     */
     func acceptAudio(pcm16le: Data) {
-        guard isRunning else {
-            return
-        }
-
-        queueAudioData(pcm16le)
+        worker.accept(pcm16le)
     }
 
-    private func queueAudioData(_ pcm16le: Data) {
-        pcmQueue.async { [weak self] in
-            guard let self = self else { return }
-
-            let queueSizeBefore = self.pcmBuffers.count
-            self.pcmBuffers.append(pcm16le)
-
-            // Keep queue size manageable
-            if self.pcmBuffers.count > Self.QUEUE_CAPACITY {
-                let removedBuffer = self.pcmBuffers.removeFirst()
-                Bridge.log("⚠️ Audio queue overflow - dropped buffer of \(removedBuffer.count) bytes")
-            }
+    private func process(_ session: Session, data: Data, generation: UInt64) {
+        guard worker.isCurrent(generation) else { return }
+        let recognizer = session.recognizer
+        recognizer.acceptWaveform(samples: toFloatArray(from: data), sampleRate: Self.SAMPLE_RATE)
+        while recognizer.isReady() {
+            guard worker.isCurrent(generation) else { return }
+            recognizer.decode()
         }
-    }
-
-    /**
-     * Start a background task to continuously consume audio and decode using Sherpa.
-     */
-    private func startProcessingTask() {
-        Bridge.log("🚀 Starting Sherpa-ONNX processing task...")
-
-        processingQueue = DispatchQueue(label: "com.augmentos.sherpaonnx.processor", qos: .userInitiated)
-
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.runLoop()
-        }
-
-        processingTask = workItem
-        processingQueue?.async(execute: workItem)
-    }
-
-    /**
-     * Main processing loop that handles transcription in real-time.
-     * Pulls audio from queue, feeds into Sherpa, emits partial/final results.
-     */
-    private func runLoop() {
-        Bridge.log("🔄 Sherpa-ONNX processing loop started")
-
-        while isRunning {
-            // Pull data from queue
-            var audioData: Data?
-
-            pcmQueue.sync {
-                if !self.pcmBuffers.isEmpty {
-                    audioData = self.pcmBuffers.removeFirst()
-                }
+        guard worker.isCurrent(generation) else { return }
+        let text = recognizer.getResult().text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if recognizer.isEndpoint() {
+            if !text.isEmpty {
+                handleTranscriptionResult(text: text, isFinal: true, generation: generation)
             }
-
-            if let data = audioData {
-                // Synchronize access to recognizer to prevent race conditions
-                objc_sync_enter(self)
-                defer { objc_sync_exit(self) }
-
-                guard let recognizer = recognizer else {
-                    Bridge.log("⚠️ Recognizer not available, skipping audio chunk")
-                    continue
-                }
-
-                do {
-                    // Convert PCM to float [-1.0, 1.0]
-                    let floatBuf = toFloatArray(from: data)
-
-                    // Pass audio data to the Sherpa-ONNX stream
-                    recognizer.acceptWaveform(samples: floatBuf, sampleRate: Self.SAMPLE_RATE)
-
-                    // Decode continuously while model is ready
-                    var decodeCount = 0
-                    while recognizer.isReady() {
-                        recognizer.decode()
-                        decodeCount += 1
-                    }
-
-                    // If utterance endpoint detected
-                    if recognizer.isEndpoint() {
-                        let result = recognizer.getResult()
-                        let finalText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                        if !finalText.isEmpty {
-                            handleTranscriptionResult(text: finalText, isFinal: true)
-                        }
-
-                        recognizer.reset() // Start new utterance
-                        lastPartialResult = ""
-                    } else {
-                        // Emit partial results if changed
-                        let result = recognizer.getResult()
-                        let partial = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                        if partial != lastPartialResult, !partial.isEmpty {
-                            handleTranscriptionResult(text: partial, isFinal: false)
-                            lastPartialResult = partial
-                        }
-                    }
-                } catch {
-                    Bridge.log("❌ Error processing audio: \(error.localizedDescription)")
-                }
-            } else {
-                // Sleep briefly to avoid tight CPU loop if no audio is available
-                Thread.sleep(forTimeInterval: 0.01)
-            }
+            recognizer.reset()
+            session.lastPartialResult = ""
+        } else if !text.isEmpty, text != session.lastPartialResult {
+            handleTranscriptionResult(text: text, isFinal: false, generation: generation)
+            session.lastPartialResult = text
         }
-
-        Bridge.log("ASR processing thread stopped")
     }
 
     /**
@@ -377,45 +271,11 @@ class SherpaOnnxTranscriber {
         return samples
     }
 
-    /**
-     * Stop transcription processing.
-     * This shuts down the processing thread and releases Sherpa-ONNX resources.
-     */
     func shutdown() {
-        Bridge.log("🛑 Shutting down SherpaOnnxTranscriber...")
-
-        isRunning = false
-        processingTask?.cancel()
-
-        // Synchronize access to recognizer during shutdown
-        objc_sync_enter(self)
-        defer { objc_sync_exit(self) }
-
-        // The recognizer will be automatically cleaned up by ARC when set to nil
-        if recognizer != nil {
-            Bridge.log("🧹 Cleaning up Sherpa-ONNX recognizer")
-            recognizer = nil
-        }
-
-        // Clear any remaining audio buffers
-        pcmQueue.sync {
-            let remainingBuffers = self.pcmBuffers.count
-            if remainingBuffers > 0 {
-                Bridge.log("🗑️ Clearing \(remainingBuffers) remaining audio buffers")
-            }
-            self.pcmBuffers.removeAll()
-        }
-
-        Bridge.log("✅ SherpaOnnxTranscriber shutdown complete")
+        worker.setActive(false)
     }
 
-    /**
-     * Restarts the transcriber after a model change.
-     * Shuts down existing resources, clears buffers, and reinitializes the recognizer.
-     */
     func restart() {
-        Bridge.log("♻️ Restarting SherpaOnnxTranscriber...")
-        shutdown()
-        initialize()
+        worker.restart()
     }
 }

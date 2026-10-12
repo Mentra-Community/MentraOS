@@ -82,6 +82,7 @@ export function isBusyGlassesConnectionStatus(status: GlassesConnectionStatus): 
 export function createDisconnectedGlassesStatus(): Partial<GlassesStatus> {
   return {
     connection: {state: "disconnected"},
+    g2MissingArm: null,
     hotspot: {state: "disabled"},
     voiceActivityDetectionEnabled: DEFAULT_VOICE_ACTIVITY_DETECTION_ENABLED,
     wifi: {state: "disconnected"},
@@ -1613,6 +1614,8 @@ export interface OtaProgress {
 }
 
 export interface GlassesStatus {
+  /** iOS G2 arm still disconnected after a three-second partial link; cleared on reset or both links. */
+  g2MissingArm?: "left" | "right" | null
   // state:
   connection: GlassesConnectionStatus
   micEnabled: boolean

@@ -17,6 +17,8 @@ import android.util.Log;
 import androidx.core.app.NotificationCompat;
 
 import com.mentra.asg_client.events.BatteryStatusEvent;
+import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.receiver.DebugMtkOtaReceiver;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
@@ -61,6 +63,8 @@ public class OtaService extends Service {
 
         stopLegacyOtaUpdaterIfPresent();
 
+        recoverInlineMtkAfterRestart();
+
         // Check if ASG client was just updated - if so, auto-resume OTA for MTK/BES
         checkAndResumeAfterApkUpdate();
 
@@ -80,7 +84,26 @@ public class OtaService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "OtaService onStartCommand");
+        if (intent != null && DebugMtkOtaReceiver.ACTION_DEBUG_MTK_OTA.equals(intent.getAction())) {
+            String manifest = intent.getStringExtra(AsgConstants.DEBUG_MTK_OTA_MANIFEST_EXTRA);
+            String artifactId = intent.getStringExtra(AsgConstants.DEBUG_MTK_OTA_ARTIFACT_ID_EXTRA);
+            new Thread(() -> {
+                try {
+                    boolean accepted = otaHelper.startValidatedDebugMtkFirmware(manifest, artifactId);
+                    Log.i(TAG, accepted ? "Pinned MTK update admitted" : "Pinned MTK update refused");
+                } catch (Exception error) {Log.e(TAG, "Pinned MTK update failed", error);}
+            }, "inline-mtk-ota").start();
+        }
         return START_STICKY;
+    }
+
+    private void recoverInlineMtkAfterRestart() {
+        otaHelper.reconcileInlineMtkAfterRestart();
+        if (otaHelper.getSessionManager().hasActiveMtkRestore()
+                && "awaiting_reboot".equals(otaHelper.getSessionManager().getCurrentPhase())
+                && otaHelper.consumeRebootAfterMtkInstall()) {
+            scheduleMtkRebootToApplyUpdate();
+        }
     }
 
     @Override
@@ -242,6 +265,11 @@ public class OtaService extends Service {
                 // so a duplicate/late SUCCESS event can't schedule a second reboot.
                 boolean shouldRebootAfterMtk =
                         otaHelper != null && otaHelper.consumeRebootAfterMtkInstall();
+
+                if (otaHelper != null && otaHelper.getSessionManager().stageMtkRestoreForReboot()) {
+                    if (shouldRebootAfterMtk) scheduleMtkRebootToApplyUpdate();
+                    break;
+                }
 
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FINISHED", 100, null);

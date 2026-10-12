@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { ByteRangeError, bufferedRangeResponse, parseSingleByteRange } from "./byte-range";
+import { ByteRangeError, streamedRangeResponse, parseSingleByteRange } from "./byte-range";
 
 describe("single byte range parsing", () => {
   test("accepts initial, bounded, open-ended and suffix ranges clamped to the payload", () => {
@@ -21,7 +21,7 @@ describe("single byte range parsing", () => {
   });
 });
 
-describe("buffered range responses over a real HTTP socket", () => {
+describe("streamed range responses over a real HTTP socket", () => {
   // Genuine synthetic silent H264 MP4 followed by deterministic padding, so a
   // tail range spans more than the socket's first chunk.
   const fixture = readFile(new URL("../../../../../tests/fixtures/synthetic-silent-h264-64x64-10f.mp4", import.meta.url));
@@ -37,7 +37,8 @@ describe("buffered range responses over a real HTTP socket", () => {
   async function withServer(run: (url: string, bytes: Uint8Array<ArrayBuffer>) => Promise<void>) {
     const bytes = new Uint8Array(Buffer.concat([await fixture, Buffer.alloc(1024 * 1024, 0x6d)]));
     const server = Bun.serve({ hostname: "127.0.0.1", port: 0,
-      fetch: request => bufferedRangeResponse(request, bytes, new Headers({ ...security, etag })) });
+      fetch: request => streamedRangeResponse(request, bytes.length, new Headers({ ...security, etag }), async range =>
+        new Blob([range ? bytes.subarray(range.start, range.end + 1) : bytes])) });
     try { await run(new URL("/artifact", server.url).href, bytes); } finally { await server.stop(true); }
   }
 
@@ -103,13 +104,16 @@ describe("buffered range responses over a real HTTP socket", () => {
         const changed = await fetch(url, { headers: { range: "bytes=0-1", "if-range": ifRange } });
         expect(changed.status).toBe(200);
         expect(changed.headers.get("content-range")).toBeNull();
-        expect(changed.headers.get("content-length")).toBe(String(bytes.byteLength));
+        // Bun uses chunked framing for a ReadableStream even when the Response
+        // has a known length. The application headers are covered by the API
+        // tests; this socket assertion checks its actual streaming framing.
+        expect(changed.headers.get("transfer-encoding")).toBe("chunked");
         expect(new Uint8Array(await changed.arrayBuffer())).toEqual(bytes);
       }
     });
   });
 
-  test("payload views keep their own offset and length, including shared-buffer input", async () => {
+  test("storage stream chunks keep their own offset and length, including shared-buffer input", async () => {
     // Stored payloads can be views into a larger buffer (e.g. pooled Node
     // Buffers) or, generically, not backed by an ArrayBuffer at all.
     const payload = Uint8Array.from({ length: 4096 }, (_, index) => index % 253);
@@ -120,17 +124,22 @@ describe("buffered range responses over a real HTTP socket", () => {
     shared.set(payload);
     for (const input of [pooled.subarray(100, 100 + payload.length), shared]) {
       const server = Bun.serve({ hostname: "127.0.0.1", port: 0,
-        fetch: request => bufferedRangeResponse(request, input, new Headers({ "content-type": "video/mp4", etag })) });
+        fetch: request => streamedRangeResponse(request, input.length, new Headers({ "content-type": "video/mp4", etag }), async range =>
+          new ReadableStream({start(controller) {
+            controller.enqueue(range ? input.subarray(range.start, range.end + 1) : input);
+            controller.close();
+          }})) });
       try {
         const url = new URL("/artifact", server.url);
         const full = await fetch(url);
-        expect(full.headers.get("content-length")).toBe(String(payload.length));
+        expect(full.headers.get("transfer-encoding")).toBe("chunked");
         expect(new Uint8Array(await full.arrayBuffer())).toEqual(payload);
         const tail = await fetch(url, { headers: { range: "bytes=-10" } });
         expect(tail.headers.get("content-range")).toBe(`bytes ${payload.length - 10}-${payload.length - 1}/${payload.length}`);
         expect(new Uint8Array(await tail.arrayBuffer())).toEqual(payload.subarray(-10));
         const middle = await fetch(url, { headers: { range: "bytes=1000-1999" } });
-        expect(middle.headers.get("content-length")).toBe("1000");
+        expect(middle.headers.get("content-range")).toBe(`bytes 1000-1999/${payload.length}`);
+        expect(middle.headers.get("transfer-encoding")).toBe("chunked");
         expect(new Uint8Array(await middle.arrayBuffer())).toEqual(payload.subarray(1000, 2000));
       } finally { await server.stop(true); }
     }

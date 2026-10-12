@@ -15,13 +15,13 @@
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import {DEFAULT_REFRESH_TOKEN_KEY} from "@mentra/cloud-client"
-import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
+import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
-import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
+import type {AudioPosition, AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import CrustModule from "@mentra/crust"
+import CrustModule, {nativeHttpRequest} from "@mentra/crust"
 import {getAuth, getConfigValues, isFeatureEnabled} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
@@ -130,11 +130,9 @@ async function syncCoreAccessTokenToBluetoothInternal(): Promise<string> {
     throw result.error
   }
 
-  try {
-    await BluetoothSdk.updateBluetoothSettings({[SETTINGS.core_token.key]: token})
-  } catch (err) {
-    console.warn(`${LOG_TAG}: direct Bluetooth core_token sync failed: ${(err as Error)?.message ?? err}`)
-  }
+  // A saved JS token is not a successful native sync. Let callers record a
+  // failed synchronization rather than ask glasses to upload with an old token.
+  await BluetoothSdk.updateBluetoothSettings({[SETTINGS.core_token.key]: token})
 
   return token
 }
@@ -349,11 +347,13 @@ function ensureTransports(): void {
       return globalThis.fetch(input, init)
     }
     const headers = Object.fromEntries(new Headers(init?.headers).entries())
-    const result = await CrustModule.nativeHttpRequest(
+    const result = await nativeHttpRequest(
+      CrustModule,
       init?.method ?? "GET",
       input,
       headers,
       (init?.body as string | undefined) ?? null,
+      init?.signal ?? undefined,
     )
     return new Response(nativeHttpResponseBody(result.status, result.body), {
       status: result.status,
@@ -588,13 +588,6 @@ export const cloudClientService = {
     construct()
   },
 
-  async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
-    if (!client) this.init()
-    const c = client
-    if (!c?.core) throw new Error("cloud client core is unavailable")
-    return c.core.miniapps.getRegistry()
-  },
-
   /**
    * Resolve the stable Core-owned Mentra user id.
    *
@@ -625,10 +618,7 @@ export const cloudClientService = {
     return userId
   },
 
-  async getMiniappAuthToken(
-    packageName: string,
-    opts?: {minTtlMs?: number; devAttestation?: string},
-  ): Promise<MiniappAuthToken> {
+  async getMiniappAuthToken(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken> {
     if (!client) this.init()
     const c = client
     if (!c) throw new Error("cloud client not initialized")
@@ -722,6 +712,10 @@ export const cloudClientService = {
     client?.runtime.sendAudioFrame(frame)
   },
 
+  getAudioPosition(): AudioPosition | null {
+    return client?.runtime.getAudioPosition() ?? null
+  },
+
   onTranscript(cb: (d: TranscriptionData) => void): () => void {
     transcriptListeners.add(cb)
     return () => {
@@ -794,8 +788,14 @@ export const cloudClientService = {
 
   core: {
     reports: {
+      getLogCollection(...args: Parameters<CloudCore["reports"]["getLogCollection"]>) {
+        return getCoreClient().reports.getLogCollection(...args)
+      },
       submit(...args: Parameters<CloudCore["reports"]["submit"]>) {
         return getCoreClient().reports.submit(...args)
+      },
+      updateLogCollection(...args: Parameters<CloudCore["reports"]["updateLogCollection"]>) {
+        return getCoreClient().reports.updateLogCollection(...args)
       },
       addLogs(...args: Parameters<CloudCore["reports"]["addLogs"]>) {
         return getCoreClient().reports.addLogs(...args)

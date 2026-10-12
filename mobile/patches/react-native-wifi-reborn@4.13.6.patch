@@ -1,0 +1,61 @@
+diff --git a/ios/RNWifi.m b/ios/RNWifi.m
+--- a/ios/RNWifi.m
++++ b/ios/RNWifi.m
+@@ -5,6 +5,8 @@
+ #import <UIKit/UIKit.h>
+ 
+ #import "ConnectError.h"
++#import "RNWifiErrorFacts.h"
++#import <os/log.h>
+ 
+ 
+ @interface WifiManager () <CLLocationManagerDelegate>
+@@ -171,6 +173,22 @@
+ 
+             [[NEHotspotConfigurationManager sharedManager] applyConfiguration:configuration completionHandler:^(NSError * _Nullable error) {
+                 if (error != nil) {
++                    // Capture the original NSError before parseError replaces its numeric code.
++                    NSString *facts = RNWifiErrorFacts(error);
++                    BOOL callbackOnMain = NSThread.isMainThread;
++                    void (^logFailure)(void) = ^{
++                        BOOL onMac = NO;
++                        if (@available(iOS 14.0, *)) onMac = NSProcessInfo.processInfo.isiOSAppOnMac;
++                        UIApplicationState state = UIApplication.sharedApplication.applicationState;
++                        NSString *appState = state == UIApplicationStateActive ? @"active"
++                            : state == UIApplicationStateBackground ? @"background" : @"inactive";
++                        os_log_error(OS_LOG_DEFAULT,
++                            "RNWIFI HOTSPOT_JOIN apply_failed %{public}@ ios_on_mac=%{public}d app_state_at_log=%{public}@ callback_on_main=%{public}d",
++                            facts, onMac, appState, callbackOnMain);
++                    };
++                    // UIKit state is read on main; diagnostics never delay or alter rejection.
++                    if (callbackOnMain) logFailure();
++                    else dispatch_async(dispatch_get_main_queue(), logFailure);
+                     reject([self parseError:error], [error localizedDescription], error);
+                 } else {
+                     // It's not guaranteed that the connection is established before completionHandler is called, so
+diff --git a/ios/RNWifiErrorFacts.h b/ios/RNWifiErrorFacts.h
+new file mode 100644
+--- /dev/null
++++ b/ios/RNWifiErrorFacts.h
+@@ -0,0 +1,21 @@
++#import <Foundation/Foundation.h>
++
++// Diagnostic identifiers only: never include localized text, credentials or userInfo.
++static inline NSString *RNWifiErrorDomain(NSString *domain) {
++    if (![domain isKindOfClass:[NSString class]] || domain.length == 0 || domain.length > 128) {
++        return @"unavailable";
++    }
++    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
++        @"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"];
++    return [domain rangeOfCharacterFromSet:allowed.invertedSet].location == NSNotFound
++        ? domain : @"unavailable";
++}
++
++static inline NSString *RNWifiErrorFacts(NSError *error) {
++    id value = error.userInfo[NSUnderlyingErrorKey];
++    NSError *underlying = [value isKindOfClass:[NSError class]] ? value : nil;
++    return [NSString stringWithFormat:@"domain=%@ code=%ld underlying_domain=%@ underlying_code=%@",
++        RNWifiErrorDomain(error.domain), (long)error.code,
++        underlying ? RNWifiErrorDomain(underlying.domain) : @"none",
++        underlying ? [NSString stringWithFormat:@"%ld", (long)underlying.code] : @"none"];
++}

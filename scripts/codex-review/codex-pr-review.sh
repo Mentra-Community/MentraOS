@@ -71,7 +71,7 @@ head_sha=$(git -C "$repo_dir" ls-remote origin "refs/pull/${pr}/head" | cut -f1)
 # Right after a push the pull ref can lag the branch by a few seconds; when the PR branch lives
 # on origin, wait (bounded) until they agree so the review targets the commit just pushed.
 branch_sha=$(git -C "$repo_dir" ls-remote origin "refs/heads/${head_branch}" | cut -f1)
-if [[ -n "$branch_sha" && "$branch_sha" != "$head_sha" ]]; then
+if [[ -n "$head_sha" && -n "$branch_sha" && "$branch_sha" != "$head_sha" ]]; then
   for _ in $(seq 1 12); do
     sleep 5
     head_sha=$(git -C "$repo_dir" ls-remote origin "refs/pull/${pr}/head" | cut -f1)
@@ -79,7 +79,14 @@ if [[ -n "$branch_sha" && "$branch_sha" != "$head_sha" ]]; then
   done
   [[ "$head_sha" == "$branch_sha" ]] || echo "codex-pr-review: warning: pull ref ${head_sha:0:8} still differs from branch ${branch_sha:0:8}; reviewing the pull ref" >&2
 fi
-[[ -n "$head_sha" ]] || head_sha=$(gh pr view "$pr" -R "$slug" --json headRefOid -q .headRefOid)
+missing_pull_ref=""
+if [[ -z "$head_sha" ]]; then
+  # GitHub can expose a new PR through its API before advertising its Git pull
+  # ref. Fetch the API's exact commit, never substitute the moving branch tip.
+  missing_pull_ref=1
+  head_sha=$(gh api "repos/$slug/pulls/$pr" --jq .head.sha) || fail "cannot resolve the exact PR head"
+  [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || fail "GitHub returned an invalid PR head"
+fi
 if [[ -z "${GH_ACCOUNT:-}" ]]; then
   me=$(gh api user -q .login) || fail "cannot identify the GitHub user; select GH_ACCOUNT=own to use configured installation credentials"
   if [[ "$author" == "$me" ]]; then GH_ACCOUNT=app; else GH_ACCOUNT=own; fi
@@ -163,7 +170,14 @@ take_lock() {
   release_reclaim
 }
 take_lock
-git -C "$repo_dir" fetch -q origin "$base" "pull/${pr}/head"
+if [[ -n "$missing_pull_ref" ]]; then
+  git -C "$repo_dir" fetch -q origin "$base" "$head_sha" \
+    || fail "cannot fetch exact PR head ${head_sha:0:8} while its pull ref is unavailable"
+  current_head=$(gh api "repos/$slug/pulls/$pr" --jq .head.sha) || fail "cannot recheck the PR head after fetching"
+  [[ "$current_head" == "$head_sha" ]] || fail "PR head changed while fetching; rerun the review on its new head"
+else
+  git -C "$repo_dir" fetch -q origin "$base" "pull/${pr}/head"
+fi
 # The branch ref can be ahead of GitHub's pull ref right after a push; fetch it when it exists on origin.
 git -C "$repo_dir" ls-remote --exit-code origin "refs/heads/${head_branch}" >/dev/null 2>&1 \
   && git -C "$repo_dir" fetch -q origin "refs/heads/${head_branch}"
@@ -171,8 +185,41 @@ git -C "$repo_dir" ls-remote --exit-code origin "refs/heads/${head_branch}" >/de
 # worktree records ownership. A directory at that path without the sentinel belongs to
 # someone else and is never touched.
 owned="${wt}.codex-review-owned"
+# Share only the two existing dependency directories from the configured anchor.
+# Validate before reset/clean so an untracked foreign occupant is never erased.
+# Targets live outside this disposable review tree; no install or copy is implicit.
+review_dependencies() {
+  local mode="$1" name source target destination parent canonical_wt expected_parent
+  canonical_wt="$(cd "$(dirname "$wt")" && pwd -P)/${wt##*/}"
+  for name in node_modules tools/mentra-e2e/node_modules; do
+    source="$repo_dir/$name"; destination="$wt/$name"
+    [[ "$mode" != link || -d "$(dirname "$destination")" ]] || continue
+    [[ "$mode" != link || "$name" != tools/mentra-e2e/node_modules || -f "$wt/tools/mentra-e2e/package.json" ]] || continue
+    if [[ -d "$wt" ]]; then
+      [[ -z "$(git -C "$wt" ls-files -- "$name")" ]] || fail "review dependency $name overlaps tracked source"
+    fi
+    if [[ ! -e "$source" && ! -L "$source" ]]; then
+      [[ ! -e "$destination" && ! -L "$destination" ]] || fail "review dependency $name has no existing anchor source; preserve its occupant"
+      continue
+    fi
+    [[ -d "$source" ]] || fail "anchor dependency $name is not an existing directory"
+    target=$(cd "$source" && pwd -P) || fail "cannot resolve anchor dependency $name"
+    [[ "$target" != "$canonical_wt" && "$target" != "$canonical_wt/"* ]] || fail "shared dependency $name is inside its disposable review tree"
+    if [[ -e "$destination" || -L "$destination" ]]; then
+      [[ -L "$destination" && "$(readlink "$destination")" == "$target" ]] \
+        || fail "review dependency $name has a changed or foreign occupant; preserve it"
+    elif [[ "$mode" == link ]]; then
+      parent=$(dirname "$destination")
+      expected_parent="$canonical_wt"; [[ "$name" != */* ]] || expected_parent="$canonical_wt/${name%/*}"
+      [[ -d "$parent" && "$(cd "$parent" && pwd -P)" == "$expected_parent" ]] \
+        || fail "review dependency $name has no canonical source parent"
+      ln -s "$target" "$destination" || fail "cannot share existing dependency $name"
+    fi
+  done
+}
 if [[ -e "$wt" ]]; then
   [[ -f "$owned" ]] || fail "$wt exists but was not created by codex-pr-review; move it or pass a different repo dir"
+  review_dependencies check
   # Drop leftovers from a previous run (test artifacts, an aborted checkout). Ignored
   # files such as node_modules are kept so dependencies need not be reinstalled.
   git -C "$wt" reset -q --hard && git -C "$wt" clean -fdq
@@ -200,6 +247,10 @@ else
   echo "created by codex-pr-review.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ); safe to delete together with $wt" > "$owned"
 fi
 [[ "$(git -C "$wt" rev-parse HEAD)" == "$head_sha" ]] || fail "worktree $wt is not at ${head_sha:0:8}"
+if [[ -d "$repo_dir/node_modules" || -d "$repo_dir/tools/mentra-e2e/node_modules" ]]; then
+  node "$script_dir/review-dependencies.mjs" "$wt" "$repo_dir" || fail "shared dependencies cannot qualify this reviewed source"
+fi
+review_dependencies link
 # Right after the resets above, nothing a previous run left behind can remain, so what
 # `git status` still reports is judged by kind. Untracked files mean the clean failed,
 # and a submodule that still differs from the PR head holds source this run did not
@@ -257,7 +308,7 @@ Do the following, in order:
    \`gh pr review ${pr} -R ${slug} --request-changes --body "<body>"\`.
    If GitHub refuses the formal review, post \`gh pr review ${pr} -R ${slug} --comment --body "<body>"\`
    whose first line is "Approve." or "Request changes." and say in your final message that you fell back.
-   The body must start with "Reviewed by local Codex (gpt-6-astra, medium)." and then list: what
+   The body must start with "Reviewed by local Codex (gpt-6.1-sol, medium)." and then list: what
    you checked (files/areas, tests/builds run), each existing comment and whether you agree with it
    and why, any defects found with file:line references and a suggested coherent fix, the
    "Is this change needed?" conclusion, and the reason for the verdict. Keep it

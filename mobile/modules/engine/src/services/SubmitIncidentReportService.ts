@@ -1,19 +1,16 @@
-import CrustModule from "@mentra/crust"
-import {Platform} from "react-native"
+import {reportAutomationCorrelation} from "@mentra/cloud-protocol/report-automation"
 
-import {submitAutomaticReport} from "../facades/reports"
+import {ReportCollectionError, reports, submitAutomaticReport, type ReportCollectionResult} from "../facades/reports"
+import {useSettingsStore} from "../stores/settings"
 import {
   logAutomaticReportSubmissionStatus,
-  logUnexpectedAutomaticReportError,
   toAutomaticReportSubmissionStatus,
   type AutomaticReportSubmissionStatus,
 } from "./AutomaticReportResult"
+import {projectPairingIdentity} from "./PairingIdentity"
+import {requiredDeviceReportLogSources} from "./reportLogSources"
 
 const LOG_TAG = "SubmitIncidentReport"
-const EVENT_NAME = "submit_incident_report"
-
-let subscription: {remove: () => void} | null = null
-
 export type IncidentReportResult = {
   alert_id?: string
   test_run_id?: string
@@ -24,6 +21,15 @@ export type IncidentReportResult = {
   incident_id?: string
   reason?: string
   error?: string
+  collection?: ReportCollectionResult
+}
+
+/** A rejected submission retains any created report and its partial collection receipts. */
+export class IncidentReportError extends Error {
+  constructor(readonly result: IncidentReportResult) {
+    super(result.error ?? result.reason ?? "Incident report submission did not complete")
+    this.name = "IncidentReportError"
+  }
 }
 
 function readString(event: Record<string, unknown>, key: string): string | undefined {
@@ -37,9 +43,11 @@ function logIncidentResult(params: {
   failureCode: string
   scenarioName?: string
   result: AutomaticReportSubmissionStatus
+  reportId?: string
+  collection?: ReportCollectionResult
 }): IncidentReportResult {
   const {alertId, testRunId, failureCode, scenarioName, result} = params
-  const reportId = result.status === "filed" ? result.reportId : undefined
+  const reportId = result.status === "filed" ? result.reportId : params.reportId
 
   const payload: IncidentReportResult = {
     alert_id: alertId,
@@ -51,6 +59,7 @@ function logIncidentResult(params: {
     incident_id: reportId,
     reason: result.status === "skipped" ? result.reason : undefined,
     error: result.status === "failed" ? result.error : undefined,
+    ...(params.collection ? {collection: params.collection} : {}),
   }
   console.log(`INCIDENT_REPORT_RESULT ${JSON.stringify(payload)}`)
   return payload
@@ -63,7 +72,7 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
   const source = readString(event, "source") ?? "external_trigger"
   const testRunId = readString(event, "test_run_id")
   const scenarioName = readString(event, "scenario_name")
-  const alertId = readString(event, "alert_id") ?? testRunId
+  const alertId = readString(event, "alert_id") ?? (source === "mentra_automated_testing" ? undefined : testRunId)
   const dashboardUrl = readString(event, "dashboard_url")
   const expectedBehavior =
     readString(event, "expected_behavior") ??
@@ -72,13 +81,26 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
       : "The workflow should complete without this incident.")
 
   const throttleKey = [source, failureCode, scenarioName || "unknown", alertId || "unknown"].join("|")
+  let reportId: string | undefined
 
   try {
     if (!rawEvent || typeof rawEvent !== "object" || Array.isArray(rawEvent))
       throw new Error("Incident report request must be an object")
+    const automationCorrelation = source === "mentra_automated_testing"
+      ? reportAutomationCorrelation({alertId, testRunId})
+      : null
+    if (source === "mentra_automated_testing" && !automationCorrelation)
+      throw new Error("Automated incident request requires valid alert_id and test_run_id")
+    const loaded = await useSettingsStore.getState().loadAllSettings()
+    if (loaded.is_error()) throw loaded.error
+    // A paired device remains required if it disconnects while collecting. A
+    // selection that never completed pairing has no glasses logs to collect.
+    const identity = projectPairingIdentity()
+    const sources = requiredDeviceReportLogSources(identity)
     const actualBehavior = JSON.stringify({failureCode, failureMessage, testRunId, scenarioName, event}, null, 2)
     const submitResult = await submitAutomaticReport({
       kind: "automatic",
+      ...(automationCorrelation ? {automationCorrelation} : {}),
       trigger: {
         type: "automatic",
         source,
@@ -93,37 +115,29 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
     })
 
     const result = toAutomaticReportSubmissionStatus(submitResult)
+    if (result.status !== "filed") {
+      logAutomaticReportSubmissionStatus(LOG_TAG, result, throttleKey)
+      throw new IncidentReportError(logIncidentResult({alertId, testRunId, failureCode, scenarioName, result}))
+    }
+    reportId = result.reportId
+    const collection = await reports.waitForCollection(reportId, {sources: [...sources], timeoutMs: 20_000})
     logAutomaticReportSubmissionStatus(LOG_TAG, result, throttleKey)
-    return logIncidentResult({alertId, testRunId, failureCode, scenarioName, result})
+    return logIncidentResult({alertId, testRunId, failureCode, scenarioName, result, collection})
   } catch (error) {
-    const result = logUnexpectedAutomaticReportError(LOG_TAG, error)
-    return logIncidentResult({alertId, testRunId, failureCode, scenarioName, result})
+    if (error instanceof IncidentReportError) throw error
+    const collection =
+      error instanceof ReportCollectionError
+        ? error.collection
+        : reportId
+        ? {reportId, state: "unavailable" as const, logCollection: {}}
+        : undefined
+    const result: AutomaticReportSubmissionStatus = {
+      status: "failed",
+      error: reportId ? "Required incident log collection did not complete" : "Incident report submission failed",
+    }
+    logAutomaticReportSubmissionStatus(LOG_TAG, result)
+    throw new IncidentReportError(
+      logIncidentResult({alertId, testRunId, failureCode, scenarioName, result, reportId, collection}),
+    )
   }
-}
-
-// Android's broadcast receiver answers with a failed receipt unless this service
-// is subscribed; Expo drops events that arrive before the listener exists.
-// Never let this abort engine start: if marking ready fails, native keeps
-// answering with the failed receipt.
-function setNativeServiceReady(ready: boolean): void {
-  if (Platform.OS !== "android") return
-  try {
-    CrustModule.setIncidentReportServiceReady(ready)
-  } catch (error) {
-    console.warn(`${LOG_TAG}: could not update native readiness:`, error instanceof Error ? error.message : error)
-  }
-}
-
-export function startSubmitIncidentReportService(): void {
-  if (subscription) return
-  subscription = CrustModule.addListener(EVENT_NAME, (event) => {
-    void submitIncidentReport(event)
-  })
-  setNativeServiceReady(true)
-}
-
-export function stopSubmitIncidentReportService(): void {
-  if (subscription) setNativeServiceReady(false)
-  subscription?.remove()
-  subscription = null
 }

@@ -4,7 +4,7 @@ import type {RecorderStatus, RecordingItem, Usage} from "../../shared/types"
 
 const EMPTY_USAGE: Usage = {bytes: 0, count: 0, quotaBytes: 0}
 /** Number of bars held in the live waveform's rolling window. */
-const WAVE_BARS = 56
+const WAVE_BARS = 240
 
 /**
  * useRecorder — single hook over the background channel bus.
@@ -32,13 +32,15 @@ export function useRecorder() {
   const [playingId, setPlayingId] = useState<string | null>(null)
   const [hasMic, setHasMic] = useState(true)
   const [ready, setReady] = useState(false)
-  const [levels, setLevels] = useState<number[]>([])
+  const [levels, setLevels] = useState<Array<{ms: number; level: number}>>([])
   const [transcript, setTranscript] = useState("")
   const [transcriptLang, setTranscriptLang] = useState("")
   const [playPosMs, setPlayPosMs] = useState(0)
+  const [playClock, setPlayClock] = useState({positionMs: 0})
   const [unavailableId, setUnavailableId] = useState<string | null>(null)
   const [shareFailedId, setShareFailedId] = useState<string | null>(null)
   const mounted = useRef(true)
+  const stoppingRef = useRef(false)
   const unavailableTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const shareFailedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Tracks the capture a status belongs to, so we only clear the live transcript
@@ -60,15 +62,18 @@ export function useRecorder() {
           recordings: RecordingItem[]
           usage: Usage
           playingId: string | null
+          playPositionMs?: number
           hasMic: boolean
           transcript?: string
           transcriptLang?: string
         }
         setStatus(s.recording)
-        setStopping(s.stopping ?? false)
+        stoppingRef.current = s.stopping ?? false
+        setStopping(stoppingRef.current)
         setRecordings(s.recordings)
         setUsage(s.usage)
         setPlayingId(s.playingId)
+        setPlayClock({positionMs: s.playPositionMs ?? 0})
         setHasMic(s.hasMic)
         // Restore an in-progress capture's transcript on WebView reopen.
         lastRecId.current = s.recording?.recordingId ?? null
@@ -83,33 +88,39 @@ export function useRecorder() {
       on("rec:status", (p) => {
         if (!mounted.current) return
         const st = p as RecorderStatus
+        // Ignore statuses already in flight when Stop was tapped.
+        if (stoppingRef.current && st.recordingId === lastRecId.current) return
         setStatus(st)
         // A new recordingId means a fresh capture — clear carryover. Keyed off
         // the id (not ms === 0) so a same-capture status can't wipe live state.
         if (st.recordingId !== lastRecId.current) {
+          stoppingRef.current = false
           setStopping(false)
           lastRecId.current = st.recordingId
           setTranscript("")
           setTranscriptLang("")
           setLevels([])
         }
-        // Feed a rolling waveform; frozen while paused.
-        if (!st.paused) {
-          setLevels((prev) => {
-            const next = [...prev, st.level]
-            return next.length > WAVE_BARS ? next.slice(next.length - WAVE_BARS) : next
-          })
-        }
+      }),
+    )
+    offs.push(
+      on("rec:waveform", (p) => {
+        if (!mounted.current || stoppingRef.current) return
+        const sample = p as {ms: number; level: number}
+        setLevels((prev) => [...prev, sample].slice(-WAVE_BARS))
       }),
     )
     offs.push(
       on("rec:stopping", () => {
-        if (mounted.current) setStopping(true)
+        if (!mounted.current) return
+        stoppingRef.current = true
+        setStopping(true)
       }),
     )
     offs.push(
       on("rec:stopped", () => {
         if (!mounted.current) return
+        stoppingRef.current = false
         setStopping(false)
         lastRecId.current = null
         setStatus(null)
@@ -136,7 +147,11 @@ export function useRecorder() {
     )
     offs.push(
       on("rec:playback", (p) => {
-        if (mounted.current) setPlayingId((p as {playingId: string | null}).playingId)
+        if (!mounted.current) return
+        const playback = p as {playingId: string | null; positionMs?: number}
+        setPlayingId(playback.playingId)
+        setPlayPosMs(playback.positionMs ?? 0)
+        setPlayClock({positionMs: playback.positionMs ?? 0})
       }),
     )
     offs.push(
@@ -181,25 +196,30 @@ export function useRecorder() {
       return
     }
     const startedAt = performance.now()
-    setPlayPosMs(0)
+    setPlayPosMs(playClock.positionMs)
     const id = setInterval(() => {
-      if (mounted.current) setPlayPosMs(performance.now() - startedAt)
+      if (mounted.current) setPlayPosMs(playClock.positionMs + performance.now() - startedAt)
     }, 100)
     return () => clearInterval(id)
-  }, [playingId])
+  }, [playingId, playClock])
 
   const startRecording = useCallback(() => mentra.send("rec:start", {}), [])
   const stopRecording = useCallback(() => {
     // Give the tap immediate visual feedback; the background echoes
     // rec:stopping for snapshots and other control surfaces.
+    stoppingRef.current = true
     setStopping(true)
     mentra.send("rec:stop", {})
   }, [])
   const cancelRecording = useCallback(() => mentra.send("rec:cancel", {}), [])
   const pauseRecording = useCallback(() => mentra.send("rec:pause", {}), [])
   const resumeRecording = useCallback(() => mentra.send("rec:resume", {}), [])
-  const play = useCallback((id: string) => mentra.send("rec:play", {id}), [])
-  const stopPlay = useCallback(() => mentra.send("rec:stop-play", {}), [])
+  const play = useCallback((id: string, positionMs = 0) => mentra.send("rec:play", {id, positionMs}), [])
+  const stopPlay = useCallback(() => {
+    setPlayingId(null)
+    setPlayPosMs(0)
+    mentra.send("rec:stop-play", {})
+  }, [])
   const exportRecording = useCallback((id: string) => mentra.send("rec:export", {id}), [])
   const exportTranscript = useCallback((id: string) => mentra.send("rec:export-transcript", {id}), [])
   const remove = useCallback((id: string) => mentra.send("rec:delete", {id}), [])

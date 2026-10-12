@@ -87,6 +87,39 @@ test("Slack escapes PR text and includes all three firmware targets", () => {
   assert.match(post({backend: "dev"}), /Backend: \*Dev\*/)
 })
 
+test("PR Slack bounds valid maximum routine titles and fifty selections while preserving install links", () => {
+  const routines = Array.from({length: 50}, (_, index) => ({id: `selected-${index}`, title: "<&>".repeat(666) + "xx", platform: "android",
+    resultsUrl: `https://admin.dev.mentraglass.com/?routineId=selected-${index}`, pipelineUrl: "https://github.com/o/r/actions/workflows/request-e2e-routine.yml",
+    pipelineLabel: "Request pipeline (workflow)"}))
+  const payload = buildPost({pr: {...pr, title: "<&>".repeat(2000)}, sha, routines, androidUrl: "https://example.com/a.apk",
+    manifestUrl: "https://example.com/m.json", targets: {...readOtaTargets(manifest, 123, sha), bes: "<&>".repeat(2000)},
+    androidRunUrl: run.html_url, ios: {assets: {install: "https://example.com/install", manifest: "https://example.com/manifest",
+      mac: "https://example.com/mac.zip"}, macInstallUrl: "https://example.com/mac-install", instructionsUrl: "https://example.com/instructions"}})
+  assert.ok(payload.blocks.length <= 50)
+  for (const block of payload.blocks) if (block.type === "section") assert.ok(block.text.text.length <= 3000)
+  const body = JSON.stringify(payload)
+  assert.match(body, /View all requested tests on the PR/)
+  assert.match(body, /Download APK/); assert.match(body, /Install on iPhone/); assert.match(body, /Install on Mac/)
+  assert.match(body, /OTA manifest/); assert.match(body, /View PR and checks/)
+  assert.ok(payload.text.length < 1500)
+  const failed = buildPost({pr, sha, error: "<&>".repeat(2000), ios: {error: "<&>".repeat(2000)}, androidRunUrl: run.html_url})
+  assert.ok(failed.blocks.every(block => block.type !== "section" || block.text.text.length <= 3000))
+})
+
+test("a requested-test section at exactly Slack's limit retains its rows without a second bounding pass", () => {
+  const routine = {id: "exact-limit", title: "Exact limit", platform: "android", resultsUrl: "https://admin.dev.mentraglass.com/?testRun=exact-limit",
+    pipelineUrl: "https://github.com/o/r/actions/workflows/request-e2e-routine.yml?padding=", pipelineLabel: "Request pipeline"}
+  const input = {pr, sha, error: "Android unavailable", androidRunUrl: run.html_url, routines: [routine]}
+  const section = payload => payload.blocks.find(block => block.text?.text.includes("*Requested tests:*"))?.text.text
+  const padding = 3000 - section(buildPost(input)).length
+  routine.pipelineUrl += "x".repeat(padding)
+  const rendered = section(buildPost(input))
+  assert.equal(rendered.length, 3000)
+  assert.match(rendered, /Requested tests:\* Exact limit/)
+  assert.ok(rendered.includes(`<${routine.resultsUrl}|View results>`))
+  assert.ok(rendered.includes(`<${routine.pipelineUrl}|Request pipeline>`))
+})
+
 const iosRun = {...run, id: 3}
 const iosReceipt = {
   schemaVersion: 1,
@@ -145,8 +178,6 @@ function harness(options = {}) {
     corruptInstall: false,
     textArtifacts: {},
     jobs: {},
-    routineRuns: [],
-    routineLookupError: false,
     ...options,
   }
   const posts = [],
@@ -157,13 +188,7 @@ function harness(options = {}) {
     rest: {
       pulls: {get: async () => ({data: state.currentPr}), listFiles: "files"},
       actions: {
-        listWorkflowRuns: async ({workflow_id, head_sha, event}) => {
-          if (workflow_id === "request-e2e-routine.yml") {
-            assert.equal(head_sha, sha)
-            assert.equal(event, "pull_request")
-            if (state.routineLookupError) throw new Error("Temporary Actions failure")
-            return {data: {workflow_runs: state.routineRuns}}
-          }
+        listWorkflowRuns: async ({workflow_id}) => {
           return {
             data: {
               workflow_runs: [
@@ -207,6 +232,9 @@ function harness(options = {}) {
   }
   const fetchImpl = async (url, options) => {
     requests.push(url)
+    if (url.endsWith("/api/internal/routine-catalog")) {
+      assert.fail("PR notification must not request the routine catalog")
+    }
     if (options.method === "POST") {
       posts.push(JSON.parse(options.body))
       return new Response("ok")
@@ -252,6 +280,7 @@ function harness(options = {}) {
   }
 }
 process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
+process.env.TEST_RUN_INGEST_TOKEN = "synthetic-ingest-token"
 
 test("publishes direct iPhone installation and a shareable Safari link without the raw IPA download", async () => {
   const receipt = structuredClone(iosReceipt)
@@ -457,17 +486,25 @@ test("deduplicates completion events and suppresses closed/superseded/cancelled 
 })
 
 test("iOS path applicability matches its filtered workflow", () => {
-  assert.equal(iosBuildRequired([{filename: "README.md"}]), false)
+  for (const filename of ["README.md", "cloud-v2/packages/core/src/service.ts", "cloud-v2/websites/admin/src/page.tsx",
+    "cloud-v2/packages/runtime/src/server.ts", "cloud-v2/packages/cloud-client/node/index.ts"])
+    assert.equal(iosBuildRequired([{filename}]), false)
   for (const filename of [
+    "cloud-v2/bun.lock",
     "mobile/app.config.ts",
     "asg_client/ota_manifests/firmware_live.json",
-    "cloud-v2/core/index.ts",
+    "cloud-v2/packages/cloud-client/src/client.ts",
+    "cloud-v2/packages/cloud-client/react-native/transports.ts",
+    "cloud-v2/packages/protocol/src/index.ts",
+    "cloud-v2/packages/runtime/src/protocol/index.ts",
     ".github/workflows/mentra-app-ios-build.yml",
     ".github/workflows/reusable-pr-build-notification.yml",
     ".github/scripts/pr-ios-artifacts.test.mjs",
     ".github/scripts/pr-android-artifacts.mjs",
     ".github/scripts/pr-android-artifacts.test.mjs",
     ".github/scripts/ensure-android-ndk.mjs",
+    ".github/scripts/ios-xcodebuild-attempt.sh",
+    ".github/actions/disk-guard/action.yml",
   ])
     assert.equal(iosBuildRequired([{filename}]), true)
 })
@@ -599,83 +636,28 @@ test("Android failure still allows verified iOS links; cancelled iOS suppresses 
   assert.equal(cancelled.posts.length, 0)
 })
 
-test("requested tests link the exact Mac archive and current-head request without waiting for device results", async () => {
-  const h = harness({
-    files: [{filename: "mobile/app.config.ts"}],
-    currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
-    routineRuns: [
-      {...run, id: 90, head_sha: "d".repeat(40), pull_requests: [{number: pr.number}]},
-      {...run, id: 91, head_repository: {full_name: "someone/fork"}, pull_requests: [{number: pr.number}]},
-      {...run, id: 9, run_attempt: 2, status: "in_progress", conclusion: null, pull_requests: [{number: pr.number}]},
-    ],
-  })
+test("requested tests link the exact Mac archive and generic request workflow without waiting for results", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: [{name: "routine:selected-mac"}]}})
   await notifyPrBuilds(h.args)
-  const text = h.posts[0].blocks.flatMap((block) => block.text?.text ?? []).join("\n")
-  assert.match(text, /Requested tests:\* Day-one OTA · iOS on Mac/)
-  assert.match(text, /https:\/\/github.com\/o\/r\/actions\/runs\/9\/attempts\/2\|Request pipeline/)
+  const text = slack(h.posts[0])
+  assert.match(text, /Requested tests:\* selected-mac · iOS on Mac/)
+  assert.match(text, /actions\/workflows\/request-e2e-routine.yml\|Request pipeline \(workflow\)/)
   assert.doesNotMatch(text, /Tests passed|Test running|Ready to run|localhost|127\.0\.0\.1/)
-  const results = new URL(text.match(/<(https:[^|]+)\|View results>/)[1])
-  assert.equal(results.origin, "https://admin.dev.mentraglass.com")
-  assert.deepEqual(Object.fromEntries(results.searchParams), {
-    testRuns: "1",
-    repository: "o/r",
-    pr: "123",
-    headSha: sha,
-    archiveSha256: iosReceipt.artifacts.mac.sha256,
-    routineId: "day1-ota",
-    platform: "ios-mac",
-  })
+  const results = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]))
+    .find(url => url.searchParams.get("platform") === "ios-on-mac")
+  assert.deepEqual(Object.fromEntries(results.searchParams), {testRuns: "1", channel: "pr", repository: "o/r", pr: "123", headSha: sha,
+    archiveSha256: iosReceipt.artifacts.mac.sha256, routineId: "selected-mac", platform: "ios-on-mac"})
   assert.match(h.written[0].body, /\[View results\]\(https:\/\/admin\.dev\.mentraglass\.com/)
-  assert.match(text, /Results appear after the device run is uploaded/)
-  h.state.routineRuns[2].status = "completed"
-  h.state.routineRuns[2].conclusion = "success"
   await notifyPrBuilds(h.args)
-  assert.equal(h.posts.length, 1, "request completion does not change build-post deduplication")
+  assert.equal(h.posts.length, 1)
 })
 
-test("request links reject another PR on the same branch/head and ambiguous or missing associations", async () => {
-  const currentRequest = {...run, id: 9, pull_requests: [{number: pr.number}]}
-  const otherRequest = {...run, id: 99, pull_requests: [{number: pr.number + 1, base: {ref: "staging"}}]}
-  const cases = [
-    {runs: [otherRequest, currentRequest], exact: true},
-    {runs: [otherRequest], exact: false},
-    {runs: [{...run, id: 99}], exact: false},
-    {runs: [{...run, id: 99, pull_requests: []}], exact: false},
-    {runs: [{...run, id: 99, pull_requests: [{number: pr.number}, {number: pr.number + 1}]}], exact: false},
-  ]
-  for (const {runs, exact} of cases) {
-    const h = harness({
-      files: [{filename: "mobile/app.config.ts"}],
-      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
-      routineRuns: runs,
-    })
-    await notifyPrBuilds(h.args)
-    const body = JSON.stringify(h.posts[0])
-    assert.doesNotMatch(body, /actions\/runs\/99/)
-    if (exact) assert.match(body, /actions\/runs\/9\/attempts\/1\|Request pipeline/)
-    else assert.match(body, /request-e2e-routine.yml\|Request pipeline \(workflow\)/)
-  }
-})
-
-test("optional request lookup never gates the build post or substitutes another revision", async () => {
-  for (const options of [
-    {routineRuns: [{...run, id: 90, head_sha: "d".repeat(40), pull_requests: [{number: pr.number}]}]},
-    {routineLookupError: true},
-  ]) {
-    const h = harness({
-      files: [{filename: "mobile/app.config.ts"}],
-      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
-      ...options,
-    })
-    await notifyPrBuilds(h.args)
-    const body = JSON.stringify(h.posts[0])
-    assert.match(body, /request-e2e-routine.yml\|Request pipeline \(workflow\)/)
-    assert.doesNotMatch(body, /actions\/runs\/90/)
-  }
+test("request workflow link remains useful when results are unavailable", async () => {
   for (const options of [{missingMac: true}, {files: []}]) {
     const h = harness({
       files: [{filename: "mobile/app.config.ts"}],
-      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+      android: {...androidRun, conclusion: "failure"},
+      currentPr: {...pr, labels: [{name: "routine:selected-mac"}]},
       ...options,
     })
     await notifyPrBuilds(h.args)
@@ -689,49 +671,55 @@ test("optional request lookup never gates the build post or substitutes another 
 })
 
 test("result links require a complete build identity", () => {
-  const identity = {repository: "o/r", pr: 123, sha, archiveSha256: "b".repeat(64)}
-  for (const patch of [{repository: "../bad"}, {pr: -1}, {sha: "short"}, {archiveSha256: undefined}, {routineId: "unknown"}])
+  const identity = {repository: "o/r", pr: 123, sha, archiveSha256: "b".repeat(64), routineId: "arbitrary-id", platform: "android"}
+  for (const patch of [{repository: "../bad"}, {pr: -1}, {sha: "short"}, {archiveSha256: undefined}, {routineId: "bad id"}, {platform: "ios-mac"}])
     assert.equal(routineResultsUrl({...identity, ...patch}), null)
 })
 
-test("no-glasses and day-one labels link their own exact build results without altering post deduplication", async () => {
-  for (const labels of [["routine:no-glasses"], ["routine:day1-ota", "routine:no-glasses"]]) {
+test("selected label IDs link each published app platform without altering post deduplication", async () => {
+  for (const labels of [["routine:selected-second"], ["routine:selected-mac", "routine:selected-second"]]) {
     const h = harness({files: [{filename: "mobile/app.config.ts"}],
       currentPr: {...pr, labels: labels.map(name => ({name}))}})
     await notifyPrBuilds(h.args)
     const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
-    assert.match(text, /Requested tests:\* No-glasses UI · iOS on Mac/)
+    assert.match(text, /Requested tests:\* selected-second · iOS on Mac/)
     const links = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]))
-    assert.deepEqual(links.map(url => url.searchParams.get("routineId")), labels.map(label => label.slice("routine:".length)))
+    const actualIds = links.map(url => url.searchParams.get("routineId")), expectedIds = labels.map(label => label.slice("routine:".length))
+    assert.equal(new Set(actualIds).size, expectedIds.length)
+    assert.deepEqual([...new Set(actualIds)].sort(), [...expectedIds].sort())
+    assert.equal(links.length, expectedIds.length * 2)
     for (const url of links) {
       assert.equal(url.searchParams.get("headSha"), sha)
-      assert.equal(url.searchParams.get("archiveSha256"), iosReceipt.artifacts.mac.sha256)
+      assert.equal(url.searchParams.get("archiveSha256"), url.searchParams.get("platform") === "android"
+        ? "e".repeat(64) : iosReceipt.artifacts.mac.sha256)
       assert.equal(url.searchParams.get("pr"), String(pr.number))
     }
-    assert.match(h.written[0].body, /No-glasses UI/)
+    assert.match(h.written[0].body, /selected-second/)
     await notifyPrBuilds(h.args)
     assert.equal(h.posts.length, 1)
   }
 })
 
-test("Mentra Call opt-in adds its exact results link without posting again on retry", async () => {
-  const h = harness({files: [{filename: "mobile/app.config.ts"}],
-    currentPr: {...pr, labels: [{name: "routine:mentra-call"}]}})
-  await notifyPrBuilds(h.args)
-  const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
-  assert.match(text, /Requested tests:\* Mentra Call · iOS on Mac/)
-  const results = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
-  assert.equal(results.searchParams.get("routineId"), "mentra-call")
-  assert.equal(results.searchParams.get("headSha"), sha)
-  assert.equal(results.searchParams.get("archiveSha256"), iosReceipt.artifacts.mac.sha256)
-  assert.equal(results.searchParams.get("pr"), String(pr.number))
-  await notifyPrBuilds(h.args)
-  assert.equal(h.posts.length, 1)
+test("arbitrary requested IDs use actual published app archives without a catalog or ingest credential", async () => {
+  const credential = process.env.TEST_RUN_INGEST_TOKEN
+  delete process.env.TEST_RUN_INGEST_TOKEN
+  try {
+    const h = harness({files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:an-id-never-listed-in-notifications"}]}})
+    await notifyPrBuilds(h.args)
+    const text = slack(h.posts[0]), urls = [...text.matchAll(/<(https:[^|]+)\|View results>/g)].map(match => new URL(match[1]).searchParams)
+    assert.deepEqual(urls.map(params => params.get("routineId")), ["an-id-never-listed-in-notifications", "an-id-never-listed-in-notifications"])
+    assert.deepEqual(urls.map(params => params.get("platform")), ["android", "ios-on-mac"])
+    assert.deepEqual(urls.map(params => params.get("archiveSha256")), ["e".repeat(64), iosReceipt.artifacts.mac.sha256])
+    assert.doesNotMatch(text, /Test running|Tests passed|Ready to run|enrolled|current routine catalog/)
+    assert.ok(!h.requests.some(url => url.includes("/routine-catalog")))
+    await notifyPrBuilds(h.args)
+    assert.equal(h.posts.length, 1)
+  } finally {process.env.TEST_RUN_INGEST_TOKEN = credential}
 })
 
-
 test("Android opt-in links the APK receipt hash and Android result platform, independently of Mac", async () => {
-  const h = harness({files: [], currentPr: {...pr, labels: [{name: "routine:no-glasses-android"}]}})
+  const h = harness({files: [], currentPr: {...pr, labels: [{name: "routine:selected-android"}]}})
   const original = h.args.fetchImpl
   const digest = "e".repeat(64)
   h.args.fetchImpl = async (url, options) => url.includes("mentra-android-pr-") && url.endsWith(".json") ? new Response(JSON.stringify({
@@ -742,11 +730,11 @@ test("Android opt-in links the APK receipt hash and Android result platform, ind
   })) : original(url, options)
   await notifyPrBuilds(h.args)
   const text = h.posts[0].blocks.flatMap(block => block.text?.text ?? []).join("\n")
-  assert.match(text, /Android no-glasses UI · Android/)
+  assert.match(text, /selected-android · Android/)
   const result = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
   assert.equal(result.searchParams.get("archiveSha256"), digest)
   assert.equal(result.searchParams.get("platform"), "android")
-  assert.equal(result.searchParams.get("routineId"), "no-glasses-android")
+  assert.equal(result.searchParams.get("routineId"), "selected-android")
 })
 
 test("an Android routine label added to already delivered publications posts its exact results link once", async () => {
@@ -755,17 +743,17 @@ test("an Android routine label added to already delivered publications posts its
   assert.equal(h.posts.length, 1)
   assert.doesNotMatch(JSON.stringify(h.posts[0]), /Requested tests/)
   // Same source and publications; only the routine selection changes.
-  h.state.currentPr = {...pr, labels: [{name: "routine:no-glasses-android"}]}
+  h.state.currentPr = {...pr, labels: [{name: "routine:selected-android"}]}
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 2)
   assert.equal(h.written.length, 2)
   const text = h.posts[1].blocks.flatMap(block => block.text?.text ?? []).join("\n")
-  assert.match(text, /Requested tests:\* Android no-glasses UI · Android/)
+  assert.match(text, /Requested tests:\* selected-android · Android/)
   const result = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
   assert.equal(result.searchParams.get("archiveSha256"), "e".repeat(64))
   assert.equal(result.searchParams.get("platform"), "android")
-  assert.equal(result.searchParams.get("routineId"), "no-glasses-android")
-  assert.match(h.written[1].body, /Android no-glasses UI/)
+  assert.equal(result.searchParams.get("routineId"), "selected-android")
+  assert.match(h.written[1].body, /selected-android/)
   assert.ok(h.written[1].body.includes(`archiveSha256=${"e".repeat(64)}`))
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 2)
@@ -774,7 +762,7 @@ test("an Android routine label added to already delivered publications posts its
 
 
 test("a last-callback Android receipt miss publishes all downloads and later enriches results once", async () => {
-  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: [{name: "routine:no-glasses-android"}]}})
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], currentPr: {...pr, labels: [{name: "routine:selected-android"}]}})
   const original = h.args.fetchImpl, digest = "e".repeat(64)
   let available = false, reads = 0
   h.args.fetchImpl = async (url, options) => {
@@ -982,4 +970,36 @@ test("an unavailable Android receipt keeps downloads but does not claim their ba
   await notifyPrBuilds(h.args)
   assert.equal(h.posts.length, 2)
   assert.match(slack(h.posts[1]), /Backend: \*Dev\* · Android ARM64/)
+})
+
+for (const filename of [".github/scripts/ios-xcodebuild-attempt.sh", ".github/actions/disk-guard/action.yml"]) {
+  test(`${filename}-only PR waits for Apple publication and includes all downloads`, async () => {
+    const h = harness({files: [{filename}],
+      jobs: {3: [job("build"), {...job("publish"), status: "in_progress", conclusion: null}]}})
+    await reconcileFromWorkflow("mentra-app-android-build.yml", h, 2)
+    assert.equal(h.posts.length, 0)
+    h.state.jobs = {}
+    await reconcileFromWorkflow("mentra-app-ios-build.yml", h, 3)
+    assert.equal(h.posts.length, 1)
+    assert.match(h.written[0].body, /Download Android APK/)
+    assert.match(h.written[0].body, /Download iPhone IPA/)
+    assert.match(h.written[0].body, /Download Mac app/)
+  })
+}
+
+test("a staging PR with a missing Android receipt stays idempotent and keeps its Mac routine links", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], androidReceipt: {unavailable: true},
+    currentPr: {...pr, base: {ref: "staging"}, labels: [{name: "routine:selected-second"}]},
+    receipt: {...iosReceipt, app: {backend: "staging"}}})
+  await notifyPrBuilds(h.args)
+  const text = slack(h.posts[0])
+  assert.doesNotMatch(h.posts[0].text, /incomplete/)
+  assert.match(text, /Backend: \*Staging\* \(Android not verified\)/)
+  assert.match(links(h.posts[0]), /Download APK/)
+  const results = new URL([...text.matchAll(/<(https:[^|]+)\|View results>/g)][0][1])
+  assert.equal(results.searchParams.get("archiveSha256"), iosReceipt.artifacts.mac.sha256)
+  assert.equal(results.searchParams.get("platform"), "ios-on-mac")
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1)
+  assert.equal(h.written.length, 1)
 })

@@ -341,3 +341,31 @@ differences were:
 
 We could follow the same pattern (CI applies the manifest after deploy) but
 it's a single artifact that rarely changes, so manual apply is fine for now.
+
+## Activate positioned audio frames
+
+`AUDIO_FRAME_TIMELINE_ENABLED` defaults to off. Keep it unset or `false` during
+installation of frame-timeline reader support: UDP can land on any runtime pod,
+so a WebSocket handshake with one upgraded pod cannot establish that every
+reader understands the new payload prefix.
+
+1. Deploy the updated runtime ingress and audio workers everywhere with the gate
+   off. Finish the rolling deployment and verify all UDP targets and worker pods
+   run the compatible image. Both old and new clients continue sending legacy
+   frames during this phase.
+2. Set `AUDIO_FRAME_TIMELINE_ENABLED=true` only after all readers are compatible.
+   This enables version 1 negotiation on new handshakes. Existing audio sessions
+   retain their negotiated format until reconnect; new clients paired with an
+   older server continue using legacy framing.
+3. Before rolling back to an image without frame-timeline readers, disable the
+   gate on every current pod. Close/drain positioned sessions and their queued
+   audio streams while compatible readers still run, and verify no positioned
+   session tags or in-flight streams remain. Only then install older readers.
+   Disabling the gate alone does not change an existing session's framing.
+
+Version 1 carries an eight-byte big-endian audio offset inside each encrypted
+UDP payload (or inside the TLS WebSocket binary frame). Probes keep their
+existing format. Each transcription result identifies whether its occurrence
+used positioned audio, so reconnecting to legacy framing retains delivery while
+late positioned finals still receive per-listener trimming. Missing word timing
+from a positioned occurrence is withheld instead of falling back to full text.

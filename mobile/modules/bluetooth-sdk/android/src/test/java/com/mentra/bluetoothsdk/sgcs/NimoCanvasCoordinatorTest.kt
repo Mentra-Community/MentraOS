@@ -51,6 +51,46 @@ class NimoCanvasCoordinatorTest {
         fun finishUpdate(frame: ByteArray) { repeat(NimoCanvasCodec.frames(4, frame, 20).size) { written() }; ack(4) }
     }
 
+    @Test fun notReadyRetriesLaunchPromptlyButStopsAfterThreeProbes() {
+        val f = Fixture(); f.canvas.activate(); f.canvas.readiness(true)
+        repeat(4) { attempt ->
+            f.written(); f.ack(1, 7)
+            val before = f.writes.size
+            f.clock.advance(999)
+            assertEquals(before, f.writes.size)
+            f.clock.advance(1)
+            assertEquals(before + if (attempt < 3) 1 else 0, f.writes.size)
+        }
+        f.clock.advance(60_000)
+        assertEquals(4, f.writes.size)
+        assertTrue(f.failures.isEmpty())
+    }
+
+    @Test fun pendingReadinessRetryIsCancelledOnDisconnectExitAndKnownReadinessLoss() {
+        for (stop in listOf("disconnect", "exit", "notReady")) {
+            val f = Fixture(); f.canvas.activate(); f.canvas.readiness(true)
+            f.written(); f.ack(1, 7)
+            when (stop) {
+                "disconnect" -> f.canvas.disconnected()
+                "exit" -> f.canvas.exit()
+                else -> f.canvas.readiness(false)
+            }
+            f.clock.advance(2_000)
+            assertEquals(1, f.writes.size)
+            assertTrue(f.failures.isEmpty())
+        }
+    }
+
+    @Test fun readinessHeartbeatCancelsPendingProbeAndDoesNotDuplicateLaunch() {
+        val f = Fixture(); f.canvas.activate(); f.canvas.readiness(true)
+        f.written(); f.ack(1, 7)
+        f.canvas.confirmedReadiness(true)
+        f.clock.advance(1_000)
+        assertEquals(2, f.writes.size)
+        f.written(); f.ack(1); f.finishUpdate(byteArrayOf(0, 0, 1))
+        assertTrue(f.failures.isEmpty())
+    }
+
     @Test fun bothNotificationDescriptorsGateCharacteristicWrites() {
         val f = Fixture()
         val rx = Any(); val mic = Any()
@@ -184,7 +224,7 @@ class NimoCanvasCoordinatorTest {
         val f = Fixture(); f.launch(); f.finishUpdate(byteArrayOf(0, 0, 1))
         f.canvas.exit()
         f.canvas.offer(byteArrayOf(1, 0, 1), "two:1")
-        assertFalse(f.canvas.nativeApp(0xFD, false))
+        f.canvas.nativeApp(0xFD, false)
         f.written()
         val before = f.writes.size
         f.ack(3)
@@ -192,15 +232,15 @@ class NimoCanvasCoordinatorTest {
         assertArrayEquals(NimoCanvasCodec.frames(1, writeCapacity = 20).single(), f.writes.last())
     }
 
-    @Test fun actualNativeTakeoverDuringExitInvalidatesEncodingAndDoesNotRelaunch() {
+    @Test fun nativeTakeoverDuringExitRetainsNewerSceneUntilExitAck() {
         val f = Fixture(); f.launch(); f.finishUpdate(byteArrayOf(0, 0, 1))
         f.canvas.exit()
         f.canvas.offer(byteArrayOf(1, 0, 1), "two:1")
-        assertTrue(f.canvas.nativeApp(0, true))
+        f.canvas.nativeApp(0, true)
         f.written()
         val before = f.writes.size
         f.ack(3)
-        assertEquals(before, f.writes.size)
+        assertEquals(before + 1, f.writes.size)
         assertTrue(f.failures.isEmpty())
     }
 

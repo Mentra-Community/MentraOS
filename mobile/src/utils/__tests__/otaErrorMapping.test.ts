@@ -41,6 +41,14 @@ function baseOtaProgress(overrides: Partial<OtaProgress> = {}): OtaProgress {
 }
 
 describe("getOtaErrorMessage", () => {
+  it.each(["dns_failed", "connection_failed", "connect_timeout", "download_timeout", "http_error"])(
+    "%s does not assert that internet is down",
+    (code) => {
+      expect(otaErrorCopyKey(code)).not.toBe(OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY)
+      expect(getOtaErrorMessage(code)).not.toContain("no internet")
+    },
+  )
+
   it("reports insufficient storage without suggesting a WiFi change", () => {
     expect(getOtaErrorMessage("insufficient_storage")).toContain("free up space")
     expect(shouldShowChangeWifiForOtaDownloadFailure(baseOtaStatus({error: "insufficient_storage"}), null, "")).toBe(
@@ -165,6 +173,8 @@ describe("glasses-side producer coverage", () => {
   // AsgConstants' OTA_* codes.
   const asgJavaRoot = resolve(__dirname, "../../../../asg_client/app/src/main/java/com/mentra/asg_client")
   const otaHelper = readFileSync(resolve(asgJavaRoot, "io/ota/helpers/OtaHelper.java"), "utf8")
+  const httpRequest = readFileSync(resolve(asgJavaRoot, "io/ota/utils/OtaHttpRequest.java"), "utf8")
+  const recoveryManager = readFileSync(resolve(asgJavaRoot, "RecoveryWorkerManager.java"), "utf8")
   const downloadException = readFileSync(resolve(asgJavaRoot, "io/ota/utils/FirmwareDownloadException.java"), "utf8")
   const asgConstants = readFileSync(resolve(asgJavaRoot, "AsgConstants.java"), "utf8")
 
@@ -181,18 +191,26 @@ describe("glasses-side producer coverage", () => {
       /return "([a-z_]+)";/g,
     ),
     ...matchAll(downloadException, /CODE_[A-Z_]+\s*=\s*"([a-z_]+)"/g),
-    ...matchAll(asgConstants, /\bOTA_[A-Z_]+\s*=\s*"([a-z_]+)"/g),
+    ...matchAll(asgConstants, /\bOTA_INSUFFICIENT_STORAGE\s*=\s*"([a-z_]+)"/g),
+    ...matchAll(
+      httpRequest.slice(
+        httpRequest.indexOf("public static String classify("),
+        httpRequest.indexOf("public static final class RequestException"),
+      ),
+      /"([a-z_]+)"(?=;| : ")/g,
+    ),
+    ...matchAll(recoveryManager, /"(downgrade_[a-z_]+)"/g),
   ])
 
   it("finds the producers it scans for", () => {
     for (const code of [
       "download_failed",
       "install_failed",
-      "no_internet",
+      "download_timeout",
       "apk_verify_failed",
       "insufficient_storage",
-      "downgrade_handoff_refused",
-      "downgrade_handoff_failed",
+      "downgrade_status_unknown",
+      "downgrade_recovery_unavailable",
       "apk_restart_guard_not_persisted",
     ]) {
       expect(producedCodes.has(code)).toBe(true)

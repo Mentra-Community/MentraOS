@@ -134,7 +134,7 @@ export default function InitScreen() {
       setPendingRoute(null)
       // Navigate to home first so the deep link screen has a proper back destination
       clearHistoryAndGoHome({transition: "none"})
-      setTimeout(() => processUrl(pendingRoute), DEEPLINK_DELAY)
+      setTimeout(() => processUrl(pendingRoute, false, true), DEEPLINK_DELAY)
       return
     }
 

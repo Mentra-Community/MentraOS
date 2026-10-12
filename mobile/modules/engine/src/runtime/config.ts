@@ -61,7 +61,7 @@ export type NavManeuverEvent = {
 export type NavOffRouteEvent = {kind: "off_route"; offRouteDistanceMeters: number}
 export type NavReroutingEvent = {kind: "rerouting"}
 export type NavArrivedEvent = {kind: "arrived"}
-export type NavErrorEvent = {kind: "error"; message: string}
+export type NavErrorEvent = {kind: "error"; message: string; terminal?: boolean}
 export type NavUpdate = NavManeuverEvent | NavOffRouteEvent | NavReroutingEvent | NavArrivedEvent | NavErrorEvent
 
 export type NavLocation = {
@@ -138,7 +138,7 @@ export interface CameraFovResult {
 export interface InteropAuditEvent {
   /** The system app that made the call. */
   caller: string
-  op: "list" | "start" | "stop" | "invoke"
+  op: "list" | "start" | "stop" | "install" | "uninstall" | "invoke"
   /** Target miniapp (start/stop/invoke). */
   target?: string
   /** Action id (invoke only). */

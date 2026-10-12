@@ -91,7 +91,7 @@ permissions:
 
 jobs:
   evaluate:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     # Must stay ABOVE the poll ceiling (MAX_MS, currently 120 min) so the script's
     # loop — not GitHub's job timeout — decides when to give up. If this is lower
     # than the poll ceiling, a legitimately-pending gate (builders queued behind a

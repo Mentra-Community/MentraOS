@@ -117,6 +117,35 @@ describe("MiniappSession meeting termination details", () => {
     expect(session.meeting.state.videoEnabled).toBeUndefined()
     session.disconnect()
   })
+
+  test("a publisher ceiling expiry is delivered, and a resume the caller sent is not an event", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.meeting"})
+    const connected = session.connect()
+    await Promise.resolve()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.meeting",
+    })
+    await connected
+    const events: Array<{pauseId: string; status: "expired"}> = []
+    session.meeting.onVideoPublisher((event) => events.push(event))
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.MEETING_VIDEO_PUBLISHER,
+      pauseId: "pause-1",
+      status: "expired",
+    })
+    transport.deliverFromPhone({
+      type: MiniappResponseType.MEETING_VIDEO_PUBLISHER,
+      pauseId: "pause-2",
+      status: "resumed",
+    })
+
+    expect(events).toEqual([{pauseId: "pause-1", status: "expired"}])
+    session.disconnect()
+  })
 })
 
 describe("MiniappSession queue-before-ACK", () => {
@@ -533,6 +562,38 @@ describe("MiniappSession visibility", () => {
     transport.deliverFromPhone({type: MiniappResponseType.VISIBILITY_CHANGE, visibility: "foreground"})
     expect(session.visibility).toBe("foreground")
     expect(values).toEqual(["background", "foreground"])
+  })
+})
+
+describe("MiniappSession install progress", () => {
+  test("delivers well-formed host progress pushes and drops malformed ones", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.mentra.store",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const received: unknown[] = []
+    session.miniapps.onInstallProgress((progress) => received.push(progress))
+    const push = (phase: unknown) =>
+      transport.deliverFromPhone({
+        type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
+        packageName: "com.example.notes",
+        version: "1.1.0",
+        phase,
+      })
+    push("downloading")
+    push("unknown-phase")
+    push("complete")
+    expect(received).toEqual([
+      {packageName: "com.example.notes", version: "1.1.0", phase: "downloading"},
+      {packageName: "com.example.notes", version: "1.1.0", phase: "complete"},
+    ])
   })
 })
 

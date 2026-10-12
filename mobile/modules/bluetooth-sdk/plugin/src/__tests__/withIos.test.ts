@@ -1,5 +1,9 @@
 const packageJson = require("../../../package.json")
-const {applyBluetoothSdkInfoPlist, INFO_SDK_VERSION, INFO_ANALYTICS_ENVIRONMENT} = require("../withIos")
+const {
+  applyBluetoothSdkInfoPlist,
+  INFO_SDK_VERSION,
+  INFO_ANALYTICS_ENVIRONMENT,
+} = require("../withIos")
 
 describe("Bluetooth SDK iOS config", () => {
   it("stamps the package version into Info.plist for workspace builds", () => {
@@ -33,5 +37,28 @@ describe("Bluetooth SDK iOS config", () => {
     const cleared = applyBluetoothSdkInfoPlist({[INFO_ANALYTICS_ENVIRONMENT]: "prod"}, {analytics: true})
     expect(cleared).not.toHaveProperty(INFO_ANALYTICS_ENVIRONMENT)
     expect(cleared.MentraBluetoothSdkAnalyticsDisabled).toBe(false)
+  })
+
+  it("declares Bluetooth background execution so reconnects complete while the phone is locked", () => {
+    const infoPlist = applyBluetoothSdkInfoPlist({}, undefined)
+
+    expect(infoPlist.UIBackgroundModes).toEqual(["bluetooth-central"])
+  })
+
+  it("merges into the app's existing background modes without duplicating them", () => {
+    const withAudio = applyBluetoothSdkInfoPlist({UIBackgroundModes: ["audio", "location"]}, undefined)
+    expect(withAudio.UIBackgroundModes).toEqual(["audio", "location", "bluetooth-central"])
+
+    const alreadyDeclared = applyBluetoothSdkInfoPlist(
+      {UIBackgroundModes: ["bluetooth-central", "audio"]},
+      undefined,
+    )
+    expect(alreadyDeclared.UIBackgroundModes).toEqual(["bluetooth-central", "audio"])
+  })
+
+  it("rejects a malformed UIBackgroundModes value instead of dropping the app's modes", () => {
+    expect(() => applyBluetoothSdkInfoPlist({UIBackgroundModes: "audio"}, undefined)).toThrow(
+      "UIBackgroundModes must be an array",
+    )
   })
 })

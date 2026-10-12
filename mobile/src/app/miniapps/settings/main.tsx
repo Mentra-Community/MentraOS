@@ -104,7 +104,7 @@ export default function MainSettingsPage() {
         </View>
 
         <VersionInfo />
-        <Spacer height={theme.spacing.s10} />
+        <Spacer height={theme.spacing.s16} />
       </ScrollView>
     </Screen>
   )

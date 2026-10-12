@@ -11,6 +11,10 @@ const mockPush = jest.fn()
 const mockSetPendingRoute = jest.fn()
 const mockGetSession = jest.fn()
 const mockIncidentRequest = jest.fn()
+const mockLoadAuthoringMiniapp = jest.fn()
+jest.mock("@/services/miniapps/loadAuthoringMiniapp", () => ({
+  loadAuthoringMiniapp: (...args: unknown[]) => mockLoadAuthoringMiniapp(...args),
+}))
 
 jest.mock("@/components/diagnostics/IncidentReportRequest", () => ({
   __esModule: true,
@@ -20,6 +24,8 @@ jest.mock("@/components/diagnostics/IncidentReportRequest", () => ({
     return <Pressable testID="incident-report-done" onPress={(props as {onDismiss: () => void}).onDismiss} />
   },
 }))
+const mockCompleteSignupVerification = jest.fn()
+let mockPendingRoute: string | null = null
 
 jest.mock("expo-linking", () => ({
   addEventListener: jest.fn(() => ({remove: jest.fn()})),
@@ -40,6 +46,7 @@ jest.mock("@/stores/navigation", () => ({
       setAnimation: jest.fn(),
       push: mockPush,
       setPendingRoute: mockSetPendingRoute,
+      getPendingRoute: () => mockPendingRoute,
     }),
   },
 }))
@@ -48,6 +55,7 @@ jest.mock("@/utils/auth/authClient", () => ({
   default: {
     getSession: (...args: unknown[]) => mockGetSession(...args),
     completeOAuthHandoff: (...args: unknown[]) => mockCompleteOAuthHandoff(...args),
+    completeSignupVerification: (...args: unknown[]) => mockCompleteSignupVerification(...args),
   },
 }))
 
@@ -64,6 +72,12 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockCompleteOAuthHandoff.mockResolvedValue({is_error: () => false})
   mockGetSession.mockResolvedValue({is_error: () => false, value: {token: undefined}})
+  mockCompleteSignupVerification.mockResolvedValue({is_error: () => false})
+  mockPendingRoute = null
+  mockSetPendingRoute.mockImplementation((url: string) => {
+    mockPendingRoute = url
+  })
+  jest.mocked(Linking.getInitialURL).mockResolvedValue(null)
 })
 
 afterEach(() => jest.useRealTimers())
@@ -198,4 +212,172 @@ it("shows a dismissible authenticated incident modal without changing the existi
   expect(mockReplaceAll).not.toHaveBeenCalled()
   fireEvent.press(tree.getByTestId("incident-report-done"))
   expect(tree.queryByTestId("incident-report-done")).toBeNull()
+})
+
+const signupCallback = "com.mentra://auth/callback#access_token=signup-token&refresh_token=provider-refresh&type=signup"
+
+it("waits for signup sign-in before navigating and ignores duplicate callbacks", async () => {
+  let finish!: (result: {is_error: () => boolean}) => void
+  mockCompleteSignupVerification.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve
+    }),
+  )
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  let processing!: Promise<void>
+  await act(async () => {
+    processing = processUrl(signupCallback)
+  })
+  expect(mockCompleteSignupVerification).toHaveBeenCalledWith("signup-token")
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  await act(async () => {
+    finish({is_error: () => false})
+    await processing
+    await processUrl(signupCallback)
+  })
+  expect(mockCompleteSignupVerification).toHaveBeenCalledTimes(1)
+  expect(mockReplaceAll).toHaveBeenCalledWith("/")
+  expect(mockSetSplashEnabled).toHaveBeenLastCalledWith(false)
+})
+
+it("completes a signup link that launches the app", async () => {
+  jest.mocked(Linking.getInitialURL).mockResolvedValue(signupCallback)
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await Promise.resolve()
+  })
+  await act(async () => {
+    await jest.runAllTimersAsync()
+  })
+  expect(mockCompleteSignupVerification).toHaveBeenCalledWith("signup-token")
+  expect(mockReplaceAll).toHaveBeenCalledWith("/")
+})
+
+it("shows a login error when signup exchange fails", async () => {
+  mockCompleteSignupVerification.mockResolvedValue({is_error: () => true, error: new Error("expired")})
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(signupCallback)
+  })
+  expect(mockReplace).toHaveBeenCalledWith("/auth/start?authError=invalid_grant")
+  expect(mockReplaceAll).not.toHaveBeenCalled()
+  expect(mockSetSplashEnabled).toHaveBeenLastCalledWith(false)
+})
+
+it("does not exchange an expired confirmation link", async () => {
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl("com.mentra://auth/callback#error=access_denied&error_code=otp_expired&type=signup")
+  })
+  expect(mockCompleteSignupVerification).not.toHaveBeenCalled()
+  expect(mockReplace).toHaveBeenCalledWith("/auth/start?authError=otp_expired")
+})
+
+const authoringUrl =
+  "com.mentra://test/load-miniapp?package=com.mentra.notes&version=1.0.27&url=http%3A%2F%2F127.0.0.1%3A3000%2Fbundle.zip"
+it("handles the native authoring URL without a settings-screen navigation", async () => {
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+  mockLoadAuthoringMiniapp.mockResolvedValue({packageName: "com.mentra.notes", version: "1.0.27"})
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(authoringUrl)
+  })
+  expect(mockLoadAuthoringMiniapp).toHaveBeenCalledWith(authoringUrl)
+  expect(mockPush).not.toHaveBeenCalled()
+})
+it("does not install a miniapp without a signed-in session", async () => {
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl(authoringUrl)
+  })
+  expect(mockLoadAuthoringMiniapp).not.toHaveBeenCalled()
+  expect(mockSetPendingRoute).toHaveBeenCalledWith(authoringUrl)
+})
+
+it("consumes an auth-deferred authoring link immediately after sign-in exactly once", async () => {
+  render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+  const url = "com.mentra://test/load-miniapp?package=com.mentra.notes&version=1.0.27&url=http%3A%2F%2Flocal%2Fbundle.zip"
+  await act(async () => {await processUrl(url)})
+  expect(mockLoadAuthoringMiniapp).not.toHaveBeenCalled()
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+  mockPendingRoute = null
+  await act(async () => {await processUrl(url, false, true); await processUrl(url)})
+  expect(mockLoadAuthoringMiniapp).toHaveBeenCalledTimes(1)
+})
+
+it("consumes a cold-start authoring link during the startup delay exactly once", async () => {
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+  render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+  let startup: Promise<void>
+  await act(async () => {
+    startup = processUrl(authoringUrl, true)
+    await Promise.resolve()
+  })
+  expect(mockPendingRoute).toBe(authoringUrl)
+  mockPendingRoute = null
+  await act(async () => {
+    await processUrl(authoringUrl, false, true)
+    await jest.advanceTimersByTimeAsync(1000)
+    await startup!
+    await processUrl(authoringUrl)
+  })
+  expect(mockLoadAuthoringMiniapp).toHaveBeenCalledTimes(1)
+})
+
+it("ignores a duplicate native event while the cold-start pending route remains set", async () => {
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "test-session"}})
+  render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+  let startup: Promise<void>
+  await act(async () => {
+    startup = processUrl(authoringUrl, true)
+    await Promise.resolve()
+    await processUrl(authoringUrl)
+  })
+  expect(mockLoadAuthoringMiniapp).not.toHaveBeenCalled()
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(1000)
+    await startup!
+  })
+  expect(mockLoadAuthoringMiniapp).toHaveBeenCalledTimes(1)
+  expect(mockPendingRoute).toBeNull()
+})
+
+it("claims a pending replay before concurrent authentication completes", async () => {
+  render(<DeeplinkProvider><Probe /></DeeplinkProvider>)
+  await act(async () => {await processUrl(authoringUrl)})
+  let authenticated!: (value: unknown) => void
+  mockGetSession.mockReturnValue(new Promise(resolve => {authenticated = resolve}))
+  let first: Promise<void>
+  await act(async () => {
+    first = processUrl(authoringUrl, false, true)
+    await processUrl(authoringUrl, false, true)
+    authenticated({is_error: () => false, value: {token: "test-session"}})
+    await first!
+  })
+  expect(mockLoadAuthoringMiniapp).toHaveBeenCalledTimes(1)
+  expect(mockPendingRoute).toBeNull()
 })

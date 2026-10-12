@@ -1,4 +1,4 @@
-import {getModelCapabilities} from "@mentra/engine"
+import {getModelCapabilities, SETTINGS, useSetting, engine} from "@mentra/engine"
 import {useState} from "react"
 import {Alert, ScrollView, View} from "react-native"
 
@@ -6,15 +6,11 @@ import {Header, Screen} from "@/components/ignite"
 import HeadUpAngleComponent from "@/components/settings/HeadUpAngleComponent"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {SETTINGS, useSetting} from "@mentra/engine"
-import {engine} from "@mentra/engine"
 
 export default function DashboardSettingsScreen() {
-  const {theme} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
   const [headUpAngleComponentVisible, setHeadUpAngleComponentVisible] = useState(false)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
@@ -70,7 +66,7 @@ export default function DashboardSettingsScreen() {
             onValueChange={() => setTwelveHourTimeEnabled(!twelveHourTimeEnabled)}
           />
 
-          {defaultWearable && features?.hasIMU && (
+          {defaultWearable && features?.imu?.headUpAngle && (
             <RouteButton
               label={translate("settings:adjustHeadAngleLabel")}
               subtitle={translate("settings:adjustHeadAngleSubtitle")}
@@ -78,10 +74,11 @@ export default function DashboardSettingsScreen() {
             />
           )}
 
-          {headUpAngle !== null && (
+          {headUpAngle !== null && features?.imu?.headUpAngle && (
             <HeadUpAngleComponent
               visible={headUpAngleComponentVisible}
-              initialAngle={headUpAngle}
+              initialAngle={Math.min(features.imu.headUpAngle.max, Math.max(features.imu.headUpAngle.min, headUpAngle))}
+              maxAngle={features.imu.headUpAngle.max}
               onCancel={onCancelHeadUpAngle}
               onSave={onSaveHeadUpAngle}
             />

@@ -4,17 +4,22 @@ import Toast from "react-native-toast-message"
 
 import NativeNotificationSettings from "@/components/settings/NativeNotificationSettings"
 import {Screen, Text, Header, Switch} from "@/components/ignite"
+import {PillButton} from "@/components/ignite/PillButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {notifyPackageName} from "@/constants/miniapps"
 import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {useRegisterCapsule} from "@/stores/capsule"
+import {setPackagesBlocked} from "@/utils/notificationBlocklist"
 
 interface InstalledApp {
   packageName: string
   appName: string
-  isBlocked: boolean
   icon: string | null
+}
+
+interface AppRow extends InstalledApp {
+  isBlocked: boolean
 }
 
 // Fixed item height for consistent scrolling
@@ -53,19 +58,7 @@ export default function NotificationSettingsScreen() {
       const installedApps = await engine.phoneNotifications.installedApps()
 
       // Sort alphabetically by app name
-      const sortedApps = installedApps
-        .map((app) => ({...app, isBlocked: blocklist.includes(app.packageName)}))
-        .sort((a, b) => a.appName.localeCompare(b.appName))
-
-      // set any apps in the blocklist to be disabled
-      // TODO: fix this
-      sortedApps.forEach((app) => {
-        if (blocklist.includes(app.packageName)) {
-          app.isBlocked = true
-        }
-      })
-
-      setApps(sortedApps)
+      setApps([...installedApps].sort((a, b) => a.appName.localeCompare(b.appName)))
     } catch (error) {
       console.error("Error loading apps:", error)
       Toast.show({
@@ -78,10 +71,6 @@ export default function NotificationSettingsScreen() {
       setRefreshing(false)
     }
   }
-
-  useEffect(() => {
-    loadInstalledApps()
-  }, [blocklist])
 
   const toggleApp = useCallback(
     async (packageName: string, currentlyBlocked: boolean) => {
@@ -123,7 +112,7 @@ export default function NotificationSettingsScreen() {
 
   // Define renderAppItem here, before any conditional returns
   const renderAppItem = useCallback(
-    ({item}: {item: InstalledApp}) => (
+    ({item}: {item: AppRow}) => (
       <View
         style={{
           flexDirection: "row",
@@ -179,19 +168,38 @@ export default function NotificationSettingsScreen() {
     [theme, toggleApp],
   )
 
-  // Memoize filtered apps to prevent recalculation
-  const filteredApps = useMemo(
-    () =>
-      apps.filter(
+  // Memoize filtered apps to prevent recalculation. Blocked state comes from the
+  // setting so switches update as soon as it changes, without reloading apps.
+  const filteredApps = useMemo(() => {
+    const blocked = new Set(Array.isArray(blocklist) ? blocklist : [])
+    return apps
+      .filter(
         (app) =>
           app.appName.toLowerCase().includes(searchQuery.toLowerCase()) ||
           app.packageName.toLowerCase().includes(searchQuery.toLowerCase()),
-      ),
-    [apps, searchQuery],
+      )
+      .map((app): AppRow => ({...app, isBlocked: blocked.has(app.packageName)}))
+  }, [apps, blocklist, searchQuery])
+
+  const enabledCount = filteredApps.filter((app) => !app.isBlocked).length
+
+  // Enable or disable every app currently listed (all apps, or the search results)
+  const setListedAppsBlocked = useCallback(
+    (blocked: boolean) => {
+      const currentBlocklist = Array.isArray(blocklist) ? blocklist : []
+      setBlocklist(
+        setPackagesBlocked(
+          currentBlocklist,
+          filteredApps.map((app) => app.packageName),
+          blocked,
+        ),
+      )
+    },
+    [blocklist, filteredApps, setBlocklist],
   )
 
   // Extract keyExtractor to prevent recreation
-  const keyExtractor = useCallback((item: InstalledApp) => item.packageName, [])
+  const keyExtractor = useCallback((item: AppRow) => item.packageName, [])
 
   if (loading) {
     return (
@@ -263,20 +271,43 @@ export default function NotificationSettingsScreen() {
         />
       </View>
 
-      {/* Stats */}
+      {/* Stats and bulk actions */}
       <View
         style={{
+          flexDirection: "row",
+          alignItems: "center",
           paddingHorizontal: theme.spacing.s4,
           paddingVertical: theme.spacing.s2,
           borderBottomWidth: 1,
           borderBottomColor: theme.colors.border,
         }}>
-        <Text style={{fontSize: 12, color: theme.colors.textDim, fontWeight: "500"}}>
+        <Text style={{flex: 1, fontSize: 12, color: theme.colors.textDim, fontWeight: "500"}}>
           {translate("settings:notificationsAppsEnabled", {
-            enabled: filteredApps.filter((app) => !app.isBlocked).length,
+            enabled: enabledCount,
             total: filteredApps.length,
           })}
         </Text>
+        <PillButton
+          tx="settings:notificationsEnableAll"
+          variant="secondary"
+          buttonStyle={{height: 30, paddingVertical: 4, paddingHorizontal: theme.spacing.s3}}
+          textStyle={{fontSize: 13}}
+          disabled={enabledCount === filteredApps.length}
+          onPress={() => setListedAppsBlocked(false)}
+        />
+        <PillButton
+          tx="settings:notificationsDisableAll"
+          variant="secondary"
+          buttonStyle={{
+            height: 30,
+            paddingVertical: 4,
+            paddingHorizontal: theme.spacing.s3,
+            marginLeft: theme.spacing.s2,
+          }}
+          textStyle={{fontSize: 13}}
+          disabled={enabledCount === 0}
+          onPress={() => setListedAppsBlocked(true)}
+        />
       </View>
 
       {/* Apps List */}

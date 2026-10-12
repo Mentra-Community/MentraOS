@@ -126,26 +126,6 @@ select,
   }
 }
 
-/* Lively waveform: each bar oscillates vertically around its level-driven height. */
-@keyframes wave-bounce {
-  0%,
-  100% {
-    transform: scaleY(0.5);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}
-.wave-bar {
-  transform-origin: center;
-  animation: wave-bounce 0.85s ease-in-out infinite;
-}
-@media (prefers-reduced-motion) {
-  .wave-bar {
-    animation: none;
-  }
-}
-
 /* Soft card elevation. */
 .elev {
   box-shadow: var(--shadow-card);

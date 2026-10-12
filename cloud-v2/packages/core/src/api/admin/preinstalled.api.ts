@@ -1,9 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { adminAuth } from "../middleware/admin-auth.middleware";
+import { createPortalAuthApi } from "../signin/portal-auth.api";
 import adminReports from "./reports.api";
 import adminSupportProfiles from "./support-profiles.api";
 import adminTestRuns from "./test-runs.api";
+import {createRoutineCatalogApi} from "./routine-catalog.api";
+import {createRoutinePreferencesApi} from "./routine-preferences.api";
 import adminTestDispatches from "./test-dispatches.api";
 import {
   PREINSTALLED_INSTALL_POLICIES,
@@ -53,12 +56,20 @@ const reviewDecisionSchema = z.object({
 });
 
 app.get("/health", c => c.json({ status: "ok", service: "cloud-core-admin" }));
+// Admin portal sign-in, ahead of the admin gate.
+app.route("/auth", createPortalAuthApi("admin"));
 app.use("*", adminAuth);
-app.get("/me", c => c.json({
-  authenticated: true,
-  admin: true,
-  user: c.var.developer ?? null,
-}));
+app.get("/me", c => {
+  const principal = c.var.principal!;
+  return c.json({
+    authenticated: true,
+    admin: true,
+    user: c.var.developer ?? null,
+    principal: principal.kind === "user"
+      ? { kind: "user", mentraUserId: principal.mentraUserId, email: principal.email, emailVerified: principal.emailVerified }
+      : { kind: "credential", credentialId: principal.credentialId },
+  });
+});
 app.get("/submissions", getSubmissions);
 app.post("/submissions/:releaseId/approve", postApproveSubmission);
 app.post("/submissions/:releaseId/reject", postRejectSubmission);
@@ -75,6 +86,8 @@ app.get("/audit-log", getAuditLog);
 app.route("/reports", adminReports);
 app.route("/support-profiles", adminSupportProfiles);
 app.route("/test-runs", adminTestRuns);
+app.route("/routine-catalog", createRoutineCatalogApi());
+app.route("/routines", createRoutinePreferencesApi());
 app.route("/", adminTestDispatches);
 
 async function getSubmissions(c: AppContext) {

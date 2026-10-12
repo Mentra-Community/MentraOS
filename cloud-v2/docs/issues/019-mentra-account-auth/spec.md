@@ -12,8 +12,9 @@ implementation. All decisions referenced here are spike.md section 5.
   unchanged (1h access, 30d rolling refresh).
 - The device ends up holding V2 tokens only. No Supabase material ever reaches
   the client (spike decision 2).
-- Login endpoints never reveal whether an email exists (uniform errors and
-  uniform timing on `login`, `password/forgot`, `signup` conflicts).
+- Login and password recovery keep uniform responses. Signup intentionally
+  reveals an existing confirmed account so returning users can recover access;
+  it never reveals linked providers, account IDs, or profile details.
 - Every account endpoint is rate limited per IP and per email (design.md picks
   the mechanism; the contract just guarantees 429 with `rate_limited`).
 
@@ -27,14 +28,17 @@ Reused: `invalid_request`, `invalid_grant`, `unauthorized_client`,
 | `invalid_credentials` | wrong email/password (never distinguishes which) | 401 |
 | `verification_required` | account exists but email not verified | 403 |
 | `weak_password` | GoTrue policy rejection, description passes through | 400 |
-| `email_taken` | signup conflict (only after verified-email check; see note) | 409 |
+| `email_taken` | existing confirmed account on signup; authenticated email-change conflict | 409 |
 | `code_invalid` | OTC/reset/deletion code wrong, expired, or used | 400 |
 | `rate_limited` | too many attempts | 429 |
 
-Note on `email_taken` vs enumeration: signup returns the same
-"check your email" success shape whether the address is new or already
-registered; `email_taken` is only returned for authenticated email-change
-conflicts.
+Note on `email_taken` vs enumeration: signup returns `409 email_taken` for an
+existing confirmed account, including accounts created with Apple or Google.
+This accepts the privacy cost of account enumeration to avoid misleading
+returning users into waiting for an email that will not arrive. Existing per-IP
+and per-email signup limits apply, but do not prevent targeted checks. Linked
+providers remain private. New and unconfirmed accounts retain the verification
+flow; login and password recovery remain uniform.
 
 ## Endpoints
 
@@ -44,7 +48,7 @@ All under `/api/account`. "auth" means a valid V2 access token (Bearer).
 
 | Endpoint | Auth | Body | Returns |
 |---|---|---|---|
-| `POST /signup` | none | `{email, password}` | `202 {status: "verification_sent"}` (uniform; see enumeration note) |
+| `POST /signup` | none | `{email, password}` | `202 {status: "verification_sent"}` or `409 email_taken` (see enumeration note) |
 | `POST /verify/resend` | none | `{email}` | `202` uniform |
 | `POST /login` | none | `{email, password}` | `200 TokenResponse` or `invalid_credentials` / `verification_required` |
 | `POST /logout` | auth | `{everywhere?: boolean}` | `204`; `everywhere` revokes all of the user's refresh tokens |

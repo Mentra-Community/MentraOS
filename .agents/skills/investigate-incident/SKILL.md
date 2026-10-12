@@ -44,7 +44,7 @@ Check whether a variable is set without printing its value. Do not print
 credentials, enable shell tracing, put tokens in committed files, or extract
 browser sessions. If no suitable credential is available, request that the user
 configure `MENTRA_ADMIN_TOKEN` in the environment. Authentication requires an
-admin-allowlisted org API key (`msk_...`) or an admin WorkOS access token.
+admin-allowlisted org API key (`msk_...`).
 
 Use the environment from the report notification. Without `--env`, the script
 tries prod, dev, then staging. `MENTRA_CORE_URL` overrides even `--env`; check

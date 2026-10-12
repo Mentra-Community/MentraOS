@@ -119,7 +119,7 @@ public class DowngradeWorker extends Worker {
               continue;
             }
             deleteStagedApk(store);
-            store.clear();
+            store.finish("converged");
             telemetry.emit(
                 "mentra_downgrade_applied", String.valueOf(target), "VERSION_CONVERGED", attempt, true);
             return Result.success();
@@ -198,7 +198,7 @@ public class DowngradeWorker extends Worker {
       int attempt) {
     Log.e(RecoveryConstants.TAG, "Downgrade transaction giving up: " + reason);
     deleteStagedApk(store);
-    store.clear();
+    store.finish(reason);
     telemetry.emit("mentra_downgrade_failed", String.valueOf(target), reason, attempt, false);
     // Terminal non-ownership verdict: a give-up BEFORE the uninstall leaves the original ASG
     // installed, alive, and sitting on its long supervision timer — telemetry alone would
@@ -207,7 +207,7 @@ public class DowngradeWorker extends Worker {
     // send it too: the factory build has no verdict receiver (or no pending handoff), so the
     // broadcast is dropped harmlessly there.
     DowngradeController.sendHandoffResult(
-        getApplicationContext(), false, target, "gave_up:" + reason);
+        getApplicationContext(), false, target, "gave_up:" + reason, store.getRequestId());
     return Result.failure();
   }
 

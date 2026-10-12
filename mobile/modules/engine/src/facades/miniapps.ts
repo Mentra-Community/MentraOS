@@ -9,7 +9,14 @@
  * `<WebView>` wired to them. This facade is the lifecycle half.
  */
 import {useAppStatusStore} from "../stores/apps"
+import {onDeferredMiniappUpdateReady} from "../services/deferredMiniappUpdates"
 import localMiniappRuntime from "../services/LocalMiniappRuntime"
+import {
+  onRunningUpdateFailed,
+  onRunningUpdatePrompt,
+  type PendingRunningUpdatePrompt,
+  type RunningUpdateFailure,
+} from "../services/runningUpdatePrompt"
 import type {ClientApp} from "../types"
 
 type AppsState = ReturnType<typeof useAppStatusStore.getState>
@@ -47,6 +54,28 @@ export const miniapps = {
     useAppStatusStore.getState().setForeground(...args),
   /** Clear the current foreground miniapp. */
   clearForeground: () => useAppStatusStore.getState().clearForeground(),
+  /**
+   * Invoke a manifest-declared action as the trusted host. Host-audience
+   * actions are unavailable through `session.actions.invoke`.
+   */
+  invokeAction: (
+    packageName: string,
+    actionId: string,
+    params?: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> => localMiniappRuntime.invokeActionFromHost(packageName, actionId, params, timeoutMs),
+  /**
+   * Render "update now?" prompts for running miniapps and answer each one. The
+   * engine decides when one may appear (foreground, one at a time, at most
+   * daily per miniapp). Returns an unsubscribe.
+   */
+  onUpdatePrompt: (listener: (prompt: PendingRunningUpdatePrompt) => void): (() => void) =>
+    onRunningUpdatePrompt(listener),
+  /** An accepted update failed; the installed version was started again. Returns an unsubscribe. */
+  onUpdateFailed: (listener: (failure: RunningUpdateFailure) => void): (() => void) => onRunningUpdateFailed(listener),
+  /** A miniapp whose automatic update waited for it has stopped. Returns an unsubscribe. */
+  onDeferredUpdateReady: (listener: (packageName: string) => void): (() => void) =>
+    onDeferredMiniappUpdateReady(listener),
   /** Stop all running miniapps. */
   stopAll: () => useAppStatusStore.getState().stopAll(),
   /** Install a miniapp from a bundle URL. */

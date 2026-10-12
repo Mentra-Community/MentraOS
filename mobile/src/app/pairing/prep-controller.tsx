@@ -4,7 +4,7 @@ import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "re
 import type {Permission} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
-import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
+import {Button, Header, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
@@ -199,25 +199,15 @@ export default function PairingPrepScreen() {
         showsVerticalScrollIndicator>
         <View className="flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6">
           <Image
-            source={require("../../../assets/glasses/even_realities_g2/even_realities_g2.png")}
+            source={require("../../../assets/glasses/even_realities/r1/ring.png")}
             resizeMode="contain"
-            className="w-50 h-25"
-          />
-          <Icon name="chevron-down" size={36} color={theme.colors.text} />
-          <Image
-            source={require("../../../assets/guide/image_g1_pair.png")}
-            resizeMode="contain"
-            className="w-62 h-38"
+            className="w-50 h-50"
           />
         </View>
 
         <View style={{justifyContent: "flex-start", flexDirection: "column"}}>
           <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
-          <Text
-            className="text-lg text-secondary-foreground"
-            text="1. Disconnect your G2 from within the Even Realities app, or uninstall the Even Realities app"
-          />
-          <Text className="text-lg text-secondary-foreground" text="2. Place your G2 in the charging case." />
+          <Text className="text-lg text-secondary-foreground" tx="pairing:r1PreviousPhone" />
         </View>
       </ScrollView>
     )
@@ -229,7 +219,7 @@ export default function PairingPrepScreen() {
       <>
         <View className="gap-4">
           <Button tx="pairing:g1Ready" onPress={advanceToPairing} />
-          {/* <Button tx="pairing:g1NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} /> */}
+          <Button tx="pairing:needMoreHelp" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} />
         </View>
         <GlassesTroubleshootingModal
           isVisible={showTroubleshootingModal}

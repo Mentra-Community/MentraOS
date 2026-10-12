@@ -124,8 +124,12 @@ export interface ConnectAckPayload {
 }
 
 export interface HostFeatures {
+  /** @internal Runtime projects transcription independently for each listener. */
+  transcriptionListeners?: boolean
   /** Host honors `startStream({captureAudio})` for the lifetime of a WHIP session. */
   captureAudio?: boolean
+  /** Host keeps the UI closed until a background session that announced it sends READY. */
+  initReady?: boolean
 }
 
 export interface MiniappAuthState {
@@ -213,6 +217,8 @@ type SessionEmitterEvents = {
   permissions: (perms: PermissionRecord) => void
   speakerState: (event: import("./modules/speaker").SpeakerStateEvent) => void
   meetingState: (event: import("./modules/meeting").MeetingState) => void
+  meetingVideoPublisher: (event: import("./modules/meeting").MeetingVideoPublisherEvent) => void
+  meetingStill: (event: import("./modules/meeting").MeetingStillProgressEvent) => void
   auth: (auth: MiniappAuthState) => void
 }
 
@@ -315,6 +321,12 @@ export class MiniappSession<TChannels extends object = any> {
   private readonly pendingRequests = new Map<string, PendingRequest>()
   private connectPromise: Promise<void> | null = null
   private disposed = false
+  /**
+   * Set by `registerMiniapp` to the host's id for this spawn: CONNECT tells the
+   * host to wait for READY, and both carry the id so the host can ignore
+   * frames from a previous context.
+   */
+  private initSessionId: string | null = null
 
   /** Manifest-declared permission cache. Updated on CONNECT_ACK / PERMISSIONS_UPDATE. */
   private _permissions: PermissionRecord = {
@@ -484,6 +496,7 @@ export class MiniappSession<TChannels extends object = any> {
       const connectPayload = {
         type: MiniappRequestType.CONNECT,
         packageName: this.packageName,
+        ...(this.initSessionId !== null ? {initReady: true, sessionId: this.initSessionId} : {}),
       }
       this.transport.send(serializeEnvelope({payload: connectPayload, requestId}))
 
@@ -491,6 +504,21 @@ export class MiniappSession<TChannels extends object = any> {
     })()
 
     return this.connectPromise
+  }
+
+  /**
+   * @internal — called by `registerMiniapp` before `connect()`. The host then
+   * keeps the UI closed until {@link reportInitReady}, so UI requests cannot
+   * reach the background before its `session.ui.handle` handlers exist.
+   */
+  announceInitReady(sessionId: string): void {
+    this.initSessionId = sessionId
+  }
+
+  /** @internal — the `registerMiniapp` handler settled; let the host open the UI. */
+  reportInitReady(): void {
+    if (this.initSessionId === null || this.disposed || !this.hostFeatures?.initReady) return
+    this.sendOneShot({type: MiniappRequestType.READY, sessionId: this.initSessionId})
   }
 
   /** Resolves when `ready` becomes true, or rejects if connect failed. */
@@ -709,8 +737,15 @@ export class MiniappSession<TChannels extends object = any> {
       case MiniappResponseType.MEETING_STATE: {
         const state = payload.state as import("./modules/meeting").MeetingPhase | undefined
         if (!state) return
+        const identityMode =
+          payload.identityMode === "guest" || payload.identityMode === "teams-user" ? payload.identityMode : undefined
         const event: import("./modules/meeting").MeetingState = {
           state,
+          identityMode,
+          guestReason:
+            identityMode === "guest"
+              ? (payload.guestReason as import("./modules/meeting").MeetingState["guestReason"])
+              : undefined,
           muted: Boolean(payload.muted),
           videoEnabled: typeof payload.videoEnabled === "boolean" ? payload.videoEnabled : undefined,
           error: payload.error as string | undefined,
@@ -729,6 +764,22 @@ export class MiniappSession<TChannels extends object = any> {
         }
         this.meeting._applyState(event)
         this.emitter.emit("meetingState", event)
+        return
+      }
+
+      case MiniappResponseType.MEETING_VIDEO_PUBLISHER: {
+        const pauseId = typeof payload.pauseId === "string" ? payload.pauseId : ""
+        if (!pauseId || payload.status !== "expired") return
+        const event = {pauseId, status: "expired" as const}
+        this.emitter.emit("meetingVideoPublisher", event)
+        return
+      }
+
+      case MiniappResponseType.MEETING_STILL: {
+        const stillId = typeof payload.stillId === "string" ? payload.stillId : ""
+        const phase = payload.phase
+        if (!stillId || (phase !== "card" && phase !== "uploading" && phase !== "shown")) return
+        this.emitter.emit("meetingStill", {stillId, phase})
         return
       }
 
@@ -759,6 +810,7 @@ export class MiniappSession<TChannels extends object = any> {
           streamType,
           payload.data,
           payload.transcriptionRoute as TranscriptionEventRoute | undefined,
+          payload.listenerId as string | undefined,
         )
         return
       }
@@ -797,6 +849,22 @@ export class MiniappSession<TChannels extends object = any> {
         if (next === "light" || next === "dark") {
           this.colorScheme = next
           this.emitter.emit("colorScheme", next)
+        }
+        return
+      }
+
+      case MiniappResponseType.MINIAPPS_INSTALL_PROGRESS: {
+        const {packageName, version, phase} = payload as Record<string, unknown>
+        if (
+          typeof packageName === "string" &&
+          typeof version === "string" &&
+          (phase === "downloading" ||
+            phase === "verifying" ||
+            phase === "extracting" ||
+            phase === "activating" ||
+            phase === "complete")
+        ) {
+          this.miniapps._deliverInstallProgress({packageName, version, phase})
         }
         return
       }

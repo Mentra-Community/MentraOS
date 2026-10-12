@@ -33,6 +33,31 @@ private final class NimoTestClock {
 final class NimoCanvasTransportTests: XCTestCase {
     private let frame = Data([0, 0, 1])
 
+    func testNotReadyProbesAreTimedBoundedAndCancelled() {
+        for stop in ["budget", "disconnect", "exit", "notReady"] {
+            let clock = NimoTestClock()
+            var keys: [Int] = []
+            let canvas = NimoCanvasCoordinator(schedule: clock.schedule, writeCapacity: { 512 }, enqueue: { frames, start, complete in
+                keys.append(Int(frames[0][9])); start(); complete(); return true
+            }, reconnect: { XCTFail($0) }, rejected: { _ in })
+            canvas.activate(); canvas.readiness(true)
+            for attempt in 0 ..< 4 {
+                canvas.response(key: 1, payload: Data([7]))
+                if stop == "disconnect" { canvas.disconnected() }
+                if stop == "exit" { canvas.exit() }
+                if stop == "notReady" { canvas.readiness(false) }
+                let before = keys.count
+                clock.advance(0.999)
+                XCTAssertEqual(keys.count, before)
+                clock.advance(0.001)
+                XCTAssertEqual(keys.count, before + (stop == "budget" && attempt < 3 ? 1 : 0))
+                if stop != "budget" { break }
+            }
+            clock.advance(60)
+            XCTAssertEqual(keys.count, stop == "budget" ? 4 : 1)
+        }
+    }
+
     func testEarlyAckOnlyAdvancesAfterFinalWriteCompletes() {
         let clock = NimoTestClock()
         var chains: [[Data]] = [], starts: [() -> Void] = [], completes: [() -> Void] = []

@@ -109,6 +109,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   connectSimulated(): Promise<void>
   disconnect(): Promise<void>
   forget(): Promise<void>
+  /** Explicit Unpair also resets connected NIMO glasses before forgetting. */
+  unpair(): Promise<void>
   forgetController(): Promise<void>
   showDashboard(): Promise<void>
   setBrightness(level: number, autoMode?: boolean | null): Promise<void>

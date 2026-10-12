@@ -119,3 +119,42 @@ Before resubmitting to Apple, verify on iPhone, iPad, and Android with the updat
    microphone requirements must still open when access is denied.
 5. Open the fullscreen mirror without microphone access. Only attempting video
    recording should request access. Declining must leave the mirror usable.
+
+## NIMO preparation and automatic connection
+
+`04e-nimo-preparation.yaml` starts at an unpaired Home with no NIMO available. It
+checks the opening instruction, iOS Settings step and foreground return, and
+Android's direct discovery route. It does not establish hardware pairing.
+
+For real-device qualification (no microphone permission needed):
+
+1. iOS: open NIMO's arms and connect its main name (without `_BLE`) in Settings.
+   In Mentra, choose NIMO and tap **They're open**. One available NIMO should
+   proceed to the normal loading/handshake and **NIMO connected** automatically.
+2. Repeat with NIMO initially disconnected. From **Connect your NIMO**, open
+   Settings, connect the main device, and return. No continuation tap is needed.
+3. Connect two NIMOs: **Choose your NIMO** must remain visible until a row is
+   selected. Tap the chevron itself to confirm that the whole row works.
+4. Leave the screen while discovery is pending. A late result must not navigate.
+   With no result for a minute, **Scan Again** must retry in place.
+5. Android: **Find my glasses** opens normal discovery without Apple Settings
+   instructions. Select a NIMO by tapping the row's chevron and complete pairing.
+6. Launch a display miniapp and verify its text on the glasses. Record platform,
+   app revision, glasses firmware, connection logs and wearer confirmation.
+
+Check the prep screens and login labels on a small Android screen with standard
+and large font sizes. Labels should wrap without hiding words; bottom actions
+and the Log In link must remain reachable by scrolling.
+
+## Android login layout
+
+`01c-login-layout.yaml` checks the Google label, Log In link and submit button,
+organization sign-in action, and empty-email validation. Start signed in; the
+flow uses the existing auth deep link without signing out or submitting credentials.
+Run on a connected physical Android phone at standard and large system font sizes,
+inspect the screenshots for clipped glyphs, then restore the original font size.
+
+```bash
+adb devices -l
+maestro --device <phone-serial> test -e MAESTRO_APP_ID=com.mentra.mentra .maestro/flows/01c-login-layout.yaml
+```

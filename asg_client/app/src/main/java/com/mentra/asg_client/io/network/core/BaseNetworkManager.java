@@ -834,6 +834,7 @@ public abstract class BaseNetworkManager implements INetworkController {
     protected final void onHotspotStarted(String ssid, String password, String gatewayIp) {
         boolean wasEnabled = isHotspotEnabled;
         updateHotspotState(true, ssid, password, gatewayIp);
+        onHotspotActiveChanged(true);
         startInactivityMonitoring();
         if (!wasEnabled) {
             notifyHotspotStateChanged(true);
@@ -845,10 +846,17 @@ public abstract class BaseNetworkManager implements INetworkController {
         boolean wasEnabled = isHotspotEnabled;
         stopInactivityMonitoring();
         clearHotspotState();
+        onHotspotActiveChanged(false);
         if (wasEnabled) {
             notifyHotspotStateChanged(false);
         }
     }
+
+    /**
+     * Called on every hotspot start and stop, including repeats. Implementations must be
+     * idempotent.
+     */
+    protected void onHotspotActiveChanged(boolean active) {}
 
     /** Register broadcast receiver for tethering state changes */
     private void registerTetheringStateReceiver() {

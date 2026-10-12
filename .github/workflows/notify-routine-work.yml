@@ -1,0 +1,39 @@
+name: Publish routine authoring status
+on:
+  workflow_dispatch:
+    inputs:
+      work_id:
+        description: Existing Core authoring work identity
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  comment:
+    environment: routine-nightly-dev
+    if: github.repository == 'Mentra-Community/MentraOS' && github.ref == 'refs/heads/dev'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    concurrency:
+      group: routine-work-status-${{ inputs.work_id }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Report the retained machine state on its originating PR
+        uses: actions/github-script@v7
+        env:
+          TEST_RUN_INGEST_TOKEN: ${{ secrets.TEST_RUN_INGEST_TOKEN_DEV }}
+          WORK_ID: ${{ inputs.work_id }}
+        with:
+          retries: 0
+          script: |
+            const {publishPrRoutineWorkReport} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-routine-work.mjs`);
+            await publishPrRoutineWorkReport({token: process.env.TEST_RUN_INGEST_TOKEN, workId: process.env.WORK_ID});
+            core.notice('Core retained the same authoring report intent. Its durable reporter owns PR comments.');

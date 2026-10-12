@@ -18,10 +18,14 @@ public struct HotspotInterfaceAddress: Equatable {
 public struct HotspotInterfaceSnapshot: Equatable {
     public let links: [String: Int]
     public let addresses: [HotspotInterfaceAddress]
+    /// Attached interfaces whose `AF_LINK` type is `IFT_ETHER`. Apple platforms report Wi-Fi and
+    /// wired Ethernet this way; cellular, VPN tunnel and loopback links have other types.
+    public let ethernetLinks: Set<String>
 
-    public init(links: [String: Int], addresses: [HotspotInterfaceAddress]) {
+    public init(links: [String: Int], addresses: [HotspotInterfaceAddress], ethernetLinks: Set<String> = []) {
         self.links = links
         self.addresses = addresses
+        self.ethernetLinks = ethernetLinks
     }
 }
 
@@ -87,6 +91,13 @@ public struct HotspotWifiIdentity: Equatable {
             detached.insert(name)
         }
     }
+
+    /// Pin a binding chosen from hotspot client evidence (see `HotspotInterfacePolicy.select`)
+    /// as this session's Wi-Fi interface. It then ends exactly like a reported one.
+    public mutating func adopt(_ binding: HotspotInterfaceBinding) {
+        guard !rejected.contains(binding.interface), !detached.contains(binding.interface) else { return }
+        trusted[binding.interface] = binding.index
+    }
 }
 
 /// Wi-Fi is not always `en0`: a Mac can have built-in Ethernet on `en0` and Wi-Fi on `en1`.
@@ -96,11 +107,33 @@ public enum HotspotInterfacePolicy {
     /// The unique up IPv4 address, on an interface this session trusts as Wi-Fi and that is still
     /// attached with the same index, that can be the hotspot client. With a BLE-reported gateway
     /// it must be a valid client on that gateway's /24. Missing or ambiguous candidates return nil.
+    ///
+    /// A phone on cellular has no Wi-Fi path when the join starts, and after association iOS
+    /// leaves the internet-less glasses AP out of both paths, so no Wi-Fi report ever arrives.
+    /// Only when the session has no trusted Wi-Fi interface, the hotspot client address is the
+    /// evidence instead: the unique valid client of the BLE gateway's /24 on an attached
+    /// Ethernet-type link that no path has reported as non-Wi-Fi. Callers bind it only after the
+    /// glasses SSID matched, then require a connection from it to reach the gateway, and must
+    /// `adopt` it so the session pins that interface.
     public static func select(snapshot: HotspotInterfaceSnapshot, identity: HotspotWifiIdentity,
                               gateway: String?) -> HotspotInterfaceBinding?
     {
+        if !identity.trusted.isEmpty {
+            return unique(snapshot, gateway: gateway) { identity.trusted[$0] }
+        }
+        guard let gateway else { return nil }
+        return unique(snapshot, gateway: gateway) { name in
+            guard snapshot.ethernetLinks.contains(name), !identity.rejected.contains(name),
+                  !identity.detached.contains(name) else { return nil }
+            return snapshot.links[name]
+        }
+    }
+
+    private static func unique(_ snapshot: HotspotInterfaceSnapshot, gateway: String?,
+                               index eligibleIndex: (String) -> Int?) -> HotspotInterfaceBinding?
+    {
         let bindings = Set(snapshot.addresses.compactMap { row -> HotspotInterfaceBinding? in
-            guard let index = identity.trusted[row.name], snapshot.links[row.name] == index,
+            guard let index = eligibleIndex(row.name), snapshot.links[row.name] == index,
                   row.isUp, LocalMediaPolicy.isPrivate(row.ipv4) else { return nil }
             if let gateway, !LocalMediaPolicy.isHotspotClientAddress(row.ipv4, gateway: gateway) { return nil }
             return HotspotInterfaceBinding(interface: row.name, index: index, address: row.ipv4)

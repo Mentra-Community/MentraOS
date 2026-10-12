@@ -3,10 +3,12 @@
 **Status:** Shipped on `mentra-miniapp-sdk-2` (commit `01d2b98a6`, follow-ups `60f4e1a78`/`d8f939fb5`).
 **Scope:** Android only. iOS (Apple JSC) unchanged.
 **Module:** `mobile/modules/crust/android/`
-**Shipped dep:** `io.github.dokar3:quickjs-kt-android:1.0.0-alpha13`
-  — NOT 1.0.5: that release ships Kotlin 2.3.0 metadata which this build's
-  Kotlin 2.1.20 compiler cannot read. Alpha13 is the last release built with
-  Kotlin 2.0 metadata; its API matches 1.0.5 for the surface we use.
+**Shipped dep:** `io.github.dokar3:quickjs-kt-android:1.0.15`, compiled by
+  the app with Kotlin 2.3.0 (`kotlinVersion` in `app.config.ts`). It
+  originally shipped as `1.0.0-alpha13`, the last release a Kotlin 2.1.20
+  compiler could read. The 3.2.1 hotfix for OS-2070 temporarily built
+  alpha13's native code from source with upstream's shared-resource lifetime
+  fix; moving to the stock 1.0.15 artifact removed that copy.
 **Estimated effort:** 2–3 days end-to-end. Actual: ~half a day end-to-end.
 
 ## Why

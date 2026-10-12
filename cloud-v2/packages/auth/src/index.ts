@@ -21,6 +21,12 @@ const DEFAULT_CONTEXT_KEY = "mentraAuth";
 export interface VerifiedMentraAuth {
   mentraUserId: string;
   tenantId?: string;
+  /**
+   * The user's verified Mentra account email, when Core could resolve one.
+   * Absent for OEM accounts and unverified addresses. Key stored data on
+   * `mentraUserId`: the email can change, the subject cannot.
+   */
+  email?: string;
   packageName: string;
   tokenId?: string;
   expiresAt?: number;
@@ -139,6 +145,7 @@ export class MentraAuth {
     return {
       mentraUserId: subject,
       tenantId: stringClaim(payload.tenantId),
+      ...(payload.email_verified === true && stringClaim(payload.email) ? { email: stringClaim(payload.email) } : {}),
       packageName: this.packageName,
       tokenId: stringClaim(payload.jti),
       expiresAt: typeof payload.exp === "number" ? payload.exp : undefined,

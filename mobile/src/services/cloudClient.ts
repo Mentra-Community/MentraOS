@@ -140,8 +140,7 @@ export const cloudClient = {
     // an explicit engine reconnect pin.
     cloudClientService.reconnect(null)
   },
-  getPreinstalledMiniappRegistry: () => cloudClientService.getPreinstalledMiniappRegistry(),
-  getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>
+  getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number}) =>
     cloudClientService.getMiniappAuthToken(packageName, opts),
   startManagedPhoto: () => cloudClientService.startManagedPhoto(),
   awaitManagedPhotoReady: (requestId: string) => cloudClientService.awaitManagedPhotoReady(requestId),

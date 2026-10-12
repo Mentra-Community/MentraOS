@@ -4,6 +4,8 @@ import {readdirSync, readFileSync, statSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {checkMapboxRuntime} from "./check-mapbox-runtime.mjs"
+
 const DIRECT_ENV_PATTERN = /process\.env\.([A-Z][A-Z0-9_]*)/g
 
 function readJson(file) {
@@ -265,21 +267,38 @@ function parseArgs(args) {
   return values
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2))
   const root = path.resolve(args.root || process.cwd())
   const contract = readJson(args.contract)
   validateContractCoverage(contract, directEnvironmentKeys(root))
   if (args.values || args["env-file"]) {
+    const values = args["env-file"]
+      ? parseEnvironmentFile(readFileSync(path.resolve(args["env-file"]), "utf8"))
+      : readJson(args.values)
     const evidence = validateProductionCloudConfig({
       contract,
       environment: args.environment,
-      values: args["env-file"]
-        ? parseEnvironmentFile(readFileSync(path.resolve(args["env-file"]), "utf8"))
-        : readJson(args.values),
+      values,
     })
+    if (args["check-maps"] === "true") {
+      if (values.MAPS_PROVIDER !== "mapbox") throw new Error("Maps authentication preflight requires MAPS_PROVIDER=mapbox")
+      await checkMapboxRuntime(values.MAPBOX_ACCESS_TOKEN)
+      evidence.checks.push({
+        id: "maps-provider-authentication",
+        keys: ["MAPBOX_ACCESS_TOKEN"],
+        status: "pass",
+        acceptanceTest: "maps-provider",
+      })
+      evidence.checks.sort((left, right) => left.id.localeCompare(right.id))
+    }
     writeFileSync(path.resolve(args.output), `${JSON.stringify(evidence, null, 2)}\n`)
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error.message)
+    process.exitCode = 1
+  })
+}

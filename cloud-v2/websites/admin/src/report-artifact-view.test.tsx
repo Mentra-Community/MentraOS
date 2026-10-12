@@ -42,7 +42,7 @@ const render = (overrides: Overrides) =>
 describe("incident report artifact view", () => {
   test("plays an MP4 video natively from its authenticated same-origin artifact URL, with a download link", () => {
     const html = render({ type: "video", contentType: "video/mp4" });
-    expect(html).toContain(`<video src="${url}"`);
+    expect(html).toMatch(new RegExp(`<video[^>]* src="${url}"`));
     expect(html).toMatch(/<video[^>]* controls=""/);
     expect(html).toMatch(/<video[^>]* playsInline=""/i);
     expect(html).toMatch(/<video[^>]* preload="metadata"/);

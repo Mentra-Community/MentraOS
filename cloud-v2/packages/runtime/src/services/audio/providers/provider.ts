@@ -16,7 +16,10 @@
  * instance, owned by the worker that created it.
  */
 
+import type { AudioPosition, TranscriptionToken } from "@mentra/cloud-protocol";
+
 export interface TranscriptEvent {
+  frameTimelineVersion?: 1;
   /** Transcribed text. May be a partial token or a complete word/phrase. */
   text: string;
   /** Whether the provider considers this finalized (vs. interim/in-progress). */
@@ -47,14 +50,8 @@ export interface TranscriptEvent {
    * `text` (the target language), so the detected source needs its own field.
    */
   sourceLanguage?: string;
-  /** Provider-specific token-level data, for clients that want it. */
-  tokens?: Array<{
-    text: string;
-    isFinal: boolean;
-    startMs?: number;
-    endMs?: number;
-    speaker?: string;
-  }>;
+  /** Internal timing retained for phone-runtime subscription projection. */
+  tokens?: TranscriptionToken[];
 }
 
 export interface ProviderOptions {
@@ -78,7 +75,7 @@ export interface ProviderOptions {
 
 export interface TranscriptionProvider {
   /** Feed a PCM (Int16 mono, 16kHz) chunk. Non-blocking. */
-  writeAudio(pcm: Int16Array): void;
+  writeAudio(pcm: Int16Array, position?: AudioPosition): void;
 
   /** Close cleanly. Best-effort flushes any pending interim transcripts. */
   close(): Promise<void>;

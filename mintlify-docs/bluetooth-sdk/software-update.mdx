@@ -166,8 +166,11 @@ app already called `engine.start()`, pass `initializeRuntime={false}`.
 The flow checks again after every install pass. It does not finish until the
 ASG client, MTK system software, and BES firmware all match the release
 manifest. On Android, hotspot OTA requires Android 13 or newer. On iOS, it uses
-the app's existing Bluetooth background execution while Mentra Live remains
-connected; it does not add a second keep-alive mechanism.
+the app's Bluetooth background execution and does not add a second keep-alive
+mechanism, so updates continue while the phone is locked. That requires the
+`bluetooth-central` background mode: the SDK's Expo config plugin adds it to
+React Native apps, and native iOS apps declare it as described in
+[Background Operation](/bluetooth-sdk/ios#background-operation).
 
 ## Customize The OTA Pages
 

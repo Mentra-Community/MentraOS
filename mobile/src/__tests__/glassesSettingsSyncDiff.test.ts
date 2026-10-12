@@ -1,8 +1,19 @@
 // Imports the real GlassesSettingsSync by path (not via "@mentra/engine",
 // which jest mocks) so the actual diff logic runs under the mobile jest CI
 // runner.
-import {diffBluetoothSettingsForPush, stripPairingIdentity} from "../../modules/engine/src/services/GlassesSettingsSync"
-import {PAIRING_IDENTITY_KEYS, SETTINGS} from "../../modules/engine/src/stores/settings"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {
+  clampDisplaySettingsForModel,
+  diffBluetoothSettingsForPush,
+  pushAllBluetoothSettings,
+  pushDeviceSettingsOnConnect,
+  startGlassesSettingsSync,
+  stopGlassesSettingsSync,
+  stripPairingIdentity,
+} from "../../modules/engine/src/services/GlassesSettingsSync"
+import {PAIRING_IDENTITY_KEYS, SETTINGS, useSettingsStore} from "../../modules/engine/src/stores/settings"
+import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
+import {pairing} from "../../modules/engine/src/facades/pairing"
 
 describe("diffBluetoothSettingsForPush", () => {
   it("pushes changed non-identity keys only", () => {
@@ -60,5 +71,67 @@ describe("stripPairingIdentity", () => {
     const settings: Record<string, unknown> = {brightness: 80, gallery_mode: true}
     for (const key of PAIRING_IDENTITY_KEYS) settings[key] = "stale"
     expect(stripPairingIdentity(settings)).toEqual({brightness: 80, gallery_mode: true})
+  })
+})
+
+describe("display settings sent to each model", () => {
+  beforeEach(async () => {
+    jest.clearAllMocks()
+    useGlassesStore.getState().reset()
+    const {setSetting} = useSettingsStore.getState()
+    await setSetting("default_wearable", "NIMO", false)
+    await setSetting("dashboard_depth", 10, false)
+    await setSetting("dashboard_height", 10, false)
+    await setSetting("head_up_angle", 90, false)
+  })
+
+  afterEach(() => {
+    stopGlassesSettingsSync()
+    jest.useRealTimers()
+  })
+
+  it("seeds the selected G1 within its limits before connecting, despite saved NIMO identity", async () => {
+    await pairing.pair({id: "g1", name: "G1", model: "Even Realities G1"})
+    expect(BluetoothSdk.updateBluetoothSettings).toHaveBeenCalledWith(
+      expect.objectContaining({dashboard_depth: 3, dashboard_height: 8, head_up_angle: 60}),
+    )
+    expect((BluetoothSdk.updateBluetoothSettings as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+      (BluetoothSdk.connect as jest.Mock).mock.invocationCallOrder[0],
+    )
+    expect(useSettingsStore.getState().getSetting("dashboard_depth")).toBe(10)
+  })
+
+  it("preserves the wider NIMO preference when reconnecting to NIMO", async () => {
+    await pushAllBluetoothSettings()
+    expect(BluetoothSdk.updateBluetoothSettings).toHaveBeenCalledWith(
+      expect.objectContaining({dashboard_depth: 10, dashboard_height: 10, head_up_angle: 90}),
+    )
+  })
+
+  it("uses the connected model during replay even before the saved identity catches up", async () => {
+    useGlassesStore.setState({connection: {state: "connected", fullyBooted: true}, deviceModel: "Even Realities G1"})
+    await pushDeviceSettingsOnConnect()
+    const patch = (BluetoothSdk.updateBluetoothSettings as jest.Mock).mock.calls[0][0]
+    expect(patch).toMatchObject({dashboard_depth: 3, dashboard_height: 8, head_up_angle: 60})
+    expect(patch).not.toHaveProperty("default_wearable")
+  })
+
+  it("clamps changed settings at flush time using the current model", async () => {
+    jest.useFakeTimers()
+    startGlassesSettingsSync()
+    await useSettingsStore.getState().setSetting("dashboard_depth", 9, false)
+    useGlassesStore.setState({connection: {state: "connected", fullyBooted: true}, deviceModel: "Even Realities G1"})
+    jest.advanceTimersByTime(300)
+    expect(BluetoothSdk.updateBluetoothSettings).toHaveBeenLastCalledWith(expect.objectContaining({dashboard_depth: 3}))
+  })
+
+  it("omits unsupported controls and leaves other settings unchanged", () => {
+    const settings = {dashboard_depth: 10, dashboard_height: 10, head_up_angle: 90, brightness: 50}
+    expect(clampDisplaySettingsForModel(settings, "AR99")).toEqual({brightness: 50})
+    expect(settings.dashboard_depth).toBe(10)
+    expect(clampDisplaySettingsForModel({dashboard_depth: 0, dashboard_height: -1}, "Even Realities G1")).toEqual({
+      dashboard_depth: 1,
+      dashboard_height: 1,
+    })
   })
 })

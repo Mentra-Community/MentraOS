@@ -33,6 +33,7 @@ services:
       nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+      nginx.ingress.kubernetes.io/proxy-body-size: "2g"
     terminationGracePeriodSeconds: 10
 
   - name: runtime
@@ -44,8 +45,6 @@ services:
     ramMegabytes: 2048
     domains:
       - name: runtime.staging.us-west-2.mentraglass.com
-    env:
-      AUDIO_WORKERS: "1"
     livenessCheck:
       enabled: true
       httpPath: /healthz

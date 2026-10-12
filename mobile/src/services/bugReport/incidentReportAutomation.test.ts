@@ -1,8 +1,20 @@
-import {submitIncidentReport} from "@mentra/engine"
+import {IncidentReportError, submitIncidentReport} from "@mentra/engine"
 
 import {parseIncidentReportRequest, submitIncidentReportOnce} from "./incidentReportAutomation"
 
-jest.mock("@mentra/engine", () => ({submitIncidentReport: jest.fn()}))
+const mockSuperMode = jest.fn()
+jest.mock("@mentra/engine", () => ({
+  engine: {settings: {get: () => mockSuperMode()}},
+  SETTINGS: {super_mode: {key: "super_mode"}},
+  submitIncidentReport: jest.fn(),
+  IncidentReportError: class IncidentReportError extends Error {
+    result: unknown
+    constructor(value: unknown) {
+      super("Incident report submission did not complete")
+      this.result = value
+    }
+  },
+}))
 
 const request = {
   alert_id: "ios-ota-1",
@@ -14,6 +26,7 @@ const receipt = {...request, status: "filed", report_id: "rep_test", incident_id
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockSuperMode.mockReturnValue(false)
   jest.mocked(submitIncidentReport).mockResolvedValue(receipt as Awaited<ReturnType<typeof submitIncidentReport>>)
 })
 
@@ -33,7 +46,7 @@ it.each([
   expect(parseIncidentReportRequest(input).ok).toBe(false)
 })
 
-it("reuses an in-flight and completed request after a screen remount", async () => {
+it("reuses a normal-mode in-flight and completed request after a screen remount", async () => {
   let finish!: (value: Awaited<ReturnType<typeof submitIncidentReport>>) => void
   jest.mocked(submitIncidentReport).mockImplementationOnce(
     () =>
@@ -49,6 +62,7 @@ it("reuses an in-flight and completed request after a screen remount", async () 
   await expect(first).resolves.toMatchObject({incident_id: "rep_test"})
   expect(second).toBe(first)
   expect(submitIncidentReportOnce("account-a/dev", request)).toBe(first)
+  expect(mockSuperMode).not.toHaveBeenCalled()
 })
 
 it("does not reuse another account's or deployment's incident", async () => {
@@ -78,4 +92,29 @@ it("returns a correlated failure if the uploader unexpectedly rejects", async ()
     status: "failed",
     error: "offline",
   })
+})
+
+it("presents a rejected partial receipt without re-filing after remount", async () => {
+  const partial = {
+    ...receipt,
+    status: "failed" as const,
+    error: "Required incident log collection did not complete",
+    collection: {reportId: "rep_test", state: "failed" as const, logCollection: {}},
+  }
+  jest.mocked(submitIncidentReport).mockRejectedValueOnce(new IncidentReportError(partial))
+  const first = submitIncidentReportOnce("partial/dev", request)
+  await expect(first).resolves.toEqual(partial)
+  expect(submitIncidentReportOnce("partial/dev", request)).toBe(first)
+  expect(submitIncidentReport).toHaveBeenCalledTimes(1)
+})
+
+it.each(["Mac", "Android"])("submits a first normal-mode %s report through the shared uploader", async (source) => {
+  const input = {...request, alert_id: `normal-mode-${source}`, source}
+  const result = {...receipt, ...input}
+  jest.mocked(submitIncidentReport).mockResolvedValueOnce(result as Awaited<ReturnType<typeof submitIncidentReport>>)
+
+  await expect(submitIncidentReportOnce(`normal-mode-${source}/dev`, input)).resolves.toEqual(result)
+  expect(submitIncidentReport).toHaveBeenCalledTimes(1)
+  expect(submitIncidentReport).toHaveBeenCalledWith(input)
+  expect(mockSuperMode).not.toHaveBeenCalled()
 })

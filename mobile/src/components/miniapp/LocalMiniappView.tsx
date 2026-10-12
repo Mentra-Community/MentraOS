@@ -1,7 +1,7 @@
 import {miniappHistoryBridge} from "./historyBridge"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {AppState, findNodeHandle, Platform, View, type AppStateStatus} from "react-native"
-import {WebView, type WebViewMessageEvent} from "react-native-webview"
+import {WebView, type WebViewMessageEvent, type WebViewProps} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
 import {translate} from "@/i18n"
@@ -23,6 +23,7 @@ import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {getStreamPreviewCoordinator, STREAM_PREVIEW_BIND_TIMEOUT_MS} from "@/services/streamPreview"
+import {getWebViewLoadErrorDiagnostics} from "./webViewLoadErrorDiagnostics"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -137,6 +138,9 @@ function LocalMiniappView({
     useMiniappPresentationStore.getState().setRevealedPackageName(packageName)
   }, [packageName])
   const connectedRef = useRef(false)
+  // The splash also waits while the UI router holds this UI for its background:
+  // until the background's init settles, its session.ui handlers may not exist.
+  const [uiReleased, setUiReleased] = useState(false)
   const [loadAttempts, setLoadAttempts] = useState(0)
   const attemptsRef = useRef(0)
   const readyTimerRef = useRef<number | null>(null)
@@ -314,6 +318,7 @@ function LocalMiniappView({
     // Fresh attempt budget per (re)launch — a re-foreground / new package
     // restarts the ready handshake and reload-retry loop from scratch.
     resetLoadState()
+    setUiReleased(false)
     previewBoundInstanceRef.current = null
 
     const ac = new AbortController()
@@ -342,6 +347,7 @@ function LocalMiniappView({
       // (handled by the effect's return).
       checkpoint()
 
+      setUiReleased(!getMentraJS()?.uiRouter.isUiHeld(packageName))
       setLabel(undefined)
       // Already-registered packages never throw from ensureRunning — a dropped
       // dev server with no on-disk snapshot returns {uiUri: null}. Route those
@@ -396,6 +402,13 @@ function LocalMiniappView({
       getStreamPreviewCoordinator().viewDestroyed(packageName, "miniapp-unmounted")
     }
   }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
+
+  useEffect(() => {
+    if (!packageName) return
+    return getMentraJS()?.uiRouter.onUiReleased((releasedPackage) => {
+      if (releasedPackage === packageName) setUiReleased(true)
+    })
+  }, [packageName])
 
   // ----- WebView bindings ----------------------------------------------------
 
@@ -575,14 +588,21 @@ function LocalMiniappView({
     onExitRef.current()
   }, [packageName])
 
-  const handleError = useCallback(() => {
-    if (!packageName) return
-    useStressTestStore.getState().recordEvent({
-      packageName,
-      at: Date.now(),
-      kind: "error",
-    })
-  }, [packageName])
+  const handleError = useCallback<NonNullable<WebViewProps["onError"]>>(
+    (event) => {
+      if (!packageName) return
+      console.warn(
+        `[LocalMiniappView:${packageName}] WebView load error`,
+        getWebViewLoadErrorDiagnostics(event.nativeEvent),
+      )
+      useStressTestStore.getState().recordEvent({
+        packageName,
+        at: Date.now(),
+        kind: "error",
+      })
+    },
+    [packageName],
+  )
 
   // Dev hot-reload: when the dev server signals a reload for THIS miniapp
   // (e.g. a file under src/ui/ changed), refresh the WebView. Because the dev
@@ -695,7 +715,7 @@ function LocalMiniappView({
         name={appName}
         iconUrl={iconUrl}
         bgColor={theme.colors.background}
-        isLoaded={connected && openingComplete}
+        isLoaded={connected && uiReleased && openingComplete}
         error={errorMessage}
         label={uiUri ? connectingLabel : label}
         devApp={isDevApp}

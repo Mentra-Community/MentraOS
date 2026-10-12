@@ -48,7 +48,7 @@ my-miniapp/
 ## The background layer
 
 The host evaluates your background bundle inside a per-miniapp JavaScript context
-and calls your `registerMiniapp` handler once the connection is ready. This is
+and calls your `registerMiniapp` handler when the background starts. This is
 where every `session.*` call lives.
 
 ```typescript src/background/index.ts
@@ -67,6 +67,35 @@ registerMiniapp(async (session) => {
 
 The background runs **even when no UI is open**. Register your subscriptions in
 the handler; they live for as long as the miniapp is enabled.
+
+### Startup: return your setup promise
+
+The Mentra App keeps your miniapp's splash screen up, and holds every message
+your UI sends, until the promise returned by your `registerMiniapp` handler
+settles. Your `session.ui.handle(...)` handlers therefore exist before the UI's
+first `mentra.request(...)` arrives.
+
+- **Return your setup.** Return or `await` it; never discard it with `void`.
+  Otherwise the UI can open before your handlers are registered, and its first
+  requests fail with `no handler registered`.
+- **Register UI handlers before slow work.** The splash stays up while the
+  promise is pending. Register `session.ui.handle` / `session.ui.onOpen` first,
+  and keep network calls out of the startup path.
+- **Failures still open the UI.** If the handler throws or rejects, or takes
+  longer than 10 seconds, the Mentra App opens the UI anyway.
+
+```typescript src/background/index.ts
+registerMiniapp(async (session) => {
+  const settings = await loadSettings(); // fast, local
+  session.ui.handle("getHistory", () => history.list());
+  session.ui.onOpen(() => session.ui.send("settings", settings));
+  void refreshFromNetwork(session); // don't hold the UI for this
+});
+```
+
+The same applies after a crash: requests the UI sends while the background
+restarts wait for the new background to be ready. Only requests the crashed
+background was already handling fail.
 
 <Note>
 The background context is not a browser and not Node: it's a bare JS engine
@@ -181,8 +210,10 @@ cross-miniapp RPC layer (`session.actions`).
    background JS context, and runs your `registerMiniapp` handler. Background is
    alive.
 2. **UI opens**: the user taps your tile; the host spawns a WebView, injects the
-   `mentra` shim, and loads `ui/index.html`. The WebView calls `mentra.ready()`,
-   and `session.ui.onOpen` fires in the background.
+   `mentra` shim, and loads `ui/index.html`. The WebView calls `mentra.ready()`.
+   Once your background is ready (see
+   [Startup](#startup-return-your-setup-promise)), the splash hides and
+   `session.ui.onOpen` fires in the background.
 3. **UI closes**: the user navigates away; the host destroys the WebView. The
    background context stays alive and `session.ui.onClose` fires.
 4. **Disable / uninstall**: the host tears down your subscriptions and kills the
@@ -192,7 +223,9 @@ cross-miniapp RPC layer (`session.actions`).
 
 If your background layer crashes, the host restarts it automatically. Repeated
 crashes back off and eventually show the user a "try again" prompt, so aim to
-reach a stable state quickly on startup.
+reach a stable state quickly on startup. A UI request that was in progress when
+the background crashed fails with `BACKGROUND_RESTARTED` and is never replayed;
+retry it yourself if it is safe to repeat.
 
 ## Next steps
 

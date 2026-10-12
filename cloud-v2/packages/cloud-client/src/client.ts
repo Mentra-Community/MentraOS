@@ -216,6 +216,7 @@ export class CloudClient {
       audio: {
         codec: config.audio?.codec ?? DEFAULT_AUDIO_CODEC,
         sampleRate: config.audio?.sampleRate ?? DEFAULT_AUDIO_SAMPLE_RATE,
+        frameTimelineVersion: 1,
         // Only LC3 carries a frame size; the config type forces LC3 hosts to
         // state theirs explicitly (decoder is sized from this — no safe guess).
         ...(config.audio?.codec === "lc3" ? {frameSizeBytes: config.audio.frameSizeBytes} : {}),
@@ -239,7 +240,14 @@ export class CloudClient {
     const camera = new Camera({http: runtimeHttp, timers})
     const tts = new Tts({http: runtimeHttp})
     const maps = new Maps({http: runtimeHttp})
-    const audio = new UdpAudio({udp: config.transports.udp})
+    const audio = new UdpAudio({
+      udp: config.transports.udp,
+      audio: {
+        codec: config.audio?.codec ?? DEFAULT_AUDIO_CODEC,
+        sampleRate: config.audio?.sampleRate ?? DEFAULT_AUDIO_SAMPLE_RATE,
+        ...(config.audio?.codec === "lc3" ? {frameSizeBytes: config.audio.frameSizeBytes} : {}),
+      },
+    })
 
     const runtime = new Runtime({
       connection,

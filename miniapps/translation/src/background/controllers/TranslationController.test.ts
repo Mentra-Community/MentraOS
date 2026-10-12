@@ -3,17 +3,20 @@ import {describe, expect, mock, test} from "bun:test"
 import {TranslationController} from "./TranslationController"
 
 /** Mock session that captures translation handlers and glasses render text. */
-function makeDisplayController() {
+function makeDisplayController(savedTarget?: string) {
   let translationHandler: ((data: unknown) => void) | undefined
   let transcriptionHandler: ((data: unknown) => void) | undefined
   const renders: string[] = []
   const uiSends: Array<{channel: string; payload: Record<string, unknown>}> = []
   const storage = new Map<string, string>()
+  if (savedTarget !== undefined) storage.set("targetLanguage", savedTarget)
+  const targets: string[] = []
   const lifecycle = new Map<string, () => void>()
   const noop = () => () => {}
   const session = {
     translation: {
-      to: (_t: string, h: (data: unknown) => void) => {
+      to: (target: string, h: (data: unknown) => void) => {
+        targets.push(target)
         translationHandler = h
         return () => {}
       },
@@ -50,6 +53,8 @@ function makeDisplayController() {
   }
   const controller = new TranslationController(session as never) as unknown as {
     start: () => Promise<void>
+    stop: () => void
+    setTargetLanguage: (target: string) => Promise<void>
     setGlassesDisplayMode: (m: string) => Promise<void>
   }
   return {
@@ -57,6 +62,7 @@ function makeDisplayController() {
     renders,
     uiSends,
     session,
+    targets,
     ready: () => lifecycle.get("ready")?.(),
     feed: (d: unknown) => translationHandler?.(d),
     feedTranscription: (d: unknown) => transcriptionHandler?.(d),
@@ -92,10 +98,45 @@ describe("TranslationController subscription replacement", () => {
   test("subscribes to the new target before releasing the old one", () => {
     const {controller, events} = makeController()
     controller.subscribeTranslation()
-    controller.settings.targetLanguage = "en"
+    controller.settings.targetLanguage = "es"
     controller.subscribeTranslation()
 
-    expect(events).toEqual(["subscribe:es", "subscribe:en", "cleanup:es"])
+    expect(events).toEqual(["subscribe:en", "subscribe:es", "cleanup:en"])
+  })
+})
+
+describe("TranslationController target defaults", () => {
+  test.each([undefined, ""])("uses English when the saved target is %p", async (savedTarget) => {
+    const {controller, targets} = makeDisplayController(savedTarget)
+    await controller.start()
+    expect(targets).toEqual(["en"])
+    controller.stop()
+  })
+
+  test.each(["es", "de", "ja"])("preserves the saved %s target", async (savedTarget) => {
+    const {controller, targets} = makeDisplayController(savedTarget)
+    await controller.start()
+    expect(targets).toEqual([savedTarget])
+    controller.stop()
+  })
+
+  test("falls back to English if settings cannot be loaded", async () => {
+    const {controller, targets, session} = makeDisplayController()
+    session.storage.get = () => Promise.reject(new Error("storage unavailable"))
+    await controller.start()
+    expect(targets).toEqual(["en"])
+    controller.stop()
+  })
+
+  test("persists a selected target and reuses it after restart", async () => {
+    const {controller, targets, session} = makeDisplayController()
+    await controller.start()
+    await controller.setTargetLanguage("fr")
+    expect(await session.storage.get("targetLanguage")).toBe("fr")
+    controller.stop()
+    await controller.start()
+    expect(targets).toEqual(["en", "fr", "fr"])
+    controller.stop()
   })
 })
 
@@ -147,8 +188,8 @@ describe("TranslationController same-language passthrough (cloud events)", () =>
   // language as a transcription event whose source == target (single-detector
   // design; no second transcription subscription).
   test("same-language event shows in the UI history", async () => {
-    const {controller, uiSends, feed} = makeDisplayController()
-    await controller.start() // default target es
+    const {controller, uiSends, feed} = makeDisplayController("es")
+    await controller.start()
 
     feed({
       text: "Hola mundo",
@@ -164,8 +205,8 @@ describe("TranslationController same-language passthrough (cloud events)", () =>
   })
 
   test("same-language reaches the glasses only in 'both' mode", async () => {
-    const {controller, renders, feed} = makeDisplayController()
-    await controller.start() // target es, default glasses mode "translation"
+    const {controller, renders, feed} = makeDisplayController("es")
+    await controller.start()
 
     feed({text: "Hola", isFinal: true, sourceLanguage: "es", targetLanguage: "es-ES", utteranceId: "u2"})
     expect(renders.some((r) => r.includes("Hola"))).toBe(false) // translation-only: not on glasses
@@ -176,8 +217,8 @@ describe("TranslationController same-language passthrough (cloud events)", () =>
   })
 
   test("cross-language events reach the glasses in every mode", async () => {
-    const {controller, renders, feed} = makeDisplayController()
-    await controller.start() // target es, translation-only mode
+    const {controller, renders, feed} = makeDisplayController("es")
+    await controller.start()
 
     feed({
       text: "Hola mundo",
@@ -195,8 +236,8 @@ describe("TranslationController same-language passthrough (cloud events)", () =>
     // Soniox has identified the language (source = "auto"/absent, and no
     // originalText since nothing is being translated). A source-vs-target
     // compare says "different" and rendered them in Translation-only mode.
-    const {controller, renders, feed} = makeDisplayController()
-    await controller.start() // target es, translation-only mode
+    const {controller, renders, feed} = makeDisplayController("es")
+    await controller.start()
 
     feed({text: "Hola", isFinal: false, sourceLanguage: "auto", targetLanguage: "es-ES", utteranceId: "u5"})
     feed({text: "Hola mun", isFinal: false, sourceLanguage: undefined, targetLanguage: "es-ES", utteranceId: "u5"})

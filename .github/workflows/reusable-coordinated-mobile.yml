@@ -150,7 +150,7 @@ env:
 jobs:
   prepare:
     name: Prepare immutable mobile release
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       release_tag: ${{ steps.release.outputs.release_tag }}
       release_identity: ${{ steps.release.outputs.release_identity }}
@@ -171,6 +171,9 @@ jobs:
       ios_asset_exists: ${{ steps.container.outputs.ios_asset_exists }}
       ipa_asset_id: ${{ steps.container.outputs.ipa_asset_id }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
@@ -321,6 +324,12 @@ jobs:
             echo "ipa_asset_id=$ipa_id"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Check Mapbox SDK download authentication
+        if: inputs.dry_run == true || steps.container.outputs.android_assets_exist != 'true' || steps.container.outputs.ios_asset_exists != 'true'
+        env:
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: node release-tooling/.github/scripts/check-mapbox-downloads.mjs
+
   android:
     name: Build and distribute coordinated Android app
     needs: prepare
@@ -366,12 +375,11 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          # The action's default list includes the retired `tools` package,
-          # which no longer downloads; Gradle fetches the rest it needs.
-          packages: platform-tools
+          # Bootstrap sdkmanager and licenses; the bounded installer owns downloads.
+          packages: ""
 
       - name: Install Android build tools used for artifact verification
-        run: sdkmanager "build-tools;36.0.0"
+        run: node release-tooling/.github/scripts/install-android-sdk.mjs platform-tools "build-tools;36.0.0"
 
       - uses: ruby/setup-ruby@v1
         if: inputs.dry_run != true
@@ -387,6 +395,14 @@ jobs:
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
         working-directory: mobile
         run: bun install --frozen-lockfile
+
+      - name: Install the selected Android SDK before Gradle
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        run: node release-tooling/.github/scripts/install-android-sdk.mjs --mobile mobile
+
+      - name: Verify the selected Android NDK installation
+        if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
+        run: node release-tooling/.github/scripts/ensure-android-ndk.mjs
 
       - name: Generate exact mobile environment and package metadata
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
@@ -1058,7 +1074,7 @@ jobs:
       mac_url: ${{ steps.downloads.outputs.mac_url }}
     name: Publish immutable iOS app from Ubuntu
     needs: [prepare, ios]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -1182,7 +1198,7 @@ jobs:
   ios-store:
     name: Process iOS upload and assign TestFlight group
     needs: [prepare, ios, ios-upload]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 70
     outputs:
       install_url: ${{ steps.distribution.outputs.install_url }}
@@ -1327,10 +1343,13 @@ jobs:
   result:
     name: Assemble coordinated mobile result
     needs: [prepare, android, ios-store]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       result_artifact: ${{ steps.name.outputs.value }}
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
@@ -1373,7 +1392,7 @@ jobs:
     name: Export mobile build status
     needs: [prepare, android, ios, ios-publish, ios-upload, ios-store]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       android_result: ${{ steps.status.outputs.android_result }}
       ios_result: ${{ steps.status.outputs.ios_result }}

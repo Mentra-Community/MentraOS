@@ -44,8 +44,11 @@ SplashScreen.setOptions({
 let previousRootUnmounted = false
 
 function Root() {
-  const [_fontsLoaded, fontError] = useFonts(customFontsToLoad)
+  const [fontsLoaded, fontError] = useFonts(customFontsToLoad)
   const [loaded, setLoaded] = useState(false)
+  // Android can retain fallback-font measurements if text mounts before our
+  // custom fonts register, clipping labels when the real glyphs are drawn.
+  const ready = loaded && fontsLoaded
 
   const loadAssets = async () => {
     try {
@@ -77,17 +80,17 @@ function Root() {
   // Runs after the Stack subtree has mounted (child effects run first), so the
   // navigator is registered and can handle the dispatch.
   useEffect(() => {
-    if (!loaded || !previousRootUnmounted) return
+    if (!ready || !previousRootUnmounted) return
     previousRootUnmounted = false
     console.log("ROOT: warm relaunch on a live JS runtime — rebooting through /")
     useNavigationStore.getState().replaceAll("/")
-  }, [loaded])
+  }, [ready])
 
   useEffect(() => {
-    if (loaded) {
+    if (ready) {
       SplashScreen.hideAsync()
     }
-  }, [loaded])
+  }, [ready])
 
   const ref = useNavigationContainerRef()
   useEffect(() => {
@@ -96,7 +99,7 @@ function Root() {
     }
   }, [ref])
 
-  if (!loaded) {
+  if (!ready) {
     return null
   }
 

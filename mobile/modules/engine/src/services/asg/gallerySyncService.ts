@@ -26,7 +26,7 @@ import {permissions, PermissionFeatures} from "../../facades/permissions"
 import {asgCameraApi} from "./asgCameraApi"
 import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
-import {localNetworkTransport} from "./localNetworkTransport"
+import {localNetworkErrorDetails, localNetworkTransport} from "./localNetworkTransport"
 import {localStorageService} from "./localStorageService"
 import {mediaProcessingQueue} from "./mediaProcessingQueue"
 import {validateCaptureMetadataForDownload} from "./galleryMediaValidation"
@@ -239,6 +239,7 @@ class GallerySyncService {
 
     this.syncStartPromise = null
     useGallerySyncStore.getState().setSyncStarting(false)
+    useGallerySyncStore.getState().clearGlassesGalleryStatus()
     this.waitingForWifiRetry = false
     this.wifiSettingsOpenedAt = null
     this.startAborted = false
@@ -252,6 +253,9 @@ class GallerySyncService {
    */
   private handleGlassesDisconnected = (): void => {
     const store = useGallerySyncStore.getState()
+    // Counts belong to this connection even when no gallery screen or sync is
+    // active. Keep them unknown until the next connection reports its summary.
+    store.clearGlassesGalleryStatus()
 
     // Pre-flight has no sync state yet — abort quietly; runStartSync checks this flag after awaits
     if (this.syncStartPromise && !this.isSyncing()) {
@@ -368,6 +372,7 @@ class GallerySyncService {
    * Handle gallery status from glasses
    */
   private handleGalleryStatus = (data: any): void => {
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) return
     console.log("[GallerySyncService] Received gallery_status:", data)
 
     const store = useGallerySyncStore.getState()
@@ -1304,7 +1309,7 @@ class GallerySyncService {
           if (appBackgrounded && appBackgroundTime) {
             console.error(`[GallerySyncService] ❌ Time in background: ${Date.now() - appBackgroundTime}ms`)
           }
-          console.error(`[GallerySyncService] ❌ Full error object:`, JSON.stringify(error, null, 2))
+          console.error(`[GallerySyncService] ❌ Native connection error:`, JSON.stringify(localNetworkErrorDetails(error)))
 
           // If user explicitly denied, don't retry
           if (error?.code === "userDenied" || error?.message?.includes("cancel")) {
@@ -2267,12 +2272,12 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ℹ️ Hotspot was not opened by service - leaving it enabled")
     }
 
-    // Clear glasses gallery count immediately after successful sync
+    // Record a known empty gallery immediately after successful sync.
     // This ensures UI shows 0 items remaining right away
     // The subsequent query will update this if new photos were taken during sync
-    if (!hasPendingRecovery && failedCount === 0) {
+    if (!hasPendingRecovery && failedCount === 0 && selectGlassesConnected(useGlassesStore.getState())) {
       console.log("[GallerySyncService]   🔄 Clearing glasses gallery count (synced all items)")
-      store.clearGlassesGalleryStatus()
+      store.setGlassesGalleryStatus(0, 0, 0, false)
     }
 
     // Auto-reset to idle after 4 seconds to clear "Sync complete!" message,

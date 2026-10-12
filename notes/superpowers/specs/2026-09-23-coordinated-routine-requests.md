@@ -69,7 +69,7 @@ was performed for the public source adapter.
 ## Nightly independent routines
 
 The current [nightly runbook](../../../.github/NIGHTLY-DEVICE-ROUTINES.md) supersedes
-the earlier ordered implementation below for new requests. At Los Angeles midnight,
+the earlier ordered implementation below for new requests. At 03:00 America/Los_Angeles,
 select one exact retained publication per dev/staging channel and independently
 request Day1 OTA, Mentra Call and the combined Mac/Android suites. Missing real
 worker registrations or platform artifacts stay unavailable; per-build no-glasses
@@ -90,10 +90,11 @@ a separate private Actions-write token after downloading the request artifact. T
 nightly scheduler no longer needs a private repository token, paired-artifact wait
 or private paired dispatch. No token crosses into a hardware process.
 
-Keep `DEVICE_ROUTINE_NIGHTLY_ENABLED` false until the reviewed enrolled runtime
-understands the independent marker and every full routine, transition, recording,
-verified return and queue-to-admin path is qualified. Source support and partial
-development evidence are not full device qualification.
+Enable `DEVICE_ROUTINE_NIGHTLY_ENABLED` once the trusted dispatch/runtime and
+reporting paths are available. Run eligible registered routines during qualification;
+report missing workers, artifacts or usable fixtures as unavailable or failed.
+Do not hold every routine behind another routine's qualification. Source support
+and partial development evidence are not full device qualification.
 
 ## Legacy nightly OTA then Call sequence
 

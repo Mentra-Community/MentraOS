@@ -12,6 +12,32 @@ let nextJobId = 1_000_000
 const nativeJobs = new Map<number, string>()
 const cancelledNativeJobs = new Set<number>()
 
+/** Keep native connection facts ahead of large stacks and private NSError userInfo. */
+export function localNetworkErrorDetails(error: unknown): {
+  code?: string | number
+  domain?: string
+  underlying?: {code?: string | number; domain?: string}
+} {
+  const facts = (value: unknown): {code?: string | number; domain?: string} => {
+    if (!value || typeof value !== "object") return {}
+    const {code, domain} = value as {code?: unknown; domain?: unknown}
+    return {
+      ...(typeof code === "number" && Number.isFinite(code)
+        ? {code}
+        : typeof code === "string" && /^[A-Za-z0-9_.-]{1,128}$/.test(code)
+          ? {code}
+          : {}),
+      ...(typeof domain === "string" && /^[A-Za-z0-9_.-]{1,128}$/.test(domain) ? {domain} : {}),
+    }
+  }
+  const details = facts(error)
+  const userInfo = (error as {userInfo?: unknown} | null | undefined)?.userInfo
+  const underlying = facts(
+    userInfo && typeof userInfo === "object" ? (userInfo as {NSUnderlyingError?: unknown}).NSUnderlyingError : undefined,
+  )
+  return Object.keys(underlying).length ? {...details, underlying} : details
+}
+
 export function shouldUseScopedLocalNetwork(os: string, moduleAvailable: boolean): boolean {
   return os === "android" && moduleAvailable
 }

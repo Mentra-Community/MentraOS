@@ -1,0 +1,13 @@
+diff --git a/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerModule.kt b/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerModule.kt
+index e149fa49fc0a4e75aabc0c7be1c156f743cdf499..eece8ed846643a54f280e1cd6966773cbc76dc42 100644
+--- a/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerModule.kt
++++ b/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerModule.kt
+@@ -170,7 +170,7 @@ class RNGestureHandlerModule(reactContext: ReactApplicationContext?) :
+     }
+     synchronized(roots) {
+       return roots.firstOrNull {
+-        it.rootView is ReactRootView && it.rootView.rootViewTag == rootViewTag
++        it.rootView.let { rv -> rv is ReactRootView && rv.getRootViewTag() == rootViewTag }
+       }
+     }
+   }

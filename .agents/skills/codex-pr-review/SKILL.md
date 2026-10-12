@@ -1,7 +1,7 @@
 ---
 name: codex-pr-review
 description: >-
-  Run an independent local Codex (gpt-6-astra, medium) review of a GitHub pull
+  Run an independent local Codex (gpt-6.1-sol, medium) review of a GitHub pull
   request and relay its verdict. Use for every PR an agent opens or updates,
   and whenever the user asks to review a PR "with Codex". The review is posted
   on the PR as approve / request-changes; it never edits, commits or merges.
@@ -27,7 +27,9 @@ total, and retries once unless the verdict was already posted. Never launch a ba
 ## What the script does
 
 - Fetches the PR head into the sibling worktree `<repo-dir>-pr-<n>`, so the main checkout is
-  never touched. The tool marks worktrees it created with a `<repo-dir>-pr-<n>.codex-review-owned`
+  never touched. If GitHub has not advertised the PR's Git pull ref yet, it fetches the
+  exact head from the PR API and rechecks that head before starting the review. It never
+  substitutes a moving branch tip. The tool marks worktrees it created with a `<repo-dir>-pr-<n>.codex-review-owned`
   sentinel; on reruns it resets and cleans only those (ignored files such as `node_modules`
   are kept) and refuses a path at that location it did not create. A per-PR lock refuses a
   second concurrent run; a lock whose owner is dead is reclaimed through a short-lived
@@ -44,7 +46,7 @@ total, and retries once unless the verdict was already posted. Never launch a ba
 - Writes the standard prompt: read the diff against the base, read every existing comment
   (bots included) and judge each on its merits, favour low complexity and a coherent design over
   patchy fixes, no edits or pushes, and finish with `gh pr review <n> --approve` or
-  `--request-changes` whose body starts with `Reviewed by local Codex (gpt-6-astra, medium).`
+  `--request-changes` whose body starts with `Reviewed by local Codex (gpt-6.1-sol, medium).`
   and lists what was checked. If GitHub refuses the formal review it falls back to `--comment`
   with `Approve.` or `Request changes.` as the first line.
 - Always adds an "Is this change needed?" step: Codex must judge whether the change is needed or
@@ -116,7 +118,7 @@ session source; it does not relabel existing sessions or spoof a source.
 | Variable                                                      | Default                                                | Purpose                                                                                       |
 | ------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | `CODEX_BIN`                                                   | `codex`                                                | Codex CLI binary. Point it at a specific install if the shim on PATH does not support `exec`. |
-| `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT`                  | `gpt-6-astra` / `medium`                               | Model and reasoning effort.                                                                   |
+| `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT`                  | `gpt-6.1-sol` / `medium`                               | Model and reasoning effort.                                                                   |
 | `CODEX_REVIEW_HOME`                                           | `~/.codex-reviews`                                     | Where prompts, final messages and runner logs are kept.                                       |
 | `CODEX_REVIEW_PROJECT_DIR`                                    | Saved `project-directory` file, otherwise PR worktree | Starting directory for future sessions; register that folder in Codex to group reviews. |
 | `CODEX_REVIEW_PROJECT_ID`                                     | Saved `project-id` file, otherwise unset             | Optional durable project assignment for the configured project on this host. |
@@ -157,3 +159,12 @@ comment; let Codex weigh comments itself.
 - If the PR belongs to someone else, report only; do not rework unless asked.
 - On `codex-pr-review: FAILED`, read `runner.log`, report the failure, and do not claim a review
   was posted.
+- Remove completed review worktrees first, before finished fixer worktrees, once
+  the canonical outcome and needed reproduction material are preserved outside
+  the checkout. Wait for the wrapper, runner and their children to exit; keep a
+  checkout still needed by active or saved review follow-up.
+- Before removal, check process use, incoming dependency symlinks and Git
+  common-directory consumers. Preserve source commits/refs, review receipts,
+  logs, evidence and shared dependencies. Use `git worktree remove`, never
+  `--force`; if the checkout is still needed or removal refuses, keep it and
+  report why. Store shared dependencies outside disposable review worktrees.

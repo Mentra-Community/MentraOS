@@ -216,6 +216,15 @@ push("/settings/profile")
 
 - **Public token (`pk.…`)** — runtime map rendering. Lives in `.env` as
   `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`. Safe to ship in the app.
+- CI generates its own `.env` from the repository's `MAPBOX_PUBLIC_TOKEN`
+  GitHub Actions secret; a local `.env` edit does not update CI.
+- Mentra Maps also embeds a public token in its committed ZIP under
+  `assets/miniapps/`. CI includes that ZIP without rebuilding it. When rotating
+  the Maps token, set `PUBLIC_MAPBOX_TOKEN` for the navigation miniapp build
+  (it falls back to `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`), bump `miniapp.json`,
+  rebuild and pack the ZIP, replace the bundled ZIP, and regenerate
+  `src/generated/bundledMiniapps.ts`. Updating the CI secret alone does not
+  replace the token inside an existing ZIP.
 - **Downloads token (`sk.…`, secret scope `Downloads:Read`)** — build time only,
   authenticates downloading Mapbox's binary SDKs. Never shipped. It must live in:
   - `~/.netrc` for iOS (SPM reads it): `machine api.mapbox.com login mapbox password sk.…`

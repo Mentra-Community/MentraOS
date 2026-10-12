@@ -10,6 +10,8 @@ import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
+import com.mentra.asg_client.io.media.core.StreamPhotoTarget;
+import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -359,6 +361,24 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         "VIDEO_RECORDING_ACTIVE",
                         "Video recording in progress - request rejected");
                 return false;
+            }
+
+            // STREAM PHOTO: a WHIP call on the glasses hotspot lends its camera to the shot and
+            // keeps publishing substitute frames. Only the phone's local still endpoint qualifies:
+            // the glasses have no internet on their own hotspot, and any other target still gets
+            // the CAMERA_BUSY rejection below.
+            if (WhipStreamingService.isActivelyStreaming()
+                    && StreamPhotoTarget.isLocalStillUpload(webhookUrl)) {
+                Log.i(
+                        TAG,
+                        "PHOTO PIPELINE [ASG 3/3] Stream photo during WHIP requestId="
+                                + requestId);
+                boolean accepted =
+                        captureService.takePhotoForStreamUpload(
+                                photoFilePath, requestId, webhookUrl, size, sound, captureSettings);
+                logCommandResult(
+                        "take_photo", accepted, accepted ? null : "Stream photo rejected");
+                return accepted;
             }
 
             // ARCHIVAL CAPTURE: a save-only request (no upload target) has no delivery leg —

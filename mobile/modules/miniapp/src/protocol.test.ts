@@ -34,13 +34,15 @@ describe("MiniappRequestType wire values", () => {
   test("STORAGE_LIST", () => expect(MiniappRequestType.STORAGE_LIST).toBe("miniapp_storage_list"))
   test("CAMERA_FOV", () => expect(MiniappRequestType.CAMERA_FOV).toBe("miniapp_camera_fov"))
   test("IMU_SET_ENABLED", () => expect(MiniappRequestType.IMU_SET_ENABLED).toBe("miniapp_imu_set_enabled"))
-  test("MIC_SET_VAD_ENABLED", () =>
-    expect(MiniappRequestType.MIC_SET_VAD_ENABLED).toBe("miniapp_mic_set_vad_enabled"))
+  test("MIC_SET_VAD_ENABLED", () => expect(MiniappRequestType.MIC_SET_VAD_ENABLED).toBe("miniapp_mic_set_vad_enabled"))
   test("MIC_SET_LOUDNESS_GATE_ENABLED", () =>
     expect(MiniappRequestType.MIC_SET_LOUDNESS_GATE_ENABLED).toBe("miniapp_mic_set_loudness_gate_enabled"))
-  test("SET_WIFI_ADB_STATE", () =>
-    expect(MiniappRequestType.SET_WIFI_ADB_STATE).toBe("miniapp_set_wifi_adb_state"))
+  test("SET_WIFI_ADB_STATE", () => expect(MiniappRequestType.SET_WIFI_ADB_STATE).toBe("miniapp_set_wifi_adb_state"))
   test("PING", () => expect(MiniappRequestType.PING).toBe("miniapp_ping"))
+  test("MINIAPPS_INSTALL", () => expect(MiniappRequestType.MINIAPPS_INSTALL).toBe("miniapp_apps_install"))
+  test("MINIAPPS_INSTALL_CHECK", () =>
+    expect(MiniappRequestType.MINIAPPS_INSTALL_CHECK).toBe("miniapp_apps_install_check"))
+  test("MINIAPPS_UNINSTALL", () => expect(MiniappRequestType.MINIAPPS_UNINSTALL).toBe("miniapp_apps_uninstall"))
   test("DASHBOARD_CONTENT_UPDATE", () =>
     expect(MiniappRequestType.DASHBOARD_CONTENT_UPDATE).toBe("miniapp_dashboard_content_update"))
   test("PHOTO", () => expect(MiniappRequestType.PHOTO).toBe("miniapp_photo"))
@@ -62,6 +64,13 @@ describe("MiniappRequestType wire values", () => {
   test("MEETING_UPDATE_VIDEO_SOURCE", () =>
     expect(MiniappRequestType.MEETING_UPDATE_VIDEO_SOURCE).toBe("miniapp_meeting_update_video_source"))
   test("MEETING_GET_STATE", () => expect(MiniappRequestType.MEETING_GET_STATE).toBe("miniapp_meeting_get_state"))
+  test("MEETING_PAUSE_VIDEO_PUBLISHER", () =>
+    expect(MiniappRequestType.MEETING_PAUSE_VIDEO_PUBLISHER).toBe("miniapp_meeting_pause_video_publisher"))
+  test("MEETING_RESUME_VIDEO_PUBLISHER", () =>
+    expect(MiniappRequestType.MEETING_RESUME_VIDEO_PUBLISHER).toBe("miniapp_meeting_resume_video_publisher"))
+  test("MEETING_SHOW_CARD", () => expect(MiniappRequestType.MEETING_SHOW_CARD).toBe("miniapp_meeting_show_card"))
+  test("MEETING_SHOW_IMAGE", () => expect(MiniappRequestType.MEETING_SHOW_IMAGE).toBe("miniapp_meeting_show_image"))
+  test("MEETING_SHOW_LIVE", () => expect(MiniappRequestType.MEETING_SHOW_LIVE).toBe("miniapp_meeting_show_live"))
 })
 
 describe("MiniappResponseType wire values", () => {
@@ -70,9 +79,13 @@ describe("MiniappResponseType wire values", () => {
   test("REQUEST_RESULT", () => expect(MiniappResponseType.REQUEST_RESULT).toBe("miniapp_request_result"))
   test("CAPABILITIES_UPDATE", () => expect(MiniappResponseType.CAPABILITIES_UPDATE).toBe("miniapp_capabilities_update"))
   test("VISIBILITY_CHANGE", () => expect(MiniappResponseType.VISIBILITY_CHANGE).toBe("miniapp_visibility_change"))
+  test("MINIAPPS_INSTALL_PROGRESS", () =>
+    expect(MiniappResponseType.MINIAPPS_INSTALL_PROGRESS).toBe("miniapp_apps_install_progress"))
   test("PONG", () => expect(MiniappResponseType.PONG).toBe("miniapp_pong"))
   test("ACTION_CALL", () => expect(MiniappResponseType.ACTION_CALL).toBe("miniapp_action_call"))
   test("MEETING_STATE", () => expect(MiniappResponseType.MEETING_STATE).toBe("miniapp_meeting_state"))
+  test("MEETING_VIDEO_PUBLISHER", () =>
+    expect(MiniappResponseType.MEETING_VIDEO_PUBLISHER).toBe("miniapp_meeting_video_publisher"))
   test("ERROR", () => expect(MiniappResponseType.ERROR).toBe("miniapp_error"))
 })
 
@@ -102,6 +115,11 @@ describe("MiniappErrorCode wire values", () => {
   test("NOT_IMPLEMENTED", () => expect(MiniappErrorCode.NOT_IMPLEMENTED).toBe("NOT_IMPLEMENTED"))
   test("REQUEST_ABORTED", () => expect(MiniappErrorCode.REQUEST_ABORTED).toBe("REQUEST_ABORTED"))
   test("INTERNAL", () => expect(MiniappErrorCode.INTERNAL).toBe("INTERNAL"))
+  test("APP_RUNNING", () => expect(MiniappErrorCode.APP_RUNNING).toBe("APP_RUNNING"))
+  test("INSTALL_FAILED", () => expect(MiniappErrorCode.INSTALL_FAILED).toBe("INSTALL_FAILED"))
+  test("INSTALL_IN_PROGRESS", () => expect(MiniappErrorCode.INSTALL_IN_PROGRESS).toBe("INSTALL_IN_PROGRESS"))
+  test("STORE_OWNERSHIP_CONFLICT", () =>
+    expect(MiniappErrorCode.STORE_OWNERSHIP_CONFLICT).toBe("STORE_OWNERSHIP_CONFLICT"))
   test("TTS_TEXT_TOO_LONG", () => expect(MiniappErrorCode.TTS_TEXT_TOO_LONG).toBe("TTS_TEXT_TOO_LONG"))
   test("TTS_INVALID_VOICE", () => expect(MiniappErrorCode.TTS_INVALID_VOICE).toBe("TTS_INVALID_VOICE"))
   test("TTS_UPSTREAM_ERROR", () => expect(MiniappErrorCode.TTS_UPSTREAM_ERROR).toBe("TTS_UPSTREAM_ERROR"))

@@ -39,6 +39,11 @@ export interface DisplayCapabilities {
   fieldOfView?: { horizontal?: number; vertical?: number };
   maxTextLines?: number;
   adjustBrightness?: boolean;
+  /** Physical display adjustment, distinct from positioning scene elements. */
+  position?: {
+    depth: {min: number; max: number};
+    height: {min: number; max: number};
+  };
 
   // --- Scene display API (display.render()) — typed capabilities ---
   // Pure DATA the host scene pipeline acts on generically; a device without
@@ -78,6 +83,8 @@ export interface SpeakerCapabilities {
  * IMU (Inertial Measurement Unit) capabilities
  */
 export interface IMUCapabilities {
+  /** Adjustable wake threshold; IMU presence alone does not imply support. */
+  headUpAngle?: {min: number; max: number};
   axisCount?: number;
   hasAccelerometer?: boolean;
   hasCompass?: boolean;
@@ -191,7 +198,9 @@ export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
     display: {
       ...evenRealitiesG1.display,
       canDisplayBitmap: false,
+      position: undefined,
     },
+    imu: {...evenRealitiesG1.imu, headUpAngle: undefined},
     hasMicrophone: true,
     hasOta: true,
     microphone: {

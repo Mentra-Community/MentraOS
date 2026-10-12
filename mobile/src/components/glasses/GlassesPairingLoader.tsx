@@ -3,11 +3,13 @@ import {View, Animated, Easing, Image} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useSetting, SETTINGS} from "@mentra/engine"
+import {engine, useSetting, SETTINGS} from "@mentra/engine"
 import {getAr99DisplayName, getAr99ImageSource, getGlassesImage, getEvenRealitiesG1Image} from "@/utils/getGlassesImage"
 
 import {getModelSpecificTips} from "@/components/glasses/GlassesTroubleshootingModal"
 import GlassView from "@/components/ui/GlassView"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
+import G2ConnectionProgress from "./G2ConnectionProgress"
 
 interface GlassesPairingLoaderProps {
   deviceModel: string
@@ -17,8 +19,15 @@ interface GlassesPairingLoaderProps {
   isBooting?: boolean
 }
 
-const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel, deviceName, ar99ProjectName, onCancel, isBooting}) => {
+const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({
+  deviceModel,
+  deviceName,
+  ar99ProjectName,
+  onCancel,
+  isBooting,
+}) => {
   const {theme} = useAppTheme()
+  const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
   const [superMode] = useSetting<boolean>(SETTINGS.super_mode.key)
   const progressAnim = useRef(new Animated.Value(0)).current
   const [currentTipIndex, setCurrentTipIndex] = useState(0)
@@ -104,6 +113,8 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel,
           </View>
         )}
 
+        <G2ConnectionProgress missingArm={glassesStatus.g2MissingArm} />
+
         {/* Instruction text */}
         <Text className="text-sm text-muted-foreground text-center px-4">{tips[currentTipIndex].body}</Text>
 
@@ -119,7 +130,3 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel,
 }
 
 export default GlassesPairingLoader
-
-
-
-

@@ -26,6 +26,24 @@ function mockSession(results: unknown[] | ((payload: Record<string, unknown>) =>
   return {session, requestCalls, requestOptions}
 }
 
+describe("SpeakerModule.play", () => {
+  test("forwards the requested playback offset", async () => {
+    const {session, requestCalls} = mockSession([null])
+    await new SpeakerModule(session).play({audioUrl: "file://recording.wav", startPositionMs: 4500})
+    expect(requestCalls[0]).toMatchObject({type: MiniappRequestType.PLAY_AUDIO, startPositionMs: 4500})
+  })
+
+  test("rejects invalid playback offsets", async () => {
+    const {session, requestCalls} = mockSession([null])
+    for (const startPositionMs of [-1, NaN, Infinity]) {
+      await expect(
+        new SpeakerModule(session).play({audioUrl: "file://recording.wav", startPositionMs}),
+      ).rejects.toThrow(RangeError)
+    }
+    expect(requestCalls).toHaveLength(0)
+  })
+})
+
 describe("SpeakerModule.speak", () => {
   test("uses one SPEAK request and forwards local routing and barge-in options", async () => {
     const {session, requestCalls, requestOptions} = mockSession([{completed: false}])

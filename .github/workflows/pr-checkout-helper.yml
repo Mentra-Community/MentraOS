@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   comment-checkout-instructions:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - name: Comment PR with checkout instructions
         uses: actions/github-script@v7

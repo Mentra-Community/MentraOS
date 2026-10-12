@@ -31,6 +31,13 @@ core-library desugaring. Add it to the host app's Expo config:
 Building with the navigation feature requires a `MAPBOX_DOWNLOADS_TOKEN` in
 the Android build environment (Mapbox's SDK repository is authenticated).
 
+The plugin also raises the host's Android build to Kotlin 2.3.0 (crust's
+QuickJS library, `quickjs-kt` 1.0.15, is compiled with Kotlin 2.4) and pins
+the root Kotlin Gradle plugin to that version. Every native module in the
+host then compiles with Kotlin 2.3. Known incompatibility:
+`react-native-gesture-handler` before 2.31.0 fails to compile; use 2.31.0 or
+later.
+
 At build time the Android side also reads the MentraJS polyfill bundle from
 its [`@mentra/jspolyfill`](https://www.npmjs.com/package/@mentra/jspolyfill)
 sibling, which is declared as a dependency.
@@ -39,3 +46,15 @@ sibling, which is declared as a dependency.
 
 Source lives in the [MentraOS monorepo](https://github.com/Mentra-Community/MentraOS)
 under `mobile/modules/crust`. Issues and contributions welcome there.
+
+## Android native HTTP cancellation
+
+Engine's cloud client uses `nativeHttpRequest(CrustModule, method, url, headers,
+body, signal?)` from `@mentra/crust`. The helper preserves Android's native
+background HTTP transport and connects the caller's `AbortSignal` to cancellation
+of that exact OkHttp call. Request IDs and native call ownership stay inside the
+transport. Completion removes its listener and native registry entry; module
+shutdown cancels only that module's outstanding host requests.
+
+Engine callers use the ordinary cloud-client API with a signal. They do not call
+native start/cancel methods or maintain their own request registry.

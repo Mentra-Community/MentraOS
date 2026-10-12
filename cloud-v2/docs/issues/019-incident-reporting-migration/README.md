@@ -45,11 +45,99 @@ Primary mobile/engine API:
 POST /api/client/reports
 POST /api/client/reports/:reportId/artifacts
 POST /api/client/reports/:reportId/complete
+POST /api/client/reports/:reportId/log-collection/:source
 ```
 
 There is deliberately no `/api/incidents` compatibility mount in Cloud V2.
 Glasses logs are report artifacts and use the same artifact endpoint as phone
 logs and screenshots.
+
+## Automated device report correlation
+
+An automated incident uses the existing `submitIncidentReport` engine Promise
+and `POST /api/client/reports` path. With `source: mentra_automated_testing`, the
+engine requires the original validated `alert_id` and `test_run_id`, and submits
+`automationCorrelation: {alertId, testRunId}`. Core accepts this field only for
+automatic `incident_report_requested` reports and stores it with the authenticated
+report owner at creation. Correlated creation waits for a majority-journaled
+write before acknowledgement, matching the recovery reader's majority visibility
+requirement. The typed contract lives in `@mentra/cloud-protocol/report-automation`;
+it preserves exact IDs without normalizing or truncating them.
+
+After manifest upload acknowledgements, the existing authenticated
+`POST /api/internal/framework-results/:requestId/complete` path can return
+`deviceIncident: {reportId, correlation}`. Core reads only the run's unique
+declared `incident-report/request.json` asset, checks its byte length and SHA-256,
+validates its version/source and exact run identity, then uses the indexed
+structured binding. The file read and database lookup each have a three-second
+bound. Exactly one matching device report is required; duplicate bindings,
+including another account's collision, return no link. The existing Admin detail
+path uses the same reconciliation when its native result receipt has no report ID.
+Unavailable lookup returns no link and does not fail already acknowledged native
+publication; absence of a link does not prove no report was filed.
+
+`deviceIncident` confirms report creation only. It does not claim successful
+phone, glasses, firmware or server log collection, rewrite the frozen run or its
+transport failure, or replace the separately retained server diagnostic report.
+Strict collection failure still rejects the engine Promise with
+`IncidentReportError.result`, retaining the partial `report_id` and collection
+receipts. Target loss still forbids further native UI reads and dismissal.
+
+Recovery neither issues a second incident intent nor grants report-reader
+credentials to workers. It adds no queue or retry system. Reports made before
+this structured binding cannot be recovered by inspecting description JSON or
+by matching recent reports; no historic fallback or report migration is provided.
+
+## Log collection and missing sources
+
+Bug and automatic reports declare `phone`, `glasses`, `glasses_firmware`,
+`cloud` and `miniapp_server` collection rows. A row starts `requested`; only a
+successfully stored log artifact marks it `received` and records the artifact
+ID, receipt time and entry count. A late dispatch failure cannot erase an
+existing receipt. A late artifact can replace an earlier failure or timeout.
+The Admin report panel and detail API expose these rows.
+
+The Mentra App uploads its original phone log snapshot, awaits at most 10 seconds
+for token synchronization and the local glasses notification call, and uploads a
+separate `phone_delivery` delta (at most 500 entries, with an omission notice).
+This delta captures the notification outcome that used to occur after the phone
+snapshot. Local SDK completion means `requested`, not device receipt. A disconnected
+pair is `unavailable`; a failed or timed-out local dispatch is `failed`. Native
+dispatch cannot be cancelled after it starts; late uploads remain valid.
+The device endpoint accepts only phone/glasses/firmware outcomes and cannot
+assert `received` or change server collection outcomes.
+
+ASG owns its Java and BES log transports. BLE sends firmware and Java bundles
+independently: a settled refusal to start the firmware transfer does not suppress
+Java logs. An in-flight writer still retains exclusive transfer ownership.
+
+The existing Core reconciliation tick independently collects Cloud V2 and miniapp
+backend logs from their existing Better Stack sources. It claims each source on
+the report row for 60 seconds, so a crashed collector can be resumed without a new
+queue. Reports remain eligible for collection for 24 hours. Queries use the report's
+authenticated user and its frozen ten-minute window ending ten seconds after
+creation, deduplicate hot/archive rows, and retain the latest 1,000 entries. Each
+query is capped at 15 seconds and 2 MiB; credentials are redacted before attachment.
+One source failure does not suppress another source or block report submission.
+An empty first lookup remains `requested` so delayed Vector ingestion can be
+collected by a later tick within the original four-minute window. An empty lookup
+after that deadline means `unavailable`, never an empty success claim.
+
+Miniapp server logs must reach the existing environment's miniapp Better Stack
+source and carry `mentraUserId` or `userId` (or a complete user token in text logs).
+Untagged server-wide logs are not attached to a user's report. Local miniapp console
+logs are already part of phone logs. Backends outside this collection path remain
+explicitly unavailable; there is no external-backend discovery or Cloud V1 socket
+telemetry compatibility layer.
+
+Requested rows with no artifact after four minutes display `timed-out`; the stored
+request is retained for late receipt. `/complete` still completes phone-side report
+submission and Slack delivery, and does not claim all sources arrived.
+
+Runtime configuration: `BETTERSTACK_V2_HOST`, `BETTERSTACK_V2_USERNAME`, and
+`BETTERSTACK_V2_PASSWORD` come from the existing shared Doppler configuration.
+`CLOUD_CORE_ENVIRONMENT` selects the version-controlled source mapping. The query
+client uses the V2 eu-central-1a credentials, not retired Cloud V1 credentials.
 
 The report owner can also attach MP4 recordings to an existing report, whatever
 its status, with multipart `type=video`, a declared capture `source` label (for
@@ -73,6 +161,47 @@ a native `<video>` at the same authenticated URL, next to the usual download
 link, and the admin proxy keeps exact lengths on these ranged responses.
 Browser playback and seeking still need qualification. `scripts/fetch-incident-logs.sh` saves these
 artifacts with an `.mp4` extension.
+
+## Slack routing
+
+The admin list API keeps `kind=bug|feedback|automatic` as a stored-kind filter,
+including internal and harness submissions. The dashboard uses the separate
+`category=bug|feedback|internal|testing|automatic` filter to partition triage views.
+When both are provided, both must match. Console MCP `report_list` accepts both
+filters, and `fetch-incident-logs.sh --list` exposes `--kind` and `--category`.
+
+Notifications use the same category precedence as the admin dashboard:
+
+| Category | Rule | Channel | Bot destination env var |
+| --- | --- | --- | --- |
+| Testing | Exact `trigger.source = mentra_automated_testing`, regardless of kind or admin status | `#user-feedback-testing` | `CLOUD_REPORTS_SLACK_CHANNEL_ID_TESTING` |
+| Automatic | Remaining `kind = automatic` reports, including admins' automatic reports | `#user-feedback-auto` | `CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC` |
+| Internal | Remaining bugs/feedback from an account on the current admin allowlist | `#user-feedback-internal` | `CLOUD_REPORTS_SLACK_CHANNEL_ID_INTERNAL` |
+| Bug / Feedback | All remaining reports | `#user-feedback` | `CLOUD_REPORTS_SLACK_CHANNEL_ID` |
+
+Internal uses the first-party account email resolved by the server and the existing
+`CLOUD_CORE_ADMIN_EMAILS` / `CLOUD_CORE_ADMIN_EMAIL_DOMAINS` policy. An allowlisted
+base email also grants admin status to its `+tag` aliases on the same domain;
+this applies to any email provider. Domain allowlist entries still match only
+the exact domain. Contact email and
+client context never grant Internal status. If the account lookup fails or times
+out, the existing best-effort notifier posts with the opaque user ID and falls
+back to the non-admin category. Slack routing is evaluated at notification time;
+historical messages are not moved when the allowlist changes.
+
+The existing bot uses `CLOUD_REPORTS_SLACK_BOT_TOKEN` and must be a member of all
+four channels. Each category requires its exact channel ID. Missing credentials
+or channel configuration returns a failure and logs the missing key names;
+Slack refusals and network errors are logged without retrying another channel.
+Report submission remains independent of Slack delivery. There are no webhook
+or cross-channel fallbacks. Bot posts preserve the existing ability to update an
+incident message with agent progress.
+
+Configure all four channel IDs in Doppler `cloud-v2/dev_aws` first, then deploy
+and verify dev before promoting configuration to staging and prod. Existing
+webhook settings are ignored by this notifier and can be retired after rollout.
+Feedback notifies on submission; bug/automatic reports notify once when artifact
+collection completes.
 
 ## Mobile Flow
 
@@ -135,13 +264,11 @@ Gallery media integrity:
 
 External incident requests, including the captions tester:
 
-- Trigger: `com.mentra.SUBMIT_INCIDENT_REPORT` on Android, available in all builds,
-  forwards the Crust event `submit_incident_report` to the engine.
-- Submission:
-  `mobile/modules/engine/src/services/SubmitIncidentReportService.ts`.
-- The service emits `INCIDENT_REPORT_RESULT` with the request's alert/test IDs
-  and a report ID, skipped reason, or failure error. The Mentra App must be
-  running and signed in. [Android contract](../../../../mobile/docs/incident-report-intent.md).
+- Trigger: `com.mentra://test/submit-incident-report` on Android and iOS,
+  requiring the existing Super Mode setting and a signed-in app.
+- Submission uses the engine's normal automatic report uploader. The modal
+  exposes correlated request/result JSON and Android logs `INCIDENT_REPORT_RESULT`.
+  See the [shared contract](../../../../mobile/INCIDENT_REPORT_AUTOMATION.md).
 - Cloud V2 transcript test logging is emitted from island via
   `mobile/modules/engine/src/services/CloudTranscriptE2EMetrics.ts`, and the
   laptop monitor records the marker in

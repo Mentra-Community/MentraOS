@@ -24,7 +24,11 @@
  */
 import nacl from "tweetnacl";
 import type { UdpSocketLike } from "../../transports";
-import { UDP_LIVENESS_PROBE_PREFIX, type ConnectionAck } from "@mentra/cloud-protocol";
+import {
+  UDP_LIVENESS_PROBE_PREFIX,
+  type AudioPosition,
+  type ConnectionAck,
+} from "@mentra/cloud-protocol";
 
 /** The audio block of `connection.ack`, present only when UDP audio is offered. */
 type AudioConfig = NonNullable<ConnectionAck["audio"]>;
@@ -40,6 +44,7 @@ const SEQ_MODULO = 0x10000;
 
 export interface UdpAudioDeps {
   udp: () => UdpSocketLike;
+  audio?: { codec: "pcm" | "lc3"; sampleRate: number; frameSizeBytes?: number };
 }
 
 export type RuntimeAudioTransport = "udp" | "ws" | "none";
@@ -59,6 +64,8 @@ interface UdpSession {
   key: Uint8Array;
   /** Per-session packet counter; wraps at the u16 boundary. */
   seq: number;
+  offsetMs: number;
+  frameTimelineVersion?: 1;
 }
 
 export class UdpAudio {
@@ -67,6 +74,17 @@ export class UdpAudio {
 
   constructor(deps: UdpAudioDeps) {
     this.udpFactory = deps.udp;
+    this.format = deps.audio ?? { codec: "pcm", sampleRate: 16000 };
+  }
+
+  private readonly format: NonNullable<UdpAudioDeps["audio"]>;
+
+  /** @internal Next submitted frame, used by the phone runtime's subscription cutoff. */
+  get audioPosition(): AudioPosition | null {
+    const s = this.session;
+    return s?.frameTimelineVersion === 1
+      ? { sessionTag: s.sessionTag, offsetMs: s.offsetMs }
+      : null;
   }
 
   /** The audio transport currently configured for outbound frames. */
@@ -76,6 +94,13 @@ export class UdpAudio {
 
   get sessionTag(): number | null {
     return this.session?.sessionTag ?? null;
+  }
+
+  /** Refresh a dead UDP route without changing the session key, tag or sequence. */
+  resetSocket(): void {
+    if (!this.session) return;
+    this.session.socket.close();
+    this.session.socket = this.udpFactory();
   }
 
   /**
@@ -98,6 +123,8 @@ export class UdpAudio {
       port: audio.udp.port,
       key: decodeBase64(audio.encryption.key),
       seq: 0,
+      offsetMs: 0,
+      frameTimelineVersion: audio.frameTimelineVersion,
     };
   }
 
@@ -115,18 +142,50 @@ export class UdpAudio {
     const session = this.session;
     if (!session) return false;
 
-    session.socket.send(this.buildEncryptedPacket(session, payload), session.host, session.port);
+    session.socket.send(
+      this.buildEncryptedPacket(
+        session,
+        this.positionedPayload(session, payload),
+      ),
+      session.host,
+      session.port,
+    );
     return true;
   }
 
   sendProbe(probeId: string): boolean {
-    return this.sendFrame(asciiBytes(`${UDP_LIVENESS_PROBE_PREFIX}${probeId}`));
+    const session = this.session;
+    if (!session) return false;
+    session.socket.send(
+      this.buildEncryptedPacket(
+        session,
+        asciiBytes(`${UDP_LIVENESS_PROBE_PREFIX}${probeId}`),
+      ),
+      session.host,
+      session.port,
+    );
+    return true;
   }
 
   buildPlainFrame(payload: Uint8Array): Uint8Array | null {
     const session = this.session;
     if (!session) return null;
-    return this.buildPacket(session, payload);
+    return this.buildPacket(session, this.positionedPayload(session, payload));
+  }
+
+  private positionedPayload(
+    session: UdpSession,
+    payload: Uint8Array,
+  ): Uint8Array {
+    if (session.frameTimelineVersion !== 1) return payload;
+    const result = new Uint8Array(8 + payload.length);
+    new DataView(result.buffer).setFloat64(0, session.offsetMs, false);
+    result.set(payload, 8);
+    session.offsetMs +=
+      this.format.codec === "lc3"
+        ? (payload.length / (this.format.frameSizeBytes ?? 20)) * 10
+        : (Math.floor(payload.length / 2) / this.format.sampleRate) * 1000;
+    return result;
   }
 
   private buildEncryptedPacket(session: UdpSession, payload: Uint8Array): Uint8Array {

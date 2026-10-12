@@ -1,6 +1,7 @@
 import {useRoute} from "@react-navigation/native"
-import {useEffect, useMemo, useRef, useState} from "react"
-import {Button, Screen} from "@/components/ignite"
+import {useEffect, useMemo, useRef} from "react"
+import {Button, Header, Screen} from "@/components/ignite"
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
@@ -46,7 +47,6 @@ export default function BtClassicPairingScreen() {
   const deviceName = device?.name || savedDeviceName || ""
   const {theme} = useAppTheme()
   const cancellingPairing = useRef(false)
-  const [isCancellingPairing, setIsCancellingPairing] = useState(false)
 
   focusEffectPreventBack()
 
@@ -78,10 +78,8 @@ export default function BtClassicPairingScreen() {
   const handleCancelPairing = async () => {
     if (cancellingPairing.current) return
     cancellingPairing.current = true
-    setIsCancellingPairing(true)
     if (!(await cancelPendingPairing())) {
       cancellingPairing.current = false
-      setIsCancellingPairing(false)
     }
   }
 
@@ -150,24 +148,23 @@ export default function BtClassicPairingScreen() {
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
-      {/* <Header leftIcon="chevron-left" onLeftPress={handleBack} /> */}
+      {device && (
+        <Header
+          leftIcon="chevron-left"
+          leftIconAccessibilityLabel={translate("pairing:cancelPairing")}
+          onLeftPress={handleCancelPairing}
+          RightActionComponent={<MentraLogoStandalone />}
+        />
+      )}
       <OnboardingGuide
         steps={steps}
         autoStart={true}
         showCloseButton={false}
+        showHeader={!device}
         endButtonText={translate("onboarding:openSettings")}
         endButtonFn={handleOpenSettings}
         showSkipButton={false}
       />
-      {device && (
-        <Button
-          className="mt-2"
-          preset="secondary"
-          tx="pairing:cancelPairing"
-          disabled={isCancellingPairing}
-          onPress={handleCancelPairing}
-        />
-      )}
 
       {otherBtConnected && (
         <View className={device ? "mt-2 w-full" : "absolute bottom-16 w-full"}>

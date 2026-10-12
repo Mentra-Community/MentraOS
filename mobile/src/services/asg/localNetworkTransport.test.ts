@@ -11,10 +11,41 @@ jest.mock("@dr.pogodin/react-native-fs", () => ({
 }))
 
 import {
+  localNetworkErrorDetails,
   localNetworkTransport,
   shouldUseScopedLocalNetwork,
 } from "../../../modules/engine/src/services/asg/localNetworkTransport"
 import {emitLocalNetworkEvent, mentraLocalNetworkMock as mockNativeModule} from "../../test-utils/mockBluetoothSdk"
+
+describe("localNetworkErrorDetails", () => {
+  it("preserves bridged domain and underlying code without a native stack or private userInfo", () => {
+    const error = Object.assign(new Error("internal error"), {
+      code: "unableToConnect",
+      domain: "NEHotspotConfigurationErrorDomain",
+      nativeStackIOS: Array(100).fill("long native stack"),
+      userInfo: {
+        SSID: "private network",
+        password: "private password",
+        NSUnderlyingError: {domain: "NSPOSIXErrorDomain", code: "22", message: "private detail"},
+      },
+    })
+    expect(localNetworkErrorDetails(error)).toEqual({
+      code: "unableToConnect",
+      domain: "NEHotspotConfigurationErrorDomain",
+      underlying: {domain: "NSPOSIXErrorDomain", code: "22"},
+    })
+    expect(JSON.stringify(localNetworkErrorDetails(error)).length).toBeLessThan(256)
+  })
+
+  it("reads non-enumerable native facts and refuses arbitrary text or malformed values", () => {
+    const error = new Error("private message")
+    Object.defineProperty(error, "domain", {value: "NEHotspotConfigurationErrorDomain"})
+    Object.defineProperty(error, "code", {value: 8})
+    expect(localNetworkErrorDetails(error)).toEqual({code: 8, domain: "NEHotspotConfigurationErrorDomain"})
+    expect(localNetworkErrorDetails({code: "secret with spaces", domain: "x".repeat(129), userInfo: null})).toEqual({})
+    expect(localNetworkErrorDetails(null)).toEqual({})
+  })
+})
 
 describe("localNetworkTransport", () => {
   beforeEach(async () => {
