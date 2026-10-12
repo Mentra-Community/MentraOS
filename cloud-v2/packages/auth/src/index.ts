@@ -16,6 +16,11 @@ export const MENTRA_JWKS_URLS = [
 const DEFAULT_ISSUER = "cloud-core";
 const DEFAULT_CLOCK_TOLERANCE = "2 minutes";
 const DEFAULT_ALGORITHMS = ["EdDSA"] as const;
+/**
+ * The key IDs Core signs miniapp tokens under. Core's key set also publishes
+ * keys for other token types, so a miniapp token is accepted only under these.
+ */
+const DEFAULT_KEY_IDS = ["mentra-miniapp-1"] as const;
 const DEFAULT_CONTEXT_KEY = "mentraAuth";
 
 export interface VerifiedMentraAuth {
@@ -59,6 +64,11 @@ export interface MentraAuthOptions {
    * Allowed signature algorithms. Defaults to EdDSA.
    */
   algorithms?: string[];
+  /**
+   * Accepted key IDs (`kid`). Defaults to the miniapp token key; tokens of any
+   * other type that Core signs are refused even though Core publishes their keys.
+   */
+  keyIds?: string[];
   /**
    * jose clockTolerance option. Defaults to two minutes for mobile clock skew.
    */
@@ -114,6 +124,7 @@ export class MentraAuth {
   private readonly packageName: string;
   private readonly issuer: string | string[];
   private readonly algorithms: string[];
+  private readonly keyIds: ReadonlySet<string>;
   private readonly clockTolerance: string | number;
   private readonly jwksUrls: string[];
   private readonly jwksSets: ReturnType<typeof jose.createRemoteJWKSet>[];
@@ -122,6 +133,7 @@ export class MentraAuth {
     this.packageName = resolvePackageName(options.packageName);
     this.issuer = resolveIssuer(options.issuer);
     this.algorithms = options.algorithms ?? [...DEFAULT_ALGORITHMS];
+    this.keyIds = new Set(options.keyIds ?? DEFAULT_KEY_IDS);
     this.clockTolerance = options.clockTolerance ?? DEFAULT_CLOCK_TOLERANCE;
     this.jwksUrls = resolveJwksUrls(options);
     const remoteOptions = {
@@ -186,6 +198,20 @@ export class MentraAuth {
    * than pointlessly retrying every environment.
    */
   private async verifyAcrossEnvironments(token: string): Promise<jose.JWTPayload> {
+    // Pin the token type and key: Core's key set also carries the keys of its
+    // access and sign-in tokens, which must never pass as miniapp tokens.
+    let header: jose.ProtectedHeaderParameters;
+    try {
+      header = jose.decodeProtectedHeader(token);
+    } catch {
+      throw new MentraAuthError("miniapp token rejected: not a JWT");
+    }
+    if (header.kid === undefined || !this.keyIds.has(header.kid)) {
+      throw new MentraAuthError("miniapp token rejected: unexpected key ID");
+    }
+    if (header.typ !== undefined && header.typ.toUpperCase() !== "JWT") {
+      throw new MentraAuthError("miniapp token rejected: unexpected token type");
+    }
     const verifyOptions = {
       issuer: this.issuer,
       audience: this.packageName,

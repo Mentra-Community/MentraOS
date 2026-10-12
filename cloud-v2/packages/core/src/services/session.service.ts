@@ -48,6 +48,7 @@ import {SUPABASE_ASYMMETRIC_ALGORITHMS, supabaseIssuer, supabaseJwksUrl} from ".
 import {KeySetUnavailableError, verifyWithKeySet} from "./signin/key-sets"
 import {revokePortalSessionsForUser} from "./signin/browser-session.service"
 import {endIdentityProviderSessions} from "./signin/idp-revocation"
+import {oidcIssuer} from "./oidc/config"
 import {
   MENTRA_ALG,
   ACCESS_TOKEN_KID,
@@ -552,6 +553,10 @@ async function resolveSubjectIdentity(subjectToken: string): Promise<{
     throw new InvalidRequest("subject_token is not a parseable JWT")
   }
 
+  // Core's sign-in server issues tokens for websites and the CLI; they never become phone tokens.
+  if (iss && iss.replace(/\/+$/, "") === oidcIssuer()) {
+    throw new InvalidGrant("tokens from Core's sign-in server cannot be exchanged for a phone session")
+  }
   if (looksLikeSupabase(iss)) {
     return {tenantId: MENTRA_OEM_ID, tenantUserId: await verifySupabaseSubject(subjectToken, alg)}
   }
