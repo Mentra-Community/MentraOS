@@ -79,6 +79,8 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:startingHotspotUpdate": "Starting update…",
   "ota:transferringToGlasses": "Transferring update to glasses…",
   "ota:installingOnGlasses": "Installing update on glasses…",
+  "ota:transportHotspot": "Using glasses hotspot",
+  "ota:transportWifi": "Using Wi-Fi",
   "ota:componentApk": "Glasses software",
   "ota:componentMtk": "System firmware",
   "ota:componentBes": "Bluetooth firmware",
@@ -240,12 +242,36 @@ export function MentraLiveOtaPreview({
 }
 
 function OtaFlowFrame({allowDevSkip, colors, controller, deviceName, style, superMode, translate}: OtaFlowFrameProps) {
+  const {state} = controller
+  const transportLabel =
+    state.transport &&
+    [
+      "starting",
+      "preparing_hotspot",
+      "updating",
+      "restarting",
+      "verifying",
+      "complete",
+      "failed",
+      "disconnected",
+    ].includes(state.screen)
+      ? translate(state.transport === "hotspot" ? "ota:transportHotspot" : "ota:transportWifi")
+      : null
+
   return (
     <SafeAreaView style={[styles.safeArea, {backgroundColor: colors.background}, style]}>
       <View style={styles.header}>
         <View />
         <MentraMark color={colors.primary} />
       </View>
+      {transportLabel ? (
+        <Text
+          accessibilityLabel={transportLabel}
+          style={[styles.transport, {color: colors.textDim}]}
+          testID={`ota.transport.${state.transport}`}>
+          {transportLabel}
+        </Text>
+      ) : null}
       <OtaFlowContent
         allowDevSkip={allowDevSkip}
         colors={colors}
@@ -332,8 +358,8 @@ function OtaFlowContent({
       state.screen === "wifi_required"
         ? "ota:wifiRequiredTitle"
         : state.versionChange
-        ? "ota:downgradeAvailable"
-        : "ota:updateAvailable"
+          ? "ota:downgradeAvailable"
+          : "ota:updateAvailable"
     return (
       <FlowPage
         colors={colors}
@@ -479,10 +505,10 @@ function OtaFlowContent({
       state.hotspotPhase === "downloading"
         ? "ota:downloadingToPhone"
         : state.hotspotPhase === "starting_hotspot"
-        ? "ota:startingGlassesHotspot"
-        : state.hotspotPhase === "joining_hotspot"
-        ? "ota:connectingPhoneToGlasses"
-        : "ota:startingHotspotUpdate",
+          ? "ota:startingGlassesHotspot"
+          : state.hotspotPhase === "joining_hotspot"
+            ? "ota:connectingPhoneToGlasses"
+            : "ota:startingHotspotUpdate",
     )
     const artifact = state.hotspotPhase === "downloading" ? state.hotspotArtifact : null
     return (
@@ -513,8 +539,8 @@ function OtaFlowContent({
     const title = hotspot
       ? translate(state.phase === "download" ? "ota:transferringToGlasses" : "ota:installingOnGlasses")
       : state.phase === "download"
-      ? "Downloading…"
-      : "Installing…"
+        ? "Downloading…"
+        : "Installing…"
     const component = state.step ? translate(componentCopyKey[state.step]) : null
     const hasStepCount =
       state.currentStep !== null &&
@@ -568,13 +594,13 @@ function OtaFlowContent({
     const title = state.versionChangeConverged
       ? translate("ota:versionChangeComplete")
       : state.versionChange
-      ? translate("ota:versionChangeFirmwarePassComplete")
-      : "Update complete!"
+        ? translate("ota:versionChangeFirmwarePassComplete")
+        : "Update complete!"
     const message = state.versionChangeConverged
       ? translate("ota:versionChangeCompleteMessage")
       : state.versionChange
-      ? translate("ota:versionChangeFirmwarePassCompleteMessage")
-      : "Your glasses are up to date."
+        ? translate("ota:versionChangeFirmwarePassCompleteMessage")
+        : "Your glasses are up to date."
     return (
       <FlowPage
         actions={
@@ -898,6 +924,7 @@ const styles = StyleSheet.create({
   svgIcon: {alignItems: "center", height: 72, justifyContent: "center", width: 72},
   title: {fontSize: 20, fontWeight: "600", textAlign: "center"},
   body: {fontSize: 14, lineHeight: 20, maxWidth: 420, textAlign: "center"},
+  transport: {fontSize: 12, lineHeight: 16, textAlign: "center"},
   errorCode: {fontSize: 12, fontVariant: ["tabular-nums"], lineHeight: 16, opacity: 0.7, textAlign: "center"},
   percent: {fontSize: 30, fontVariant: ["tabular-nums"], fontWeight: "700"},
   progressTrack: {borderRadius: 4, height: 8, maxWidth: 420, overflow: "hidden", width: "100%"},
