@@ -74,4 +74,10 @@ describe("Core's sign-in server configuration", () => {
     set({CLOUD_CORE_OIDC_ISSUER: "http://127.0.0.1:4000", CLOUD_CORE_ENVIRONMENT: undefined})
     expect(() => assertOidcIssuerConfiguration()).not.toThrow()
   })
+
+  test("an IPv6 loopback HTTP issuer counts as loopback", () => {
+    // URL.hostname keeps the brackets of an IPv6 literal: "[::1]".
+    set({CLOUD_CORE_OIDC_ISSUER: "http://[::1]:4000", CLOUD_CORE_ENVIRONMENT: undefined})
+    expect(() => assertOidcIssuerConfiguration()).not.toThrow()
+  })
 })

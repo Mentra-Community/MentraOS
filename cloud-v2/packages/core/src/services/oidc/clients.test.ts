@@ -113,4 +113,12 @@ describe("first-party client registry", () => {
     configure([{...admin, redirectUris: ["http://127.0.0.1:4001/api/admin/auth/callback"]}], {CLOUD_CORE_ENVIRONMENT: undefined})
     expect(configuredClients()).toHaveLength(1)
   })
+
+  test("every loopback host counts as loopback, IPv6 included", () => {
+    // URL.hostname keeps the brackets of an IPv6 literal: "[::1]".
+    configure([{...cli, redirectUris: ["http://127.0.0.1:53682/callback", "http://localhost:53682/callback", "http://[::1]:53682/callback"]}])
+    expect(configuredClients()[0]!.redirectUris).toContain("http://[::1]:53682/callback")
+    configure([{...admin, redirectUris: ["http://[::1]:4001/api/admin/auth/callback"]}], {CLOUD_CORE_ENVIRONMENT: undefined})
+    expect(configuredClients()).toHaveLength(1)
+  })
 })
