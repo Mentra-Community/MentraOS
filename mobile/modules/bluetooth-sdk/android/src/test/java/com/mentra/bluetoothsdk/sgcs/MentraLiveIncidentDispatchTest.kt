@@ -129,6 +129,34 @@ class MentraLiveIncidentDispatchTest {
         }
     }
 
+    @Test fun `stale callback of a finished owner cannot confirm the colliding report's file`() = withLive { live ->
+        ready(live)
+        DeviceStore.set("bluetooth", "core_token", "synthetic")
+        withCloud { cloud ->
+            val name = IncidentLogBleRelayNaming.bleFileBaseName(incident, 'B')
+            val logName = IncidentLogBleRelayNaming.bleFileBaseName(incident, 'L')
+            live.sendIncidentId(incident, cloud.base)
+            val staleRelay = (get(live, "bleIncidentLogRelays") as Map<*, *>)[name]!!
+            receiveRelayFile(live, name, "owner")
+            assertNotNull(cloud.requests.poll(5, TimeUnit.SECONDS))
+            awaitMain { relayOwner(live, name) == null }
+            receiveRelayFile(live, logName, "owner-logcat")
+            assertNotNull(cloud.requests.poll(5, TimeUnit.SECONDS))
+            awaitMain { relayOwner(live, logName) == null }
+
+            live.sendIncidentId(collidingIncident, cloud.base)
+            val confirmationsBefore = wire(live).split("transfer_complete").size
+
+            // A late callback of the first report's request arrives while the colliding report owns the name.
+            uploadWith(live, staleRelay, name, "late-owner-evidence")
+            assertNotNull(cloud.requests.poll(5, TimeUnit.SECONDS))
+            repeat(50) { shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(10) }
+
+            assertEquals(confirmationsBefore, wire(live).split("transfer_complete").size)
+            assertEquals(collidingIncident, relayOwner(live, name))
+        }
+    }
+
     @Test fun `failed Cloud POST keeps the owner until its ownership expires`() = withLive { live ->
         ready(live)
         DeviceStore.set("bluetooth", "core_token", "synthetic")
@@ -207,7 +235,10 @@ class MentraLiveIncidentDispatchTest {
     }
 
     private fun receiveRelayFile(live: MentraLive, name: String, payload: String) {
-        val relay = (get(live, "bleIncidentLogRelays") as Map<*, *>)[name]!!
+        uploadWith(live, (get(live, "bleIncidentLogRelays") as Map<*, *>)[name]!!, name, payload)
+    }
+
+    private fun uploadWith(live: MentraLive, relay: Any, name: String, payload: String) {
         MentraLive::class.java.declaredMethods.first { it.name == "uploadBleIncidentLogPayload" }
             .apply { isAccessible = true }
             .invoke(live, relay, name, payload.toByteArray(StandardCharsets.UTF_8))

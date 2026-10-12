@@ -161,6 +161,29 @@ final class IncidentLogDispatchTests: XCTestCase {
         }
     }
 
+    func testStaleCallbackOfFinishedOwnerCannotConfirmCollidingReportsFile() async throws {
+        try await withCloud(status: 200) {
+            let live = IncidentLogTransport()
+            let name = "Brep_01m4hbvt88d"
+            let logcat = "Lrep_01m4hbvt88d"
+            try live.sendIncidentId(incident, apiBaseUrl: cloudBase)
+            let staleRelay = try XCTUnwrap(live.bleIncidentLogRelays[name])
+            try await receive(live, name, "owner")
+            try await receive(live, logcat, "owner-logcat")
+            try live.sendIncidentId(collidingIncident, apiBaseUrl: cloudBase)
+            let confirmationsBefore = sentMessages(live).filter { $0.contains("transfer_complete") }.count
+            let requestsBefore = CloudStub.requests.count
+
+            // A late callback of the first report's request arrives while the colliding report owns the name.
+            live.uploadBleIncidentLogRelay(relay: staleRelay, fileName: name, data: Data("late".utf8))
+            try await waitFor { CloudStub.requests.count == requestsBefore + 1 }
+            try await Task.sleep(nanoseconds: 300_000_000)
+
+            XCTAssertEqual(sentMessages(live).filter { $0.contains("transfer_complete") }.count, confirmationsBefore)
+            XCTAssertEqual(live.bleIncidentLogRelays[name]?.incidentId, collidingIncident)
+        }
+    }
+
     func testFailedCloudPostKeepsOwnerUntilOwnershipExpires() async throws {
         try await withCloud(status: 500) {
             let live = IncidentLogTransport()

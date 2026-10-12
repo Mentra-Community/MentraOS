@@ -4644,6 +4644,12 @@ class MentraLive: NSObject, SGCManager {
                 statusCode = nil
             }
             DispatchQueue.main.async {
+                // A different report now owns this name (it was admitted after our owner finished),
+                // so a completion here would mark ITS file done. Drop the stale callback.
+                if let owner = self.bleIncidentLogRelays[relay.fileBaseKey], owner.incidentId != relay.incidentId {
+                    Bridge.log("LIVE: Dropping stale incident relay callback for \(relay.fileBaseKey)")
+                    return
+                }
                 if ok {
                     Bridge.log("LIVE: ✅ Incident log BLE relay uploaded (\(relay.kind))")
                 } else if let existing = self.bleIncidentLogRelays[relay.fileBaseKey] {

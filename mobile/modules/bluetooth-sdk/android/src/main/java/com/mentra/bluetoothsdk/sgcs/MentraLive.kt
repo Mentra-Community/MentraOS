@@ -10713,6 +10713,13 @@ class MentraLive : SGCManager() {
                 success,
                 message ->
             Handler(Looper.getMainLooper()).post {
+                // A different report now owns this name (it was admitted after our owner finished),
+                // so a completion here would mark ITS file done. Drop the stale callback.
+                val owner = bleIncidentLogRelays[relay.fileBaseKey]
+                if (owner != null && owner.incidentId != relay.incidentId) {
+                    Log.w(TAG, "Dropping stale incident relay callback for " + relay.fileBaseKey)
+                    return@post
+                }
                 if (success) {
                     Bridge.log(
                             "LIVE: ✅ Incident log BLE relay uploaded (" +
