@@ -13,6 +13,28 @@ for the workspace hostname, and the served deployment manifest. The Runtime
 profile does not start Redis, UDP, cloud audio, camera, Cloudflare, speech,
 maps, Store, or reporting dependencies.
 
+The Acme demo deployment differs in one way, for the Enterprise Demo miniapp it
+adds from [demo-miniapps.json](./demo-miniapps.json). With `cloudSpeechAndPhotos`
+on, Runtime also runs speech-to-text (Soniox), text-to-speech (ElevenLabs) and
+glasses photos, stored on the replica, with a Redis sidecar. Speech and questions
+then leave the stack for Soniox, ElevenLabs and the miniapp's hosted backend. The
+installer doesn't offer this. Its keys are the `soniox-api-key` and
+`elevenlabs-api-key` secrets in the stack's Key Vault, copied from Doppler
+`cloud-v2/dev`. As with the Graph client secret below, CI can't grant Key Vault
+access, so an Owner stores them and runs `access.bicep` once:
+
+```bash
+for pair in SONIOX_API_KEY:soniox-api-key ELEVENLABS_API_KEY:elevenlabs-api-key; do
+  # --plain ends with a newline that must not reach the key.
+  printf %s "$(doppler secrets get "${pair%%:*}" --project cloud-v2 --config dev --plain)" |
+    az keyvault secret set --vault-name kv-mentra-enterprise-ref --name "${pair#*:}" --file /dev/stdin --output none
+done
+az deployment group create --resource-group rg-mentra-enterprise-reference \
+  --template-file cloud-v2/deploy/azure/enterprise-reference/access.bicep \
+  --parameters keyVaultName=kv-mentra-enterprise-ref cloudSpeechAndPhotos=true \
+    teamsGraphClientId=<ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID>
+```
+
 Core's report API is available independently of Runtime and consumer telemetry.
 See [report setup and retrieval](operations.md#reports-and-durable-attachments)
 for existing admin org API-key authorization and the attachment-storage lifecycle.
@@ -29,12 +51,12 @@ Feedback also opens the same form.
 - Mobile public client: `95ad08c2-7837-4ddf-933c-1fce3d6d2799`
 - Core API: `20424d9e-4b99-44e8-82c9-0ad06f08a8db`
 - Core scope: `api://20424d9e-4b99-44e8-82c9-0ad06f08a8db/mentra.session`
-- Workspace: `https://mentra.acmeworkspace.com`
+- Workspace: `https://demo.acmeworkspace.com`
 
-The demo workspace is branded **Acme Industries**. The original
-`https://enterprisedev.mentraglass.com` remains an HTTPS alias for existing
-installs. Both addresses serve the same deployment, with discovery URLs matching
-the address used to enroll. The deployment ID, Core origin, Entra tenant, and existing sessions
+The demo workspace is branded **Acme Industries**. The earlier
+`https://mentra.acmeworkspace.com` and `https://enterprisedev.mentraglass.com`
+remain HTTPS aliases for existing installs. All three addresses serve the same
+deployment, with discovery URLs matching the address used to enroll. The deployment ID, Core origin, Entra tenant, and existing sessions
 are preserved. `acmeworkspace.com` is also verified as an Entra sign-in domain;
 demo employee accounts still require their own assignment and Teams license.
 
@@ -83,12 +105,17 @@ independent push trigger, so it cannot drift from the coordinated `dev` release.
 The `ghcr.io/mentra-community/mentra-cloud` package is public, so customer registries import
 releases anonymously; no registry credential is needed.
 
-Signing keys, the refresh pepper and the Graph client secret live in the
+Signing keys, the refresh pepper, the Graph client secret and, with admin
+portal sign-in on, its client secret (`entra-browser-client-secret`) live in the
 stack's Key Vault (`kv-mentra-enterprise-ref`), which `bootstrap.bicep` created
 once with Owner rights, together with `access.bicep`'s per-secret grants. Each
 Container App reads only its own secrets with its own identity, so the
 Contributor-only CI deployment passes just the vault name. Customer
 deployments get their own vault the same way.
+
+Core also serves the admin portal on its own host. With `adminPortalSignIn` on,
+Organization Admins sign in there with their Entra account; guided setup turns
+it on. See [admin portal sign-in](./entra-setup.md#admin-portal-sign-in).
 
 ## Customer-shaped deployment
 
@@ -105,7 +132,9 @@ cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh /secure/path/mentra
 ```
 
 It creates the resource group, runs `bootstrap.bicep` (registry, identities, Key
-Vault, role assignments), creates the signing keys in Key Vault once, applies
+Vault, role assignments), creates the signing keys in Key Vault once, checks
+that Key Vault holds the admin portal client secret when `adminPortalSignIn` is
+on ([entra-setup.md](./entra-setup.md#admin-portal-sign-in)), applies
 `access.bicep`'s per-secret grants, imports and verifies the digest, deploys
 Core and Runtime, runs the smoke test, and prints the deployment outputs. A
 rerun waits for a still-running deployment of the same name and recovers a Key
@@ -122,8 +151,9 @@ Administrator or Privileged Role Administrator (otherwise it prints the app's
 API permissions page). It writes the client secret straight to Key Vault as
 `teams-graph-client-secret-<client ID>` (one secret per app, so a new app's ID
 and secret take effect together), records `teamsGraphClientId` and `teamsGraphOrganizerId`, rolls the change out,
-and prints the Teams PowerShell access-policy commands with the IDs filled in,
-also saving them to `mentra-state/teams-policy.ps1`. The secret it creates
+and applies the Teams application access policy itself when the operator is a
+Teams administrator, saving the script to `mentra-state/teams-policy.ps1` for a
+Teams administrator to run when it can't. The secret it creates
 expires after 2 years; renew it with `setup.sh configure-teams --teams-secret-stdin`
 (or the hidden prompt of `setup.sh configure-teams`).
 See [Graph consent and Teams access policy](./entra-setup.md#meeting-creation).
@@ -152,14 +182,20 @@ separately in `services.coreUrl`.
 
 When migrating an existing hostname, set `workspaceCertificateName` to a new
 managed-certificate resource name; Azure certificates cannot change their subject
-in place. To keep existing clients working, include the old binding in
-`additionalWorkspaceDomains`, for example:
+in place. Azure issues it only for a hostname already on an app in the
+environment, so add the new hostname to Runtime first (`az containerapp hostname
+add`; the reference CI deployment does this itself). To keep existing clients
+working, include the old binding in `additionalWorkspaceDomains`, for example:
 
 ```json
 {
-  "workspaceHostname": "mentra.acmeworkspace.com",
-  "workspaceCertificateName": "ca-mentra-enterprise-reference-acme-workspace",
+  "workspaceHostname": "demo.acmeworkspace.com",
+  "workspaceCertificateName": "ca-mentra-enterprise-reference-acme-demo",
   "additionalWorkspaceDomains": [
+    {
+      "hostname": "mentra.acmeworkspace.com",
+      "certificateName": "ca-mentra-enterprise-reference-acme-workspace"
+    },
     {
       "hostname": "enterprisedev.mentraglass.com",
       "certificateName": "ca-mentra-enterprise-reference-workspace"
@@ -196,7 +232,7 @@ Treat this as a documented tradeoff, not a production network posture; see
 ## Smoke test
 
 ```bash
-export MENTRA_WORKSPACE=https://mentra.acmeworkspace.com
+export MENTRA_WORKSPACE=https://demo.acmeworkspace.com
 cloud-v2/deploy/azure/enterprise-reference/scripts/smoke-test.sh "$MENTRA_WORKSPACE"
 ```
 

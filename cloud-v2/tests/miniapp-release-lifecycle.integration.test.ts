@@ -9,7 +9,6 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import crypto from "node:crypto";
 import {
   afterAll,
   beforeAll,
@@ -36,10 +35,6 @@ import { PreinstalledRegistryModel } from "../packages/core/src/models/preinstal
 import { PreinstalledRegistryRevisionModel } from "../packages/core/src/models/preinstalled-registry-revision.model";
 import type { PreinstalledRegistryService } from "../packages/core/src/services/miniapps/preinstalled-registry.service";
 import type { MiniAppService } from "../packages/core/src/services/miniapps/miniapp.service";
-import type {
-  DeveloperJwk,
-  DeveloperSigningService,
-} from "../packages/core/src/services/miniapps/developer-signing.service";
 
 const developer = {
   developerId: "dev_test_user",
@@ -50,7 +45,6 @@ const developer = {
 
 let miniapps: MiniAppService;
 let registries: PreinstalledRegistryService;
-let signing: DeveloperSigningService;
 
 beforeAll(async () => {
   await connectMongo(
@@ -71,12 +65,8 @@ beforeAll(async () => {
   const { PreinstalledRegistryService } = await import(
     "../packages/core/src/services/miniapps/preinstalled-registry.service"
   );
-  const { DeveloperSigningService } = await import(
-    "../packages/core/src/services/miniapps/developer-signing.service"
-  );
   miniapps = new MiniAppService();
   registries = new PreinstalledRegistryService();
-  signing = new DeveloperSigningService();
 });
 
 afterAll(async () => {
@@ -171,32 +161,6 @@ describe("miniapp release lifecycle", () => {
     await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
     const asset = await registries.getBundleAsset(assetId);
     expect(asset._id.toString()).toBe(assetId);
-  });
-
-  test("developer signing key authorizes dev attestation only for owned package", async () => {
-    await miniapps.createMiniApp(developer, {
-      packageName: "com.example.devtool",
-      displayName: "Dev Tool",
-    });
-
-    const pair = crypto.generateKeyPairSync("ed25519");
-    const privateKeyJwk = pair.privateKey.export({ format: "jwk" }) as DeveloperJwk;
-    const publicKeyJwk = pair.publicKey.export({ format: "jwk" }) as DeveloperJwk;
-    const { id: signingKeyId } = await signing.registerKey(developer, { publicKeyJwk });
-    const payload = {
-      packageName: "com.example.devtool",
-      devServerUrl: "http://127.0.0.1:3000",
-      nonce: crypto.randomUUID(),
-      expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      signingKeyId,
-    };
-    const privateKey = crypto.createPrivateKey({ key: privateKeyJwk as crypto.JsonWebKeyInput, format: "jwk" });
-    const signature = crypto.sign(null, Buffer.from(canonicalJson(payload)), privateKey).toString("base64url");
-
-    await expect(signing.verifyDevAttestation("com.example.devtool", { ...payload, signature })).resolves.toBeUndefined();
-    await expect(signing.verifyDevAttestation("com.example.other", { ...payload, signature })).rejects.toThrow(
-      "attestation packageName does not match request",
-    );
   });
 
   test("accepted releases can be promoted into the client preinstall registry", async () => {
@@ -320,13 +284,3 @@ describe("miniapp release lifecycle", () => {
     )).rejects.toThrow("can only include one release per miniapp");
   });
 });
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    .join(",")}}`;
-}

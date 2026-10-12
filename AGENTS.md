@@ -160,6 +160,14 @@ For a failing nightly device suite, use
 members running, diagnose failures as they arrive, and choose targeted manual runs
 or held authoring for verification after the suite finishes.
 
+## GitHub Actions runners
+
+When adding or editing GitHub Actions workflows, use the
+[`configure-workflow-runners` skill](.agents/skills/configure-workflow-runners/SKILL.md).
+Use Blacksmith for Linux jobs and the existing office Mac mini self-hosted runner
+for macOS jobs. Do not add GitHub-hosted Linux runners unless the user explicitly
+requests an exception. Apply this to reusable workflows and runner matrices too.
+
 ## Commit & Pull Request Guidelines
 
 Write imperative, present-tense commit subjects (e.g., "Add BLE retry delay") and keep scope focused. Reference issue IDs or Slack threads in the body when applicable. Before opening a PR, run relevant `bun run test` suites and platform builds, attach log excerpts for hardware-dependent steps, and call out configuration updates. PR descriptions should outline scope, test evidence, and screenshots or screen recordings for UI-impacting changes.
@@ -236,7 +244,7 @@ Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports 
 
 1. Get the report id (from Slack, the admin console, or the user)
 2. Fetch it: `./scripts/fetch-incident-logs.sh {reportId}` — downloads `report.json` plus every artifact into `./incident-logs/{reportId}/`
-3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an org API key (`msk_...`) whose synthetic email is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`, or a WorkOS access token of an admin user
+3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an org API key (`msk_...`) whose synthetic email is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`
 4. Without an environment override, the script tries prod, dev, then staging and reports which backend succeeded. Use `--env prod|dev|staging` or `MENTRA_CORE_URL` to target one backend explicitly.
 
 What you get:

@@ -46,6 +46,8 @@ node_modules/
 web-build/
 .DS_Store
 *.tgz
+# Pinned publishing tools for the first-party miniapp Store action.
+!.github/actions/publish-miniapp/tooling/vendor/*.tgz
 my-app*
 template/src/__tests__/__snapshots__/
 lerna-debug.log

@@ -27,7 +27,7 @@ bunx @mentra/cli@dev --help
 
 ```bash
 mentra login              # sign in to the Mentra Developer Console
-mentra dev                # local dev server with a signed Cloud V2 identity
+mentra dev                # local dev server; no login, the phone runs it as the package
 mentra build              # build the current miniapp
 mentra pack               # zip dist/ into a submittable release
 mentra publish            # upload + publish a release

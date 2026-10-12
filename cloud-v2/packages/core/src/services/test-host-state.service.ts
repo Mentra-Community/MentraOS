@@ -13,6 +13,8 @@ import {
 } from "../types/lane-restoration.types"
 import {frameworkBindingSchema} from "../types/framework-version.types"
 import {TestRunError} from "./test-result-error"
+import {routineProgressSchema} from '../types/routine-progress.types'
+import {TestRequestModel} from '../models/test-request.model'
 const resource = z
   .object({
     id: frameworkIdentitySchema,
@@ -58,6 +60,7 @@ export const hostStateSchema = z
             dispatchMode: z.enum(["automatic", "authoring", "paused"]),
             state: z.enum(["idle", "running", "reserved", "in-repair", "out-of-service", "offline"]),
             activity: laneActivitySchema.optional(),
+            progress: routineProgressSchema.optional(),
             resources: z.array(resource),
             glasses: z.array(glassesInventorySchema).max(1).optional(),
             routineAvailability: z.array(routineAvailability).max(1000).optional(),
@@ -66,6 +69,9 @@ export const hostStateSchema = z
           .superRefine((lane, ctx) => {
             if (lane.activity && ['idle', 'offline'].includes(lane.state))
               ctx.addIssue({code: 'custom', message: 'Idle or offline lane cannot report active custody'})
+            if (lane.progress && (lane.activity?.owner.kind !== 'run' ||
+                lane.activity.owner.id !== lane.progress.requestId || lane.activity.generation !== lane.progress.ownerGeneration))
+              ctx.addIssue({code: 'custom', message: 'Routine progress must identify the current run owner'})
             const keys = lane.routineAvailability?.map((row) => `${row.routineId}:${row.definitionRevision}`) ?? []
             if (new Set(keys).size !== keys.length)
               ctx.addIssue({code: "custom", message: "Duplicate lane routine availability identity"})
@@ -131,6 +137,9 @@ export const hostStateSchema = z
           code: "custom",
           message: "Framework history current generation differs from reporting incarnation",
         })
+    for (const lane of snapshot.lanes) if (lane.progress && (lane.progress.controllerIncarnation !== snapshot.incarnation ||
+        lane.progress.sequence !== snapshot.sequence || lane.progress.observedAt !== snapshot.observedAt))
+      ctx.addIssue({code: 'custom', message: 'Routine progress differs from its controller observation'})
     if (new Set(snapshot.lanes.map((lane) => lane.id)).size !== snapshot.lanes.length)
       ctx.addIssue({code: "custom", message: "Duplicate host lane identity"})
     if (snapshot.restoration?.attempts.some((attempt) => !snapshot.lanes.some((lane) => lane.id === attempt.laneId)))
@@ -191,11 +200,33 @@ const deploymentCursor = (row: {deploymentGeneration?: number; deploymentSequenc
   deploymentGeneration: row.deploymentGeneration ?? {$exists: false},
   deploymentSequence: row.deploymentSequence ?? {$exists: false},
 })
+async function retryHostStateWrite<T>(write: () => Promise<T | undefined>, conflict: string): Promise<T> {
+  // Only an atomic write collision returns undefined; semantic conflicts and database errors propagate.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const receipt = await write()
+    if (receipt !== undefined) return receipt
+  }
+  throw new TestRunError(409, conflict)
+}
 export class TestHostStateService {
   constructor(private readonly now: () => number = Date.now) {}
   async report(input: unknown, hostId: string) {
     const snapshot = hostStateSchema.parse(input)
+    return retryHostStateWrite(
+      () => this.reportSnapshot(snapshot, hostId),
+      'Controller snapshot advanced concurrently; retry current observation',
+    )
+  }
+  private async reportSnapshot(snapshot: TestHostState, hostId: string) {
     if (snapshot.hostId !== hostId) throw new TestRunError(409, "Host snapshot differs from authenticated controller")
+    for (const lane of snapshot.lanes) if (lane.progress) {
+      const request = await TestRequestModel.findOne({requestId: lane.progress.requestId, hostId,
+        inputSha256: lane.progress.requestDigest, 'input.laneId': lane.id,
+        'hostReceipt.requestId': lane.progress.requestId, 'hostReceipt.hostId': hostId,
+        'hostReceipt.inputSha256': lane.progress.requestDigest}).select({requestId: 1})
+        .read('primary').readConcern('majority').setOptions({timeoutMS: 10_000}).lean()
+      if (!request) throw new TestRunError(409, 'Routine progress differs from its authenticated accepted request')
+    }
     const current = await TestHostStateModel.findOne({hostId}).lean()
     if (current) {
       if (
@@ -222,7 +253,7 @@ export class TestHostStateService {
           sequence: current.sequence,
           ...deploymentCursor(current),
         }
-      : {hostId}
+      : {hostId, incarnationGeneration: {$exists: false}}
     const history: FrameworkHistoryEntry[] = (current?.frameworkHistory ?? []).map((value) =>
       frameworkHistoryEntrySchema.parse(value),
     )
@@ -243,7 +274,7 @@ export class TestHostStateService {
           prior.endedAt = interval.endedAt
           prior.endReason = interval.endReason
         }
-      } else history.push(interval)
+      } else history.push(frameworkHistoryEntrySchema.parse(interval))
     }
     history.sort((a, b) => a.incarnationGeneration - b.incarnationGeneration)
     // A late history-bearing restart may already have inserted the successor. Move the process stop
@@ -317,7 +348,7 @@ export class TestHostStateService {
         },
         {upsert: !current, new: true, writeConcern: testWriteConcern},
       ).lean()
-      if (!saved) throw new TestRunError(409, "Controller snapshot advanced concurrently; retry current observation")
+      if (!saved) return undefined
       return {
         hostId,
         incarnation: saved.incarnation,
@@ -325,8 +356,8 @@ export class TestHostStateService {
         sequence: saved.sequence,
       }
     } catch (error) {
-      if ((error as {code?: number}).code === 11000)
-        throw new TestRunError(409, "Controller snapshot advanced concurrently")
+      if (!current && (error as {code?: number}).code === 11000)
+        return undefined
       throw error
     }
   }
@@ -353,6 +384,12 @@ export class TestHostStateService {
   }
   async reportDeployment(input: unknown, hostId: string) {
     const observation = updaterDeploymentSchema.parse(input)
+    return retryHostStateWrite(
+      () => this.reportDeploymentObservation(observation, hostId),
+      'Host deployment observation advanced concurrently',
+    )
+  }
+  private async reportDeploymentObservation(observation: z.infer<typeof updaterDeploymentSchema>, hostId: string) {
     if (observation.hostId !== hostId)
       throw new TestRunError(409, "Deployment observation differs from authenticated host")
     const current = await TestHostStateModel.findOne({hostId}).lean()
@@ -391,7 +428,7 @@ export class TestHostStateService {
       },
       {new: true, writeConcern: testWriteConcern},
     ).lean()
-    if (!saved) throw new TestRunError(409, "Host deployment observation advanced concurrently")
+    if (!saved) return undefined
     return {hostId, generation: saved.deploymentGeneration ?? 0, sequence: saved.deploymentSequence ?? 0}
   }
 }

@@ -70,7 +70,7 @@ export class MicrosoftEntraDeploymentAuthProvider implements DeploymentAuthProvi
       throw new Error("Native meetings are disabled by this deployment")
     }
     if (!matches(this.auth.sessionScopes) && !matches(this.auth.teamsScopes)) {
-      throw new Error("Requested Microsoft scopes are not declared by this workspace")
+      throw new Error("Requested Microsoft scopes are not declared by this organization")
     }
     const result = await this.native.acquireToken(this.configuration(), scopes, request.forceRefresh)
     return result.accessToken

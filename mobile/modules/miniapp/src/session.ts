@@ -853,6 +853,22 @@ export class MiniappSession<TChannels extends object = any> {
         return
       }
 
+      case MiniappResponseType.MINIAPPS_INSTALL_PROGRESS: {
+        const {packageName, version, phase} = payload as Record<string, unknown>
+        if (
+          typeof packageName === "string" &&
+          typeof version === "string" &&
+          (phase === "downloading" ||
+            phase === "verifying" ||
+            phase === "extracting" ||
+            phase === "activating" ||
+            phase === "complete")
+        ) {
+          this.miniapps._deliverInstallProgress({packageName, version, phase})
+        }
+        return
+      }
+
       case MiniappResponseType.REQUEST_RESULT: {
         const requestId = envelope.requestId
         if (!requestId) return

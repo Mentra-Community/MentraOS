@@ -8,7 +8,10 @@ import {
   DeveloperOrgServiceError,
   type DeveloperOrgRecord,
 } from "../../services/developer-orgs/developer-org.service";
-import { DeveloperApiKeyService } from "../../services/developer-orgs/developer-api-key.service";
+import {
+  apiKeyEnvironmentLabel as consoleEnvironmentLabel,
+  DeveloperApiKeyService,
+} from "../../services/developer-orgs/developer-api-key.service";
 import { DeveloperOrgInvitationService } from "../../services/developer-orgs/developer-org-invitation.service";
 import { sendOrgInviteEmail } from "../../services/email/email.service";
 import {
@@ -923,23 +926,6 @@ function workosOrgMetadata(org: DeveloperOrgRecord): Record<string, string> {
   };
 }
 
-function consoleEnvironmentLabel(): string {
-  const explicit = process.env.CLOUD_CORE_ENVIRONMENT;
-  if (explicit) return explicit;
-
-  const consoleUrl = process.env.CONSOLE2_URL;
-  if (!consoleUrl) return "local";
-  try {
-    const host = new URL(consoleUrl).hostname;
-    if (host.includes(".dev.")) return "dev";
-    if (host.includes(".staging.")) return "staging";
-    if (host === "console2.mentraglass.com") return "prod";
-    if (host === "localhost" || host === "127.0.0.1") return "local";
-    return host;
-  } catch {
-    return "local";
-  }
-}
 
 async function listOrgMembers(org: DeveloperOrgRecord): Promise<ConsoleOrgMember[]> {
   const members = await developerOrgs.listMembers(org.id);

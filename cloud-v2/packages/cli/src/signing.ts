@@ -4,15 +4,6 @@ import { readFileSync } from "node:fs";
 import { listSigningKeys, registerSigningKey, type SignedBundleMetadata } from "./api";
 import { loadSigningKey, saveSigningKey, type CliCredentials, type CliJwk, type CliSigningKey } from "./credentials";
 
-export interface DevMiniappAttestation {
-  packageName: string;
-  devServerUrl: string;
-  nonce: string;
-  expiresAt: string;
-  signingKeyId: string;
-  signature: string;
-}
-
 export async function ensureSigningKey(credentials: CliCredentials): Promise<CliSigningKey> {
   const stored = await loadSigningKey(credentials.coreUrl);
   if (stored && await remoteKeyIsActive(credentials, stored.signingKeyId)) return stored;
@@ -51,29 +42,6 @@ export function signBundleMetadata(input: {
     payload,
     signature: signPayload(input.signingKey.privateKeyJwk, payload),
   };
-}
-
-export function signDevAttestation(input: {
-  signingKey: CliSigningKey;
-  packageName: string;
-  devServerUrl: string;
-  ttlMs?: number;
-}): DevMiniappAttestation {
-  const payload = {
-    packageName: input.packageName,
-    devServerUrl: input.devServerUrl,
-    nonce: crypto.randomUUID(),
-    expiresAt: new Date(Date.now() + (input.ttlMs ?? 15 * 60_000)).toISOString(),
-    signingKeyId: input.signingKey.signingKeyId,
-  };
-  return {
-    ...payload,
-    signature: signPayload(input.signingKey.privateKeyJwk, payload),
-  };
-}
-
-export function encodeDevAttestation(attestation: DevMiniappAttestation): string {
-  return Buffer.from(JSON.stringify(attestation)).toString("base64url");
 }
 
 export function sha256Hex(bytes: Uint8Array): string {

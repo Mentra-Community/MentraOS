@@ -33,6 +33,7 @@ export type {
 export type {IslandNotification, IslandNotificationKind} from "./facades/notifications"
 export type {WifiSearchResult} from "./facades/glassesWifi"
 export type {IdentitySnapshot} from "./services/PairingIdentity"
+export type {PendingRunningUpdatePrompt, RunningUpdateFailure} from "./services/runningUpdatePrompt"
 export type {DisplayMirrorEvent} from "./facades/displayMirror"
 export type {
   IslandConfigureOptions,

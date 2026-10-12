@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import { DeveloperSigningKeyModel } from "../../models/developer-signing-key.model";
-import { MiniAppModel } from "../../models/miniapp.model";
 import type { DeveloperIdentity } from "./miniapp.service";
 
 export type DeveloperJwk = Record<string, unknown> & {
@@ -24,15 +23,6 @@ export interface BundleSignaturePayload {
 
 export interface SignedBundleMetadata {
   payload: BundleSignaturePayload;
-  signingKeyId: string;
-  signature: string;
-}
-
-export interface DevMiniappAttestation {
-  packageName: string;
-  devServerUrl: string;
-  nonce: string;
-  expiresAt: string;
   signingKeyId: string;
   signature: string;
 }
@@ -70,31 +60,6 @@ export class DeveloperSigningService {
     }
     verifySignature(key.publicKeyJwk as DeveloperJwk, metadata.payload, metadata.signature);
     await DeveloperSigningKeyModel.updateOne({ _id: metadata.signingKeyId }, { $set: { lastUsedAt: new Date() } });
-  }
-
-  async verifyDevAttestation(packageName: string, attestation: DevMiniappAttestation): Promise<void> {
-    const normalizedPackage = normalizePackageName(packageName);
-    if (attestation.packageName !== normalizedPackage) {
-      throw new DeveloperSigningServiceError("invalid_dev_attestation", "attestation packageName does not match request", 403);
-    }
-    if (!attestation.devServerUrl || !attestation.nonce) {
-      throw new DeveloperSigningServiceError("invalid_dev_attestation", "attestation is missing required fields", 400);
-    }
-    const expiresAt = Date.parse(attestation.expiresAt);
-    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-      throw new DeveloperSigningServiceError("dev_attestation_expired", "dev attestation expired", 403);
-    }
-    const key = await this.requireActiveKey(attestation.signingKeyId);
-    const app = await MiniAppModel.findOne({ packageName: normalizedPackage, status: { $ne: "archived" } }).lean();
-    if (!app || app.orgId !== key.orgId) {
-      throw new DeveloperSigningServiceError(
-        "dev_attestation_forbidden",
-        "signing key is not allowed to develop this package",
-        403,
-      );
-    }
-    verifySignature(key.publicKeyJwk as DeveloperJwk, attestationPayload(attestation), attestation.signature);
-    await DeveloperSigningKeyModel.updateOne({ _id: key._id }, { $set: { lastUsedAt: new Date() } });
   }
 
   private async requireActiveKey(signingKeyId: string) {
@@ -140,32 +105,10 @@ function verifySignature(publicKeyJwk: DeveloperJwk, payload: unknown, signature
   }
 }
 
-function attestationPayload(attestation: DevMiniappAttestation) {
-  return {
-    packageName: attestation.packageName,
-    devServerUrl: attestation.devServerUrl,
-    nonce: attestation.nonce,
-    expiresAt: attestation.expiresAt,
-    signingKeyId: attestation.signingKeyId,
-  };
-}
-
 function assertPublicEd25519Jwk(jwk: DeveloperJwk): void {
   if (!jwk || jwk.kty !== "OKP" || jwk.crv !== "Ed25519" || typeof jwk.x !== "string") {
     throw new DeveloperSigningServiceError("invalid_public_key", "publicKeyJwk must be an Ed25519 public JWK", 400);
   }
-}
-
-function normalizePackageName(packageName: string): string {
-  const normalized = packageName.trim().toLowerCase();
-  if (!/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(normalized)) {
-    throw new DeveloperSigningServiceError(
-      "invalid_package_name",
-      "package name must be lowercase reverse-DNS text",
-      400,
-    );
-  }
-  return normalized;
 }
 
 function assertPackagePrefix(prefix: string, packageName: string): void {

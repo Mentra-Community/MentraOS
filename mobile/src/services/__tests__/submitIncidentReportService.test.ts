@@ -79,6 +79,7 @@ it.each([
   {kind: "none"} as const,
   {kind: "pending", model: "Mentra Live"} as const,
   {kind: "paired", model: "Even Realities G1", name: "G1"} as const,
+  {kind: "paired", model: "Simulated Glasses", name: "Simulated Glasses"} as const,
 ])("requires only phone logs when no Mentra Live is paired: %j", async (identity) => {
   jest.mocked(projectPairingIdentity).mockReturnValue(identity)
   await expect(submitIncidentReport({failure_code: "entry_failed"})).resolves.toMatchObject({status: "filed"})

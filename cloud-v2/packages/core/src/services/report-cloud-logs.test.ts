@@ -92,6 +92,21 @@ describe('report server log parsing', () => {
     ].join('\n'), USER)).toEqual([]);
   });
 
+  test('keeps user-correlated audio feed diagnostics without admitting suffix-only or foreign rows', () => {
+    const feed = {
+      message: 'feed', module: 'audio-worker', seq: 128, payloadBytes: 120,
+      codec: 'lc3', hasDecoder: true, pcmBytes: 640, providers: 1,
+    };
+    const entries = parseServerLogs([
+      row({...feed, mentraUserId: USER}),
+      row({...feed, user: USER.slice(-6)}),
+      row({...feed, mentraUserId: OTHER_USER, user: USER.slice(-6)}),
+    ].join('\n'), USER);
+
+    expect(entries).toHaveLength(1);
+    expect(JSON.parse(entries[0]!.message)).toEqual({...feed, mentraUserId: USER});
+  });
+
   test('redacts opaque credentials in standard, camelCase and nested fields and message values', () => {
     const entries = parseServerLogs(row({
       mentraUserId: USER,
@@ -259,4 +274,22 @@ describe('report server log transport', () => {
       await expect(collectServerLogs({source: 'cloud', mentraUserId: USER, createdAt: CREATED_AT}, transport)).rejects.toThrow('timed out before receiving a response');
     } finally { timeout.mockRestore(); }
   });
+});
+
+test('miniapp collection requires structured identity and package, never text identity', () => {
+  const query = serverLogQuery('miniapp_server', 'dev', USER, CREATED_AT);
+  expect(query).toContain("notEmpty(JSONExtractString(raw,'packageName'))");
+  expect(query).not.toContain("JSONExtractString(raw,'userId')");
+  expect(query).not.toContain('position(');
+  const text = [
+    row({mentraUserId: USER, packageName: 'com.mentra.notes', message: 'note generated'}),
+    row({mentraUserId: USER, packageName: 'com.mentra.call', message: 'call ended'}),
+    row({mentraUserId: OTHER_USER, packageName: 'com.mentra.notes', message: USER}),
+    row({mentraUserId: USER, message: 'missing package'}),
+    row({mentraUserId: USER, packageName: '   ', message: 'invalid package'}),
+    row({userId: USER, packageName: 'com.mentra.notes', message: USER}),
+  ].join('\n');
+  const entries = parseServerLogs(text, USER, 'miniapp_server');
+  expect(entries).toHaveLength(2);
+  expect(entries.map(entry => JSON.parse(entry.message).packageName)).toEqual(['com.mentra.call', 'com.mentra.notes']);
 });

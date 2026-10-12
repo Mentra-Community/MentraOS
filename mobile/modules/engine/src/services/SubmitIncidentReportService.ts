@@ -2,13 +2,13 @@ import {reportAutomationCorrelation} from "@mentra/cloud-protocol/report-automat
 
 import {ReportCollectionError, reports, submitAutomaticReport, type ReportCollectionResult} from "../facades/reports"
 import {useSettingsStore} from "../stores/settings"
-import {DeviceTypes} from "../types"
 import {
   logAutomaticReportSubmissionStatus,
   toAutomaticReportSubmissionStatus,
   type AutomaticReportSubmissionStatus,
 } from "./AutomaticReportResult"
 import {projectPairingIdentity} from "./PairingIdentity"
+import {requiredDeviceReportLogSources} from "./reportLogSources"
 
 const LOG_TAG = "SubmitIncidentReport"
 export type IncidentReportResult = {
@@ -96,10 +96,7 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
     // A paired device remains required if it disconnects while collecting. A
     // selection that never completed pairing has no glasses logs to collect.
     const identity = projectPairingIdentity()
-    const sources =
-      identity.kind === "paired" && identity.model === DeviceTypes.LIVE
-        ? (["phone", "glasses", "glasses_firmware"] as const)
-        : (["phone"] as const)
+    const sources = requiredDeviceReportLogSources(identity)
     const actualBehavior = JSON.stringify({failureCode, failureMessage, testRunId, scenarioName, event}, null, 2)
     const submitResult = await submitAutomaticReport({
       kind: "automatic",

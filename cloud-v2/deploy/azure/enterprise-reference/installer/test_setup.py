@@ -27,6 +27,14 @@ class InstallerTests(unittest.TestCase):
         self.addCleanup(openssl.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        # Tests never reach Azure: an az call that a test forgot to replace fails here.
+        guard = Path(self.temp.name) / 'no-azure'
+        guard.mkdir()
+        (guard / 'az').write_text('#!/bin/sh\necho "Tests never call Azure: az $*" >&2\nexit 97\n')
+        (guard / 'az').chmod(0o755)
+        no_azure = patch.dict(os.environ, {'PATH': f"{guard}:{os.environ['PATH']}"})
+        no_azure.start()
+        self.addCleanup(no_azure.stop)
         self.directory = Path(self.temp.name) / 'state'
         self.directory.mkdir(mode=0o700)
         self.args = argparse.Namespace(json=True, config=None, dns_ready=False, grant_admin_consent=False)
@@ -169,8 +177,8 @@ class InstallerTests(unittest.TestCase):
 
     def test_generated_global_names_differ_for_same_deployment_name(self):
         args = argparse.Namespace(config=str(self.directory / 'answers.json'), json=True)
-        setup.write_json(args.config, dict(subscriptionId=SUB, tenantId=TENANT,
-                         deploymentId='acme-mentra', displayName='ACME', location='westus2', workspaceHostname=''))
+        setup.write_json(args.config, dict(subscriptionId=SUB, tenantId=TENANT, deploymentId='acme-mentra', displayName='ACME',
+                         location='westus2', workspaceHostname='', verifiedEmailDomains=['acme.example']))
         names = []
         for name in ('one', 'two'):
             directory = self.directory / name
@@ -184,6 +192,34 @@ class InstallerTests(unittest.TestCase):
             self.assertRegex(value['keyVaultName'], r'^kv[a-z0-9]{3,22}$')
         for index in range(3):
             self.assertNotEqual(names[0][index], names[1][index])
+
+    def test_email_domains_are_refused_by_name_until_canonical(self):
+        cases = (('Acme.com', 'lowercase: acme.com'), ('acme.com.', 'ends with a dot'),
+                 ('acme', 'not an email domain'), ('acme..com', 'not an email domain'),
+                 ('-acme.com', 'not an email domain'), ('acme_corp.com', 'not an email domain'),
+                 ('@acme.com', 'not an email domain'), ('https://acme.com', 'not an email domain'),
+                 ('a' * 64 + '.com', 'not an email domain'), ('.'.join(['a' * 60] * 5) + '.com', 'not an email domain'),
+                 ('acme.com,acme.com', 'listed twice'), ('mentra.glass', 'Mentra domain'),
+                 ('mentraglass.com', 'Mentra domain'), ('eu.mentra.glass', 'Mentra domain'),
+                 ('acme.com, corp.mentraglass.com', 'Mentra domain'))
+        for value, reason in cases:
+            bad = value.split(',')[-1].strip()
+            with self.subTest(value=value), self.assertRaises(setup.SetupError) as error:
+                setup.email_domains(value)
+            # The message names the value it refuses.
+            self.assertIn(reason, str(error.exception))
+            self.assertIn(f'"{bad}"', str(error.exception))
+        for value in ('', [], ' , '):
+            with self.subTest(value=value), self.assertRaisesRegex(setup.SetupError, 'at least one'):
+                setup.email_domains(value)
+        for value in ([42], {'acme.com': True}, 'acme.com'.encode()):
+            with self.subTest(value=value), self.assertRaisesRegex(setup.SetupError, 'list of domain names'):
+                setup.email_domains(value)
+
+    def test_valid_email_domains_keep_their_order(self):
+        self.assertEqual(setup.email_domains('acme.com, us.acme.com acme.co.uk'), ['acme.com', 'us.acme.com', 'acme.co.uk'])
+        self.assertEqual(setup.email_domains([' acme.com ', 'xn--bcher-kva.example', 'notmentra.glass', 'a-1.b2.io']),
+                         ['acme.com', 'xn--bcher-kva.example', 'notmentra.glass', 'a-1.b2.io'])
 
     def test_interrupted_identity_update_recovers_without_new_registrations(self):
         self.config['displayName'] = 'Example'
@@ -285,14 +321,17 @@ class InstallerTests(unittest.TestCase):
             calls.append(argv)
             return ''
         with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
-             patch.object(setup, 'run', side_effect=run), \
+             patch.object(setup, 'run', side_effect=run), patch.object(setup, 'ensure_portal_secret'), \
              patch.object(setup, 'deploy', side_effect=setup.SetupError('interrupted')):
             with self.assertRaisesRegex(setup.SetupError, 'interrupted'):
                 setup.install(self.args, self.directory, self.config, self.state)
         with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
              patch.object(setup, 'run', side_effect=run), patch.object(setup, 'deploy'), \
+             patch.object(setup, 'ensure_portal_secret') as portal_secret, \
              patch.object(setup, 'verify', return_value={'status': 'infrastructure_verified'}):
             self.assertEqual(setup.install(self.args, self.directory, self.config, self.state)['status'], 'infrastructure_verified')
+        # The admin portal's client secret is in Key Vault before Core is deployed to read it.
+        portal_secret.assert_called_once_with(self.directory, self.config, self.state)
         validate = [argv for argv in calls if '--validate-only' in argv]
         self.assertEqual(len(validate), 2)
         self.assertEqual(validate[0][-1], str(self.directory / 'deployment.config.json'))
@@ -444,47 +483,185 @@ class InstallerTests(unittest.TestCase):
                 setup.configure_mirror(self.args, self.directory, self.config, self.state)
         self.assertEqual(original, {p.name: p.read_bytes() for p in self.directory.glob('*.json')})
 
-    def admin_fixture(self):
+    def admin_context(self, deployed, ready_after_update=True, refused=False):
+        """Fake Core: `containerapp show` reports `deployed` until an update rolls out a new allowlist.
+
+        `refused` is what Core answers when setup probes a saved key (True: 401)."""
+        probe = patch.object(setup, 'admin_key_refused', return_value=refused)
+        self.probe = probe.start()
+        self.addCleanup(probe.stop)
         self.config.update(coreName='ca-test-core', keyVaultName='kvtest1234')
         self.state['binding'].update(coreName='ca-test-core', keyVaultName='kvtest1234')
         self.save()
         self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
         self.state['outputs'] = {'coreOrigin': 'https://core.example'}
+        core = {'env': deployed, 'revision': 'core--1', 'ready': 'core--1'}
         calls = []
+
         def azure(config, *args):
             calls.append(args)
+            if args[:2] == ('containerapp', 'update'):
+                core['env'] = args[args.index('--set-env-vars') + 1].split('=', 1)[1]
+                core['revision'] = 'core--2'
+                if ready_after_update:
+                    core['ready'] = 'core--2'
             if args[:2] == ('containerapp', 'show'):
-                return {'properties': {'template': {'containers': [{'env': [{'name': 'CLOUD_CORE_ADMIN_EMAILS', 'value': 'existing@example.com'}]}]}}}
+                return {'properties': {'latestRevisionName': core['revision'], 'latestReadyRevisionName': core['ready'],
+                                       'template': {'containers': [{'env': [
+                                           {'name': 'CLOUD_CORE_ADMIN_EMAILS', 'value': core['env']}]}]}}}
             return {}
-        return azure, calls
+        return calls, azure
 
-    def test_admin_key_reuses_key_vault_copy_and_preserves_existing_allowlist(self):
-        azure, calls = self.admin_fixture()
-        saved = {'value': 'msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.secret', 'tags': {'keyId': '01M3ZG55PT8Z7J3HFVFZ49QWPR'}}
-        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=saved), \
-             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script') as script, \
+    def allowlisted(self, allowlist):
+        self.config['coreAdminEmails'] = allowlist
+        self.save()
+        self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
+
+    def minted(self, key_id='01M3ZG55PT8Z7J3HFVFZ49QWPR'):
+        credential = dict(id=key_id, value='mak_local_' + key_id + '.' + 'a' * 43, adminEmail=setup.OPERATOR_EMAIL)
+        return argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(credential) + 'MENTRA_ADMIN_END')
+
+    @staticmethod
+    def vaulted(key_id, value):
+        return {'value': value, 'tags': {'keyId': key_id}}
+
+    def test_admin_bootstrap_allowlists_the_operator_before_minting_its_key(self):
+        legacy = 'api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local'
+        calls, azure = self.admin_context('existing@example.com,' + legacy)
+        revisions = []
+
+        def execute(config, current, owner, script):
+            revisions.append(current['properties']['latestReadyRevisionName'])
+            self.assertIn(b'createOperatorKey', script)
+            return self.minted()
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script', side_effect=execute), \
              patch.object(setup, 'check_admin_access') as access:
             result = setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
-        script.assert_not_called()
-        vault_set.assert_not_called()
-        access.assert_called_once_with('https://core.example', saved['value'])
-        self.assertIn('existing@example.com', self.config['coreAdminEmails'])
-        self.assertIn('api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local', self.config['coreAdminEmails'])
-        self.assertEqual(setup.digest(self.directory / 'deployment.config.json'), self.state['configHash'])
-        self.assertIn('az keyvault secret show --vault-name kvtest1234 --name mentra-admin-key', result['read'])
-        self.assertNotIn(saved['value'], json.dumps(result))
+        # Every address stays, an earlier installer's api-key@<keyId>.local included.
+        allowlist = legacy + ',existing@example.com,' + setup.OPERATOR_EMAIL
+        self.assertEqual(self.config['coreAdminEmails'], allowlist)
+        self.assertEqual([c for c in calls if c[:2] == ('containerapp', 'update')][0][-1], 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
+        # The key is minted only in the revision that allowlists its creator.
+        self.assertEqual(revisions, ['core--2'])
+        value = 'mak_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43
+        vault_set.assert_called_once_with(self.config, 'mentra-admin-key', value, keyId='01M3ZG55PT8Z7J3HFVFZ49QWPR')
+        access.assert_called_once_with('https://core.example', value)
+        self.assertEqual(result['status'], 'admin_key_ready')
+        self.assertNotIn(value, json.dumps(result))
+        self.assertNotIn(value, ''.join(p.read_text() for p in self.directory.glob('*.json')))
         self.assertFalse((self.directory / 'admin-key.json').exists())
+        self.assertEqual(setup.digest(self.directory / 'deployment.config.json'), self.state['configHash'])
 
-    def test_new_admin_key_goes_to_key_vault_not_disk(self):
-        azure, calls = self.admin_fixture()
-        credential = {'id': '01M3ZG55PT8Z7J3HFVFZ49QWPR', 'value': 'msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.secret'}
-        output = argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(credential) + 'MENTRA_ADMIN_END')
+    def test_admin_bootstrap_waits_for_the_allowlist_rollout(self):
+        calls, azure = self.admin_context('existing@example.com', ready_after_update=False)
         with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=None), \
-             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script', return_value=output), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script') as execute, \
+             patch.object(setup, 'CORE_REVISION_TIMEOUT_SECONDS', 0):
+            with self.assertRaises(setup.SetupError):
+                setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        execute.assert_not_called()
+        vault_set.assert_not_called()
+
+    def test_admin_bootstrap_reuses_the_key_vault_key_without_minting(self):
+        allowlist = 'existing@example.com,' + setup.OPERATOR_EMAIL
+        calls, azure = self.admin_context(allowlist)
+        self.allowlisted(allowlist)
+        value = 'mak_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43
+        with patch.object(setup, 'azure', side_effect=azure), \
+             patch.object(setup, 'vault_get', return_value=self.vaulted('01M3ZG55PT8Z7J3HFVFZ49QWPR', value)), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script') as execute, \
+             patch.object(setup, 'check_admin_access') as access:
+            result = setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        execute.assert_not_called()
+        vault_set.assert_not_called()
+        access.assert_called_once_with('https://core.example', value)
+        self.assertFalse([c for c in calls if c[:2] == ('containerapp', 'update')])
+        self.assertIn('az keyvault secret show --vault-name kvtest1234 --name mentra-admin-key', result['read'])
+        self.assertNotIn(value, json.dumps(result))
+
+    def test_admin_bootstrap_keeps_an_earlier_msk_key_while_its_address_is_allowlisted(self):
+        legacy = 'api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local'
+        allowlist = legacy + ',' + setup.OPERATOR_EMAIL
+        calls, azure = self.admin_context(allowlist)
+        self.allowlisted(allowlist)
+        value = 'msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43
+        with patch.object(setup, 'azure', side_effect=azure), \
+             patch.object(setup, 'vault_get', return_value=self.vaulted('01M3ZG55PT8Z7J3HFVFZ49QWPR', value)), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script') as execute, \
+             patch.object(setup, 'check_admin_access'):
+            result = setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        execute.assert_not_called()
+        vault_set.assert_not_called()
+        self.assertFalse([c for c in calls if c[:2] == ('containerapp', 'update')])
+        self.assertIn(legacy, result['next'])
+
+    def test_admin_bootstrap_takes_back_the_journaled_msk_key_core_still_accepts(self):
+        legacy = 'api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local'
+        calls, azure = self.admin_context(legacy + ',' + setup.OPERATOR_EMAIL)
+        credential = dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR', value='msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43,
+                          adminEmail=legacy)
+        returned = argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(credential) + 'MENTRA_ADMIN_END')
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script', return_value=returned), \
              patch.object(setup, 'check_admin_access'):
             setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
         vault_set.assert_called_once_with(self.config, 'mentra-admin-key', credential['value'], keyId=credential['id'])
-        self.assertNotIn(credential['value'], ''.join(p.read_text() for p in self.directory.glob('*.json')))
+
+    def test_admin_bootstrap_replaces_a_saved_key_core_refuses(self):
+        allowlist = 'existing@example.com,' + setup.OPERATOR_EMAIL
+        calls, azure = self.admin_context(allowlist, refused=True)
+        self.allowlisted(allowlist)
+        saved = self.vaulted('01M3ZG55PT8Z7J3HFVFZ49QWPR', 'mak_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43)
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=saved), \
+             patch.object(setup, 'vault_set') as vault_set, \
+             patch.object(setup, 'execute_admin_script', return_value=self.minted('01M49R16X16A5RK24C3ZB7J283')) as execute, \
+             patch.object(setup, 'check_admin_access') as access:
+            setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        self.probe.assert_called_once_with('https://core.example', saved['value'])
+        execute.assert_called_once()
+        value = 'mak_local_01M49R16X16A5RK24C3ZB7J283.' + 'a' * 43
+        vault_set.assert_called_once_with(self.config, 'mentra-admin-key', value, keyId='01M49R16X16A5RK24C3ZB7J283')
+        access.assert_called_once_with('https://core.example', value)
+
+    def test_admin_key_refused_only_on_401(self):
+        def raising(code):
+            def urlopen(request, timeout):
+                raise setup.urllib.error.HTTPError(request.full_url, code, 'status', {}, None)
+            return urlopen
+        with patch.object(setup.urllib.request, 'urlopen', side_effect=raising(401)):
+            self.assertTrue(setup.admin_key_refused('https://core.example', 'mak_local_x'))
+        for code in (403, 500, 503):
+            with patch.object(setup.urllib.request, 'urlopen', side_effect=raising(code)):
+                self.assertFalse(setup.admin_key_refused('https://core.example', 'mak_local_x'))
+        with patch.object(setup.urllib.request, 'urlopen', side_effect=OSError('offline')):
+            self.assertFalse(setup.admin_key_refused('https://core.example', 'mak_local_x'))
+
+    def test_admin_bootstrap_replaces_a_saved_key_whose_creator_is_not_allowlisted(self):
+        calls, azure = self.admin_context(setup.OPERATOR_EMAIL)
+        saved = self.vaulted('01M3ZG55PT8Z7J3HFVFZ49QWPR', 'msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43)
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=saved), \
+             patch.object(setup, 'vault_set') as vault_set, \
+             patch.object(setup, 'execute_admin_script', return_value=self.minted('01M49R16X16A5RK24C3ZB7J283')), \
+             patch.object(setup, 'check_admin_access'):
+            setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        vault_set.assert_called_once_with(self.config, 'mentra-admin-key', 'mak_local_01M49R16X16A5RK24C3ZB7J283.' + 'a' * 43,
+                                          keyId='01M49R16X16A5RK24C3ZB7J283')
+
+    def test_admin_bootstrap_rejects_a_credential_core_would_not_accept(self):
+        for value in ('msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43,  # its address is not allowlisted
+                      'mak_local_01M49R16X16A5RK24C3ZB7J283.' + 'a' * 43,  # another key's id
+                      'mak_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.secret'):
+            calls, azure = self.admin_context(setup.OPERATOR_EMAIL)
+            returned = argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(
+                dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR', value=value)) + 'MENTRA_ADMIN_END')
+            with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=None), \
+                 patch.object(setup, 'vault_set') as vault_set, \
+                 patch.object(setup, 'execute_admin_script', return_value=returned):
+                with self.assertRaises(setup.SetupError):
+                    setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+            vault_set.assert_not_called()
+
     def test_admin_allowlist_update_recovers_interrupted_checkpoint(self):
         self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
         self.save()

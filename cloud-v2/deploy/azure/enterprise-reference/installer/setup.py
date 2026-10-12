@@ -33,10 +33,23 @@ BINDING_KEYS = ('subscriptionId', 'tenantId', 'resourceGroup', 'registryName', '
                 'resourceTags', 'coreApiClientId', 'mobileClientId', 'keyVaultName')
 # Key Vault holds every original secret; nothing secret is stored locally.
 ADMIN_KEY_SECRET = 'mentra-admin-key'
-# Teams settings may be added after installation; resume rolls them out.
+# Teams settings, email domains and admin portal sign-in may be added after
+# installation; resume rolls them out.
 UPDATABLE_KEYS = {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId', 'teamsGraphClientId',
-                  'teamsGraphOrganizerId'}
+                  'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn'}
 GUID = re.compile(r'^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$')
+# Admin portal sign-in: Core signs people in as the Core API app, with this client
+# secret from Key Vault, and Entra returns them to this path on Core's host.
+PORTAL_SECRET = 'entra-browser-client-secret'
+PORTAL_SECRET_LABEL = 'Mentra admin portal'
+PORTAL_CALLBACK = '/api/admin/auth/callback'
+PORTAL_STEP = 'Admin portal sign-in'
+SIGN_IN_SCOPES = ('openid', 'email', 'profile')
+# Core treats an Entra email as verified only in the organization's own domains,
+# and refuses Mentra's.
+MENTRA_EMAIL_DOMAINS = ('mentra.glass', 'mentraglass.com')
+DOMAIN_LABEL = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?')
+EMAIL_DOMAINS_PROMPT = 'Email domains your Microsoft Entra directory issues, comma-separated (list each subdomain)'
 
 
 class SetupError(Exception):
@@ -407,7 +420,7 @@ DATA_LOCATIONS = {'canada': 'Canada', 'brazil': 'Brazil', 'uk': 'UK', 'australia
 RESTORED_KEYS = ('registryName', 'keyVaultName', 'environmentName', 'runtimeName', 'coreName', 'coreIdentityName',
                  'runtimeIdentityName', 'communicationName', 'location', 'tenantId', 'coreApiClientId', 'mobileClientId', 'coreAdminEmails', 'workspaceHostname',
                  'workspaceCertificateName', 'additionalWorkspaceDomains', 'displayName', 'communicationDataLocation',
-                 'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId',
+                 'teamsGraphTenantId', 'teamsGraphClientId', 'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn',
                  'miniappConfiguration', 'allowedGlassesModels', 'telemetryEnabled', 'privacyPolicyUrl',
                  'termsOfServiceUrl', 'documentationUrl', 'supportUrl', 'mongoAccountName', 'reportStorageAccountName')
 # Restored even when empty: an empty value there is a deliberate choice.
@@ -437,6 +450,51 @@ def clean_answer(key, value):
             return None
         return value
     return value
+
+
+def email_domains(value):
+    """The organization's email domains in the form Core requires. A SetupError names any value refused."""
+    if isinstance(value, str):
+        value = value.replace(',', ' ').split()
+    if not isinstance(value, list) or not all(isinstance(domain, str) for domain in value):
+        raise SetupError('Email domains must be a list of domain names, such as ["acme.com"].')
+    domains = []
+    for domain in (item.strip() for item in value):
+        if domain.endswith('.'):
+            raise SetupError(f'Email domain "{domain}" ends with a dot; enter it without the dot.')
+        if domain != domain.lower():
+            raise SetupError(f'Email domain "{domain}" must be lowercase: {domain.lower()}')
+        if len(domain) > 253 or '.' not in domain or not all(DOMAIN_LABEL.fullmatch(label) for label in domain.split('.')):
+            raise SetupError(f'"{domain}" is not an email domain such as acme.com: use letters, digits and hyphens, '
+                             'with at least one dot.')
+        if any(domain == mentra or domain.endswith('.' + mentra) for mentra in MENTRA_EMAIL_DOMAINS):
+            raise SetupError(f'"{domain}" is a Mentra domain; list only your organization\'s email domains.')
+        if domain in domains:
+            raise SetupError(f'Email domain "{domain}" is listed twice.')
+        domains.append(domain)
+    if not domains:
+        raise SetupError('Enter at least one email domain, such as acme.com.')
+    return domains
+
+
+def suggested_email_domain(account):
+    # The signed-in administrator's own domain, unless they are a guest here.
+    name = (account.get('user') or {}).get('name') or ''
+    if '@' not in name or '#ext#' in name.lower():
+        return ''
+    try:
+        return email_domains([name.rsplit('@', 1)[1].lower()])[0]
+    except SetupError:
+        return ''
+
+
+def ask_email_domains(default=''):
+    while True:
+        answer = input(EMAIL_DOMAINS_PROMPT + (f' [{default}]' if default else '') + ': ').strip() or default
+        try:
+            return email_domains(answer)
+        except SetupError as error:
+            print(f'  {error}')
 
 
 ANSWER_HELP = {'subscriptionId': 'an Azure subscription ID (a UUID)', 'tenantId': 'a Microsoft Entra tenant ID (a UUID)',
@@ -524,6 +582,15 @@ def init(args, directory):
                 inputs[key] = value
                 break
             print(f'  Please enter {ANSWER_HELP[key]}.')
+    # Organization Admins sign in to the admin portal with an email in one of these.
+    domains = getattr(args, 'email_domains', None) or inputs.get('verifiedEmailDomains')
+    if domains is not None:
+        inputs['verifiedEmailDomains'] = email_domains(domains)
+    elif interactive:
+        inputs['verifiedEmailDomains'] = ask_email_domains(suggested_email_domain(account))
+    else:
+        raise SetupError('verifiedEmailDomains is required in --config for unattended initialization: '
+                         'the email domains your Entra directory issues, such as ["acme.com"].')
     if inputs.get('subscriptionId') is None or not GUID.fullmatch(inputs.get('subscriptionId', '')):
         raise SetupError('subscriptionId must be a UUID')
     for key in ('coreApiClientId', 'mobileClientId'):
@@ -854,6 +921,7 @@ def install(args, directory, config, state):
     run(['bash', str(ROOT / 'scripts/deploy.sh'), '--validate-only', str(directory / 'deployment.config.json')],
         env=environment(config), explain=True)
     ensure_group(config, state, checks)
+    ensure_portal_secret(directory, config, state)
     domain_verified = state.get('domainVerified', False)
     checkpoint(directory, state, 'deploying', configHash=digest(directory / 'deployment.config.json'))
     if config['workspaceHostname']:
@@ -1002,46 +1070,114 @@ def execute_admin_script(config, current, owner, script):
     return result
 
 
+# The identity installer/admin-key.ts mints the operator key as; keep both in sync.
+# An operator key works only while its creator's email is in CLOUD_CORE_ADMIN_EMAILS.
+OPERATOR_EMAIL = 'operator@private-cloud.local'
+# The installer mints mak_ operator keys. An msk_ administrator key from an earlier
+# installer is an operator key too, created by its own address, api-key@<keyId>.local.
+OPERATOR_KEY = re.compile(r'(mak|msk)_local_([0-9A-HJKMNP-TV-Z]{26})\.[A-Za-z0-9_-]{43}')
+CORE_REVISION_TIMEOUT_SECONDS = 900
+
+
+def operator_key_creator(prefix, key_id):
+    return OPERATOR_EMAIL if prefix == 'mak' else 'api-key@' + key_id + '.local'
+
+
+def core_admin_emails(current):
+    return next((entry.get('value', '') for entry in current['properties']['template']['containers'][0]['env']
+                 if entry['name'] == 'CLOUD_CORE_ADMIN_EMAILS'), '')
+
+
+def admin_allowlist(*values):
+    emails = {email.strip() for value in values for email in value.split(',')}
+    return ','.join(sorted(email for email in emails if email))
+
+
+def working_key(credential, allowlist):
+    """The saved key's creator when its creator is allowlisted, so Core accepts it; otherwise None."""
+    key = OPERATOR_KEY.fullmatch(credential.get('value', ''))
+    if not key or credential.get('id') != key.group(2):
+        return None
+    creator = operator_key_creator(key.group(1), key.group(2))
+    listed = {email.strip().lower() for email in allowlist.split(',')}
+    return creator if creator.lower() in listed else None
+
+
+def wait_for_core_allowlist(config, allowlist):
+    import time
+    deadline = time.monotonic() + CORE_REVISION_TIMEOUT_SECONDS
+    while True:
+        current = azure(config, 'containerapp', 'show', '--name', config['coreName'], '--resource-group', config['resourceGroup'])
+        properties = current['properties']
+        if (properties.get('latestReadyRevisionName') == properties.get('latestRevisionName')
+                and core_admin_emails(current) == allowlist):
+            return current
+        if time.monotonic() >= deadline:
+            raise SetupError('Core has not finished rolling out the administrator allowlist. Retry bootstrap-admin.')
+        time.sleep(10)
+
+
 def bootstrap_admin(args, directory, config, state):
     # The administrator key lives in Key Vault. Core's own journal returns the
     # same key if this is retried before the Key Vault write completes.
     if not state.get('outputs', {}).get('coreOrigin'):
         raise SetupError('Deploy Core before creating its administrator key')
     current = azure(config, 'containerapp', 'show', '--name', config['coreName'], '--resource-group', config['resourceGroup'])
+    deployed = core_admin_emails(current)
+    allowlist = admin_allowlist(deployed, config.get('coreAdminEmails', ''), OPERATOR_EMAIL)
+    # Preserve the setting in installer configuration so later setup runs retain it.
+    if config.get('coreAdminEmails', '') != allowlist:
+        update_configuration(directory, config, state, coreAdminEmails=allowlist)
+    if deployed != allowlist:
+        # Core mints an operator key only for an Organization Admin, so the
+        # installer identity must be allowlisted in the revision that runs it.
+        azure(config, 'containerapp', 'update', '--name', config['coreName'], '--resource-group', config['resourceGroup'],
+              '--set-env-vars', 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
+        current = wait_for_core_allowlist(config, allowlist)
     saved = vault_get(config, ADMIN_KEY_SECRET)
-    if saved:
-        credential = {'id': (saved.get('tags') or {}).get('keyId', ''), 'value': saved.get('value', '')}
-    else:
+    credential = {'id': (saved.get('tags') or {}).get('keyId', ''), 'value': saved.get('value', '')} if saved else {}
+    creator = working_key(credential, allowlist)
+    if creator and admin_key_refused(state['outputs']['coreOrigin'], credential['value']):
+        # Allowlisted but refused: revoked in the admin portal, say. admin-key.ts replaces it.
+        creator = None
+    if not creator:
+        # No key yet, a saved key whose creator is not allowlisted, or one Core refuses.
+        # Core returns the journaled key while it still works, and mints a mak_ key otherwise.
         result = execute_admin_script(config, current, state['owner'], (ROOT / 'installer/admin-key.ts').read_bytes())
         match = re.search(r'MENTRA_ADMIN_BEGIN(.*?)MENTRA_ADMIN_END', result.stdout, re.S)
         if not match:
             raise SetupError('Core admin bootstrap did not return a credential. Check the selected Core revision; raw output withheld.')
         credential = json.loads(match.group(1))
-    if not re.fullmatch(r'[0-9A-HJKMNP-TV-Z]{26}', credential.get('id', '')) or not credential.get('value', '').startswith('msk_local_'):
-        raise SetupError('Core returned an invalid administrator credential')
-    if not saved:
+        creator = working_key(credential, allowlist)
+        if not creator:
+            raise SetupError('Core returned an invalid administrator credential')
+    if not saved or saved.get('value') != credential['value']:
         vault_set(config, ADMIN_KEY_SECRET, credential['value'], keyId=credential['id'])
-    email = 'api-key@' + credential['id'] + '.local'
-    values = next((entry.get('value', '') for entry in current['properties']['template']['containers'][0]['env']
-                   if entry['name'] == 'CLOUD_CORE_ADMIN_EMAILS'), '')
-    emails = sorted(set(filter(None, (values + ',' + config.get('coreAdminEmails', '') + ',' + email).split(','))))
-    allowlist = ','.join(emails)
-    if allowlist != values:
-        # Preserve the setting in installer configuration so later resume retains it.
-        update_configuration(directory, config, state, coreAdminEmails=allowlist)
-        azure(config, 'containerapp', 'update', '--name', config['coreName'], '--resource-group', config['resourceGroup'],
-              '--set-env-vars', 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
     check_admin_access(state['outputs']['coreOrigin'], credential['value'])
     checkpoint(directory, state, state['phase'], adminKey={'keyVault': config['keyVaultName'], 'secret': ADMIN_KEY_SECRET,
                                                             'keyId': credential['id'], 'verifiedAt': now()})
     return {'status': 'admin_key_ready', 'keyVault': config['keyVaultName'], 'secret': ADMIN_KEY_SECRET,
             'read': admin_key_command(config),
-            'next': 'Use this key as MENTRA_ADMIN_TOKEN to retrieve feedback reports.'}
+            'next': 'Use this key as MENTRA_ADMIN_TOKEN to retrieve feedback reports. '
+                    'It works while ' + creator + ' stays in coreAdminEmails.'}
 
 
 def admin_key_command(config):
     return (f"az keyvault secret show --vault-name {config['keyVaultName']} --name {ADMIN_KEY_SECRET} "
             f"--subscription {config['subscriptionId']} --query value --output tsv")
+
+
+def admin_key_refused(core_origin, token):
+    """True only when Core answers 401 for the key: it is revoked, expired or unknown. Anything else is not a refusal."""
+    request = urllib.request.Request(core_origin.rstrip('/') + '/api/admin/reports?limit=1',
+                                     headers={'Authorization': 'Bearer ' + token})
+    try:
+        with urllib.request.urlopen(request, timeout=30):
+            return False
+    except urllib.error.HTTPError as error:
+        return error.code == 401
+    except (OSError, http.client.HTTPException):
+        return False
 
 
 def check_admin_access(core_origin, token, attempts=30, wait=10):
@@ -1090,6 +1226,8 @@ def configure_entra(args, directory, config, state):
             argv += [flag, config[field]]
     if args.grant_admin_consent:
         argv.append('--grant-admin-consent')
+    # The helper's own progress goes to stderr, which run() keeps for error reports.
+    print('  This can take a few minutes while Microsoft Entra catches up...', flush=True)
     result = json.loads(run(argv, env=environment(config), explain=True))
     if result['tenantId'].lower() != config['tenantId'].lower():
         raise SetupError('Entra helper returned another tenant')
@@ -1169,15 +1307,18 @@ def vault_az(config, *args, missing_ok=False):
             return json.loads(result.stdout or 'null')
         if missing_ok and 'SecretNotFound' in result.stderr:
             return None
-        # Role propagation shows as ForbiddenByRbac (or a bare Forbidden on older CLIs);
-        # a firewall or policy block will not clear by waiting.
+        # Role propagation shows as ForbiddenByRbac (or a bare Forbidden on older CLIs), and
+        # a new vault's name can take a moment to resolve. A firewall or policy block will
+        # not clear by waiting.
         rbac = 'ForbiddenByRbac' in result.stderr or ('Forbidden' in result.stderr and 'ForbiddenBy' not in result.stderr)
-        if not rbac:
+        resolving = re.search(r'getaddrinfo|Name or service not known|nodename nor servname|Failed to establish a new connection',
+                              result.stderr)
+        if not (rbac or resolving):
             reason = next((line for line in result.stderr.splitlines() if line.startswith('ERROR')), 'no details')
             raise SetupError(f"Key Vault {config['keyVaultName']} refused the request: {reason[:300]}")
         if attempt + 1 == VAULT_RETRIES:
             break
-        if not granted:
+        if rbac and not granted:
             grant_vault_access(config)
             granted = True
         time.sleep(RETRY_SECONDS)
@@ -1192,6 +1333,16 @@ def grant_vault_access(config):
         path = Path(temp) / 'deployment.config.json'
         write_json(path, config)
         run(['bash', str(ROOT / 'scripts/deploy.sh'), '--bootstrap-only', str(path)], env=environment(config), explain=True)
+
+
+def ensure_vault(config):
+    # The ownership template creates the vault. deploy.sh applies that template
+    # too, so on a first install this only runs it a step earlier.
+    found = subprocess.run(['az', 'keyvault', 'show', '--name', config['keyVaultName'], '--resource-group',
+                            config['resourceGroup'], '--subscription', config['subscriptionId'], '--output', 'none'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if found.returncode:
+        grant_vault_access(config)
 
 
 def vault_get(config, name):
@@ -1277,6 +1428,72 @@ def graph_filter(collection, expression, select=''):
 def service_principal(config, app_id, select='id,appRoles,appRoleAssignmentRequired'):
     found = graph(config, 'GET', graph_filter('servicePrincipals', f"appId eq {odata(app_id)}", select))['value']
     return found[0] if found else None
+
+
+def core_app(config, select):
+    found = graph(config, 'GET', graph_filter('applications', f"appId eq {odata(config['coreApiClientId'])}", select))['value']
+    if not found:
+        raise SetupError(f"The Core app {config['coreApiClientId']} is not an app registration in tenant {config['tenantId']}.")
+    return found[0]
+
+
+def operator_object_id(config):
+    # The signed-in operator's object ID in the deployment tenant, from their Graph token; '' if unknown.
+    try:
+        payload = graph_token(config['tenantId']).split('.')[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
+    except (GraphError, IndexError, ValueError, AttributeError):
+        return ''
+    oid = str(claims.get('oid', '')) if isinstance(claims, dict) else ''
+    return oid if GUID.fullmatch(oid) else ''
+
+
+def add_client_secret(config, app_object_id, secret_name, label):
+    """Adds a client secret to an app registration and stores it in Key Vault at once; returns its expiry."""
+    expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    label = f'{label} {uuid.uuid4().hex[:8]}'
+    try:
+        password = graph(config, 'POST', f'applications/{app_object_id}/addPassword',
+                         {'passwordCredential': {'displayName': label, 'endDateTime': expires}})
+    except GraphError:
+        # Graph may have created it without its reply reaching us; its secret is lost, so remove it.
+        with contextlib.suppress(GraphError, KeyError, TypeError):
+            for credential in graph(config, 'GET', f'applications/{app_object_id}?$select=passwordCredentials')['passwordCredentials']:
+                if credential.get('displayName') == label:
+                    graph(config, 'POST', f'applications/{app_object_id}/removePassword', {'keyId': credential['keyId']})
+        raise
+    try:
+        vault_set(config, secret_name, password['secretText'])
+    except BaseException:
+        # The one-time secret is gone; remove its credential instead of leaking it.
+        with contextlib.suppress(GraphError):
+            graph(config, 'POST', f'applications/{app_object_id}/removePassword', {'keyId': password['keyId']})
+        raise
+    return expires
+
+
+def ensure_portal_secret(directory, config, state):
+    # Core reads the Core API app's client secret for admin portal sign-in from
+    # Key Vault, so it must be there before Core is granted it and deployed with
+    # sign-in on (adminPortalSignIn).
+    ensure_vault(config)
+    if not vault_get(config, PORTAL_SECRET):
+        print('  Creating the client secret for admin portal sign-in; it goes straight to Key Vault...')
+        try:
+            expires = add_client_secret(config, core_app(config, 'id')['id'], PORTAL_SECRET, PORTAL_SECRET_LABEL)
+        except GraphError as error:
+            if error.code not in (401, 403):
+                raise
+            raise SetupError(
+                f"Your account cannot add a client secret to the Core app {config['coreApiClientId']} for admin portal "
+                'sign-in. An Application Administrator or Cloud Application Administrator makes you one of its owners, '
+                f"in Cloud Shell signed in to tenant {config['tenantId']}:\n"
+                f"    az ad app owner add --id {config['coreApiClientId']} "
+                f"--owner-object-id {operator_object_id(config) or 'YOUR_OBJECT_ID'}\n"
+                'Then run setup again.') from None
+        checkpoint(directory, state, state['phase'], adminPortal=dict(state.get('adminPortal') or {}, secretExpires=expires))
+    if config.get('adminPortalSignIn') is not True:
+        update_configuration(directory, config, state, adminPortalSignIn=True)
 
 
 # --- Plan: Azure's own what-if preview, summarized -------------------------
@@ -1437,19 +1654,46 @@ def ensure_providers(config, interactive):
 
 
 def grant_admin_consent(config):
-    run(['bash', str(ROOT / 'scripts/configure-entra.sh'), '--consent-only', '--mobile-client-id', config['mobileClientId']],
-        env=environment(config), explain=True)
+    run(['bash', str(ROOT / 'scripts/configure-entra.sh'), '--consent-only', '--mobile-client-id', config['mobileClientId'],
+         '--core-client-id', config['coreApiClientId']], env=environment(config), explain=True)
+
+
+def consented_scopes(config, sp_id):
+    grants = graph(config, 'GET', f'servicePrincipals/{sp_id}/oauth2PermissionGrants')['value']
+    return ' '.join(g.get('scope', '') for g in grants if g.get('consentType') == 'AllPrincipals').split()
+
+
+CONSENT_STEP = 'Admin consent'
+
+
+def ensure_admin_consent(config, consented, interactive):
+    """Grants tenant-wide consent for the sign-in apps when it is missing; returns the step left, if any."""
+    if consented:
+        return []
+    if confirm('Grant tenant-wide consent for the Mentra sign-in apps now? (needs an Entra admin role)', True, interactive):
+        try:
+            # Success means consent was granted; Graph can take a while to list it.
+            grant_admin_consent(config)
+            return []
+        except SetupError:
+            pass
+    return [{'step': CONSENT_STEP, 'action': 'A Global Administrator, Privileged Role Administrator or '
+             'Cloud Application Administrator opens these pages and selects "Grant admin consent" on each: '
+             f"{permissions_page(config['mobileClientId'])} and {permissions_page(config['coreApiClientId'])}"}]
 
 
 def mobile_access(config):
     sp = service_principal(config, config['mobileClientId'], 'id,appRoleAssignmentRequired')
     if not sp:
         return {'servicePrincipalId': None, 'consent': False, 'assigned': False}
-    grants = graph(config, 'GET', f"servicePrincipals/{sp['id']}/oauth2PermissionGrants")['value']
-    scopes = ' '.join(g.get('scope', '') for g in grants if g.get('consentType') == 'AllPrincipals').split()
+    scopes = consented_scopes(config, sp['id'])
     assigned = graph(config, 'GET', f"servicePrincipals/{sp['id']}/appRoleAssignedTo?$top=1")['value']
+    # The admin portal signs in through the Core app, which needs the OpenID sign-in scopes.
+    core = service_principal(config, config['coreApiClientId'], 'id')
+    core_scopes = consented_scopes(config, core['id']) if core else []
     return {'servicePrincipalId': sp['id'], 'assigned': bool(assigned),
-            'consent': all(s in scopes for s in ('mentra.session', 'Teams.ManageCalls', 'Teams.ManageChats'))}
+            'consent': all(s in scopes for s in ('mentra.session', 'Teams.ManageCalls', 'Teams.ManageChats'))
+            and all(s in core_scopes for s in SIGN_IN_SCOPES)}
 
 
 def resolve_principal(config, entry):
@@ -1503,13 +1747,15 @@ def assign_employees(config, sp_id, entries):
     return assigned, problems
 
 
-def entra_handoff(config, state):
+def entra_handoff(config, state, operator=''):
     # For an Entra administrator; setup itself only needs the two IDs it prints.
+    # Owning Core lets the operator add its admin portal client secret and redirect.
+    owner = f' --core-owner {operator}' if operator else ''
     return {'step': 'Sign-in apps', 'action': (
         'A Global Administrator, Application Administrator or Cloud Application Administrator runs this in Cloud Shell, '
         f"signed in to tenant {config['tenantId']}:\n"
         f'    ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh --core-name {shlex.quote(app_name(config, "Core"))} '
-        f'--mobile-name {shlex.quote(app_name(config, "Mobile"))} --installer-owner {state["owner"]} --grant-admin-consent\n'
+        f'--mobile-name {shlex.quote(app_name(config, "Mobile"))} --installer-owner {state["owner"]}{owner} --grant-admin-consent\n'
         '  If that is you, run it here. Anyone else first downloads the installer with the guide\'s install command, '
         'ending in "&& MENTRA_START=0 bash mentra-install.sh".\n'
         f'  It prints coreApiClientId and mobileClientId. Then run: {setup_command()} configure-entra '
@@ -1530,18 +1776,7 @@ def entra_handoffs(args, config, interactive):
             access = mobile_access(config)
     except GraphError:
         return [{'step': 'Employee sign-in', 'action': 'Setup could not read the Entra applications. An Entra administrator should grant admin consent and assign employees to the Mobile application.'}]
-    consent_url = permissions_page(config['mobileClientId'])
-    if not access['consent']:
-        if confirm('Grant tenant-wide consent for the Mentra sign-in app now? (needs an Entra admin role)', True, interactive):
-            try:
-                # Success means consent was granted; Graph can take a while to list it.
-                grant_admin_consent(config)
-                access['consent'] = True
-            except SetupError:
-                pass
-        if not access['consent']:
-            handoffs.append({'step': 'Admin consent', 'action': 'A Global Administrator, Privileged Role Administrator or '
-                             'Cloud Application Administrator opens this page and selects "Grant admin consent": ' + consent_url})
+    handoffs.extend(ensure_admin_consent(config, access['consent'], interactive))
     sp_id = access['servicePrincipalId']
     portal = (f'https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ManagedAppMenuBlade/~/Users/objectId/{sp_id}'
               f"/appId/{config['mobileClientId']}" if sp_id else
@@ -1561,6 +1796,77 @@ def entra_handoffs(args, config, interactive):
     if not access['assigned']:
         handoffs.append({'step': 'Employee access', 'action': 'Add employees or groups under Users and groups: ' + portal})
     return handoffs
+
+
+# --- Admin portal sign-in ---------------------------------------------------
+
+def portal_configured(app, graph_sp, redirect):
+    if not app or not graph_sp:
+        return False
+    sign_in = {s.get('id') for s in graph_sp.get('oauth2PermissionScopes') or [] if s.get('value') in SIGN_IN_SCOPES}
+    declared = {a.get('id') for r in app.get('requiredResourceAccess') or [] if r.get('resourceAppId') == GRAPH_APP_ID
+                for a in r.get('resourceAccess') or []}
+    return (redirect in ((app.get('web') or {}).get('redirectUris') or [])
+            and any(c.get('name') == 'email' for c in (app.get('optionalClaims') or {}).get('idToken') or [])
+            and len(sign_in) == len(SIGN_IN_SCOPES) and sign_in <= declared)
+
+
+def portal_handoff(config, core):
+    return {'step': PORTAL_STEP, 'action': (
+        'An Application Administrator or Cloud Application Administrator runs this in Cloud Shell, '
+        f"signed in to tenant {config['tenantId']}, then you run setup again:\n"
+        f"    ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh --admin-portal-only "
+        f"--core-client-id {config['coreApiClientId']} --admin-portal-url {core} --grant-admin-consent")}
+
+
+def admin_portal(directory, config, state):
+    """Registers admin portal sign-in on the Core app once Core's address exists; returns any step left."""
+    core = state.get('outputs', {}).get('coreOrigin')
+    if not core or config.get('adminPortalSignIn') is not True:
+        return []
+    try:
+        app = core_app(config, 'id,web,optionalClaims,requiredResourceAccess,passwordCredentials')
+        graph_sp = service_principal(config, GRAPH_APP_ID, 'id,oauth2PermissionScopes')
+    except SetupError:
+        app = graph_sp = None
+    if not portal_configured(app, graph_sp, core + PORTAL_CALLBACK):
+        try:
+            run(['bash', str(ROOT / 'scripts/configure-entra.sh'), '--admin-portal-only', '--core-client-id',
+                 config['coreApiClientId'], '--admin-portal-url', core], env=environment(config), explain=True)
+        except SetupError as error:
+            print(f'  Setup could not configure it with your account: {error}')
+            return [portal_handoff(config, core)]
+    portal = dict(state.get('adminPortal') or {}, url=core + '/')
+    expires = max((c.get('endDateTime') or '' for c in (app or {}).get('passwordCredentials') or []
+                   if (c.get('displayName') or '').startswith(PORTAL_SECRET_LABEL)), default='')
+    if expires:
+        portal['secretExpires'] = expires
+    checkpoint(directory, state, state['phase'], adminPortal=portal)
+    return []
+
+
+def other_handoffs(state, step):
+    return [h for h in state.get('handoffs') or [] if h.get('step') != step]
+
+
+def update_email_domains(args, directory, config, state, interactive):
+    """Applies --email-domains, or asks a deployment that has none. True when the domains changed."""
+    if getattr(args, 'email_domains', None):
+        domains = email_domains(args.email_domains)
+    elif 'verifiedEmailDomains' not in config and interactive:
+        section(PORTAL_STEP)
+        print('Organization Admins sign in to the admin portal with their work account. Core trusts their email only '
+              'in your own domains.')
+        domains = ask_email_domains(suggested_email_domain(signed_in_account()))
+    else:
+        return False
+    if domains == config.get('verifiedEmailDomains'):
+        return False
+    if state['phase'] == 'infrastructure_verified':
+        # The next install rolls the new domains out to Core.
+        checkpoint(directory, state, 'deploying')
+    update_configuration(directory, config, state, verifiedEmailDomains=domains)
+    return True
 
 
 # --- DNS --------------------------------------------------------------------
@@ -1674,25 +1980,7 @@ def create_meetings_app(directory, config, state):
             time.sleep(ENTRA_RETRY_SECONDS)
     expires = None
     if not vault_get(config, teams_secret(app['appId'])):
-        expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=730)).strftime('%Y-%m-%dT%H:%M:%SZ')
-        label = f'Mentra Private Cloud {uuid.uuid4().hex[:8]}'
-        try:
-            password = graph(config, 'POST', f"applications/{app['id']}/addPassword",
-                             {'passwordCredential': {'displayName': label, 'endDateTime': expires}})
-        except GraphError:
-            # Graph may have created it without its reply reaching us; its secret is lost, so remove it.
-            with contextlib.suppress(GraphError, KeyError, TypeError):
-                for credential in graph(config, 'GET', f"applications/{app['id']}?$select=passwordCredentials")['passwordCredentials']:
-                    if credential.get('displayName') == label:
-                        graph(config, 'POST', f"applications/{app['id']}/removePassword", {'keyId': credential['keyId']})
-            raise
-        try:
-            vault_set(config, teams_secret(app['appId']), password['secretText'])
-        except BaseException:
-            # The one-time secret is gone; remove its credential instead of leaking it.
-            with contextlib.suppress(GraphError):
-                graph(config, 'POST', f"applications/{app['id']}/removePassword", {'keyId': password['keyId']})
-            raise
+        expires = add_client_secret(config, app['id'], teams_secret(app['appId']), 'Mentra Private Cloud')
     return app['appId'], consent, expires
 
 
@@ -1739,23 +2027,81 @@ def meetings_consent(config, client_id):
         return None
 
 
+TEAMS_ADMIN_API = '48ac35b8-9aa8-4d74-927d-1f4a14a0b239'  # Skype and Teams Tenant Admin API
+
+
 def teams_policy_commands(client_id, organizer_id, tenant_id, previous_client_id=''):
+    """A Teams administrator's PowerShell for meeting creation, safe to run more than once.
+
+    Setup runs it with the signed-in account's tokens; anyone else runs it in
+    Cloud Shell's PowerShell and signs in with a device code.
+    """
     add = f"Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Add='{client_id}'}}"
-    commands = ['Install-Module MicrosoftTeams -Scope CurrentUser -Force   # first time only',
-                f'Connect-MicrosoftTeams -TenantId {tenant_id} -UseDeviceAuthentication',
-                '# Create the MentraMeetings policy, or add this app to it:',
-                f'if (Get-CsApplicationAccessPolicy -Identity MentraMeetings -ErrorAction SilentlyContinue) '
-                f'{{ {add} }} else {{ New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id} }}']
+    commands = ['# Lets the Mentra meetings app create Teams meetings for your employees. Run it once as a Teams administrator.',
+                'if (-not (Get-Module -ListAvailable MicrosoftTeams)) { Install-Module MicrosoftTeams -Scope CurrentUser -Force }',
+                '# Loading the module can report that PowerShell remoting is unavailable; that is harmless here.',
+                'Import-Module MicrosoftTeams -ErrorAction SilentlyContinue',
+                "$ErrorActionPreference = 'Stop'",
+                '# Setup passes tokens outside Cloud Shell; Cloud Shell signs in as you; elsewhere, a device code.',
+                'if ($env:MENTRA_GRAPH_TOKEN) { Connect-MicrosoftTeams -AccessTokens @($env:MENTRA_GRAPH_TOKEN, $env:MENTRA_TEAMS_TOKEN) | Out-Null }',
+                'elseif ($env:ACC_CLOUD) { Connect-MicrosoftTeams -Identity | Out-Null }',
+                f'else {{ Connect-MicrosoftTeams -TenantId {tenant_id} -UseDeviceAuthentication | Out-Null }}',
+                f"$app = '{client_id}'",
+                '# Teams reports a missing policy as an error.',
+                '$existing = try { Get-CsApplicationAccessPolicy -Identity MentraMeetings } catch { $null }',
+                '# Granting to everyone copies MentraMeetings into Global, so Mentra\'s own apps never count as another policy.',
+                f"$mentra = @($app, '{previous_client_id}') + @($existing.AppIds)",
+                '# The policy is granted to everyone, so never take the place of another app\'s policy.',
+                "$others = @(Get-CsApplicationAccessPolicy | Where-Object { $_.Identity -ne 'Tag:MentraMeetings' -and @($_.AppIds | Where-Object { $_ -notin $mentra }).Count })",
+                'if ($others) {',
+                '  Write-Output "MENTRA_TEAMS_POLICY_CONFLICT This tenant already has Teams application access policies: $(($others.Identity) -join \', \')."',
+                '  Write-Output "Add the meetings app to the one your employees use: Set-CsApplicationAccessPolicy -Identity <policy> -AppIds @{Add=\'$app\'}"',
+                '  exit 3',
+                '}',
+                '# Teams refuses to add an app that is already there, so re-runs only add what is missing.',
+                f"if (-not $existing) {{ New-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds {client_id} }} "
+                f"elseif ($existing.AppIds -notcontains $app) {{ {add} }}"]
     if previous_client_id and previous_client_id != client_id:
-        commands.append(f"Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Remove='{previous_client_id}'}}"
+        commands.append(f"if ($existing.AppIds -contains '{previous_client_id}') "
+                        f"{{ Set-CsApplicationAccessPolicy -Identity MentraMeetings -AppIds @{{Remove='{previous_client_id}'}} }}"
                         '   # the Graph app it replaces')
-    commands += ['# Let employees create meetings as themselves. This replaces any policy already granted to everyone;',
-                 '# if your tenant has one, add the app to that policy instead (Set-CsApplicationAccessPolicy with @{Add=...}).',
-                 'Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global']
+    commands.append('Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Global')
     if organizer_id:
         commands.append(f'Grant-CsApplicationAccessPolicy -PolicyName MentraMeetings -Identity {organizer_id}')
-    commands.append('# Policy changes can take up to 30 minutes to apply.')
+    commands.append("Write-Output 'MENTRA_TEAMS_POLICY_APPLIED Teams can take up to 30 minutes to apply it.'")
     return commands
+
+
+def apply_teams_policy(config, script):
+    """Run the Teams script as the signed-in account. Returns (applied, reason it wasn't)."""
+    pwsh = shutil.which('pwsh')
+    if not pwsh:
+        return False, 'PowerShell is not installed here'
+    tokens = {}
+    # Cloud Shell signs Teams PowerShell in as the user (-Identity). Its Graph tokens carry an
+    # audience Teams PowerShell rejects, so tokens are only passed elsewhere.
+    for name, resource in () if os.environ.get('ACC_CLOUD') else (('MENTRA_GRAPH_TOKEN', 'https://graph.microsoft.com'),
+                                                                  ('MENTRA_TEAMS_TOKEN', TEAMS_ADMIN_API)):
+        try:
+            tokens[name] = json.loads(run(['az', 'account', 'get-access-token', '--tenant', config['tenantId'],
+                                           '--resource', resource, '--output', 'json']))['accessToken']
+        except (SetupError, ValueError, KeyError):
+            return False, 'your account could not get a Teams administrator sign-in'
+    try:
+        result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-File', str(script)], env=dict(os.environ, **tokens),
+                                text=True, capture_output=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        return False, 'Teams PowerShell did not finish within 15 minutes'
+    output = re.sub(r'\x1b\[[0-9;]*m', '', (result.stdout or '') + '\n' + (result.stderr or ''))
+    if result.returncode == 0 and 'MENTRA_TEAMS_POLICY_APPLIED' in output:
+        return True, ''
+    conflict = next((line for line in output.splitlines() if 'MENTRA_TEAMS_POLICY_CONFLICT' in line), '')
+    if conflict:
+        return False, conflict.split('MENTRA_TEAMS_POLICY_CONFLICT', 1)[1].strip()
+    if re.search(r'(?i)access denied|forbidden|unauthori[sz]ed|not have (the )?permission|AADSTS', output):
+        return False, 'your account is not a Teams administrator here (guest accounts are refused)'
+    return False, 'Teams PowerShell failed: ' + (next((l.strip() for l in reversed(output.splitlines()) if l.strip()), '') or
+                                                 f'exit {result.returncode}')[:300]
 
 
 def permissions_page(app_id):
@@ -1830,9 +2176,27 @@ def configure_teams(args, directory, config, state, interactive=None):
     # Kept with the setup files, for the Teams administrator who runs it.
     (directory / 'teams-policy.ps1').write_text('\n'.join(policy) + '\n')
     rollout = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
+    # The script takes Teams access away from the app it replaces, so it runs only once the
+    # deployment uses the new app. It only ever adds this app, so a failed re-run leaves an
+    # earlier success in place.
+    earlier = state.get('teamsPolicyApplied') == client_id
+    if rollout['status'] == 'infrastructure_verified':
+        print('  Applying the Teams policy as your account...', flush=True)
+        applied, reason = apply_teams_policy(config, directory / 'teams-policy.ps1')
+    else:
+        applied, reason = False, 'the deployment has not switched to this app yet'
+    if applied:
+        print('  Applied. Teams can take up to 30 minutes to apply it.')
+    elif earlier:
+        print(f'  Not applied again ({reason}); the policy applied earlier still covers this app.')
+    else:
+        print(f'  Not applied: {reason}.')
+    applied = applied or earlier
+    checkpoint(directory, state, state['phase'], teamsPolicyApplied=client_id if applied else '')
     result = {'status': 'meeting_creation_configured' if rollout['status'] == 'infrastructure_verified' else rollout['status'],
               'graphClientId': client_id, 'adminConsent': {True: 'granted', False: 'needed'}.get(consent, 'unknown'),
-              'teamsPolicy': policy, 'teamsPolicyFile': str(directory / 'teams-policy.ps1')}
+              'teamsPolicy': policy, 'teamsPolicyFile': str(directory / 'teams-policy.ps1'),
+              'teamsPolicyApplied': applied, 'teamsPolicyReason': reason}
     if not consent:
         result['consentLink'] = permissions_page(client_id)
     if expires:
@@ -1920,6 +2284,21 @@ def upgrade_command(args, directory, interactive=None):
     config, state, release = load(directory)
     result = install(argparse.Namespace(**dict(vars(args), dns_ready=bool(state.get('domainVerified')))), directory, config, state)
     if result['status'] == 'infrastructure_verified':
+        config, state, release = load(directory)
+        portal_steps = admin_portal(directory, config, state)
+        # Admin portal sign-in adds the Core app's Graph sign-in scopes, which a tenant
+        # that blocks user consent must consent to before Organization Admins can sign in.
+        checked = config.get('adminPortalSignIn') is True and not portal_steps
+        consent_steps = []
+        if checked:
+            try:
+                consented = mobile_access(config)['consent']
+            except GraphError:
+                consented = False
+            consent_steps = ensure_admin_consent(config, consented, interactive)
+        # Once checked, the consent step reflects the tenant now, not an earlier run.
+        kept = [h for h in other_handoffs(state, PORTAL_STEP) if not (checked and h.get('step') == CONSENT_STEP)]
+        checkpoint(directory, state, state['phase'], handoffs=kept + portal_steps + consent_steps)
         relink()
         result = dict(result, status='upgraded', release=release['releaseTag'])
     return result
@@ -1941,6 +2320,8 @@ def guided(args, directory):
         return finish(directory, result)
     config, state, release = load(directory)
     relink()
+    if update_email_domains(args, directory, config, state, interactive):
+        config, state, release = load(directory)
     section('Checking the Azure subscription')
     ensure_providers(config, interactive)
     checks = preflight(config)
@@ -1979,7 +2360,7 @@ def guided(args, directory):
                 # The names are taken by apps another team owns; recreating them elsewhere would fail the same way.
                 raise
             print(f'  Setup could not create them with your account: {error}')
-            checkpoint(directory, state, state['phase'], handoffs=[entra_handoff(config, state)])
+            checkpoint(directory, state, state['phase'], handoffs=[entra_handoff(config, state, operator_object_id(config))])
             return finish(directory, {'status': 'awaiting_entra', 'next': (
                 f'After the Entra administrator has run the command above, record the two IDs with '
                 f'{setup_command()} configure-entra --core-client-id CORE_ID --mobile-client-id MOBILE_ID, '
@@ -2003,6 +2384,8 @@ def guided(args, directory):
                 return finish(directory, {'status': 'awaiting_dns', 'next': 'Run setup again once the DNS records are in place.'})
             result = install(argparse.Namespace(**dict(vars(args), dns_ready=True)), directory, config, state)
         config, state, release = load(directory)
+    section(PORTAL_STEP)
+    checkpoint(directory, state, state['phase'], handoffs=handoffs + admin_portal(directory, config, state))
     section('Administrator key')
     admin = bootstrap_admin(args, directory, config, state)
     config, state, release = load(directory)
@@ -2028,10 +2411,12 @@ def print_teams(teams):
     if teams.get('consentLink'):
         print('A Global Administrator or Privileged Role Administrator grants its Microsoft Graph permission here '
               '(select "Grant admin consent"): ' + teams['consentLink'])
-    print('A Teams administrator runs these once in Cloud Shell (Switch to PowerShell); they are also saved in '
-          + teams.get('teamsPolicyFile', 'teams-policy.ps1') + ':')
-    for line in teams['teamsPolicy']:
-        print('  ' + line)
+    if teams.get('teamsPolicyApplied'):
+        print('The Teams policy is applied; meeting creation works within about 30 minutes.')
+        return
+    path = teams.get('teamsPolicyFile', 'teams-policy.ps1')
+    print(f'Still to do - Teams policy: a Teams administrator runs {path} once, in Cloud Shell after choosing '
+          f'Switch to PowerShell: & {path}  (send them the file if they use their own Cloud Shell).')
 
 
 def finish(directory, result):
@@ -2042,8 +2427,13 @@ def finish(directory, result):
     if state['phase'] == 'infrastructure_verified':
         print(f'Mentra Private Cloud is running at {origin}')
         print(f'Employees: install the Mentra App, tap Sign in to your organization, and enter {origin.removeprefix("https://")}.')
-        print(f'Administrator key: {admin_key_command(config)}')
         core = state.get('outputs', {}).get('coreOrigin')
+        if core and config.get('adminPortalSignIn') is True:
+            print(f'Admin portal: {core}/ (Organization Admins sign in with their work account)')
+        expires = (state.get('adminPortal') or {}).get('secretExpires')
+        if expires:
+            print(f'Its client secret expires {expires[:10]}; rotate it before then (see operations.md).')
+        print(f'Administrator key: {admin_key_command(config)}')
         if core:
             print(f'Feedback reports: curl -H "Authorization: Bearer $({admin_key_command(config)})" {core}/api/admin/reports')
         teams = result.get('teams')
@@ -2056,10 +2446,14 @@ def finish(directory, result):
             if meetings_consent(config, config['teamsGraphClientId']) is False:
                 print('Still to do - Graph permission for meeting creation (Global Administrator or Privileged Role '
                       'Administrator, select "Grant admin consent"): ' + permissions_page(config['teamsGraphClientId']))
-            if (directory / 'teams-policy.ps1').exists():
-                print(f"Teams policy commands for meeting creation are saved in {directory / 'teams-policy.ps1'}.")
+            if (directory / 'teams-policy.ps1').exists() and state.get('teamsPolicyApplied') != config['teamsGraphClientId']:
+                print(f"Still to do - Teams policy: a Teams administrator runs {directory / 'teams-policy.ps1'} once "
+                      '(Cloud Shell, Switch to PowerShell), or run configure-teams again as one.')
     for handoff in state.get('handoffs') or []:
         print(f"Still to do - {handoff['step']}: {handoff['action']}")
+    if not config.get('verifiedEmailDomains'):
+        print(f'Still to do - {PORTAL_STEP}: give the email domains your Entra directory issues, so Organization Admins '
+              f'can sign in: {setup_command()} --email-domains DOMAIN[,DOMAIN]')
     print(f'To check status or continue later, run: {setup_command()}')
     print('To upgrade later, run the install command from the documentation again.')
     return dict(result, phase=state['phase'], workspace=origin)
@@ -2083,6 +2477,8 @@ def main():
     parser.add_argument('--core-client-id', help='configure-entra: Core app an Entra administrator created')
     parser.add_argument('--mobile-client-id', help='configure-entra: Mobile app an Entra administrator created')
     parser.add_argument('--employees', help='Comma-separated employee emails or group names allowed to sign in')
+    parser.add_argument('--email-domains', help='Comma-separated email domains your Entra directory issues; Core treats '
+                        'an email as verified only in these (Organization Admins need one)')
     parser.add_argument('--mirror', help='Approved Azure registry/repository for configure-mirror; release digest stays pinned')
     parser.add_argument('--dns-zone', help='Existing Azure DNS zone for configure-azure-dns')
     parser.add_argument('--dns-resource-group', help='Resource group containing the Azure DNS zone')

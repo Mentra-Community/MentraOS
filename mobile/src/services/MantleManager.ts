@@ -3,14 +3,22 @@ import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
+import Constants from "expo-constants"
 import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
-import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
-import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, linkLingoPackageName, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
+import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
+import {BUNDLED_MINIAPPS, BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
+import {
+  BUNDLED_STORE_MINIAPP_PACKAGES,
+  CHINA_HIDDEN_APPS,
+  SUPPORTED_MINIAPP_SDK_RANGE,
+  linkLingoPackageName,
+  mentraCallPackageName,
+  notifyPackageName,
+} from "@/constants/miniapps"
 import {IosMiniappVisibility} from "@/services/miniapps/IosMiniappVisibility"
 import {isSuperModeMiniappAllowed, shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
 import {storage} from "@/utils/storage"
@@ -22,6 +30,7 @@ import {isPhoneWifiEnabled, requestPhoneWifiEnable} from "@/services/phoneWifi"
 import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
+  getDevAppRecords,
   audioPlaybackService,
   displayProcessor,
   gallerySyncService,
@@ -40,9 +49,22 @@ import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 import {showAlert} from "@/utils/AlertUtils"
+import type {GlassesMenuItem} from "@/utils/glassesMenu"
 import {translate} from "@/i18n"
 import {Buffer} from "@craftzdog/react-native-buffer"
 import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployment"
+
+/**
+ * The bundled Store updates every miniapp this build bundles. OEM builds can
+ * bundle another Store and assign packages to it; one Store cannot update a
+ * package assigned to another.
+ */
+const BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS: Readonly<Record<string, string>> = Object.fromEntries(
+  BUNDLED_SYSTEM_MINIAPP_PACKAGES.map((packageName) => [packageName, "com.mentra.store"]),
+)
+
+const isBundledStore = (packageName: string): boolean =>
+  BUNDLED_STORE_MINIAPP_PACKAGES.some((store) => store === packageName)
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
@@ -60,18 +82,16 @@ import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployme
 
 /**
  * Parse `<packageName>-<version>` out of a bundled miniapp asset name like
- * `com.mentra.navigation-1.0.2.zip`. Splits on the last hyphen so dotted
- * package names (which contain no hyphens) stay intact. Returns null if the
- * name doesn't match the expected shape.
+ * `com.mentra.navigation-1.0.2.zip`. The version is the trailing semantic
+ * version, so hyphenated package names and prerelease versions stay intact.
+ * Returns null if the name doesn't match the expected shape.
  */
 function parseBundledMiniappName(name: string): {packageName: string; version: string} | null {
+  // expo-asset names omit the extension; tests and older callers may include it.
   const base = name.replace(/\.zip$/i, "")
-  const lastHyphen = base.lastIndexOf("-")
-  if (lastHyphen <= 0 || lastHyphen === base.length - 1) return null
-  return {
-    packageName: base.slice(0, lastHyphen),
-    version: base.slice(lastHyphen + 1),
-  }
+  const match = /^(.+)-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/.exec(base)
+  if (!match) return null
+  return {packageName: match[1], version: match[2]}
 }
 
 // The background phone-location task + its tier control moved into island
@@ -417,13 +437,13 @@ class MantleManager {
         ? {
             getMeetingAccount: async () => {
               const session = await workspaceAuth.getSession()
-              if (!session) throw new Error("Sign in to your workspace to use Teams")
+              if (!session) throw new Error("Sign in to your organization to use Teams")
               const {displayName, email} = session.identity
               return {displayName, email}
             },
             getTeamsToken: async () => {
               if (deployment.manifest.auth.mode !== "microsoft-entra") {
-                throw new Error("This workspace does not have a Microsoft Entra identity")
+                throw new Error("This organization does not have a Microsoft Entra identity")
               }
               return workspaceAuth.getAccessToken({scopes: deployment.manifest.auth.teamsScopes})
             },
@@ -499,7 +519,17 @@ class MantleManager {
           },
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
-      config: {...deploymentCloudConfigValues(deployment), isLocalMiniappAllowed: isSuperModeMiniappAllowed},
+      config: {
+        ...deploymentCloudConfigValues(deployment),
+        isLocalMiniappAllowed: isSuperModeMiniappAllowed,
+        bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
+        bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
+        bundledSystemMiniappStoreOwners: BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS,
+        // A Store is a background updater only: never listed or opened.
+        isMiniappAvailable: (packageName, mode) => mode === "background" || !isBundledStore(packageName),
+        hostVersion: Constants.expoConfig?.version ?? process.env.EXPO_PUBLIC_MENTRAOS_VERSION,
+        supportedMiniappSdkRange: SUPPORTED_MINIAPP_SDK_RANGE,
+      },
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
@@ -639,6 +669,7 @@ class MantleManager {
     // Remove all event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
+    storeUpdateScheduler.stop()
     this.activePhoneNotificationId = null
 
     // Spoken notifications: a queued summary would otherwise synthesize and play
@@ -730,13 +761,10 @@ class MantleManager {
       if (!isCurrent()) return
     }
 
-    // Then reconcile the admin-managed preinstall registry from Cloud V2. This
-    // lets Core move users to newer bundled miniapp releases without shipping a
-    // new mobile binary.
-    if (!background && deploymentStore.getActive().kind === "consumer") {
-      await preinstalledMiniappSync.sync()
-      if (!isCurrent()) return
-    }
+    // Stores run only as background updaters. Clear any older UI or autostart
+    // state without interrupting a maintenance action already in progress.
+    await this.prepareBackgroundStores()
+    if (!isCurrent()) return
 
     // Region-restricted miniapps must not surface or autostart from an old install.
     this.hidePlatformBlockedMiniapps()
@@ -751,6 +779,34 @@ class MantleManager {
     await miniappLauncher
       .autostartLocalMiniapps()
       .catch((e) => console.warn("MANTLE: autostartLocalMiniapps failed", e))
+    if (!isCurrent()) return
+
+    // Updates now come from the bundled Store's backend. Start them after the
+    // user's sessions are restored, so a running miniapp defers its update,
+    // and only for the Stores this deployment allows.
+    const installed = await appRegistry.getInstalledMiniapps({includeBackgroundOnly: true})
+    if (!isCurrent()) return
+    void storeUpdateScheduler.start(
+      BUNDLED_STORE_MINIAPP_PACKAGES.filter((packageName) => installed.some((app) => app.packageName === packageName)),
+    )
+  }
+
+  /** A Store never shows on Home, in the glasses menu, or as running UI. */
+  private async prepareBackgroundStores(): Promise<void> {
+    for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
+      engine.miniapps.setHiddenStatus(packageName, true)
+    }
+    const menuItems = engine.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | null
+    const visibleMenuItems = menuItems?.filter((item) => !isBundledStore(item.packageName))
+    if (menuItems && visibleMenuItems && visibleMenuItems.length !== menuItems.length) {
+      await engine.settings.set(SETTINGS.menu_apps.key, visibleMenuItems)
+    }
+    for (const packageName of BUNDLED_STORE_MINIAPP_PACKAGES) {
+      // A context the user started (from an older build) must not survive. A
+      // hidden maintenance context may already be applying an update.
+      if (miniappLauncher.isProjectedRunning(packageName)) await miniappLauncher.stop(packageName)
+      saveLocalAppRunningState(packageName, false)
+    }
   }
 
   /**
@@ -790,7 +846,7 @@ class MantleManager {
       // initMiniapps owns managed synchronization; never start an independent
       // retry that could install a bundle without publishing its visibility.
       if (shouldHideMiniapp(mentraCallPackageName)) {
-        throw new Error("The workspace Call bundle could not be installed and verified")
+        throw new Error("The organization's Call bundle could not be installed and verified")
       }
       return
     }
@@ -819,6 +875,17 @@ class MantleManager {
     // Bundled consumer assets excluded by the workspace are expected skips.
     if (approved !== null && !approved.includes(packageName)) return
     if (shouldHideMiniapp(packageName) || appRegistry.getInstalledVersions(packageName).includes(version)) return
+    // A QR-selected development build (or its offline snapshot) stays the
+    // user's choice across restarts and Mentra App upgrades.
+    if (deployment.kind === "consumer" && getDevAppRecords().some((app) => app.packageName === packageName)) return
+    // Bundling never downgrades: a newer installed release (a QR or managed
+    // install) stays selected. The installer enforces the same rule again.
+    try {
+      appRegistry.assertCanInstallVersion(packageName, version)
+    } catch (error) {
+      console.log(`MANTLE: skipping bundled ${packageName}@${version}: ${(error as Error).message}`)
+      return
+    }
     if (packageName === "com.mentra.example" && !engine.settings.get(SETTINGS.super_mode.key)) return
 
     await asset.downloadAsync()
@@ -830,7 +897,12 @@ class MantleManager {
     )
       return
     if (!asset.localUri) throw new Error(`Bundled ${packageName} has no local URI`)
-    const result = await appRegistry.installFromLocalZip(asset.localUri)
+    // The same installer as every other source: the ZIP must be the package
+    // and version its asset name declares, and it obeys the signer rule.
+    const result = await appRegistry.installFromLocalZip(asset.localUri, {
+      expectedPackageName: packageName,
+      expectedVersion: version,
+    })
     if (result.is_error()) throw result.error
     console.log(`MANTLE: installed bundled miniapp ${result.value.packageName}@${result.value.version}`)
   }

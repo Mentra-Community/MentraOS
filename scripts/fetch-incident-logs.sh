@@ -21,8 +21,7 @@
 # Environment variables:
 #   MENTRA_ADMIN_TOKEN  (required) Bearer token for the admin API: an org API
 #                       key (msk_...) whose synthetic email is allowlisted in
-#                       CLOUD_CORE_ADMIN_EMAILS, or a WorkOS access token of
-#                       an admin user.
+#                       CLOUD_CORE_ADMIN_EMAILS.
 #   MENTRA_CORE_URL     (optional) Core API base URL; disables auto-discovery
 #                       and overrides --env.
 
@@ -115,8 +114,7 @@ if [ -z "${MENTRA_ADMIN_TOKEN:-}" ]; then
   err "MENTRA_ADMIN_TOKEN environment variable not set"
   note ""
   note "The admin reports API needs a bearer token with admin access:"
-  note "  - an org API key (msk_...) allowlisted via CLOUD_CORE_ADMIN_EMAILS, or"
-  note "  - a WorkOS access token of an admin user"
+  note "  an org API key (msk_...) allowlisted via CLOUD_CORE_ADMIN_EMAILS"
   note ""
   note "  export MENTRA_ADMIN_TOKEN=msk_..."
   exit 1

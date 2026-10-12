@@ -9,6 +9,7 @@
  * it, exactly as an external OEM's app would — Mentra is just another OEM.
  */
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
+import {BgTimer} from "@mentra/engine"
 
 import {AuthClient} from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
@@ -23,6 +24,7 @@ const REFRESH_KEY = "mentra.account.refreshToken"
 const PROFILE_KEY = "mentra.account.userProfile"
 const OAUTH_STATE_KEY = "mentra.account.oauth.state"
 const OAUTH_VERIFIER_KEY = "mentra.account.oauth.verifier"
+const LOGOUT_TIMEOUT_MS = 10_000
 
 type Tokens = {access: string; refresh: string}
 
@@ -63,20 +65,28 @@ function saveCachedProfile(user: MentraAuthUser): void {
 
 function core(path: string): string {
   if (deploymentStore.getActive().kind === "workspace") {
-    throw new Error("Mentra account services are unavailable in an organization workspace")
+    throw new Error("Mentra account services are unavailable in an organization")
   }
   return `${resolvedEndpoints().core.replace(/\/+$/, "")}${path}`
 }
 
 async function throwApiError(res: Response): Promise<never> {
   const body = await res.json().catch(() => ({}) as any)
-  throw new Error(body?.error_description || body?.error || `HTTP ${res.status}`)
+  const error = new Error(body?.error_description || body?.error || `HTTP ${res.status}`)
+  if (typeof body?.error === "string") Object.assign(error, {code: body.error})
+  throw error
 }
 
 const authState = createAuthStateFanout()
 
 export class AccountAuthProvider extends AuthClient {
   private static instance: AccountAuthProvider
+  /** A logout invalidates every older request, including a pending refresh. */
+  private sessionGeneration = 0
+
+  private assertSessionCurrent(generation: number): void {
+    if (generation !== this.sessionGeneration) throw new Error("auth session was cleared")
+  }
 
   public static async getInstance(): Promise<AccountAuthProvider> {
     if (!AccountAuthProvider.instance) AccountAuthProvider.instance = new AccountAuthProvider()
@@ -123,6 +133,7 @@ export class AccountAuthProvider extends AuthClient {
   }
 
   private async performRefresh(refresh: string): Promise<Tokens | null> {
+    const generation = this.sessionGeneration
     const res = await fetch(core("/api/client/auth/refresh"), {
       method: "POST",
       headers: {"content-type": "application/x-www-form-urlencoded"},
@@ -132,8 +143,10 @@ export class AccountAuthProvider extends AuthClient {
       // and responds with unsupported_grant_type (HTTP 400).
       body: new URLSearchParams({grant_type: "refresh_token", refresh_token: refresh}).toString(),
     })
+    this.assertSessionCurrent(generation)
     if (!res.ok) {
       const errorBody = (await res.json().catch(() => ({}))) as {error?: string}
+      this.assertSessionCurrent(generation)
       const errorCode = errorBody.error ?? "unknown_error"
 
       // A refresh endpoint can return several RFC-shaped 400 responses. Only
@@ -161,6 +174,7 @@ export class AccountAuthProvider extends AuthClient {
       return null
     }
     const body = (await res.json()) as {access_token: string; refresh_token: string}
+    this.assertSessionCurrent(generation)
     const t = {access: body.access_token, refresh: body.refresh_token}
     saveTokens(t)
     return t
@@ -176,13 +190,16 @@ export class AccountAuthProvider extends AuthClient {
   /** Return a valid access token, refreshing once via the V2 refresh grant if
    * the stored one is rejected. Throws if there is no usable session. */
   private async ensureFreshAccess(): Promise<string> {
+    const generation = this.sessionGeneration
     const tokens = loadTokens()
     if (!tokens) throw new Error("not signed in")
     const probe = await fetch(core("/api/account/me"), {
       headers: {authorization: `Bearer ${tokens.access}`},
     })
+    this.assertSessionCurrent(generation)
     if (!AccountAuthProvider.tokenRejected(probe.status)) return tokens.access
     const refreshed = await this.refreshTokens(tokens.refresh)
+    this.assertSessionCurrent(generation)
     if (!refreshed) {
       console.log(`MENTRA AUTH: clearing tokens, refresh rejected after /me probe (HTTP ${probe.status})`)
       clearTokens()
@@ -193,12 +210,14 @@ export class AccountAuthProvider extends AuthClient {
 
   public getSession(): AsyncResult<MentraAuthSession, Error> {
     return Res.try_async(async () => {
+      const generation = this.sessionGeneration
       const tokens = loadTokens()
       if (!tokens) return {token: undefined}
       let access = tokens.access
       let meRes = await fetch(core("/api/account/me"), {
         headers: {authorization: `Bearer ${access}`},
       }).catch(() => null) // null = offline; keep tokens, report no user
+      this.assertSessionCurrent(generation)
       if (meRes && AccountAuthProvider.tokenRejected(meRes.status)) {
         // Access token expired (1h TTL): silently refresh, then retry /me, so a
         // cold boot after an hour restores the session instead of bouncing the
@@ -210,11 +229,13 @@ export class AccountAuthProvider extends AuthClient {
         } catch {
           offline = true // network failure: not a rejection, keep tokens
         }
+        this.assertSessionCurrent(generation)
         if (refreshed) {
           access = refreshed.access
           meRes = await fetch(core("/api/account/me"), {
             headers: {authorization: `Bearer ${access}`},
           }).catch(() => null)
+          this.assertSessionCurrent(generation)
         } else if (!offline) {
           // getSession() runs on cold boot but also from deeplink auth checks
           // and reset-password, so don't claim "boot" here.
@@ -228,6 +249,7 @@ export class AccountAuthProvider extends AuthClient {
       let user: MentraAuthUser | undefined
       if (meRes?.ok) {
         const me = (await meRes.json()) as {mentraUserId: string; email?: string; name?: string; avatarUrl?: string}
+        this.assertSessionCurrent(generation)
         user = {id: me.mentraUserId, email: me.email, name: me.name ?? me.email ?? "", avatarUrl: me.avatarUrl}
         saveCachedProfile(user)
       } else {
@@ -253,6 +275,7 @@ export class AccountAuthProvider extends AuthClient {
    * "mint a subject token for my app" surface). */
   public getSubjectToken(): AsyncResult<{token: string; type: string}, Error> {
     return Res.try_async(async () => {
+      const generation = this.sessionGeneration
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/subject-token"), {
         method: "POST",
@@ -260,12 +283,14 @@ export class AccountAuthProvider extends AuthClient {
       })
       if (!res.ok) await throwApiError(res)
       const body = (await res.json()) as {token: string; type: string}
+      this.assertSessionCurrent(generation)
       return {token: body.token, type: body.type}
     })
   }
 
   public signInWithPassword(credentials: {email: string; password: string}): AsyncResult<MentraSigninResponse, Error> {
     return Res.try_async(async () => {
+      const generation = this.sessionGeneration
       const res = await fetch(core("/api/account/login"), {
         method: "POST",
         headers: {"content-type": "application/json"},
@@ -273,8 +298,10 @@ export class AccountAuthProvider extends AuthClient {
       })
       if (!res.ok) await throwApiError(res)
       const body = (await res.json()) as {access_token: string; refresh_token: string}
+      this.assertSessionCurrent(generation)
       saveTokens({access: body.access_token, refresh: body.refresh_token})
       const session = await this.getSession()
+      this.assertSessionCurrent(generation)
       const value = session.is_ok() ? session.value : {token: body.access_token}
       // Notify synchronously with the session we already fetched (rather than via
       // notify()'s extra async /me round-trip) so AuthContext.user is populated
@@ -309,6 +336,7 @@ export class AccountAuthProvider extends AuthClient {
 
   public completeSignupVerification(accessToken: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
+      const generation = this.sessionGeneration
       // Email confirmation links carry GoTrue tokens. Use the existing public
       // exchange; never save those tokens as a Cloud V2 session.
       const res = await fetch(core("/api/client/auth/exchange"), {
@@ -332,6 +360,7 @@ export class AccountAuthProvider extends AuthClient {
       })
       if (!meRes.ok) await throwApiError(meRes)
       const me = (await meRes.json()) as {mentraUserId?: string; email?: string; name?: string; avatarUrl?: string}
+      this.assertSessionCurrent(generation)
       if (!me.mentraUserId) throw new Error("verification returned no account")
       const user: MentraAuthUser = {
         id: me.mentraUserId,
@@ -358,6 +387,7 @@ export class AccountAuthProvider extends AuthClient {
 
   public resetPasswordByCode(email: string, code: string, newPassword: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
+      const generation = this.sessionGeneration
       const res = await fetch(core("/api/account/password/reset"), {
         method: "POST",
         headers: {"content-type": "application/json"},
@@ -365,6 +395,7 @@ export class AccountAuthProvider extends AuthClient {
       })
       if (!res.ok) await throwApiError(res)
       const body = (await res.json()) as {access_token: string; refresh_token: string}
+      this.assertSessionCurrent(generation)
       saveTokens({access: body.access_token, refresh: body.refresh_token})
       this.notify("SIGNED_IN")
     })
@@ -385,7 +416,7 @@ export class AccountAuthProvider extends AuthClient {
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/password/change"), {
         method: "POST",
-        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
         body: JSON.stringify({currentPassword, newPassword}),
       })
       if (!res.ok) await throwApiError(res)
@@ -398,7 +429,7 @@ export class AccountAuthProvider extends AuthClient {
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/email/change"), {
         method: "POST",
-        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
         body: JSON.stringify({newEmail, password}),
       })
       if (!res.ok && res.status !== 202) await throwApiError(res)
@@ -410,7 +441,7 @@ export class AccountAuthProvider extends AuthClient {
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/email/change/confirm"), {
         method: "POST",
-        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
         body: JSON.stringify({code}),
       })
       if (!res.ok) await throwApiError(res)
@@ -423,7 +454,7 @@ export class AccountAuthProvider extends AuthClient {
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/delete/request"), {
         method: "POST",
-        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
         body: JSON.stringify({}),
       })
       if (!res.ok && res.status !== 202) await throwApiError(res)
@@ -435,11 +466,13 @@ export class AccountAuthProvider extends AuthClient {
       const access = await this.ensureFreshAccess()
       const res = await fetch(core("/api/account/delete/confirm"), {
         method: "POST",
-        headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
+        headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
         body: JSON.stringify({code}),
       })
       if (!res.ok) await throwApiError(res)
       // The account is gone; the server revoked every session already.
+      this.sessionGeneration += 1
+      this.refreshInFlight = null
       clearTokens()
       authState.emit("SIGNED_OUT", {token: undefined})
     })
@@ -469,6 +502,7 @@ export class AccountAuthProvider extends AuthClient {
    * verifier for the V2 session at /oauth/complete. */
   public completeOAuthHandoff(params: {code: string; state: string}): AsyncResult<void, Error> {
     return Res.try_async(async () => {
+      const generation = this.sessionGeneration
       const expectedState = storage.load<string>(OAUTH_STATE_KEY)
       const verifier = storage.load<string>(OAUTH_VERIFIER_KEY)
       if (expectedState.is_error() || verifier.is_error() || !expectedState.value || !verifier.value) {
@@ -489,13 +523,16 @@ export class AccountAuthProvider extends AuthClient {
       } catch (err) {
         throw err instanceof Error ? err : new Error(String(err))
       }
+      this.assertSessionCurrent(generation)
       storage.remove(OAUTH_STATE_KEY)
       storage.remove(OAUTH_VERIFIER_KEY)
       if (!res.ok) await throwApiError(res)
       const body = (await res.json()) as {access_token: string; refresh_token: string}
+      this.assertSessionCurrent(generation)
       if (!body?.access_token || !body?.refresh_token) throw new Error("oauth completion returned no session")
       saveTokens({access: body.access_token, refresh: body.refresh_token})
       const session = await this.getSession()
+      this.assertSessionCurrent(generation)
       authState.emit("SIGNED_IN", session.is_ok() ? session.value : {token: body.access_token})
     })
   }
@@ -510,22 +547,56 @@ export class AccountAuthProvider extends AuthClient {
   public signOut(): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       const tokens = loadTokens()
-      if (tokens) {
-        // Refresh first if the access token expired (1h TTL): revoking with a
-        // stale token 400s and would leave the server session alive even
-        // though the device forgets it. Best-effort — a dead session throws
-        // in ensureFreshAccess (already cleared) and offline just skips.
-        const access = await this.ensureFreshAccess().catch(() => null)
-        if (access) {
-          await fetch(core("/api/account/logout"), {
-            method: "POST",
-            headers: {"content-type": "application/json", authorization: `Bearer ${access}`},
-            body: JSON.stringify({}),
-          }).catch(() => null)
-        }
-      }
+      this.sessionGeneration += 1
+      this.refreshInFlight = null
       clearTokens()
-      this.notify("SIGNED_OUT")
+      authState.emit("SIGNED_OUT", {token: undefined})
+      if (!tokens) return
+      const controller = new AbortController()
+      let timeout: number | undefined
+      try {
+        await Promise.race([
+          this.revokeSession(tokens, controller.signal),
+          new Promise<never>((_, reject) => {
+            timeout = BgTimer.setTimeout(() => {
+              controller.abort()
+              reject(new Error("Account session revocation timed out; local credentials were cleared"))
+            }, LOGOUT_TIMEOUT_MS)
+          }),
+        ])
+      } catch (error) {
+        console.warn("MENTRA AUTH: account revocation failed; local credentials were cleared")
+        throw error
+      } finally {
+        if (timeout !== undefined) BgTimer.clearTimeout(timeout)
+      }
     })
+  }
+
+  /** Remote revocation uses the private snapshot and never writes rotated tokens. */
+  private async revokeSession(tokens: Tokens, signal: AbortSignal): Promise<void> {
+    const probe = await fetch(core("/api/account/me"), {headers: {authorization: `Bearer ${tokens.access}`}, signal})
+    if (signal.aborted) throw new Error("Account session revocation timed out")
+    let access = tokens.access
+    if (AccountAuthProvider.tokenRejected(probe.status)) {
+      const refreshed = await fetch(core("/api/client/auth/refresh"), {
+        method: "POST",
+        headers: {"content-type": "application/x-www-form-urlencoded"},
+        signal,
+        body: new URLSearchParams({grant_type: "refresh_token", refresh_token: tokens.refresh}).toString(),
+      })
+      if (signal.aborted) throw new Error("Account session revocation timed out")
+      if (!refreshed.ok) await throwApiError(refreshed)
+      const body = (await refreshed.json()) as {access_token: string}
+      access = body.access_token
+    }
+    if (signal.aborted) throw new Error("Account session revocation timed out")
+    const response = await fetch(core("/api/account/logout"), {
+      method: "POST",
+      headers: {"content-type": "application/json", "authorization": `Bearer ${access}`},
+      body: "{}",
+      signal,
+    })
+    if (!response.ok) await throwApiError(response)
   }
 }

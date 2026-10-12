@@ -26,6 +26,46 @@ import type {TestHistoryEntry} from "../../../../packages/core/src/types/test-hi
 import {readTestRunLink} from "../lib/test-run-links"
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types"
 import {frameworkRunSchema, recordedFrameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types"
+import {lifecycleRuns} from '../../../../packages/core/src/testing/framework-lifecycle.fixture';
+
+test('run page separates actual Harness diagnostic actions/time from teardown failures and resource readiness', () => {
+  const fixture = lifecycleRuns.find(fixture => fixture.scenario === 'cleaned-provider-error')!;
+  const run = frameworkRunSchema.parse(fixture.run), client = new QueryClient();
+  client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome: 'teardown-failed', uploadsComplete: true, evidenceStatus: 'failed'});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+  const teardownStart = html.indexOf('aria-label="Teardown details"'), diagnosticStart = html.indexOf('aria-label="Diagnostics details"');
+  const teardown = html.slice(teardownStart, diagnosticStart), diagnostic = html.slice(diagnosticStart, html.indexOf('id="run-phase-evidence"'));
+  expect(teardown).toContain('Resources ready');
+  expect(teardown).toContain('Cleanup journal unavailable');
+  expect(teardown).toContain('>Failed</span>');
+  expect(diagnostic).toContain('Save failure screenshot');
+  expect(diagnostic).toContain('Submit incident report');
+  expect(diagnostic).toContain('Started ');
+  expect(diagnostic).toContain('Finished ');
+  expect(diagnostic).not.toContain('<video');
+  expect(teardown).not.toContain('Save failure screenshot');
+  expect(html).toContain(' · Diagnostics ');
+  expect(teardownStart).toBeLessThan(diagnosticStart);
+});
+
+test('diagnostic summary preserves failed precedence and cancelled actions in mixed results', () => {
+  const original = lifecycleRuns.find(fixture => fixture.scenario === 'diagnostic-failure')!.run;
+  for (const statuses of [['cancelled'], ['passed', 'cancelled'], ['failed', 'cancelled']] as const) {
+    const diagnostics = statuses.map((status, index) => ({...original.result.diagnostics![index % original.result.diagnostics!.length]!,
+      id: `diagnostic:${index}`, status}));
+    const failures = diagnostics.filter(action => action.status !== 'passed').map(action => ({
+      phase: 'evidence' as const, actionId: action.id, message: `Diagnostic ${action.status}`}));
+    const run = frameworkRunSchema.parse({...original, result: {...original.result, diagnostics,
+      failures: [...original.result.failures.filter(failure => failure.phase !== 'evidence'), ...failures],
+      timing: {...original.result.timing, diagnosticsMs: diagnostics.reduce((sum, action) => sum + action.durationMs, 0)}}});
+    const client = new QueryClient();
+    client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome: 'failed', uploadsComplete: true, evidenceStatus: 'failed'});
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+    const header = html.slice(html.indexOf('aria-label="Diagnostics details"'), html.indexOf('Diagnostics: Diagnostic actions'));
+    expect(header).toContain(statuses.some(status => status === 'failed') ? '>Failed</span>' : '>Cancelled</span>');
+    expect(header).not.toContain('>Passed</span>');
+  }
+});
 
 const routine = routineEnrollmentSchema.parse({
   routineId: "notes-phone",

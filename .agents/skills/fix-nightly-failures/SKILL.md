@@ -138,9 +138,26 @@ Read latest attempts first and adopt accepted equivalent work. Retain stable rer
 IDs and preview digests across uncertain transport retries. For an unaccepted
 preview that has definitively expired, create a new ID and preview; accepted
 submissions always reconcile their existing identity. A deliberate next
-attempt gets a new ID and terminal predecessor. Never repeat passing long tests
-merely to verify a shared fix. See the linked API in operations.
+attempt gets a new ID and terminal predecessor. See the linked API in operations.
 A new failure returns to diagnosis, not an automatic full-suite retry loop.
+
+### Verify manual reliability fixes with three passes
+
+Before moving to a fresh full suite in a manual reliability campaign, require
+three consecutive passing linked reruns for each failed routine covered by a fix.
+Keep the selected app artifacts, routine definitions and installed framework
+revision unchanged across that sequence. Start the next attempt only after its
+predecessor has finished setup, test and teardown with required evidence published.
+Only distinct successful executions count; retries of the same submission or
+publication do not. Any failure or change to the selected versions resets the
+count and returns to diagnosis or verification of the new fix.
+
+Record each attempt's ID, result link, selected versions and current count in the
+existing ledger. Compatible routines can verify in parallel, but a shared cause
+still needs three passes per failed routine; a representative's passes do not
+qualify other members. Unaffected routines need no extra reruns. These manual
+verification passes leave original outcomes unchanged and do not count toward a
+streak of actual scheduled 4 a.m. nightly passes.
 
 ## Continue efficiently through long waits
 
@@ -163,7 +180,8 @@ bounded waiting while preserving work; do not introduce a queue/timer framework.
 ## Report merged fixes and honest limits
 
 Finish when each observed failure has a targeted verification result for its
-approved merged fix or equivalent, an evidence-backed machine/fixture conclusion,
+approved merged fix or equivalent (three passes for manual reliability campaigns),
+an evidence-backed machine/fixture conclusion,
 or an explicitly unavailable deployment/access prerequisite with next action and
 owner. A source fix with available verification is not completion; dispatch it
 and consume its result. Do not hide an

@@ -19,6 +19,9 @@ import type {
 import {useGlassesStore} from "../stores/glasses"
 import {isGlassesConnected} from "../services/GlassesReadiness"
 import {cloudClientService} from "../services/CloudClientService"
+import {projectPairingIdentity} from "../services/PairingIdentity"
+import {requiredDeviceReportLogSources} from "../services/reportLogSources"
+import {DeviceTypes} from "../types"
 import {collectDiagnosticContext} from "../utils/diagnosticContext"
 import {logBuffer} from "../utils/devLogging"
 import {BgTimer} from "../utils/timers"
@@ -108,6 +111,9 @@ function pruneAutomaticThrottleRegistry(nowMs: number, windowMs: number): void {
 }
 
 async function notifyGlasses(reportId: string): Promise<ReportLogCollectionUpdate> {
+  if (!requiredDeviceReportLogSources(projectPairingIdentity()).some((source) => source === "glasses")) {
+    return {state: "unavailable", reason: "no_paired_mentra_live"}
+  }
   if (!isGlassesConnected(useGlassesStore.getState().connection)) {
     return {state: "unavailable", reason: "glasses_disconnected"}
   }
@@ -118,6 +124,9 @@ async function notifyGlasses(reportId: string): Promise<ReportLogCollectionUpdat
     try {
       await cloudClientService.syncCoreTokenToBluetooth()
       if (expired) return {state: "failed", reason: "incident_dispatch_timeout"}
+      if (!requiredDeviceReportLogSources(projectPairingIdentity()).some((source) => source === "glasses")) {
+        return {state: "unavailable", reason: "no_paired_mentra_live"}
+      }
       if (!isGlassesConnected(useGlassesStore.getState().connection)) {
         return {state: "unavailable", reason: "glasses_disconnected"}
       }
@@ -128,6 +137,13 @@ async function notifyGlasses(reportId: string): Promise<ReportLogCollectionUpdat
       if (expired) return {state: "failed", reason: "incident_dispatch_timeout"}
       if (!isGlassesConnected(native.connection)) {
         return {state: "unavailable", reason: "glasses_disconnected"}
+      }
+      // Live's deviceModel can be its hardware variant (for example K900).
+      // Pairing identity supplies the canonical product; reject Phone Mode's
+      // simulated native link without inventing a second hardware-model map.
+      if (native.deviceModel.includes(DeviceTypes.SIMULATED) ||
+        !requiredDeviceReportLogSources(projectPairingIdentity()).some((source) => source === "glasses")) {
+        return {state: "unavailable", reason: "no_connected_mentra_live"}
       }
       stage = "incident_dispatch"
       await BluetoothSdk.sendIncidentId(reportId, cloudClientService.getCoreUrl())

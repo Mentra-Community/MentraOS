@@ -43,7 +43,7 @@ test('existing authenticated completion recovers a filed report link after trans
     teardown: {ready: true}, failures: [{phase: 'test', actionId: 'original', message: 'Original failure'}]},
     assets: [{...fixture().assets[0]!, size: original.length, sha256: createHash('sha256').update(original).digest('hex')}]} as RecordedFrameworkRun;
   const before = JSON.stringify(run), hash = requestInputDigest(run);
-  let lookup = 0, failLookup = false, unavailableLookup = false, uploadsComplete = true;
+  let lookup = 0, failLookup = false, unavailableLookup = false, uploadsComplete = true, references = 0, referenceFailure = false;
   const service = new FrameworkResultService({async insert() {}, async getByRequest() {
     return {payload: run, payloadSha256: hash, uploadsComplete};
   }, async getByRun() {return {payload: run, payloadSha256: hash, uploadsComplete};}, async getAsset() {return null;}},
@@ -53,6 +53,13 @@ test('existing authenticated completion recovers a filed report link after trans
     lookup++; expect(correlation).toEqual({alertId: 'original-alert', testRunId: runId});
     if (unavailableLookup) throw new Error('Optional report lookup unavailable');
     return failLookup ? null : 'rep_ORIGINAL';
+  }, async (reportId, correlation, frozen) => {
+    references++;
+    expect(reportId).toBe('rep_ORIGINAL');
+    expect(correlation).toEqual({alertId: 'original-alert', testRunId: runId});
+    expect(frozen).toBe(run);
+    if (referenceFailure) throw new Error('Original screenshot attachment was not acknowledged');
+    return frozen.assets.length;
   });
   service.mediaByRun = async () => new Response(original);
   expect(await service.complete('accepted-request', 'owned-host')).toMatchObject({deviceIncident: {
@@ -60,17 +67,24 @@ test('existing authenticated completion recovers a filed report link after trans
   }});
   expect(JSON.stringify(run)).toBe(before);
   expect(run.result.test).toBe('failed');
+  expect(references).toBe(1);
+  referenceFailure = true;
+  await expect(service.complete('accepted-request', 'owned-host')).rejects.toThrow('not acknowledged');
+  referenceFailure = false;
+  await service.complete('accepted-request', 'owned-host');
+  expect(references).toBe(3);
   failLookup = true;
   expect(await service.complete('accepted-request', 'owned-host')).not.toHaveProperty('deviceIncident');
-  expect(lookup).toBe(2);
+  expect(lookup).toBe(4);
   unavailableLookup = true;
   expect(await service.complete('accepted-request', 'owned-host')).not.toHaveProperty('deviceIncident');
-  expect(lookup).toBe(3);
+  expect(lookup).toBe(5);
   await expect(service.complete('accepted-request', 'foreign-host')).rejects.toThrow('not acknowledged');
-  expect(lookup).toBe(3);
+  expect(lookup).toBe(5);
   uploadsComplete = false;
   await expect(service.complete('accepted-request', 'owned-host')).rejects.toThrow('not acknowledged');
-  expect(lookup).toBe(3);
+  expect(lookup).toBe(5);
+  expect(references).toBe(3);
 });
 
 test('incident link requires a created report receipt bound to the original request and run', () => {

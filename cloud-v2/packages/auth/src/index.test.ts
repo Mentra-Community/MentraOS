@@ -148,6 +148,28 @@ describe("@mentra/auth miniapp auth", () => {
     expect(verified.mentraUserId).toBe("user_123");
   });
 
+  test("exposes the verified account email and ignores an unverified one", async () => {
+    const auth = createMentraAuth({
+      packageName: TEST_PACKAGE,
+      jwksUrl: `${server.url.origin}/.well-known/jwks.json`,
+    });
+
+    const verified = await auth.verifyToken(
+      await mintMiniappToken(TEST_PACKAGE, { claims: { email: "wearer@example.com", email_verified: true } }),
+    );
+    expect(verified.email).toBe("wearer@example.com");
+    expect(verified.mentraUserId).toBe("user_123");
+
+    const unverified = await auth.verifyToken(
+      await mintMiniappToken(TEST_PACKAGE, { claims: { email: "wearer@example.com", email_verified: false } }),
+    );
+    expect(unverified.email).toBeUndefined();
+
+    const absent = await auth.verifyToken(await mintMiniappToken(TEST_PACKAGE));
+    expect(absent.email).toBeUndefined();
+    expect("email" in absent).toBe(false);
+  });
+
   test("extractBearerToken accepts Bearer auth and rejects missing auth", () => {
     expect(extractBearerToken("Bearer abc.def.ghi")).toBe("abc.def.ghi");
     expect(() => extractBearerToken(undefined)).toThrow(MentraAuthError);
@@ -246,10 +268,10 @@ describe("@mentra/auth multi-environment JWKS fallback", () => {
 
 async function mintMiniappToken(
   audience: string,
-  opts: { expirationTime?: string | number; issuer?: string } = {},
+  opts: { expirationTime?: string | number; issuer?: string; claims?: jose.JWTPayload } = {},
 ): Promise<string> {
   const privateKey = await jose.importPKCS8(privatePem, "EdDSA");
-  return new jose.SignJWT({ tenantId: "test-oem" })
+  return new jose.SignJWT({ tenantId: "test-oem", ...opts.claims })
     .setProtectedHeader({ alg: "EdDSA", kid: "mentra-miniapp-1" })
     .setIssuer(opts.issuer ?? TEST_ISSUER)
     .setAudience(audience)

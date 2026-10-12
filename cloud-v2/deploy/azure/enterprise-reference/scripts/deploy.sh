@@ -71,6 +71,10 @@ jq -e '
     type == "object" and
     (keys | length <= 100 and all(package_name)) and
     ([.[]] | all(miniapp_configuration));
+  def email_domain:
+    type == "string" and length <= 253 and
+    test("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$") and
+    (test("(^|\\.)(mentra\\.glass|mentraglass\\.com)$") | not);
   def semver: type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$");
   def semver_key:
     capture("^(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<patch>[0-9]+)(?:-(?<pre>[0-9A-Za-z.-]+))?") |
@@ -103,6 +107,8 @@ jq -e '
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
   ((.coreAdminEmails // "") | type == "string") and
+  ((.verifiedEmailDomains // []) | type == "array" and all(email_domain) and (unique | length) == length) and
+  ((.adminPortalSignIn // false) | type == "boolean") and
   ((.miniappConfiguration // {}) | miniapp_configuration_map) and
   ($minVersion | semver) and
   ($recommendedVersion | semver) and
@@ -135,6 +141,7 @@ CORE_NAME="$(jq -r .coreName "$CONFIG")"
 CORE_IDENTITY="$(jq -r .coreIdentityName "$CONFIG")"
 RUNTIME_IDENTITY="$(jq -r .runtimeIdentityName "$CONFIG")"
 TEAMS_CLIENT_ID="$(jq -r '.teamsGraphClientId // ""' "$CONFIG")"
+ADMIN_PORTAL_SIGN_IN="$(jq -r '.adminPortalSignIn // false' "$CONFIG")"
 
 # Wizard calls are bound to an explicit subscription without changing az defaults.
 if [[ -n "${MENTRA_SUBSCRIPTION_ID:-}" ]]; then
@@ -161,7 +168,7 @@ fi
 BOOTSTRAP_PARAMETERS=(registryName="$REGISTRY_NAME" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY" keyVaultName="$KEY_VAULT"
   operatorPrincipalId="$OPERATOR_ID" operatorPrincipalType="$OPERATOR_TYPE" resourceTags="$(jq -c '.resourceTags // {}' "$CONFIG")")
 ACCESS_PARAMETERS=(keyVaultName="$KEY_VAULT" coreIdentityName="$CORE_IDENTITY" runtimeIdentityName="$RUNTIME_IDENTITY"
-  teamsGraphClientId="$TEAMS_CLIENT_ID")
+  teamsGraphClientId="$TEAMS_CLIENT_ID" adminPortalSignIn="$ADMIN_PORTAL_SIGN_IN")
 
 umask 077
 PARAMETERS="$(mktemp "${TMPDIR:-/tmp}/mentra-private-parameters.XXXXXX")"
@@ -186,6 +193,8 @@ jq -n \
       coreApiClientId:{value:$c.coreApiClientId},
       mobileClientId:{value:$c.mobileClientId},
       coreAdminEmails:{value:($c.coreAdminEmails // "")},
+      verifiedEmailDomains:{value:($c.verifiedEmailDomains // [])},
+      adminPortalSignIn:{value:($c.adminPortalSignIn // false)},
       workspaceHostname:{value:($c.workspaceHostname // "")},
       workspaceCertificateName:{value:($c.workspaceCertificateName // (($c.runtimeName // "ca-mentra-enterprise-reference") + "-workspace"))},
       additionalWorkspaceDomains:{value:($c.additionalWorkspaceDomains // [])},
@@ -295,6 +304,16 @@ if [[ -n "$TEAMS_CLIENT_ID" ]]; then
     exit 1
   }
 fi
+# Admin portal sign-in: Core reads the Core API app's client secret, which setup
+# creates in Key Vault. With adminPortalSignIn on, Core cannot start without it.
+if [[ "$ADMIN_PORTAL_SIGN_IN" == true ]]; then
+  az keyvault secret show --vault-name "$KEY_VAULT" --name entra-browser-client-secret --query id --output none 2>/dev/null || {
+    printf 'adminPortalSignIn is on, but Key Vault %s has no entra-browser-client-secret, the Core API app client secret for admin portal sign-in. Run setup.sh, or store one as entra-setup.md describes.\n' \
+      "$KEY_VAULT" >&2
+    exit 1
+  }
+fi
+# End of the admin portal secret check.
 
 # Grant each app read access to exactly its own secrets. New grants take a
 # moment to reach Key Vault, and an app that cannot read a secret fails to start.

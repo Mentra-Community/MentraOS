@@ -55,6 +55,10 @@ jobs:
       ENTRA_TENANT_ID: 2e7662c0-e826-4928-95b2-60bdd48d5d95
       ENTRA_CORE_CLIENT_ID: 20424d9e-4b99-44e8-82c9-0ad06f08a8db
       ENTRA_MOBILE_CLIENT_ID: 95ad08c2-7837-4ddf-933c-1fce3d6d2799
+      # Earlier addresses stay bound as aliases (additionalWorkspaceDomains below).
+      WORKSPACE_HOSTNAME: demo.acmeworkspace.com
+      # redis:7-alpine, the sidecar behind the demo's speech and photos.
+      REDIS_DIGEST: sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
     steps:
       - uses: actions/checkout@v4
         with:
@@ -149,7 +153,42 @@ jobs:
             --output tsv)
           [[ "$imported_digest" == "${{ steps.source.outputs.source_digest }}" ]]
 
-      - name: Deploy Core and meetings-only Runtime
+      - name: Import the Redis sidecar image into Azure
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          if ! az acr manifest show-metadata --registry "$AZURE_REGISTRY" --name "redis@$REDIS_DIGEST" >/dev/null 2>&1; then
+            az acr import \
+              --name "$AZURE_REGISTRY" \
+              --source "docker.io/library/redis@$REDIS_DIGEST" \
+              --image "redis:7-alpine-${REDIS_DIGEST:7:12}"
+          fi
+          az acr manifest show-metadata --registry "$AZURE_REGISTRY" --name "redis@$REDIS_DIGEST" >/dev/null
+
+      # Azure issues a managed certificate only for a hostname already on an app
+      # in the environment, so a new workspace hostname is attached first. The
+      # deployment then creates its certificate and binds it.
+      - name: Attach the workspace hostname to Runtime
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          attached=$(az containerapp hostname list \
+            --name "$AZURE_CONTAINER_APP" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?name=='$WORKSPACE_HOSTNAME'].name" \
+            --output tsv)
+          if [[ -z "$attached" ]]; then
+            az containerapp hostname add \
+              --hostname "$WORKSPACE_HOSTNAME" \
+              --name "$AZURE_CONTAINER_APP" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --output none
+          fi
+
+      # The demo also runs speech-to-text, text-to-speech and photos for the
+      # Enterprise demo miniapp. Their keys are the stack's soniox-api-key and
+      # elevenlabs-api-key Key Vault secrets.
+      - name: Deploy Core and Runtime
         if: inputs.dry_run != true
         env:
           CORE_ADMIN_EMAILS: ${{ vars.ENTERPRISE_DEV_CORE_ADMIN_EMAILS }}
@@ -162,14 +201,16 @@ jobs:
           umask 077
           jq -n \
             --arg cloudImage "${{ steps.source.outputs.image }}" \
+            --arg redisImage "$AZURE_REGISTRY.azurecr.io/redis@$REDIS_DIGEST" \
             --arg registryName "$AZURE_REGISTRY" \
             --arg keyVaultName "$AZURE_KEY_VAULT" \
             --arg communicationName "$AZURE_COMMUNICATION_SERVICE" \
             --arg tenantId "$ENTRA_TENANT_ID" \
             --arg coreApiClientId "$ENTRA_CORE_CLIENT_ID" \
             --arg mobileClientId "$ENTRA_MOBILE_CLIENT_ID" \
-            --arg workspaceHostname "mentra.acmeworkspace.com" \
+            --arg workspaceHostname "$WORKSPACE_HOSTNAME" \
             --slurpfile reference cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json \
+            --slurpfile demo cloud-v2/deploy/azure/enterprise-reference/demo-miniapps.json \
             '{
               "$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
               contentVersion:"1.0.0.0",
@@ -183,13 +224,15 @@ jobs:
                 mobileClientId:{value:$mobileClientId},
                 coreAdminEmails:{value:env.CORE_ADMIN_EMAILS},
                 workspaceHostname:{value:$workspaceHostname},
-                workspaceCertificateName:{value:"ca-mentra-enterprise-reference-acme-workspace"},
-                additionalWorkspaceDomains:{value:[{hostname:"enterprisedev.mentraglass.com",certificateName:"ca-mentra-enterprise-reference-workspace"}]},
+                workspaceCertificateName:{value:"ca-mentra-enterprise-reference-acme-demo"},
+                additionalWorkspaceDomains:{value:[{hostname:"mentra.acmeworkspace.com",certificateName:"ca-mentra-enterprise-reference-acme-workspace"},{hostname:"enterprisedev.mentraglass.com",certificateName:"ca-mentra-enterprise-reference-workspace"}]},
                 displayName:{value:$reference[0].displayName},
                 approvedSystemMiniapps:{value:$reference[0].systemMiniapps.approvedPackageNamesOverride},
                 teamsGraphClientId:{value:env.TEAMS_GRAPH_CLIENT_ID},
                 teamsGraphOrganizerId:{value:env.TEAMS_GRAPH_ORGANIZER_ID},
-                managedMiniapps:{value:$reference[0].miniapps.managed}
+                managedMiniapps:{value:($reference[0].miniapps.managed + $demo[0])},
+                cloudSpeechAndPhotos:{value:true},
+                redisImage:{value:$redisImage}
               }
             }' > "$parameters"
           az deployment group create \
@@ -309,7 +352,7 @@ jobs:
             jq -nc --arg url "$url" --argjson statusCode "$status" \
               '{url: $url, ready: true, statusCode: $statusCode}' >> private-deployment-checks.ndjson
           done
-          jq -e '.status == "ok" and .package == "runtime" and .services == ["meetings"]' \
+          jq -e '.status == "ok" and .package == "runtime" and .services == ["realtime-audio", "camera", "tts", "meetings"]' \
             "$RUNNER_TEMP/healthz.json"
           jq -e '.status == "ok" and .package == "core"' "$RUNNER_TEMP/core-healthz.json"
           jq -e '.keys | length >= 2' < <(curl --fail --silent --show-error "$core_origin/.well-known/jwks.json")
@@ -329,6 +372,7 @@ jobs:
             --arg mobile "$ENTRA_MOBILE_CLIENT_ID" \
             --arg coreClient "$ENTRA_CORE_CLIENT_ID" \
             --slurpfile reference cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json \
+            --slurpfile demo cloud-v2/deploy/azure/enterprise-reference/demo-miniapps.json \
             '.schemaVersion == 1
              and (has("releaseIdentity") | not)
              and .services.coreUrl == $core
@@ -339,18 +383,25 @@ jobs:
              and .auth.authorityUrl == ("https://login.microsoftonline.com/" + $tenant)
              and .auth.clientId == $mobile
              and .auth.sessionScopes == [("api://" + $coreClient + "/mentra.session")]
-             and .features.runtimeRealtimeSession == false
-             and .features.managedStreams == false
+             and .features.runtimeRealtimeSession == true
+             and .features.managedStreams == true
              and .features.nativeMeetings == true
+             and .features.cloudSpeech == true
              and .systemMiniapps == $reference[0].systemMiniapps
-             and .miniapps.managed == $reference[0].miniapps.managed
+             and .miniapps.managed == ($reference[0].miniapps.managed + $demo[0])
+             and any(.miniapps.managed[]; .packageName == "com.mentra.call")
              and .telemetry == false' \
             <<< "$manifest"
 
-          bundle_url=$(jq -er '.miniapps.managed[] | select(.packageName == "com.mentra.call") | .bundleUrl' <<< "$manifest")
-          bundle_sha=$(jq -er '.miniapps.managed[] | select(.packageName == "com.mentra.call") | .sha256' <<< "$manifest")
-          curl --fail --silent --show-error "$bundle_url" --output "$RUNNER_TEMP/mentra-call.zip"
-          echo "$bundle_sha  $RUNNER_TEMP/mentra-call.zip" | sha256sum --check
+          while read -r bundle_url bundle_sha; do
+            curl --fail --silent --show-error "$bundle_url" --output "$RUNNER_TEMP/managed-miniapp.zip"
+            echo "$bundle_sha  $RUNNER_TEMP/managed-miniapp.zip" | sha256sum --check
+          done < <(jq -er '.miniapps.managed[] | "\(.bundleUrl) \(.sha256)"' <<< "$manifest")
+
+          # Answers audio/mpeg only when Runtime has the ElevenLabs key; it calls no provider.
+          tts_type=$(curl --fail --silent --show-error --head --output /dev/null \
+            --write-out '%{content_type}' "$workspace_origin/api/tts/speak?text=ok")
+          [[ "$tts_type" == audio/* ]]
 
           curl --fail --silent --show-error --location "$workspace_origin/legal/privacy" >/dev/null
           curl --fail --silent --show-error --location "$workspace_origin/legal/terms" >/dev/null
@@ -448,7 +499,7 @@ jobs:
             echo "- Azure mirror: \`${{ steps.source.outputs.image || 'validation only' }}\`"
             echo "- Workspace: ${{ steps.verify.outputs.workspace_origin || 'validation only' }}"
             echo "- Core: ${{ steps.verify.outputs.core_origin || 'validation only' }}"
-            echo "- Services: \`meetings\`"
+            echo "- Services: \`realtime-audio,camera,tts,meetings\`"
             echo "- Provider: \`acs-teams\`"
             echo "- Coordinated release: \`true\`"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -20,7 +20,7 @@
  */
 
 import {useCallback, useEffect, useRef, useState} from "react"
-import {Dimensions, InteractionManager, Keyboard, Platform, View} from "react-native"
+import {InteractionManager, Keyboard, Platform, View, useWindowDimensions} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {
   Easing,
@@ -145,8 +145,7 @@ export default function Compositor() {
   // has in-app history (so the WebView's own back-swipe handles it) and back on
   // once the WebView is at page 0 (so our edge swipe backgrounds the miniapp).
   const gestureEnabled = useNavigationStore((s) => s.forceGestureEnabled)
-  const screenWidth = Dimensions.get("window").width
-  const screenHeight = Dimensions.get("window").height
+  const {width: screenWidth, height: screenHeight} = useWindowDimensions()
   const commitThreshold = screenWidth * COMMIT_FRACTION
 
   const handleShouldCapture = useCallback(() => {
