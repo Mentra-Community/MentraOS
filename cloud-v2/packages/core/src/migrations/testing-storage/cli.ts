@@ -5,7 +5,7 @@ import mongoose from 'mongoose';
 import {requestInputDigest} from '../../services/test-request.service';
 import {createRecordedFrameworkRunSummaryProjection} from '../../services/framework-run-summary.service';
 import {writeRunEnvelope, verifyRunEnvelope, readStoredRun} from '../../services/framework-run-detail.service';
-import {readRoutineDefinition, writeRoutineDefinition, routineCollectionDetailSchema, readRoutineCollection, writeRoutineCollection} from '../../services/routine-definition-detail.service';
+import {readRoutineDefinition, writeRoutineDefinition, routineCollectionDetailSchema, routineCollectionManifestSchema, readRoutineCollection} from '../../services/routine-definition-detail.service';
 import {TestingDetailStorage} from '../../services/testing-detail-storage.service';
 import {reportNativeSnapshotSchema, expandNativeReportSnapshot} from '../../services/report-native-detail.service';
 import {frameworkRunOutcome, frameworkEvidenceComplete, recordedFrameworkRunSchema} from '../../types/framework-run.types';
@@ -122,7 +122,8 @@ try {
         acceptedAssets: assets.map(asset => ({runId: asset.runId, assetId: asset.assetId, storageKey: asset.storageKey,
           sizeBytes: asset.sizeBytes, sha256: asset.sha256}))}, true);
     };
-    if (operation === 'export') for (const row of scope.rows) {
+    if (operation === 'export') {
+      const exportRow = async (row: ScopeRow) => {
       const original = await readBson(row); if (digestBson(original) !== row.bsonSha256) throw Error('Source backup differs');
       const doc: any = value(original); let update: Record<string, unknown>, removed: string[];
       if (row.collection === 'test_runs') {
@@ -138,7 +139,7 @@ try {
           definitionSha256: doc.definitionSha256, routineSource: doc.routineSource, definition: doc.definition});
         const {detail, card} = await writeRoutineDefinition(input, details); update = {detail, card}; removed = ['definition'];
       } else if (row.collection === 'routine_collections') {
-        const definitions = [];
+        const definitions = [], references = [];
         for (const member of doc.members) {
           const source = definitionRows.get(`${doc.commit}:${member.routineId}:${member.platform}`);
           const definition: any = source ? value(await readBson(source)) : value(await db.collection('routine_definitions').findOne({definitionRevision: doc.commit, routineId: member.routineId, platform: member.platform}));
@@ -146,17 +147,24 @@ try {
           if (!source) {
             const found = await readRoutineDefinition(definition, details);
             if (found.definitionSha256 !== member.definitionSha256) throw Error('Collection exact member digest differs');
-            definitions.push(found); continue;
+            definitions.push(found);
+            references.push({routineId: found.routineId, platform: found.platform, definitionRevision: found.definitionRevision,
+              definitionSha256: found.definitionSha256, routineSource: found.routineSource, detail: definition.detail});
+            continue;
           }
           const found = routineEnrollmentSchema.parse({routineId: definition.routineId, platform: definition.platform,
             definitionRevision: definition.definitionRevision, definitionSha256: definition.definitionSha256,
             definition: definition.definition, routineSource: definition.routineSource});
           if (found.definitionSha256 !== member.definitionSha256) throw Error('Collection exact member digest differs');
           definitions.push(found);
+          const exported = JSON.parse(await readFile(receiptPath(source), 'utf8'));
+          if (exported.scopeSha256 !== scopeSha256 || exported.sourceSha256 !== source.bsonSha256) throw Error('Collection definition receipt differs');
+          references.push({routineId: found.routineId, platform: found.platform, definitionRevision: found.definitionRevision,
+            definitionSha256: found.definitionSha256, routineSource: found.routineSource, detail: exported.update.detail});
         }
         const collection = routineCollectionDetailSchema.parse({commit: doc.commit, version: doc.version, definitions});
         if (requestInputDigest(collection) !== doc.manifestSha256) throw Error('Collection original manifest differs');
-        update = {detail: (await writeRoutineCollection(collection, details)).detail}; removed = [];
+        update = {detail: await details.write('collection', doc.commit, routineCollectionManifestSchema.parse({commit: doc.commit, version: doc.version, definitions: references}))}; removed = [];
       } else {
         const assets = await parseReceipts(row), runIds = [...new Set(assets.map(asset => asset.sourceTestRunId))];
         if (runIds.length !== 1) throw Error('Native report references more than one result');
@@ -182,6 +190,15 @@ try {
           artifacts: doc.artifacts.filter((artifact: any) => !byId.has(artifact.artifactId))}; removed = [];
       }
       await write(receiptPath(row), {version: 1, scopeSha256, sourceSha256: row.bsonSha256, update, removed, verifiedAt: new Date().toISOString()});
+      };
+      // Definition receipts precede collection references; within each phase bounded independent exports run together.
+      for (const collection of ['test_runs', 'routine_definitions', 'routine_collections', 'reports']) {
+        const rows = scope.rows.filter(row => row.collection === collection);
+        for (let offset = 0; offset < rows.length; offset += 8) {
+          await Promise.all(rows.slice(offset, offset + 8).map(exportRow));
+          console.log(JSON.stringify({operation, collection, verified: Math.min(offset + 8, rows.length), total: rows.length}));
+        }
+      }
     }
     else if (operation === 'verify') {
       for (const row of scope.rows) {
