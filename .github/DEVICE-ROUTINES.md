@@ -10,6 +10,13 @@ The GitHub check shows live phase, current test step, observed completed/total t
 
 After a check finishes, GitHub's native **Re-run** verifies the latest unsuccessful selected members, or all members after a complete pass, preserving previous results and exact app/routine selections. To stop active work, open **Details** and use **Cancel routine tests**. Cancellation requests ordinary cleanup and cannot turn the check green; custody must settle before a rerun. A timeout remains visible even while containment continues.
 
+## Check an active request
+
+1. Open the **Routine tests** check on the PR's current head. Confirm the selected routines and follow their phase, current step and completed/total test steps. **No routine tests requested** means there are no selected routines.
+2. Open **Details** to inspect each member and its latest observation. A waiting or stale row needs its stated prerequisite; it does not establish that a routine is currently running.
+3. To stop active work, use authenticated Admin **Cancel routine tests** once. Follow the original attempt through cancellation and ordinary cleanup; an accepted cancellation is not a completed release.
+4. After the original attempt finishes and custody settles, use GitHub's native **Re-run** on that check. Follow the linked attempt and retain the original results. Rerunning an Actions job or submitting another manual request does not perform this check action.
+
 Select coverage and wait for its pending check before enabling auto-merge. Disable auto-merge before changing routine labels on an already-green head; label changes cannot atomically invalidate GitHub's existing commit check. [PR routine check configuration](../cloud-v2/packages/core/docs/pr-routine-checks.md) describes App setup and required-check activation. Require the App-owned **Routine tests** context only after installed-App event and UI verification.
 
 Coordinated publication displays generic available-test and exact-build result links. Publication callbacks reconcile selected PR coverage; publication alone starts no routine. Explicit requests and the independently enabled dev nightly select coverage.
