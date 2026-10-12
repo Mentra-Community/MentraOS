@@ -27,6 +27,13 @@ test('actual Hono webhook routes only own App/install controls and hides transpo
   const cancel = {...payload, action: 'requested_action', requested_action: {identifier: 'cancel'}}
   expect((await send(cancel)).status).toBe(200); expect(controls).toHaveLength(1)
   expect((await send({...cancel, requested_action: {identifier: 'shell'}})).status).toBe(200); expect(controls).toHaveLength(1)
+  const rerun = {...cancel, requested_action: {identifier: 'rerun-routines'}}
+  expect((await send(rerun)).status).toBe(200); expect(controls).toHaveLength(2)
+  expect(controls[1]).toMatchObject({kind: 'rerun', checkId: 23, externalId: payload.check_run.external_id, actor: 'employee'})
+  expect((await send({...rerun, check_run: {...rerun.check_run, app: {id: 33}}})).status).toBe(400)
+  expect((await send({...rerun, installation: {id: 33}})).status).toBe(400)
+  expect((await send({...rerun, requested_action: undefined})).status).toBe(200)
+  expect(controls).toHaveLength(2)
 })
 
 test('signed PR intake acknowledges after durable persistence without waiting for metadata or external work', async () => {

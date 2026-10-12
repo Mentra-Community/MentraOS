@@ -1,14 +1,16 @@
+import {createHmac} from 'node:crypto'
 import {expect, test} from 'bun:test'
 import {PrRoutineCheckService, prRoutineGateId, routineCheckPayload, routineCheckPublicName} from './pr-routine-check.service'
 import type {PrRoutineCheckRepository} from './pr-routine-check.repository'
-import type {PrRoutineCheckRow, PrRoutineContext, CheckPayload} from '../types/pr-routine-check.types'
+import {ROUTINE_RERUN_ACTION, type PrRoutineCheckRow, type PrRoutineContext, type CheckPayload} from '../types/pr-routine-check.types'
 import {requestInputDigest} from './test-request.service'
 import {PrBuildDispatchFailure} from './pr-routine-check-github'
 import {TestRunError} from './test-result-error'
 import {testRoutineSource} from '../testing/framework-fixtures'
+import {createPrRoutineCheckApi} from '../api/internal/pr-routine-check.api'
 
 function fixture() {
-  let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, contextCalls = 0, loseIntakeWake = false, resolveCount = 0, deliveries = 0, lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false
+  let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, contextCalls = 0, loseIntakeWake = false, resolveCount = 0, deliveries = 0, lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false, canWrite = true
   const stored = new Map<string, PrRoutineCheckRow>(), events = new Map<string, string>(), requests = new Map<string, any>(), results = new Map<string, any>()
   const controls = new Map<string,{deliveryId:string;digest:string;control:unknown;nextAt:Date}>(), processed = new Set<string>()
   const nativeIds = new Map<string, number>()
@@ -35,7 +37,7 @@ function fixture() {
   const previews: any[] = [], rerunSubmits: any[] = []
   const definition = {id: 'login', title: 'Account login', steps: [{id: 'open', instruction: 'Open account'}, {id: 'check', instruction: 'Verify login'}], platforms: ['android']}
   const createService = () => new PrRoutineCheckService(rows, {
-    async context() {contextCalls++; return structuredClone(context)}, async permission() {return true}, async ownedCheck() {return true},
+    async context() {contextCalls++; return structuredClone(context)}, async permission() {return canWrite}, async ownedCheck() {return true},
     async findCheck(payload) {findCalls++; return !lostDelivery ? nativeIds.get(payload.external_id) : undefined}, async producer() {return producerReceipt}, async deliver(_id, payload) {if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (!nativeIds.has(payload.external_id)) nativeIds.set(payload.external_id, 99 + nativeIds.size); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return nativeIds.get(payload.external_id)!}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
   }, {
     async freezeSelection(value: any) {return {...value, build: {repository: 'Mentra-Community/MentraOS', kind: 'android-apk', channel: 'pr', headSha: context.headSha, source: value.source,
@@ -55,7 +57,7 @@ function fixture() {
   {async get() {return null}}, () => now, {async resolve() {resolveCount++; return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
-  return {get service() {return service}, loseIntakeWake() {loseIntakeWake=true}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
+  return {get service() {return service}, canWrite(value: boolean) {canWrite=value}, loseIntakeWake() {loseIntakeWake=true}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
     failSubmit(value = true) {failSubmit = value}, failHistory(value = true) {failHistory = value}, failCancellation(value?: string) {failCancellation = value}, holdCancellation(value?: Promise<void>) {holdCancellation = value}, history(value: any[]) {history = value},
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
     get contextCalls() {return contextCalls}, get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
@@ -358,13 +360,39 @@ test('native rerun waits for its replacement producer while the previous failed 
  f.build(); await f.drain(4); expect(f.submissions.length).toBeGreaterThan(0);
  expect(f.gate().attempt.members[0]!.status).toBe('running');
 });
-test('terminal and cancelling PATCH projections explicitly remove the Cancel action', async () => {
+test('only completed checks expose the fixed routine rerun action, with no custom cancellation action', async () => {
  const f = fixture(); await f.intake();
  expect(routineCheckPayload(f.gate(), f.now).actions).toEqual([]);
  f.gate().attempt.cancellation = {kind: 'cancel', requestedAt: new Date(f.now).toISOString()};
  expect(routineCheckPayload(f.gate(), f.now).actions).toEqual([]);
- f.gate().attempt.conclusion = 'cancelled';
- expect(routineCheckPayload(f.gate(), f.now).actions).toEqual([]);
+ for (const conclusion of ['success', 'failure', 'cancelled', 'timed_out'] as const) {
+   f.gate().attempt.conclusion = conclusion;
+   expect(routineCheckPayload(f.gate(), f.now).actions).toEqual([ROUTINE_RERUN_ACTION]);
+ }
+});
+
+test('signed requested-action rerun uses the same current-generation control and duplicate delivery cannot create extra work', async () => {
+ const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f);
+ const old = control(f, 'button-rerun'), secret = 'signed-routine-action-fixture-secret-32';
+ const app = createPrRoutineCheckApi(f.service, {applicationId: 17, installationId: 19} as any, () => secret);
+ const send = (deliveryId: string, checkId = old.checkId, externalId = old.externalId) => {
+   const body = JSON.stringify({repository: {full_name: 'Mentra-Community/MentraOS'}, installation: {id: 19},
+     sender: {login: 'employee'}, action: 'requested_action', requested_action: {identifier: 'rerun-routines'},
+     check_run: {id: checkId, external_id: externalId, head_sha: old.headSha, app: {id: 17}}});
+   return app.request('/webhook', {method: 'POST', body, headers: {'x-github-event': 'check_run', 'x-github-delivery': deliveryId,
+     'x-hub-signature-256': `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`}});
+ };
+ f.canWrite(false); expect((await send('read-only-actor')).status).toBe(200); await f.service.tick();
+ expect(f.gate().attempt.generation).toBe(1); expect(f.gate().controls).toHaveLength(0);
+ f.canWrite(true); expect((await send('button-rerun')).status).toBe(200); await f.service.tick(); await f.drain(1);
+ const generation = f.gate().attempt.generation, id = f.gate().checkId, previewCount = f.previews.length, submitCount = f.rerunSubmits.length;
+ expect(generation).toBe(2); expect(id).not.toBe(old.checkId); expect(f.gate().controls).toHaveLength(1);
+ expect((await send('button-rerun')).status).toBe(200); await f.service.tick();
+ expect(f.gate().attempt.generation).toBe(generation); expect(f.gate().checkId).toBe(id);
+ expect(f.previews).toHaveLength(previewCount); expect(f.rerunSubmits).toHaveLength(submitCount);
+ expect((await send('historical-button')).status).toBe(200); await f.service.tick();
+ expect(f.gate().attempt.generation).toBe(generation); expect(f.gate().controls).toHaveLength(1);
+ expect(f.previews).toHaveLength(previewCount); expect(f.rerunSubmits).toHaveLength(submitCount);
 });
 
 test('authenticated Admin cancellation fences head/generations and duplicate operation preserves custody', async () => {
