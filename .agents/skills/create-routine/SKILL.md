@@ -102,7 +102,11 @@ save each action and assertion, then execute that saved action through the same
 driver/helper replay will use. Traverse the **whole English flow** this way: a manual
 click does not prove a different script written afterward. Prefer the simplest
 supported interaction that works; verify outcomes rather than successful clicks.
-Complete every saved product step and normal teardown before ordinary replay.
+When authoring new or changed actions, complete every saved product step and
+normal teardown before ordinary replay. An already implemented, reviewed
+correction can begin with ordinary full recorded replay on the selected sources;
+do not add a duplicate held traversal or no-op authoring job. Use authoring only
+when an observed action needs editing or a candidate requires its admission path.
 A partially successful held traversal or expired recording is not that boundary.
 On a settled step failure, inspect the actual error, edit that existing action and
 retry with a concrete `retryReason` from its current safe prerequisite state. Keep
