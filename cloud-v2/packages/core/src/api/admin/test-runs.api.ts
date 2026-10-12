@@ -12,6 +12,7 @@ import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema, type Frame
 import {createTestRerunRoutes} from "../internal/test-reruns.api";
 import {routineDispatchIntentSchema} from '../../types/routine-dispatch.types';
 import {portableRoutineSelectionSchema, type StoredRoutineJob} from '../../types/routine-job.types';
+import {PrRoutineCheckService, routineCheckPayload} from '../../services/pr-routine-check.service';
 import {LaneRestorationService} from "../../services/lane-restoration.service";
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
@@ -41,6 +42,15 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   app.get("/health/:hostId", async c => c.json(await health.history(c.req.param("hostId"), c.req.query("days"))));
   app.get("/lanes/overview", async c => c.json(await restoration.overview()));
   app.get("/restoration/list", async c => c.json(await restoration.list(c.req.query('hostId'))));
+  app.get('/pr-checks/:gateId', async c => {
+    const id = c.req.param('gateId');
+    if (!/^pr-check-[a-f0-9]{64}$/.test(id)) throw new TestRunError(400, 'Invalid PR check identity');
+    const row = await new PrRoutineCheckService().detail(id);
+    if (!row) throw new TestRunError(404, 'PR check was not found');
+    return c.json({gateId: id, coverageGeneration: row.payload.coverageGeneration, attemptGeneration: row.payload.attempt.generation,
+      check: routineCheckPayload(row.payload, Date.now()), delivery: {pending: !!row.payload.reporting.intended,
+        deliveredAt: row.payload.reporting.deliveredAt, error: row.payload.reporting.error}});
+  });
   app.get("/:runId", async c => {
     const id = c.req.param("runId");
     if (!frameworkIdentitySchema.safeParse(id).success) throw new TestRunError(400, "Invalid run or request identity");

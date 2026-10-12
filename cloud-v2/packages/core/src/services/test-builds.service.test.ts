@@ -68,7 +68,7 @@ test("wrong archive size and moved PR base cannot become newly selectable", asyn
   const f = fixture();
   if (kind === "size") f.rows.set(`HEAD ${CDN}pr-builds/${f.receipt.artifacts.mac.name}`, new Response(null, {headers: {"Content-Length": "99"}}));
   else f.rows.set(`${API}/git/ref/heads/dev`, {ref: "refs/heads/dev", object: {type: "commit", sha: "e".repeat(40)}});
-  f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, {workflow_runs: [run()]});
+  f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=10`, {workflow_runs: [run()]});
   expect((await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"}))[0]!.availability).toBe("unavailable");
  }
 });
@@ -94,7 +94,7 @@ test("an immutable Android publication verifies its recorded base after dev adva
  const f = fixture(), name = `mentra-android-pr-12-${HEAD}-50-1`;
  const androidRun = run({path: ".github/workflows/mentra-app-android-build.yml"});
  f.rows.set(`${API}/actions/runs/50/attempts/1`, androidRun);
- f.rows.set(`${API}/actions/workflows/mentra-app-android-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, {workflow_runs: [androidRun]});
+ f.rows.set(`${API}/actions/workflows/mentra-app-android-build.yml/runs?&per_page=10`, {workflow_runs: [androidRun]});
  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{...jobs[0]!,
   steps: [{name: "Upload APK to the public artifact CDN", status: "completed", conclusion: "success"}]}]});
  const receipt = {schemaVersion: 1, pr: 12, headSha: HEAD, baseSha: BASE, buildSha: MERGE, runId: 50, runAttempt: 1,
@@ -127,7 +127,7 @@ test("an immutable Android publication verifies its recorded base after dev adva
 
 test("PR inventory exposes only the current same-repository head with verified published artifacts", async () => {
  const f = fixture();
- f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?event=pull_request&head_sha=${HEAD}&per_page=10`, {
+ f.rows.set(`${API}/actions/workflows/mentra-app-ios-build.yml/runs?&per_page=10`, {
   workflow_runs: [run(), run({id: 51, head_sha: BASE}), run({id: 52, head_repository: {full_name: "external/fork"}})],
  });
  const builds = await f.gateway.inventory({channel: "pr", pr: 12, platform: "ios-on-mac"});

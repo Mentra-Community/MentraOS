@@ -171,6 +171,8 @@ export class TestRerunService {
       if (row.state === "preview" && Date.parse(row.plan.expiresAt) <= this.now()) throw new TestRunError(409, "Preview expired; use a new rerun ID");
       return {rerunId: row.rerunId, previewDigest: row.previewDigest, plan: currentPlan.data, state: row.state};
     }
+    if (selected.deadline && (Date.parse(selected.deadline) <= this.now() || Date.parse(selected.deadline) > this.now() + 3 * 3600_000))
+      throw new TestRunError(400, 'Rerun deadline must be within three hours');
     const parentMembers = await this.parentMembers(selected.parent);
     const selection = selected.selection;
     const known = new Set(parentMembers.map(m => m.memberId));
@@ -247,7 +249,7 @@ export class TestRerunService {
     const plan = rerunPlanSchema.parse({rerunId: selected.rerunId, parent: selected.parent, ...(selected.source ? {source: selected.source} : {}),
       ...(selected.routineRevision ? {routineRevision: selected.routineRevision} : {}),
       ...(selected.minimumFrameworkVersion === undefined ? {} : {minimumFrameworkVersion: selected.minimumFrameworkVersion}),
-      reason: selected.reason, actor, createdAt: new Date(this.now()).toISOString(), expiresAt: new Date(this.now() + 600_000).toISOString(), members});
+      ...(selected.deadline ? {deadline: selected.deadline} : {}), reason: selected.reason, actor, createdAt: new Date(this.now()).toISOString(), expiresAt: new Date(this.now() + 600_000).toISOString(), members});
     const row: RerunRecord = {rerunId: plan.rerunId, inputDigest, previewDigest: requestInputDigest(plan), plan, state: "preview"};
     try {await this.store.insert(row);} catch (error) {
       if ((error as {code?: number}).code !== 11000) throw error;
@@ -278,7 +280,7 @@ export class TestRerunService {
     }
     const admissions = [];
     for (const member of currentPlan.data.members) {
-      try {await this.jobs.submitFrozen(member.selection, new Date(Date.parse(row.acceptedAt!) + 3 * 3600_000).toISOString()); admissions.push({requestId: member.requestId, admitted: true});}
+      try {await this.jobs.submitFrozen(member.selection, currentPlan.data.deadline ?? new Date(Date.parse(row.acceptedAt!) + 3 * 3600_000).toISOString()); admissions.push({requestId: member.requestId, admitted: true});}
       catch {admissions.push({requestId: member.requestId, admitted: false, reason: "Admission unavailable; retry this same rerun ID and preview digest"});}
     }
     return {...await this.detail(row.rerunId), admissions};

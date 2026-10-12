@@ -1,4 +1,5 @@
 name: Mobile App iOS Build
+run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}', inputs.routine_pr, inputs.routine_head_sha, inputs.routine_base) || '' }}"
 
 on:
   pull_request:
@@ -77,12 +78,25 @@ on:
       - ".github/scripts/allocate-asg-version.mjs"
       - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
   workflow_dispatch:
+    inputs:
+      routine_pr:
+        description: Trusted routine coverage PR number
+        type: string
+        required: false
+      routine_head_sha:
+        description: Exact selected PR head
+        type: string
+        required: false
+      routine_base:
+        description: Exact selected PR base
+        type: string
+        required: false
 
 # Cancel a branch's in-flight build when a newer commit is pushed to it.
 # Scoped per-ref so branches never cancel each other; keeps the Mac runner
 # queue from filling with superseded builds.
 concurrency:
-  group: ios-build-${{ github.workflow }}-${{ github.ref }}
+  group: ios-build-${{ github.workflow }}-${{ inputs.routine_pr && format('refs/pull/{0}/merge', inputs.routine_pr) || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -90,20 +104,51 @@ permissions:
   actions: read
 
 env:
-  PR_IOS_SIGNED: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
-  PR_NUMBER: ${{ github.event.pull_request.number }}
-  PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  PR_IOS_SIGNED: ${{ (github.event_name == 'pull_request' || inputs.routine_pr != '') && (github.event.pull_request.head.repo.full_name == github.repository || (github.event_name == 'workflow_dispatch' && inputs.routine_pr != '' && github.ref == 'refs/heads/dev')) }}
+  PR_NUMBER: ${{ github.event.pull_request.number || inputs.routine_pr }}
+  PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.routine_head_sha }}
   # Keep per-PR configuration out of reusable JavaScript, matching Android.
   EXPO_PUBLIC_ASG_OTA_VERSION_URL: ""
-  PR_OTA_MANIFEST_URL: ${{ github.event_name == 'pull_request' && format('https://artifactscdn.mentraglass.com/{0}/releases/pr-builds/ota-pr-{1}-{2}.json', github.repository, github.event.pull_request.number, github.event.pull_request.head.sha) || '' }}
+  PR_OTA_MANIFEST_URL: ${{ (github.event_name == 'pull_request' || inputs.routine_pr != '') && format('https://artifactscdn.mentraglass.com/{0}/releases/pr-builds/ota-pr-{1}-{2}.json', github.repository, github.event.pull_request.number || inputs.routine_pr, github.event.pull_request.head.sha || inputs.routine_head_sha) || '' }}
 
 jobs:
+  routine-pr:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      merge_sha: ${{ steps.resolve.outputs.merge_sha }}
+      head_ref: ${{ steps.resolve.outputs.head_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          persist-credentials: false
+      - name: Validate explicit routine PR metadata
+        id: resolve
+        if: inputs.routine_pr != ''
+        uses: actions/github-script@v7
+        env:
+          ROUTINE_PR: ${{ inputs.routine_pr }}
+          ROUTINE_HEAD_SHA: ${{ inputs.routine_head_sha }}
+          ROUTINE_BASE: ${{ inputs.routine_base }}
+        with:
+          script: |
+            if (context.eventName !== 'workflow_dispatch' || context.ref !== 'refs/heads/dev') throw new Error('Explicit PR builds require trusted dev dispatch');
+            const {prepareExplicitRoutinePr} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/prepare-explicit-routine-pr.mjs`);
+            await prepareExplicitRoutinePr({github, context, core});
+
   build:
+    needs: routine-pr
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 90
     outputs:
       upload_attempt: ${{ github.run_attempt }}
     env:
+      MENTRA_PR_BUILD_SHA: ${{ needs.routine-pr.outputs.merge_sha || github.sha }}
+      MENTRA_PR_BASE_REF: ${{ inputs.routine_base || github.base_ref }}
+      MENTRA_PR_HEAD_REF: ${{ needs.routine-pr.outputs.head_ref || github.head_ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.routine_pr }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.routine_head_sha }}
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
 
@@ -211,6 +256,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.routine-pr.outputs.merge_sha || github.sha }}
 
       - name: Free disk space if low
         uses: ./.github/actions/disk-guard
@@ -276,12 +323,12 @@ jobs:
           # A lane that produces a distributable must not inherit that silently.
           # Fatal on release-producing events, warning on pull_request, matching the
           # Sentry DSN rule (OS-1827).
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then
             # A PR app targets its base's services: staging-targeted PRs use
             # staging, every other PR keeps dev. GITHUB_BASE_REF is GitHub's PR
             # base, not PR-controlled input. The backend is part of the reuse
             # fingerprint, so a dev binary is never repackaged as staging.
-            case "$GITHUB_BASE_REF" in
+            case "${MENTRA_PR_BASE_REF:-$GITHUB_BASE_REF}" in
               staging) CLOUD_ENV="staging" ;;
               *) CLOUD_ENV="dev" ;;
             esac
@@ -331,7 +378,7 @@ jobs:
               echo "EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT"
             } >> "$GITHUB_ENV"
             echo "Cloud backend pinned to $CLOUD_ENV ($CLOUD_CORE)"
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+          elif [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then
             echo "::warning::Unrecognised cloud env '$CLOUD_ENV'; this PR build keeps the dev backend (OS-1875)."
           else
             echo "::error::Unrecognised cloud env '$CLOUD_ENV'. A distributable build must pin its backend (OS-1875)."
@@ -357,7 +404,7 @@ jobs:
           # changed response shape lands here as an empty DSN and is reported with
           # an actionable message, rather than killing the step with a bare
           # non-zero exit that says nothing about crash reporting.
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then
             SENTRY_DSN_REQUIRED=false
           else
             SENTRY_DSN_REQUIRED=true
@@ -778,7 +825,7 @@ jobs:
 
   publish:
     needs: build
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: (github.event_name == 'pull_request' || inputs.routine_pr != '') && (github.event.pull_request.head.repo.full_name == github.repository || (github.event_name == 'workflow_dispatch' && inputs.routine_pr != '' && github.ref == 'refs/heads/dev'))
     # Blacksmith: a GitHub-hosted publish step stalls PR builds whenever
     # GitHub-hosted runners are unavailable.
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -790,6 +837,8 @@ jobs:
       SOURCE_RUN_ATTEMPT: ${{ needs.build.outputs.upload_attempt }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.routine_pr != '' && 'dev' || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

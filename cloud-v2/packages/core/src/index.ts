@@ -25,6 +25,7 @@ import {createCoreStop, serveCore} from "./http-server"
 import {startFrameworkRunSummaryBackfill} from "./services/framework-run-summary.service"
 import {startRoutineWorkReporting} from "./services/routine-work-notification"
 import {RoutineJobService} from './services/routine-job.service'
+import {PrRoutineCheckService} from './services/pr-routine-check.service'
 import {RoutineWorkService} from './services/routine-work.service'
 import {NightlyRoutineService} from "./services/nightly-routine.service"
 import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
@@ -80,10 +81,11 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const reportNotifications = new ReportSlackDeliveryService()
   const reportServerLogs = new ReportServerLogCollectionService()
   const routineJobs = new RoutineJobService()
+  const prRoutineChecks = new PrRoutineCheckService()
   const routineAuthors = new RoutineWorkService()
   const nightlyRoutines = new NightlyRoutineService()
-  const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, undefined, async () => {
-    await Promise.allSettled([reportNotifications.tick(), reportServerLogs.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending()])
+  const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, 15_000, async () => {
+    await Promise.allSettled([reportNotifications.tick(), reportServerLogs.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending(), prRoutineChecks.tick()])
   })
 
   logger.info({port: boundPort}, "cloud-v2 core listening")

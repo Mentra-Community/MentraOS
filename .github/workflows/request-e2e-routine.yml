@@ -32,8 +32,6 @@ on:
         description: Optional exact Harness commit (defaults to main)
         type: string
         required: false
-  pull_request_target:
-    types: [opened, reopened, synchronize, labeled]
 permissions:
   contents: read
   actions: read
@@ -43,8 +41,7 @@ jobs:
     environment: routine-nightly-dev
     if: >-
       github.repository == 'Mentra-Community/MentraOS' &&
-      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev') ||
-       (github.event_name == 'pull_request_target' && vars.DEVICE_ROUTINE_PR_DISPATCH_ENABLED == 'true' && github.event.pull_request.head.repo.full_name == github.repository))
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:

@@ -21,10 +21,12 @@ test("installation tokens use signed short-lived JWTs and explicit separate repo
   } });
   expect(await app.token("source")).toBe("scoped-1"); expect(await app.token("private")).toBe("scoped-2");
   expect(await app.token("reporter")).toBe("scoped-3");
+  expect(await app.token("checks")).toBe("scoped-4");
   expect(bodies).toEqual([
     { repositories: ["MentraOS"], permissions: { actions: "write", contents: "read", pull_requests: "read" } },
     { repositories: ["Mentra-Automated-Testing"], permissions: { actions: "read" } },
     { repositories: ["MentraOS"], permissions: { pull_requests: "write" } },
+    { repositories: ["MentraOS"], permissions: { checks: "write", pull_requests: "read", contents: "read" } },
   ]);
 });
 

@@ -1,4 +1,5 @@
 name: Mobile App Android Build
+run-name: "${{ inputs.routine_pr && format('Routine PR #{0} {1} {2}', inputs.routine_pr, inputs.routine_head_sha, inputs.routine_base) || '' }}"
 
 on:
   pull_request:
@@ -79,6 +80,18 @@ on:
       - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
   workflow_dispatch:
     inputs:
+      routine_pr:
+        description: Trusted routine coverage PR number
+        type: string
+        required: false
+      routine_head_sha:
+        description: Exact selected PR head
+        type: string
+        required: false
+      routine_base:
+        description: Exact selected PR base
+        type: string
+        required: false
       build_number:
         description: Optional Android versionCode for an installable test build
         required: false
@@ -92,7 +105,7 @@ on:
 # Scoped per-ref so branches never cancel each other; keeps the runner
 # queue from filling with superseded builds.
 concurrency:
-  group: android-build-${{ github.workflow }}-${{ github.ref }}
+  group: android-build-${{ github.workflow }}-${{ inputs.routine_pr && format('refs/pull/{0}/merge', inputs.routine_pr) || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -105,7 +118,33 @@ env:
   ARTIFACTS_R2_BUCKET: artifactscdn
 
 jobs:
+  routine-pr:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      merge_sha: ${{ steps.resolve.outputs.merge_sha }}
+      head_ref: ${{ steps.resolve.outputs.head_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          persist-credentials: false
+      - name: Validate explicit routine PR metadata
+        id: resolve
+        if: inputs.routine_pr != ''
+        uses: actions/github-script@v7
+        env:
+          ROUTINE_PR: ${{ inputs.routine_pr }}
+          ROUTINE_HEAD_SHA: ${{ inputs.routine_head_sha }}
+          ROUTINE_BASE: ${{ inputs.routine_base }}
+        with:
+          script: |
+            if (context.eventName !== 'workflow_dispatch' || context.ref !== 'refs/heads/dev') throw new Error('Explicit PR builds require trusted dev dispatch');
+            const {prepareExplicitRoutinePr} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/prepare-explicit-routine-pr.mjs`);
+            await prepareExplicitRoutinePr({github, context, core});
+
   build:
+    needs: routine-pr
     # Blacksmith 8 vCPU / 32 GB: this is the long-pole check on every mobile PR
     # (~17 min of assembleRelease on 4 vCPU). The Expo plugin already sets
     # -Xmx8192m, which is tight on the 16 GB box and leaves Gradle
@@ -115,12 +154,16 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
+      MENTRA_PR_BUILD_SHA: ${{ needs.routine-pr.outputs.merge_sha || github.sha }}
+      MENTRA_PR_BASE_REF: ${{ inputs.routine_base || github.base_ref }}
+      MENTRA_PR_HEAD_REF: ${{ needs.routine-pr.outputs.head_ref || github.head_ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.routine_pr }}
       MENTRAOS_PINNED_BUILD_NUMBER: ${{ inputs.build_number || '' }}
       # PR configuration is packaged after compilation so matching signed APKs
       # can be reused across revisions. Other builds retain their embedded pin.
-      EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ github.event_name != 'pull_request' && inputs.ota_manifest_url || '' }}
-      PR_OTA_MANIFEST_URL: ${{ github.event_name == 'pull_request' && format('https://artifactscdn.mentraglass.com/{0}/releases/pr-builds/ota-pr-{1}-{2}.json', github.repository, github.event.pull_request.number, github.event.pull_request.head.sha) || '' }}
-      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ (github.event_name != 'pull_request' && inputs.routine_pr == '') && inputs.ota_manifest_url || '' }}
+      PR_OTA_MANIFEST_URL: ${{ (github.event_name == 'pull_request' || inputs.routine_pr != '') && format('https://artifactscdn.mentraglass.com/{0}/releases/pr-builds/ota-pr-{1}-{2}.json', github.repository, github.event.pull_request.number || inputs.routine_pr, github.event.pull_request.head.sha || inputs.routine_head_sha) || '' }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.routine_head_sha }}
       # Compile-check APKs are phone sideloads. Full ABI belongs on the
       # coordinated release workflow, not on this compile-check workflow.
       ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
@@ -191,6 +234,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.routine-pr.outputs.merge_sha || github.sha }}
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -245,12 +290,12 @@ jobs:
           # A lane that produces a distributable must not inherit that silently.
           # Fatal on release-producing events, warning on pull_request, matching the
           # Sentry DSN rule (OS-1827).
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then
             # A PR app targets its base's services: staging-targeted PRs use
             # staging, every other PR keeps dev. GITHUB_BASE_REF is GitHub's PR
             # base, not PR-controlled input. The backend is part of the reuse
             # fingerprint, so a dev binary is never repackaged as staging.
-            case "$GITHUB_BASE_REF" in
+            case "${MENTRA_PR_BASE_REF:-$GITHUB_BASE_REF}" in
               staging) CLOUD_ENV="staging" ;;
               *) CLOUD_ENV="dev" ;;
             esac
@@ -300,7 +345,7 @@ jobs:
               echo "EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT"
             } >> "$GITHUB_ENV"
             echo "Cloud backend pinned to $CLOUD_ENV ($CLOUD_CORE)"
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+          elif [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then
             echo "::warning::Unrecognised cloud env '$CLOUD_ENV'; this PR build keeps the dev backend (OS-1875)."
           else
             echo "::error::Unrecognised cloud env '$CLOUD_ENV'. A distributable build must pin its backend (OS-1875)."
@@ -330,7 +375,7 @@ jobs:
           # changed response shape lands here as an empty DSN and is reported with
           # an actionable message, rather than killing the step with a bare
           # non-zero exit that says nothing about crash reporting.
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.routine_pr }}" != "" ]; then
             SENTRY_DSN_REQUIRED=false
           else
             SENTRY_DSN_REQUIRED=true
@@ -367,7 +412,7 @@ jobs:
           fi
 
       - name: Prepare PR mobile configuration
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
         run: node .github/scripts/prepare-pr-mobile.mjs
 
       - name: Inject release signing key
@@ -380,12 +425,12 @@ jobs:
           upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
 
       - name: Fingerprint compiled mobile inputs
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
         run: node .github/scripts/pr-mobile-build.mjs
 
       - name: Select a matching signed PR APK
         id: select-apk
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
         uses: actions/github-script@v7
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
@@ -470,7 +515,7 @@ jobs:
           RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Package this PR's configuration and sign
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
         env:
           REUSED: ${{ steps.select-apk.outputs.reused }}
         run: |
@@ -484,7 +529,7 @@ jobs:
             mobile/android/app/build/outputs/apk/release/app-release.apk
 
       - name: Verify embedded OTA manifest pin
-        if: github.event_name != 'pull_request' && env.EXPO_PUBLIC_ASG_OTA_VERSION_URL != ''
+        if: (github.event_name != 'pull_request' && inputs.routine_pr == '') && env.EXPO_PUBLIC_ASG_OTA_VERSION_URL != ''
         run: |
           python3 - <<'PY'
           import os
@@ -511,20 +556,20 @@ jobs:
           echo "Release APK is signed with the production upload key."
 
       - name: Upload Release APK (artifact)
-        if: github.event_name != 'pull_request'
+        if: (github.event_name != 'pull_request' && inputs.routine_pr == '')
         uses: actions/upload-artifact@v4
         with:
           name: app-release
           path: mobile/android/app/build/outputs/apk/release/app-release.apk
 
       - name: Upload APK to the public artifact CDN
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.routine_pr }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.routine_head_sha }}
         run: |
           set -euo pipefail
           node .github/scripts/pr-android-artifacts.mjs mobile/android/app/build/outputs/apk/release/app-release.apk
@@ -536,7 +581,7 @@ jobs:
             --fingerprint "$MENTRA_PR_MOBILE_FINGERPRINT"
 
       - name: Cleanup old release assets
-        if: github.event_name == 'pull_request'
+        if: (github.event_name == 'pull_request' || inputs.routine_pr != '')
         continue-on-error: true
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}

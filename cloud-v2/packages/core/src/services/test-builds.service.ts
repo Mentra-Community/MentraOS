@@ -147,14 +147,14 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       .parse(await this.api(`${REPOSITORY}/git/ref/heads/${base}`));
     return ref.object.sha;
   }
-  async inventory(query: TestBuildQuery): Promise<TestBuild[]> {
+  async inventory(query: TestBuildQuery, allowOriginalBase = false): Promise<TestBuild[]> {
     const pr = query.channel === "pr" ? await this.pr(query.pr!) : undefined;
     const platform = query.platform;
     const workflow = pr ? prWorkflow(platform) : RELEASE_WORKFLOW;
-    const filter = pr ? `event=pull_request&head_sha=${pr.head.sha}` : `branch=${query.channel}`;
+    const filter = pr ? '' : `branch=${query.channel}`;
     const data = z.object({ workflow_runs: z.array(runSchema) }).parse(
       await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?${filter}&per_page=10`));
-    const base = pr ? await this.baseSha(pr) : undefined;
+    const base = pr && !allowOriginalBase ? await this.baseSha(pr) : undefined;
     return Promise.all(data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr)).map(run =>
       this.describe(run, query.channel, platform, pr, base)));
   }
@@ -198,7 +198,9 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   private matches(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PullRequest) {
     return run.repository.full_name === REPOSITORY && run.head_repository.full_name === REPOSITORY
       && run.path === `.github/workflows/${pr ? prWorkflow(platform) : RELEASE_WORKFLOW}`
-      && (pr ? run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref
+      && (pr ? (run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref ||
+        run.event === 'workflow_dispatch' && run.head_branch === 'dev' &&
+          run.display_title === `Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref}`)
         : ["push", "workflow_dispatch"].includes(run.event) && run.head_branch === channel);
   }
   async resolve(source: TestBuildSource, platform: TestBuildPlatform): Promise<TestBuild> {
@@ -216,8 +218,10 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt }
       : { channel: channel as "dev" | "staging", buildRunId: run.id, publicationAttempt: run.run_attempt };
     const build: TestBuild = { source, platform, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
-      headSha: run.head_sha, buildUrl: runUrl(REPOSITORY, run.id), createdAt: run.created_at,
-      availability: "unavailable" };
+      headSha: pr?.head.sha ?? run.head_sha, buildUrl: runUrl(REPOSITORY, run.id), createdAt: run.created_at,
+      availability: "unavailable",
+      ...(run.status !== 'completed' ? {producerStatus: 'pending' as const} :
+        run.conclusion && run.conclusion !== 'success' ? {producerStatus: 'failed' as const} : {}) };
     try {
       const artifacts = pr ? await (platform === "android" ? this.androidPrArtifacts(run, pr, baseSha) : this.prArtifacts(run, pr, baseSha))
         : await this.releaseArtifacts(run, channel, platform);

@@ -245,3 +245,18 @@ test('progress and history use compact members while preview keeps full frozen p
  await f.preview('source-boundary',{memberIds:['member-20']});
  expect(fullReads).toBe(1);expect(compactReads).toBe(2);expect(f.members).toEqual(original);
 });
+
+test('an explicit gate deadline freezes before admission and cannot extend on replay', async () => {
+  const f = fixture(), deadline = '2026-10-06T13:00:00Z'
+  const submissions: string[] = []
+  const jobs = (f.service as any).jobs, submit = jobs.submitFrozen.bind(jobs)
+  jobs.submitFrozen = async (selection: any, boundary: string) => {submissions.push(boundary); return submit(selection)}
+  const input = {rerunId: 'gate-deadline', parent: {suiteId: 'nightly'}, selection: {memberIds: ['member-20']}, reason: 'Check re-run', deadline}
+  const preview = await f.service.preview(input, 'employee')
+  expect(preview.plan.deadline).toBe(deadline)
+  await f.service.submit({rerunId: preview.rerunId, previewDigest: preview.previewDigest})
+  await f.service.submit({rerunId: preview.rerunId, previewDigest: preview.previewDigest})
+  expect(submissions).toEqual([deadline, deadline])
+  await expect(f.service.preview({...input, deadline: '2026-10-06T14:00:00Z'}, 'employee')).rejects.toThrow('different selection')
+  await expect(f.service.preview({...input, rerunId: 'too-late', deadline: '2026-10-06T16:00:00Z'}, 'employee')).rejects.toThrow('within three hours')
+})
