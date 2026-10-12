@@ -209,10 +209,12 @@ jobs:
     # collection that already holds documents. Start this change's Core on a
     # fresh database, and on one the base branch's Core left behind with every
     # collection populated, as a running deployment's upgrade would.
-    # Forks and Dependabot get no Azure sign-in, so their PRs skip this job.
+    # Azure trusts this repository's pull requests and dev (ci-database/main.bicep);
+    # forks, Dependabot and manual runs on other branches skip this job.
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev')
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:

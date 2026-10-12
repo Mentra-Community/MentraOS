@@ -309,7 +309,9 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
 async function findIncidentKeyReport(mentraUserId: string, incidentKey: string, timeoutMs: number): Promise<SubmitReportResult | null> {
   // serverSelectionTimeoutMS bounds only connection setup, not an in-flight
   // query, so carry the remaining deadline onto the operation itself.
-  const row = await ReportModel.findOne({mentraUserId, incidentKey}, {_id: 0, reportId: 1, status: 1})
+  // The derived reportId reads through the unique reportId index.
+  const row = await ReportModel.findOne({reportId: incidentReportId(mentraUserId, incidentKey), mentraUserId, incidentKey},
+    {_id: 0, reportId: 1, status: 1})
     .read('primary').readConcern('majority').setOptions({timeoutMS: timeoutMs})
     .lean<{reportId: string; status: ReportStatus}>();
   return row ? {reportId: row.reportId, status: row.status, deduplicated: true} : null;
