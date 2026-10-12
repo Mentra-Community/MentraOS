@@ -62,6 +62,30 @@ describe("localNetworkTransport", () => {
     expect(localNetworkTransport.isScopedConnectionActive()).toBe(true)
   })
 
+  it("records an acquired Android network before the caller checks a replaced OTA owner", async () => {
+    let resolve!: (value: {localAddress: string}) => void
+    mockNativeModule.connect.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolve = r
+        }),
+    )
+    let current = true
+    const connecting = localNetworkTransport.connect("AndroidShare_test", "password", {
+      retryIosInternalError: true,
+      assertCurrent: () => {
+        if (!current) throw new Error("OTA owner changed")
+      },
+    })
+    current = false
+    resolve({localAddress: "192.168.43.2"})
+    await expect(connecting).resolves.toBe("192.168.43.2")
+    expect(localNetworkTransport.isScopedConnectionActive()).toBe(true)
+    await localNetworkTransport.disconnect()
+    expect(mockNativeModule.disconnect).toHaveBeenCalled()
+    expect(localNetworkTransport.isScopedConnectionActive()).toBe(false)
+  })
+
   it("routes glasses HTTP through the captured WiFi network", async () => {
     await localNetworkTransport.connect("AndroidShare_test", "password")
 

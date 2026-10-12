@@ -145,7 +145,6 @@ export const localNetworkTransport = {
       }
     }
     const result = await otaLocalNetwork.connect(ssid, password)
-    assertCurrent()
     scopedConnectionActive = true
     return result.localAddress
   },
