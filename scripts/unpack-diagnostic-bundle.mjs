@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import {createHash} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {constants} from 'node:fs';
-import {mkdir, open, readFile, realpath} from 'node:fs/promises';
+import {lstat, mkdir, open, readFile, realpath, rename, rm} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 
@@ -39,26 +39,45 @@ export async function unpackDiagnosticBundle(bytes, out) {
   await mkdir(resolve(out), {recursive: true, mode: 0o700});
   const root = await realpath(resolve(out));
   const directory = join(root, `diagnostic-bundle-${hash(bytes)}`);
-  await mkdir(directory, {mode: 0o700}).catch(error => {if (error.code !== 'EEXIST') throw error;});
-  if (await realpath(directory) !== directory) throw Error('Diagnostic extraction directory must not be a symlink.');
-  const save = async (filename, data) => {
-    const path = join(directory, filename);
-    let file;
-    try {file = await open(path, 'wx', 0o600);} catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const receipt = {schemaVersion: 1, bundleSha256: hash(bytes), files: members.map(member => member.receipt)};
+  const files = [...members.map(member => ({filename: member.receipt.filename, data: member.data})),
+    {filename: 'manifest.json', data: Buffer.from(JSON.stringify(receipt, null, 2) + '\n')}];
+  const verifyExisting = async () => {
+    let stat;
+    try {stat = await lstat(directory);} catch (error) {if (error.code === 'ENOENT') return false; throw error;}
+    if (!stat.isDirectory() || stat.uid !== process.getuid?.() || await realpath(directory) !== directory)
+      throw Error('Diagnostic extraction directory must be owned and not a symlink.');
+    for (const {filename, data} of files) {
+      const file = await open(join(directory, filename), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       try {
         const stat = await file.stat();
         if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid?.() || stat.size !== data.length ||
           !(await file.readFile()).equals(data)) throw Error('Extracted diagnostic has different ownership or bytes.');
       } finally {await file.close();}
-      return;
     }
-    try {await file.writeFile(data); await file.sync();} finally {await file.close();}
+    return true;
   };
-  for (const member of members) await save(member.receipt.filename, member.data);
-  const receipt = {schemaVersion: 1, bundleSha256: hash(bytes), files: members.map(member => member.receipt)};
-  await save('manifest.json', Buffer.from(JSON.stringify(receipt, null, 2) + '\n'));
+  const syncDirectory = async path => {
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {await file.sync();} finally {await file.close();}
+  };
+  if (!await verifyExisting()) {
+    // Publish the complete directory once. Interrupted writes cannot poison the immutable final path.
+    const staging = `${directory}-${randomUUID()}.tmp`;
+    await mkdir(staging, {mode: 0o700});
+    try {
+      for (const {filename, data} of files) {
+        const file = await open(join(staging, filename), 'wx', 0o600);
+        try {await file.writeFile(data); await file.sync();} finally {await file.close();}
+      }
+      await syncDirectory(staging);
+      try {await rename(staging, directory);} catch (error) {
+        if (!['EEXIST', 'ENOTEMPTY'].includes(error.code) || !await verifyExisting()) throw error;
+      }
+      await syncDirectory(root);
+    } finally {await rm(staging, {recursive: true, force: true});}
+    await verifyExisting();
+  } else await syncDirectory(root);
   return {...receipt, directory};
 }
 

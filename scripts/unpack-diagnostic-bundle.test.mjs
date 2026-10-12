@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile} from 'node:fs/promises';
+import {mkdtemp, open, readFile, readdir, realpath, rm, symlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {unpackDiagnosticBundle, verifyEvidenceBytes} from './unpack-diagnostic-bundle.mjs';
@@ -58,4 +58,30 @@ test('ordinary JSON is untouched; a foreign extraction symlink and a mismatched 
     await assert.rejects(unpackDiagnosticBundle(bytes, out), /symlink/);
     assert.deepEqual(await readdir(foreign), []);
   } finally {await rm(out, {recursive: true, force: true}); await rm(foreign, {recursive: true, force: true});}
+});
+
+test('partial member or manifest writes do not poison a retry, and concurrent extraction sees only complete directories', async () => {
+  const out = await temp(), probe = await open(join(out, 'probe'), 'wx');
+  const prototype = Object.getPrototypeOf(probe), original = prototype.writeFile;
+  await probe.close(); await rm(join(out, 'probe'));
+  try {
+    for (const failManifest of [false, true]) {
+      let injected = false;
+      prototype.writeFile = async function (data, ...args) {
+        if (!injected && data.toString().includes('bundleSha256') === failManifest) {
+          injected = true; await original.call(this, data.subarray(0, 5), ...args);
+          throw Error('Injected partial extraction');
+        }
+        return original.call(this, data, ...args);
+      };
+      const bytes = archive([{...entry, id: `fault-${failManifest}`}]);
+      await assert.rejects(unpackDiagnosticBundle(bytes, out), /partial extraction/);
+      prototype.writeFile = original;
+      assert.equal((await readdir(out)).some(name => name.endsWith('.tmp')), false);
+      const [first, second] = await Promise.all([unpackDiagnosticBundle(bytes, out), unpackDiagnosticBundle(bytes, out)]);
+      assert.deepEqual(first, second);
+      assert.deepEqual(await readFile(join(first.directory, first.files[0].filename)), raw);
+      assert.deepEqual(JSON.parse(await readFile(join(first.directory, 'manifest.json'))).files, first.files);
+    }
+  } finally {prototype.writeFile = original; await rm(out, {recursive: true, force: true});}
 });
