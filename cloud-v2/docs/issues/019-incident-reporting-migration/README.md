@@ -165,8 +165,10 @@ artifacts with an `.mp4` extension.
 ## Idempotency keys
 
 A device that can retry a report after a reboot or a lost response names the
-event with an optional `incidentKey` on `POST /api/client/reports`. Every kind
-accepts it; it must match `^[A-Za-z0-9._:-]{1,128}$`. With a key, Core returns
+event with an optional `incidentKey` on `POST /api/client/reports`. Bug and
+automatic reports accept it; feedback rejects it with HTTP 400 because feedback
+is complete and notifies at creation. The key must match
+`^[A-Za-z0-9._:-]{1,128}$`. With a key, Core returns
 the existing report for the authenticated `(mentraUserId, incidentKey)` pair
 instead of creating one. The response keeps the `{reportId, status}` shape, with
 the existing report's current status, and adds `deduplicated: true` on that path
@@ -195,9 +197,10 @@ timeout returns `503`. The first accepted keyed upload for
 a collection source marks that source `received`. Uploads without `retryKey`
 keep the existing behavior and store a new artifact on every call.
 
-Cloud Client exposes `incidentKey` on `SubmitReportInput`, `deduplicated` on
-`SubmitReportResult`, and `core.reports.addLogs(reportId, source, entries,
-{retryKey})`. A Cloud that predates these fields strips them during validation:
+Cloud Client exposes `incidentKey` on the bug and automatic variants of
+`SubmitReportInput`, `deduplicated` on `SubmitReportResult`, and
+`core.reports.addLogs(reportId, source, entries, {retryKey})`. A Cloud that
+predates these fields strips them during validation:
 it creates a new report and stores a new artifact, and never returns
 `deduplicated`. Callers must treat a missing `deduplicated` as "possibly new".
 

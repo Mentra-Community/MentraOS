@@ -529,6 +529,27 @@ describe("report idempotency keys", () => {
     expect(await ReportModel.countDocuments({})).toBe(1);
   });
 
+  test("bug reports accept incident keys and deduplicate without changing keyless behavior", async () => {
+    const keyedBug = {
+      kind: "bug",
+      incidentKey: "manual-bug-1",
+      trigger: {type: "manual", source: "feedback_screen", reason: "manual_bug_report"},
+      report: {actualBehavior: "The app stopped"},
+      context: {},
+    };
+    const first = await submit(keyedBug);
+    expect(first.status).toBe(200);
+    const created = await first.json() as {reportId: string; status: string};
+    const repeated = await submit(keyedBug);
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toEqual({...created, deduplicated: true});
+
+    const keyless = await submit({...keyedBug, incidentKey: undefined});
+    expect(keyless.status).toBe(200);
+    expect(((await keyless.json()) as {reportId: string}).reportId).not.toBe(created.reportId);
+    expect(await ReportModel.countDocuments({})).toBe(2);
+  });
+
   test("feedback is not idempotent by incident key and is rejected with one", async () => {
     const res = await submit({ kind: "feedback", incidentKey: INCIDENT_KEY, feedback: "note", context: {} });
     expect(res.status).toBe(400);

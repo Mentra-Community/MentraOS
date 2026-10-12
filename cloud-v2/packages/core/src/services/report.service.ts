@@ -62,31 +62,35 @@ export interface ReportDetails {
 
 export interface ReportContext extends Record<string, unknown> {}
 
+interface IncidentKeyInput {
+  /** Device identity of one bug or automatic event; repeats return the user's existing report. */
+  incidentKey?: string;
+}
+
 export type SubmitReportInput = (
-  | {
+  | ({
       mentraUserId: string;
       kind: "bug";
       trigger: ReportTrigger;
       report: ReportDetails;
       context: ReportContext;
-    }
-  | {
+    } & IncidentKeyInput)
+  | ({
       mentraUserId: string;
       kind: "automatic";
       automationCorrelation?: ReportAutomationCorrelation;
       trigger: Extract<ReportTrigger, { type: "automatic" }>;
       report: ReportDetails;
       context: ReportContext;
-    }
+    } & IncidentKeyInput)
   | {
       mentraUserId: string;
       kind: "feedback";
+      incidentKey?: never;
       feedback: string | Record<string, unknown>;
       context: ReportContext;
-    }) & {
-  /** Device identity of one event; repeats return the user's existing report. */
-  incidentKey?: string;
-};
+    }
+);
 
 export interface SubmitReportResult {
   reportId: string;
@@ -207,6 +211,10 @@ async function lookupUserEmail(mentraUserId: string): Promise<string | null> {
 }
 
 export async function submitReport(input: SubmitReportInput): Promise<SubmitReportResult> {
+  // Keep the service boundary safe for untyped/internal JavaScript callers too;
+  // the HTTP schema independently rejects this combination with a 400.
+  if (input.kind === "feedback" && "incidentKey" in input)
+    throw new TypeError("feedback reports do not accept incidentKey");
   const rawCorrelation = 'automationCorrelation' in input ? input.automationCorrelation : undefined;
   const correlation = rawCorrelation === undefined ? null : reportAutomationCorrelation(rawCorrelation);
   if (rawCorrelation !== undefined && (!correlation || input.kind !== 'automatic'
