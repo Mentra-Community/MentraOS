@@ -482,9 +482,10 @@ export class PrRoutineCheckService {
   }
   async reconcile(gateId: string, suppliedContext?: PrRoutineContext) {
     const row = await this.rows.claim(gateId, new Date(this.now()))
-    if (!row) return
+    if (!row) return false
     let gate = structuredClone(row.payload)
     let nextAt = this.now() + 15_000
+    let reconciled = true
     const expire = () => {
       if (!gate.attempt.conclusion && this.now() >= Date.parse(gate.attempt.deadline)) {
         gate.attempt.cancellation ??= {kind: 'timeout', requestedAt: iso(this.now())}
@@ -496,10 +497,10 @@ export class PrRoutineCheckService {
     if (expire()) {
       const payload = routineCheckPayload(gate, this.now())
       gate.reporting.intended = {revision: row.revision + 1, payload, digest: digest(payload)}
-      if (!await this.rows.save(row, gate, new Date(this.now()))) return
+      if (!await this.rows.save(row, gate, new Date(this.now()))) return false
       await this.deliver(gateId)
       const retained = await this.rows.claim(gateId, new Date(this.now()))
-      if (!retained) return
+      if (!retained) return false
       Object.assign(row, retained); gate = structuredClone(retained.payload)
     }
     try {
@@ -516,8 +517,9 @@ export class PrRoutineCheckService {
         gate.checkExternalId = externalId(gate); gate.reporting = {nextAt: iso(this.now())}
         const pending = routineCheckPayload(gate, this.now())
         gate.reporting.intended = {revision: row.revision + 1, payload: pending, digest: digest(pending)}
-        if (await this.rows.save(row, gate, new Date(this.now()))) await this.deliver(gateId)
-        return
+        const saved = await this.rows.save(row, gate, new Date(this.now()))
+        if (saved) await this.deliver(gateId)
+        return saved
       }
       for (const retired of gate.retired.filter(attempt => attempt.cancellation)) {
         if (retired.members.some(member => !member.settled)) await this.cancel(retired)
@@ -544,22 +546,20 @@ export class PrRoutineCheckService {
           if (!gate.selectionComplete && !gate.selectionError && !gate.attempt.rerun) {
             if (!gate.routineRevision && gate.context.labels.length) {
               gate.routineRevision = await this.sources.resolve()
-              await this.rows.save(row, gate, new Date(this.now()))
-              return
+              return this.rows.save(row, gate, new Date(this.now()))
             }
             try {await this.select(gate)} catch (error) {
               if (error instanceof TestRunError && [400, 422].includes(error.status)) gate.selectionError = 'Selected routine is unavailable in the frozen source.'
               else throw error
             }
-            await this.rows.save(row, gate, new Date(this.now()))
-            return
+            return this.rows.save(row, gate, new Date(this.now()))
           }
           if (gate.selectionError) {gate.attempt.conclusion = 'failure'; gate.attempt.finishedAt = iso(this.now())}
           else if (!gate.attempt.members.length) {gate.attempt.conclusion = 'success'; gate.attempt.finishedAt = iso(this.now())}
           else if (predecessorsSettled && !gate.retired.some(attempt => attempt.cancellation && attempt.members.some(member => !member.settled))) {
-            if (gate.attempt.rerun) {await this.rerun(gate); if (await this.dispatchBuilds(row, gate)) return} else {
-              if (await this.freezeAdmissions(gate)) {await this.rows.save(row, gate, new Date(this.now())); return}
-              if (await this.dispatchBuilds(row, gate)) return
+            if (gate.attempt.rerun) {await this.rerun(gate); if (await this.dispatchBuilds(row, gate)) return false} else {
+              if (await this.freezeAdmissions(gate)) return this.rows.save(row, gate, new Date(this.now()))
+              if (await this.dispatchBuilds(row, gate)) return false
               await this.admit(gate)
             }
             if (gate.attempt.members.every(member => member.settled && terminalStatuses.includes(member.status) &&
@@ -574,6 +574,7 @@ export class PrRoutineCheckService {
         }
       }
     } catch (error) {
+      reconciled = false
       gate.reporting.error = 'Routine check reconciliation is unavailable; retained work will retry.'
       nextAt = this.now() + 30_000
     }
@@ -582,10 +583,11 @@ export class PrRoutineCheckService {
     if (gate.reporting.deliveredDigest !== hash && (this.now() >= Date.parse(gate.reporting.nextAt) || gate.attempt.conclusion || gate.attempt.cancellation)) {
       gate.reporting.intended = {revision: row.revision + 1, payload, digest: hash}
       // Save reporting intent even when containment observation failed. A deadline never releases native custody.
-      if (!await this.rows.save(row, gate, new Date(this.now()))) return
-      return this.deliver(gateId)
+      if (!await this.rows.save(row, gate, new Date(this.now()))) return false
+      await this.deliver(gateId)
+      return reconciled
     }
-    await this.rows.save(row, gate, this.next(gate, nextAt))
+    return await this.rows.save(row, gate, this.next(gate, nextAt)) && reconciled
   }
   private async deliver(gateId: string) {
     const row = await this.rows.claim(gateId, new Date(this.now()))
@@ -644,16 +646,18 @@ export class PrRoutineCheckService {
         if (input.kind === 'intake') gateId = (await this.intake(input.number!, event.deliveryId, event.digest, input.context!)).gateId
         else gateId = (await this.control(event.control as Parameters<PrRoutineCheckService['control']>[0])).gateId
         await this.rows.wake(gateId, new Date(this.now()))
-        await this.rows.eventSettled(event.deliveryId)
-        return gateId
+        return {gateId, deliveryId: event.deliveryId}
       }
       catch (error) {await this.rows.eventSettled(event.deliveryId, error instanceof TestRunError && error.status === 409 ? undefined : new Date(this.now() + 30_000)); return undefined}
     }))
     const due = await this.rows.due(new Date(this.now()))
-    const ready = new Set([...handled.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []), ...due])
+    const admittedEvents = handled.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : [])
+    const ready = new Set([...admittedEvents.map(event => event.gateId), ...due])
     await Promise.allSettled([...ready].map(async gateId => {
       const row = await this.rows.get(gateId)
-      await this.reconcile(gateId)
+      const reconciled = await this.reconcile(gateId)
+      await Promise.all(admittedEvents.filter(event => event.gateId === gateId).map(event =>
+        this.rows.eventSettled(event.deliveryId, reconciled ? undefined : new Date(this.now() + 30_000))))
       await this.deliver(gateId)
       for (const predecessor of row?.payload.predecessors ?? []) await this.reconcile(predecessor)
     }))

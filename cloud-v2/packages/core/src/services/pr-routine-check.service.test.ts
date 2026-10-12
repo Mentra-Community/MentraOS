@@ -8,7 +8,7 @@ import {TestRunError} from './test-result-error'
 import {testRoutineSource} from '../testing/framework-fixtures'
 
 function fixture() {
-  let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, contextCalls = 0, resolveCount = 0, deliveries = 0, lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false
+  let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, contextCalls = 0, loseIntakeWake = false, resolveCount = 0, deliveries = 0, lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false
   const stored = new Map<string, PrRoutineCheckRow>(), events = new Map<string, string>(), requests = new Map<string, any>(), results = new Map<string, any>()
   const controls = new Map<string,{deliveryId:string;digest:string;control:unknown;nextAt:Date}>(), processed = new Set<string>()
   const checkPayloads: CheckPayload[] = [], submissions: Array<{selection: any; deadline: string}> = [], cancellations: string[] = []
@@ -23,7 +23,7 @@ function fixture() {
       if (crashCreation && payload.creation && !payload.checkId) {crashCreation = false; return false}
       if (crashProducer && Object.values(payload.buildRequests ?? {}).some(value => value.state === 'uncertain')) {crashProducer = false; return false}
       return true},
-    async wake(id, date) {const row=stored.get(id); if(row && (!row.nextAt || row.nextAt>date)) row.nextAt=date},
+    async wake(id, date) {const row=stored.get(id); if(loseIntakeWake) {loseIntakeWake=false; return}; if(row && (!row.nextAt || row.nextAt>date)) row.nextAt=date},
     async due(date) {return [...stored.values()].filter(row => row.nextAt && row.nextAt <= date).sort((a,b)=>a.nextAt!.getTime()-b.nextAt!.getTime()).slice(0,20).map(row => row.gateId)},
     async predecessors(number, except) {return [...stored.values()].filter(row => row.payload.context.number === number && row.gateId !== except).map(row => row.gateId)},
     async eventsDue(date) {return [...controls.values()].filter(row=>!processed.has(row.deliveryId)&&row.nextAt<=date)}, async eventSettled(id,nextAt) {if(nextAt) controls.get(id)!.nextAt=nextAt;else processed.add(id)}, async event(id, hash, _gateId, control) {if (events.has(id) && events.get(id) !== hash) throw Error('conflict'); events.set(id, hash); if(control && !controls.has(id)) controls.set(id,{deliveryId:id,digest:hash,control:structuredClone(control),nextAt:new Date(now)})},
@@ -54,7 +54,7 @@ function fixture() {
   {async get() {return null}}, () => now, {async resolve() {resolveCount++; return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
-  return {get service() {return service}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
+  return {get service() {return service}, loseIntakeWake() {loseIntakeWake=true}, restart() {service = createService()}, stored, context, requests, results, submissions, cancellations, checkPayloads, previews, rerunSubmits, buildCalls, dispatchFailure(value: boolean | undefined) {dispatchFailure = value},
     failSubmit(value = true) {failSubmit = value}, failHistory(value = true) {failHistory = value}, failCancellation(value?: string) {failCancellation = value}, holdCancellation(value?: Promise<void>) {holdCancellation = value}, history(value: any[]) {history = value},
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
     get contextCalls() {return contextCalls}, get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
@@ -436,4 +436,25 @@ test('final delivery outage and timeout containment remain due until delivered a
  const request=f.requests.get(f.gate().attempt.members[0]!.requestId!);request.state='terminal';request.terminalStatus='cancelled';request.dispatchCompletion={disposition:'clean'};
  await f.drain(2); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeDefined(); expect(f.gate().reporting.intended).toBeDefined();
  f.outage(false); await f.drain(2); expect(f.gate().reporting.intended).toBeUndefined(); expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+})
+
+
+test('intake wake cannot be lost when an older lease parks after event acknowledgment', async () => {
+ const f=fixture();f.context.labels=[];await f.intake();await f.drain(3);expect(f.stored.get(f.gate().gateId)!.nextAt).toBeUndefined();
+ // Model a second Core process still owning the earlier observation lease.
+ const row=f.stored.get(f.gate().gateId)!;row.lease={id:'older-reader',expiresAt:new Date(f.now+120000)};
+ f.context.labels=['routine:login'];await f.service.intake(12,'busy-intake-wake',requestInputDigest('busy-intake-wake'),structuredClone(f.context));f.loseIntakeWake();await f.service.tick();
+ delete row.lease;await f.drain(3);
+ expect(f.gate().coverageGeneration).toBe(2);expect(f.gate().attempt.members).toHaveLength(1);
+})
+
+
+test('a new-head event remains recoverable under contention and waits for old-head physical custody', async () => {
+ const f=fixture();await f.intake();f.build();await f.drain();const oldId=f.gate().gateId,original=f.gate().attempt.members[0]!.requestId!, before=f.submissions.length;
+ f.context.headSha='d'.repeat(40);const newId=prRoutineGateId(f.context.headSha);await f.service.intake(12,'new-head-event',requestInputDigest('new-head-event'),structuredClone(f.context));
+ const pending=f.stored.get(newId)!;pending.lease={id:'other-process',expiresAt:new Date(f.now+120000)};await f.service.tick();expect(f.submissions.length).toBe(before);
+ delete pending.lease;await f.drain(4);expect(f.gate().attempt.cancellation?.kind).toBe('superseded');expect(f.submissions.length).toBe(before);
+ const request=f.requests.get(original);request.state='terminal';request.terminalStatus='cancelled';request.dispatchCompletion={disposition:'clean'};f.build();await f.drain(5);
+ expect(f.stored.get(oldId)!.payload.attempt.conclusion).toBe('cancelled');expect(f.stored.get(newId)!.payload.attempt.members[0]!.requestId).toBeDefined();
+ expect(f.submissions.length).toBeGreaterThan(before);
 })
