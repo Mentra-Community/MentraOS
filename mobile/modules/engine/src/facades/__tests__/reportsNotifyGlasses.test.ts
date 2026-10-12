@@ -8,6 +8,15 @@ import {cloudClientService} from "../../services/__tests__/cloudClientServiceTes
 mock.module("../../stores/glasses", () => ({
   useGlassesStore: {getState: () => ({connection: {state: "connected"}})},
 }))
+mock.module("../../services/PairingIdentity", () => ({
+  projectPairingIdentity: () => ({kind: "paired", deviceModel: "Mentra Live"}),
+}))
+mock.module("../../services/reportLogSources", () => ({
+  requiredDeviceReportLogSources: () => ["phone", "glasses"],
+}))
+mock.module("../../types", () => ({
+  DeviceTypes: {SIMULATED: "Simulated Glasses", LIVE: "Mentra Live"},
+}))
 mock.module("../../utils/diagnosticContext", () => ({
   collectDiagnosticContext: async (context?: Record<string, unknown>) => context ?? {},
 }))
@@ -37,7 +46,7 @@ cloudClientService.core = {
     complete: mock(async () => ({status: "ready"})),
   },
 }
-bluetoothSdk.getGlassesStatus = mock(async () => ({connection: {state: "connected"}}))
+bluetoothSdk.getGlassesStatus = mock(async () => ({connection: {state: "connected"}, deviceModel: "Mentra Live"}))
 bluetoothSdk.sendIncidentId = sendIncidentId
 
 const {submitAutomaticReport} = await import("../reports")

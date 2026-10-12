@@ -21,6 +21,15 @@ mock.module("react-native-mmkv", () => ({
 mock.module("../../stores/glasses", () => ({
   useGlassesStore: {getState: () => ({connection: {state: "connected"}})},
 }))
+mock.module("../PairingIdentity", () => ({
+  projectPairingIdentity: () => ({kind: "paired", deviceModel: "Mentra Live"}),
+}))
+mock.module("../reportLogSources", () => ({
+  requiredDeviceReportLogSources: () => ["phone", "glasses"],
+}))
+mock.module("../../types", () => ({
+  DeviceTypes: {SIMULATED: "Simulated Glasses", LIVE: "Mentra Live"},
+}))
 mock.module("../../utils/diagnosticContext", () => ({
   collectDiagnosticContext: async (context?: Record<string, unknown>) => context ?? {},
 }))
@@ -105,7 +114,7 @@ cloudClientService.core = {
     complete: mock(async () => ({status: "ready"})),
   },
 }
-bluetoothSdk.getGlassesStatus = mock(async () => ({connection: {state: "connected"}}))
+bluetoothSdk.getGlassesStatus = mock(async () => ({connection: {state: "connected"}, deviceModel: "Mentra Live"}))
 bluetoothSdk.sendIncidentId = sendIncidentId
 bluetoothSdk.sendBesCrashReported = sendBesCrashReported
 
