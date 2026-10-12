@@ -145,6 +145,7 @@ class GallerySyncService {
   private hotspotConnectionTimeout: number | null = null
   private hotspotRequestTimeout: number | null = null
   private abortController: AbortController | null = null
+  private hotspotOwner: string | null = null
   private isInitialized = false
   private glassesStoreUnsubscribe: (() => void) | null = null
   private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null
@@ -210,6 +211,7 @@ class GallerySyncService {
   async cleanup(): Promise<void> {
     // Engine teardown owns the same Gallery session, including a failed transfer.
     const starting = this.syncStartPromise
+    this.syncStartPromise = null
     this.startAborted = true
     this.abortController?.abort()
     this.abortController = null
@@ -491,11 +493,13 @@ class GallerySyncService {
     }
 
     useGallerySyncStore.getState().setSyncStarting(true)
-    this.syncStartPromise = this.runStartSync().finally(() => {
+    const starting = this.runStartSync().finally(() => {
+      if (this.syncStartPromise !== starting) return
       this.syncStartPromise = null
       useGallerySyncStore.getState().setSyncStarting(false)
     })
-    return this.syncStartPromise
+    this.syncStartPromise = starting
+    return starting
   }
 
   /**
@@ -574,6 +578,10 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     const glassesStore = useGlassesStore.getState()
+    if (store.syncServiceOpenedHotspot && !this.sameHotspotOwner()) {
+      this.hotspotOwner = null
+      store.setSyncServiceOpenedHotspot(false)
+    }
     const glassesConnected = isGlassesConnected(glassesStore.connection)
     const glassesHotspot =
       glassesStore.hotspot.state === "enabled"
@@ -931,6 +939,11 @@ class GallerySyncService {
 
     // Request hotspot
     console.log("[GallerySyncService] 📡 Step 4/6: Requesting hotspot from glasses...")
+    this.hotspotOwner = this.connectedGlassesIdentity()
+    if (!this.hotspotOwner) {
+      store.setSyncError("Connected glasses identity is unavailable")
+      return
+    }
     store.setRequestingHotspot()
     store.setSyncServiceOpenedHotspot(true)
 
@@ -2445,8 +2458,12 @@ class GallerySyncService {
     // Phone routing and the glasses AP have independent stop operations.
     // Always attempt the owned AP stop even if routing cleanup rejects.
     try {
-      const stopped = await BluetoothSdk.setHotspotState(false)
-      if (stopped.state !== "disabled") throw new Error("Gallery hotspot shutdown was not confirmed")
+      // Retained failure ownership cannot authorize a command to another pair.
+      if (this.sameHotspotOwner()) {
+        const stopped = await BluetoothSdk.setHotspotState(false)
+        if (stopped.state !== "disabled") throw new Error("Gallery hotspot shutdown was not confirmed")
+      }
+      this.hotspotOwner = null
       store.setSyncServiceOpenedHotspot(false)
       store.setHotspotInfo(null)
     } catch (error) {
@@ -2459,6 +2476,19 @@ class GallerySyncService {
     }
     console.log("[GallerySyncService] Hotspot closed")
     return null
+  }
+
+  private connectedGlassesIdentity(): string | null {
+    const {bluetoothMacAddress, serialNumber} = useGlassesStore.getState()
+    return bluetoothMacAddress
+      ? `mac:${bluetoothMacAddress.toUpperCase()}`
+      : serialNumber
+        ? `serial:${serialNumber}`
+        : null
+  }
+
+  private sameHotspotOwner(): boolean {
+    return this.hotspotOwner !== null && this.connectedGlassesIdentity() === this.hotspotOwner
   }
 
   /**

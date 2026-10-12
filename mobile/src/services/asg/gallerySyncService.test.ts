@@ -319,6 +319,7 @@ describe("GallerySyncService", () => {
     mockIsWifiEnabled.mockResolvedValue(true)
     useGallerySyncStore.getState().reset()
     useGlassesStore.getState().reset()
+    useGlassesStore.getState().setGlassesInfo({bluetoothMacAddress: "CC:CC:CC:CC:CC:CC"})
     await gallerySyncService.cleanup()
   })
 
@@ -496,6 +497,18 @@ describe("GallerySyncService", () => {
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
   })
 
+  it("does not open an AP when the connected pair identity is unknown", async () => {
+    useGlassesStore
+      .getState()
+      .setGlassesInfo({connection: {state: "connected", fullyBooted: true}, bluetoothMacAddress: "", serialNumber: ""})
+    await gallerySyncService.startSync()
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    expect(useGallerySyncStore.getState()).toMatchObject({
+      syncServiceOpenedHotspot: false,
+      lastError: "Connected glasses identity is unavailable",
+    })
+  })
+
   it.each(["android", "ios"])(
     "waits for the owned AP stop during %s engine cleanup and preserves the sync failure",
     async (platform) => {
@@ -503,6 +516,7 @@ describe("GallerySyncService", () => {
       gallerySyncService.initialize()
       const store = useGallerySyncStore.getState()
       store.setSyncServiceOpenedHotspot(true)
+      ;(gallerySyncService as unknown as {hotspotOwner: string}).hotspotOwner = "mac:CC:CC:CC:CC:CC:CC"
       store.setHotspotInfo(HOTSPOT_INFO)
       store.setSyncError("Original transfer failed")
       let releaseStop!: () => void
@@ -537,6 +551,7 @@ describe("GallerySyncService", () => {
 
   it("still stops its AP when phone routing cleanup fails", async () => {
     useGallerySyncStore.getState().setSyncServiceOpenedHotspot(true)
+    ;(gallerySyncService as unknown as {hotspotOwner: string}).hotspotOwner = "mac:CC:CC:CC:CC:CC:CC"
     jest.spyOn(localNetworkTransport, "disconnect").mockRejectedValueOnce(new Error("Routing release failed"))
     await expect(gallerySyncService.cleanup()).rejects.toThrow("Gallery network cleanup failed")
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(false)
@@ -555,6 +570,7 @@ describe("GallerySyncService", () => {
   it("retains AP ownership after a failed stop so later engine cleanup can finish it", async () => {
     const store = useGallerySyncStore.getState()
     store.setSyncServiceOpenedHotspot(true)
+    ;(gallerySyncService as unknown as {hotspotOwner: string}).hotspotOwner = "mac:CC:CC:CC:CC:CC:CC"
     store.setSyncError("Original transfer failed")
     ;(BluetoothSdk.setHotspotState as jest.Mock).mockRejectedValueOnce(new Error("Disable reply lost"))
     await expect(gallerySyncService.cleanup()).rejects.toThrow("Gallery network cleanup failed")
@@ -571,6 +587,7 @@ describe("GallerySyncService", () => {
   it("reports both independent cleanup failures without erasing the original sync failure", async () => {
     const store = useGallerySyncStore.getState()
     store.setSyncServiceOpenedHotspot(true)
+    ;(gallerySyncService as unknown as {hotspotOwner: string}).hotspotOwner = "mac:CC:CC:CC:CC:CC:CC"
     store.setSyncError("Original transfer failed")
     const routingFailure = new Error("Routing release failed"),
       stopFailure = new Error("Disable reply lost")
@@ -628,6 +645,76 @@ describe("GallerySyncService", () => {
     await starting
     expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
     expect(useGallerySyncStore.getState().syncStarting).toBe(false)
+  })
+
+  it("allows a fresh start after cleanup while the old permission prompt remains unresolved", async () => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    let releaseOld!: () => void
+    ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseOld = resolve
+        }),
+    )
+    const oldStart = gallerySyncService.startSync()
+    for (let i = 0; i < 20 && !releaseOld; i++) await Promise.resolve()
+    await gallerySyncService.cleanup()
+    let releaseFresh!: () => void
+    ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseFresh = resolve
+        }),
+    )
+    const freshStart = gallerySyncService.startSync()
+    for (let i = 0; i < 20 && !releaseFresh; i++) await Promise.resolve()
+    releaseOld()
+    await oldStart
+    expect(gallerySyncService.isSyncStarting()).toBe(true)
+    const joined = gallerySyncService.startSync()
+    expect(gallerySyncNotifications.requestPermissions).toHaveBeenCalledTimes(2)
+    releaseFresh()
+    await Promise.all([freshStart, joined])
+    expect(BluetoothSdk.setHotspotState).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
+    expect(useGallerySyncStore.getState()).toMatchObject({
+      syncState: "requesting_hotspot",
+      syncServiceOpenedHotspot: true,
+    })
+  })
+
+  it("does not transfer retained AP ownership to a different pair", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      bluetoothMacAddress: "AA:AA:AA:AA:AA:AA",
+      serialNumber: "original",
+    })
+    ;(BluetoothSdk.setHotspotState as jest.Mock)
+      .mockRejectedValueOnce(new Error("Enable reply lost"))
+      .mockRejectedValueOnce(new Error("Disable reply lost"))
+    await gallerySyncService.startSync()
+    expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(true)
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      bluetoothMacAddress: "BB:BB:BB:BB:BB:BB",
+      serialNumber: "different",
+      hotspotEnabled: true,
+      hotspotSsid: HOTSPOT_INFO.ssid,
+      hotspotPassword: HOTSPOT_INFO.password,
+      hotspotGatewayIp: HOTSPOT_INFO.ip,
+    })
+    mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
+    jest
+      .spyOn(
+        gallerySyncService as unknown as {connectToHotspotWifi(info: typeof HOTSPOT_INFO): Promise<void>},
+        "connectToHotspotWifi",
+      )
+      .mockResolvedValue(undefined)
+    const stopCalls = (BluetoothSdk.setHotspotState as jest.Mock).mock.calls.length
+    await gallerySyncService.startSync()
+    await gallerySyncService.cleanup()
+    expect(BluetoothSdk.setHotspotState).toHaveBeenCalledTimes(stopCalls)
+    expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(false)
   })
 
   it.each(["explanation", "connection", "preparation"])(
@@ -694,6 +781,7 @@ describe("GallerySyncService", () => {
   it("stops the owned AP after the glasses publish a hotspot error", async () => {
     gallerySyncService.initialize()
     useGallerySyncStore.getState().setSyncServiceOpenedHotspot(true)
+    ;(gallerySyncService as unknown as {hotspotOwner: string}).hotspotOwner = "mac:CC:CC:CC:CC:CC:CC"
     GlobalEventEmitter.emit("hotspot_error", {error_message: "AP initialization failed"})
     await Promise.resolve()
     await Promise.resolve()
@@ -734,6 +822,7 @@ describe("GallerySyncService", () => {
 
   it("closes the AP even when reporting a failed transfer also rejects", async () => {
     useGallerySyncStore.getState().setSyncServiceOpenedHotspot(true)
+    ;(gallerySyncService as unknown as {hotspotOwner: string}).hotspotOwner = "mac:CC:CC:CC:CC:CC:CC"
     ;(mediaProcessingQueue.retryPending as jest.Mock).mockRejectedValueOnce(new Error("Recovery failed"))
     const notificationFailure = new Error("Notification failed")
     ;(gallerySyncNotifications.showSyncError as jest.Mock).mockRejectedValueOnce(notificationFailure)
