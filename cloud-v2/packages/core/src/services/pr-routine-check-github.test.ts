@@ -264,13 +264,13 @@ test('GitHub whole-second terminal receipt matches the retained millisecond inte
     completed_at: '2026-10-12T04:11:36Z'}
   for (const method of ['POST', 'PATCH']) {
     const f = fixture(call => call.method === method ? reply(native, method === 'POST' ? 201 : 200) :
-      call.path.startsWith('commits/') ? inventory(method === 'PATCH' ? [native] : []) : reply(native))
+      call.path.startsWith('commits/') ? inventory(method === 'PATCH' ? [check(99, payload.external_id)] : []) : reply(native))
     expect(await f.github.deliver(method === 'PATCH' ? 99 : undefined, completed, method === 'POST')).toBe(99)
     expect(f.calls.filter(call => call.method === method)).toHaveLength(1)
   }
   for (const timestamp of ['2026-10-12T04:11:35Z', '2026-10-12T04:11:37Z', null, 'invalid']) {
     const f = fixture(call => call.method === 'PATCH' ? reply({...native, completed_at: timestamp}) :
-      call.path.startsWith('commits/') ? inventory([native]) : reply(native))
+      call.path.startsWith('commits/') ? inventory([check(99, payload.external_id)]) : reply(native))
     await expect(f.github.deliver(99, completed)).rejects.toThrow()
     expect(f.calls.filter(call => call.method === 'POST')).toHaveLength(0)
   }
