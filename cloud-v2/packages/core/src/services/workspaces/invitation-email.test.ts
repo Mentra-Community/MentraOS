@@ -11,6 +11,7 @@ function build(overrides: Partial<InvitationEmailInput> = {}) {
     role: "developer",
     inviteUrl: INVITE_URL,
     expiresAt: new Date("2026-10-26T01:25:48.000Z"),
+    sentAt: new Date("2026-10-12T01:25:48.000Z"),
     invitedBy: "alex@example.test",
     ...overrides,
   })
@@ -46,16 +47,19 @@ describe("the invitation email", () => {
     expect(build({invitedBy: "  "}).text).toContain("You've been invited")
   })
 
-  test("shows the expiry as a date, without a time or a time zone", () => {
+  test("gives the expiry as a number of days, which no time zone can shift", () => {
     const {html, text} = build()
     for (const body of [html, text]) {
-      expect(body).toContain("This invitation expires on October 26, 2026.")
+      expect(body).toContain("This invitation expires in 14 days.")
       expect(body).not.toContain("GMT")
       expect(body).not.toContain("01:25")
-      expect(body).not.toContain("2026-10-26")
+      expect(body).not.toContain("2026")
     }
-    // The UTC day, whatever the server's own zone.
-    expect(build({expiresAt: new Date("2026-10-26T23:59:00.000Z")}).text).toContain("October 26, 2026")
+    // Rounded to whole days, never less than one.
+    const sentAt = new Date("2026-10-12T00:00:00.000Z")
+    expect(build({sentAt, expiresAt: new Date("2026-10-26T05:00:00.000Z")}).text).toContain("expires in 14 days.")
+    expect(build({sentAt, expiresAt: new Date("2026-10-13T00:00:00.000Z")}).text).toContain("expires in 1 day.")
+    expect(build({sentAt, expiresAt: new Date("2026-10-12T02:00:00.000Z")}).text).toContain("expires in 1 day.")
   })
 
   test("tells them which address to sign in with", () => {
@@ -105,7 +109,7 @@ describe("the invitation email", () => {
         "Accept the invitation:",
         INVITE_URL,
         "",
-        "To accept, sign in to Mentra with dev@example.test. This invitation expires on October 26, 2026.",
+        "To accept, sign in to Mentra with dev@example.test. This invitation expires in 14 days.",
         "",
         "If you weren't expecting this invitation, you can ignore this email. Nothing changes unless you accept it.",
         "",
