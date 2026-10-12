@@ -86,7 +86,9 @@ const submitReportSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("feedback"),
-    incidentKey: idempotencyKeySchema.optional(),
+    // Feedback is complete as submitted and notifies at creation, so a retry cannot be told apart
+    // from a first submission whose notification never went out: it is not idempotent by key.
+    incidentKey: z.never().optional(),
     feedback: z.union([z.string(), recordSchema]),
     context: recordSchema,
   }),

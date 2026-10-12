@@ -524,9 +524,15 @@ describe("report idempotency keys", () => {
 
     // The existing report's current status is returned, whatever the resubmitted kind.
     expect((await completeReport(created.reportId)).status).toBe(200);
-    const third = await submit({ kind: "feedback", incidentKey: INCIDENT_KEY, feedback: "again", context: {} });
+    const third = await submit(crashReport(INCIDENT_KEY));
     expect(await third.json()).toEqual({ reportId: created.reportId, status: "ready", deduplicated: true });
     expect(await ReportModel.countDocuments({})).toBe(1);
+  });
+
+  test("feedback is not idempotent by incident key and is rejected with one", async () => {
+    const res = await submit({ kind: "feedback", incidentKey: INCIDENT_KEY, feedback: "note", context: {} });
+    expect(res.status).toBe(400);
+    expect(await ReportModel.countDocuments({})).toBe(0);
   });
 
   test("concurrent submissions with one incident key converge on a single report", async () => {
@@ -1030,17 +1036,13 @@ describe("report Slack notifications", () => {
     });
   }
 
-  test("a deduplicated feedback submission sends no second notification", async () => {
-    const body = JSON.stringify({ kind: "feedback", incidentKey: "feedback-once", feedback: "only once", context: {} });
-    const send = () => coreApp.fetch(new Request(REPORTS_PATH, {
-      method: "POST", headers: { ...authHeaders(), "content-type": "application/json" }, body }));
-    const first = await (await send()).json() as { reportId: string };
-    await delivered;
-    const second = await (await send()).json() as { reportId: string; deduplicated?: true };
-    expect(second).toEqual({ reportId: first.reportId, status: "ready", deduplicated: true });
-    // Give a wrongly fired notifier time to reach the mocked bot.
+  test("feedback with an incident key is rejected and sends no notification", async () => {
+    const res = await coreApp.fetch(new Request(REPORTS_PATH, {
+      method: "POST", headers: { ...authHeaders(), "content-type": "application/json" },
+      body: JSON.stringify({ kind: "feedback", incidentKey: "feedback-once", feedback: "only once", context: {} }) }));
+    expect(res.status).toBe(400);
     await new Promise(resolve => setTimeout(resolve, 200));
-    expect(slackCalls).toHaveLength(1);
+    expect(slackCalls).toHaveLength(0);
   });
 
   test("submits successfully with no Slack call when the bot token is unset", async () => {
