@@ -929,6 +929,9 @@ const en = {
     miniappScanLoading: "Loading miniapp…",
     miniappScanInstalledTitle: "Installed",
     miniappScanInstalledBody: "{{name}} v{{version}} is on your home screen.",
+    miniappScanPermissionsRequiredTitle: "Required permissions denied",
+    miniappScanPermissionsRequiredBody:
+      "{{name}} can't run without these permissions: {{permissions}}. Open Settings to enable them, then try again.",
     miniappDevSignedInstallTitle: "Uninstall required",
     miniappDevSignedInstallBody:
       "{{packageName}} is installed with a publisher signature. Uninstall it before running a development build.",
