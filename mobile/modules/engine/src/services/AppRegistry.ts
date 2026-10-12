@@ -1562,10 +1562,15 @@ class AppRegistry {
     }
   }
 
+  /** A `dev-*` snapshot or a release a developer installed from a release QR. */
+  private isDeveloperVersion(packageName: string, version: string): boolean {
+    return version.startsWith("dev-") || this.getReleaseIdentity(packageName, version)?.source === "direct_download"
+  }
+
   public async getActiveVersion(packageName: string): Promise<string | undefined> {
     let versions = this.getInstalledVersions(packageName)
-    // A scanned build only stands in while the deployment allows development.
-    // Leaving the stored pointer alone lets re-allowing it bring that scan
+    // A developer build only stands in while the deployment allows development.
+    // Leaving the stored pointer alone lets re-allowing it bring that build
     // back; until then the released version stays on screen.
     const devAllowed = isDevMiniappAllowed(packageName)
     const selectedSnapshot = devAllowed ? this.getSelectedDevSnapshot(packageName) : null
@@ -1573,7 +1578,11 @@ class AppRegistry {
     // Treat MMKV as a hint, not authority. A stored version may have been
     // GC'd off disk without this pointer being updated.
     const res = storage.load<string>(`${packageName}_active_version`)
-    if (res.is_ok() && versions.includes(res.value) && (!res.value.startsWith("dev-") || devAllowed)) {
+    if (
+      res.is_ok() &&
+      versions.includes(res.value) &&
+      (devAllowed || !this.isDeveloperVersion(packageName, res.value))
+    ) {
       return res.value
     }
     // Dev versions take precedence over semver-installed versions.
@@ -1587,10 +1596,12 @@ class AppRegistry {
         return devVersions[0]
       }
     }
-    versions = versions.filter((v) => semver.valid(v))
+    versions = versions.filter((v) => semver.valid(v) && (devAllowed || !this.isDeveloperVersion(packageName, v)))
     versions.sort((a, b) => semver.rcompare(a, b))
     if (!versions.length) return undefined
-    if (!(res.is_ok() && res.value.startsWith("dev-"))) this.setActiveVersion(packageName, versions[0])
+    if (!(res.is_ok() && this.isDeveloperVersion(packageName, res.value))) {
+      this.setActiveVersion(packageName, versions[0])
+    }
     return versions[0]
   }
 
