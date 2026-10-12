@@ -3,6 +3,7 @@ import type {RoutineProgress} from './routine-progress.types'
 
 export const ROUTINE_CHECK_NAME = 'Routine tests'
 export const ROUTINE_CHECK_REPOSITORY = 'Mentra-Community/MentraOS'
+export const ROUTINE_RERUN_ACTION = {label: 'Re-run routines', description: 'Run routine tests again', identifier: 'rerun-routines'} as const
 export type CheckConclusion = 'success' | 'failure' | 'cancelled' | 'timed_out'
 export type PrRoutineContext = {
   number: number; headSha: string; baseRef: string; headRef: string; sameRepository: boolean;
@@ -39,7 +40,7 @@ export type CheckPayload = {
   status: 'queued' | 'in_progress' | 'completed'; conclusion?: CheckConclusion;
   started_at: string; completed_at?: string; details_url: string;
   output: {title: string; summary: string};
-  actions: []
+  actions: [] | [typeof ROUTINE_RERUN_ACTION]
 }
 export type PrRoutineCheckRow = {gateId: string; revision: number; payload: PrRoutineCheck; nextAt?: Date;
   lease?: {id: string; expiresAt: Date}}

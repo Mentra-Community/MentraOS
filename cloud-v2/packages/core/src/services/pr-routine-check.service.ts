@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto'
-import {ROUTINE_CHECK_NAME, ROUTINE_CHECK_REPOSITORY, type CheckPayload, type PrRoutineAttempt,
+import {ROUTINE_CHECK_NAME, ROUTINE_CHECK_REPOSITORY, ROUTINE_RERUN_ACTION, type CheckPayload, type PrRoutineAttempt,
   type PrRoutineCheck, type PrRoutineCheckRow, type PrRoutineContext, type PrRoutineMember} from '../types/pr-routine-check.types'
 import {RoutineJobService} from './routine-job.service'
 import {RoutineDispatchService} from './routine-dispatch.service'
@@ -64,7 +64,7 @@ export function routineCheckPayload(gate: PrRoutineCheck, now: number): CheckPay
     started_at: attempt.acceptedAt, ...(attempt.finishedAt ? {completed_at: attempt.finishedAt} : {}), details_url: adminUrl(gate),
     output: {title: done ? attempt.conclusion === 'success' ? 'Routine tests passed' : 'Routine tests did not pass' :
       attempt.cancellation ? 'Routine tests are stopping' : 'Routine tests in progress', summary},
-    actions: []}
+    actions: done ? [ROUTINE_RERUN_ACTION] : []}
 }
 
 export class PrRoutineCheckService {
