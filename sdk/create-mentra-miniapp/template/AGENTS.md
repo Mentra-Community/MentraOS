@@ -58,9 +58,11 @@ Reference: https://docs.mentraglass.com/app-devs/core-concepts/webviews/back-nav
 
 ## Identity
 
-- Replace `icon.png` with an icon for this miniapp: a square PNG, at least
-  512x512. The template ships a generic glasses placeholder, and
-  `mentra-miniapp` warns while it is still in place.
+- Replace `icon.png` with an icon designed for this miniapp: a square PNG, at
+  least 512x512. The template ships a generic glasses placeholder, and
+  `mentra-miniapp dev` and `release` warn while it is still in place.
+- If you cannot create an image file, say so in your final message: tell the
+  user that `icon.png` is still the template placeholder and needs replacing.
 - Set `name` and `description` in `miniapp.json` to describe the miniapp.
 
 ## Development

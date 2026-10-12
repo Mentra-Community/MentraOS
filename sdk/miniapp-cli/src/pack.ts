@@ -152,7 +152,7 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
 
   // Copy icon.png into dist/ if it exists
   if (existsSync(iconSrc)) {
-    warnIfPlaceholderIcon(cwd);
+    if (!opts.silent) warnIfPlaceholderIcon(cwd);
     copyFileSync(iconSrc, join(distDir, 'icon.png'));
   } else if (!opts.silent) {
     console.warn('Warning: icon.png not found in project root, skipping');

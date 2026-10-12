@@ -26,6 +26,7 @@ import {readFileSync, existsSync, statSync, readdirSync, unlinkSync} from 'fs'
 import os from 'os'
 import {resolve, join} from 'path'
 import {buildProduction} from './build.js'
+import {warnIfPlaceholderIcon} from './icon.js'
 import {verifySignedBundleArchive, verifyUnsignedBundleArchive} from './bundle-signing.js'
 import {pack} from './pack.js'
 import {printQR, writeQRPng} from './qr.js'
@@ -75,6 +76,8 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const packageName = manifest.packageName as string
   const version = manifest.version as string
   const name = (manifest.name as string) ?? packageName
+
+  warnIfPlaceholderIcon(cwd)
 
   // ---- 2. Build (or skip via cache) -----------------------------------
   const cacheDir = resolve(cwd, 'build')
