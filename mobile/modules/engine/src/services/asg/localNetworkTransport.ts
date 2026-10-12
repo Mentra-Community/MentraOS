@@ -123,7 +123,8 @@ export const localNetworkTransport = {
         assertCurrent()
         try {
           await WifiManager.connectToProtectedSSID(ssid, password, false, false)
-          assertCurrent()
+          // Report acquisition first; the caller records it before its own
+          // identity check and normal teardown of a replaced OTA attempt.
           return undefined
         } catch (error) {
           assertCurrent()

@@ -63,7 +63,7 @@ describe("localNetworkTransport", () => {
   })
 
   it("records an acquired Android network before the caller checks a replaced OTA owner", async () => {
-    let resolve!: (value: {localAddress: string}) => void
+    let resolve!: (value: {connected: boolean; ssid: string; localAddress: string}) => void
     mockNativeModule.connect.mockImplementationOnce(
       () =>
         new Promise((r) => {
@@ -78,7 +78,7 @@ describe("localNetworkTransport", () => {
       },
     })
     current = false
-    resolve({localAddress: "192.168.43.2"})
+    resolve({connected: true, ssid: "AndroidShare_test", localAddress: "192.168.43.2"})
     await expect(connecting).resolves.toBe("192.168.43.2")
     expect(localNetworkTransport.isScopedConnectionActive()).toBe(true)
     await localNetworkTransport.disconnect()
@@ -323,6 +323,26 @@ describe("completed iOS hotspot join recovery", () => {
     const original = internalJoinError()
     reject(original)
     expect(await failure).toBe(original)
+    expect(mockLegacyConnect).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns successful iOS acquisition to caller cleanup after OTA ownership changes", async () => {
+    let resolve!: () => void
+    mockLegacyConnect.mockReturnValueOnce(
+      new Promise<void>((r) => {
+        resolve = r
+      }),
+    )
+    let current = true
+    const pending = localNetworkTransport.connect("test-hotspot", "test-passphrase", {
+      ...retryOptions,
+      assertCurrent: () => {
+        if (!current) throw new Error("OTA owner changed")
+      },
+    })
+    current = false
+    resolve()
+    await expect(pending).resolves.toBeUndefined()
     expect(mockLegacyConnect).toHaveBeenCalledTimes(1)
   })
 
