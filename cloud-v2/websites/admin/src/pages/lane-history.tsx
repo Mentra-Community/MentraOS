@@ -31,7 +31,7 @@ export function LaneHistoryPage({selection, now}: {selection: LaneSelection; now
         Refresh lane</TestingButton></div>
     <section className={TESTING_PANEL}><h3 className="font-semibold">Current lane status</h3>
       {controllers.isError && <p role="alert" className="mt-3 text-sm text-red-700">Controller reports could not refresh. Current lane status is unknown.</p>}
-      {host && lane ? <LaneHealthHost host={{...host, lanes: [lane]}} fresh={fresh} linkHistory={false} /> : <p className="mt-3 text-sm text-[#747780]">{controllers.isPending ? loading('Loading lane report') : "No controller report is available for this lane. Current status is unknown."}</p>}
+      {host && lane ? <LaneHealthHost host={{...host, lanes: [lane]}} fresh={fresh} linkHistory={false} controls /> : <p className="mt-3 text-sm text-[#747780]">{controllers.isPending ? loading('Loading lane report') : "No controller report is available for this lane. Current status is unknown."}</p>}
       {controllers.data?.truncated && <p className="mt-3 text-sm text-amber-800">Controller reports are truncated; this lane may be omitted.</p>}
     </section>
     {detailedHost && <section className={TESTING_PANEL}><h3 className="font-semibold">Framework installation history</h3><FrameworkHealth host={detailedHost} fresh={!details.isError && restorationHostIsFresh(detailedHost, now, details.data!.freshForMs)} /></section>}

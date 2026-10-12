@@ -17,7 +17,7 @@ Store the token there; it does not need a repository-secret slot. Allow the
 `dev` and `staging` branches. Leave required reviewers and wait timers off for
 unattended notifications.
 
-Three Linux jobs on ephemeral Blacksmith runners select this environment: `coordinated-release.yml`'s
+The release-notification jobs on ephemeral Blacksmith runners select this environment: `coordinated-release.yml`'s
 `notify-slack`, and `notify-release-routine.yml`'s `resolve` and `update`. The
 resolver needs it because it checks token availability before producing work.
 These are ordinary jobs, not `workflow_call` jobs: GitHub resolves the secret
@@ -39,6 +39,15 @@ Without this configuration, the existing incoming webhook still delivers the
 release post and says **Terminal Slack updates unavailable; use the results
 link**. Historical webhook posts have no retained editable receipt and are not
 modified automatically.
+
+## Nightly suite notifications
+
+Nightly suite summaries use `#nightly-builds` through the same bot. The nightly
+scheduler also selects `build-notifications`; that environment already supplies
+`TEST_RUN_INGEST_TOKEN_DEV` and additionally defines the variable
+`SLACK_NIGHTLY_BUILDS_CHANNEL_ID`. Invite the bot to the nightly channel as well.
+This does not move coordinated-release messages or their routine-result updates.
+See [nightly setup](../../.github/NIGHTLY-DEVICE-ROUTINES.md#slack-destination).
 
 ## Flow
 

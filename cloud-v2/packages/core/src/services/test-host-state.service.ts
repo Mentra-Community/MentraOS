@@ -1,3 +1,4 @@
+import {laneControlExchangeSchema} from './lane-controls.service'
 import {z} from "zod"
 import {TestHostStateModel} from "../models/test-host-state.model"
 import {testWriteConcern} from "../models/test-write-concern"
@@ -105,6 +106,7 @@ export const hostStateSchema = z
           }),
       )
       .max(100),
+    laneControls: laneControlExchangeSchema.optional(),
     restoration: laneRestorationProjectionSchema.optional(),
     frameworkBinding: frameworkBindingSchema.optional(),
     frameworkAcceptedAt: z.string().datetime({offset: true}).optional(),

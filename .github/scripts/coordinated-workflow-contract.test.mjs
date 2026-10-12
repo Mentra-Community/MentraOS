@@ -397,6 +397,7 @@ test("Private Deployment remains release-matched without gating the dev release"
 
   assert.match(privateDeploymentJob, /^    needs: \[plan, runtime-image\]$/m)
   assert.match(privateDeploymentJob, /needs\.plan\.outputs\.cloud_environment == 'dev'/)
+  assert.match(privateDeploymentJob, /vars\.ENTERPRISE_DEMO_FROZEN != 'true'/)
   assert.match(privateDeploymentJob, /source_commit: \$\{\{ needs\.plan\.outputs\.source_commit \}\}/)
   assert.match(privateDeploymentJob, /release_plan_artifact: \$\{\{ needs\.plan\.outputs\.plan_artifact \}\}/)
   assert.match(

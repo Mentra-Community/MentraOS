@@ -130,6 +130,20 @@ function stableReportId(prefix: "rep" | "art", binding: string): string {
   return `${prefix}_${BigInt(`0x${hex}`).toString(32).padStart(26, "0").toUpperCase()}`;
 }
 
+const CROCKFORD_BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/** The reportId of a keyed submission: the user and incident key hashed into the
+ * same `rep_` + 26-character ULID alphabet as every other device report. The
+ * long-standing unique reportId index then deduplicates keyed submissions, so
+ * no new unique index is needed (Cosmos DB, which Private Cloud uses, cannot
+ * add one to a collection that already holds reports). */
+export function incidentReportId(mentraUserId: string, incidentKey: string): string {
+  let value = BigInt(`0x${createHash("sha256").update(`incident\n${mentraUserId}\n${incidentKey}`).digest("hex").slice(0, 32)}`);
+  let id = "";
+  for (let i = 0; i < 26; i++, value >>= 5n) id = CROCKFORD_BASE32[Number(value & 31n)] + id;
+  return `rep_${id}`;
+}
+
 /** Server-owned incident for a published run without a device-filed report. The unique
  * reportId deduplicates concurrent creation and retries without changing the TestRun. */
 export async function ensureTestRunReport(testRunId: string, payloadSha256: string,
@@ -228,7 +242,7 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
       timeoutMs => findIncidentKeyReport(input.mentraUserId, incidentKey, timeoutMs));
     if (existing) return existing;
   }
-  const reportId = `rep_${ulid()}`;
+  const reportId = incidentKey !== undefined ? incidentReportId(input.mentraUserId, incidentKey) : `rep_${ulid()}`;
   const status: ReportStatus = input.kind === "feedback" ? "ready" : "collecting";
   const feedback = "feedback" in input
     ? typeof input.feedback === "string"
@@ -262,7 +276,7 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     else if (correlation) await ReportModel.create([document], {writeConcern: attachmentWriteConcern});
     else await ReportModel.create(document);
   } catch (error) {
-    // A concurrent submission with the same incident key won the unique index.
+    // A concurrent submission with the same incident key created this reportId first.
     // Its write may still be pending or roll back, so answer only once it is committed.
     if (incidentKey === undefined || (error as {code?: number}).code !== 11000) throw error;
     const existing = await awaitCommitted(deadline, timeoutMs => findIncidentKeyReport(input.mentraUserId, incidentKey, timeoutMs));
@@ -295,7 +309,9 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
 async function findIncidentKeyReport(mentraUserId: string, incidentKey: string, timeoutMs: number): Promise<SubmitReportResult | null> {
   // serverSelectionTimeoutMS bounds only connection setup, not an in-flight
   // query, so carry the remaining deadline onto the operation itself.
-  const row = await ReportModel.findOne({mentraUserId, incidentKey}, {_id: 0, reportId: 1, status: 1})
+  // The derived reportId reads through the unique reportId index.
+  const row = await ReportModel.findOne({reportId: incidentReportId(mentraUserId, incidentKey), mentraUserId, incidentKey},
+    {_id: 0, reportId: 1, status: 1})
     .read('primary').readConcern('majority').setOptions({timeoutMS: timeoutMs})
     .lean<{reportId: string; status: ReportStatus}>();
   return row ? {reportId: row.reportId, status: row.status, deduplicated: true} : null;

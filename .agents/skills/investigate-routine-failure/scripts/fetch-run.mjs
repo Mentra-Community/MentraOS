@@ -3,6 +3,8 @@ import {createHash} from 'node:crypto';
 import {mkdir, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {unpackDiagnosticBundle, verifyEvidenceBytes as verifyAsset} from '../../../../scripts/unpack-diagnostic-bundle.mjs';
+export {verifyAsset};
 
 const origins = {
   dev: {admin: 'admin.dev.mentraglass.com', core: 'https://core.dev.us-west-2.mentraglass.com'},
@@ -46,11 +48,6 @@ export async function boundedGet(url, token, limit, fetcher = fetch) {
   }
   return Buffer.concat(chunks);
 }
-export function verifyAsset(bytes, asset) {
-  if (!Number.isSafeInteger(asset.size) || asset.size < 1 || !/^[a-f0-9]{64}$/.test(asset.sha256 ?? '') ||
-    bytes.length !== asset.size || createHash('sha256').update(bytes).digest('hex') !== asset.sha256)
-    throw Error('Asset size/digest differs from the declared run manifest.');
-}
 export async function fetchRun({target, token, out, assetId, maxBytes = 8 * 1024 * 1024, fetcher = fetch}) {
   const endpoint = `${target.core}/api/admin/test-runs/${encodeURIComponent(target.id)}`;
   const bytes = await boundedGet(endpoint, token, 8 * 1024 * 1024, fetcher);
@@ -79,6 +76,10 @@ export async function fetchRun({target, token, out, assetId, maxBytes = 8 * 1024
     const filename = `asset-${createHash('sha256').update(assetId).digest('hex').slice(0, 24)}`;
     await writeFile(join(out, filename), data, {mode: 0o600});
     receipt.asset = {id: assetId, endpoint: assetEndpoint, filename, sha256: asset.sha256, size: asset.size, mimeType: asset.mimeType};
+    if (asset.mimeType === 'application/json') {
+      const bundle = await unpackDiagnosticBundle(data, out);
+      if (bundle) receipt.asset.bundle = bundle;
+    }
   }
   await writeFile(join(out, 'receipt.json'), JSON.stringify(receipt, null, 2), {mode: 0o600});
   return receipt;

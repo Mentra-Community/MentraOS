@@ -354,7 +354,9 @@ jobs:
   private-deployment:
     name: Deploy release-matched private stack
     needs: [plan, runtime-image]
-    if: needs.plan.outputs.cloud_environment == 'dev'
+    # ENTERPRISE_DEMO_FROZEN=true holds the demo on its current release (e.g. during
+    # sales demos). The Private Cloud download channel then stays put as well.
+    if: needs.plan.outputs.cloud_environment == 'dev' && vars.ENTERPRISE_DEMO_FROZEN != 'true'
     permissions:
       actions: read
       contents: read

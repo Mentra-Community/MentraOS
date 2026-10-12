@@ -1,3 +1,4 @@
+import {LaneControls} from './lane-controls'
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {useQuery} from "@tanstack/react-query"
 import {LoadingIndicator} from '../components/loading-indicator'
@@ -27,10 +28,12 @@ export function LaneHealthHost({
   host,
   fresh,
   linkHistory = true,
+  controls = false,
 }: {
   host: LaneOverviewHost | LaneRestorationHost
   fresh: boolean
   linkHistory?: boolean
+  controls?: boolean
 }) {
   return (
     <div className="mt-5">
@@ -83,6 +86,7 @@ export function LaneHealthHost({
                   <p className="text-xs">Generation {lane.activity.generation}</p>
                 </div> : ['running', 'reserved', 'in-repair'].includes(lane.state)
                   ? <p className="mt-2 text-xs text-[#747780]">{fresh ? 'Owner not reported.' : 'Last reported owner unavailable.'}</p> : null}
+                {controls && <LaneControls hostId={host.hostId} laneId={lane.id} mode={lane.dispatchMode} fresh={fresh} />}
                 {linkHistory && (
                   <a
                     className="mt-3 inline-block text-sm font-medium text-blue-700 hover:underline"
@@ -125,6 +129,7 @@ export function LaneHealthSection({now}: {now: number}) {
       {query.data?.hosts.map((host) => (
         <LaneHealthHost
           key={host.hostId}
+          controls
           host={host}
           fresh={!query.isError && restorationHostIsFresh(host, now, query.data!.freshForMs)}
         />

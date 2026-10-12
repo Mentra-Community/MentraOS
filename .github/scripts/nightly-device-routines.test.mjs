@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {scheduledOccurrence, githubOccurrence, nightlyApi, reconcileNightlyOccurrence, nightlySummary, publishNightlyWebhook, NIGHTLY_WORKFLOW} from "./nightly-device-routines.mjs"
+import {scheduledOccurrence, githubOccurrence, nightlyApi, reconcileNightlyOccurrence, nightlySummary, publishNightlyMessage, NIGHTLY_WORKFLOW} from "./nightly-device-routines.mjs"
 const occurrence = {occurrenceId: "nightly-dev-2026-10-03", startedAt: "2026-10-03T11:00:00.000Z", trigger: "nightly"}
 function terminal() {return {...occurrence, suiteId: "nightly-example", finishedAt: "2026-10-03T12:00:00.000Z", status: "pass", expectedCount: 1, passed: 1,
   resultUrl: "https://admin.dev.mentraglass.com/?testRun=example", members: [{memberId: "example", routineId: "never-listed-check", platform: "android", status: "pass", publicationComplete: true, runId: "example"}]}}
@@ -32,13 +32,13 @@ test("dynamic expected members and publication evidence prevent a false pass", (
   result.expectedCount = 2; assert.throws(() => nightlySummary(result), /complete frozen/)
 })
 test("Slack summary matches history failure and skipped counts and refuses rerun sends", async () => {
-  const sends = [], options = {result: terminal(), webhook: "https://hooks.slack.com/services/fixture", attempt: 1,
-    fetchImpl: async (_, options) => {sends.push(JSON.parse(options.body)); return new Response("ok")}}
-  assert.equal((await publishNightlyWebhook(options)).status, "acknowledged")
+  const sends = [], options = {result: terminal(), token: "fixture-bot-token", channel: "CNIGHTLY", attempt: 1,
+    fetchImpl: async (_, options) => {sends.push(JSON.parse(options.body)); return Response.json({ok: true, channel: "CNIGHTLY", ts: "123.456", message: {bot_id: "BFIXTURE"}})}}
+  assert.equal((await publishNightlyMessage(options)).status, "acknowledged")
   assert.match(sends[0].text, /^🟢 Dev nightly: Passed\n<https:\/\/admin\.dev\.mentraglass\.com\/\?testRun=example\|View nightly results>\nBuild: unavailable in the nightly receipt\n0\/1 failed$/)
   assert.equal(sends[0].unfurl_links, false)
   assert.equal(sends[0].unfurl_media, false)
-  await assert.rejects(publishNightlyWebhook({...options, attempt: 2}), /reconciliation/)
+  await assert.rejects(publishNightlyMessage({...options, attempt: 2}), /reconciliation/)
   assert.equal(sends.length, 1)
 })
 
@@ -73,8 +73,8 @@ test("expired trigger reconciles the original occurrence without resetting its s
 
 async function slackText(result) {
   let body
-  await publishNightlyWebhook({result, webhook: "https://hooks.slack.com/services/fixture", attempt: 1,
-    fetchImpl: async (_, options) => {body = JSON.parse(options.body); return new Response("ok")}})
+  await publishNightlyMessage({result, token: "fixture-bot-token", channel: "CNIGHTLY", attempt: 1,
+    fetchImpl: async (_, options) => {body = JSON.parse(options.body); return Response.json({ok: true, channel: "CNIGHTLY", ts: "123.456", message: {bot_id: "BFIXTURE"}})}})
   assert.match(body.text, /^(?:🟢|🔴|⚪) Dev nightly:/)
   assert.match(body.text, /View nightly results>|Result link unavailable/)
   return body.text.split("\n").slice(2).join("\n")
@@ -138,8 +138,8 @@ test("Slack identifies the frozen release, commit and producer job", async () =>
 
 test("Slack uses the stable suite link and distinguishes success, failure and empty selection", async () => {
   const sends = [], result = {...terminal(), resultUrl: "https://admin.dev.mentraglass.com/?testSuite=nightly-example"}
-  const send = value => publishNightlyWebhook({result: value, webhook: "https://hooks.slack.com/services/fixture", attempt: 1,
-    fetchImpl: async (_, options) => {sends.push(JSON.parse(options.body)); return new Response("ok")}})
+  const send = value => publishNightlyMessage({result: value, token: "fixture-bot-token", channel: "CNIGHTLY", attempt: 1,
+    fetchImpl: async (_, options) => {sends.push(JSON.parse(options.body)); return Response.json({ok: true, channel: "CNIGHTLY", ts: "123.456", message: {bot_id: "BFIXTURE"}})}})
   await send(result)
   assert.match(sends[0].text, /^🟢 Dev nightly: Passed/)
   assert.match(sends[0].text, /<https:\/\/admin\.dev\.mentraglass\.com\/\?testSuite=nightly-example\|View nightly results>/)
@@ -157,8 +157,8 @@ test('history-style summary keeps cancellations and evidence-only incompleteness
   ]
   for (const {status, members, heading, counts} of cases) {
     let text
-    await publishNightlyWebhook({result: {...terminal(), status, members, passed: 0}, webhook: 'https://hooks.slack.com/services/fixture', attempt: 1,
-      fetchImpl: async (_, options) => {text = JSON.parse(options.body).text; return new Response('ok')}})
+    await publishNightlyMessage({result: {...terminal(), status, members, passed: 0}, token: 'fixture-bot-token', channel: 'CNIGHTLY', attempt: 1,
+      fetchImpl: async (_, options) => {text = JSON.parse(options.body).text; return Response.json({ok: true, channel: 'CNIGHTLY', ts: '123.456', message: {bot_id: 'BFIXTURE'}})}})
     assert.ok(text.startsWith(`⚪ Dev nightly: ${heading}\n`)); assert.ok(text.includes(`\n${counts}\n`))
     assert.doesNotMatch(text, /\d+\/\d+ passed|\d+\/\d+ Ran/)
   }
@@ -172,9 +172,46 @@ test('mixed failed and incomplete receipts retain the red Failed history heading
     let text
     const result = {...terminal(), status: 'incomplete', passed: 0, expectedCount: 2,
       members: [{...terminal().members[0], status: 'setup-failed'}, neighbor]}
-    await publishNightlyWebhook({result, webhook: 'https://hooks.slack.com/services/fixture', attempt: 1,
-      fetchImpl: async (_, options) => {text = JSON.parse(options.body).text; return new Response('ok')}})
+    await publishNightlyMessage({result, token: 'fixture-bot-token', channel: 'CNIGHTLY', attempt: 1,
+      fetchImpl: async (_, options) => {text = JSON.parse(options.body).text; return Response.json({ok: true, channel: 'CNIGHTLY', ts: '123.456', message: {bot_id: 'BFIXTURE'}})}})
     assert.ok(text.startsWith('🔴 Dev nightly: Failed\n'))
     assert.ok(text.includes(neighbor.status === 'incomplete' ? '\n1/1 failed, 1 skipped\n' : '\n1/2 failed\n'))
+  }
+})
+
+
+test("nightly delivery retains the actual channel and message identity through the existing bot", async () => {
+  const sends = []
+  const receipt = await publishNightlyMessage({result: terminal(), token: "fixture-bot-token", channel: "CNIGHTLY", attempt: 1,
+    fetchImpl: async (url, options) => {
+      sends.push({url, options})
+      return Response.json({ok: true, channel: "CNIGHTLY", ts: "123.456", message: {bot_id: "BFIXTURE"}})
+    }})
+  assert.deepEqual(receipt, {occurrenceId: occurrence.occurrenceId, status: "acknowledged", passed: true,
+    channel: "CNIGHTLY", ts: "123.456", botId: "BFIXTURE"})
+  assert.equal(sends[0].url, "https://slack.com/api/chat.postMessage")
+  assert.equal(sends[0].options.headers.Authorization, "Bearer fixture-bot-token")
+  assert.equal(sends[0].options.redirect, "error")
+  assert.equal(JSON.parse(sends[0].options.body).channel, "CNIGHTLY")
+})
+
+test("nightly refuses missing configuration and never blindly retries an ambiguous or rejected post", async () => {
+  let calls = 0
+  const base = {result: terminal(), token: "fixture-bot-token", channel: "CNIGHTLY", attempt: 1}
+  for (const invalid of [{token: undefined}, {channel: undefined}, {channel: "nightly-builds"}, {attempt: 2}]) {
+    await assert.rejects(publishNightlyMessage({...base, ...invalid, fetchImpl: async () => {calls++; assert.fail("Invalid configuration must not send")}}))
+  }
+  assert.equal(calls, 0)
+  for (const fetchImpl of [
+    async () => {calls++; throw new Error("Lost response")},
+    async () => {calls++; return new Response('{"ok":', {status: 200})},
+    async () => {calls++; return Response.json({ok: false, error: "not_in_channel"})},
+    async () => {calls++; return Response.json({ok: true, channel: "COTHER", ts: "123.456", message: {bot_id: "BFIXTURE"}})},
+    async () => {calls++; return Response.json({ok: true, channel: "CNIGHTLY", ts: "bad", message: {bot_id: "BFIXTURE"}})},
+    async () => {calls++; return Response.json({ok: true, channel: "CNIGHTLY", ts: "123.456", message: {}})},
+  ]) {
+    const before = calls
+    await assert.rejects(publishNightlyMessage({...base, fetchImpl}))
+    assert.equal(calls, before + 1)
   }
 })
