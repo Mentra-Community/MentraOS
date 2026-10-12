@@ -213,11 +213,11 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     || input.trigger.source !== REPORT_TESTING_SOURCE || input.trigger.reason !== 'incident_report_requested'))
     throw new ReportArtifactError(409, 'Invalid automated incident correlation');
   const {incidentKey} = input;
-  // One bound covers every Mongo read and write of a keyed submission: an
+  // Every Mongo read and write of a keyed submission runs under a bound: an
   // unresponsive primary must surface temporarily_unavailable, not hang.
-  const deadline = Date.now() + committedReadWait.timeoutMs;
   if (incidentKey !== undefined) {
-    const existing = await withinDeadline(deadline, timeoutMs => findIncidentKeyReport(input.mentraUserId, incidentKey, timeoutMs));
+    const existing = await withinDeadline(Date.now() + committedReadWait.timeoutMs,
+      timeoutMs => findIncidentKeyReport(input.mentraUserId, incidentKey, timeoutMs));
     if (existing) return existing;
   }
   const reportId = `rep_${ulid()}`;
@@ -241,6 +241,9 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     ...(input.kind !== 'feedback' ? {logCollection: initialReportLogCollection(new Date())} : {}),
     status,
   };
+  // The creation (and the wait on a concurrent winner) gets its own full bound, so a
+  // slow pre-check cannot turn a write that would have committed into a spurious 503.
+  const deadline = Date.now() + committedReadWait.timeoutMs;
   try {
     // The recovery reader requires majority visibility. A correlated creation
     // must not be acknowledged before its binding is committed at that level.
