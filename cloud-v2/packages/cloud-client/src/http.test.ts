@@ -31,6 +31,7 @@ describe("createHttpClient", () => {
       });
       const error = await http.post("/api/client/reports", { privateBody: "PRIVATE_PAYLOAD" }).catch((error) => error);
       expect(error).toBeInstanceOf(HttpError);
+      if (!(error instanceof HttpError)) throw error;
       expect(error.code).toBe("NETWORK_ERROR");
       expect(error.message).toBe("Network request failed: POST /api/client/reports");
       expect(calls).toBe(1);
