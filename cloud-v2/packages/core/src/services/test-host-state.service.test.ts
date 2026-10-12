@@ -1,13 +1,23 @@
 import {expect, spyOn, test} from "bun:test"
+import {createTestHostStateApi} from '../api/internal/test-host-state.api'
 import {TestHostStateModel} from "../models/test-host-state.model"
-import {TestHostStateService} from "./test-host-state.service"
+import {TestRequestModel} from '../models/test-request.model'
+import {hostStateSchema, TestHostStateService} from "./test-host-state.service"
+import {routineProgressSchema} from '../types/routine-progress.types'
 
 function fixture() {
   let row: Record<string, any> | null = null,
     now = Date.parse("2026-10-03T01:00:00Z"),
-    writes = 0
+    writes = 0,
+    reads = 0,
+    writeAttempts = 0,
+    failedWrites = 0
+  let beforeWrite: ((change: Record<string, any>) => void | Promise<void>) | undefined
   const find = spyOn(TestHostStateModel, "findOne").mockImplementation((() => ({
-    lean: async () => row && {...row},
+    lean: async () => {
+      reads++
+      return row && structuredClone(row)
+    },
   })) as any)
   const update = spyOn(TestHostStateModel, "findOneAndUpdate").mockImplementation(((
     filter: Record<string, unknown>,
@@ -15,6 +25,12 @@ function fixture() {
     options: {upsert: boolean},
   ) => ({
     lean: async () => {
+      writeAttempts++
+      await beforeWrite?.(change.$set)
+      if (failedWrites > 0) {
+        failedWrites--
+        return null
+      }
       if (
         row &&
         Object.entries(filter).some(([key, value]) =>
@@ -22,8 +38,10 @@ function fixture() {
             ? (row![key] !== undefined) !== (value as {$exists: boolean}).$exists
             : row![key] !== value,
         )
-      )
+      ) {
+        if (options.upsert) throw Object.assign(new Error('Duplicate host identity'), {code: 11000})
         return null
+      }
       if (!row && !options.upsert) return null
       row = {...row, ...change.$set}
       writes++
@@ -34,6 +52,10 @@ function fixture() {
     service: new TestHostStateService(() => now),
     advance: (ms: number) => (now += ms),
     writes: () => writes,
+    reads: () => reads,
+    writeAttempts: () => writeAttempts,
+    failWrites: (count: number) => {failedWrites = count},
+    beforeWrite: (hook: typeof beforeWrite) => {beforeWrite = hook},
     row: () => row!,
     stop: () => {
       find.mockRestore()
@@ -53,6 +75,147 @@ const snapshot = (
   sequence,
   observedAt,
   lanes: [{id: "mac", platform: "ios-on-mac", dispatchMode: "automatic", state: "idle", resources: []}],
+})
+
+const runningSnapshot = (sequence = 1) => {
+  const value = snapshot(1, sequence), requestId = 'run-one'
+  return {...value, lanes: [{...value.lanes[0], state: 'running', activity: {generation: 7,
+    owner: {kind: 'run', id: requestId, requestId}}, progress: {requestId, requestDigest: 'a'.repeat(64),
+    ownerGeneration: 7, controllerIncarnation: value.incarnation, sequence, phase: 'test',
+    currentStep: {id: 'verify-login', index: 1}, completedSteps: 1, totalSteps: 3,
+    startedAt: '2026-10-03T00:58:00Z', lastProgressAt: '2026-10-03T00:59:00Z', observedAt: value.observedAt}}]}
+}
+function acceptedRequestLookup(found: boolean | Record<string, unknown> = true) {
+  const queries: Record<string, unknown>[] = [], projections: unknown[] = [], settings: unknown[] = []
+  const find = spyOn(TestRequestModel, 'findOne').mockImplementation(((query: Record<string, unknown>) => {
+    queries.push(query)
+    const chain = {select(value: unknown) {projections.push(value); return chain},
+      read(value: unknown) {settings.push(value); return chain}, readConcern(value: unknown) {settings.push(value); return chain},
+      setOptions(value: unknown) {settings.push(value); return chain}, async lean() {
+        if (typeof found === 'boolean') return found ? {requestId: 'run-one'} : null
+        const field = (path: string) => path.split('.').reduce<unknown>((value, key) =>
+          value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined, found)
+        return Object.entries(query).every(([path, value]) => field(path) === value) ? {requestId: found.requestId} : null
+      }}
+    return chain
+  }) as any)
+  return {queries, projections, settings, stop() {find.mockRestore()}}
+}
+
+test('optional live progress persists only from the exact accepted request and heartbeat never invents advancement', async () => {
+  const f = fixture(), lookup = acceptedRequestLookup()
+  try {
+    const first = runningSnapshot()
+    await f.service.report(first, 'mini')
+    expect((await f.service.get('mini'))!.lanes[0]!.progress).toEqual(routineProgressSchema.parse(first.lanes[0]!.progress))
+    expect(lookup.queries[0]).toEqual({requestId: 'run-one', hostId: 'mini', inputSha256: 'a'.repeat(64), 'input.laneId': 'mac',
+      'hostReceipt.requestId': 'run-one', 'hostReceipt.hostId': 'mini', 'hostReceipt.inputSha256': 'a'.repeat(64)})
+    expect(lookup.projections).toEqual([{requestId: 1}])
+    expect(lookup.settings).toEqual(['primary', 'majority', {timeoutMS: 10000}])
+    const heartbeat = runningSnapshot(2), observedAt = '2026-10-03T01:00:15Z'
+    heartbeat.observedAt = observedAt; heartbeat.lanes[0]!.progress.observedAt = observedAt
+    f.advance(15000); await f.service.report(heartbeat, 'mini')
+    expect((await f.service.get('mini'))!.lanes[0]!.progress).toMatchObject({observedAt, lastProgressAt: first.lanes[0]!.progress.lastProgressAt})
+    await f.service.report({...snapshot(1, 3), observedAt}, 'mini')
+    expect((await f.service.get('mini'))!.lanes[0]!.progress).toBeUndefined()
+    expect(lookup.queries).toHaveLength(2)
+  } finally {lookup.stop(); f.stop()}
+})
+
+test('live progress rejects stale custody, private fields, inconsistent counts and a different host observation', () => {
+  const original = runningSnapshot()
+  expect(hostStateSchema.safeParse(original).success).toBe(true)
+  const invalid: Array<(value: ReturnType<typeof runningSnapshot>) => void> = [
+    value => {value.lanes[0]!.state = 'idle'},
+    value => {value.lanes[0]!.activity.owner.id = 'different-run'},
+    value => {value.lanes[0]!.activity.generation++},
+    value => {value.lanes[0]!.progress.ownerGeneration++},
+    value => {value.lanes[0]!.progress.controllerIncarnation = 'previous-controller'},
+    value => {value.lanes[0]!.progress.sequence++},
+    value => {value.lanes[0]!.progress.observedAt = '2026-10-03T01:00:01Z'},
+    value => {value.lanes[0]!.progress.requestDigest = 'bad'},
+    value => {value.lanes[0]!.progress.completedSteps = 4},
+    value => {value.lanes[0]!.progress.currentStep.index = 3},
+    value => {value.lanes[0]!.progress.phase = 'framework-teardown'},
+    value => {value.lanes[0]!.progress.lastProgressAt = '2026-10-03T00:57:00Z'},
+    value => {value.lanes[0]!.progress.lastProgressAt = '2026-10-03T01:00:01Z'},
+    value => {Object.assign(value.lanes[0]!.progress, {privateError: 'private phone data'})},
+    value => {Object.assign(value.lanes[0]!.progress.currentStep, {name: 'private step name'})},
+    value => {value.lanes[0]!.progress.currentStep.id = '/private/path'},
+  ]
+  for (const change of invalid) {const value = structuredClone(original); change(value); expect(hostStateSchema.safeParse(value).success).toBe(false)}
+  const author = structuredClone(original)
+  Object.assign(author.lanes[0]!.activity.owner, {kind: 'authoring'}); delete (author.lanes[0]!.activity.owner as Record<string, unknown>).requestId
+  expect(hostStateSchema.safeParse(author).success).toBe(false)
+  const preparation = structuredClone(original)
+  Object.assign(preparation.lanes[0]!.progress, {phase: 'preparation', completedSteps: 0, totalSteps: 0})
+  delete (preparation.lanes[0]!.progress as Record<string, unknown>).currentStep
+  expect(hostStateSchema.safeParse(preparation).success).toBe(true)
+})
+
+test('unrecognized accepted request or digest cannot update the host or another lane', async () => {
+  const f = fixture(), lookup = acceptedRequestLookup(false)
+  try {
+    await f.service.report(snapshot(1, 1), 'mini')
+    for (const requestDigest of ['a'.repeat(64), 'b'.repeat(64)]) {
+      const value = runningSnapshot(2); value.lanes[0]!.progress.requestDigest = requestDigest
+      await expect(f.service.report(value, 'mini')).rejects.toThrow('authenticated accepted request')
+    }
+    expect(f.writes()).toBe(1)
+    expect((await f.service.get('mini'))!.lanes[0]!.progress).toBeUndefined()
+    expect(lookup.queries.map(query => query.inputSha256)).toEqual(['a'.repeat(64), 'b'.repeat(64)])
+    await expect(f.service.report(runningSnapshot(2), 'another-host')).rejects.toThrow('authenticated controller')
+    expect(lookup.queries).toHaveLength(2)
+  } finally {lookup.stop(); f.stop()}
+})
+
+test('routed queued, rejected and cancelled requests need a matching acceptance receipt while accepted terminal publication remains valid', async () => {
+  const routed = {requestId: 'run-one', hostId: 'mini', inputSha256: 'a'.repeat(64), input: {laneId: 'mac'}}
+  const receipt = {requestId: 'run-one', hostId: 'mini', inputSha256: 'a'.repeat(64), acceptedAt: '2026-10-03T00:58:00Z'}
+  const cases = [{...routed, state: 'queued'}, {...routed, state: 'terminal', terminalStatus: 'not-run', hostRejection: receipt},
+    {...routed, state: 'terminal', terminalStatus: 'cancelled', hostCancellation: receipt},
+    {...routed, state: 'accepted', hostReceipt: {...receipt, requestId: 'other-run'}},
+    {...routed, state: 'accepted', hostReceipt: {...receipt, hostId: 'other-host'}},
+    {...routed, state: 'accepted', hostReceipt: {...receipt, inputSha256: 'b'.repeat(64)}},
+    {...routed, state: 'accepted', hostReceipt: receipt}, {...routed, state: 'running', hostReceipt: receipt},
+    {...routed, state: 'terminal', terminalStatus: 'fail', hostReceipt: receipt}]
+  for (const row of cases) {
+    const f = fixture(), lookup = acceptedRequestLookup(row), allowed = 'hostReceipt' in row && row.hostReceipt === receipt
+    try {
+      const value = runningSnapshot()
+      if (row.state === 'terminal') {value.lanes[0]!.progress.phase = 'publication'; delete (value.lanes[0]!.progress as Record<string, unknown>).currentStep}
+      const token = 'acceptance-test-credential'.repeat(2), api = createTestHostStateApi(f.service, () => JSON.stringify({mini: token}))
+      const response = await api.request('/', {method: 'POST', headers: {Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'}, body: JSON.stringify(value)})
+      expect(response.status).toBe(allowed ? 200 : 409)
+      expect(f.writes()).toBe(allowed ? 1 : 0)
+      if (allowed) expect((await f.service.get('mini'))!.lanes[0]!.progress?.requestId).toBe('run-one')
+    } finally {lookup.stop(); f.stop()}
+  }
+})
+
+test('actual host-state HTTP admission distinguishes malformed progress, missing accepted request and authenticated observation', async () => {
+  const f = fixture(), lookup = acceptedRequestLookup()
+  try {
+    const token = 'host-test-credential'.repeat(3), api = createTestHostStateApi(f.service, () => JSON.stringify({mini: token}))
+    const post = (value: unknown, credential = token) => api.request('/', {method: 'POST',
+      headers: {Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json'}, body: JSON.stringify(value)})
+    expect((await post(runningSnapshot())).status).toBe(200)
+    const malformed = runningSnapshot(2); Object.assign(malformed.lanes[0]!.progress, {rawError: 'private device text'})
+    expect((await post(malformed)).status).toBe(400)
+    expect((await post({...runningSnapshot(2), hostId: 'other-host'})).status).toBe(409)
+    expect((await post(runningSnapshot(2), 'wrong-credential')).status).toBe(401)
+    expect(f.writes()).toBe(1); expect(lookup.queries).toHaveLength(1)
+  } finally {lookup.stop(); f.stop()}
+  const missing = fixture(), refused = acceptedRequestLookup(false)
+  try {
+    const token = 'host-test-credential'.repeat(3), api = createTestHostStateApi(missing.service, () => JSON.stringify({mini: token}))
+    const response = await api.request('/', {method: 'POST', headers: {Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'}, body: JSON.stringify(runningSnapshot())})
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({error: 'host_state_conflict', message: 'Routine progress differs from its authenticated accepted request'})
+    expect(missing.writes()).toBe(0)
+  } finally {refused.stop(); missing.stop()}
 })
 
 test("server receipt freshness is independent of clocks and duplicates cannot extend it", async () => {
@@ -93,7 +256,7 @@ test("durable generations order restarts and reject delayed unseen old incarnati
   }
 })
 
-test("concurrent generation replacement fences the losing snapshot and retry cannot overwrite it", async () => {
+test("concurrent generation replacement rereads the loser without overwriting the winning snapshot", async () => {
   const f = fixture()
   try {
     await f.service.report(snapshot(1, 1), "mini")
@@ -101,7 +264,7 @@ test("concurrent generation replacement fences the losing snapshot and retry can
       f.service.report(snapshot(3, 1), "mini"),
       f.service.report(snapshot(2, 1), "mini"),
     ])
-    expect(results.map((item) => item.status)).toEqual(["fulfilled", "rejected"])
+    expect(results.map((item) => item.status)).toEqual(["fulfilled", "fulfilled"])
     expect((await f.service.get("mini"))!.incarnationGeneration).toBe(3)
     expect((await f.service.report(snapshot(2, 1), "mini")).incarnationGeneration).toBe(3)
     expect(f.writes()).toBe(2)
@@ -216,6 +379,166 @@ const observation = (sequence: number, extra: Record<string, unknown> = {}) => (
   ...extra,
 })
 
+for (const updaterFirst of [true, false]) {
+  test(`independent controller and updater observations survive CAS contention (${updaterFirst ? 'updater' : 'controller'} wins)`, async () => {
+    const f = fixture()
+    try {
+      await f.service.report(accepted(1, 1), 'mini')
+      const updater = () => f.service.reportDeployment(observation(1), 'mini')
+      const controller = () => f.service.report(accepted(1, 2), 'mini')
+      const receipts = await Promise.all(updaterFirst ? [updater(), controller()] : [controller(), updater()])
+      expect(receipts).toHaveLength(2)
+      expect(f.row()).toMatchObject({sequence: 2, deploymentGeneration: 1, deploymentSequence: 1,
+        deploymentObservation: observation(1).deployment, snapshot: accepted(1, 2)})
+      expect(f.row().frameworkHistory).toHaveLength(1)
+      expect(f.writes()).toBe(3)
+      expect(f.writeAttempts()).toBe(4)
+    } finally {f.stop()}
+  })
+}
+
+test('a competing controller cannot claim an enrolled generation after a CAS miss', async () => {
+  const f = fixture()
+  try {
+    await f.service.report(accepted(1, 1), 'mini')
+    const results = await Promise.allSettled([
+      f.service.report(accepted(2, 1), 'mini'),
+      f.service.report({...accepted(2, 1), incarnation: 'competing-process'}, 'mini'),
+    ])
+    expect(results[0].status).toBe('fulfilled')
+    expect(results[1].status).toBe('rejected')
+    expect((results[1] as PromiseRejectedResult).reason.message).toContain('another process')
+    expect(f.row().incarnation).toBe('boot-2')
+    expect(f.row().frameworkHistory.map((value: any) => value.incarnation)).toEqual(['boot-1', 'boot-2'])
+    expect(f.writes()).toBe(2)
+  } finally {f.stop()}
+})
+
+for (const competingGeneration of [2, 3]) {
+  test(`initial host creation cannot overwrite the concurrent winner (generation ${competingGeneration})`, async () => {
+    const f = fixture()
+    try {
+      const results = await Promise.allSettled([
+        f.service.report(accepted(3, 1), 'mini'),
+        f.service.report({...accepted(competingGeneration, 1), incarnation: 'competing-process'}, 'mini'),
+      ])
+      expect(results[0].status).toBe('fulfilled')
+      if (competingGeneration === 3) {
+        expect(results[1].status).toBe('rejected')
+        expect((results[1] as PromiseRejectedResult).reason.message).toContain('another process')
+      } else expect(results[1]).toMatchObject({status: 'fulfilled', value: {incarnation: 'boot-3', incarnationGeneration: 3}})
+      expect(f.row().incarnation).toBe('boot-3')
+      expect(f.row().frameworkHistory).toHaveLength(1)
+      expect(f.writes()).toBe(1)
+    } finally {f.stop()}
+  })
+}
+
+test('a stop that wins against its own controller heartbeat remains a semantic conflict after retry', async () => {
+  const f = fixture()
+  try {
+    await f.service.report(accepted(1, 1), 'mini')
+    const stopped = {installationId: 'release-1', process: accepted(1, 1).frameworkProcess,
+      observedAt: '2026-10-03T01:00:02Z'}
+    const results = await Promise.allSettled([
+      f.service.reportDeployment(observation(1, {stopped}), 'mini'),
+      f.service.report(accepted(1, 2), 'mini'),
+    ])
+    expect(results[0].status).toBe('fulfilled')
+    expect(results[1].status).toBe('rejected')
+    expect((results[1] as PromiseRejectedResult).reason.message).toContain('observed stopped')
+    expect(f.row().sequence).toBe(1)
+    expect(f.row().frameworkHistory).toHaveLength(1)
+    expect(f.row().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: 'observed-stop'})
+    expect(f.row().frameworkStopReceipts).toEqual([stopped])
+    expect(f.writes()).toBe(2)
+  } finally {f.stop()}
+})
+
+for (const producer of ['controller', 'updater'] as const) {
+  test(`${producer} atomic collisions exhaust three attempts while unrelated database errors do not retry`, async () => {
+    const f = fixture()
+    try {
+      await f.service.report(accepted(1, 1), 'mini')
+      const write = () => producer === 'controller'
+        ? f.service.report(accepted(1, 2), 'mini') : f.service.reportDeployment(observation(1), 'mini')
+      const reads = f.reads(), attempts = f.writeAttempts()
+      f.failWrites(3)
+      await expect(write()).rejects.toThrow('advanced concurrently')
+      expect(f.reads() - reads).toBe(3)
+      expect(f.writeAttempts() - attempts).toBe(3)
+      expect(f.writes()).toBe(1)
+      for (const code of [50, 11000]) {
+        const error = Object.assign(new Error('Unexpected database failure'), {code})
+        const before = f.writeAttempts()
+        f.beforeWrite(() => {throw error})
+        await expect(write()).rejects.toBe(error)
+        expect(f.writeAttempts() - before).toBe(1)
+      }
+    } finally {f.stop()}
+  })
+}
+
+test('initial unique-host collisions exhaust the same three-attempt bound', async () => {
+  const f = fixture()
+  try {
+    f.beforeWrite(() => {throw Object.assign(new Error('Duplicate host identity'), {code: 11000})})
+    await expect(f.service.report(accepted(1, 1), 'mini')).rejects.toThrow('advanced concurrently')
+    expect(f.reads()).toBe(3)
+    expect(f.writeAttempts()).toBe(3)
+    expect(f.writes()).toBe(0)
+  } finally {f.stop()}
+})
+
+test('history reconciliation on repeated CAS misses preserves the exact reported input', async () => {
+  const f = fixture()
+  try {
+    await f.service.report(accepted(3, 1), 'mini')
+    const stopped = {installationId: 'release-1', process: accepted(1, 1).frameworkProcess,
+      observedAt: '2026-10-03T01:00:01.500Z'}
+    await f.service.reportDeployment(observation(1, {stopped}), 'mini')
+    const input = {...accepted(3, 2), frameworkHistory: [{binding: binding(1), incarnation: 'boot-1',
+      incarnationGeneration: 1, process: accepted(1, 1).frameworkProcess,
+      effectiveAt: accepted(1, 1).frameworkAcceptedAt, observedAt: accepted(1, 1).observedAt,
+      endedAt: accepted(3, 1).frameworkAcceptedAt, endReason: 'accepted-replacement'}]}
+    const original = structuredClone(input)
+    f.failWrites(2)
+    await f.service.report(input, 'mini')
+    expect(input).toEqual(original)
+    expect(f.row().snapshot.frameworkHistory).toEqual(original.frameworkHistory)
+    expect(f.row().frameworkHistory).toHaveLength(2)
+    expect(f.row().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: 'observed-stop'})
+    expect(f.row().deploymentSequence).toBe(1)
+    expect(f.row().frameworkStopReceipts).toEqual([stopped])
+  } finally {f.stop()}
+})
+
+test('actual HTTP host-state API resolves updater CAS contention but preserves semantic and exhausted conflicts', async () => {
+  const f = fixture()
+  const token = 'synthetic-cas-test-' + 'x'.repeat(32)
+  const api = createTestHostStateApi(f.service, () => JSON.stringify({mini: token}))
+  const post = (body: unknown) => api.request('/', {method: 'POST',
+    headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+  try {
+    expect((await post(accepted(1, 1))).status).toBe(200)
+    f.beforeWrite(async () => {f.beforeWrite(undefined); await f.service.reportDeployment(observation(1), 'mini')})
+    expect((await post(accepted(1, 2))).status).toBe(200)
+    expect(f.row()).toMatchObject({sequence: 2, deploymentSequence: 1})
+    expect(f.row().frameworkHistory).toHaveLength(1)
+    const semantic = await post({...accepted(1, 3), incarnation: 'competing-process'})
+    expect(semantic.status).toBe(409)
+    expect(await semantic.json()).toEqual({error: 'host_state_conflict', message: 'Controller incarnation generation belongs to another process'})
+    f.failWrites(3)
+    const exhausted = await post(accepted(1, 3))
+    expect(exhausted.status).toBe(409)
+    expect(await exhausted.json()).toEqual({error: 'host_state_conflict', message: 'Controller snapshot advanced concurrently; retry current observation'})
+    f.beforeWrite(() => {throw new Error('Database unavailable')})
+    const unavailable = await post(accepted(1, 3))
+    expect(unavailable.status).toBe(503)
+    expect(await unavailable.json()).toEqual({error: 'host_state_unavailable'})
+  } finally {f.stop()}
+})
+
 test("accepted framework intervals preserve exact source and process across controller observations and replacement", async () => {
   const f = fixture()
   try {
@@ -327,10 +650,11 @@ test("controller and updater history writes use one row CAS instead of losing ob
       ),
       f.service.report(accepted(2, 1), "mini"),
     ])
-    expect(results.map((value) => value.status)).toEqual(["fulfilled", "rejected"])
+    expect(results.map((value) => value.status)).toEqual(["fulfilled", "fulfilled"])
     expect(f.row().frameworkHistory[0].endReason).toBe("observed-stop")
-    await f.service.report(accepted(2, 1), "mini")
     expect(f.row().frameworkHistory).toHaveLength(2)
+    expect(f.row().frameworkHistory.at(-1).endedAt).toBeUndefined()
+    expect(f.row().frameworkStopReceipts).toHaveLength(1)
   } finally {
     f.stop()
   }
@@ -391,8 +715,7 @@ test('startup winning the shared CAS forces stop retry, which preserves the same
       f.service.report(accepted(1, 2), 'mini'),
       f.service.reportDeployment(observation(1, {stopped}), 'mini'),
     ])
-    expect(results.map(value => value.status)).toEqual(['fulfilled', 'rejected'])
-    await f.service.reportDeployment(observation(1, {stopped}), 'mini')
+    expect(results.map(value => value.status)).toEqual(['fulfilled', 'fulfilled'])
     expect(f.row().frameworkHistory[0]).toMatchObject({endedAt: stopped.observedAt, endReason: 'observed-stop'})
     expect(f.row().frameworkStopReceipts).toEqual([stopped])
   } finally {f.stop()}

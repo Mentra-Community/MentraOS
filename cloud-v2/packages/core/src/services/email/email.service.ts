@@ -12,11 +12,13 @@ function sender(): string {
  * Send a transactional email via Resend's HTTP API. Best-effort: if
  * RESEND_API_KEY is unset (e.g. local dev) we log and skip rather than throw,
  * so the caller (an invite) still succeeds and can fall back to the copy link.
+ * `text` is the plain-text alternative, for clients that do not show HTML.
  */
 export async function sendEmail(opts: {
   to: string;
   subject: string;
   html: string;
+  text?: string;
 }): Promise<{ ok: boolean; skipped?: boolean }> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
@@ -30,7 +32,13 @@ export async function sendEmail(opts: {
         authorization: `Bearer ${apiKey}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ from: sender(), to: [opts.to], subject: opts.subject, html: opts.html }),
+      body: JSON.stringify({
+        from: sender(),
+        to: [opts.to],
+        subject: opts.subject,
+        html: opts.html,
+        ...(opts.text ? { text: opts.text } : {}),
+      }),
     });
     if (!res.ok) {
       logger.error({ status: res.status, body: await res.text().catch(() => "") }, "resend email send failed");

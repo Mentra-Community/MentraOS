@@ -2,7 +2,7 @@ import {createHash, createHmac} from "node:crypto"
 import {createLogger} from "@mentra/cloud-shared"
 import {SupportProfileModel} from "../models/support-profile.model"
 import {UserModel} from "../models/user.model"
-import {getUserById} from "./account/gotrue.client"
+import {trustedAccountEmail} from "./account/trusted-email.service"
 
 export const SUPPORT_DEVICE_HISTORY_LIMIT = 12
 export const SUPPORT_IDENTICAL_UPDATE_MIN_MS = 60_000
@@ -308,7 +308,7 @@ async function captureMeaningfulTransitions(
   if (!posthogApiKey()) return
   const events = meaningfulTransitions(previous, next)
   if (events.length === 0) return
-  const email = await trustedEmail(mentraUserId).catch(() => null)
+  const email = await trustedAccountEmail(mentraUserId).catch(() => null)
   const properties = posthogPropertiesFor(next)
   for (const event of events) {
     try {
@@ -324,13 +324,6 @@ async function captureMeaningfulTransitions(
       logger.warn({mentraUserId, event, error: (error as Error)?.message}, "support PostHog capture dropped")
     }
   }
-}
-
-async function trustedEmail(mentraUserId: string): Promise<string | null> {
-  const user = await UserModel.findOne({mentraUserId}).lean()
-  if (!user || user.tenantId !== "mentra") return null
-  const identity = await getUserById(user.tenantUserId).catch(() => null)
-  return identity?.emailVerified ? identity.email : null
 }
 
 async function sendCapture(input: {

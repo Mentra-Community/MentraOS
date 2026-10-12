@@ -5,7 +5,7 @@ import {ReportModel} from '../models/report.model'
 import {TestAssetModel} from '../models/test-run.model'
 import {testFrameworkBinding, testRoutineSource} from '../testing/framework-fixtures'
 import {recordedFrameworkRunSchema, type RecordedFrameworkRun} from '../types/framework-run.types'
-import {referenceTestRunDiagnostics} from './report.service'
+import {referenceDeviceIncidentDiagnostics, referenceTestRunDiagnostics} from './report.service'
 import {requestInputDigest} from './test-request.service'
 
 const mocks: Array<{mockRestore(): void}> = []
@@ -34,7 +34,7 @@ function frozenRun(count: number): RecordedFrameworkRun {
       timing: {startedAt: '2026-10-08T10:00:00Z', setupMs: 10, testMs: 0, teardownMs: 10}}})
 }
 
-function models(run: RecordedFrameworkRun) {
+function models(run: RecordedFrameworkRun, expectedOwner = owner) {
   const assets = new Map(run.assets.map(asset => [asset.id, {runId: run.result.runId, assetId: asset.id,
     storageKey: `test-runs/original/${asset.id}`, sha256: asset.sha256, sizeBytes: asset.size}]))
   const rows = new Map<string, Row>(), metadata = new Map<string, Metadata>()
@@ -83,7 +83,7 @@ function models(run: RecordedFrameworkRun) {
   mocks.push(spyOn(ReportModel, 'updateOne').mockImplementation((async (
     selectedOwner: unknown, update: {$addToSet: {artifacts: {$each: Metadata[]}}}, options: unknown,
   ) => {
-    expect(selectedOwner).toEqual(owner)
+    expect(selectedOwner).toEqual(expectedOwner)
     expect(options).toEqual(writeOptions)
     const selected = update.$addToSet.artifacts.$each
     expect(selected.length).toBeGreaterThan(0)
@@ -205,6 +205,66 @@ test('screenshots reference original bytes with screenshot metadata, retain JSON
   expect([...f.rows.values()].map(row => row.storageKey)).toEqual(run.assets.slice(0, 4).map(asset => `test-runs/original/${asset.id}`))
   expect([...f.rows.values()].map(row => row.sourceTestAssetId)).not.toContain('recording')
   expect(requestInputDigest(run)).toBe(before)
+})
+
+function deviceReport(row: unknown, reportId: string, runId: string) {
+  mocks.push(spyOn(ReportModel, 'findOne').mockImplementation(((filter: unknown) => {
+    expect(filter).toEqual({reportId, 'automationCorrelation.testRunId': runId,
+      'automationCorrelation.alertId': 'original-alert'})
+    const query = {
+      select() {return query},
+      read(value: string) {expect(value).toBe('primary'); return query},
+      readConcern(value: string) {expect(value).toBe('majority'); return query},
+      setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 3000}); return query},
+      async lean() {return row},
+    }
+    return query
+  }) as never))
+}
+
+const deviceOwner = {reportId: 'rep_DEVICE', mentraUserId: 'authenticated-device-owner'}
+const deviceRow = {...deviceOwner, kind: 'automatic',
+  trigger: {source: 'mentra_automated_testing', reason: 'incident_report_requested'}}
+
+test('device report attachments derive ownership from durable correlation and reuse original screenshots after retry', async () => {
+  const run = screenshotRun(), before = requestInputDigest(run), f = models(run, deviceOwner)
+  const correlation = {alertId: 'original-alert', testRunId: run.result.runId}
+  deviceReport(deviceRow, deviceOwner.reportId, run.result.runId)
+  f.failAfterCommit(1)
+  await expect(referenceDeviceIncidentDiagnostics(deviceOwner.reportId, correlation, run)).rejects.toBe(f.committedError)
+  f.allowWrites(); f.resetCalls(); f.forbidWrites()
+  expect(await referenceDeviceIncidentDiagnostics(deviceOwner.reportId, correlation, run)).toBe(4)
+  expect(f.writes).toHaveLength(0)
+  expect(f.metadata.size).toBe(4)
+  expect([...f.metadata.values()].filter(row => row.type === 'screenshot')).toHaveLength(2)
+  expect([...f.rows.values()].every(row => row.mentraUserId === deviceOwner.mentraUserId && row.reportId === deviceOwner.reportId)).toBe(true)
+  expect(requestInputDigest(run)).toBe(before)
+})
+
+for (const row of [null, {...deviceRow, kind: 'bug'}, {...deviceRow, mentraUserId: ''},
+  {...deviceRow, trigger: {...deviceRow.trigger, source: 'unrelated'}},
+  {...deviceRow, trigger: {...deviceRow.trigger, reason: 'unrelated'}}]) {
+  test(`device report with missing or unrelated ownership refuses attachments: ${JSON.stringify(row)}`, async () => {
+    const run = screenshotRun(), f = models(run, deviceOwner)
+    deviceReport(row, deviceOwner.reportId, run.result.runId)
+    await expect(referenceDeviceIncidentDiagnostics(deviceOwner.reportId,
+      {alertId: 'original-alert', testRunId: run.result.runId}, run)).rejects.toMatchObject({status: 409})
+    expect(f.assetReads).toHaveLength(0)
+    expect(f.writes).toHaveLength(0)
+    expect(f.metadataWrites).toHaveLength(0)
+  })
+}
+
+test('a different run or invalid request binding cannot authorize device report attachments', async () => {
+  const run = screenshotRun(), f = models(run, deviceOwner)
+  const lookup = spyOn(ReportModel, 'findOne')
+  mocks.push(lookup)
+  for (const correlation of [{alertId: 'original-alert', testRunId: 'other-run'},
+    {alertId: '../foreign', testRunId: run.result.runId}])
+    await expect(referenceDeviceIncidentDiagnostics(deviceOwner.reportId, correlation, run)).rejects.toMatchObject({status: 409})
+  expect(lookup).not.toHaveBeenCalled()
+  expect(f.assetReads).toHaveLength(0)
+  expect(f.metadataWrites).toHaveLength(0)
 })
 
 for (const [field, value] of Object.entries({sha256: 'f'.repeat(64), sizeBytes: 999, storageKey: 'different/original', contentType: 'text/plain'})) {

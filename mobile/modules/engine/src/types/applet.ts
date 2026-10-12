@@ -100,6 +100,13 @@ export interface DeclaredAction {
   parameters?: Record<string, unknown>
   /** JSON-Schema descriptor for the action's structured result. */
   outputSchema?: Record<string, unknown>
+  /**
+   * `persistent` (default): invoking starts the miniapp as normal, user-visible
+   * activity. `transient`: an invisible, invocation-scoped wake.
+   */
+  lifecycle: "persistent" | "transient"
+  /** `host` actions are invoked only by the Mentra App and never listed to miniapps. */
+  audience: "system" | "host"
 }
 
 export interface ClientApp extends AppletInterface {
@@ -107,6 +114,8 @@ export interface ClientApp extends AppletInterface {
   offlineRoute: string
   compatibility?: CompatibilityResult
   loading: boolean
+  /** An update is downloading or activating; user opens are refused until it settles. */
+  updating?: boolean
   local: boolean
   hidden: boolean
   onStart?: () => void

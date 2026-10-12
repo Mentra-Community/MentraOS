@@ -1,12 +1,15 @@
+/**
+ * @fileoverview Administration of Core's built-in Store (miniapp review, the
+ * preinstalled-miniapp registry and its audit log), mounted inside `/api/admin`
+ * by `admin.api.ts`. Every route needs an Organization Admin who is a person:
+ * these routes have no organization capability of their own, and keys,
+ * operator keys included, are refused. Core's built-in Store is removed with
+ * the old Developer Console.
+ */
+
 import { Hono } from "hono";
 import { z } from "zod";
-import { adminAuth } from "../middleware/admin-auth.middleware";
-import adminReports from "./reports.api";
-import adminSupportProfiles from "./support-profiles.api";
-import adminTestRuns from "./test-runs.api";
-import {createRoutineCatalogApi} from "./routine-catalog.api";
-import {createRoutinePreferencesApi} from "./routine-preferences.api";
-import adminTestDispatches from "./test-dispatches.api";
+import { requireOrganizationAdminPerson } from "../middleware/principal.middleware";
 import {
   PREINSTALLED_INSTALL_POLICIES,
 } from "../../models/preinstalled-registry-revision.model";
@@ -54,32 +57,18 @@ const reviewDecisionSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
-app.get("/health", c => c.json({ status: "ok", service: "cloud-core-admin" }));
-app.use("*", adminAuth);
-app.get("/me", c => c.json({
-  authenticated: true,
-  admin: true,
-  user: c.var.developer ?? null,
-}));
-app.get("/submissions", getSubmissions);
-app.post("/submissions/:releaseId/approve", postApproveSubmission);
-app.post("/submissions/:releaseId/reject", postRejectSubmission);
-app.post("/submissions/:releaseId/publish", postPublishSubmission);
-app.get("/preinstalled/registries", getRegistries);
-app.post("/preinstalled/registries", postRegistry);
-app.get("/preinstalled/releases", getReleases);
-app.get("/preinstalled/registries/:registryId/revisions", getRevisions);
-app.post("/preinstalled/registries/:registryId/revisions", postRevision);
-app.post("/preinstalled/registries/:registryId/revisions/:revisionId/promote", postPromoteRevision);
-app.get("/audit-log", getAuditLog);
-// Report triage lives in its own router; mounting it behind the adminAuth
-// gate above keeps auth to a single pass per request.
-app.route("/reports", adminReports);
-app.route("/support-profiles", adminSupportProfiles);
-app.route("/test-runs", adminTestRuns);
-app.route("/routine-catalog", createRoutineCatalogApi());
-app.route("/routines", createRoutinePreferencesApi());
-app.route("/", adminTestDispatches);
+const organizationAdmin = requireOrganizationAdminPerson();
+app.get("/submissions", organizationAdmin, getSubmissions);
+app.post("/submissions/:releaseId/approve", organizationAdmin, postApproveSubmission);
+app.post("/submissions/:releaseId/reject", organizationAdmin, postRejectSubmission);
+app.post("/submissions/:releaseId/publish", organizationAdmin, postPublishSubmission);
+app.get("/preinstalled/registries", organizationAdmin, getRegistries);
+app.post("/preinstalled/registries", organizationAdmin, postRegistry);
+app.get("/preinstalled/releases", organizationAdmin, getReleases);
+app.get("/preinstalled/registries/:registryId/revisions", organizationAdmin, getRevisions);
+app.post("/preinstalled/registries/:registryId/revisions", organizationAdmin, postRevision);
+app.post("/preinstalled/registries/:registryId/revisions/:revisionId/promote", organizationAdmin, postPromoteRevision);
+app.get("/audit-log", organizationAdmin, getAuditLog);
 
 async function getSubmissions(c: AppContext) {
   return c.json({ submissions: await miniapps.listAdminSubmissions() });

@@ -54,6 +54,8 @@ reads, so say *when* the action should be used.
 | `description` | Required, non-empty. The AI-facing contract: say when to use it. |
 | `parameters` | A JSON-Schema object (the MCP subset): top-level `type: "object"`, `properties` typed `string` / `number` / `boolean` / `array` (of primitives), plus `enum`, `description`, `items`, and a top-level `required` array. Use `number`, not `integer`. |
 | `outputSchema` | Optional JSON Schema describing the handler's structured return value. Declaring it lets result-aware agents interpret the result reliably instead of guessing from arbitrary JSON. |
+| `lifecycle` | Optional. `"persistent"` (default) starts your miniapp as normal activity that keeps running after the call. `"transient"` wakes it invisibly for the call only: it does not show as running and stops when the call settles, unless the user opens it meanwhile. |
+| `audience` | Optional. `"system"` (default) lets system miniapps such as Mentra AI find and call the action. `"host"` reserves it for the Mentra App itself; it is never listed to miniapps. |
 
 ## Handle it
 
@@ -87,7 +89,9 @@ When Mentra AI invokes one of your actions, the host **headless-wakes** your
 miniapp if it isn't already running: it spawns your background context (no UI, no
 foreground change, so whatever the user is doing is undisturbed), waits for your
 handlers to register, delivers the call, and returns your handler's result. Your
-miniapp keeps running afterward until it's stopped.
+miniapp keeps running afterward until it's stopped, unless the action is
+`"transient"`, in which case the host stops the context it woke once the call
+settles.
 
 Because an inbound call waits only briefly for a just-woken miniapp to register,
 call `session.actions.handle` at the top of your

@@ -20,6 +20,8 @@ ACS, and ACR.
 - Idempotent `configure-entra.sh` helper and administrator review steps.
 - Signing keys and the refresh pepper, created directly in the deployment's Key Vault
   (`scripts/ensure-vault-secrets.sh`); they are never exported or written to the setup folder.
+- The admin portal, built into the image and served by Core on Core's host. Its sign-in
+  uses a client secret of the Core API app that setup creates directly in Key Vault.
 - Deployment manifest/branding/legal configuration.
 - Smoke tests and digest-based upgrade/rollback instructions.
 
@@ -32,6 +34,8 @@ Collect and approve:
   Korea, India, UAE, Africa or Asia Pacific for regions there; United States otherwise);
 - workspace DNS name (a subdomain);
 - Entra tenant, Core API client id, and Mobile client id;
+- the email domains your Entra directory issues, each subdomain listed separately, and
+  the Organization Admins who sign in to the admin portal;
 - assigned employees/groups, admin consent, MFA, and Conditional Access;
 - official Android/iOS distribution channels and redirect URIs;
 - persistent database, signing-key, refresh-pepper, backup, and rotation policy (Cosmos DB
@@ -53,11 +57,13 @@ its storage mounted. It verifies and unpacks the package, then starts
 `setup.sh` with no command. Running the same command again continues an
 interrupted install, finishes after a handoff, or upgrades. Guided setup:
 
-1. Asks six questions: subscription, tenant, company name, deployment name,
-   region and an optional custom web address. An invalid answer is explained
-   and asked again. A region such as `West US 2` and a pasted
-   `https://mentra.example.com/` are accepted; a custom address must be a
-   subdomain.
+1. Asks seven questions: subscription, tenant, company name, deployment name,
+   region, an optional custom web address, and the email domains your Entra
+   directory issues. An invalid answer is explained and asked again. A region
+   such as `West US 2` and a pasted `https://mentra.example.com/` are accepted;
+   a custom address must be a subdomain. Email domains are comma-separated,
+   lowercase, each subdomain listed separately, and never a Mentra domain; see
+   [email domains](./entra-setup.md#email-domains).
 2. Checks the subscription: that the login can use it, the resource providers
    (offering to register missing ones), the tools, the tenant, and that
    `rg-<deployment>` is not someone else's resource group.
@@ -68,14 +74,19 @@ interrupted install, finishes after a handoff, or upgrades. Guided setup:
 4. Only after that confirmation, creates the two Entra apps
    (`configure-entra.sh --installer-owner`), offers tenant-wide consent, and
    assigns the employees or groups the operator names (`--employees`).
-5. Installs with progress lines, handles DNS (adds the two records when the
-   zone is in Azure DNS in the subscription, otherwise prints them and saves
-   `dns-records.json`), verifies, creates the administrator key, and offers
-   Teams meeting creation.
+5. Installs with progress lines. Before Core is deployed it adds a client secret
+   to the Core app for admin portal sign-in, stores it in Key Vault and turns on
+   `adminPortalSignIn` in the saved configuration. It
+   handles DNS (adds the two records when the zone is in Azure DNS in the
+   subscription, otherwise prints them and saves `dns-records.json`), verifies,
+   registers the admin portal's redirect URI on the Core app, creates the
+   administrator key, and offers Teams meeting creation.
 
-The final summary prints the workspace, the `az keyvault secret show` command
-for the administrator key, a `curl` command for `<core>/api/admin/reports`
-using that key, and every pending administrator step as a `Still to do` line:
+The final summary prints the workspace, the admin portal address
+(`https://<core host>/`) and its client secret's expiry date, the
+`az keyvault secret show` command for the administrator key, a `curl` command
+for `<core>/api/admin/reports` using that key, and every pending administrator
+step as a `Still to do` line:
 
 - **Sign-in apps.** When the operator cannot create Entra apps, setup prints
   the exact command for an Application Administrator or Cloud Application
@@ -84,10 +95,11 @@ using that key, and every pending administrator step as a `Still to do` line:
   ```bash
   ~/mentra-install/mentra-private-cloud/scripts/configure-entra.sh \
     --core-name "<Company> Mentra Core (<deployment name>)" --mobile-name "<Company> Mentra Mobile (<deployment name>)" \
-    --installer-owner <owner> --grant-admin-consent
+    --installer-owner <owner> --core-owner <operator object ID> --grant-admin-consent
   ```
 
-  The operator records the two printed IDs, then runs setup again. This
+  `--core-owner` lets the operator's setup manage the Core app's admin portal
+  sign-in. The operator records the two printed IDs, then runs setup again. This
   command only checks that both are single-tenant apps in the tenant:
 
   ```bash
@@ -96,8 +108,14 @@ using that key, and every pending administrator step as a `Still to do` line:
   ```
 - **Admin consent.** A Global Administrator, Privileged Role Administrator or
   Cloud Application Administrator selects **Grant admin consent** on the Mobile
-  app's API permissions page. Setup rechecks consent on every run and keeps
-  the line until it is granted.
+  and Core apps' API permissions pages. Setup rechecks consent on every run and
+  keeps the line until it is granted.
+- **Admin portal sign-in.** When setup cannot register the portal's redirect
+  URI on the Core app, an Application Administrator or Cloud Application
+  Administrator runs the printed `configure-entra.sh --admin-portal-only`
+  command (see [admin portal sign-in](./entra-setup.md#admin-portal-sign-in)).
+  The line also appears when the deployment has no email domains, with the
+  `--email-domains` command that sets them.
 - **Employee access**, **DNS records**, and the meetings app's **Graph
   permission** (Global Administrator or Privileged Role Administrator).
 
@@ -114,10 +132,13 @@ Cloud Shell disconnects after 20 minutes without interaction. That is expected:
 reopen it and run the same command. `deploy.sh` waits (up to 30 minutes) for a
 deployment of the same name that is still running, then continues.
 
-For automation, start from `answers.example.json` (the six answers plus
-`resourceTags`) and run `setup.sh --yes --config answers.json --employees
-EMAIL,GROUP`. Values in angle brackets are refused. `MENTRA_START=0` downloads
-without starting setup, which is also the default without a terminal.
+For automation, start from `answers.example.json` (the seven answers, with the
+email domains as the `verifiedEmailDomains` list, plus `resourceTags`) and run
+`setup.sh --yes --config answers.json --employees EMAIL,GROUP`. Values in angle
+brackets are refused. To change the email domains later, run setup with
+`--email-domains DOMAIN[,DOMAIN]`; it rolls the change out to Core.
+`MENTRA_START=0` downloads without starting setup, which is also the default
+without a terminal.
 
 The numbered sections below describe the same steps with the standalone
 helpers.
@@ -127,7 +148,10 @@ helpers.
 Guided setup runs this step itself after the preview is confirmed. Otherwise
 follow [entra-setup.md](./entra-setup.md). The helper provisions:
 
-- a single-tenant Core API exposing `mentra.session`; and
+- a single-tenant Core API exposing `mentra.session`, which is also the admin
+  portal's sign-in client (the `email` ID token claim, the Microsoft Graph
+  `openid`, `email` and `profile` permissions, and the
+  `https://<core host>/api/admin/auth/callback` redirect URI); and
 - an assignment-required public Mobile client with Core and ACS delegated
   permissions and official binary redirects.
 
@@ -162,9 +186,13 @@ cloud-v2/deploy/azure/enterprise-reference/scripts/deploy.sh /secure/path/mentra
 The deployment helper runs `bootstrap.bicep` (registry, one managed identity per
 app, purge-protected Key Vault; needs Owner or User Access Administrator). It
 grants whoever runs it Key Vault Secrets Officer on that vault and creates the
-signing keys and refresh pepper directly in Key Vault, once. `access.bicep` then
-lets each app read only its own secrets: Core its keys, Runtime the Graph secret.
-No app can read the administrator key. Finally the helper imports and verifies
+signing keys and refresh pepper directly in Key Vault, once. With
+`adminPortalSignIn` set to `true` it stops unless Key Vault already holds
+`entra-browser-client-secret`, the Core app's client secret for admin portal
+sign-in ([store it](./entra-setup.md#admin-portal-sign-in) after
+`deploy.sh --bootstrap-only`). `access.bicep` then lets each app read only its
+own secrets: Core its keys and, with admin portal sign-in on, that secret;
+Runtime the Graph secret. No app can read the administrator key. Finally the helper imports and verifies
 the release digest, deploys `main.bicep` (Contributor is enough) and runs the
 smoke test. A deployed Core is never given
 new keys: if Key Vault is missing one, the helper refuses and points to
@@ -186,7 +214,8 @@ The templates create:
 - customer-owned ACS;
 - a managed identity per app, each able to read only its own Key Vault secrets;
 - a purge-protected Key Vault holding the signing keys, refresh pepper,
-  administrator key and optional Graph client secret;
+  admin portal client secret, administrator key and optional Graph client
+  secret;
 - a generated deployment manifest; and
 - Container App secrets that reference Key Vault, plus ACS and Mongo
   connection strings derived from their resources.
@@ -244,6 +273,8 @@ same origin without changing the manifest or auth contract.
 Before pilot use verify:
 
 - assigned sign-in on Android and iOS;
+- admin portal sign-in at `https://<core host>/` as an Organization Admin, and
+  refusal for anyone else;
 - unassigned, wrong-tenant, wrong-audience, and wrong-client rejection;
 - MFA/Conditional Access return;
 - silent Core refresh, relaunch, logout, and workspace switching;

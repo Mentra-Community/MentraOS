@@ -14,6 +14,9 @@ internal data class AnalyticsGlassesSnapshot(
     val androidVersion: String = "",
     val appVersion: String = "",
     val buildNumber: String = "",
+    /** -1 while the glasses have not reported a level. */
+    val batteryLevel: Int = -1,
+    val charging: Boolean = false,
 )
 
 internal data class AnalyticsEvent(
@@ -36,12 +39,21 @@ internal data class AnalyticsEvent(
  *   is visible in both weeks. Reporting days follow `America/Los_Angeles`, the
  *   calendar the WAU weeks are cut on; a UTC day would miss the Sunday-evening to
  *   Monday-morning Pacific boundary, which is one UTC day.
+ * - `bluetooth_sdk_glasses_disconnected` when a counted connection ends, with its
+ *   length, why it ended, and the battery levels seen during it. The reason is
+ *   supplied by the caller: an SDK disconnect/forget/cancel call, the phone's
+ *   Bluetooth turning off, or otherwise a lost link.
  */
 internal class BluetoothSdkAnalyticsTracker(private val simulatedModel: String) {
     private var lastConnected = false
     private var connectedPendingModel = false
     private var identifiedSerial: String? = null
     private var identifiedReportingDay: Long? = null
+    private var connectedAtMs: Long? = null
+    private var batteryAtConnect = -1
+    private var lastBattery = -1
+    private var lastCharging: Boolean? = null
+    private var lastModel = ""
 
     fun initialize(snapshot: AnalyticsGlassesSnapshot, reportingDay: Long) {
         lastConnected = snapshot.connected
@@ -54,7 +66,12 @@ internal class BluetoothSdkAnalyticsTracker(private val simulatedModel: String) 
         identifiedReportingDay = identifiedSerial?.let { reportingDay }
     }
 
-    fun observe(snapshot: AnalyticsGlassesSnapshot, reportingDay: Long): List<AnalyticsEvent> {
+    fun observe(
+        snapshot: AnalyticsGlassesSnapshot,
+        reportingDay: Long,
+        nowMs: Long = 0L,
+        disconnectReason: () -> String = { DISCONNECT_UNKNOWN },
+    ): List<AnalyticsEvent> {
         val events = mutableListOf<AnalyticsEvent>()
         val wasConnected = lastConnected
         lastConnected = snapshot.connected
@@ -64,14 +81,30 @@ internal class BluetoothSdkAnalyticsTracker(private val simulatedModel: String) 
                 connectedPendingModel = false
                 events += connectedEvent(snapshot, modelUnresolved = true)
             }
+            connectedAtMs?.let { startedAt ->
+                events += disconnectedEvent(nowMs - startedAt, disconnectReason())
+            }
+            connectedAtMs = null
             identifiedSerial = null
             identifiedReportingDay = null
             return events
         }
 
+        if (snapshot.model.isNotBlank()) lastModel = snapshot.model
+        if (snapshot.batteryLevel >= 0) {
+            if (batteryAtConnect < 0) batteryAtConnect = snapshot.batteryLevel
+            lastBattery = snapshot.batteryLevel
+            lastCharging = snapshot.charging
+        }
+
         if (!wasConnected) {
             identifiedSerial = null
             identifiedReportingDay = null
+            connectedAtMs = nowMs
+            lastModel = snapshot.model
+            batteryAtConnect = snapshot.batteryLevel
+            lastBattery = snapshot.batteryLevel
+            lastCharging = snapshot.charging.takeIf { snapshot.batteryLevel >= 0 }
             if (snapshot.model.isBlank()) {
                 connectedPendingModel = true
             } else {
@@ -106,6 +139,21 @@ internal class BluetoothSdkAnalyticsTracker(private val simulatedModel: String) 
             },
         )
 
+    private fun disconnectedEvent(durationMs: Long, reason: String) =
+        AnalyticsEvent(
+            "bluetooth_sdk_glasses_disconnected",
+            buildMap {
+                put("event_kind", "glasses_disconnected")
+                put("session_duration_ms", durationMs.coerceAtLeast(0))
+                put("disconnect_reason", reason)
+                lastModel.takeIf { it.isNotBlank() }?.let { put("glasses_model", it) }
+                put("glasses_is_simulated", lastModel == simulatedModel)
+                batteryAtConnect.takeIf { it >= 0 }?.let { put("battery_level_at_connect", it) }
+                lastBattery.takeIf { it >= 0 }?.let { put("battery_level_at_disconnect", it) }
+                lastCharging?.let { put("charging", it) }
+            },
+        )
+
     private fun identifiedEvent(snapshot: AnalyticsGlassesSnapshot, serial: String, kind: String) =
         AnalyticsEvent(
             "bluetooth_sdk_glasses_identified",
@@ -126,6 +174,12 @@ internal class BluetoothSdkAnalyticsTracker(private val simulatedModel: String) 
         )
 
     companion object {
+        const val DISCONNECT_USER = "user_disconnect"
+        const val DISCONNECT_FORGET = "forget"
+        const val DISCONNECT_CANCEL = "cancel"
+        const val DISCONNECT_BLUETOOTH_OFF = "bluetooth_off"
+        const val DISCONNECT_LINK_LOST = "link_lost"
+        const val DISCONNECT_UNKNOWN = "unknown"
         const val MILLIS_PER_DAY = 86_400_000L
         val REPORTING_ZONE: TimeZone = TimeZone.getTimeZone("America/Los_Angeles")
 

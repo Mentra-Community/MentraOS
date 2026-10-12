@@ -3,12 +3,17 @@ import {TestRunsTabs} from "./pages/test-runs-tabs";
 import {TestRerunPage, readRerunId} from "./pages/test-reruns";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bug, Check, ClipboardList, CloudUpload, FileText, FlaskConical, History, Home, KeyRound, Loader2, MessageSquareWarning, PackageCheck, RefreshCcw, RotateCcw, ShieldCheck, Users, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
+import { resolvePage, visiblePages, type AdminMe, type AdminPageKey } from "./lib/admin-access";
 import { api, ApiError } from "./lib/api";
+import { OperatorKeysPage } from "./pages/operator-keys";
+import { WorkspacesPage } from "./pages/workspaces";
+import { loginHref, signOutOfAdminPortal } from "./lib/session";
+import { SignedOutScreen } from "./components/signed-out";
 import {
   hasInvalidTestRunListScope, readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
 } from "./lib/test-run-links";
@@ -20,13 +25,7 @@ import { RecordingVideo } from "./components/recording-video";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
 type InstallPolicy = "install_once" | "keep_updated" | "mandatory";
-type AdminPageKey = "home" | "review" | "preinstalled" | "audit" | "incidents" | "test-runs" | "routine-catalog" | "system-health";
 type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
-
-interface AdminUser {
-  developerId: string;
-  email: string;
-}
 
 interface Registry {
   id: string;
@@ -142,6 +141,8 @@ const ADMIN_NAV: readonly NavItem[] = [
   { key: "test-runs", label: "Test runs", icon: FlaskConical },
   { key: "routine-catalog", label: "Routine catalog", icon: BookOpen },
   { key: "system-health", label: "System health", icon: ShieldCheck },
+  { key: "workspaces", label: "Workspaces", icon: Users },
+  { key: "operator-keys", label: "Operator keys", icon: KeyRound },
 ];
 
 /**
@@ -184,8 +185,10 @@ const initialRoutineCatalog = new URLSearchParams(window.location.search).get("r
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
-  const [page, setPage] = useState<AdminPageKey>(
-    initialSystemHealth ? "system-health" : initialRerunId || initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : "home",
+  // The page asked for, if any. What shows is `resolvePage(page, visible)`: a page this principal cannot
+  // open (a deep link, say) falls back to their first visible page.
+  const [page, setPage] = useState<AdminPageKey | null>(
+    initialSystemHealth ? "system-health" : initialRerunId || initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : null,
   );
   const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
@@ -199,22 +202,22 @@ function AdminPage() {
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [signedOut, setSignedOut] = useState<{ signOutUrl: string | null } | null>(null);
 
   async function signOut() {
     setSigningOut(true);
-    try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; reload still drops us at the login gate
-    }
-    window.location.reload();
+    const result = await signOutOfAdminPortal();
+    qc.clear();
+    setSignedOut(result);
   }
 
   const me = useQuery({
     queryKey: ["admin-me"],
-    queryFn: () => api<{ authenticated: true; admin: true; user: AdminUser | null }>("/api/admin/me"),
+    queryFn: () => api<AdminMe>("/api/admin/me"),
     retry: false,
   });
+  const visible = me.data ? visiblePages(me.data) : [];
+  const active = resolvePage(page, visible);
 
   useEffect(() => {
     // The deep link is safe in state now, so drop it from the address bar —
@@ -271,22 +274,22 @@ function AdminPage() {
   const submissions = useQuery({
     queryKey: ["admin-submissions"],
     queryFn: () => api<{ submissions: ReleaseSummary[] }>("/api/admin/submissions"),
-    enabled: me.isSuccess && (["home", "review"].includes(page) || detailReleaseId !== null),
+    enabled: me.isSuccess && visible.includes("review") && (active === "home" || active === "review" || detailReleaseId !== null),
   });
   const registries = useQuery({
     queryKey: ["admin-registries"],
     queryFn: () => api<{ registries: Registry[] }>("/api/admin/preinstalled/registries"),
-    enabled: me.isSuccess && ["home", "preinstalled"].includes(page),
+    enabled: me.isSuccess && (active === "home" || active === "preinstalled"),
   });
   const releases = useQuery({
     queryKey: ["admin-releases"],
     queryFn: () => api<{ releases: ReleaseSummary[] }>("/api/admin/preinstalled/releases"),
-    enabled: me.isSuccess && (page === "preinstalled" || detailReleaseId !== null),
+    enabled: me.isSuccess && visible.includes("preinstalled") && (active === "preinstalled" || detailReleaseId !== null),
   });
   const audit = useQuery({
     queryKey: ["admin-audit"],
     queryFn: () => api<{ events: AuditEvent[] }>("/api/admin/audit-log"),
-    enabled: me.isSuccess && ["home", "audit"].includes(page),
+    enabled: me.isSuccess && (active === "home" || active === "audit"),
   });
   const activeRegistry = useMemo(
     () => registries.data?.registries.find(registry => registry.environment === env && registry.name === "default"),
@@ -295,7 +298,7 @@ function AdminPage() {
   const revisions = useQuery({
     queryKey: ["admin-revisions", activeRegistry?.id],
     queryFn: () => api<{ revisions: RegistryRevision[] }>(`/api/admin/preinstalled/registries/${activeRegistry?.id}/revisions`),
-    enabled: me.isSuccess && ["home", "preinstalled"].includes(page) && Boolean(activeRegistry?.id),
+    enabled: me.isSuccess && (active === "home" || active === "preinstalled") && Boolean(activeRegistry?.id),
   });
 
   // Review decisions carry the reviewer's typed notes. "Request changes" is a
@@ -384,22 +387,34 @@ function AdminPage() {
     "test-runs": { title: "Test runs", body: "Recorded routines, build provenance, firmware checks, and fixture return state." },
     "routine-catalog": { title: "Routine catalog", body: "What each routine checks, what it needs, and a passing recording." },
     "system-health": { title: "System health", body: "Machines, lanes, framework, memory and disk." },
+    workspaces: { title: "Workspaces", body: "Every workspace in this organization: members, invitations, keys, settings, audit, and ownership recovery." },
+    "operator-keys": { title: "Operator keys", body: "Organization keys for incident, support-profile and test-run tooling." },
   };
 
+  if (signedOut) return <SignedOutScreen signOutUrl={signedOut.signOutUrl} />;
   if (me.isLoading) return <Splash label="Checking admin session" />;
   if (me.isError) {
-    // A 403 means the Mentra login itself worked but the account isn't on the
-    // admin allowlist; offering the login button again would be misleading.
-    return <LoginGate denied={me.error instanceof ApiError && me.error.status === 403} />;
+    // A 403 means the sign-in itself worked but this caller may not use the admin portal; offering the
+    // sign-in button again would be misleading.
+    return (
+      <LoginGate
+        denied={me.error instanceof ApiError && me.error.status === 403}
+        onSignOut={signOut}
+        signingOut={signingOut}
+      />
+    );
   }
+  // Signed in, but no organization capability opens any page here: not an Organization Admin.
+  if (!active) return <LoginGate denied onSignOut={signOut} signingOut={signingOut} />;
+  const principal = me.data!;
 
   return (
     <AppShell
       brandTitle="Admin"
       brandSubtitle="MentraOS"
       badge={<EnvBadge env={env} />}
-      nav={ADMIN_NAV}
-      activeKey={page}
+      nav={ADMIN_NAV.filter(item => visible.includes(item.key as AdminPageKey))}
+      activeKey={active}
       onSelect={key => {
         setPage(key as AdminPageKey);
         setHealthTab("lanes");
@@ -417,21 +432,21 @@ function AdminPage() {
         setSuiteId(null);
         if (key === "routine-catalog") window.history.replaceState(null, "", "/?routineCatalog=1");
       }}
-      title={pageMeta[page].title}
-      description={pageMeta[page].body}
-      userEmail={me.data?.user?.email ?? "Admin"}
+      title={pageMeta[active].title}
+      description={pageMeta[active].body}
+      userEmail={principal.user?.email ?? principal.credential?.label ?? "Admin"}
       accountLabel="Admin"
       onSignOut={signOut}
       signingOut={signingOut}
       headerAction={
-        page === "preinstalled" && selectedReleases.length > 0 ? (
+        active === "preinstalled" && selectedReleases.length > 0 ? (
           <div className="rounded-full border border-[#dfe3dc] bg-white px-4 py-2 text-sm font-semibold text-[#4f5d54]">
             {selectedReleases.length} selected
           </div>
         ) : undefined
       }
     >
-      {page === "home" ? (
+      {active === "home" ? (
         <HomePage
           env={env}
           loading={submissions.isLoading || registries.isLoading}
@@ -444,7 +459,7 @@ function AdminPage() {
         />
       ) : null}
 
-      {page === "review" ? (
+      {active === "review" ? (
         <ReviewQueue
           submissions={submissionList}
           loading={submissions.isLoading}
@@ -452,7 +467,7 @@ function AdminPage() {
         />
       ) : null}
 
-      {page === "preinstalled" ? (
+      {active === "preinstalled" ? (
         <PreinstalledPage
           env={env}
           releases={releaseList}
@@ -470,16 +485,18 @@ function AdminPage() {
         />
       ) : null}
 
-      {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
+      {active === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
-      {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
-      <div className={["test-runs", "routine-catalog", "system-health"].includes(page) ? "testing-workspace" : undefined}>
-      {page === "test-runs" ? <SystemHealthSummary /> : null}
-      {page === "system-health" ? <SystemHealthPage tab={healthTab} lane={laneSelection} onTabChange={selectHealthTab} /> : null}
-      {page === "routine-catalog" ? <RoutineCatalogPage /> : null}
-      {page === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
-      {page === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
-      {page === "test-runs" && !rerunId && !suiteId ? (
+      {active === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
+      {active === "workspaces" ? <WorkspacesPage /> : null}
+      {active === "operator-keys" ? <OperatorKeysPage /> : null}
+      <div className={["test-runs", "routine-catalog", "system-health"].includes(active) ? "testing-workspace" : undefined}>
+      {active === "test-runs" ? <SystemHealthSummary /> : null}
+      {active === "system-health" ? <SystemHealthPage tab={healthTab} lane={laneSelection} onTabChange={selectHealthTab} /> : null}
+      {active === "routine-catalog" ? <RoutineCatalogPage /> : null}
+      {active === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
+      {active === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
+      {active === "test-runs" && !rerunId && !suiteId ? (
         testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <TestRunsTabs>
           {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
             <h2 className="font-semibold">Results for the selected build</h2>
@@ -1384,19 +1401,10 @@ function formatDate(value: string | null | undefined): string {
   return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-function LoginGate({ denied = false }: { denied?: boolean }) {
-  // The full URL preserves report and testRun/step deep links through the
-  // login round-trip; safeReturnTo on Core validates the origin either way.
-  const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
-
-  async function signOutAndReload() {
-    try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; the reload lands back on this gate either way
-    }
-    window.location.reload();
-  }
+export function LoginGate({ denied = false, onSignOut, signingOut = false }: { denied?: boolean; onSignOut?: () => void; signingOut?: boolean }) {
+  // The relative path and query preserve report and testRun/step deep links
+  // through the sign-in round trip; Core accepts only a relative return_to.
+  const loginUrl = loginHref();
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(180deg,#ffffff_0%,#f4f8f6_100%)] px-5 py-10 text-[#14141a]">
@@ -1423,7 +1431,7 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
             <div className="h-2.5" />
             <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
               {denied
-                ? "You're signed in, but this account isn't on the admin allowlist. Switch accounts, or ask for your email to be added to the Core admin allowlist."
+                ? "You're signed in, but this account has no administrator access here: that needs a verified email on the Core admin allowlist. Manage your own workspaces in the workspace portal, switch accounts, or ask for your email to be added."
                 : "Review miniapp releases, publish preinstalled registries, and manage internal operations."}
             </p>
 
@@ -1432,7 +1440,8 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
               <button
                 type="button"
                 className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
-                onClick={signOutAndReload}
+                onClick={onSignOut}
+                disabled={signingOut}
               >
                 Sign out and switch account
               </button>
@@ -1441,7 +1450,7 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
                 className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
                 href={loginUrl}
               >
-                Continue with Mentra login
+                Sign in
               </a>
             )}
 

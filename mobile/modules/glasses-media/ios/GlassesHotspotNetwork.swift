@@ -257,6 +257,8 @@ public final class GlassesHotspotNetwork {
     /// a Wi-Fi type constraint on a usable hotspot route. Both paths' interface types feed one
     /// session identity (HotspotWifiIdentity): a positive Wi-Fi report outlives later omission
     /// only while the same interface stays attached; contrary reports and replacement fail closed.
+    /// A phone that starts on cellular never gets a report; HotspotInterfacePolicy then uses
+    /// the hotspot client address as the evidence.
     private func startInterfaceMonitors(generation gen: Int) {
         interfaceMonitors.forEach { $0.cancel() }
         let monitors = [NWPathMonitor(requiredInterfaceType: .wifi), NWPathMonitor()]
@@ -318,8 +320,10 @@ public final class GlassesHotspotNetwork {
     }
 
     private func bind(_ selected: HotspotInterfaceBinding) {
+        let evidence = wifiIdentity.trusted[selected.interface] == selected.index ? "wifi_report" : "hotspot_client"
+        wifiIdentity.adopt(selected)
         binding = selected
-        logger.info("HOTSPOT_JOIN address_verified interface=\(selected.interface, privacy: .public)")
+        logger.info("HOTSPOT_JOIN address_verified interface=\(selected.interface, privacy: .public) evidence=\(evidence, privacy: .public)")
     }
 
     /// Interface names and their IPv4 addresses only; never credentials or SSIDs.
@@ -327,8 +331,11 @@ public final class GlassesHotspotNetwork {
         let snapshot = observeInterfaces()
         let wifi = Set(wifiIdentity.trusted.keys)
         let addresses = snapshot.addresses.filter { wifi.contains($0.name) }.map { "\($0.name)=\($0.ipv4)" }
+        let other = snapshot.addresses.filter { !wifi.contains($0.name) && LocalMediaPolicy.isPrivate($0.ipv4) }
+            .map { "\($0.name)\(snapshot.ethernetLinks.contains($0.name) ? "" : "(non-ethernet)")=\($0.ipv4)" }
         return "Wi-Fi interfaces=\(wifi.isEmpty ? "none" : wifi.sorted().joined(separator: ",")), " +
-            "Wi-Fi IPv4=\(addresses.isEmpty ? "none" : addresses.sorted().joined(separator: ","))"
+            "Wi-Fi IPv4=\(addresses.isEmpty ? "none" : addresses.sorted().joined(separator: ",")), " +
+            "other private IPv4=\(other.isEmpty ? "none" : other.sorted().joined(separator: ","))"
     }
 
     private func waitForLocalAccess(address: String, generation gen: Int) {
@@ -376,14 +383,16 @@ public final class GlassesHotspotNetwork {
         replies.forEach { $0() }
     }
 
-    /// Every attached interface's kernel index (its AF_LINK row) and every IPv4 address with its
-    /// interface name and up state. Selection belongs to HotspotInterfacePolicy; an interface
-    /// name alone never identifies Wi-Fi. A failed read yields an empty sample, which fails closed.
+    /// Every attached interface's kernel index and link type (its AF_LINK row) and every IPv4
+    /// address with its interface name and up state. Selection belongs to HotspotInterfacePolicy;
+    /// an interface name alone never identifies Wi-Fi. A failed read yields an empty sample, which
+    /// fails closed.
     static func interfaceSnapshot() -> HotspotInterfaceSnapshot {
         var interfaces: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&interfaces) == 0 else { return HotspotInterfaceSnapshot(links: [:], addresses: []) }
         defer { freeifaddrs(interfaces) }
         var links: [String: Int] = [:]
+        var ethernetLinks: Set<String> = []
         var rows: [HotspotInterfaceAddress] = []
         var cursor = interfaces
         while let item = cursor {
@@ -392,8 +401,13 @@ public final class GlassesHotspotNetwork {
             guard let address = value.ifa_addr else { continue }
             let name = String(cString: value.ifa_name)
             if address.pointee.sa_family == UInt8(AF_LINK) {
-                let index = address.withMemoryRebound(to: sockaddr_dl.self, capacity: 1) { Int($0.pointee.sdl_index) }
-                if index > 0 { links[name] = index }
+                let (index, type) = address.withMemoryRebound(to: sockaddr_dl.self, capacity: 1) {
+                    (Int($0.pointee.sdl_index), Int32($0.pointee.sdl_type))
+                }
+                if index > 0 {
+                    links[name] = index
+                    if type == IFT_ETHER { ethernetLinks.insert(name) }
+                }
                 continue
             }
             guard address.pointee.sa_family == UInt8(AF_INET) else { continue }
@@ -401,6 +415,6 @@ public final class GlassesHotspotNetwork {
             guard getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
             rows.append(HotspotInterfaceAddress(name: name, isUp: value.ifa_flags & UInt32(IFF_UP) != 0, ipv4: String(cString: host)))
         }
-        return HotspotInterfaceSnapshot(links: links, addresses: rows)
+        return HotspotInterfaceSnapshot(links: links, addresses: rows, ethernetLinks: ethernetLinks)
     }
 }

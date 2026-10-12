@@ -74,10 +74,13 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
 
   const dismiss = useCallback(
     (buttonIndex: number) => {
+      // Settle the answered alert now: a newer alert may replace this one
+      // before the fade-out finishes, and must not inherit this answer.
+      const resolve = resolveRef.current
+      resolveRef.current = null
+      resolve?.(buttonIndex)
       animateOut(() => {
-        resolveRef.current?.(buttonIndex)
-        resolveRef.current = null
-        setState(null)
+        setState((current) => (current && current.resolve === resolve ? null : current))
       })
     },
     [animateOut],
@@ -113,6 +116,9 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
     setModalRef(
       (alertState) =>
         new Promise<number>((resolve) => {
+          // A newer alert replaces the visible one. Settle the replaced alert as
+          // dismissed (-1) so its caller does not wait forever.
+          resolveRef.current?.(-1)
           resolveRef.current = resolve
           setState({...alertState, resolve})
         }),

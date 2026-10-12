@@ -17,6 +17,8 @@
   "runtimeName": "ca-acme-mentra",
   "coreName": "ca-acme-mentra-core",
   "coreAdminEmails": "",
+  "verifiedEmailDomains": ["acme.example"],
+  "adminPortalSignIn": false,
   "coreIdentityName": "id-acme-mentra-core",
   "runtimeIdentityName": "id-acme-mentra-runtime",
   "communicationName": "acme-mentra-acs",

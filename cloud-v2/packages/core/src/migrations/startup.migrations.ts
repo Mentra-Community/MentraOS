@@ -11,6 +11,9 @@ import { DeveloperOrgInvitationModel } from "../models/developer-org-invitation.
 import { DeveloperOrgMembershipModel } from "../models/developer-org-membership.model";
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
+import { BrowserSessionModel } from "../models/browser-session.model";
+import { LoginTransactionModel } from "../models/login-transaction.model";
+import { AuthRateLimitModel } from "../models/auth-rate-limit.model";
 import { OemModel } from "../models/oem.model";
 import {TestHostStateModel} from "../models/test-host-state.model";
 import {TestRerunModel} from "../models/test-rerun.model";
@@ -21,7 +24,13 @@ import {backfillTestSuiteStartedAt, TestSuiteModel} from "../models/test-suite.m
 import { reconcileTestRunIndexes, TestAssetModel, TestRunModel } from "../models/test-run.model";
 import { TestDispatchModel } from "../models/test-dispatch.model";
 import {ReportModel} from '../models/report.model';
-import {ReportAssetModel} from '../models/report-asset.model';
+import {ReportAssetModel, reconcileReportAssetIndexes} from '../models/report-asset.model';
+import { AccessCredentialModel } from "../models/access-credential.model";
+import { WorkspaceAuditEventModel } from "../models/workspace-audit-event.model";
+import { WorkspaceInvitationModel } from "../models/workspace-invitation.model";
+import { WorkspaceMembershipModel } from "../models/workspace-membership.model";
+import { WorkspaceModel } from "../models/workspace.model";
+import { convertLegacyAdminKeys } from "../services/workspaces/legacy-admin-keys";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
@@ -54,6 +63,11 @@ export async function runStartupMigrations(): Promise<void> {
   await dropLegacyUserIdentityIndex();
   await dedupeUserIdentityRows();
   await UserModel.createIndexes();
+  // Portal sign-in: session and transaction lookups are by unique hash, and
+  // rows expire by TTL. Built before serving so a session is never duplicated.
+  await BrowserSessionModel.createIndexes();
+  await LoginTransactionModel.createIndexes();
+  await AuthRateLimitModel.createIndexes();
   // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes();
   // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.
@@ -73,6 +87,7 @@ export async function runStartupMigrations(): Promise<void> {
   await TestAssetModel.createIndexes();
   // Native incident creation and shared diagnostic references must dedupe before completion ACK.
   await ReportModel.createIndexes();
+  await reconcileReportAssetIndexes();
   await ReportAssetModel.createIndexes();
   // No device execution grant is safe until request IDs are unique across all Core instances.
   // The send receipt must be unique before any admin can submit a device request.
@@ -90,6 +105,31 @@ export async function runStartupMigrations(): Promise<void> {
   await safeCreateInvitationIndexes();
   await backfillDeveloperOrgOwners();
   await backfillMembersFromWorkos();
+  // Workspaces rely on unique indexes (one active membership per person, one
+  // pending invitation per address, unique ids). Build them, and their
+  // collections, before serving: a request in the first moments after boot must
+  // not create a collection inside a transaction. An index the database refuses
+  // (some databases a Private Cloud uses support only part of MongoDB's index
+  // options) is logged and does not stop Core: sign-in, incidents and keys keep
+  // working.
+  await Promise.all(
+    [WorkspaceModel, WorkspaceMembershipModel, WorkspaceInvitationModel, AccessCredentialModel, WorkspaceAuditEventModel].map(
+      async (model) => {
+        try {
+          await model.createCollection();
+          await model.createIndexes();
+        } catch (error) {
+          logger.error(
+            { collection: model.collection.collectionName, error: (error as Error)?.message },
+            "failed to create workspace collection indexes",
+          );
+        }
+      },
+    ),
+  );
+  // Allowlisted admin API keys keep working as operator keys, before any
+  // request is served. A key that fails is logged and retried next start.
+  await convertLegacyAdminKeys();
   await ensureMentraAccountOem();
 }
 

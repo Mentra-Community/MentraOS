@@ -12,6 +12,9 @@ struct AnalyticsGlassesSnapshot {
     var androidVersion = ""
     var appVersion = ""
     var buildNumber = ""
+    /// -1 while the glasses have not reported a level.
+    var batteryLevel = -1
+    var charging = false
 }
 
 struct AnalyticsEvent {
@@ -32,7 +35,17 @@ struct AnalyticsEvent {
 ///   is visible in both weeks. Reporting days follow `America/Los_Angeles`, the
 ///   calendar the WAU weeks are cut on; a UTC day would miss the Sunday-evening to
 ///   Monday-morning Pacific boundary, which is one UTC day.
+/// - `bluetooth_sdk_glasses_disconnected` when a counted connection ends, with its
+///   length, why it ended, and the battery levels seen during it. The reason is
+///   supplied by the caller: an SDK disconnect/forget/cancel call, the phone's
+///   Bluetooth turning off, or otherwise a lost link.
 struct BluetoothSdkAnalyticsTracker {
+    static let disconnectUser = "user_disconnect"
+    static let disconnectForget = "forget"
+    static let disconnectCancel = "cancel"
+    static let disconnectBluetoothOff = "bluetooth_off"
+    static let disconnectLinkLost = "link_lost"
+    static let disconnectUnknown = "unknown"
     static let millisPerDay: Int64 = 86_400_000
     static let reportingZone = TimeZone(identifier: "America/Los_Angeles")!
 
@@ -53,6 +66,11 @@ struct BluetoothSdkAnalyticsTracker {
     private var connectedPendingModel = false
     private var identifiedSerial: String?
     private var identifiedReportingDay: Int64?
+    private var connectedAtMs: Int64?
+    private var batteryAtConnect = -1
+    private var lastBattery = -1
+    private var lastCharging: Bool?
+    private var lastModel = ""
 
     init(simulatedModel: String) {
         self.simulatedModel = simulatedModel
@@ -69,7 +87,12 @@ struct BluetoothSdkAnalyticsTracker {
         identifiedReportingDay = identifiedSerial == nil ? nil : reportingDay
     }
 
-    mutating func observe(_ snapshot: AnalyticsGlassesSnapshot, reportingDay: Int64) -> [AnalyticsEvent] {
+    mutating func observe(
+        _ snapshot: AnalyticsGlassesSnapshot,
+        reportingDay: Int64,
+        nowMs: Int64 = 0,
+        disconnectReason: () -> String = { BluetoothSdkAnalyticsTracker.disconnectUnknown }
+    ) -> [AnalyticsEvent] {
         var events: [AnalyticsEvent] = []
         let wasConnected = lastConnected
         lastConnected = snapshot.connected
@@ -79,14 +102,30 @@ struct BluetoothSdkAnalyticsTracker {
                 connectedPendingModel = false
                 events.append(connectedEvent(snapshot, modelUnresolved: true))
             }
+            if let connectedAtMs {
+                events.append(disconnectedEvent(durationMs: nowMs - connectedAtMs, reason: disconnectReason()))
+            }
+            connectedAtMs = nil
             identifiedSerial = nil
             identifiedReportingDay = nil
             return events
         }
 
+        if !snapshot.model.isBlank { lastModel = snapshot.model }
+        if snapshot.batteryLevel >= 0 {
+            if batteryAtConnect < 0 { batteryAtConnect = snapshot.batteryLevel }
+            lastBattery = snapshot.batteryLevel
+            lastCharging = snapshot.charging
+        }
+
         if !wasConnected {
             identifiedSerial = nil
             identifiedReportingDay = nil
+            connectedAtMs = nowMs
+            lastModel = snapshot.model
+            batteryAtConnect = snapshot.batteryLevel
+            lastBattery = snapshot.batteryLevel
+            lastCharging = snapshot.batteryLevel >= 0 ? snapshot.charging : nil
             if snapshot.model.isBlank {
                 connectedPendingModel = true
             } else {
@@ -118,6 +157,20 @@ struct BluetoothSdkAnalyticsTracker {
         if !snapshot.model.isBlank { properties["glasses_model"] = snapshot.model }
         if modelUnresolved { properties["glasses_model_unresolved"] = true }
         return AnalyticsEvent(name: "bluetooth_sdk_glasses_connected", properties: properties)
+    }
+
+    private func disconnectedEvent(durationMs: Int64, reason: String) -> AnalyticsEvent {
+        var properties: [String: Any] = [
+            "event_kind": "glasses_disconnected",
+            "session_duration_ms": max(durationMs, 0),
+            "disconnect_reason": reason,
+            "glasses_is_simulated": lastModel == simulatedModel,
+        ]
+        if !lastModel.isBlank { properties["glasses_model"] = lastModel }
+        if batteryAtConnect >= 0 { properties["battery_level_at_connect"] = batteryAtConnect }
+        if lastBattery >= 0 { properties["battery_level_at_disconnect"] = lastBattery }
+        if let lastCharging { properties["charging"] = lastCharging }
+        return AnalyticsEvent(name: "bluetooth_sdk_glasses_disconnected", properties: properties)
     }
 
     private func identifiedEvent(_ snapshot: AnalyticsGlassesSnapshot, serial: String, kind: String) -> AnalyticsEvent {

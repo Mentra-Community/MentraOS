@@ -8,7 +8,20 @@
  *   /api/client/auth/*          — device-called auth: exchange, refresh,
  *                                 miniapp-token
  *   /api/client/reports/*       — device-filed reports
+ *   /api/client/bluetooth-sdk/* — Bluetooth SDK startup update check,
+ *                                 unauthenticated (called from customer apps)
  *   /api/agent/reports/*        — read-only private dev-agent access
+ *   /api/admin/auth/*, /api/portal/auth/*
+ *                               — portal sign-in (the deployment's identity provider)
+ *   /api/admin/*                — the admin portal's API (capability-gated), incl.
+ *                                 /api/admin/workspaces and /api/admin/organization
+ *   /api/portal/*               — the workspace portal's API, incl. /api/portal/workspaces
+ *   /api/workspaces/*, /api/organization/*
+ *                               — the same workspace and organization handlers, for
+ *                                 bearers (identity-provider access tokens, Core keys)
+ *   /api/internal/workspaces/*  — the signed service API the Store calls (64 KiB body limit)
+ *   everything else (GET)       — the admin portal's files, when
+ *                                 CLOUD_CORE_ADMIN_STATIC_DIR is set (Private Cloud)
  *
  * Caller convention (auth/spec.md): /api/client/* is device-called and
  * /api/oem/* is reserved for the OEM's backend. The token exchange + refresh
@@ -16,17 +29,19 @@
  * /api/oem/*.
  *
  * The global error handler translates `OauthError` subtypes to the RFC 8693
- * error body shape `{ error, error_description }`. Anything else becomes a
- * generic 500.
+ * error body shape `{ error, error_description }`, and expected workspace
+ * failures (`WorkspaceError`) to the same shape with their status. Anything
+ * else becomes a generic 500.
  */
 
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { createHealthApp, createLogger, type ReadinessCheck } from "@mentra/cloud-shared";
 import type { AppEnv } from "../types/hono.types";
 import { OauthError } from "../types/oauth.types";
 import { AccountError } from "../services/account/account-error";
 import { requestContext } from "./middleware/context.middleware";
-import adminPreinstalled from "./admin/preinstalled.api";
+import adminApi from "./admin/admin.api";
 import reportAgent from "./agent/reports.api";
 import {createTestRequestsApi} from "./internal/test-requests.api";
 import {createFrameworkResultsApi} from "./internal/framework-results.api";
@@ -45,13 +60,22 @@ import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
 import clientMiniapps from "./client/miniapps.api";
+import clientBluetoothSdk from "./client/bluetooth-sdk.api";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import consoleAuth from "./console/cli-auth.api";
 import portalEnterprise from "./portal/enterprise.api";
+import internalWorkspaces from "./internal/workspaces.api";
+import { createOrganizationApi } from "./organization/organization.api";
+import { createWorkspacesApi } from "./workspaces/workspaces.api";
+import { WorkspaceError } from "../services/workspaces/workspace-error";
 import wellKnown from "./well-known.api";
+import { createAdminStaticApp } from "./admin-static";
 
 const logger = createLogger("core").child({ service: "app" });
+
+/** The largest body the signed workspace service API reads. */
+const INTERNAL_WORKSPACES_BODY_LIMIT_BYTES = 64 * 1024;
 
 export interface CreateAppOptions {
   readinessChecks: ReadinessCheck[];
@@ -95,7 +119,17 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/auth", clientAuth);
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
+  app.route("/api/client/bluetooth-sdk", clientBluetoothSdk);
   app.route("/api/agent/reports", reportAgent);
+  // Service calls carry small JSON bodies; the limit applies before the signature check reads one.
+  app.use(
+    "/api/internal/workspaces/*",
+    bodyLimit({
+      maxSize: INTERNAL_WORKSPACES_BODY_LIMIT_BYTES,
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+  );
+  app.route("/api/internal/workspaces", internalWorkspaces);
   app.route("/api/internal/test-requests", createRoutineJobBindingApi());
   app.route("/api/internal/test-requests", createTestRequestsApi());
   app.route("/api/internal/routine-jobs", createRoutineJobsApi());
@@ -116,7 +150,14 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/account/oauth", accountOauth);
   app.route("/api/console", consoleAuth);
   app.route("/api/portal", portalEnterprise);
-  app.route("/api/admin", adminPreinstalled);
+  app.route("/api/admin", adminApi);
+  app.route("/api/workspaces", createWorkspacesApi());
+  app.route("/api/organization", createOrganizationApi());
+
+  // A Private Cloud serves the admin portal from Core itself, on Core's host.
+  // Mounted last: it answers only GET/HEAD outside /api and /.well-known.
+  const adminStaticDir = process.env.CLOUD_CORE_ADMIN_STATIC_DIR?.trim();
+  if (adminStaticDir) app.route("/", createAdminStaticApp(adminStaticDir));
 
   // Global error translator.
   app.onError((err, c) => {
@@ -127,6 +168,9 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
         // future error subclasses (4xx/5xx) compile without a switch.
         err.httpStatus as 400,
       );
+    }
+    if (err instanceof WorkspaceError) {
+      return c.json({ error: err.code, error_description: err.message }, err.status as 400);
     }
 
     // Unexpected. Log with the per-request logger if available so the line

@@ -349,7 +349,20 @@ engine.miniapps.clearForeground()
 await engine.miniapps.stopAll()
 await engine.miniapps.install(url, opts?)
 await engine.miniapps.uninstall(packageName, version?)
+await engine.miniapps.invokeAction(packageName, actionId, params?, timeoutMs?) // host-only actions included
+const offPrompt = engine.miniapps.onUpdatePrompt((prompt) => {
+  // Show "Update {prompt.displayName}?" and answer it.
+  prompt.answer(userChoseUpdate ? "update" : "not_now")
+})
+const offFailure = engine.miniapps.onUpdateFailed(({displayName, installedVersion}) => { … })
+const offDeferred = engine.miniapps.onDeferredUpdateReady((packageName) => { … }) // run Store maintenance again
 ```
+
+`onUpdatePrompt` is how the host renders the question before a bundled Store's
+update closes a running miniapp. The engine decides when a prompt may appear:
+only while the app is in the foreground, one at a time, and at most once a day
+per miniapp. If the update fails after the user accepts, the engine starts the
+installed version again and calls `onUpdateFailed`.
 
 ## `engine.stores.*` — escape hatch (not the OEM contract)
 

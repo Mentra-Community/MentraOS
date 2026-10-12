@@ -47,10 +47,13 @@ test('Android failure image requires its exact recorded phase, action, message a
     {...diagnostic[0], error: {message: other.message}, screenshotAssetId: 'other-screen'}])).toEqual([]);
 });
 
-test('Mac failed result uses its explicit public screenshot path without choosing a nearby image', () => {
+test('a retained Mac reporter failure cannot establish a terminal screenshot association', () => {
   const run = fixture('ios-on-mac');
   const row = {id: failure.actionId, status: 'failed', error: failure.message, screenshot: screenshot.path};
-  expect(recordedFailureScreens(run, {results: [row]})).toEqual(association);
+  expect(recordedFailureScreens(run, {results: [row]})).toEqual([]);
+  const terminal = {command: 'failure-screenshot', state: 'complete', phase: 'test', actionId: failure.actionId,
+    message: failure.message, screenshotPath: screenshot.path, source: 'screenshot'};
+  expect(recordedFailureScreens(run, [row, terminal])).toEqual(association);
   for (const changed of [{privateEvidence: true}, {status: 'passed'}, {error: 'Different failure'},
     {screenshot: 'screenshots/failure-update.png'}, {id: 'other'}])
     expect(recordedFailureScreens(run, {results: [{...row, ...changed}]})).toEqual([]);
@@ -175,7 +178,7 @@ test('Admin projects optional failure images without changing frozen results or 
 });
 
 const journalPath = (id: string) => `setup-evidence/mac-commands-${id.repeat(8)}-${id.repeat(4)}-${id.repeat(4)}-${id.repeat(4)}-${id.repeat(12)}.json`;
-function lifecycleFixture(phase: 'setup' | 'teardown' = 'setup') {
+function lifecycleFixture(phase: 'setup' | 'test' | 'teardown' = 'setup') {
   const run = fixture('ios-on-mac');
   const original = {...failure, phase};
   const app = {...screenshot, path: 'setup-evidence/screenshots/app-original.png'};
@@ -192,7 +195,7 @@ function jsonAsset(id: string, path: string, value: unknown) {
     size: body.length, sha256: createHash('sha256').update(body).digest('hex')}};
 }
 
-test.each(['setup', 'teardown'] as const)('Mac %s journal associates each public source by exact original failure and declared relative path', phase => {
+test.each(['setup', 'test', 'teardown'] as const)('Mac %s journal associates each public source by exact original failure and declared relative path', phase => {
   const {run, original, app, desktop, rows} = lifecycleFixture(phase);
   const expected = [{phase, actionId: original.actionId, assetId: app.id, desktopAssetId: desktop.id}];
   expect(recordedFailureScreens(run, {records: rows})).toEqual(expected);
@@ -209,6 +212,36 @@ test.each(['setup', 'teardown'] as const)('Mac %s journal associates each public
     .toEqual([{phase, actionId: original.actionId, desktopAssetId: desktop.id}]);
   expect(recordedFailureScreens({...run, assets: [...run.assets, {...desktop, path: 'different-path.png'}]}, {records: rows}))
     .toEqual([{phase, actionId: original.actionId, assetId: app.id}]);
+});
+
+test.each(['passed', 'failed'] as const)('outer Mac test failure reads its terminal journal with historical %s nested rows', async status => {
+  const {run, rows, original, app, desktop} = lifecycleFixture('test');
+  const nested = jsonAsset('nested-report', 'run.json', {results: [
+    {id: original.actionId, status, error: original.message, screenshot: 'screenshots/historical.png'},
+  ]});
+  const journal = jsonAsset('journal', journalPath('a'), {records: rows});
+  const historical = {...app, id: 'historical-screen', path: 'screenshots/historical.png'};
+  const recorded = {...run, assets: [...run.assets, historical, nested.asset, journal.asset]};
+  const readIds: string[] = [], signals: AbortSignal[] = [];
+  const expected = [{phase: original.phase, actionId: original.actionId, assetId: app.id, desktopAssetId: desktop.id}];
+  expect(failureDiagnosticAssets(recorded)).toEqual([journal.asset]);
+  expect(await readFailureScreens(recorded, async (asset, signal) => {
+    readIds.push(asset.id); signals.push(signal);
+    return new Response(asset.id === nested.asset.id ? nested.body : journal.body);
+  })).toEqual(expected);
+  expect(readIds).toEqual([journal.asset.id]);
+  expect(signals).toHaveLength(1);
+  expect(recorded.result.failures).toEqual([original]);
+  expect(recorded.result.test).toBe('failed');
+  expect(await readFailureScreens({...recorded, assets: [app, desktop, nested.asset]}, async () => new Response(nested.body)))
+    .toEqual([]);
+
+  const conflicting = jsonAsset('nested-report', 'run.json', {results: [
+    {id: original.actionId, status: 'failed', error: original.message, screenshot: 'missing.png'},
+  ]});
+  expect(await readFailureScreens({...recorded, assets: [app, desktop, conflicting.asset, journal.asset]}, async asset =>
+    new Response(asset.id === conflicting.asset.id ? conflicting.body : journal.body)))
+    .toEqual(expected);
 });
 
 test('multiple declared Mac journals merge before association and share one total byte budget', async () => {
@@ -250,8 +283,8 @@ test('all Mac journal reads share the original three-second deadline and refuse 
   expect(signal?.aborted).toBe(true);
 });
 
-test('bundled Mac lifecycle journals retain their exact bytes and associations, with nested digest verification', async () => {
-  const {run, rows, original, app, desktop} = lifecycleFixture('teardown');
+test.each(['test', 'teardown'] as const)('bundled Mac %s journals retain their exact bytes and associations, with nested digest verification', async phase => {
+  const {run, rows, original, app, desktop} = lifecycleFixture(phase);
   const originalJournal = jsonAsset('journal-a', journalPath('a'), {records: rows});
   const entry = {id: originalJournal.asset.id, path: originalJournal.asset.path, size: originalJournal.asset.size,
     sha256: originalJournal.asset.sha256, bytesBase64: originalJournal.body.toString('base64')};

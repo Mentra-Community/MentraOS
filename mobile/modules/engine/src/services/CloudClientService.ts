@@ -15,7 +15,7 @@
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import {DEFAULT_REFRESH_TOKEN_KEY} from "@mentra/cloud-client"
-import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
+import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
 import type {AudioPosition, AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
@@ -588,13 +588,6 @@ export const cloudClientService = {
     construct()
   },
 
-  async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
-    if (!client) this.init()
-    const c = client
-    if (!c?.core) throw new Error("cloud client core is unavailable")
-    return c.core.miniapps.getRegistry()
-  },
-
   /**
    * Resolve the stable Core-owned Mentra user id.
    *
@@ -625,10 +618,7 @@ export const cloudClientService = {
     return userId
   },
 
-  async getMiniappAuthToken(
-    packageName: string,
-    opts?: {minTtlMs?: number; devAttestation?: string},
-  ): Promise<MiniappAuthToken> {
+  async getMiniappAuthToken(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken> {
     if (!client) this.init()
     const c = client
     if (!c) throw new Error("cloud client not initialized")

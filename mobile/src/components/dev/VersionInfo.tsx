@@ -13,6 +13,8 @@ import {engine, SETTINGS, useSetting, getAppBuildInfo} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
+const SUPER_MODE_PRESS_DURATION_MS = 10000
+
 export const VersionInfo = () => {
   const {themed} = useAppTheme()
   const buildInfo = getAppBuildInfo()
@@ -29,6 +31,8 @@ export const VersionInfo = () => {
   const lastPressTime = useRef(0)
   const pressTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pressSequence = useRef(0)
+  const longPress = useRef<{id: number; startedAt: number} | null>(null)
 
   const handleQuickPress = () => {
     const currentTime = Date.now()
@@ -96,7 +100,25 @@ export const VersionInfo = () => {
   }
 
   const handlePressIn = () => {
+    const press = {id: ++pressSequence.current, startedAt: performance.now()}
+    longPress.current = press
+    console.info("[SUPER_MODE_PRESS]", {
+      phase: "press_in",
+      pressId: press.id,
+      atMs: Date.now(),
+      timerPending: longPressTimer.current !== null,
+    })
+    const timerRequestedAt = performance.now()
     longPressTimer.current = setTimeout(() => {
+      const elapsedMs = Math.round(performance.now() - timerRequestedAt)
+      console.info("[SUPER_MODE_PRESS]", {
+        phase: "timer_fired",
+        pressId: press.id,
+        atMs: Date.now(),
+        elapsedMs,
+        requestedDurationMs: SUPER_MODE_PRESS_DURATION_MS,
+        timerDelayMs: elapsedMs - SUPER_MODE_PRESS_DURATION_MS,
+      })
       setSuperMode(true)
       // showAlert(translate("debug:superMode"), translate("debug:superModeActivated"), [{text: translate("common:ok")}])
       Toast.show({
@@ -107,13 +129,35 @@ export const VersionInfo = () => {
         visibilityTime: 2000,
       })
       longPressTimer.current = null
-    }, 10000)
+    }, SUPER_MODE_PRESS_DURATION_MS)
+    console.info("[SUPER_MODE_PRESS]", {
+      phase: "timer_requested",
+      pressId: press.id,
+      atMs: Date.now(),
+      requestedDurationMs: SUPER_MODE_PRESS_DURATION_MS,
+    })
   }
 
   const handlePressOut = () => {
+    const press = longPress.current
+    const elapsedMs = press ? Math.round(performance.now() - press.startedAt) : null
+    console.info("[SUPER_MODE_PRESS]", {
+      phase: "press_out",
+      pressId: press?.id ?? null,
+      atMs: Date.now(),
+      elapsedMs,
+      timerPending: longPressTimer.current !== null,
+    })
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current)
       longPressTimer.current = null
+      console.info("[SUPER_MODE_PRESS]", {
+        phase: "timer_cancelled",
+        pressId: press?.id ?? null,
+        atMs: Date.now(),
+        elapsedMs,
+        reason: "press_out",
+      })
       copyVersionInfo()
     }
   }

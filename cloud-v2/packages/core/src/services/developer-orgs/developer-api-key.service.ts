@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { ulid } from "ulid";
 import { DeveloperOrgApiKeyModel } from "../../models/developer-org-api-key.model";
+import { deploymentEnvironmentLabel } from "../workspaces/organization";
 
 export interface ApiKeyRecord {
   id: string; // keyId — what the console uses to revoke
@@ -108,4 +109,12 @@ function serializeApiKey(
     updatedAt: row.updatedAt?.toISOString() ?? null,
     lastUsedAt: row.lastUsedAt ? new Date(row.lastUsedAt).toISOString() : null,
   };
+}
+
+/**
+ * The environment label this Core's API keys carry (`msk_<env>_...`):
+ * `CLOUD_CORE_ENVIRONMENT`, else derived from `CONSOLE2_URL`, else `local`.
+ */
+export function apiKeyEnvironmentLabel(): string {
+  return deploymentEnvironmentLabel();
 }

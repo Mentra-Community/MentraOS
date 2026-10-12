@@ -9,10 +9,50 @@ jest.mock("@/utils/auth/authClient", () => ({AuthClient: class {}}))
 
 import {AccountAuthProvider} from "./accountClient"
 import {storage} from "@/utils/storage"
+import {isDuplicateSignupError, mapAuthError} from "@/utils/auth/authErrors"
 
 type TestableProvider = {
   performRefresh(refresh: string): Promise<{access: string; refresh: string} | null>
 }
+
+describe("AccountAuthProvider signup", () => {
+  const originalFetch = global.fetch
+  const fetchMock = jest.fn()
+
+  beforeEach(() => {
+    fetchMock.mockReset()
+    global.fetch = fetchMock as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+  })
+
+  it("preserves the conflict code so signup can offer sign-in instead of verification", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: "email_taken",
+        error_description: "This email is already registered. Please sign in.",
+      }),
+    })
+    const result = await new AccountAuthProvider().signUp({email: "returning@example.test", password: "new-password"})
+    expect(result.is_error()).toBe(true)
+    if (!result.is_error()) throw new Error("Expected a signup conflict")
+    expect(result.error).toMatchObject({code: "email_taken"})
+    expect(isDuplicateSignupError(result.error)).toBe(true)
+    expect(mapAuthError(result.error)).toBe("login:errors.emailAlreadyRegistered")
+  })
+
+  it("new signup remains a successful verification flow", async () => {
+    fetchMock.mockResolvedValue({ok: true, status: 202, json: async () => ({status: "verification_sent"})})
+    const result = await new AccountAuthProvider().signUp({email: "new@example.test", password: "new-password"})
+    expect(result.is_ok()).toBe(true)
+    if (!result.is_ok()) throw result.error
+    expect(result.value).toEqual({session: null, user: null})
+  })
+})
 
 describe("AccountAuthProvider refresh requests", () => {
   const originalFetch = global.fetch

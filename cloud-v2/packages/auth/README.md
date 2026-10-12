@@ -20,6 +20,11 @@ app.post("/api/endpoint", async (c) => {
 });
 ```
 
+`session.email` is the user's verified Mentra account email when Core could
+resolve one (from the token's `email` + `email_verified` claims). It is absent
+for OEM accounts and unverified addresses, and it can change, so key stored data
+on `mentraUserId`.
+
 Defaults:
 
 - `packageName`: required, or set `MENTRA_PACKAGE_NAME`, `MINIAPP_PACKAGE_NAME`, or `PACKAGE_NAME`.
