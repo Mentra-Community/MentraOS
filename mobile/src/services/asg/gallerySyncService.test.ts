@@ -320,7 +320,7 @@ describe("GallerySyncService", () => {
     // in tests that don't explicitly want to trigger clock-skew recovery.
     jest.useFakeTimers({now: 2000})
     jest.clearAllMocks()
-    CrustModule.isIOSAppOnMac = false
+    Object.defineProperty(CrustModule, "isIOSAppOnMac", {value: false, configurable: true, writable: true})
     mockGetCurrentWifiSSID.mockResolvedValue("")
     mockIsWifiEnabled.mockResolvedValue(true)
     useGallerySyncStore.getState().reset()
@@ -363,7 +363,7 @@ describe("GallerySyncService", () => {
 
   it("uses the shared Mac association owner instead of a legacy SSID shortcut", async () => {
     Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
-    CrustModule.isIOSAppOnMac = true
+    Object.defineProperty(CrustModule, "isIOSAppOnMac", {value: true, configurable: true, writable: true})
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
     jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
@@ -382,7 +382,7 @@ describe("GallerySyncService", () => {
 
   it("releases the Mac association before retrying after a failed health probe", async () => {
     Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
-    CrustModule.isIOSAppOnMac = true
+    Object.defineProperty(CrustModule, "isIOSAppOnMac", {value: true, configurable: true, writable: true})
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
     jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
