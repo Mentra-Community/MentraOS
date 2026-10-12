@@ -1,6 +1,7 @@
 import {testRoutineSource} from "../testing/framework-fixtures"
 import {expect, spyOn, test} from 'bun:test'
 import {GithubRoutineMergeGateway, RoutineMergeEligibilityService, type CandidatePromotion} from './routine-merge-eligibility.service'
+import {writeRoutineDefinition} from './routine-definition-detail.service'
 import {RoutineDefinitionService, type RoutineDefinitionRepository} from './routine-definition.service'
 import {requestInputDigest} from './test-request.service'
 import type {RoutineEnrollment} from '../types/routine-definition.types'
@@ -145,8 +146,9 @@ test('promotion retries an interrupted run-first update without losing candidate
     () => chain(() => (request.catalogEligible ? [] : [request])) as any,
   )
   const jobs = spyOn(RoutineWorkModel, 'findOne').mockReturnValue(chain(() => job) as any)
+  const snapshot = await writeRoutineDefinition(candidate)
   const definitions = spyOn(RoutineDefinitionModel, 'findOne').mockReturnValue(chain(() =>
-    ({...candidate, candidateBindings: [candidate.verification]})) as any)
+    ({...snapshot, candidateBindings: [candidate.verification]})) as any)
   let runEligible = false, interruptRequestWrite = true
   const order: string[] = []
   const runUpdate = spyOn(TestRunModel, 'updateOne').mockImplementation((_filter: unknown, change?: any) => {

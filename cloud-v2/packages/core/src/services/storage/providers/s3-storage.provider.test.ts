@@ -102,3 +102,20 @@ test("does not expose a signed URL when the metadata request fails", async () =>
     }
   } finally { fetchMock.mockRestore(); }
 });
+
+test('bounded testing detail requests preserve bytes, signed content type and cancellation without exposing URLs', async () => {
+  let stored = Buffer.alloc(0); const requests: Request[] = [];
+  const server = Bun.serve({hostname: '127.0.0.1', port: 0, async fetch(request) {
+    requests.push(request);
+    if (request.method === 'PUT') {stored = Buffer.from(await request.arrayBuffer()); return new Response(null, {status: 200});}
+    return new Response(stored, {headers: {'Content-Type': 'application/json'}});
+  }});
+  try {
+    const provider = new S3StorageProvider({...options, endpoint: `http://127.0.0.1:${server.port}`});
+    const body = Buffer.from('{"status":"failed"}');
+    await provider.putObject({key: 'detail.json', body, contentType: 'application/json', signal: AbortSignal.timeout(1000)});
+    expect(requests[0]?.headers.get('content-type')).toBe('application/json');
+    expect(await provider.getObject('detail.json', AbortSignal.timeout(1000))).toEqual(new Uint8Array(body));
+    await expect(provider.getObject('detail.json', AbortSignal.abort())).rejects.toThrow('storage object request failed');
+  } finally {server.stop(true);}
+});

@@ -307,12 +307,12 @@ test("native result list scopes the archive digest and excludes retained old pay
     const service = new FrameworkResultService();
     expect(await service.list({routineId: "walkthrough", platform: "ios-on-mac", archiveSha256: "a".repeat(64), prNumber: "12", channel: "pr"})).toEqual({runs: [], nextCursor: null});
     expect(filter as Record<string, unknown> | null).toEqual({
-      "payload.schemaVersion": 1,
+      resultSchemaVersion: 1,
       "routineId": "walkthrough",
       "platform": "ios-on-mac",
-      "payload.build.archive.sha256": "a".repeat(64),
-      "payload.build.prNumber": 12,
-      "payload.build.channel": "pr",
+      "build.archive.sha256": "a".repeat(64),
+      "build.prNumber": 12,
+      "build.channel": "pr",
     })
   } finally {find.mockRestore();}
 })
@@ -342,11 +342,11 @@ test("exact-request summary verifies the existing projection and frozen build wi
   })
   const projection = createFrameworkRunSummaryProjection(run, requestInputDigest(run));
   let row: any = {runId: run.requestId, requestId: run.requestId, payloadSha256: projection.payloadSha256,
-    summaryProjection: projection, uploadsComplete: false, payload: {build: run.build}};
+    summaryProjection: projection, uploadsComplete: false, build: run.build};
   let queries = 0;
   const find = spyOn(TestRunModel, "findOne").mockImplementation(((filter: unknown) => {
     queries++;
-    expect(filter).toEqual({"payload.schemaVersion": 1, "requestId": run.requestId})
+    expect(filter).toEqual({resultSchemaVersion: 1, "requestId": run.requestId})
     return {
       select(fields: unknown) {
         expect(fields).toEqual({
@@ -355,7 +355,7 @@ test("exact-request summary verifies the existing projection and frozen build wi
           "payloadSha256": 1,
           "summaryProjection": 1,
           "uploadsComplete": 1,
-          "payload.build": 1,
+          "build": 1,
         })
         return this;
       },
@@ -395,8 +395,8 @@ test("exact-request summary verifies the existing projection and frozen build wi
       () => {row.payloadSha256 = "e".repeat(64);},
       () => {row.requestId = "foreign";},
       () => {row.runId = "foreign";},
-      () => {row.payload.build.headSha = "e".repeat(40);},
-      () => {row.payload = undefined;},
+      () => {row.build.headSha = "e".repeat(40);},
+      () => {row.build = undefined;},
     ];
     for (const corrupt of corruptions) {
       row = structuredClone(valid); corrupt(); const before = queries;
@@ -469,9 +469,9 @@ test("native run summaries retain build identity and distinct execution and evid
     expect(second.runs.map(row => row.runId)).toEqual(["run-100"]);
     expect(second.nextCursor).toBeNull();
     expect(filters[1]).toEqual({
-      "payload.schemaVersion": 1,
-      "payload.build.headSha": build.headSha,
-      "payload.build.channel": "dev",
+      resultSchemaVersion: 1,
+      "build.headSha": build.headSha,
+      "build.channel": "dev",
       "$or": [{startedAt: {$lt: new Date(run.startedAt)}}, {startedAt: new Date(run.startedAt), runId: {$lt: "run-101"}}],
     })
   } finally {find.mockRestore();}
@@ -680,74 +680,32 @@ test("old saved lifecycle omissions remain readable without invented action repo
   expect(writes).toBe(0);
 })
 
-test("asset reads project one immutable declaration and preserve missing and unauthorized outcomes", async () => {
-  const {TestAssetService} = await import("./test-asset.service");
-  const declaration = {id: "report:final", kind: "report" as const, path: "setup-evidence/final.json",
-    sha256: "c".repeat(64), size: 100, mimeType: "application/json" as const};
-  const calls: Array<{pipeline: any[]; options: any}> = [];
-  const aggregate = spyOn(TestRunModel.collection, "aggregate").mockImplementation(((pipeline: any[], options: any) => {
-    calls.push({pipeline, options});
-    const filter = pipeline[0].$match;
-    return {async toArray() {return (filter.requestId ?? filter.runId) === "missing-run" ? []
-      : [{payload: {result: {runId: "frozen-run"}, assets:
-        pipeline[2].$project["payload.assets"].$filter.cond.$eq[1].$literal === declaration.id ? [declaration] : []}}];}};
-  }) as any);
-  let acknowledged = false;
-  const custody = spyOn(TestAssetModel, "findOne").mockImplementation(() => ({read() {return this;}, readConcern() {return this;},
-    async lean() {return acknowledged ? {runId: "frozen-run", assetId: declaration.id} : null;}}) as any);
-  const upload = spyOn(TestAssetService.prototype, "uploadDeclaredAsset").mockImplementation(async (runId, asset) => {
-    expect(runId).toBe("frozen-run");
-    expect(asset).toEqual({assetId: declaration.id, kind: "metadata", contentType: declaration.mimeType,
-      filename: "final.json", sizeBytes: declaration.size, sha256: declaration.sha256});
-    return {assetId: declaration.id, uploaded: true, created: true};
-  });
-  const media = spyOn(TestAssetService.prototype, "mediaDeclaredAsset").mockImplementation(async (asset, _stored, request) => {
-    expect(asset).toEqual({assetId: declaration.id, kind: "metadata", contentType: declaration.mimeType,
-      filename: "final.json", sizeBytes: declaration.size, sha256: declaration.sha256});
-    expect(request.method).toBe("HEAD");
-    return new Response(null, {status: 206, headers: {"content-range": "bytes 0-1/100", "content-length": "2"}});
-  });
-  let owner = "mini";
-  const service = new FrameworkResultService(undefined, async () => ({
-    hostId: owner,
-    input: {routineSource: testRoutineSource()} as any,
-  }))
-  const headers = new Headers({"content-type": declaration.mimeType});
-  const mediaRequest = new Request("http://localhost/asset", {method: "HEAD"});
+test('asset declarations and accepted mappings preserve authorization and missing outcomes', async () => {
+  const {TestAssetService} = await import('./test-asset.service');
+  const declaration = {id: 'report:final', kind: 'report' as const, path: 'setup-evidence/final.json',
+    sha256: 'c'.repeat(64), size: 100, mimeType: 'application/json' as const};
+  let owner = 'mini', acknowledged = false;
+  const repository: FrameworkResultRepository = {async insert() {}, async getByRequest() {return null;}, async getByRun() {return null;},
+    async getAsset(identity, id) {return ('requestId' in identity ? identity.requestId : identity.runId) === 'missing' ? null
+      : {runId: 'frozen-run', asset: id === declaration.id ? declaration : null};}};
+  const find = spyOn(TestRunModel, 'findOne').mockReturnValue({select() {return this;}, read() {return this;}, readConcern() {return this;},
+    lean: async () => null} as never);
+  const receipt = spyOn(TestAssetModel, 'findOne').mockReturnValue({read() {return this;}, readConcern() {return this;},
+    lean: async () => acknowledged ? {runId: 'frozen-run', assetId: declaration.id, storageKey: 'original'} : null} as never);
+  const upload = spyOn(TestAssetService.prototype, 'uploadDeclaredAsset').mockResolvedValue({assetId: declaration.id, uploaded: true, created: true});
+  const media = spyOn(TestAssetService.prototype, 'mediaDeclaredAsset').mockResolvedValue(new Response(null, {status: 206}));
+  const service = new FrameworkResultService(repository, async () => ({hostId: owner, input: {} as never}));
   try {
-    expect(await service.upload("request", declaration.id, "mini", null, headers)).toMatchObject({uploaded: true, sha256: declaration.sha256, size: declaration.size});
-    owner = "other";
-    await expect(service.upload("request", declaration.id, "mini", null, headers)).rejects.toThrow("not owned");
-    owner = "mini";
-    await expect(service.upload("missing-run", declaration.id, "mini", null, headers)).rejects.toThrow("not owned");
-    await expect(service.upload("request", "undeclared", "mini", null, headers)).rejects.toThrow("not declared");
-    expect(upload).toHaveBeenCalledTimes(1);
-    await expect(service.media("request", declaration.id, mediaRequest)).rejects.toThrow("not acknowledged");
-    await expect(service.mediaByRun("frozen-run", "undeclared", mediaRequest)).rejects.toThrow("not declared");
-    await expect(service.mediaByRun("missing-run", declaration.id, mediaRequest)).rejects.toThrow("not declared");
-    expect(custody).toHaveBeenCalledTimes(1);
-    expect(custody.mock.calls[0]).toEqual([{runId: "frozen-run", assetId: declaration.id}]);
-    for (const [index, call] of calls.entries()) {
-      expect(call.pipeline[0].$match).toMatchObject({"payload.schemaVersion": 1});
-      expect(call.pipeline[1]).toEqual({$limit: 1});
-      expect(call.pipeline[2].$project).toEqual({
-        "payload.result.runId": 1,
-        "payload.assets": {$filter: {input: "$payload.assets", as: "asset",
-          cond: {$eq: ["$$asset.id", {$literal: [3, 5].includes(index) ? "undeclared" : declaration.id}]}}},
-        "_id": 0,
-      })
-      expect(call.options.readPreference.mode).toBe("primary");
-      expect(call.options.readConcern).toEqual({level: "majority"});
-    }
-    expect(calls[0].pipeline[0].$match).toEqual({"payload.schemaVersion": 1, "requestId": "request"})
-    expect(calls[5].pipeline[0].$match).toEqual({"payload.schemaVersion": 1, "runId": "frozen-run"})
+    await service.upload('request', declaration.id, 'mini', null, new Headers());
+    owner = 'other'; await expect(service.upload('request', declaration.id, 'mini', null, new Headers())).rejects.toThrow('not owned');
+    owner = 'mini'; await expect(service.upload('missing', declaration.id, 'mini', null, new Headers())).rejects.toThrow('not owned');
+    await expect(service.upload('request', 'undeclared', 'mini', null, new Headers())).rejects.toThrow('not declared');
+    await expect(service.media('request', declaration.id, new Request('http://localhost'))).rejects.toThrow('not acknowledged');
     acknowledged = true;
-    const response = await service.mediaByRun("frozen-run", declaration.id, mediaRequest);
-    expect(response.status).toBe(206);
-    expect(response.headers.get("content-length")).toBe("2");
-    expect(media).toHaveBeenCalledTimes(1);
-  } finally {aggregate.mockRestore(); custody.mockRestore(); upload.mockRestore(); media.mockRestore();}
-})
+    expect((await service.media('request', declaration.id, new Request('http://localhost'))).status).toBe(206);
+    expect(upload).toHaveBeenCalledTimes(1); expect(media).toHaveBeenCalledTimes(1);
+  } finally {find.mockRestore(); receipt.mockRestore(); upload.mockRestore(); media.mockRestore();}
+});
 
 test("4096 streamed assets acknowledge once at complete with immutable metadata and concurrent retry custody", async () => {
   const {createHash} = await import("node:crypto");

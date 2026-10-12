@@ -6,7 +6,8 @@ import {tmpdir} from "node:os"
 import {join} from "node:path"
 import {ReportModel} from "../models/report.model"
 import {ReportAssetModel, reconcileReportAssetIndexes} from "../models/report-asset.model"
-import {TestAssetModel} from "../models/test-run.model"
+import {writeRunEnvelope} from "./framework-run-detail.service"
+import {TestAssetModel, TestRunModel} from "../models/test-run.model"
 import {testFrameworkBinding, testRoutineSource} from "../testing/framework-fixtures"
 import {recordedFrameworkRunSchema} from "../types/framework-run.types"
 import {
@@ -115,13 +116,16 @@ const uri = process.env.FAILED_RUN_REPORT_MONGO_URI
         delivery,
       })
       const hash = requestInputDigest(frozen)
+      const detailPointer = await writeRunEnvelope(frozen, hash, [{runId: frozen.result.runId, assetId: 'setup-diagnostics', storageKey, sha256: digest, sizeBytes: bytes.length}], true)
+      await TestRunModel.collection.insertOne({runId: frozen.result.runId, payloadSha256: hash, uploadsComplete: true, resultSchemaVersion: 1, detail: detailPointer})
+      await TestAssetModel.deleteMany({})
       const receipts = await Promise.all([service.complete(frozen, hash), service.complete(frozen, hash)])
       expect(receipts[0]?.reportId).toBe(receipts[1]?.reportId)
       const final = await service.complete(frozen, hash)
       expect(final?.slack).toMatchObject({state: "sent", channel: "C1", ts: "1.2"})
       expect(sends).toBe(1)
       expect(await ReportModel.countDocuments()).toBe(1)
-      expect(await ReportAssetModel.countDocuments()).toBe(2)
+      expect(await ReportAssetModel.countDocuments()).toBe(1)
       const detail = await getReport(final!.reportId)
       expect(detail?.report.artifacts).toHaveLength(2)
       expect(detail?.report.slackDelivery?.state).toBe("sent")
@@ -129,13 +133,12 @@ const uri = process.env.FAILED_RUN_REPORT_MONGO_URI
         archive: {sha256: "d".repeat(64), size: 100},
         receipt: {sha256: "e".repeat(64), size: 25},
       })
-      const raw = await ReportAssetModel.findOne({sourceTestRunId: "failed-run"}).lean()
-      expect(raw?.sourceTestAssetId).toBe("setup-diagnostics")
-      expect(raw?.storageKey).toBe(storageKey)
-      const artifact = (await readReportArtifact(final!.reportId, raw!.artifactId))!
+      const raw = detail!.assets.find(asset => asset.storageKey === storageKey)!
+      expect(raw.storageKey).toBe(storageKey)
+      const artifact = (await readReportArtifact(final!.reportId, raw.artifactId))!
       expect(Buffer.from(await new Response(await artifact.stream()).arrayBuffer())).toEqual(bytes)
-      // Repeat/restart only references the same raw object; no test asset is removed or copied.
-      expect(await TestAssetModel.countDocuments()).toBe(1)
+      // Native bytes have one accepted authority; completed run receipt rows are unnecessary.
+      expect(await TestAssetModel.countDocuments()).toBe(0)
       expect(await storage.getObject(storageKey)).toEqual(bytes)
 
       // Both failed-run and worker-diagnostic fallbacks expose collection gaps.
@@ -165,7 +168,7 @@ const uri = process.env.FAILED_RUN_REPORT_MONGO_URI
       try {
         await new ReportServerLogCollectionService().tick()
         expect(collect).not.toHaveBeenCalled()
-        expect(await ReportAssetModel.countDocuments()).toBe(2)
+        expect(await ReportAssetModel.countDocuments()).toBe(1)
       } finally {collect.mockRestore()}
       const original = (await ReportModel.findOne({reportId: worker.reportId}).lean())!.logCollection
       await ensureTestRunReport("worker-run", "f".repeat(64))
@@ -188,13 +191,12 @@ const uri = process.env.FAILED_RUN_REPORT_MONGO_URI
       await Promise.all([referenceDeviceIncidentDiagnostics(deviceOwner.reportId, correlation, frozen),
         referenceDeviceIncidentDiagnostics(deviceOwner.reportId, correlation, frozen)])
       await referenceDeviceIncidentDiagnostics(deviceOwner.reportId, correlation, frozen)
-      const shared = await ReportAssetModel.find({storageKey}).lean()
-      expect(shared).toHaveLength(2)
-      expect(new Set(shared.map(row => row.reportId))).toEqual(new Set([final!.reportId, deviceOwner.reportId]))
-      expect(new Set(shared.map(row => row.artifactId)).size).toBe(2)
-      expect(shared.every(row => row.sha256 === digest && row.sizeBytes === bytes.length)).toBe(true)
-      expect((await getReport(deviceOwner.reportId))!.report.artifacts).toHaveLength(1)
-      const deviceRaw = shared.find(row => row.reportId === deviceOwner.reportId)!
+      expect(await ReportAssetModel.countDocuments({storageKey})).toBe(0)
+      const deviceDetail = (await getReport(deviceOwner.reportId))!
+      expect(deviceDetail.report.artifacts).toHaveLength(1)
+      const deviceRaw = deviceDetail.assets.find(asset => asset.storageKey === storageKey)!
+      expect(deviceRaw.artifactId).not.toBe(raw.artifactId)
+      expect(deviceRaw.sha256).toBe(digest)
       const deviceArtifact = (await readReportArtifact(deviceOwner.reportId, deviceRaw.artifactId))!
       expect(Buffer.from(await new Response(await deviceArtifact.stream()).arrayBuffer())).toEqual(bytes)
       expect(await storage.getObject(storageKey)).toEqual(bytes)

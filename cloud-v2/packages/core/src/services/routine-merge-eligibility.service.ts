@@ -1,3 +1,4 @@
+import {readRoutineDefinition} from './routine-definition-detail.service';
 import {z} from 'zod'
 import {RoutineDefinitionModel} from '../models/routine-definition.model'
 import {RoutineWorkModel} from '../models/routine-work.model'
@@ -74,10 +75,10 @@ const repository: RoutineMergeRepository = {
           view.data.details.requestId === request.requestId && review?.sourceRevision === binding.sourceRevision &&
           review.verdict === 'APPROVED' && review.prUrl === view.data.details.prUrl && definition &&
           definition.definitionRevision === input.definitionRevision &&
-          requestInputDigest(definition.definition) === definition.definitionSha256 &&
+          (await readRoutineDefinition(definition)).definitionSha256 === definition.definitionSha256 &&
           (definition.candidateBindings as unknown[] | undefined)?.some(value => requestInputDigest(value) === requestInputDigest(binding)))
         found.push({requestId: request.requestId, ...binding, prUrl: review.prUrl,
-          definition: definition.definition as RoutineEnrollment['definition']})
+          definition: (await readRoutineDefinition(definition)).definition})
     }
     return found
   },

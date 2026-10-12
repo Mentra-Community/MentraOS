@@ -9,6 +9,9 @@ import {requestInputDigest} from "./test-request.service";
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {GithubRoutineMergeGateway, RoutineMergeEligibilityService} from './routine-merge-eligibility.service';
 
+import {readRoutineDefinition, writeRoutineDefinition, routineCollectionDetailSchema} from './routine-definition-detail.service';
+import {TestingDetailStorage} from './testing-detail-storage.service';
+
 export class RoutineDefinitionConflict extends Error {}
 export interface RoutineDefinitionRepository {
   enroll(row: RoutineEnrollment): Promise<void>;
@@ -20,7 +23,8 @@ export interface RoutineDefinitionRepository {
 const mongoRepository: RoutineDefinitionRepository = {
   async enroll(row) {
     const identity = {routineId: row.routineId, platform: row.platform, definitionRevision: row.definitionRevision};
-    const {verification, ...definition} = row;
+    const {verification} = row;
+    const definition = await writeRoutineDefinition(row);
     try {
       await RoutineDefinitionModel.create([{...definition, ...(verification ? {candidateBindings: [verification]} :
         {ordinaryEnrolledAt: new Date()})}], {writeConcern: testWriteConcern});
@@ -29,7 +33,7 @@ const mongoRepository: RoutineDefinitionRepository = {
       const existing = await RoutineDefinitionModel.findOne(identity).read('primary').readConcern('majority').lean();
       if (!existing || !existing.routineSource || existing.definitionSha256 !== row.definitionSha256 ||
           requestInputDigest(existing.routineSource) !== requestInputDigest(row.routineSource) ||
-          requestInputDigest(existing.definition) !== row.definitionSha256)
+          (await readRoutineDefinition(existing)).definitionSha256 !== row.definitionSha256)
         throw new RoutineDefinitionConflict("Definition revision already has different contents");
       if (verification) {
         // One current binding per work ID; retries cannot grow the metadata or rewrite source.
@@ -75,18 +79,13 @@ const mongoRepository: RoutineDefinitionRepository = {
     const latest = await RoutineCollectionModel.findOne().sort({version: -1})
       .read('primary').readConcern('majority').lean();
     if (!latest) return [];
-    const stored = await RoutineDefinitionModel.find({definitionRevision: latest.commit,
-      $or: latest.members.map(member => ({routineId: member.routineId, platform: member.platform}))})
-      .select({routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1, routineSource: 1, definition: 1, _id: 0})
-      .read('primary').readConcern('majority').lean();
-    const rows = latest.members.map(member => {
-      const row = stored.find(value => value.routineId === member.routineId && value.platform === member.platform);
-      if (!row || row.definitionSha256 !== member.definitionSha256)
-        throw new RoutineDefinitionConflict('Published collection member is unavailable');
-      return routineEnrollmentSchema.parse(row);
-    });
-    if (requestInputDigest({commit: latest.commit, version: latest.version, definitions: rows}) !== latest.manifestSha256)
+    const collection = await new TestingDetailStorage().read(latest.detail, routineCollectionDetailSchema);
+    if (collection.commit !== latest.commit || collection.version !== latest.version || requestInputDigest(collection) !== latest.manifestSha256)
       throw new RoutineDefinitionConflict('Published collection manifest differs');
+    const rows = collection.definitions;
+    if (rows.length !== latest.members.length || rows.some((row, index) => row.routineId !== latest.members[index]?.routineId ||
+      row.platform !== latest.members[index]?.platform || row.definitionSha256 !== latest.members[index]?.definitionSha256))
+      throw new RoutineDefinitionConflict('Published collection members differ');
     return rows;
   },
   async getCurrent(routineId, platform) {
@@ -99,7 +98,7 @@ const mongoRepository: RoutineDefinitionRepository = {
     const stored = await RoutineDefinitionModel.find({definitionRevision: latest.commit,
       $or: latest.members.map(member => ({routineId: member.routineId, platform: member.platform}))})
       .select({routineId: 1, platform: 1, definitionRevision: 1, definitionSha256: 1,
-        'definition.title': 1, 'definition.purpose': 1, 'definition.glasses.models': 1, _id: 0})
+        card: 1, _id: 0})
       .read('primary').readConcern('majority').lean();
     // Displayed rows belong to the chosen publication. Only current() reads and
     // verifies every definition byte against the complete manifest digest.
@@ -107,7 +106,8 @@ const mongoRepository: RoutineDefinitionRepository = {
       const row = stored.find(value => value.routineId === member.routineId && value.platform === member.platform);
       if (!row || row.definitionSha256 !== member.definitionSha256)
         throw new RoutineDefinitionConflict('Published collection member is unavailable');
-      return routineCardDefinitionSchema.parse(row);
+      const {card, ...identity} = row;
+      return routineCardDefinitionSchema.parse({...identity, definition: card});
     });
   },
   async getExact(routineId, platform, definitionRevision, ordinaryOnly = false) {
@@ -115,9 +115,7 @@ const mongoRepository: RoutineDefinitionRepository = {
       ...(ordinaryOnly ? {ordinaryEnrolledAt: {$exists: true}} : {})})
       .read('primary').readConcern('majority').lean();
     if (!row) return null;
-    return routineEnrollmentSchema.parse({routineId: row.routineId, platform: row.platform,
-      definitionRevision: row.definitionRevision, definitionSha256: row.definitionSha256,
-      definition: row.definition, routineSource: row.routineSource});
+    return readRoutineDefinition(row);
   },
 };
 export class RoutineDefinitionService {
@@ -152,6 +150,9 @@ export class RoutineDefinitionService {
     collection.definitions.sort((left, right) =>
       `${left.routineId}:${left.platform}`.localeCompare(`${right.routineId}:${right.platform}`));
     const manifestSha256 = requestInputDigest(collection);
+    const detail = await new TestingDetailStorage().write('collection', collection.commit, collection);
+    const snapshots = new Map<string, Awaited<ReturnType<typeof writeRoutineDefinition>>>();
+    for (const row of collection.definitions) snapshots.set(`${row.routineId}:${row.platform}`, await writeRoutineDefinition(row));
     try {await RoutineDefinitionModel.db.transaction(async session => {
       const publication = await RoutineCollectionModel.findOne({$or: [{commit: collection.commit}, {version: collection.version}]}).session(session).lean();
       if (publication) {
@@ -162,14 +163,14 @@ export class RoutineDefinitionService {
       for (const row of collection.definitions) {
         const identity = {routineId: row.routineId, platform: row.platform, definitionRevision: row.definitionRevision};
         const existing = await RoutineDefinitionModel.findOne(identity).session(session).lean();
-        if (existing && (!existing.routineSource || existing.definitionSha256 !== row.definitionSha256 || requestInputDigest(existing.definition) !== row.definitionSha256 ||
+        if (existing && (!existing.routineSource || existing.definitionSha256 !== row.definitionSha256 || (await readRoutineDefinition(existing)).definitionSha256 !== row.definitionSha256 ||
           requestInputDigest(existing.routineSource) !== requestInputDigest(row.routineSource)))
           throw new RoutineDefinitionConflict('Published immutable collection bytes conflict');
         if (existing && !existing.ordinaryEnrolledAt) await RoutineDefinitionModel.updateOne(identity,
           {$set: {ordinaryEnrolledAt: new Date()}}, {session});
-        else if (!existing) await RoutineDefinitionModel.create([{...row, ordinaryEnrolledAt: new Date()}], {session});
+        else if (!existing) await RoutineDefinitionModel.create([{...snapshots.get(`${row.routineId}:${row.platform}`), ordinaryEnrolledAt: new Date()}], {session});
       }
-      await RoutineCollectionModel.create([{commit: collection.commit, version: collection.version, manifestSha256,
+      await RoutineCollectionModel.create([{commit: collection.commit, version: collection.version, manifestSha256, detail,
         members: collection.definitions.map(row => ({routineId: row.routineId, platform: row.platform, definitionSha256: row.definitionSha256}))}], {session});
     }, {writeConcern: testWriteConcern});} catch (error) {
       if ((error as {code?: number}).code !== 11000) throw error;

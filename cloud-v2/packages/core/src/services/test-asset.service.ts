@@ -7,6 +7,8 @@ import {testWriteConcern} from "../models/test-write-concern";
 import {createStorageService, type StorageService} from "./storage/storage.service";
 import {ByteRangeError, parseSingleByteRange} from "./storage/byte-range";
 import {TestRunError} from "./test-result-error";
+import {findAcceptedTestAsset} from './framework-run-detail.service';
+
 export interface TestAsset {assetId: string; kind: string; contentType: string; filename: string; sizeBytes: number; sha256: string}
 export interface StoredTestAsset {runId: string; assetId: string; storageKey: string; sizeBytes: number; sha256: string}
 export function parseTestAssetRange(header: string | null, size: number): { start: number; end: number } | undefined {
@@ -31,7 +33,7 @@ function mediaSignatureMatches(type: string, bytes: Buffer): boolean {
 
 const assets = {
   async findAsset(runId: string, assetId: string): Promise<StoredTestAsset | null> {
-    return await TestAssetModel.findOne({runId, assetId}).read("primary").readConcern("majority").lean();
+    return findAcceptedTestAsset(runId, assetId);
   },
   async insertAsset(asset: StoredTestAsset): Promise<StoredTestAsset> {
     try {await TestAssetModel.create([asset], {writeConcern: testWriteConcern}); return asset;}

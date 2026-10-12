@@ -9,18 +9,22 @@ const schema = new Schema({
   hostId: {type: String, required: true}, platform: {type: String, required: true}, laneId: {type: String, required: true},
   startedAt: {type: Date, required: true}, completedAt: {type: Date, required: true},
   summaryProjection: {type: Schema.Types.Mixed},
-  payloadSha256: {type: String, required: true}, payload: {type: Schema.Types.Mixed, required: true},
+  payloadSha256: {type: String, required: true},
+  resultSchemaVersion: {type: Number, required: true},
+  build: {type: Schema.Types.Mixed, required: true},
+  detail: {type: Schema.Types.Mixed, required: true},
+  recordingAssetId: String, recordedPassingExample: {type: Boolean, required: true},
   uploadsComplete: {type: Boolean, required: true}, outcome: {type: String, required: true},
   verification: {type: Schema.Types.Mixed, immutable: true}, catalogEligible: {type: Boolean},
 }, {collection: "test_runs", timestamps: true, autoIndex: false});
 schema.index({requestId: 1}, {unique: true, name: "test_runs_terminal_request",
-  partialFilterExpression: {"payload.schemaVersion": 1}});
+  partialFilterExpression: {resultSchemaVersion: 1}});
 schema.index({routineId: 1, platform: 1, definitionRevision: 1, outcome: 1, uploadsComplete: 1, startedAt: -1, runId: -1});
 schema.index({startedAt: -1, runId: -1});
 // Native readers filter this equality before sorting. A distinct key pattern
 // avoids conflicting with the full history index on Cosmos MongoDB.
 export const TEST_RUN_NATIVE_HISTORY_INDEX = "test_runs_native_history";
-const nativeHistoryKey = {"payload.schemaVersion": 1, startedAt: -1, runId: -1} as const;
+const nativeHistoryKey = {resultSchemaVersion: 1, startedAt: -1, runId: -1} as const;
 schema.index(nativeHistoryKey, {name: TEST_RUN_NATIVE_HISTORY_INDEX});
 schema.index({hostId: 1, laneId: 1, startedAt: -1, runId: -1});
 export const TEST_RUN_COMPLETION_INDEX = "test_runs_completed_at";
@@ -35,7 +39,7 @@ export async function reconcileTestRunIndexes(collection = TestRunModel.collecti
   for (const index of indexes) {
     const oldRequest = Object.keys(index.key).length === 1 && index.key.requestId === 1
       && (index.name !== "test_runs_terminal_request" || !index.unique
-        || JSON.stringify(index.partialFilterExpression) !== JSON.stringify({"payload.schemaVersion": 1}));
+        || JSON.stringify(index.partialFilterExpression) !== JSON.stringify({resultSchemaVersion: 1}));
     const oldCompletion = index.name === TEST_RUN_COMPLETION_INDEX
       && JSON.stringify(index.key) !== JSON.stringify({completedAt: -1, runId: -1});
     const oldNativeHistory = index.name === TEST_RUN_NATIVE_HISTORY_INDEX
