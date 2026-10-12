@@ -1,33 +1,19 @@
-import { useEffect, useRef, useState } from "react";
-import { signOutLocally } from "../lib/account-actions";
-import type { AccountAuthClient } from "../lib/supabase";
-import { Loading, Page } from "../ui";
+import { useEffect, useRef } from "react";
+import { END_SESSION_PATH } from "../lib/links";
+import { Loading } from "../ui";
 
 /**
- * `/signout`: ends this site's Mentra session.
- *
- * This uses `signOut({scope: "local"})` (through `signOutLocally`) and never
- * `signOut()`: the default scope is global, which would end the session of
- * every other Mentra site and the CLI for this account.
+ * `/signout`: signs this browser out of Mentra on this environment's sign-in
+ * site, at Core's sign-in server's end-session endpoint (which asks to
+ * confirm). Sites and the CLI the person is signed in to stay signed in until
+ * they sign out of them.
  */
-export function SignOutRoute({ auth }: { auth: AccountAuthClient }) {
-  const [done, setDone] = useState(false);
+export function SignOutRoute({ navigate }: { navigate: (url: string) => void }) {
   const started = useRef(false);
-
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    void signOutLocally(auth).then(() => setDone(true));
-  }, [auth]);
-
-  if (!done) return <Loading label="Signing out…" />;
-  return <SignedOutView />;
-}
-
-export function SignedOutView() {
-  return (
-    <Page title="Signed out of Mentra">
-      <p className="muted">You are signed out of your Mentra account on this site.</p>
-    </Page>
-  );
+    navigate(END_SESSION_PATH);
+  }, [navigate]);
+  return <Loading label="Signing out…" />;
 }

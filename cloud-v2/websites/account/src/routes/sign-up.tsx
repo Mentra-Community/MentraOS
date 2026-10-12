@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { signUpWithEmail } from "../lib/account-actions";
-import { authorizePath, readAuthorizationId } from "../lib/links";
+import { loginPath, readInteractionId } from "../lib/links";
 import { MESSAGES } from "../lib/messages";
 import type { AccountAuthClient } from "../lib/supabase";
 import { Notice, Page, TextField } from "../ui";
@@ -12,9 +12,9 @@ export interface SignUpRouteProps {
   navigate: (url: string) => void;
 }
 
-/** `/signup`, optionally continuing an authorization request. */
+/** `/signup`, optionally continuing a sign-in. */
 export function SignUpRoute({ auth, origin, search, navigate }: SignUpRouteProps) {
-  const [authorizationId] = useState(() => readAuthorizationId(search));
+  const [interactionId] = useState(() => readInteractionId(search));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,9 +26,10 @@ export function SignUpRoute({ auth, origin, search, navigate }: SignUpRouteProps
     if (busy) return;
     setBusy(true);
     setError(null);
-    const result = await signUpWithEmail(auth, { email: email.trim(), password, origin, authorizationId });
+    const result = await signUpWithEmail(auth, { email: email.trim(), password, origin, interactionId });
     if (result.kind === "signed-in") {
-      navigate(authorizationId ? authorizePath(authorizationId) : "/");
+      // The login route hands the new session to Core's sign-in server.
+      navigate(interactionId ? loginPath(interactionId) : "/");
       return;
     }
     setBusy(false);
@@ -37,9 +38,9 @@ export function SignUpRoute({ auth, origin, search, navigate }: SignUpRouteProps
     else setError(result.message);
   }
 
-  const backToSignIn = authorizationId ? (
+  const backToSignIn = interactionId ? (
     <nav className="links" aria-label="Account help">
-      <a href={authorizePath(authorizationId)}>Back to sign in</a>
+      <a href={loginPath(interactionId)}>Back to sign in</a>
     </nav>
   ) : null;
 

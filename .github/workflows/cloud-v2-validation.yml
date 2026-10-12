@@ -91,6 +91,7 @@ jobs:
         run: |
           bun test --max-concurrency=1 \
             websites/account/src \
+            websites/account/functions \
             websites/portal/src \
             websites/portal/functions \
             websites/admin/functions \

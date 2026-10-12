@@ -8,17 +8,20 @@ import { Notice, Page, TextField } from "../ui";
 export interface SignInViewProps {
   auth: AccountAuthClient;
   origin: string;
-  /** The authorization request to continue after sign-in. */
-  authorizationId: string;
+  /** The sign-in (provider interaction) to continue after signing in. */
+  interactionId: string;
+  /** The site the person is signing in to, from Core's client registry. */
+  clientName?: string;
+  initialError?: string | null;
   /** Called after a successful email and password sign-in. */
   onSignedIn: () => void;
 }
 
-export function SignInView({ auth, origin, authorizationId, onSignedIn }: SignInViewProps) {
+export function SignInView({ auth, origin, interactionId, clientName = "", initialError = null, onSignedIn }: SignInViewProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -39,7 +42,7 @@ export function SignInView({ auth, origin, authorizationId, onSignedIn }: SignIn
     if (busy) return;
     setBusy(true);
     setError(null);
-    const result = await startSocialSignIn(auth, provider, origin, authorizationId);
+    const result = await startSocialSignIn(auth, provider, origin, interactionId);
     // On success supabase-js navigates to the provider; keep the buttons disabled.
     if (!result.ok) {
       setBusy(false);
@@ -49,6 +52,7 @@ export function SignInView({ auth, origin, authorizationId, onSignedIn }: SignIn
 
   return (
     <Page title="Sign in to your Mentra account">
+      {clientName ? <p className="muted">to continue to {clientName}</p> : null}
       {error ? <Notice tone="error">{error}</Notice> : null}
       <form className="form" onSubmit={submit}>
         <TextField id="email" label="Email" type="email" autoComplete="email" value={email} onChange={setEmail} disabled={busy} />
@@ -77,8 +81,8 @@ export function SignInView({ auth, origin, authorizationId, onSignedIn }: SignIn
         </button>
       </div>
       <nav className="links" aria-label="Account help">
-        <a href={signUpPath(authorizationId)}>Create a Mentra account</a>
-        <a href={resetPath(authorizationId)}>Forgot your password?</a>
+        <a href={signUpPath(interactionId)}>Create a Mentra account</a>
+        <a href={resetPath(interactionId)}>Forgot your password?</a>
       </nav>
     </Page>
   );
