@@ -207,8 +207,13 @@ class GallerySyncService {
   /**
    * Cleanup - remove event listeners
    */
-  cleanup(): void {
-    void localNetworkTransport.disconnect()
+  async cleanup(): Promise<void> {
+    // Engine teardown owns the same Gallery session, including a failed transfer.
+    const starting = this.syncStartPromise
+    this.startAborted = true
+    this.abortController?.abort()
+    this.abortController = null
+    mediaProcessingQueue.abort()
     if (this.hotspotListenerRegistered) {
       GlobalEventEmitter.removeListener("hotspot_status_change", this.handleHotspotStatusChange)
       GlobalEventEmitter.removeListener("hotspot_error", this.handleHotspotError)
@@ -237,14 +242,20 @@ class GallerySyncService {
       this.hotspotRequestTimeout = null
     }
 
-    this.syncStartPromise = null
     useGallerySyncStore.getState().setSyncStarting(false)
     useGallerySyncStore.getState().clearGlassesGalleryStatus()
     this.waitingForWifiRetry = false
     this.wifiSettingsOpenedAt = null
-    this.startAborted = false
+    // Keep the existing pre-flight guard armed until the admitted start resumes.
+    // A permission prompt must not block teardown or later enable the AP.
+    this.startAborted = starting !== null
     this.ssidReadable = true
     this.isInitialized = false
+    if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
+      await this.closeHotspot()
+    } else {
+      await localNetworkTransport.disconnect()
+    }
     console.log("[GallerySyncService] Cleaned up")
   }
 
@@ -460,6 +471,7 @@ class GallerySyncService {
     }
 
     store.setSyncError(eventData.error_message || "Failed to start hotspot")
+    if (store.syncServiceOpenedHotspot) void this.closeHotspot()
     gallerySyncNotifications.showSyncError("Failed to start hotspot")
   }
 
@@ -919,7 +931,9 @@ class GallerySyncService {
       if (currentStore.syncState === "requesting_hotspot") {
         console.error("[GallerySyncService] Hotspot request timed out")
         currentStore.setSyncError("Hotspot request timed out")
-        currentStore.setSyncServiceOpenedHotspot(false)
+        // A missing reply does not prove the requested AP never started. Retain
+        // ownership until the existing stop command confirms its closure.
+        void this.closeHotspot()
         gallerySyncNotifications.showSyncError("Could not start hotspot - please try again")
       }
       this.hotspotRequestTimeout = null
@@ -937,7 +951,7 @@ class GallerySyncService {
       }
       console.error("[GallerySyncService]   ❌ Failed to request hotspot:", error)
       store.setSyncError("Failed to start hotspot")
-      store.setSyncServiceOpenedHotspot(false)
+      await this.closeHotspot()
     }
   }
 
@@ -1309,7 +1323,10 @@ class GallerySyncService {
           if (appBackgrounded && appBackgroundTime) {
             console.error(`[GallerySyncService] ❌ Time in background: ${Date.now() - appBackgroundTime}ms`)
           }
-          console.error(`[GallerySyncService] ❌ Native connection error:`, JSON.stringify(localNetworkErrorDetails(error)))
+          console.error(
+            `[GallerySyncService] ❌ Native connection error:`,
+            JSON.stringify(localNetworkErrorDetails(error)),
+          )
 
           // If user explicitly denied, don't retry
           if (error?.code === "userDenied" || error?.message?.includes("cancel")) {
@@ -1706,10 +1723,9 @@ class GallerySyncService {
       console.error("[GallerySyncService] Failed to start download:", error)
       store.setSyncError(error?.message || "Failed to start download")
       await gallerySyncNotifications.showSyncError("Failed to start download")
-
-      if (store.syncServiceOpenedHotspot) {
-        await this.closeHotspot()
-      }
+    } finally {
+      // Notification/recovery failures must not bypass the AP owner’s teardown.
+      if (store.syncServiceOpenedHotspot) await this.closeHotspot()
     }
   }
 
@@ -2346,10 +2362,15 @@ class GallerySyncService {
 
     try {
       console.log("[GallerySyncService] Closing hotspot...")
-      await localNetworkTransport.disconnect()
-      await BluetoothSdk.setHotspotState(false)
-      store.setSyncServiceOpenedHotspot(false)
-      store.setHotspotInfo(null)
+      try {
+        await localNetworkTransport.disconnect()
+      } finally {
+        // Phone routing and the glasses AP have independent stop operations.
+        // Always attempt the owned AP stop even if routing cleanup rejects.
+        await BluetoothSdk.setHotspotState(false)
+        store.setSyncServiceOpenedHotspot(false)
+        store.setHotspotInfo(null)
+      }
       console.log("[GallerySyncService] Hotspot closed")
     } catch (error) {
       console.error("[GallerySyncService] Failed to close hotspot:", error)
