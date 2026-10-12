@@ -113,7 +113,7 @@ ASG validation for `STORED`:
 - untruncated: received length == `len` and CRC == `crc`, and both equal the
   values in the discovered `dump_id`/`dump_len`;
 - truncated: received length == `sent` and CRC == trailer `crc`, `total` ==
-  discovered `dump_len`; the incident is flagged `truncated`.
+  discovered `dump_len`; the incident is flagged `truncated` and records `dumpPrefixLen` (= `sent`) and `dumpPrefixCrc` (= trailer `crc`) so the stored prefix can be verified later.
 
 ## 4. Dump content lines (BES)
 

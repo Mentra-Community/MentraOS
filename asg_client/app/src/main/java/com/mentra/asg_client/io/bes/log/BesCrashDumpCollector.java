@@ -690,6 +690,10 @@ public final class BesCrashDumpCollector {
             put(record, "flags", flags);
         }
         put(flags, "truncated", t.trailer != null);
+        // A truncated dump.txt holds only the validated prefix: keep its length and CRC so the
+        // stored bytes can be checked later (dumpId covers the full stream, not this prefix).
+        put(record, "dumpPrefixLen", t.trailer != null ? (Object) t.trailer.sent : JSONObject.NULL);
+        put(record, "dumpPrefixCrc", t.trailer != null ? (Object) t.trailer.crcHex : JSONObject.NULL);
         put(flags, "torn", ctx.torn);
         put(flags, "tailCaptured", ctx.tailCaptured);
         put(flags, "dumpGap", ctx.tailTruncated || ctx.logLost);

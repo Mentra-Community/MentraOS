@@ -42,9 +42,8 @@ def dump_incident(serial="ML395018B", seq="0000002a", body=b"crashbody-012345678
     dump_id = f"{seq}-{dump_crc}"
     stored = full
     if truncated:
+        # Production stores only the validated prefix; the BES trailer is not part of dump.txt.
         stored = full[: len(full) // 2]
-        stored += b"[CRASH-TRUNCATED] sent=%d total=%d crc=%s\n" % (
-            len(stored), len(full), crc(full[: len(full) // 2]).encode())
     incident = {
         "v": 1, "incidentKey": f"{serial}-dump-{dump_id}", "kind": "dump", "reason": "bes_crash",
         "state": "STORED", "attribution": "match", "bootId": boot_id, "observedBootId": boot_id,
@@ -52,6 +51,9 @@ def dump_incident(serial="ML395018B", seq="0000002a", body=b"crashbody-012345678
         "flags": {"truncated": truncated, "torn": False, "tailCaptured": tail, "dumpGap": False},
         "traceGaps": trace_gaps, "uploaded": False,
     }
+    if truncated:
+        incident["dumpPrefixLen"] = len(stored)
+        incident["dumpPrefixCrc"] = crc(stored)
     return incident, stored, dump_id
 
 
@@ -104,6 +106,20 @@ class VerifyBesIncidentTests(unittest.TestCase):
         write_bundle(self.tmp, incident["incidentKey"], incident, dump, "1\t1\t0\tx\n")
         checks = self.verify(incident["incidentKey"])
         self.assertTrue(checks.passed, checks.render())
+
+    def test_truncated_dump_with_corrupt_prefix_fails(self):
+        incident, dump, dump_id = dump_incident(truncated=True)
+        corrupt = bytes([dump[0] ^ 0xFF]) + dump[1:]
+        write_bundle(self.tmp, incident["incidentKey"], incident, corrupt, "1\t1\t0\tx\n")
+        checks = self.verify(incident["incidentKey"])
+        names = {n: ok for n, ok, _ in checks.results}
+        self.assertFalse(names["truncated: dump.txt CRC32 == dumpPrefixCrc"])
+
+    def test_truncated_dump_without_a_prefix_receipt_fails(self):
+        incident, dump, dump_id = dump_incident(truncated=True)
+        del incident["dumpPrefixLen"], incident["dumpPrefixCrc"]
+        write_bundle(self.tmp, incident["incidentKey"], incident, dump, "1\t1\t0\tx\n")
+        self.assertFalse(self.verify(incident["incidentKey"]).passed)
 
     def test_reset_incident_passes(self):
         boot, observed = "1a2b3c4d5e6f7081", "5566778899aabbcc"   # the reset boot, the boot that saw it

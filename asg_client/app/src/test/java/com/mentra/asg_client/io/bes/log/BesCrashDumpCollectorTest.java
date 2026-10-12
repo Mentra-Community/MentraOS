@@ -847,6 +847,8 @@ public class BesCrashDumpCollectorTest {
         assertEquals("STORED", record.getString("state"));
         assertTrue(record.getJSONObject("flags").getBoolean("truncated"));
         assertEquals(t.full.length, record.getLong("dumpLen"));
+        assertEquals(t.prefix.length, record.getLong("dumpPrefixLen"));
+        assertEquals(crcHex(t.prefix), record.getString("dumpPrefixCrc"));
         assertArrayEquals(t.prefix, BesIncidentStore.readBytes(
                 rig.store.dumpFile(record.getString("incidentKey"))));
     }

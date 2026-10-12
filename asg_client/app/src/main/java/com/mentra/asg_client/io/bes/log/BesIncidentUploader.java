@@ -146,6 +146,11 @@ public final class BesIncidentUploader {
                 if (dir == null) {
                     return null;
                 }
+                if (relay && relayNameBusy(access, record)) {
+                    Log.w(TAG, "Relay file name of " + incidentKey
+                            + " is held by another report in flight; waiting for it");
+                    return null;
+                }
                 JSONObject artifacts = record.optJSONObject("artifacts");
                 JSONObject artifact = artifacts != null ? artifacts.optJSONObject(artifactKey) : null;
                 String recordedSha = null;
@@ -196,6 +201,43 @@ public final class BesIncidentUploader {
                 return null;
             }
         }
+    }
+
+    /**
+     * True when this report's relay file name equals that of another REPORTED incident whose relay
+     * body was already attempted but not confirmed. The phone keys its transfer by that name, so a
+     * second body must wait: admitting it would overwrite the first mapping and could upload one
+     * incident's bytes into the other's report. Does not apply once this incident's own relay body
+     * is already attempted (it is being retried, not admitted).
+     */
+    private static boolean relayNameBusy(BesIncidentUploadAccess access, JSONObject record) {
+        if (isRelayAttempted(record)) {
+            return false;
+        }
+        String reportId = record.optString("reportId", "");
+        if (record.isNull("reportId") || reportId.isEmpty()) {
+            return false;
+        }
+        String name = relayFileBaseName(reportId);
+        String ownKey = record.optString("incidentKey", "");
+        for (JSONObject other : access.pendingForPhone()) {
+            if (ownKey.equals(other.optString("incidentKey", ""))
+                    || !"REPORTED".equals(other.optString("state", ""))
+                    || other.isNull("reportId")
+                    || !isRelayAttempted(other)) {
+                continue;
+            }
+            if (name.equalsIgnoreCase(relayFileBaseName(other.optString("reportId", "")))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isRelayAttempted(JSONObject record) {
+        JSONObject artifacts = record.optJSONObject("artifacts");
+        JSONObject relay = artifacts != null ? artifacts.optJSONObject(ARTIFACT_RELAY) : null;
+        return relay != null && relay.optBoolean("attempted", false);
     }
 
     /**

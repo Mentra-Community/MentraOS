@@ -312,15 +312,38 @@ public class BesIncidentUploaderTest {
     }
 
     @Test
-    public void transferCompleteIsNotAttributedWhenTwoReportsShareTheRelayFileName() throws Exception {
+    public void aSecondReportWithTheSameRelayFileNameWaitsUntilTheFirstIsConfirmed() throws Exception {
         String otherKey = "ML395018B-dump-0000002b-1f2e3d4d";
         String otherReport = "rep_01JZWY3V8N0ZZZZZZZZZZZZZZZ";
         access.createStored(otherKey, 2000L, "[CRASH-CONTEXT] v=2 seq=2\nx\n", trace(5));
         assertThat(access.markReported(otherKey, otherReport)).isTrue();
         assertThat(BesIncidentUploader.relayFileBaseName(otherReport))
                 .isEqualTo(BesIncidentUploader.relayFileBaseName(REPORT));
-        uploader.prepare(KEY, BesIncidentUploader.ARTIFACT_RELAY);
-        uploader.prepare(otherKey, BesIncidentUploader.ARTIFACT_RELAY);
+
+        assertThat(uploader.prepare(KEY, BesIncidentUploader.ARTIFACT_RELAY)).isNotNull();
+        // The first body is in flight under that name: the second is not admitted or attempted.
+        assertThat(uploader.prepare(otherKey, BesIncidentUploader.ARTIFACT_RELAY)).isNull();
+        assertThat(access.find(otherKey).getJSONObject("artifacts")
+                .getJSONObject(BesIncidentUploader.ARTIFACT_RELAY).getBoolean("attempted")).isFalse();
+        // Retrying the first is still allowed.
+        assertThat(uploader.prepare(KEY, BesIncidentUploader.ARTIFACT_RELAY)).isNotNull();
+
+        assertThat(uploader.onTransferComplete(BesIncidentUploader.relayFileBaseName(REPORT), true))
+                .isEqualTo(KEY);
+        assertThat(uploader.prepare(otherKey, BesIncidentUploader.ARTIFACT_RELAY)).isNotNull();
+        assertThat(uploader.onTransferComplete(BesIncidentUploader.relayFileBaseName(otherReport), true))
+                .isEqualTo(otherKey);
+    }
+
+    @Test
+    public void transferCompleteIsNotAttributedWhenTwoAttemptedReportsShareTheRelayFileName() throws Exception {
+        String otherKey = "ML395018B-dump-0000002b-1f2e3d4d";
+        String otherReport = "rep_01JZWY3V8N0ZZZZZZZZZZZZZZZ";
+        access.createStored(otherKey, 2000L, "[CRASH-CONTEXT] v=2 seq=2\nx\n", trace(5));
+        assertThat(access.markReported(otherKey, otherReport)).isTrue();
+        // Both were attempted before admission control existed.
+        access.commitArtifact(KEY, BesIncidentUploader.ARTIFACT_RELAY, (dir, rec) -> new byte[] {1});
+        access.commitArtifact(otherKey, BesIncidentUploader.ARTIFACT_RELAY, (dir, rec) -> new byte[] {2});
 
         assertThat(uploader.onTransferComplete(BesIncidentUploader.relayFileBaseName(REPORT), true))
                 .isNull();

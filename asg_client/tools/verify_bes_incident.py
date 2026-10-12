@@ -148,12 +148,19 @@ def verify_bundle(path, device_id=None):
             id_crc = dump_id.split("-")[1] if "-" in dump_id else None
             flags = incident.get("flags", {}) or {}
             if flags.get("truncated"):
-                checks.check("truncated: len == dumpLen? (no, sent<total)",
-                             len(dump) <= (incident.get("dumpLen") or 0),
-                             f"sent={len(dump)} dumpLen={incident.get('dumpLen')}")
-                # The dump_id crc covers the FULL stream; truncated dump.txt holds only the
-                # sent prefix, so its own crc is the trailer crc, not id_crc.
-                checks.check("truncated flag present in flags", True)
+                # dumpId covers the FULL stream; dump.txt holds only the validated prefix, whose
+                # length and CRC32 the collector recorded from the BES trailer.
+                prefix_len = incident.get("dumpPrefixLen")
+                prefix_crc = incident.get("dumpPrefixCrc")
+                checks.check("truncated: dump.txt shorter than dumpLen",
+                             len(dump) < (incident.get("dumpLen") or 0),
+                             f"{len(dump)} vs dumpLen={incident.get('dumpLen')}")
+                checks.check("truncated: dump.txt length == dumpPrefixLen",
+                             isinstance(prefix_len, int) and len(dump) == prefix_len,
+                             f"{len(dump)} vs {prefix_len}")
+                checks.check("truncated: dump.txt CRC32 == dumpPrefixCrc",
+                             isinstance(prefix_crc, str) and crc32_hex(dump) == prefix_crc,
+                             f"{crc32_hex(dump)} vs {prefix_crc}")
             else:
                 checks.check("dump.txt length == dumpLen", len(dump) == incident.get("dumpLen"),
                              f"{len(dump)} vs {incident.get('dumpLen')}")
@@ -171,11 +178,6 @@ def verify_bundle(path, device_id=None):
                     actual = len(body.rstrip(b"\n")) if body.endswith(b"\n") else len(body)
                     checks.check("[CRASH-TAIL] captured == bytes to [CRASH-TAIL-END]",
                                  actual == captured, f"captured={captured} actual={actual}")
-            trailer = CRASH_TRUNCATED.search(dump)
-            if trailer:
-                total = int(trailer.group(2))
-                checks.check("[CRASH-TRUNCATED] total == dumpLen", total == incident.get("dumpLen"),
-                             f"{total} vs {incident.get('dumpLen')}")
 
     # trace.txt rules (section 7).
     trace_path = os.path.join(path, "trace.txt")
