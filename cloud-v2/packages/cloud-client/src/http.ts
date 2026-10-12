@@ -69,6 +69,25 @@ const MAX_RETRIES = 2;
 /** Base backoff in milliseconds; doubles per attempt (250, 500, ...). */
 const RETRY_BASE_MS = 250;
 
+/** Recognize only fixed native categories; never log an exception message, stack or arbitrary code. */
+function nativeFailureCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  const code = error.code;
+  return typeof code === "string" &&
+    [
+      "E_NATIVE_HTTP_DNS",
+      "E_NATIVE_HTTP_CONNECT",
+      "E_NATIVE_HTTP_TIMEOUT",
+      "E_NATIVE_HTTP_TLS",
+      "E_NATIVE_HTTP_SOCKET",
+      "E_NATIVE_HTTP_INTERRUPTED",
+      "E_NATIVE_HTTP_IO",
+      "E_NATIVE_HTTP_OTHER",
+    ].includes(code)
+    ? code
+    : undefined;
+}
+
 /**
  * Join a base URL and a path without producing a double slash or dropping one.
  *
@@ -186,7 +205,8 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
         throwIfAborted(signal);
         if (isAbortError(error)) throw error;
         // Transient network failure: let the loop retry.
-        logger.warn("http network error", { method, path, attempt });
+        const nativeCode = nativeFailureCode(error);
+        logger.warn("http network error", { method, path, attempt, ...(nativeCode ? { nativeCode } : {}) });
         continue;
       }
 
