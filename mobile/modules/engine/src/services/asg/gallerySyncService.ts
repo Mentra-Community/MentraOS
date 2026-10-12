@@ -1172,6 +1172,7 @@ class GallerySyncService {
                 return // Exit function successfully
               }
             } catch (preError: unknown) {
+              if (signal?.aborted) return
               const message = preError instanceof Error ? preError.message : String(preError)
               console.warn(`[GallerySyncService] ⚠️ Could not get current SSID: ${message}`)
               console.warn("[GallerySyncService] ⚠️ Error code:", (preError as {code?: unknown} | null)?.code)
@@ -1191,6 +1192,7 @@ class GallerySyncService {
           appBackgrounded = false // Reset flag for this attempt
           appBackgroundTime = null
 
+          if (signal?.aborted) return
           await localNetworkTransport.connect(hotspotInfo.ssid, hotspotInfo.password)
           if (signal?.aborted) return
 
@@ -1222,7 +1224,9 @@ class GallerySyncService {
               hotspotInfo.ssid,
               async (pollNumber) => {
                 try {
+                  if (signal?.aborted) return ""
                   const currentSsid = await WifiManager.getCurrentWifiSSID()
+                  if (signal?.aborted) return ""
                   console.log(
                     `[GallerySyncService] 🍎 Verify poll ${pollNumber}/${maxVerifyAttempts}: Current="${currentSsid}", Target="${hotspotInfo.ssid}"`,
                   )
@@ -1233,7 +1237,10 @@ class GallerySyncService {
                   throw error
                 }
               },
-              () => new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500)),
+              () =>
+                signal?.aborted
+                  ? Promise.resolve()
+                  : new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500)),
               maxVerifyAttempts,
             )
 
@@ -1293,11 +1300,13 @@ class GallerySyncService {
                 : await WifiManager.getCurrentWifiSSID()
               console.log(`[GallerySyncService] 📶 Final SSID check before download: "${finalSSID}"`)
             } catch (finalError: unknown) {
+              if (signal?.aborted) return
               const message = finalError instanceof Error ? finalError.message : String(finalError)
               console.warn(`[GallerySyncService] ⚠️ Could not perform final SSID check: ${message}`)
               // Continue anyway - we've done our best to verify
             }
           }
+          if (signal?.aborted) return
           if (Platform.OS === "android") {
             // Some local builds can have stale generated typings for the Bluetooth SDK module.
             ;(BluetoothSdk as any).logCurrentWifiFrequency?.()
@@ -1338,6 +1347,7 @@ class GallerySyncService {
                   signal: probeController.signal,
                 })
 
+                if (signal?.aborted) return
                 const probeDuration = Date.now() - probeStartTime
                 console.log(
                   `[GallerySyncService] 🍎 Probe ${probeNum} response: HTTP ${probeResponse.status} (${probeDuration}ms)`,
@@ -1351,6 +1361,7 @@ class GallerySyncService {
                   break
                 }
               } catch (probeError: unknown) {
+                if (signal?.aborted) return
                 const errorMsg = probeError instanceof Error ? probeError.message : String(probeError)
                 console.log(
                   `[GallerySyncService] 🍎 Probe ${probeNum} failed: ${errorMsg.substring(0, 50)}${
@@ -1511,6 +1522,7 @@ class GallerySyncService {
         }
       }
 
+      if (signal?.aborted) return
       // All retries exhausted
       const totalWifiDuration = Date.now() - wifiConnectStartTime
 

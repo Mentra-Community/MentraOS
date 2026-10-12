@@ -932,6 +932,53 @@ describe("GallerySyncService", () => {
     }
   })
 
+  it.each([false, true])("ignores an old connection SSID rejection after cleanup (fresh start=%s)", async (fresh) => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    await gallerySyncService.startSync()
+    let rejectOld!: (error: Error) => void
+    mockGetCurrentWifiSSID.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectOld = reject
+        }),
+    )
+    const service = gallerySyncService as unknown as {
+      connectToHotspotWifi(info: typeof HOTSPOT_INFO): Promise<void>
+      showWifiJoinExplanation(ssid: string): Promise<boolean>
+    }
+    jest.spyOn(service, "showWifiJoinExplanation").mockResolvedValue(true)
+    const connect = jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
+    const oldConnection = service.connectToHotspotWifi(HOTSPOT_INFO)
+    for (let i = 0; i < 20 && !rejectOld; i++) await Promise.resolve()
+    expect(rejectOld).toBeDefined()
+    await gallerySyncService.cleanup()
+    let releaseFresh!: () => void
+    let freshStart: Promise<void> | undefined
+    if (fresh) {
+      ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseFresh = resolve
+          }),
+      )
+      freshStart = gallerySyncService.startSync()
+      for (let i = 0; i < 20 && !releaseFresh; i++) await Promise.resolve()
+    }
+    const saved = useGallerySyncStore.getState()
+    const hotspotCalls = (BluetoothSdk.setHotspotState as jest.Mock).mock.calls.length
+    rejectOld(wifiError("locationPermissionDenied", "Permission not granted"))
+    await oldConnection
+    expect(connect).not.toHaveBeenCalled()
+    expect(useGallerySyncStore.getState()).toBe(saved)
+    expect(BluetoothSdk.setHotspotState).toHaveBeenCalledTimes(hotspotCalls)
+    expect((gallerySyncService as unknown as {ssidReadable: boolean}).ssidReadable).toBe(true)
+    if (freshStart) {
+      await gallerySyncService.cleanup()
+      releaseFresh()
+      await freshStart
+    }
+  })
+
   it.each(["location", "local_wifi", "storage"])(
     "ignores a delayed %s pre-flight denial after cleanup",
     async (gate) => {
