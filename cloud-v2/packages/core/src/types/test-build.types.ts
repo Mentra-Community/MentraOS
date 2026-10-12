@@ -16,7 +16,7 @@ export type TestBuildQuery = z.infer<typeof testBuildQuerySchema>;
 export type TestBuildPlatform = z.infer<typeof routinePlatformSchema>;
 export interface TestBuild {
   source: TestBuildSource; platform?: TestBuildPlatform; title: string; headSha: string; buildUrl: string; createdAt: string;
-  availability: "available" | "unavailable"; reason?: string; release?: string;
+  availability: "available" | "unavailable"; producerStatus?: "pending" | "failed"; reason?: string; release?: string;
   archive?: {name: string; sha256: string; size: number; url: string};
   receipt?: {url: string; sha256: string; size: number};
   manifestSha256?: string;

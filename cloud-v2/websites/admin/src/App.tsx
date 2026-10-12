@@ -1,4 +1,5 @@
 import {LoadingIndicator} from "./components/loading-indicator";
+import {PrRoutineCheckPage, readPrCheckId} from './pages/pr-routine-check';
 import {TestRunsTabs} from "./pages/test-runs-tabs";
 import {TestRerunPage, readRerunId} from "./pages/test-reruns";
 import {TestSuitePage, readSuiteId} from "./pages/test-suites";
@@ -174,6 +175,7 @@ export function App() {
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
 const initialTestRunsPage = new URLSearchParams(window.location.search).get("testRuns") === "1";
+const initialPrCheckId = readPrCheckId(window.location.search);
 const initialRerunId = readRerunId(window.location.search);
 const initialSuiteId = readSuiteId(window.location.search);
 const initialTestRunLink = readTestRunLink(window.location.search);
@@ -188,8 +190,9 @@ function AdminPage() {
   // The page asked for, if any. What shows is `resolvePage(page, visible)`: a page this principal cannot
   // open (a deep link, say) falls back to their first visible page.
   const [page, setPage] = useState<AdminPageKey | null>(
-    initialSystemHealth ? "system-health" : initialRerunId || initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : null,
+    initialSystemHealth ? "system-health" : initialPrCheckId || initialRerunId || initialTestRunsPage || initialSuiteId || initialTestRunLink || initialTestRunListScope ? "test-runs" : initialRoutineCatalog ? "routine-catalog" : pendingDeepLinkReportId ? "incidents" : null,
   );
+  const [prCheckId, setPrCheckId] = useState<string | null>(initialPrCheckId);
   const [rerunId, setRerunId] = useState<string | null>(initialRerunId);
   const [suiteId, setSuiteId] = useState<string | null>(initialSuiteId);
   const [healthTab, setHealthTab] = useState(initialHealthTab);
@@ -236,6 +239,8 @@ function AdminPage() {
       setHealthTab(readSystemHealthTab(window.location.search));
       setLaneSelection(readLaneSelection(window.location.search));
       if (search.get("systemHealth") === "1") { setPage("system-health"); return; }
+      const prCheck = readPrCheckId(window.location.search);
+      setPrCheckId(prCheck);
       const rerun = readRerunId(window.location.search);
       setRerunId(rerun);
       const suite = readSuiteId(window.location.search);
@@ -245,7 +250,7 @@ function AdminPage() {
       setTestRunLink(selection);
       setTestRunListScope(scope);
       setInvalidTestRunListScope(hasInvalidTestRunListScope(window.location.search));
-      if (rerun || suite || selection || scope || new URLSearchParams(window.location.search).get("testRuns") === "1") setPage("test-runs");
+      if (prCheck || rerun || suite || selection || scope || new URLSearchParams(window.location.search).get("testRuns") === "1") setPage("test-runs");
       else if (new URLSearchParams(window.location.search).get("routineCatalog") === "1") setPage("routine-catalog");
     };
     window.addEventListener("popstate", restore);
@@ -259,6 +264,7 @@ function AdminPage() {
   }
 
   function selectTestRun(selection: TestRunLink | null, replace = false) {
+    setPrCheckId(null);
     setRerunId(null);
     setSuiteId(null);
     setTestRunLink(selection);
@@ -494,9 +500,10 @@ function AdminPage() {
       {active === "test-runs" ? <SystemHealthSummary /> : null}
       {active === "system-health" ? <SystemHealthPage tab={healthTab} lane={laneSelection} onTabChange={selectHealthTab} /> : null}
       {active === "routine-catalog" ? <RoutineCatalogPage /> : null}
-      {active === "test-runs" && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
-      {active === "test-runs" && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
-      {active === "test-runs" && !rerunId && !suiteId ? (
+      {active === "test-runs" && prCheckId ? <PrRoutineCheckPage gateId={prCheckId} /> : null}
+      {active === "test-runs" && !prCheckId && rerunId ? <TestRerunPage rerunId={rerunId} /> : null}
+      {active === "test-runs" && !prCheckId && !rerunId && suiteId ? <TestSuitePage suiteId={suiteId} /> : null}
+      {active === "test-runs" && !prCheckId && !rerunId && !suiteId ? (
         testRunLink ? <FrameworkRunPage runId={testRunLink.runID} stepId={testRunLink.stepID} /> : <TestRunsTabs>
           {testRunListScope && <section className="rounded-2xl border border-[#e0e4de] bg-white p-5">
             <h2 className="font-semibold">Results for the selected build</h2>

@@ -76,8 +76,9 @@ real routine on Harness `main` is requestable without a published collection or
 existing Core enrollment. Required Harness PR checks validate source before merge;
 they do not prove the routine passes on devices.
 
-An ordinary new request resolves current Harness `main` once at submission and
-freezes that exact SHA with the selected PR app build. Labels contain the routine
+The App-owned `Routine tests` PR check resolves current Harness `main` once for
+the whole selected coverage before waiting for builds, then freezes that exact SHA
+with each selected PR platform artifact. Labels contain the routine
 ID, not a source revision. If that SHA differs from the source inspected above,
 read the requested source before claiming it covers the PR. An explicitly selected
 authorized routine SHA overrides the default through the request workflow's
@@ -199,16 +200,16 @@ hardware or implement another authoring workflow.
 
 ## Keep request status honest
 
-- PR dispatch is off unless `DEVICE_ROUTINE_PR_DISPATCH_ENABLED` is explicitly
-  enabled. Adding labels does not enable that gate. When enabled, the existing
-  request workflow submits routine IDs with exact PR build sources through
-  `POST /api/internal/routine-dispatches`; Core resolves current Harness `main` or
-  the optional exact override once, freezes app/routine inputs, and routes source
-  preparation to explicitly configured host/lane bindings. Check its request
-  status and linked result. A preparing, queued, rejected,
-  unavailable or unrecorded request is not a pass. After artifact publication,
-  use the normal request workflow/Admin path for an authorized retry; do not
-  toggle labels or repeatedly dispatch to overcome an explicit denial.
+- PR routine labels are consumed by the App-owned `Routine tests` check through
+  signed GitHub webhook intake. The check is queued on the current head before
+  waiting for builds and submits ordinary Core jobs once. Existing build callbacks
+  reconcile that gate; they do not admit another original. Manual exact-build
+  requests remain available through `request-e2e-routine.yml` on trusted `dev`.
+  App configuration and required-check activation must be qualified separately.
+  Re-run inherits exact app/definition selection and requests unsuccessful latest
+  members, or all members after a complete pass. Cancel requests ordinary cleanup;
+  a GitHub cancellation acknowledgement does not release controller custody.
+  A preparing, queued, rejected, unavailable or unrecorded request is not a pass.
 - Existing enabled coverage may run after labeling. For firmware/meeting tests,
   confirm the request fits the existing authorized fixture and finite attempt
   budget. If that authorization is unknown, defer adding the label and report

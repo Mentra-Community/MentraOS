@@ -87,7 +87,7 @@ def packaged_backend(compilation, env):
     backend = env.get("EXPO_PUBLIC_BUILD_ENV")
     if compilation["mobileFingerprint"] != env.get("MENTRA_PR_MOBILE_FINGERPRINT"):
         raise ValueError("Packaged compilation differs from this job's backend fingerprint")
-    if backend != pr_backend(env.get("GITHUB_BASE_REF", "")):
+    if backend != pr_backend(env.get("MENTRA_PR_BASE_REF") or env.get("GITHUB_BASE_REF", "")):
         raise ValueError("Packaged backend differs from the PR base")
     return backend
 

@@ -44,6 +44,7 @@ import { requestContext } from "./middleware/context.middleware";
 import adminApi from "./admin/admin.api";
 import reportAgent from "./agent/reports.api";
 import {createTestRequestsApi} from "./internal/test-requests.api";
+import {createPrRoutineCheckApi} from './internal/pr-routine-check.api';
 import {createFrameworkResultsApi} from "./internal/framework-results.api";
 import {createTestHostStateApi} from "./internal/test-host-state.api";
 import {createRoutineDefinitionsApi} from "./internal/routine-definitions.api";
@@ -133,6 +134,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/internal/test-requests", createRoutineJobBindingApi());
   app.route("/api/internal/test-requests", createTestRequestsApi());
   app.route("/api/internal/routine-jobs", createRoutineJobsApi());
+  app.route('/api/internal/pr-routine-checks', createPrRoutineCheckApi());
   app.route("/api/internal/testing/dispatch", createTestingDispatchApi());
   app.route("/api/internal/framework-results", createFrameworkResultsApi());
   app.route("/api/internal/test-host-state", createTestHostStateApi());

@@ -63,7 +63,7 @@ const verified = (row: RerunRecord): RerunRecord => {
 export class TestRerunService {
   constructor(private readonly store: RerunRepository = testRerunRepository,
     private readonly suites: Pick<TestSuiteService, "detail" | "summary"> & Partial<Pick<TestSuiteService,"originalMember">> = new TestSuiteService(),
-    private readonly jobs: Pick<RoutineJobService, 'freezeSelection' | 'submitFrozen'> = new RoutineJobService(),
+    private readonly jobs: Pick<RoutineJobService, 'freezeSelection' | 'submitFrozen' | 'cancelFrozen'> = new RoutineJobService(),
     private readonly requests: Pick<TestRequestService, 'get' | 'prepare'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, "summary"> = new FrameworkResultService(),
     private readonly now: () => number = Date.now) {}
@@ -171,6 +171,8 @@ export class TestRerunService {
       if (row.state === "preview" && Date.parse(row.plan.expiresAt) <= this.now()) throw new TestRunError(409, "Preview expired; use a new rerun ID");
       return {rerunId: row.rerunId, previewDigest: row.previewDigest, plan: currentPlan.data, state: row.state};
     }
+    if (selected.deadline && (Date.parse(selected.deadline) <= this.now() || Date.parse(selected.deadline) > this.now() + 3 * 3600_000))
+      throw new TestRunError(400, 'Rerun deadline must be within three hours');
     const parentMembers = await this.parentMembers(selected.parent);
     const selection = selected.selection;
     const known = new Set(parentMembers.map(m => m.memberId));
@@ -247,7 +249,7 @@ export class TestRerunService {
     const plan = rerunPlanSchema.parse({rerunId: selected.rerunId, parent: selected.parent, ...(selected.source ? {source: selected.source} : {}),
       ...(selected.routineRevision ? {routineRevision: selected.routineRevision} : {}),
       ...(selected.minimumFrameworkVersion === undefined ? {} : {minimumFrameworkVersion: selected.minimumFrameworkVersion}),
-      reason: selected.reason, actor, createdAt: new Date(this.now()).toISOString(), expiresAt: new Date(this.now() + 600_000).toISOString(), members});
+      ...(selected.deadline ? {deadline: selected.deadline} : {}), reason: selected.reason, actor, createdAt: new Date(this.now()).toISOString(), expiresAt: new Date(this.now() + 600_000).toISOString(), members});
     const row: RerunRecord = {rerunId: plan.rerunId, inputDigest, previewDigest: requestInputDigest(plan), plan, state: "preview"};
     try {await this.store.insert(row);} catch (error) {
       if ((error as {code?: number}).code !== 11000) throw error;
@@ -278,7 +280,7 @@ export class TestRerunService {
     }
     const admissions = [];
     for (const member of currentPlan.data.members) {
-      try {await this.jobs.submitFrozen(member.selection, new Date(Date.parse(row.acceptedAt!) + 3 * 3600_000).toISOString()); admissions.push({requestId: member.requestId, admitted: true});}
+      try {await this.jobs.submitFrozen(member.selection, currentPlan.data.deadline ?? new Date(Date.parse(row.acceptedAt!) + 3 * 3600_000).toISOString()); admissions.push({requestId: member.requestId, admitted: true});}
       catch {admissions.push({requestId: member.requestId, admitted: false, reason: "Admission unavailable; retry this same rerun ID and preview digest"});}
     }
     return {...await this.detail(row.rerunId), admissions};
@@ -292,6 +294,22 @@ export class TestRerunService {
       ...(value.routineRevision ? {routineRevision: value.routineRevision} : {}),
       ...(value.minimumFrameworkVersion === undefined ? {} : {minimumFrameworkVersion: value.minimumFrameworkVersion}),
       reason: value.reason, predecessorAttemptId: value.predecessorAttemptId}, actor);
+  }
+  /** Fence an accepted linked child's exact job even when its first admission has no request row yet. */
+  async cancelRequest(requestId: string, reason: string): Promise<boolean> {
+    if (!frameworkIdentitySchema.safeParse(requestId).success) throw new TestRunError(400, 'Invalid linked request identity');
+    const stored = await this.store.byRequest(requestId);
+    if (!stored) return false;
+    const row = verified(stored), parsed = rerunPlanSchema.safeParse(row.plan);
+    if (row.state !== 'accepted') throw new TestRunError(409, 'Accepted linked selection is unavailable');
+    if (!parsed.success) {
+      if (await this.requests.get(requestId)) return false; // Recorded history is read-only; its existing request still has ordinary cancellation.
+      throw new TestRunError(409, 'Accepted current linked selection is unavailable');
+    }
+    const member = parsed.data.members.find(member => member.requestId === requestId);
+    if (!member || !row.acceptedAt) throw new TestRunError(503, 'Linked cancellation provenance is unavailable');
+    await this.jobs.cancelFrozen(member.selection, parsed.data.deadline ?? new Date(Date.parse(row.acceptedAt) + 3 * 3600_000).toISOString(), {reason});
+    return true;
   }
   async detail(id: string) {
     if (!frameworkIdentitySchema.safeParse(id).success) throw new TestRunError(400, "Invalid rerun identity");
