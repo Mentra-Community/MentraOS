@@ -77,7 +77,7 @@ export class PrRoutineCheckService {
     private readonly requests: Pick<TestRequestService, 'get'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, 'summary'> = new FrameworkResultService(),
     private readonly suites: Pick<TestSuiteService, 'create' | 'bind' | 'complete'> = new TestSuiteService(),
-    private readonly reruns: Pick<TestRerunService, 'preview' | 'submit' | 'history'> = new TestRerunService(),
+    private readonly reruns: Pick<TestRerunService, 'preview' | 'submit' | 'history' | 'detail'> = new TestRerunService(),
     private readonly hosts: Pick<TestHostStateService, 'get'> = new TestHostStateService(),
     private readonly now: () => number = Date.now,
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve'> = new GithubRoutineSourceGateway()) {}
@@ -132,8 +132,9 @@ export class PrRoutineCheckService {
           await this.rows.save(claimed, gate, new Date(this.now()))
           throw new TestRunError(409, 'Previous routine ownership is still settling')
         }
+        await this.completeOriginalSuite(gate, gate.attempt)
         gate.retired.push(gate.attempt)
-        gate.attempt = {...this.attempt(gate.attempt.generation + 1), suiteId: gate.attempt.suiteId, suiteStartedAt: gate.attempt.suiteStartedAt ?? gate.attempt.acceptedAt,
+        gate.attempt = {...this.attempt(gate.attempt.generation + 1), routineRevision: gate.attempt.routineRevision, suiteId: gate.attempt.suiteId, suiteStartedAt: gate.attempt.suiteStartedAt ?? gate.attempt.acceptedAt,
           members: gate.attempt.members.map(member => ({...member, progress: undefined}))}
         gate.checkExternalId = externalId(gate)
         delete gate.reporting.intended; delete gate.reporting.deliveredDigest
@@ -182,6 +183,7 @@ export class PrRoutineCheckService {
       canCancel: !gate.attempt.conclusion && !gate.attempt.cancellation, cancelling: !!gate.attempt.cancellation && !gate.attempt.conclusion,
       check: routineCheckPayload(gate, now), resultsUrl: resultsUrl(gate),
       members: gate.attempt.members.map(member => ({id: member.memberId, title: member.title, lane: member.laneLabel ?? member.platform,
+        ...(member.requestId ? {resultsUrl: `${adminBase()}/?testRun=${encodeURIComponent(member.requestId)}`} : {}),
         status: member.status, activity: member.waitReason ?? (member.progress && now - Date.parse(member.progress.observedAt) <= 60_000
           ? member.progress.phase.replace(/-/g, ' ') + (member.progress.currentStep ? `: ${member.stepNames[member.progress.currentStep.index] ?? member.progress.currentStep.id}` : '') : member.settled ? member.status : 'Progress unavailable')})),
       delivery: {pending: !!gate.reporting.intended, deliveredAt: gate.reporting.deliveredAt, error: gate.reporting.error}}
@@ -214,7 +216,7 @@ export class PrRoutineCheckService {
           status: 'waiting for app build', publicationComplete: false, settled: false})
       }
     }
-    gate.attempt.members = members; gate.selectionComplete = true
+    gate.attempt.members = members; gate.attempt.routineRevision = gate.routineRevision; gate.selectionComplete = true
     if (gate.attempt.members.length >= 2) gate.attempt.suiteId = `pr-suite-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration})}`
   }
   private async observe(member: PrRoutineMember) {
@@ -254,8 +256,8 @@ export class PrRoutineCheckService {
     for (const member of attempt.members) {
       if (!member.originalRequestId && member.requestId && await this.requests.get(member.requestId)) member.originalRequestId = member.requestId
       if (!member.originalRequestId) continue
-      const parent = attempt.suiteId ? {suiteId: attempt.suiteId} : {requestId: member.originalRequestId}
-      const history = await this.reruns.history(parent, attempt.suiteId ? member.memberId : member.originalRequestId, undefined, 1)
+      const parent = attempt.suiteId && member.suiteBound ? {suiteId: attempt.suiteId} : {requestId: member.originalRequestId}
+      const history = await this.reruns.history(parent, 'suiteId' in parent ? member.memberId : member.originalRequestId, undefined, 1)
       const latest = history.attempts[0]
       if (latest?.requestId && latest.requestId !== member.requestId) {
         const request = await this.requests.get(latest.requestId) as unknown as StoredRoutineJob | null
@@ -275,10 +277,10 @@ export class PrRoutineCheckService {
     }
     // Cancel every accepted linked child, including one admitted outside this check.
     await Promise.all(attempt.members.filter(member => member.originalRequestId).map(member => contain(member, async () => {
-      const parent = attempt.suiteId ? {suiteId: attempt.suiteId} : {requestId: member.originalRequestId!}
+      const parent = attempt.suiteId && member.suiteBound ? {suiteId: attempt.suiteId} : {requestId: member.originalRequestId!}
       let before: number | undefined
       for (let page = 0; page < 4; page++) {
-        const history = await this.reruns.history(parent, attempt.suiteId ? member.memberId : member.originalRequestId!, before, 25)
+        const history = await this.reruns.history(parent, 'suiteId' in parent ? member.memberId : member.originalRequestId!, before, 25)
         for (const child of history.attempts) if (child.requestId && child.requestId !== member.requestId) await contain(member, async () => {
           await this.jobs.cancel(child.requestId!, {reason: `PR routine check ${attempt.cancellation!.kind}`})
           const request = await this.requests.get(child.requestId!) as unknown as StoredRoutineJob | null
@@ -301,6 +303,17 @@ export class PrRoutineCheckService {
     })))
     for (const member of attempt.members) if (member.containmentPending) member.settled = false
     if (failed) throw new TestRunError(503, 'Ordinary cancellation or custody observation is unavailable; containment will retry')
+  }
+  private async createOriginalSuite(gate: PrRoutineCheck, attempt: PrRoutineAttempt) {
+    if (attempt.suiteId) await this.suites.create({suiteId: attempt.suiteId, channel: 'pr', trigger: 'pr', startedAt: attempt.suiteStartedAt ?? attempt.acceptedAt,
+      build: {headSha: gate.headSha}, members: attempt.members.map(member => ({memberId: member.memberId,
+        routineId: member.routineId, platform: member.platform, definitionRevision: attempt.routineRevision ?? gate.routineRevision}))})
+  }
+  private async completeOriginalSuite(gate: PrRoutineCheck, attempt: PrRoutineAttempt) {
+    if (!attempt.suiteId || attempt.rerun || attempt.members.some(member => !member.settled || member.containmentPending)) return
+    await this.createOriginalSuite(gate, attempt)
+    for (const member of attempt.members) if (member.originalRequestId) {await this.suites.bind(attempt.suiteId, member.memberId, {requestId: member.originalRequestId}); member.suiteBound = true}
+    await this.suites.complete(attempt.suiteId, {finishedAt: iso(this.now())})
   }
   private async freezeAdmissions(gate: PrRoutineCheck) {
     const attempt = gate.attempt
@@ -377,16 +390,15 @@ export class PrRoutineCheckService {
   }
   private async admit(gate: PrRoutineCheck) {
     const attempt = gate.attempt
-    if (attempt.suiteId) await this.suites.create({suiteId: attempt.suiteId, channel: 'pr', trigger: 'pr', startedAt: attempt.suiteStartedAt ?? attempt.acceptedAt,
-      build: {headSha: gate.headSha}, members: attempt.members.map(member => ({memberId: member.memberId,
-        routineId: member.routineId, platform: member.platform, definitionRevision: gate.routineRevision}))})
+    if (!attempt.rerun) await this.createOriginalSuite(gate, attempt)
     for (const member of attempt.members) {
       if (!member.selection || member.status === 'not-run' || attempt.rerun && member.originalRequestId) continue
       try {
         await this.jobs.submitFrozen(member.selection, attempt.deadline)
         member.originalRequestId ??= member.requestId
-        if (attempt.suiteId && (!attempt.rerun || !attempt.rerun.linkedMemberIds?.includes(member.memberId)))
-          await this.suites.bind(attempt.suiteId, member.memberId, {requestId: member.requestId!})
+        if (attempt.suiteId && !attempt.rerun) {
+          await this.suites.bind(attempt.suiteId, member.memberId, {requestId: member.requestId!}); member.suiteBound = true
+        }
         await this.observe(member)
       } catch {
         member.status = 'admission pending'; member.settled = false
@@ -395,22 +407,42 @@ export class PrRoutineCheckService {
     }
   }
   private async rerun(gate: PrRoutineCheck) {
-    const attempt = gate.attempt, previous = gate.retired.at(-1)!, plan = attempt.rerun!
+    const attempt = gate.attempt, plan = attempt.rerun!
+    let unavailable = false
     // Existing linked history owns every real retry. Never manufacture an original for a failed admission.
     const selected = attempt.members.filter(member => plan.memberIds.includes(member.memberId)), admitted = selected.filter(member => plan.linkedMemberIds?.includes(member.memberId))
     if (admitted.length) {
-      const parent = attempt.suiteId ? {suiteId: attempt.suiteId} : {requestId: admitted[0]!.originalRequestId!}
-      if (!plan.previewDigest) {
-        const preview = await this.reruns.preview({rerunId: plan.id, parent, deadline: attempt.deadline,
-          selection: {memberIds: attempt.suiteId ? admitted.map(member => member.memberId) : [admitted[0]!.originalRequestId!]},
-          reason: 'GitHub routine check re-run'}, gate.controls.at(-1)!.actor)
-        plan.previewDigest = preview.previewDigest
-        for (const value of preview.plan.members) {
-          const member = admitted.find(member => attempt.suiteId ? member.memberId === value.memberId : member.originalRequestId === value.memberId)!
-          member.requestId = value.requestId; member.selection = value.selection; member.status = 'admission pending'; member.settled = false; member.publicationComplete = false
+      plan.groups ??= [...(attempt.suiteId && admitted.some(member => member.suiteBound) ? [{id: plan.id, parent: {suiteId: attempt.suiteId}, memberIds: admitted.filter(member => member.suiteBound).map(member => member.memberId)}] : []),
+        ...admitted.filter(member => !attempt.suiteId || !member.suiteBound).map(member => ({id: `${plan.id}-${digest(member.memberId)}`, parent: {requestId: member.originalRequestId!}, memberIds: [member.memberId]}))]
+      for (const group of plan.groups) {
+        try {
+          if (!group.previewDigest) {
+            const preview = await this.reruns.preview({rerunId: group.id, parent: group.parent, deadline: attempt.deadline,
+              selection: {memberIds: 'suiteId' in group.parent ? group.memberIds : [group.parent.requestId]},
+              reason: 'GitHub routine check re-run'}, gate.controls.at(-1)!.actor)
+            group.previewDigest = preview.previewDigest
+            for (const value of preview.plan.members) {
+              const member = admitted.find(member => 'suiteId' in group.parent ? member.memberId === value.memberId : member.originalRequestId === value.memberId)!
+              member.requestId = value.requestId; member.selection = value.selection; member.status = 'admission pending'; member.settled = false; member.publicationComplete = false
+            }
+          }
+          await this.reruns.submit({rerunId: group.id, previewDigest: group.previewDigest})
+        } catch (error) {
+          unavailable = true
+          for (const member of admitted.filter(member => group.memberIds.includes(member.memberId))) {member.settled = false; member.status = 'admission pending'}
+          try {
+            if (error instanceof TestRunError && error.status === 409) {
+              const retained = await this.reruns.detail(group.id)
+              if (retained.state === 'preview' && retained.createdAt && this.now() - Date.parse(retained.createdAt) >= 600_000 && (group.previewAttempt ?? 0) < 20) {
+                // An expired, positively unaccepted preview owns no jobs. Renew its plan, never an uncertain accepted submission.
+                group.previewAttempt = (group.previewAttempt ?? 0) + 1
+                const base = 'suiteId' in group.parent ? plan.id : `${plan.id}-${digest(group.memberIds[0])}`
+                group.id = `${base}:preview:${group.previewAttempt}`; delete group.previewDigest
+              }
+            }
+          } catch { /* Retain the same identity when its acceptance state is unavailable. */ }
         }
       }
-      await this.reruns.submit({rerunId: plan.id, previewDigest: plan.previewDigest})
     }
     for (const member of selected.filter(member => !plan.linkedMemberIds?.includes(member.memberId) && !member.originalRequestId)) {
       if (member.requestId && await this.requests.get(member.requestId)) {member.originalRequestId = member.requestId; await this.observe(member); continue}
@@ -426,6 +458,7 @@ export class PrRoutineCheckService {
     if (await this.freezeAdmissions(gate)) return
     await this.admit(gate)
     for (const member of attempt.members) await this.observe(member)
+    if (unavailable) throw new TestRunError(503, 'Linked admission is unavailable; independent members continue and retained plans will retry')
   }
   async reconcile(gateId: string, suppliedContext?: PrRoutineContext) {
     const row = await this.rows.claim(gateId, new Date(this.now()))
@@ -466,17 +499,24 @@ export class PrRoutineCheckService {
         if (await this.rows.save(row, gate, new Date(this.now()))) await this.deliver(gateId)
         return
       }
-      for (const retired of gate.retired.filter(attempt => attempt.cancellation && attempt.members.some(member => !member.settled))) await this.cancel(retired)
+      for (const retired of gate.retired.filter(attempt => attempt.cancellation)) {
+        if (retired.members.some(member => !member.settled)) await this.cancel(retired)
+        await this.completeOriginalSuite(gate, retired)
+      }
       let predecessorsSettled = true
       for (const id of gate.predecessors ?? []) {
         const previous = await this.rows.get(id)
         if (previous && [previous.payload.attempt, ...previous.payload.retired].some(attempt => attempt.members.some(member => member.requestId && !member.settled))) predecessorsSettled = false
       }
-      if (gate.attempt.conclusion && gate.attempt.cancellation) await this.cancel(gate.attempt)
+      if (gate.attempt.conclusion && gate.attempt.cancellation) {
+        await this.cancel(gate.attempt)
+        await this.completeOriginalSuite(gate, gate.attempt)
+      }
       if (!gate.attempt.conclusion) {
         if (this.now() >= Date.parse(gate.attempt.deadline)) gate.attempt.cancellation ??= {kind: 'timeout', requestedAt: iso(this.now())}
         if (gate.attempt.cancellation) {
           await this.cancel(gate.attempt)
+          await this.completeOriginalSuite(gate, gate.attempt)
           if (gate.attempt.cancellation.kind === 'timeout' || gate.attempt.members.every(member => !member.requestId || member.settled)) {
             gate.attempt.conclusion = gate.attempt.cancellation.kind === 'timeout' ? 'timed_out' : 'cancelled'; gate.attempt.finishedAt = iso(this.now())
           }
@@ -504,7 +544,7 @@ export class PrRoutineCheckService {
             }
             if (gate.attempt.members.every(member => member.settled && terminalStatuses.includes(member.status) &&
                 (member.status !== 'pass' || member.publicationComplete))) {
-              if (gate.attempt.suiteId && !gate.attempt.rerun) await this.suites.complete(gate.attempt.suiteId, {finishedAt: iso(this.now())})
+              await this.completeOriginalSuite(gate, gate.attempt)
               if (!expire()) {
                 gate.attempt.conclusion = gate.attempt.members.every(member => member.status === 'pass' && member.publicationComplete) ? 'success' : 'failure'
                 gate.attempt.finishedAt = iso(this.now())

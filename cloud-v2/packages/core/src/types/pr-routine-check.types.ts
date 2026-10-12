@@ -11,13 +11,14 @@ export type PrRoutineContext = {
 export type PrRoutineMember = {
   memberId: string; routineId: string; platform: 'android' | 'ios-on-mac';
   title: string; stepIds: string[]; stepNames: string[];
-  originalRequestId?: string; requestId?: string; selection?: PortableRoutineSelection;
+  originalRequestId?: string; requestId?: string; suiteBound?: boolean; selection?: PortableRoutineSelection;
   status: string; publicationComplete: boolean; settled: boolean; progress?: RoutineProgress;
   laneLabel?: string; waitReason?: string; containmentPending?: boolean;
 }
 export type PrRoutineAttempt = {
-  generation: number; acceptedAt: string; deadline: string; members: PrRoutineMember[];
-  suiteId?: string; suiteStartedAt?: string; rerun?: {id: string; previewDigest?: string; memberIds: string[]; linkedMemberIds?: string[]};
+  generation: number; acceptedAt: string; deadline: string; routineRevision?: string; members: PrRoutineMember[];
+  suiteId?: string; suiteStartedAt?: string; rerun?: {id: string; memberIds: string[]; linkedMemberIds?: string[];
+    groups?: Array<{id: string; parent: {suiteId: string} | {requestId: string}; memberIds: string[]; previewDigest?: string; previewAttempt?: number}>};
   conclusion?: CheckConclusion; finishedAt?: string;
   cancellation?: {kind: 'cancel' | 'superseded' | 'closed' | 'timeout'; requestedAt: string}
 }

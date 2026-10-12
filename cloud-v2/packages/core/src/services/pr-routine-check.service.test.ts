@@ -47,7 +47,7 @@ function fixture() {
     routineSource: testRoutineSource(), definition} as any}}, {async inventory() {return structuredClone(builds)}},
   {async get(id) {return requests.get(id) ?? null}}, {async summary(id) {if (!results.has(id)) throw new TestRunError(404, 'missing'); return results.get(id)}},
   {async create() {return {} as any}, async bind() {return {} as any}, async complete() {return {} as any}},
-  {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
+  {async preview(input: any) {previews.push(input); return {previewDigest: 'f'.repeat(64), plan: {members: []}} as any}, async submit(input: any) {rerunSubmits.push(input); return {} as any}, async detail() {return {state: 'accepted'} as any}, async history() {if (failHistory) throw Error('provider-sensitive-history-error'); return {original: {} as any, attempts: history, nextBefore: null}}},
   {async get() {return null}}, () => now, {async resolve() {resolveCount++; return 'a'.repeat(40)}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
@@ -158,7 +158,7 @@ test('duplicate native rerun retains one generation and fresh absolute deadline'
 test('linked native rerun IDs remain distinct when a new same-head coverage generation restarts attempt numbering', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f);
   await f.service.control(control(f, 'coverage-one-rerun')); await f.drain(1);
-  const first = f.gate().attempt.rerun!.id; expect(f.previews.at(-1)!.rerunId).toBe(first);
+  const first = f.gate().attempt.rerun!.id; expect(f.previews.at(-1)!.rerunId.startsWith(first)).toBe(true);
   f.gate().attempt.conclusion = 'failure'; f.gate().attempt.members[0]!.settled = true;
   f.context.baseRef = 'staging'; await f.drain(6); await complete(f);
   expect(f.gate().coverageGeneration).toBe(2); expect(f.gate().attempt.generation).toBe(1);

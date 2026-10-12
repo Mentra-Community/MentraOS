@@ -11,7 +11,7 @@ export function readPrCheckId(search: string) {
 export interface PrCheckView {
   gateId: string; coverageGeneration: number; attemptGeneration: number; canCancel: boolean; cancelling: boolean;
   check: {status: string; output: {title: string}}; resultsUrl: string;
-  members: Array<{id: string; title: string; lane: string; status: string; activity: string}>;
+  members: Array<{id: string; title: string; lane: string; status: string; activity: string; resultsUrl?: string}>;
   delivery: {pending: boolean; error?: string}
 }
 export function PrRoutineCheckPage({gateId}: {gateId: string}) {
@@ -28,7 +28,7 @@ export function PrRoutineCheckPage({gateId}: {gateId: string}) {
     <p className="mt-2 text-sm">{gate.cancelling ? 'Cancellation requested; ordinary cleanup is still settling.' : gate.check.status} · Refreshes every 15 seconds</p>
     {gate.delivery.error && <p role="alert" className="mt-2">{gate.delivery.error}</p>}
     <table className="mt-4 w-full text-left text-sm"><thead><tr><th>Routine</th><th>Lane</th><th>Result</th><th>Current activity</th></tr></thead>
-      <tbody>{gate.members.map(member => <tr key={member.id}><td>{member.title}</td><td>{member.lane}</td><td>{member.status}</td><td>{member.activity}</td></tr>)}</tbody></table>
+      <tbody>{gate.members.map(member => <tr key={member.id}><td>{member.resultsUrl ? <a className={TESTING_LINK} href={member.resultsUrl}>{member.title}</a> : member.title}</td><td>{member.lane}</td><td>{member.status}</td><td>{member.activity}</td></tr>)}</tbody></table>
     <div className="mt-4 flex gap-4 items-center"><a className={TESTING_LINK} href={gate.resultsUrl}>Results and diagnostics</a>
       {gate.canCancel && <TestingButton disabled={cancel.isPending} onClick={() => cancel.mutate()}>{cancel.isPending ? 'Requesting cancellation…' : 'Cancel routine tests'}</TestingButton>}</div>
     {cancel.error && <p role="alert" className="mt-2">Cancellation unavailable. Refresh the check and retry the same operation.</p>}
