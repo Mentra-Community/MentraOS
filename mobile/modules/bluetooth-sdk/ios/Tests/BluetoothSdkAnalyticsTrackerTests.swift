@@ -4,8 +4,59 @@ import XCTest
 final class BluetoothSdkAnalyticsTrackerTests: XCTestCase {
     private var tracker = BluetoothSdkAnalyticsTracker(simulatedModel: "Simulated Glasses")
 
-    private func snapshot(connected: Bool, model: String = "Mentra Live", serial: String = "") -> AnalyticsGlassesSnapshot {
-        AnalyticsGlassesSnapshot(connected: connected, fullyBooted: connected, model: model, serialNumber: serial)
+    private func snapshot(
+        connected: Bool,
+        model: String = "Mentra Live",
+        serial: String = "",
+        battery: Int = -1,
+        charging: Bool = false
+    ) -> AnalyticsGlassesSnapshot {
+        var snapshot = AnalyticsGlassesSnapshot(connected: connected, fullyBooted: connected, model: model, serialNumber: serial)
+        snapshot.batteryLevel = battery
+        snapshot.charging = charging
+        return snapshot
+    }
+
+    func testCountedConnectionReportsItsLengthReasonAndBatteryWhenItEnds() throws {
+        tracker.initialize(snapshot(connected: false), reportingDay: 100)
+        _ = tracker.observe(snapshot(connected: true), reportingDay: 100, nowMs: 1000)
+        _ = tracker.observe(snapshot(connected: true, battery: 80), reportingDay: 100, nowMs: 2000)
+        _ = tracker.observe(snapshot(connected: true, battery: 71, charging: true), reportingDay: 100, nowMs: 3000)
+
+        let ended = tracker.observe(snapshot(connected: false), reportingDay: 100, nowMs: 61000) {
+            BluetoothSdkAnalyticsTracker.disconnectUser
+        }
+        XCTAssertEqual(ended.count, 1)
+        let disconnected = try XCTUnwrap(ended.first)
+        XCTAssertEqual(disconnected.name, "bluetooth_sdk_glasses_disconnected")
+        XCTAssertEqual(disconnected.properties["session_duration_ms"] as? Int64, 60000)
+        XCTAssertEqual(disconnected.properties["disconnect_reason"] as? String, "user_disconnect")
+        XCTAssertEqual(disconnected.properties["battery_level_at_connect"] as? Int, 80)
+        XCTAssertEqual(disconnected.properties["battery_level_at_disconnect"] as? Int, 71)
+        XCTAssertEqual(disconnected.properties["charging"] as? Bool, true)
+        XCTAssertEqual(disconnected.properties["glasses_model"] as? String, "Mentra Live")
+
+        // Further disconnected updates do not report the connection again.
+        XCTAssertTrue(tracker.observe(snapshot(connected: false), reportingDay: 100, nowMs: 62000).isEmpty)
+    }
+
+    func testConnectionAlreadyUpWhenTheSdkStartedIsNotReportedAsEnding() {
+        tracker.initialize(snapshot(connected: true, serial: "MLAB0001"), reportingDay: 100)
+        XCTAssertTrue(tracker.observe(snapshot(connected: false), reportingDay: 100, nowMs: 5000).isEmpty)
+    }
+
+    func testBatteryFromAPreviousConnectionDoesNotLeakIntoTheNextOne() throws {
+        tracker.initialize(snapshot(connected: false), reportingDay: 100)
+        _ = tracker.observe(snapshot(connected: true, battery: 90), reportingDay: 100, nowMs: 0)
+        _ = tracker.observe(snapshot(connected: false), reportingDay: 100, nowMs: 1000)
+        _ = tracker.observe(snapshot(connected: true), reportingDay: 100, nowMs: 2000)
+        let ended = tracker.observe(snapshot(connected: false), reportingDay: 100, nowMs: 3000)
+        XCTAssertEqual(ended.count, 1)
+        let second = try XCTUnwrap(ended.first)
+        XCTAssertNil(second.properties["battery_level_at_connect"])
+        XCTAssertNil(second.properties["battery_level_at_disconnect"])
+        XCTAssertNil(second.properties["charging"])
+        XCTAssertEqual(second.properties["disconnect_reason"] as? String, "unknown")
     }
 
     func testConnectThenSerialEmitsEachOncePerConnection() {
@@ -40,7 +91,7 @@ final class BluetoothSdkAnalyticsTrackerTests: XCTestCase {
         tracker.initialize(snapshot(connected: false), reportingDay: 100)
         _ = tracker.observe(snapshot(connected: true, model: ""), reportingDay: 100)
         let ended = tracker.observe(snapshot(connected: false, model: ""), reportingDay: 100)
-        XCTAssertEqual(ended.map(\.name), ["bluetooth_sdk_glasses_connected"])
+        XCTAssertEqual(ended.map(\.name), ["bluetooth_sdk_glasses_connected", "bluetooth_sdk_glasses_disconnected"])
         XCTAssertEqual(ended[0].properties["glasses_model_unresolved"] as? Bool, true)
         XCTAssertNil(ended[0].properties["glasses_model"])
     }

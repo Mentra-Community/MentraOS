@@ -27,6 +27,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "glasses_status",
             "bluetooth_status",
             "log",
+            "sdk_update_notice",
             "device_discovered",
             "default_device_changed",
             // Individual event handlers

@@ -8,6 +8,8 @@
  *   /api/client/auth/*          — device-called auth: exchange, refresh,
  *                                 miniapp-token
  *   /api/client/reports/*       — device-filed reports
+ *   /api/client/bluetooth-sdk/* — Bluetooth SDK startup update check,
+ *                                 unauthenticated (called from customer apps)
  *   /api/agent/reports/*        — read-only private dev-agent access
  *   /api/admin/auth/*, /api/portal/auth/*
  *                               — portal sign-in (the deployment's identity provider)
@@ -58,6 +60,7 @@ import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
 import clientSupportProfile from "./client/support-profile.api";
 import clientMiniapps from "./client/miniapps.api";
+import clientBluetoothSdk from "./client/bluetooth-sdk.api";
 import accountApi from "./account/account.api";
 import accountOauth from "./account/oauth.api";
 import consoleAuth from "./console/cli-auth.api";
@@ -116,6 +119,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/client/auth", clientAuth);
   app.route("/api/client/reports", clientReports);
   app.route("/api/client/support-profile", clientSupportProfile);
+  app.route("/api/client/bluetooth-sdk", clientBluetoothSdk);
   app.route("/api/agent/reports", reportAgent);
   // Service calls carry small JSON bodies; the limit applies before the signature check reads one.
   app.use(
