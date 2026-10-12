@@ -1,5 +1,6 @@
 // Exercise the installed native diagnostic formatter without joining a network.
 #import "RNWifiErrorFacts.h"
+#import "RNWifiApplyDiagnostics.h"
 
 static void check(BOOL condition, NSString *message) {
   if (!condition) {
@@ -55,7 +56,49 @@ int main(void) {
     NSError *nested = [NSError errorWithDomain:@"Nested" code:7 userInfo:@{NSUnderlyingErrorKey: error}];
     check([RNWifiErrorFacts(nested) isEqualToString:@"domain=Nested code=7 underlying_domain=NEHotspotConfigurationErrorDomain underlying_code=8"],
           @"Never recursively print an underlying chain");
-    NSLog(@"PASS: original native codes, bounded identifiers, private data exclusion");
+    check([bridged.domain isEqual:error.domain] && bridged.code == error.code &&
+          bridged.userInfo[NSUnderlyingErrorKey] == underlying &&
+          [bridged.localizedDescription isEqual:error.localizedDescription], @"Keep the original error and underlying error unchanged");
+
+    __block NSTimeInterval now = 100;
+    RNWifiApplyDiagnostics *apply = [[RNWifiApplyDiagnostics alloc] initWithClock:^{ return now; }];
+    NSTimeInterval request = apply.now;
+    now += 0.01; [apply applyStarted];
+    now += 0.05; [apply applyCompleted];
+    now += 0.01;
+    NSDictionary *lateBefore = [apply factsForKind:@"target_configuration" phase:@"apply_admission"
+        requestedAt:request state:RNWifiTargetConfigurationState(@"private target", @[@"private other", @"private target"])];
+    check([lateBefore[@"state"] isEqual:@"present"] && [lateBefore[@"callback_observed"] boolValue],
+          @"A pre-admission request answered after callback is not a pre-apply snapshot");
+    check([lateBefore[@"requested_elapsed_ms"] doubleValue] == 0 &&
+          [lateBefore[@"observed_elapsed_ms"] doubleValue] > [lateBefore[@"callback_elapsed_ms"] doubleValue],
+          @"Keep request, apply, callback and observed timing separate");
+    NSData *encoded = [NSJSONSerialization dataWithJSONObject:lateBefore options:0 error:nil];
+    check([[[NSString alloc] initWithData:encoded encoding:NSUTF8StringEncoding] rangeOfString:@"private"].location == NSNotFound,
+          @"Configuration names never reach emitted facts");
+    check([RNWifiTargetConfigurationState(@"private target", @[]) isEqual:@"absent"] &&
+          [RNWifiTargetConfigurationState(@"private target", nil) isEqual:@"unavailable"] &&
+          [RNWifiTargetConfigurationState(@"private target", @[@1]) isEqual:@"unavailable"], @"Validate configured-name observation");
+    check([RNWifiAssociationState(@"private target", @"private target") isEqual:@"matched"] &&
+          [RNWifiAssociationState(@"private target", @"private other") isEqual:@"different"] &&
+          [RNWifiAssociationState(@"private target", nil) isEqual:@"unavailable"] &&
+          [RNWifiAssociationState(@"private target", @"") isEqual:@"unavailable"], @"Privacy-redacted association is unavailable, not disconnected");
+    request = now;
+    now += 2.001;
+    check(![apply factsForKind:@"association" phase:@"after_callback" requestedAt:request state:@"matched"],
+          @"Drop an OS reply after its bounded diagnostic window");
+    RNWifiApplyDiagnostics *current = [[RNWifiApplyDiagnostics alloc] initWithClock:^{ return now; }];
+    check(![apply factsForKind:@"association" phase:@"after_callback" requestedAt:now state:@"matched"],
+          @"Superseded replies cannot describe the current invocation");
+    check([current factsForKind:@"association" phase:@"before_apply" requestedAt:now state:@"unavailable"] != nil,
+          @"Current invocation accepts a bounded unavailable observation");
+    check(![current factsForKind:@"association" phase:@"before_apply" requestedAt:now state:@"private target"] &&
+          ![current factsForKind:@"private target" phase:@"before_apply" requestedAt:now state:@"matched"],
+          @"Only fixed diagnostic fields can be emitted");
+    now -= 1;
+    check(![current factsForKind:@"association" phase:@"after_callback" requestedAt:now + 1 state:@"matched"],
+          @"Reject backwards or future observation timestamps");
+    NSLog(@"PASS: native error facts, asynchronous diagnostic ordering, late/superseded replies, private data exclusion");
   }
   return 0;
 }
