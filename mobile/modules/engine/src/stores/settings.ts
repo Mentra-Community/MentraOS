@@ -1165,11 +1165,18 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
 
-        // Turn the Barrier back on once for installs that were reset to off;
-        // a later user opt-out remains in force.
+        // migration:loudness_gate_default_off_v1 reset every install it ran on to off. Turn those
+        // installs back on once. Installs that never ran it keep whatever they saved, so an opt-out
+        // from before that reset survives, and a later opt-out remains in force.
+        const LOUDNESS_GATE_RESET_KEY = "migration:loudness_gate_default_off_v1"
         const LOUDNESS_GATE_MIGRATION_KEY = "migration:loudness_gate_default_on_v1"
+        const loudnessGateWasReset = storage.load<boolean>(LOUDNESS_GATE_RESET_KEY)
         const loudnessGateMigrationDone = storage.load<boolean>(LOUDNESS_GATE_MIGRATION_KEY)
-        if (loudnessGateMigrationDone.is_error() || !loudnessGateMigrationDone.value) {
+        if (
+          !loudnessGateWasReset.is_error() &&
+          loudnessGateWasReset.value &&
+          (loudnessGateMigrationDone.is_error() || !loudnessGateMigrationDone.value)
+        ) {
           // updateServer: true, matching the android_blur / camera_fov migrations. The flag is
           // inert until the Cloud V2 settings sync lands, but this setting is saveOnServer, so
           // the intent recorded here is the one that should carry over.
