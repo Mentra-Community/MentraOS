@@ -34,7 +34,8 @@ export default function MiniappDeveloperScannerScreen() {
 
   // Every scan path opens a miniapp only once each required permission its
   // miniapp.json declares is granted, the gate a home-tile tap applies. Asks for
-  // the missing ones; after a denial, names them and offers Settings.
+  // the missing ones; after a denial, names them and offers Settings. Every way
+  // out without opening runs onDecline, so the scanner never stays frozen.
   const grantRequiredPermissions = async (app: AppletInterface, onDecline: () => void): Promise<boolean> => {
     const result = await askPermissionsUI(app, theme)
     if (result === 1) return true
@@ -47,7 +48,13 @@ export default function MiniappDeveloperScannerScreen() {
           permissions: stillNeeded.map((p) => PERMISSION_CONFIG[p]?.name ?? p).join(", "),
         }),
         [
-          {text: translate("debugSettings:miniappScanOpenSettings"), onPress: () => Linking.openSettings()},
+          {
+            text: translate("debugSettings:miniappScanOpenSettings"),
+            onPress: () => {
+              onDecline()
+              void Linking.openSettings()
+            },
+          },
           {text: translate("common:cancel"), onPress: onDecline, style: "cancel"},
         ],
       )
@@ -79,7 +86,12 @@ export default function MiniappDeveloperScannerScreen() {
       await engine.miniapps.refresh()
       const app = engine.miniapps.list().find((candidate) => candidate.packageName === packageName)
       if (!app) return showOnHomeScreen()
-      if (!(await grantRequiredPermissions(app, showOnHomeScreen))) return
+      if (!(await grantRequiredPermissions(app, showOnHomeScreen))) {
+        // Installing over a running copy restarts it (and restores it if the
+        // install fails). Without its permissions, don't leave the new release running.
+        if (app.running) await engine.miniapps.stop(packageName)
+        return
+      }
       clearHistoryAndGoHome()
       leftScanner = true
       if (await engine.miniapps.start(app, {skipNavigation: true})) await engine.miniapps.setForeground(packageName)
@@ -103,13 +115,6 @@ export default function MiniappDeveloperScannerScreen() {
         const url = new URL(data)
         const baseUrl = decodeURIComponent(url.searchParams.get("url") || "")
         if (!baseUrl) throw new Error("release QR missing url param")
-
-        // An explicit install restarts whatever copy was running, which would
-        // start the new release before its permissions are checked. Stop it first.
-        const releasePackage = url.searchParams.get("package")
-        if (releasePackage && engine.miniapps.list().some((app) => app.packageName === releasePackage && app.running)) {
-          await engine.miniapps.stop(releasePackage)
-        }
 
         const res = await installMiniappFromJsonUrl(baseUrl)
         if (res.is_error()) {
