@@ -12,6 +12,7 @@
 import * as jose from "jose";
 import { createLogger } from "@mentra/cloud-shared";
 import { OauthServerError } from "../types/oauth.types";
+import { OIDC_TOKEN_KID, resetOidcKeyCache } from "./oidc/keys";
 
 const logger = createLogger("core").child({ service: "signing-keys.service" });
 
@@ -97,6 +98,7 @@ export function resetSigningKeyCache(): void {
   mentraKeys = null;
   miniappKeys = null;
   accountKeys = null;
+  resetOidcKeyCache();
 }
 
 /** The account signing public key in SPKI PEM form, for seeding the `mentra`
@@ -111,7 +113,9 @@ export function getAccountPublicKeyPem(): string {
  *   - access-token key (internal services verify access tokens),
  *   - runtime-token key (Runtime trusts Core-brokered runtime tokens),
  *   - miniapp-token key (developer backends verify miniapp tokens),
- *   - account-token key (audit visibility for Mentra's own OEM subject tokens).
+ *   - account-token key (audit visibility for Mentra's own OEM subject tokens),
+ *   - sign-in server key (ID and access tokens of Core's OpenID Connect
+ *     provider, signed with the access-token key under its own `kid`).
  * Publishing keys ahead of need makes rotation a no-coordination change.
  */
 export async function getPublicJwks(): Promise<{ keys: jose.JWK[] }> {
@@ -123,6 +127,7 @@ export async function getPublicJwks(): Promise<{ keys: jose.JWK[] }> {
   const keys: jose.JWK[] = [
     { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: ACCESS_TOKEN_KID },
     { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: RUNTIME_TOKEN_KID },
+    { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: OIDC_TOKEN_KID },
     { ...miniappJwk, alg: MENTRA_ALG, use: "sig", kid: MINIAPP_TOKEN_KID },
   ];
   // The account key is optional: environments deployed before the account env

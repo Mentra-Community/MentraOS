@@ -39,6 +39,7 @@ import {OPERATOR_KEY_SCOPES, ORGANIZATION_CAPABILITIES} from "../packages/worksp
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {
+  coreAccessToken,
   ADMIN_COOKIE,
   ADMIN_EMAIL,
   ADMIN_ORIGIN,
@@ -112,7 +113,7 @@ async function person(key: string, options: {email?: string; emailVerified?: boo
   const email = options.email ?? `${key}@example.test`
   const emailVerified = options.emailVerified ?? true
   idp.registerUser({sub, email, emailConfirmed: emailVerified})
-  const bearer = await idp.mint({sub, aud: "authenticated", client_id: "console-client", email})
+  const bearer = await coreAccessToken({sub, email, emailVerified})
   const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: sub})
   return {sub, email, emailVerified, bearer, mentraUserId}
 }
@@ -430,25 +431,19 @@ describe("authentication", () => {
     expect(await WorkspaceModel.countDocuments({})).toBe(1)
   })
 
-  test("a malformed or unknown Core key, or a token the identity provider did not sign, is 401", async () => {
+  test("a malformed or unknown Core key, or a token Core's sign-in server did not sign, is 401", async () => {
     expect((await call("POST", "/api/workspaces", {as: "msk_local_notakey", body: {name: "X"}})).status).toBe(401)
     expect((await call("GET", "/api/workspaces", {as: "mak_local_notakey"})).status).toBe(401)
-    const forged = await idp.mint(
-      {sub: "supa-forger", aud: "authenticated", client_id: "console-client"},
-      {alg: "RS256", key: "attacker"},
-    )
+    const forged = await idp.mint({sub: "supa-forger", aud: "authenticated"}, {alg: "RS256", key: "attacker"})
     expect((await call("GET", "/api/workspaces", {as: forged})).status).toBe(401)
     expect(await WorkspaceModel.countDocuments({})).toBe(0)
   })
 
-  test("an identity provider that cannot be asked is 503 temporarily_unavailable, never a guess", async () => {
-    const someone = await person("someone")
-    idp.outage = true
-
-    const reply = await call("GET", "/api/workspaces", {as: someone})
-
-    expect(reply.status).toBe(503)
-    expect(reply.json.error).toBe("temporarily_unavailable")
+  test("a Core access token from another environment's sign-in server is 401", async () => {
+    const restore = applyEnv({CLOUD_CORE_OIDC_ISSUER: "https://account.staging.test"})
+    const other = await coreAccessToken({sub: "supa-elsewhere", email: "elsewhere@example.test"})
+    restore()
+    expect((await call("GET", "/api/workspaces", {as: other})).status).toBe(401)
   })
 
   test("GET /api/organization is open to Core keys and reports what they may do", async () => {
@@ -1005,12 +1000,11 @@ describe("members", () => {
 describe("invitations", () => {
   test("an admin whose email is not verified cannot invite", async () => {
     const ws = await newWorkspace()
-    // The account's address loses its confirmation; Core learns it on the next lookup.
-    idp.registerUser({sub: ws.admin.sub, email: ws.admin.email, emailConfirmed: false})
-    resetIdpTokenCaches()
+    // The account's address lost its confirmation; Core records it at the admin's next sign-in.
+    const unverified = await coreAccessToken({sub: ws.admin.sub, email: ws.admin.email, emailVerified: false})
 
     const reply = await call("POST", `/api/workspaces/${ws.workspaceId}/invitations`, {
-      as: ws.admin,
+      as: unverified,
       body: {email: "someone@example.test", role: "developer"},
     })
 
@@ -1139,10 +1133,9 @@ describe("invitations", () => {
     expect(unverified.status).toBe(403)
     expect(unverified.json.error).toBe("email_mismatch")
 
-    // Once the account confirms the address, the same link works.
-    idp.registerUser({sub: invitee.sub, email: invitee.email, emailConfirmed: true})
-    resetIdpTokenCaches()
-    expect((await call("POST", "/api/workspaces/invitations/accept", {as: invitee, body: {token}})).status).toBe(200)
+    // Once the account confirms the address and the invitee signs in again, the same link works.
+    const confirmed = await coreAccessToken({sub: invitee.sub, email: invitee.email, emailVerified: true})
+    expect((await call("POST", "/api/workspaces/invitations/accept", {as: confirmed, body: {token}})).status).toBe(200)
   })
 
   test("the link defaults to the workspace portal's accept page; with neither setting, inviting fails and writes nothing", async () => {

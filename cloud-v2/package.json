@@ -40,6 +40,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "jose": "^5.9.6",
+    "openid-client": "6.8.8",
     "typescript": "^5.7.0"
   },
   "patchedDependencies": {

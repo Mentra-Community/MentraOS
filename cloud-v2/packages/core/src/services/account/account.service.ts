@@ -13,6 +13,7 @@ import {findOrCreateUser} from "../user.service"
 import {sendEmail} from "../email/email.service"
 import * as gotrue from "./gotrue.client"
 import {SupportProfileModel} from "../../models/support-profile.model"
+import {SigninIdentityModel} from "../../models/signin-identity.model"
 import {UserModel} from "../../models/user.model"
 import * as otc from "./one-time-code.service"
 import {AccountError} from "./account-error"
@@ -78,7 +79,15 @@ export async function requestPasswordReset(email: string): Promise<void> {
   })
 }
 
-export async function resetPassword(email: string, code: string, newPassword: string): Promise<TokenResponse> {
+/**
+ * Reset a password with an emailed code. Every session of the person ends
+ * (`revokeAllSessionsForUser`). The Mentra App is then signed in fresh; the
+ * sign-in page passes `signIn: false`, gets no phone session, and the person
+ * signs in again through Core's sign-in server.
+ */
+export async function resetPassword(email: string, code: string, newPassword: string, opts: {signIn: false}): Promise<null>
+export async function resetPassword(email: string, code: string, newPassword: string, opts?: {signIn?: true}): Promise<TokenResponse>
+export async function resetPassword(email: string, code: string, newPassword: string, opts: {signIn?: boolean} = {}): Promise<TokenResponse | null> {
   const {payload} = await otc.consumeCode({
     code,
     purpose: "password_reset",
@@ -91,6 +100,7 @@ export async function resetPassword(email: string, code: string, newPassword: st
   // before minting so the new session is the only survivor.
   const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: userId})
   await revokeAllSessionsForUser({mentraUserId: user.mentraUserId})
+  if (opts.signIn === false) return null
   const identity = await gotrue.verifyPassword(email, newPassword)
   return sessionForIdentity(identity)
 }
@@ -222,6 +232,8 @@ export async function finishAccountDeletion(mentraUserId: string): Promise<"comp
   await revokeAllSessionsForUser({mentraUserId})
   await removeDeletedUserFromWorkspaces(mentraUserId)
   await SupportProfileModel.deleteOne({mentraUserId})
+  // How the person last signed in to Core's sign-in server, email included.
+  await SigninIdentityModel.deleteOne({mentraUserId})
   if (user.tenantId === MENTRA_TENANT_ID) await gotrue.deleteUser(user.tenantUserId)
   await UserModel.updateOne(
     {mentraUserId, accountDeletionCompletedAt: null},

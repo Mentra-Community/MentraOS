@@ -48,6 +48,8 @@ import {SUPABASE_ASYMMETRIC_ALGORITHMS, supabaseIssuer, supabaseJwksUrl} from ".
 import {KeySetUnavailableError, verifyWithKeySet} from "./signin/key-sets"
 import {revokePortalSessionsForUser} from "./signin/browser-session.service"
 import {endIdentityProviderSessions} from "./signin/idp-revocation"
+import {oidcIssuer} from "./oidc/config"
+import {revokeProviderSessionsAndGrants} from "./oidc/mongo-adapter"
 import {
   MENTRA_ALG,
   ACCESS_TOKEN_KID,
@@ -369,14 +371,17 @@ export async function revokeAllForOem(tenantId: string): Promise<{deletedSession
 /**
  * Account-wide revocation (logout-everywhere, password change or reset,
  * account deletion):
- *  1. sets the person's `webSignInsRevokedAt`, so Core refuses their
- *     identity-provider tokens from earlier sign-ins, including ones refreshed
- *     later (the Store's next request for them fails);
+ *  1. sets the person's `webSignInsRevokedAt`, so Core refuses their Core
+ *     access tokens and sign-ins from before it, and the sign-in page's
+ *     hand-off refuses Supabase sessions that started before it (the Store's
+ *     next request for them fails);
  *  2. revokes every phone refresh token. `exceptSessionId` keeps the current
  *     phone session alive (e.g. logout-everywhere from the active app without
  *     kicking itself). The access token dies at its natural expiry;
  *  3. ends their portal sessions;
- *  4. on hosted Core, ends every Supabase session of the person (best effort,
+ *  4. ends their sessions and grants at Core's sign-in server: the sign-in
+ *     site asks for credentials again and every client's next refresh fails;
+ *  5. on hosted Core, ends every Supabase session of the person (best effort,
  *     never blocking: see endIdentityProviderSessions).
  * Step 1 comes first so the web side is closed before anything else runs.
  */
@@ -393,6 +398,7 @@ export async function revokeAllSessionsForUser(args: {
   if (args.exceptSessionId) filter.sessionId = {$ne: args.exceptSessionId}
   const result = await RefreshTokenModel.deleteMany(filter)
   await revokePortalSessionsForUser(args.mentraUserId, "account_revocation")
+  await revokeProviderSessionsAndGrants(args.mentraUserId)
   if (user) await endIdentityProviderSessions(user)
   return {deletedSessions: result.deletedCount ?? 0}
 }
@@ -552,6 +558,10 @@ async function resolveSubjectIdentity(subjectToken: string): Promise<{
     throw new InvalidRequest("subject_token is not a parseable JWT")
   }
 
+  // Core's sign-in server issues tokens for websites and the CLI; they never become phone tokens.
+  if (iss && iss.replace(/\/+$/, "") === oidcIssuer()) {
+    throw new InvalidGrant("tokens from Core's sign-in server cannot be exchanged for a phone session")
+  }
   if (looksLikeSupabase(iss)) {
     return {tenantId: MENTRA_OEM_ID, tenantUserId: await verifySupabaseSubject(subjectToken, alg)}
   }

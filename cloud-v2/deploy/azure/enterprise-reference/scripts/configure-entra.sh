@@ -32,8 +32,8 @@ usage() {
     "                               reused only if it carries the tag" \
     "  --core-owner UUID            Make this user or service principal an owner of Core, so it can" \
     "                               manage Core's admin portal client secret and redirect URI" \
-    "  --admin-portal-url URL       Core's https:// origin; registers URL/api/admin/auth/callback," \
-    "                               the admin portal's sign-in redirect, on Core" \
+    "  --admin-portal-url URL       Core's https:// origin; registers URL/interaction/callback/workforce," \
+    "                               where Entra returns people to Core's sign-in server, on Core" \
     "  --grant-admin-consent        Grant tenant-wide consent after configuring permissions" \
     "  --consent-only               Only grant consent for --mobile-client-id (and --core-client-id," \
     "                               if given); change nothing else" \
@@ -61,14 +61,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Core sends exactly <origin>/api/admin/auth/callback, so register exactly that.
+# Core's sign-in server sends exactly <origin>/interaction/callback/workforce, so register exactly that.
 ADMIN_PORTAL_URL="${ADMIN_PORTAL_URL%/}"
 ORIGIN_PATTERN='^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$'
 if [[ -n "$ADMIN_PORTAL_URL" && ! "$ADMIN_PORTAL_URL" =~ $ORIGIN_PATTERN ]]; then
   printf -- '--admin-portal-url must be the https:// origin of Core, such as https://core.example.com\n' >&2
   exit 2
 fi
-PORTAL_REDIRECT="${ADMIN_PORTAL_URL:+$ADMIN_PORTAL_URL/api/admin/auth/callback}"
+PORTAL_REDIRECT="${ADMIN_PORTAL_URL:+$ADMIN_PORTAL_URL/interaction/callback/workforce}"
 UUID_PATTERN='^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$'
 if [[ -n "$CORE_OWNER" && ! "$CORE_OWNER" =~ $UUID_PATTERN ]]; then
   printf -- '--core-owner must be an object ID (a UUID)\n' >&2

@@ -1,28 +1,28 @@
 /**
  * @fileoverview Sign-in for Core's portal websites (the admin portal and the
- * enterprise portal), as confidential OpenID Connect clients of the
- * deployment's identity provider.
+ * workspace portal), as confidential clients of Core's own sign-in server
+ * (its OpenID Connect provider, `services/oidc`), on hosted Core and on a
+ * Private Cloud alike.
  *
- * The flow is the authorization code flow with S256 PKCE and `state`:
- *  - hosted Core (Supabase): scope `email profile`, never `openid` (on an
- *    HS256 project the code exchange then fails with HTTP 500 and leaves an
- *    orphaned session). Core learns who signed in from the access token in its
- *    own code exchange, verified like any identity-provider token, and
- *    requires it to be issued to this portal's client. Core then ends that
- *    Supabase session (`POST {issuer}/logout?scope=local`): the portal keeps no
- *    Supabase tokens, so the session has no further use. The sign-in page's
- *    own session, which carries single sign-on, is separate and continues;
- *  - a Private Cloud provider (Entra): scope from its browser settings
- *    (`openid email profile`) plus `nonce`; the ID token is re-verified with
- *    jose against the pinned key set (issuer, audience, `azp`, algorithms,
- *    nonce, directory tenant, subject claim).
- * Confidential clients authenticate with `client_secret_post`: Supabase
- * refuses openid-client's `client_secret_basic`.
+ * The flow is the authorization code flow with S256 PKCE, `state` and
+ * `nonce`, scope `openid email profile`, and `client_secret_post`. Each
+ * portal's client is the first-party client of its kind in
+ * `CLOUD_CORE_OIDC_CLIENTS` (`admin_portal`, `workspace_portal`), and its
+ * redirect URI, `<portal origin>/api/<portal>/auth/callback`, must be
+ * registered there exactly.
+ *
+ * Core learns who signed in only from the code exchange: the ID token is
+ * verified by openid-client and again with jose against Core's own key
+ * (`kid` mentra-oidc-1): `iss` equal to `CLOUD_CORE_OIDC_ISSUER`, `aud` equal
+ * to the portal's client ID (and `azp` when `aud` has several values),
+ * `nonce`, expiry. Its `sub` is the person's `mentraUserId`. The portal keeps
+ * no tokens: it requests no refresh token and stores only its own session.
  *
  * Redirect and callback URLs come only from configuration, never from `Host`
- * or forwarding headers. Tokens never reach the browser: it holds only the
- * portal's own session cookie (`__Host-` prefixed, HttpOnly, Secure,
- * SameSite=Lax, Path=/, no Domain).
+ * or forwarding headers. The browser holds only the portal's own session
+ * cookie (`__Host-` prefixed, HttpOnly, Secure, SameSite=Lax, Path=/, no
+ * Domain). Sign-out ends that session and offers the provider's end-session
+ * endpoint, the sign-in site's sign-out.
  */
 
 import {createLogger} from "@mentra/cloud-shared"
@@ -30,15 +30,14 @@ import type {Context} from "hono"
 import {deleteCookie, getCookie, setCookie} from "hono/cookie"
 import * as client from "openid-client"
 
-import {UserModel} from "../../models/user.model"
+import * as jose from "jose"
+
 import type {AppEnv} from "../../types/hono.types"
-import {findOrCreateUser, isDeletedAccount} from "../user.service"
-import {
-  ConfigurationError,
-  isDeployedEnvironment,
-  portalIdentityProvider,
-  type WebIdentityProvider,
-} from "./config"
+import {loadAccount} from "../oidc/account"
+import {clientOfKind, clientSecret} from "../oidc/clients"
+import {allowsInsecureIssuer, endSessionUrl, oidcIssuer} from "../oidc/config"
+import {OIDC_TOKEN_ALG, OIDC_TOKEN_KID, oidcVerificationKey} from "../oidc/keys"
+import {ConfigurationError} from "./config"
 import {
   createPortalSession,
   revokePortalSession,
@@ -46,9 +45,6 @@ import {
   type PortalKind,
   type SessionIdentity,
 } from "./browser-session.service"
-import {trustedEmail} from "./email-trust"
-import {IdentityProviderUnavailableError, verifyIdpAccessToken} from "./idp-tokens"
-import {KeySetUnavailableError, verifyWithKeySet} from "./key-sets"
 import {consumeLoginTransaction, LOGIN_TRANSACTION_TTL_MS, startLoginTransaction} from "./login-transaction.service"
 import {s256} from "./random"
 import {consumeRateLimit} from "./rate-limit.service"
@@ -56,7 +52,7 @@ import {safeReturnTo} from "./return-to"
 
 const logger = createLogger("core").child({service: "portal-signin"})
 
-const SUPABASE_SCOPE = "email profile"
+const PORTAL_SCOPE = "openid email profile"
 const DISCOVERY_TTL_MS = 60 * 60_000
 const ID_TOKEN_CLOCK_TOLERANCE_SEC = 30
 const LOGIN_LIMIT_PER_MINUTE = 20
@@ -64,16 +60,23 @@ const CALLBACK_LIMIT_PER_MINUTE = 30
 
 type C = Context<AppEnv>
 
-export interface PortalClient {
+/** A portal website as Core serves it: its origin and session cookie, from its configured URL alone. */
+export interface PortalSite {
   portal: PortalKind
-  clientId: string
-  clientSecret: string
   /** The portal's origin, from configuration. */
   origin: string
-  redirectUri: string
   cookieName: string
   /** HTTPS portal: `__Host-` cookies with Secure. A local HTTP portal drops both. */
   secureCookies: boolean
+}
+
+/** The portal's client at Core's sign-in server. */
+export interface PortalClient extends PortalSite {
+  /** Core's sign-in server: the issuer the portal signs in with. */
+  issuer: string
+  clientId: string
+  clientSecret: string
+  redirectUri: string
 }
 
 function clean(value: string | undefined): string {
@@ -81,42 +84,34 @@ function clean(value: string | undefined): string {
 }
 
 /**
- * The portal's client registration and URLs, from configuration. Throws
- * ConfigurationError when this portal's sign-in is not configured.
- *  - Hosted (Supabase): CLOUD_CORE_{ADMIN,ENTERPRISE}_PORTAL_{URL,CLIENT_ID,CLIENT_SECRET}.
- *  - Private Cloud: the admin portal uses the provider's browser settings and
- *    CLOUD_CORE_ADMIN_PORTAL_URL; the enterprise portal is a hosted product.
+ * The portal's site from `CLOUD_CORE_ADMIN_PORTAL_URL` or
+ * `CLOUD_CORE_ENTERPRISE_PORTAL_URL`, or null when unset. Sessions, sign-out
+ * and the CSRF check need only this.
  */
-export function portalClient(portal: PortalKind, provider: WebIdentityProvider = portalIdentityProvider()): PortalClient {
+export function portalSite(portal: PortalKind): PortalSite | null {
   const url = portal === "admin" ? clean(process.env.CLOUD_CORE_ADMIN_PORTAL_URL) : clean(process.env.CLOUD_CORE_ENTERPRISE_PORTAL_URL)
-  let clientId: string
-  let clientSecret: string
-  if (provider.kind === "supabase") {
-    clientId =
-      portal === "admin"
-        ? clean(process.env.CLOUD_CORE_ADMIN_PORTAL_CLIENT_ID)
-        : clean(process.env.CLOUD_CORE_ENTERPRISE_PORTAL_CLIENT_ID)
-    clientSecret =
-      portal === "admin"
-        ? clean(process.env.CLOUD_CORE_ADMIN_PORTAL_CLIENT_SECRET)
-        : clean(process.env.CLOUD_CORE_ENTERPRISE_PORTAL_CLIENT_SECRET)
-  } else {
-    if (portal !== "admin" || !provider.browser) throw new ConfigurationError(`${portal} portal sign-in is not configured`)
-    clientId = provider.browser.clientId
-    clientSecret = clean(process.env[provider.browser.clientSecretEnv])
-  }
-  if (!url || !clientId || !clientSecret) throw new ConfigurationError(`${portal} portal sign-in is not configured`)
+  if (!url) return null
   const origin = new URL(url).origin
   const secureCookies = origin.startsWith("https:")
-  return {
-    portal,
-    clientId,
-    clientSecret,
-    origin,
-    redirectUri: `${origin}/api/${portal}/auth/callback`,
-    cookieName: secureCookies ? `__Host-mentra_${portal}_session` : `mentra_${portal}_session`,
-    secureCookies,
+  return {portal, origin, cookieName: secureCookies ? `__Host-mentra_${portal}_session` : `mentra_${portal}_session`, secureCookies}
+}
+
+/**
+ * The portal's client at Core's sign-in server, from configuration. Throws
+ * ConfigurationError when this portal's sign-in is not configured: no issuer,
+ * no portal URL, no client of its kind, or its callback not registered.
+ */
+export function portalClient(portal: PortalKind): PortalClient {
+  const issuer = oidcIssuer()
+  const site = portalSite(portal)
+  const client = clientOfKind(portal === "admin" ? "admin_portal" : "workspace_portal")
+  const secret = client ? clientSecret(client) : null
+  if (!issuer || !site || !client || !secret) throw new ConfigurationError(`${portal} portal sign-in is not configured`)
+  const redirectUri = `${site.origin}/api/${portal}/auth/callback`
+  if (!client.redirectUris.includes(redirectUri)) {
+    throw new ConfigurationError(`${portal} portal sign-in: client "${client.clientId}" does not register ${redirectUri}`)
   }
+  return {...site, issuer, clientId: client.clientId, clientSecret: secret, redirectUri}
 }
 
 /** The portal's client, or null when its sign-in is not configured. */
@@ -138,28 +133,8 @@ function cookieOptions(secure: boolean, maxAgeSec: number) {
 }
 
 /** Set (or rotate) the portal's session cookie. */
-export function setPortalSessionCookie(c: C, pc: PortalClient, value: string): void {
+export function setPortalSessionCookie(c: C, pc: PortalSite, value: string): void {
   setCookie(c, pc.cookieName, value, cookieOptions(pc.secureCookies, Math.floor(SESSION_ABSOLUTE_MS / 1000)))
-}
-
-// --- after-sign-in hooks ---------------------------------------------------------
-
-export type AfterSignInHook = (identity: SessionIdentity) => Promise<void>
-const afterSignInHooks: AfterSignInHook[] = []
-
-/** Run `hook` after every portal sign-in. A throwing hook is logged and never blocks sign-in. */
-export function registerAfterSignInHook(hook: AfterSignInHook): void {
-  afterSignInHooks.push(hook)
-}
-
-async function runAfterSignInHooks(identity: SessionIdentity): Promise<void> {
-  for (const hook of afterSignInHooks) {
-    try {
-      await hook(identity)
-    } catch (err) {
-      logger.error({errorName: (err as Error)?.name}, "after-sign-in hook failed")
-    }
-  }
 }
 
 // --- discovery -----------------------------------------------------------------
@@ -171,33 +146,23 @@ export function resetPortalSigninCaches(): void {
   configurations.clear()
 }
 
-function allowsInsecureIssuer(issuer: string): boolean {
-  if (isDeployedEnvironment()) return false
-  const url = new URL(issuer)
-  return url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
-}
-
 /**
- * The provider's OpenID configuration for this client, discovered from its
- * issuer and cached for an hour, with `jwks_uri` pinned to the configured key
- * set. Plain HTTP is allowed only for a loopback issuer on an undeployed Core.
+ * Core's sign-in server's configuration for this portal's client, discovered
+ * from the issuer and cached for an hour. Plain HTTP is allowed only for a
+ * loopback issuer on an undeployed Core.
  */
-async function oidcConfiguration(provider: WebIdentityProvider, pc: PortalClient): Promise<client.Configuration> {
-  const key = `${provider.issuer}|${pc.clientId}`
+async function oidcConfiguration(pc: PortalClient): Promise<client.Configuration> {
+  const key = `${pc.issuer}|${pc.clientId}`
   const cached = configurations.get(key)
   if (cached && cached.expiresAt > Date.now()) return cached.config
-  const insecure = allowsInsecureIssuer(provider.issuer)
-  const auth = client.ClientSecretPost(pc.clientSecret)
-  const discovered = await client.discovery(
-    new URL(provider.issuer),
+  const insecure = allowsInsecureIssuer(pc.issuer)
+  const config = await client.discovery(
+    new URL(pc.issuer),
     pc.clientId,
-    {client_secret: pc.clientSecret},
-    auth,
+    {client_secret: pc.clientSecret, id_token_signed_response_alg: OIDC_TOKEN_ALG},
+    client.ClientSecretPost(pc.clientSecret),
     insecure ? {execute: [client.allowInsecureRequests]} : undefined,
   )
-  const metadata = JSON.parse(JSON.stringify(discovered.serverMetadata())) as client.ServerMetadata
-  const config = new client.Configuration({...metadata, jwks_uri: provider.jwksUrl}, pc.clientId, {client_secret: pc.clientSecret}, auth)
-  if (insecure) client.allowInsecureRequests(config)
   configurations.set(key, {config, expiresAt: Date.now() + DISCOVERY_TTL_MS})
   return config
 }
@@ -248,15 +213,8 @@ function clientIp(c: C): string {
 
 /** `GET /api/{admin,portal}/auth/login?return_to`: start the code flow. */
 export async function startPortalSignIn(c: C, portal: PortalKind): Promise<Response> {
-  let provider: WebIdentityProvider
-  let pc: PortalClient
-  try {
-    provider = portalIdentityProvider()
-    pc = portalClient(portal, provider)
-  } catch (err) {
-    if (err instanceof ConfigurationError) return notConfigured(c, portal)
-    throw err
-  }
+  const pc = portalClientIfConfigured(portal)
+  if (!pc) return notConfigured(c, portal)
   try {
     if (!(await consumeRateLimit(`portal-login:${portal}:ip:${clientIp(c)}`, LOGIN_LIMIT_PER_MINUTE, 60))) {
       return tooMany(c, portal)
@@ -268,9 +226,9 @@ export async function startPortalSignIn(c: C, portal: PortalKind): Promise<Respo
 
   let config: client.Configuration
   try {
-    config = await oidcConfiguration(provider, pc)
+    config = await oidcConfiguration(pc)
   } catch (err) {
-    logger.error({errorName: (err as Error)?.name, code: (err as {code?: string})?.code}, "identity provider discovery failed")
+    logger.error({errorName: (err as Error)?.name, code: (err as {code?: string})?.code}, "sign-in server discovery failed")
     return unavailable(c, portal)
   }
 
@@ -282,39 +240,27 @@ export async function startPortalSignIn(c: C, portal: PortalKind): Promise<Respo
     return unavailable(c, portal)
   }
   const {cookieValue, tx} = started
-  const parameters: Record<string, string> = {
+  const authorizationUrl = client.buildAuthorizationUrl(config, {
     redirect_uri: pc.redirectUri,
+    scope: PORTAL_SCOPE,
     state: tx.state,
+    nonce: tx.nonce,
     code_challenge: s256(tx.pkceVerifier),
     code_challenge_method: "S256",
-  }
-  if (provider.kind === "supabase") {
-    parameters.scope = SUPABASE_SCOPE
-  } else {
-    parameters.scope = provider.browser!.scopes.join(" ")
-    parameters.nonce = tx.nonce
-  }
-  const authorizationUrl = client.buildAuthorizationUrl(config, parameters)
+  })
   setCookie(c, txCookieName(pc.secureCookies), cookieValue, cookieOptions(pc.secureCookies, Math.floor(LOGIN_TRANSACTION_TTL_MS / 1000)))
   c.header("cache-control", "no-store")
   return c.redirect(authorizationUrl.href, 302)
 }
 
-class SignInRefused extends Error {
+export class SignInRefused extends Error {
   override name = "SignInRefused"
 }
 
 /** `GET /api/{admin,portal}/auth/callback`: redeem the code and start a portal session. */
 export async function finishPortalSignIn(c: C, portal: PortalKind): Promise<Response> {
-  let provider: WebIdentityProvider
-  let pc: PortalClient
-  try {
-    provider = portalIdentityProvider()
-    pc = portalClient(portal, provider)
-  } catch (err) {
-    if (err instanceof ConfigurationError) return notConfigured(c, portal)
-    throw err
-  }
+  const pc = portalClientIfConfigured(portal)
+  if (!pc) return notConfigured(c, portal)
 
   try {
     if (!(await consumeRateLimit(`portal-callback:${portal}:ip:${clientIp(c)}`, CALLBACK_LIMIT_PER_MINUTE, 60))) {
@@ -326,7 +272,7 @@ export async function finishPortalSignIn(c: C, portal: PortalKind): Promise<Resp
     const tx = await consumeLoginTransaction(txCookie, state)
     if (!tx || tx.portal !== portal) throw new SignInRefused("unknown, used or expired sign-in transaction")
 
-    const config = await oidcConfiguration(provider, pc)
+    const config = await oidcConfiguration(pc)
     // The callback URL Core verifies is its configured redirect URI with the
     // query string the provider sent, never one built from request headers.
     const callbackUrl = new URL(pc.redirectUri)
@@ -334,15 +280,11 @@ export async function finishPortalSignIn(c: C, portal: PortalKind): Promise<Resp
     const tokens = await client.authorizationCodeGrant(config, callbackUrl, {
       pkceCodeVerifier: tx.pkceVerifier,
       expectedState: tx.state,
-      ...(provider.kind === "oidc_provider" ? {expectedNonce: tx.nonce, idTokenExpected: true} : {}),
+      expectedNonce: tx.nonce,
+      idTokenExpected: true,
     })
+    const identity = await verifyPortalIdToken(pc, tokens.id_token, tx.nonce)
 
-    const identity =
-      provider.kind === "supabase"
-        ? await supabaseSignIn(provider, pc, tokens.access_token)
-        : await providerSignIn(provider, pc, tokens.id_token, tx.nonce)
-
-    await runAfterSignInHooks(identity)
     const {cookieValue} = await createPortalSession(portal, identity)
     setPortalSessionCookie(c, pc, cookieValue)
     deleteCookie(c, txCookieName(pc.secureCookies), {path: "/", secure: pc.secureCookies})
@@ -355,13 +297,14 @@ export async function finishPortalSignIn(c: C, portal: PortalKind): Promise<Resp
       return signInFailed(c, portal)
     }
     const code = (err as {code?: string})?.code
-    // openid-client protocol errors (bad state, a refused code, a malformed
-    // response) are refusals; a provider answering 5xx, a network failure or a
-    // database failure is an outage, and every failure fails closed.
+    // openid-client protocol errors (bad state, a refused code, an ID token
+    // that fails its checks) are refusals; the sign-in server answering 5xx, a
+    // network failure or a database failure is an outage, and every failure
+    // fails closed.
     const providerStatus = upstreamStatus(err)
     const protocolError = err instanceof client.ClientError || (typeof code === "string" && code.startsWith("OAUTH_"))
     if (protocolError && !(providerStatus !== undefined && providerStatus >= 500)) {
-      logger.warn({portal, code, errorName: (err as Error).name}, "portal sign-in refused by the identity provider exchange")
+      logger.warn({portal, code, errorName: (err as Error).name}, "portal sign-in refused by the code exchange")
       return signInFailed(c, portal)
     }
     logger.error({portal, errorName: (err as Error)?.name, code}, "portal sign-in failed")
@@ -369,7 +312,7 @@ export async function finishPortalSignIn(c: C, portal: PortalKind): Promise<Resp
   }
 }
 
-/** The HTTP status of the identity provider response behind an openid-client error, when there is one. */
+/** The HTTP status of the sign-in server's response behind an openid-client error, when there is one. */
 function upstreamStatus(err: unknown): number | undefined {
   const error = err as {status?: unknown; cause?: unknown}
   if (typeof error?.status === "number") return error.status
@@ -377,104 +320,60 @@ function upstreamStatus(err: unknown): number | undefined {
   return undefined
 }
 
-async function supabaseSignIn(provider: WebIdentityProvider, pc: PortalClient, accessToken: string): Promise<SessionIdentity> {
-  // An outage (IdentityProviderUnavailableError) propagates and fails closed with 503.
-  const identity = await verifyIdpAccessToken(accessToken)
-  if (!identity || identity.clientId !== pc.clientId) throw new SignInRefused("access token refused")
-  await endSupabaseSession(provider, accessToken)
-  return {
-    mentraUserId: identity.mentraUserId,
-    tenantId: identity.tenantId,
-    sourceId: provider.sourceId,
-    subject: identity.subject,
-    email: identity.email,
-    emailVerified: identity.emailVerified,
-    authTime: identity.sessionStartedAt ?? new Date(),
-  }
-}
-
 /**
- * End the Supabase session from the portal's code exchange
- * (`POST {issuer}/logout?scope=local` with that access token, and the
- * publishable key for Supabase's gateway). Best effort: a failure is logged
- * and never blocks sign-in.
+ * The person behind the ID token from the portal's code exchange, verified
+ * again with Core's own key: header `kid` mentra-oidc-1 and no `at+jwt` type,
+ * `iss`, `aud` (and `azp`), `nonce` and expiry. Core must still accept the
+ * person: not deleted, not signed in before their revocation, from a source
+ * still configured.
  */
-async function endSupabaseSession(provider: WebIdentityProvider, accessToken: string): Promise<void> {
-  try {
-    const headers: Record<string, string> = {authorization: `Bearer ${accessToken}`}
-    const publishable = clean(process.env.SUPABASE_ANON_KEY)
-    if (publishable) headers.apikey = publishable
-    const response = await fetch(`${provider.issuer}/logout?scope=local`, {
-      method: "POST",
-      headers,
-      signal: AbortSignal.timeout(5_000),
-    })
-    if (response.status !== 204) logger.warn({status: response.status}, "could not end the portal's Supabase session")
-  } catch (err) {
-    logger.warn({errorName: (err as Error)?.name}, "could not end the portal's Supabase session")
-  }
-}
-
-async function providerSignIn(
-  provider: WebIdentityProvider,
-  pc: PortalClient,
-  idToken: string | undefined,
-  nonce: string,
-): Promise<SessionIdentity> {
+export async function verifyPortalIdToken(pc: PortalClient, idToken: string | undefined, nonce: string): Promise<SessionIdentity> {
   if (!idToken) throw new SignInRefused("no ID token")
-  let payload
+  let payload: jose.JWTPayload
   try {
-    ;({payload} = await verifyWithKeySet(idToken, provider.jwksUrl, {
-      issuer: provider.issuer,
+    const header = jose.decodeProtectedHeader(idToken)
+    const typ: unknown = header.typ
+    if (header.kid !== OIDC_TOKEN_KID || (typ !== undefined && (typeof typ !== "string" || typ.toUpperCase() !== "JWT"))) {
+      throw new SignInRefused("ID token header refused")
+    }
+    ;({payload} = await jose.jwtVerify(idToken, await oidcVerificationKey(), {
+      issuer: pc.issuer,
       audience: pc.clientId,
-      algorithms: provider.algorithms,
+      algorithms: [OIDC_TOKEN_ALG],
       clockTolerance: ID_TOKEN_CLOCK_TOLERANCE_SEC,
+      requiredClaims: ["sub", "iat", "exp"],
     }))
   } catch (err) {
-    if (err instanceof KeySetUnavailableError) throw new IdentityProviderUnavailableError(err.message)
+    if (err instanceof SignInRefused) throw err
     throw new SignInRefused("ID token refused")
   }
   if (payload.nonce !== nonce) throw new SignInRefused("ID token nonce mismatch")
-  if (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== pc.clientId) {
-    throw new SignInRefused("ID token azp mismatch")
-  }
-  if (provider.expectedDirectoryTenantId) {
-    const directoryTenant = provider.directoryTenantClaim ? payload[provider.directoryTenantClaim] : undefined
-    if (directoryTenant !== provider.expectedDirectoryTenantId) throw new SignInRefused("ID token directory tenant mismatch")
-  }
-  const subject = payload[provider.subjectClaim]
-  if (typeof subject !== "string" || !subject) throw new SignInRefused("ID token has no subject")
-  const email = trustedEmail({
-    provider,
-    email: payload[provider.browser?.emailClaim ?? "email"],
-    tokenEmailVerified: payload.email_verified,
-  })
-  const user = await findOrCreateUser({tenantId: provider.tenantId, tenantUserId: subject})
-  if (isDeletedAccount(user)) throw new SignInRefused("account is deleted")
-  const revokedAt = (await UserModel.findOne({mentraUserId: user.mentraUserId}, {webSignInsRevokedAt: 1}).lean())?.webSignInsRevokedAt
-  const issuedAt = typeof payload.iat === "number" ? new Date(payload.iat * 1000) : new Date()
-  if (revokedAt && issuedAt.getTime() < revokedAt.getTime()) throw new SignInRefused("sign-in from before a revocation")
+  if (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== pc.clientId) throw new SignInRefused("ID token azp mismatch")
+  const mentraUserId = payload.sub!
+  const authTimeSec = typeof payload.auth_time === "number" ? payload.auth_time : (payload.iat as number)
+  const account = await loadAccount(mentraUserId, authTimeSec)
+  if (!account) throw new SignInRefused("the person is no longer accepted")
   return {
-    mentraUserId: user.mentraUserId,
-    tenantId: provider.tenantId,
-    sourceId: provider.sourceId,
-    subject,
-    email: email.email,
-    emailVerified: email.verified,
-    authTime: issuedAt,
+    mentraUserId,
+    tenantId: account.tenantId,
+    sourceId: account.sourceId,
+    subject: account.subject,
+    email: typeof payload.email === "string" ? payload.email : null,
+    emailVerified: payload.email_verified === true,
+    authTime: new Date(authTimeSec * 1000),
   }
 }
 
 /** `POST /api/{admin,portal}/auth/logout`: end the portal session; offer the identity provider's sign-out. */
 export async function signOutPortal(c: C, portal: PortalKind): Promise<Response> {
   c.header("cache-control", "no-store")
-  const pc = portalClientIfConfigured(portal)
+  const pc = portalSite(portal)
   if (!pc) return c.json({error: "not_configured", error_description: "portal sign-in is not configured"}, 503)
   if (!isSameOrigin(c, pc.origin)) return c.json({error: "forbidden", error_description: "cross-origin request refused"}, 403)
   const value = getCookie(c, pc.cookieName)
   if (value) await revokePortalSession(value, "sign_out")
   deleteCookie(c, pc.cookieName, {path: "/", secure: pc.secureCookies})
-  return c.json({signOutUrl: clean(process.env.CLOUD_CORE_IDP_SIGNOUT_URL) || null})
+  return c.json({signOutUrl: endSessionUrl()})
 }
 
 /**

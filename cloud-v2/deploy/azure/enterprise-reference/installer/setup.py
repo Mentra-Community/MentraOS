@@ -38,11 +38,12 @@ ADMIN_KEY_SECRET = 'mentra-admin-key'
 UPDATABLE_KEYS = {'sourceRegistryMirror', 'coreAdminEmails', 'teamsGraphTenantId', 'teamsGraphClientId',
                   'teamsGraphOrganizerId', 'verifiedEmailDomains', 'adminPortalSignIn'}
 GUID = re.compile(r'^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$')
-# Admin portal sign-in: Core signs people in as the Core API app, with this client
-# secret from Key Vault, and Entra returns them to this path on Core's host.
+# Admin portal sign-in: Core's sign-in server signs people in as the Core API app,
+# with this client secret from Key Vault, and Entra returns them to this path on
+# Core's host (the sign-in server's callback for the provider "workforce").
 PORTAL_SECRET = 'entra-browser-client-secret'
 PORTAL_SECRET_LABEL = 'Mentra admin portal'
-PORTAL_CALLBACK = '/api/admin/auth/callback'
+PORTAL_CALLBACK = '/interaction/callback/workforce'
 PORTAL_STEP = 'Admin portal sign-in'
 SIGN_IN_SCOPES = ('openid', 'email', 'profile')
 # Core treats an Entra email as verified only in the organization's own domains,

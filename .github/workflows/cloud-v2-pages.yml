@@ -77,11 +77,6 @@ jobs:
               echo "Refusing to deploy prod from ref '${{ github.ref_name }}'; prod deploys are only allowed from main." >&2
               exit 1
             fi
-            # Mentra's sign-in page serves every environment, so it ships like production.
-            if [[ "${site}" == "account" && "${env_name}" != "prod" ]]; then
-              echo "The account site serves every environment; deploy it with environment prod, from main." >&2
-              exit 1
-            fi
           else
             case "${{ github.ref_name }}" in
               dev) env_name="dev" ;;
@@ -101,9 +96,9 @@ jobs:
       - name: Deploy Pages
         working-directory: cloud-v2
         env:
-          # Public build-time values for Mentra's sign-in page (account site),
-          # used only by the prod deployment. Unset: the site is skipped.
+          # Public build-time values for each environment's sign-in site (the
+          # account site): the one Supabase project behind every environment.
+          # Unset: the site is skipped.
           ACCOUNT_SUPABASE_URL: ${{ vars.ACCOUNT_SUPABASE_URL }}
           ACCOUNT_SUPABASE_PUBLISHABLE_KEY: ${{ vars.ACCOUNT_SUPABASE_PUBLISHABLE_KEY }}
-          ACCOUNT_FIRST_PARTY_CLIENT_IDS: ${{ vars.ACCOUNT_FIRST_PARTY_CLIENT_IDS }}
         run: bun scripts/deploy-pages.ts "${{ steps.target.outputs.environment }}" "${{ steps.target.outputs.site }}"

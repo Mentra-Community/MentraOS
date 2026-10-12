@@ -15,8 +15,12 @@ import {randomToken, sha256Hex} from "./random"
 export const LOGIN_TRANSACTION_TTL_MS = 10 * 60_000
 const MAX_COOKIE_LENGTH = 256
 
+/** Whose sign-in this is: a portal's, or the sign-in server's at the customer's identity provider. */
+export type LoginTransactionKind = PortalKind | "provider"
+
 export interface LoginTransaction {
-  portal: PortalKind
+  portal: LoginTransactionKind
+  interactionUid: string | null
   state: string
   nonce: string
   pkceVerifier: string
@@ -25,13 +29,15 @@ export interface LoginTransaction {
 }
 
 export async function startLoginTransaction(
-  portal: PortalKind,
+  portal: LoginTransactionKind,
   returnTo: string,
   now: Date = new Date(),
+  opts: {interactionUid?: string} = {},
 ): Promise<{cookieValue: string; tx: LoginTransaction}> {
   const cookieValue = randomToken()
   const tx: LoginTransaction = {
     portal,
+    interactionUid: opts.interactionUid ?? null,
     state: randomToken(),
     nonce: randomToken(),
     pkceVerifier: randomToken(),
@@ -56,7 +62,8 @@ export async function consumeLoginTransaction(
   }).lean()
   if (!row) return null
   return {
-    portal: row.portal as PortalKind,
+    portal: row.portal as LoginTransactionKind,
+    interactionUid: row.interactionUid ?? null,
     state: row.state,
     nonce: row.nonce,
     pkceVerifier: row.pkceVerifier,

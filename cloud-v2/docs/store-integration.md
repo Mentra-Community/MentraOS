@@ -43,10 +43,11 @@ Store holds one value from that list. Keep both in the secret manager.
 | `POST /users/resolve-email` | `{mentraUserId}` of the Mentra account whose confirmed email this is (the Core user is created on first use), or `404 user_not_found`. |
 
 - **Principals.** A bearer credential is what a person or a key presented to the
-  Store: an access token from the deployment's identity provider (on hosted
-  Core, the Supabase access token of the Developer Console or the CLI, from a
-  client on `CLOUD_CORE_WEB_CLIENT_IDS`) or a Core key. Phone Core tokens and ID
-  tokens are refused. A `mentra_user` credential is the Store vouching for a
+  Store: a Core access token from the Core's sign-in server (issued to the
+  Developer Console or the CLI, first-party clients in
+  `CLOUD_CORE_OIDC_CLIENTS`; see [`signin.md`](signin.md)) or a Core key. Phone
+  Core tokens, ID tokens, Supabase tokens and another environment's tokens are
+  refused. A `mentra_user` credential is the Store vouching for a
   person it already authenticated; that person is never an Organization Admin
   here.
 - **Package scope.** A key limited to some packages is refused

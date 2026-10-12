@@ -10,7 +10,7 @@ param cloudImage string
 @description('Existing Azure Container Registry created by bootstrap.bicep.')
 param registryName string
 
-@description('Existing Key Vault created by bootstrap.bicep. It holds refresh-token-pepper, the mentra- and miniapp- JWT key pairs, entra-browser-client-secret (the Core API app\'s client secret for admin portal sign-in) and, when Graph meeting creation is enabled, teams-graph-client-secret-<teamsGraphClientId>.')
+@description('Existing Key Vault created by bootstrap.bicep. It holds refresh-token-pepper, the mentra- and miniapp- JWT key pairs, oidc-cookie-keys and oidc-admin-portal-client-secret (Core\'s sign-in server), entra-browser-client-secret (the Core API app\'s client secret, with which Core\'s sign-in server signs people in through Entra) and, when Graph meeting creation is enabled, teams-graph-client-secret-<teamsGraphClientId>.')
 param keyVaultName string
 
 param tenantId string
@@ -23,7 +23,7 @@ param coreAdminEmails string = ''
 @description('Email domains the customer\'s Entra directory issues, each subdomain listed separately: lowercase, no trailing dot, no Mentra domain. Core treats an Entra email as verified only in these domains.')
 param verifiedEmailDomains array = []
 
-@description('Admin portal sign-in with the customer\'s Entra directory. Requires the Key Vault secret entra-browser-client-secret, the Core API app\'s client secret, granted to Core by access.bicep with the same setting. When false, Core serves the admin portal but its sign-in is not configured.')
+@description('Admin portal sign-in with the customer\'s Entra directory, through Core\'s sign-in server on Core\'s host. Requires the Key Vault secrets entra-browser-client-secret (the Core API app\'s client secret), oidc-cookie-keys and oidc-admin-portal-client-secret, granted to Core by access.bicep with the same setting. When false, Core serves the admin portal but its sign-in is not configured.')
 param adminPortalSignIn bool = false
 
 @description('Durable Core attachment storage account. The default is stable for this resource group.')
@@ -241,6 +241,15 @@ var oidcProviders = [
     }
   } : {})
 ]
+// The admin portal is the one client of Core's sign-in server on a Private Cloud.
+var oidcClients = [
+  {
+    clientId: 'admin-portal'
+    kind: 'admin_portal'
+    secretEnv: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET'
+    redirectUris: ['${coreOrigin}/api/admin/auth/callback']
+  }
+]
 var mongoConnectionString = replace(mongo.listConnectionStrings().connectionStrings[0].connectionString, '/?', '/mentra-private?')
 var resolvedManagedMiniapps = map(managedMiniapps, app => {
       packageName: app.packageName
@@ -362,6 +371,8 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
         { name: 'miniapp-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-public-key', identity: coreIdentity.id }
       ], adminPortalSignIn ? [
         { name: 'entra-browser-client-secret', keyVaultUrl: '${vaultUri}secrets/entra-browser-client-secret', identity: coreIdentity.id }
+        { name: 'oidc-cookie-keys', keyVaultUrl: '${vaultUri}secrets/oidc-cookie-keys', identity: coreIdentity.id }
+        { name: 'oidc-admin-portal-client-secret', keyVaultUrl: '${vaultUri}secrets/oidc-admin-portal-client-secret', identity: coreIdentity.id }
       ] : [])
     }
     template: {
@@ -384,14 +395,19 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'CLOUD_STORAGE_LOCAL_DIR', value: '/mnt/core-attachments' }
             { name: 'CLOUD_CORE_OIDC_PROVIDERS', value: string(oidcProviders) }
             // The admin portal is the image's built portal, served by Core on
-            // Core's host; Entra redirects to <portal>/api/admin/auth/callback.
+            // Core's host, and signs in through Core's sign-in server there.
             { name: 'CLOUD_CORE_ADMIN_PORTAL_URL', value: coreOrigin }
             { name: 'CLOUD_CORE_ADMIN_STATIC_DIR', value: '/app/admin-dist' }
-            { name: 'CLOUD_CORE_IDP_SIGNOUT_URL', value: '${loginEndpoint}${tenantId}/oauth2/v2.0/logout' }
             { name: 'LOG_STDOUT_JSON', value: 'true' }
             { name: 'SERVICE_NAME', value: 'core-enterprise-reference' }
           ], adminPortalSignIn ? [
+            // Core's sign-in server, on Core's host; Entra returns people to
+            // <core>/interaction/callback/workforce.
             { name: 'ENTRA_BROWSER_CLIENT_SECRET', secretRef: 'entra-browser-client-secret' }
+            { name: 'CLOUD_CORE_OIDC_ISSUER', value: coreOrigin }
+            { name: 'CLOUD_CORE_OIDC_COOKIE_KEYS', secretRef: 'oidc-cookie-keys' }
+            { name: 'CLOUD_CORE_OIDC_CLIENTS', value: string(oidcClients) }
+            { name: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET', secretRef: 'oidc-admin-portal-client-secret' }
           ] : [])
           resources: { cpu: json('0.5'), memory: '1Gi' }
           volumeMounts: [{ volumeName: 'core-attachments', mountPath: '/mnt/core-attachments' }]

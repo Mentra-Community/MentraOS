@@ -1,5 +1,5 @@
-import { authErrorCode, isAuthSessionError, isRateLimited } from "./auth-errors";
-import { authorizeUrl } from "./links";
+import { authErrorCode, isRateLimited } from "./auth-errors";
+import { loginUrl } from "./links";
 import { MESSAGES } from "./messages";
 import type { AccountAuthClient, SocialProvider } from "./supabase";
 
@@ -12,12 +12,11 @@ function fail(message: string): ActionResult {
 }
 
 /**
- * Ends this site's session only.
+ * Forgets the page's Supabase session.
  *
  * Never call `signOut()` without `{scope: "local"}`. The supabase-js default
- * is the global scope, which revokes every session of the account: the admin
- * portal, the enterprise portal, the Developer Console and the CLI would all
- * be signed out too.
+ * is the global scope, which revokes every Supabase session of the account,
+ * including the Mentra App's.
  */
 export async function signOutLocally(auth: AccountAuthClient): Promise<void> {
   try {
@@ -46,20 +45,20 @@ export async function signInWithEmail(
 }
 
 /**
- * Sends the person to Google or Apple. They come back to the same
- * authorization request, where the PKCE code is exchanged by supabase-js.
+ * Sends the person to Google or Apple. They come back to the login route of
+ * the same sign-in, where supabase-js exchanges the PKCE code.
  */
 export async function startSocialSignIn(
   auth: AccountAuthClient,
   provider: SocialProvider,
   origin: string,
-  authorizationId: string,
+  interactionId: string,
 ): Promise<ActionResult> {
   const failure = fail(provider === "google" ? MESSAGES.googleFailed : MESSAGES.appleFailed);
   try {
     const { error } = await auth.signInWithOAuth({
       provider,
-      options: { redirectTo: authorizeUrl(origin, authorizationId) },
+      options: { redirectTo: loginUrl(origin, interactionId) },
     });
     return error ? failure : ok;
   } catch {
@@ -74,15 +73,14 @@ export type SignUpResult =
 
 /**
  * Creates an account. An address that already has an account gets the same
- * "check your email" result as a new one.
+ * "check your email" result as a new one. The confirmation link returns to
+ * the sign-in in progress, or to the site's root, which shows its outcome.
  */
 export async function signUpWithEmail(
   auth: AccountAuthClient,
-  input: { email: string; password: string; origin: string; authorizationId: string | null },
+  input: { email: string; password: string; origin: string; interactionId: string | null },
 ): Promise<SignUpResult> {
-  const emailRedirectTo = input.authorizationId
-    ? authorizeUrl(input.origin, input.authorizationId)
-    : `${input.origin}/`;
+  const emailRedirectTo = input.interactionId ? loginUrl(input.origin, input.interactionId) : `${input.origin}/`;
   try {
     const { data, error } = await auth.signUp({
       email: input.email,
@@ -100,45 +98,5 @@ export async function signUpWithEmail(
     return { kind: "error", message: MESSAGES.signUpFailed };
   } catch {
     return { kind: "error", message: MESSAGES.signUpFailed };
-  }
-}
-
-/** Always reports the same result whether or not the address has an account. */
-export async function requestPasswordReset(
-  auth: AccountAuthClient,
-  input: { email: string; origin: string; authorizationId: string | null },
-): Promise<ActionResult> {
-  const redirectTo = input.authorizationId
-    ? `${input.origin}/reset?authorization_id=${encodeURIComponent(input.authorizationId)}`
-    : `${input.origin}/reset`;
-  try {
-    const { error } = await auth.resetPasswordForEmail(input.email, { redirectTo });
-    if (!error) return ok;
-    return fail(isRateLimited(error) ? MESSAGES.rateLimited : MESSAGES.resetFailed);
-  } catch {
-    return fail(MESSAGES.resetFailed);
-  }
-}
-
-export type UpdatePasswordResult = ActionResult & { expired?: boolean };
-
-export async function updatePassword(
-  auth: AccountAuthClient,
-  password: string,
-): Promise<UpdatePasswordResult> {
-  try {
-    const { error } = await auth.updateUser({ password });
-    if (!error) return ok;
-    if (isAuthSessionError(error)) return { ok: false, message: MESSAGES.resetExpired, expired: true };
-    const code = authErrorCode(error);
-    if (code === "weak_password") return fail(MESSAGES.weakPassword);
-    if (code === "same_password") return fail(MESSAGES.samePassword);
-    if (code === "reauthentication_needed") {
-      return { ok: false, message: MESSAGES.resetExpired, expired: true };
-    }
-    if (isRateLimited(error)) return fail(MESSAGES.rateLimited);
-    return fail(MESSAGES.updatePasswordFailed);
-  } catch {
-    return fail(MESSAGES.updatePasswordFailed);
   }
 }

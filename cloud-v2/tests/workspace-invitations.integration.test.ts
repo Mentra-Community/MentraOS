@@ -57,6 +57,7 @@ import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {membershipRow} from "./support/membership-row"
 import {
+  coreAccessToken,
   applyEnv,
   HOSTED_ENV,
   PORTAL_ORIGIN,
@@ -1635,8 +1636,9 @@ describe("through the workspace API, signed in with the fake identity provider",
     restoreEnv()
   })
 
-  const bearer = async (sub: string, email: string, claims: Record<string, unknown> = {}) => ({
-    authorization: `Bearer ${await idp.mint({sub, aud: "authenticated", client_id: "console-client", email, ...claims})}`,
+  // The email is verified as Core recorded it at the person's sign-in.
+  const bearer = async (sub: string, email: string, emailVerified = true) => ({
+    authorization: `Bearer ${await coreAccessToken({sub, email, emailVerified})}`,
     "content-type": "application/json",
   })
   const post = (path: string, headers: Record<string, string>, body: unknown) =>
@@ -1669,7 +1671,7 @@ describe("through the workspace API, signed in with the fake identity provider",
     // The invitee's GoTrue account has not confirmed the address. The token's own claims cannot vouch
     // for it: verification comes only from the account.
     idp.registerUser({sub: "supa-invitee", email: "invitee@example.test", emailConfirmed: false})
-    const unverified = await bearer("supa-invitee", "invitee@example.test", {email_verified: true})
+    const unverified = await bearer("supa-invitee", "invitee@example.test", false)
     const peeked = await post("/api/workspaces/invitations/peek", unverified, {token})
     expect(peeked.status).toBe(200)
     expect(await peeked.json()).toEqual({
@@ -1711,7 +1713,8 @@ describe("through the workspace API, signed in with the fake identity provider",
 
     // The token's email claim says the invited address, but the account's confirmed email is another one.
     idp.registerUser({sub: "supa-other", email: "other@example.test", emailConfirmed: true})
-    const other = await bearer("supa-other", "invitee@example.test")
+    // The account's own (verified) email is other@: Core records it at sign-in, whatever else the person claims.
+    const other = await bearer("supa-other", "other@example.test")
     const refused = await post("/api/workspaces/invitations/accept", other, {token})
     expect(refused.status).toBe(403)
     expect(await refused.json()).toMatchObject({error: "email_mismatch"})
@@ -1733,7 +1736,7 @@ describe("through the workspace API, signed in with the fake identity provider",
 
     // Unverified: refused, as accepting is.
     idp.registerUser({sub: "supa-invitee", email: "invitee@example.test", emailConfirmed: false})
-    const unverified = await get("/api/workspaces/invitations/mine", await bearer("supa-invitee", "invitee@example.test"))
+    const unverified = await get("/api/workspaces/invitations/mine", await bearer("supa-invitee", "invitee@example.test", false))
     expect(unverified.status).toBe(403)
     expect(await unverified.json()).toMatchObject({error: "email_unverified"})
 

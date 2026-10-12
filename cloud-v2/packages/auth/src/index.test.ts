@@ -19,8 +19,13 @@ const privatePem = keypair.privateKey.export({ type: "pkcs8", format: "pem" }).t
 const publicPem = keypair.publicKey.export({ type: "spki", format: "pem" }).toString();
 const publicKey = await jose.importSPKI(publicPem, "EdDSA", { extractable: true });
 const publicJwk = await jose.exportJWK(publicKey);
+// Core's key set publishes keys for several token types, some under the same
+// key material; the sign-in server's kid stands in for them here.
 const jwks = {
-  keys: [{ ...publicJwk, alg: "EdDSA", use: "sig", kid: "mentra-miniapp-1" }],
+  keys: [
+    { ...publicJwk, alg: "EdDSA", use: "sig", kid: "mentra-miniapp-1" },
+    { ...publicJwk, alg: "EdDSA", use: "sig", kid: "mentra-oidc-1" },
+  ],
 };
 
 const server = Bun.serve({
@@ -263,6 +268,49 @@ describe("@mentra/auth multi-environment JWKS fallback", () => {
     expect(mentraJwksUrls()).toEqual(MENTRA_JWKS_URLS);
     expect(mentraJwksUrls()).toHaveLength(4);
     expect(mentraJwksUrl()).toBe(MENTRA_JWKS_URLS[0]);
+  });
+});
+
+describe("token type and key pinning", () => {
+  const urlA = `${server.url.origin}/.well-known/jwks.json`;
+  test("a token under another Core key ID is refused, even with a valid signature and claims", async () => {
+    const token = await mintWithKey(privatePem, TEST_PACKAGE, { kid: "mentra-oidc-1" });
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl: urlA });
+    await expect(auth.verifyToken(token)).rejects.toThrow("unexpected key ID");
+  });
+
+  test("a typed at+jwt token is refused", async () => {
+    const privateKey = await jose.importPKCS8(privatePem, "EdDSA");
+    const token = await new jose.SignJWT({ tenantId: "test-oem" })
+      .setProtectedHeader({ alg: "EdDSA", kid: "mentra-miniapp-1", typ: "at+jwt" })
+      .setIssuer(TEST_ISSUER)
+      .setAudience(TEST_PACKAGE)
+      .setSubject("user_123")
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(privateKey);
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl: urlA });
+    await expect(auth.verifyToken(token)).rejects.toThrow("unexpected token type");
+  });
+
+  test.each([1, {}])("a non-string typ (%p) is refused, never a TypeError", async (typ) => {
+    const privateKey = await jose.importPKCS8(privatePem, "EdDSA");
+    const token = await new jose.SignJWT({ tenantId: "test-oem" })
+      .setProtectedHeader({ alg: "EdDSA", kid: "mentra-miniapp-1", typ } as unknown as jose.JWTHeaderParameters)
+      .setIssuer(TEST_ISSUER)
+      .setAudience(TEST_PACKAGE)
+      .setSubject("user_123")
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(privateKey);
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl: urlA });
+    await expect(auth.verifyToken(token)).rejects.toThrow("unexpected token type");
+  });
+
+  test("keyIds widens the accepted key IDs for a rotation", async () => {
+    const token = await mintWithKey(privatePem, TEST_PACKAGE, { kid: "mentra-oidc-1" });
+    const auth = createMentraAuth({ packageName: TEST_PACKAGE, jwksUrl: urlA, keyIds: ["mentra-miniapp-1", "mentra-oidc-1"] });
+    await expect(auth.verifyToken(token)).resolves.toMatchObject({ mentraUserId: "user_b" });
   });
 });
 

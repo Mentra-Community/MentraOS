@@ -52,6 +52,7 @@ import {
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {
+  coreAccessToken,
   ADMIN_COOKIE,
   ADMIN_EMAIL,
   ADMIN_ORIGIN,
@@ -120,7 +121,7 @@ async function person(key: string, options: {email?: string; emailVerified?: boo
   const email = options.email ?? `${key}@example.test`
   const emailVerified = options.emailVerified ?? true
   idp.registerUser({sub, email, emailConfirmed: emailVerified})
-  const bearer = await idp.mint({sub, aud: "authenticated", client_id: "console-client", email})
+  const bearer = await coreAccessToken({sub, email, emailVerified})
   const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: sub})
   const {cookieValue} = await createPortalSession("admin", {
     mentraUserId,

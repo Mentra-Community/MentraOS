@@ -16,7 +16,6 @@ const contoso: WebIdentityProvider = {
   algorithms: ["RS256"],
   verifiedEmailDomains: ["contoso.com"],
   browser: null,
-  accessToken: null,
 }
 
 const savedAdmins = process.env.CLOUD_CORE_ADMIN_EMAILS

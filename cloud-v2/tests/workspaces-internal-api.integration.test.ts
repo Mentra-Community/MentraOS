@@ -60,6 +60,7 @@ import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {membershipRow} from "./support/membership-row"
 import {
+  coreAccessToken,
   ADMIN_EMAIL,
   applyEnv,
   HOSTED_ENV,
@@ -85,8 +86,8 @@ const MODELS = [
 const SERVICE_SECRETS = {store: ["store-s1", "store-s0"]}
 const BASE = "https://core.test"
 const API = "/api/internal/workspaces"
-/** A web client of this deployment (`CLOUD_CORE_WEB_CLIENT_IDS`), as the Developer Console's server is. */
-const WEB_CLIENT = "console-client"
+/** A first-party client of Core's sign-in server, as the Developer Console's server is. */
+const WEB_CLIENT = "console"
 /** The contract's principal for a person: nothing of Core's own (`tenantId`, `via`). */
 const USER_PRINCIPAL_KEYS = ["email", "emailVerified", "isOrganizationAdmin", "kind", "mentraUserId"]
 
@@ -101,7 +102,7 @@ let restoreEnv: () => void = () => {}
 // --- Fixtures --------------------------------------------------------------
 
 interface Person {
-  /** A Supabase access token issued to a web client, as the Store receives it. */
+  /** A Core access token from Core's sign-in server, as the Store receives it. */
   bearer: string
   sub: string
   email: string
@@ -109,14 +110,14 @@ interface Person {
 }
 
 /**
- * A person with a Supabase account (confirmed email unless told otherwise) and a bearer token for a
- * web client. Their Core user is the one the phone has: `("mentra", sub)`.
+ * A person with a Supabase account (confirmed email unless told otherwise), signed in through Core's
+ * sign-in server, and their Core access token. Their Core user is the one the phone has: `("mentra", sub)`.
  */
 async function person(key: string, options: {email?: string; emailConfirmed?: boolean} = {}): Promise<Person> {
   const sub = `supa-${key}`
   const email = options.email ?? `${key}@example.test`
   idp.registerUser({sub, email, emailConfirmed: options.emailConfirmed ?? true})
-  const bearer = await idp.mint({sub, aud: "authenticated", client_id: WEB_CLIENT, email})
+  const bearer = await coreAccessToken({sub, email, emailVerified: options.emailConfirmed ?? true, clientId: WEB_CLIENT})
   const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: sub})
   return {bearer, sub, email, mentraUserId}
 }
@@ -713,13 +714,12 @@ describe("POST /authorize", () => {
   test("an allowlisted email the account directory has not confirmed is no Organization Admin, whatever the token claims", async () => {
     const {workspaceId} = await newWorkspace()
     const claimant = await person("claimant", {email: ADMIN_EMAIL, emailConfirmed: false})
-    const claiming = await idp.mint({
+    const claiming = await coreAccessToken({
       sub: claimant.sub,
-      aud: "authenticated",
-      client_id: WEB_CLIENT,
       email: ADMIN_EMAIL,
-      email_verified: true,
-      user_metadata: {email_verified: true},
+      emailVerified: false,
+      clientId: WEB_CLIENT,
+      claims: {email: ADMIN_EMAIL, email_verified: true},
     })
 
     for (const token of [claimant.bearer, claiming]) {
@@ -844,31 +844,6 @@ describe("POST /authorize", () => {
     }
   })
 
-  test("an identity provider that cannot be asked is 503 temporarily_unavailable, retryable", async () => {
-    const {workspaceId} = await newWorkspace()
-    const newcomer = await person("newcomer")
-    idp.outage = true
-
-    const reply = await raw("POST", `${API}/authorize`, {
-      body: {credential: {type: "bearer", token: newcomer.bearer}, workspaceId},
-    })
-
-    expect(reply.status).toBe(503)
-    expect(reply.json).toMatchObject({error: "temporarily_unavailable"})
-    await expectClientError(
-      store().authorize({credential: {type: "bearer", token: newcomer.bearer}, workspaceId}),
-      "core_unavailable",
-      503,
-    )
-
-    // Once the provider answers, the same token works.
-    idp.outage = false
-    expect(await store().authorize({credential: {type: "bearer", token: newcomer.bearer}, workspaceId})).toMatchObject({
-      allowed: false,
-      reason: "not_a_member",
-    })
-  })
-
   test("an authorize answer has exactly the contract's fields, at every level", async () => {
     const {workspaceId, developer} = await newWorkspace()
 
@@ -916,14 +891,14 @@ describe("POST /principal", () => {
     expect(Object.keys(reply.json.principal).sort()).toEqual(USER_PRINCIPAL_KEYS)
   })
 
-  test("the person is the phone's Core user, created on first sight of the token", async () => {
-    idp.registerUser({sub: "supa-first-sight", email: "first@example.test", emailConfirmed: true})
-    const bearer = await idp.mint({sub: "supa-first-sight", aud: "authenticated", client_id: WEB_CLIENT})
-    expect(await UserModel.countDocuments({tenantUserId: "supa-first-sight"})).toBe(0)
+  test("the person is the phone's Core user", async () => {
+    const phoneUser = await findOrCreateUser({tenantId: "mentra", tenantUserId: "supa-first-sight"})
+    const bearer = await coreAccessToken({sub: "supa-first-sight", email: "first@example.test", clientId: WEB_CLIENT})
 
     const resolved = await store().resolvePrincipal(bearer)
 
     const user = await UserModel.findOne({tenantId: "mentra", tenantUserId: "supa-first-sight"}).lean()
+    expect(user!.mentraUserId).toBe(phoneUser.mentraUserId)
     expect(resolved?.principal).toEqual({
       kind: "user",
       mentraUserId: user!.mentraUserId,
@@ -948,15 +923,14 @@ describe("POST /principal", () => {
     })
   })
 
-  test("email verification comes from the account directory, never from the token", async () => {
+  test("email verification is what Core recorded at sign-in, never the token's claims", async () => {
     const unconfirmed = await person("unconfirmed", {email: ADMIN_EMAIL, emailConfirmed: false})
-    const claiming = await idp.mint({
+    const claiming = await coreAccessToken({
       sub: unconfirmed.sub,
-      aud: "authenticated",
-      client_id: WEB_CLIENT,
       email: ADMIN_EMAIL,
-      email_verified: true,
-      user_metadata: {email_verified: true},
+      emailVerified: false,
+      clientId: WEB_CLIENT,
+      claims: {email: ADMIN_EMAIL, email_verified: true},
     })
 
     for (const token of [unconfirmed.bearer, claiming]) {
@@ -991,10 +965,14 @@ describe("POST /principal", () => {
       "   ",
       "msk_local_garbage",
       `mak_local_${"0".repeat(26)}.${"A".repeat(43)}`,
-      // Signed with a key the provider never published.
-      await idp.mint({sub: "supa-owner", aud: "authenticated", client_id: WEB_CLIENT}, {alg: "RS256", key: "attacker"}),
+      // Signed with a key Core never published.
+      await new jose.SignJWT({client_id: WEB_CLIENT, sub: "mu_forged", aud: "urn:mentra:core", iss: process.env.CLOUD_CORE_OIDC_ISSUER})
+        .setProtectedHeader({alg: "EdDSA", kid: "mentra-oidc-1", typ: "at+jwt"})
+        .setIssuedAt()
+        .setExpirationTime("1h")
+        .sign((await jose.generateKeyPair("EdDSA")).privateKey),
       // Expired.
-      await idp.mint({sub: "supa-owner", aud: "authenticated", client_id: WEB_CLIENT, iat: Math.floor(Date.now() / 1000) - 7200}),
+      await coreAccessToken({sub: "supa-owner", email: "owner@example.test", clientId: WEB_CLIENT, iat: Math.floor(Date.now() / 1000) - 7200}),
     ]
     for (const token of tokens) {
       const reply = await raw("POST", `${API}/principal`, {body: {token}})
@@ -1023,15 +1001,21 @@ describe("POST /principal", () => {
     })
   })
 
-  test("an ID token, a phone's Supabase session token and another client's token are refused with 401 invalid_token", async () => {
+  test("an ID token, Supabase tokens, an unknown client's and another environment's tokens are refused with 401 invalid_token", async () => {
     const owner = await person("owner")
+    const restore = applyEnv({CLOUD_CORE_OIDC_ISSUER: "https://account.staging.test"})
+    const otherEnvironment = await coreAccessToken({sub: owner.sub, email: owner.email, clientId: WEB_CLIENT})
+    restore()
     const refused = {
-      // An ID token is addressed to the client, not to Supabase's API.
-      idToken: await idp.mint({sub: owner.sub, aud: WEB_CLIENT, client_id: WEB_CLIENT, email: owner.email}),
-      // A phone's Supabase session: no client, so it is only good for the phone's token exchange.
+      // An ID token is addressed to the client, not to Core's API.
+      idToken: await coreAccessToken({sub: owner.sub, email: owner.email, clientId: WEB_CLIENT, claims: {aud: WEB_CLIENT}}),
+      // A phone's Supabase session: only good for the phone's token exchange.
       phoneSession: await idp.mint({sub: owner.sub, aud: "authenticated", role: "authenticated", email: owner.email}),
-      // A client that is not one of this deployment's web clients.
-      otherClient: await idp.mint({sub: owner.sub, aud: "authenticated", client_id: "mobile-client", email: owner.email}),
+      // A Supabase OAuth token: Supabase's OAuth server is not Core's sign-in server.
+      supabaseOAuth: await idp.mint({sub: owner.sub, aud: "authenticated", client_id: WEB_CLIENT, email: owner.email}),
+      // A client that is not registered at Core's sign-in server.
+      otherClient: await coreAccessToken({sub: owner.sub, email: owner.email, clientId: "mobile-client"}),
+      otherEnvironment,
     }
 
     for (const [kind, token] of Object.entries(refused)) {
@@ -1047,17 +1031,6 @@ describe("POST /principal", () => {
       const reply = await raw("POST", `${API}/principal`, {body})
       expect({body, status: reply.status, error: reply.json?.error}).toEqual({body, status: 400, error: "invalid_request"})
     }
-  })
-
-  test("an identity provider that cannot be asked is 503 temporarily_unavailable, not a 401 that reads as a bad token", async () => {
-    const newcomer = await person("newcomer")
-    idp.outage = true
-
-    const reply = await raw("POST", `${API}/principal`, {body: {token: newcomer.bearer}})
-
-    expect(reply.status).toBe(503)
-    expect(reply.json).toMatchObject({error: "temporarily_unavailable"})
-    await expectClientError(store().resolvePrincipal(newcomer.bearer), "core_unavailable", 503)
   })
 
   test("a service-level 401 is not reported as an invalid token", async () => {

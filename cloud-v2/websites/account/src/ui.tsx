@@ -26,7 +26,7 @@ export function Notice({ tone = "info", children }: { tone?: "info" | "error"; c
 export function TextField(props: {
   id: string;
   label: string;
-  type: "email" | "password";
+  type: "email" | "password" | "text";
   autoComplete: string;
   value: string;
   onChange: (value: string) => void;
