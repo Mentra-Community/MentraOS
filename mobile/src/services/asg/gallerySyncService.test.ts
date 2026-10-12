@@ -1669,6 +1669,40 @@ describe("GallerySyncService", () => {
     })
   })
 
+  it("finishes a successful owned sync once and admits a follow-up after idempotent cleanup", async () => {
+    ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockResolvedValue(undefined)
+    ;(gallerySettingsService.getAutoSaveToCameraRoll as jest.Mock).mockResolvedValue(false)
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    await gallerySyncService.startSync()
+    const service = gallerySyncService as unknown as {
+      resolveSyncManifest(client: string, time: number): Promise<unknown>
+      closeHotspot(): Promise<Error | null>
+    }
+    jest
+      .spyOn(service, "resolveSyncManifest")
+      .mockResolvedValueOnce({syncData: EMPTY_SYNC_RESPONSE, usedFullSync: false})
+    const disconnect = jest.spyOn(localNetworkTransport, "disconnect").mockResolvedValue(undefined)
+    await startFileDownload()
+    expect(disconnect).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.setHotspotState).toHaveBeenNthCalledWith(2, false)
+    expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(false)
+    let releaseRouting!: () => void
+    disconnect.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRouting = resolve
+        }),
+    )
+    const repeated = service.closeHotspot()
+    const followup = gallerySyncService.startSync()
+    expect(BluetoothSdk.setHotspotState).toHaveBeenCalledTimes(2)
+    releaseRouting()
+    await expect(repeated).resolves.toBeNull()
+    await followup
+    expect(BluetoothSdk.setHotspotState).toHaveBeenNthCalledWith(3, true)
+    expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(true)
+  })
+
   it.each(["manifest", "legacy", "capture"])(
     "does not let an old %s error notification close a fresh session AP",
     async (stage) => {

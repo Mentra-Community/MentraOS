@@ -613,7 +613,7 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     const glassesStore = useGlassesStore.getState()
-    if (store.syncServiceOpenedHotspot) {
+    if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
       const ownership = this.hotspotOwnership()
       if (ownership === "different") {
         this.hotspotOwner = null
@@ -1437,7 +1437,7 @@ class GallerySyncService {
             console.warn("[GallerySyncService] 🚫 User cancelled WiFi connection - aborting")
             appStateSubscription.remove()
             store.setSyncError("WiFi connection cancelled")
-            if (store.syncServiceOpenedHotspot) {
+            if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
               await this.closeHotspot()
             }
             return
@@ -1479,7 +1479,7 @@ class GallerySyncService {
           //         this.waitingForWifiRetry = false
           //         this.wifiSettingsOpenedAt = null
           //         store.setSyncError("WiFi disabled - enable WiFi and try again")
-          //         if (store.syncServiceOpenedHotspot) {
+          //         if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
           //           this.closeHotspot()
           //         }
           //       },
@@ -1491,7 +1491,7 @@ class GallerySyncService {
           //         this.wifiSettingsOpenedAt = Date.now()
           //         await SettingsNavigationUtils.openWifiSettings()
           //         store.setSyncError("Enable WiFi and try sync again")
-          //         if (store.syncServiceOpenedHotspot) {
+          //         if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
           //           await this.closeHotspot()
           //         }
           //       },
@@ -1505,7 +1505,7 @@ class GallerySyncService {
             console.error("[GallerySyncService] 🚫 WiFi was disabled during connection - aborting")
             appStateSubscription.remove()
             store.setSyncError("Could not connect - check WiFi is enabled")
-            if (store.syncServiceOpenedHotspot) {
+            if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
               await this.closeHotspot()
             }
             return
@@ -1563,7 +1563,7 @@ class GallerySyncService {
 
       store.setSyncError(userErrorMessage)
 
-      if (store.syncServiceOpenedHotspot) {
+      if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
         await this.closeHotspot()
       }
     } finally {
@@ -1851,7 +1851,7 @@ class GallerySyncService {
       await gallerySyncNotifications.showSyncError("Failed to start download")
     } finally {
       // Notification/recovery failures must not bypass the AP owner’s teardown.
-      if (!signal?.aborted && store.syncServiceOpenedHotspot) await this.closeHotspot()
+      if (!signal?.aborted && useGallerySyncStore.getState().syncServiceOpenedHotspot) await this.closeHotspot()
     }
   }
 
@@ -2137,7 +2137,7 @@ class GallerySyncService {
         await gallerySyncNotifications.showSyncError(error?.message || "Download failed")
       }
 
-      if (!signal?.aborted && store.syncServiceOpenedHotspot) {
+      if (!signal?.aborted && useGallerySyncStore.getState().syncServiceOpenedHotspot) {
         await this.closeHotspot()
       }
     }
@@ -2357,7 +2357,7 @@ class GallerySyncService {
         await gallerySyncNotifications.showSyncError(error?.message || "Download failed")
       }
 
-      if (!signal?.aborted && store.syncServiceOpenedHotspot) {
+      if (!signal?.aborted && useGallerySyncStore.getState().syncServiceOpenedHotspot) {
         await this.closeHotspot()
       }
     }
@@ -2432,7 +2432,7 @@ class GallerySyncService {
     if (signal?.aborted) return
     // Close hotspot if we opened it
     const store = useGallerySyncStore.getState()
-    if (store.syncServiceOpenedHotspot) {
+    if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
       console.log("[GallerySyncService]   📡 Closing hotspot (service opened it)...")
       await this.closeHotspot()
     } else {
@@ -2503,7 +2503,7 @@ class GallerySyncService {
 
     store.setSyncCancelled()
     const failures: unknown[] = []
-    if (store.syncServiceOpenedHotspot) {
+    if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
       const failure = await this.closeHotspot()
       if (failure) failures.push(failure)
     } else {
@@ -2552,15 +2552,17 @@ class GallerySyncService {
     // Always attempt the owned AP stop even if routing cleanup rejects.
     try {
       // Retained failure ownership cannot authorize a command to another pair.
-      const ownership = this.hotspotOwnership()
-      if (ownership === "unknown") throw new Error("Gallery hotspot owner identity is unavailable")
-      if (ownership === "same") {
-        const stopped = await BluetoothSdk.setHotspotState(false)
-        if (stopped.state !== "disabled") throw new Error("Gallery hotspot shutdown was not confirmed")
+      if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
+        const ownership = this.hotspotOwnership()
+        if (ownership === "unknown") throw new Error("Gallery hotspot owner identity is unavailable")
+        if (ownership === "same") {
+          const stopped = await BluetoothSdk.setHotspotState(false)
+          if (stopped.state !== "disabled") throw new Error("Gallery hotspot shutdown was not confirmed")
+        }
+        this.hotspotOwner = null
+        store.setSyncServiceOpenedHotspot(false)
+        store.setHotspotInfo(null)
       }
-      this.hotspotOwner = null
-      store.setSyncServiceOpenedHotspot(false)
-      store.setHotspotInfo(null)
     } catch (error) {
       failures.push(error)
     }
