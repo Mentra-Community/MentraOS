@@ -50,6 +50,16 @@ Use existing video when no screenshot was captured, and record missing or failed
 captures. A missing screenshot alone does not justify replaying inputs or asking
 the human for a photo.
 
+For network failures, distinguish glasses station Wi-Fi from the glasses SoftAP,
+phone Internet and host routing. API33 station-Wi-Fi routines declare
+`{kind: 'glasses', capabilities: ['wifi']}`: connect in setup, disconnect in
+teardown even after failure, and use radio-only `enable()` for scanning. The
+provider owns credentials and native settlement. STA cleanup does not prove an
+app-started SoftAP stopped; inspect its owning app/fixture's cleanup evidence.
+For OTA, check the current selected transport marker for each original install
+pass. A passing diagnostic capture can contain a failed short-body download;
+inspect its byte/hash result and preserve the failure without resending inputs.
+
 | Recorded failing build | Destination |
 | --- | --- |
 | Dev | Fix branch and PR targeting `dev`. |
@@ -194,6 +204,10 @@ review passes, request any missing selected routines using that head's CI
 artifacts through the existing dispatch path. Qualification requires both an
 independent approval and passing routine results for that same head, regardless
 of which finishes first. Never SSH into fixtures to bypass the routine worker.
+For an already implemented, reviewed correction, begin with ordinary full recorded
+replay. Its setup, product assertions and accepted cleanup provide verification
+without another held traversal. Use built-in authoring when the observed failure
+requires editing a saved action or admitting an unpublished candidate.
 Wait for artifacts or a free fixture as a recorded waiting state.
 
 The PR artifact requester and dispatcher accept PRs targeting `dev` or `staging`.

@@ -311,7 +311,15 @@ describe("owner journey", () => {
     const peeked = await call("POST", "/api/workspaces/invitations/peek", {as: developer, body: {token}})
     expect(peeked.status).toBe(200)
     expect(peeked.headers.get("cache-control")).toBe("no-store")
-    expect(peeked.json).toEqual({workspaceName: "Acme", email: developer.email, role: "developer"})
+    expect(peeked.json).toEqual({
+      invitationId: invited.json.invitationId,
+      workspaceId,
+      workspaceName: "Acme",
+      email: developer.email,
+      role: "developer",
+      invitedByEmail: owner.email,
+      expiresAt: invited.json.expiresAt,
+    })
     const inPath = await call("GET", `/api/workspaces/invitations/${token}`, {as: developer})
     expect(inPath.status).toBe(404)
     expect(inPath.text).not.toContain("Acme")
@@ -669,6 +677,16 @@ describe("workspaces", () => {
     expect(asOrgAdmin.status).toBe(200)
     expect(asOrgAdmin.json.membership).toBeNull()
     expect(asOrgAdmin.json.capabilities).toContain("workspace.delete")
+    // It says why, so a screen can name their role and where their powers come from.
+    expect(asOrgAdmin.json.organizationAdmin).toBe(true)
+    expect(asDeveloper.json.organizationAdmin).toBe(false)
+
+    // An organization admin who joined as a Member: their membership says Member, their capabilities Owner.
+    await join(ws.workspaceId, ws.owner, admin, "member")
+    const asMemberAdmin = await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: admin})
+    expect(asMemberAdmin.json.membership).toMatchObject({role: "member"})
+    expect(asMemberAdmin.json.capabilities).toContain("workspace.delete")
+    expect(asMemberAdmin.json.organizationAdmin).toBe(true)
   })
 
   test("a non-member is 403 and an unknown workspace is 404", async () => {
@@ -1137,7 +1155,7 @@ describe("invitations", () => {
     const link = new URL(defaulted.json.inviteUrl)
     expect(link.origin).toBe(PORTAL_ORIGIN)
     const token = link.searchParams.get("workspaceInvite")!
-    expect((await call("POST", "/api/workspaces/invitations/peek", {as: ws.owner, body: {token}})).json).toEqual({
+    expect((await call("POST", "/api/workspaces/invitations/peek", {as: ws.owner, body: {token}})).json).toMatchObject({
       workspaceName: "Acme",
       email: "first@example.test",
       role: "member",
@@ -1422,7 +1440,7 @@ describe("the workspace portal route group", () => {
     expect(invited.status).toBe(201)
     const token = (invited.json.inviteUrl as string).slice(INVITE_PREFIX.length)
     const peeked = await call("POST", `${PORTAL}/invitations/peek`, {as: inviteeSession, body: {token}})
-    expect(peeked.json).toEqual({workspaceName: "Portal Co", email: invitee.email, role: "member"})
+    expect(peeked.json).toMatchObject({workspaceName: "Portal Co", email: invitee.email, role: "member"})
     const accepted = await call("POST", `${PORTAL}/invitations/accept`, {as: inviteeSession, body: {token}})
     expect(accepted.status).toBe(200)
     expect(accepted.json.workspaceId).toBe(workspaceId)
@@ -1658,6 +1676,18 @@ describe("ownership recovery", () => {
     expect(byEmail.status).toBe(200)
     const heirView = await call("GET", `/api/workspaces/${ws.workspaceId}`, {as: heir})
     expect(heirView.json.membership.role).toBe("owner")
+    // The address they were found by names them: in the member list and in the audit log.
+    const heirRow = await WorkspaceMembershipModel.findOne({
+      workspaceId: ws.workspaceId,
+      mentraUserId: heir.mentraUserId,
+      status: "active",
+    }).lean()
+    expect(heirRow!.email).toBe(heir.email.toLowerCase())
+    const audit = await WorkspaceAuditEventModel.findOne({
+      workspaceId: ws.workspaceId,
+      action: "membership.ownership_recovered",
+    }).lean()
+    expect(audit!.target).toMatchObject({mentraUserId: heir.mentraUserId, email: heir.email.toLowerCase()})
   })
 
   test("by email: an account directory that cannot answer is 503, never user_not_found", async () => {

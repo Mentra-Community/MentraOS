@@ -464,3 +464,56 @@ test('a failed authoring tick still drains active incident reporting before shut
   await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); expect(drained).toBe(false);
   release(); await stopped; expect(drained).toBe(true);
 });
+
+test('one reporting timer keeps PR ticks independent and serialized while normal reports are held, then drains both', async () => {
+  let timerTick!: () => void, normalCalls = 0, reportCalls = 0, prCalls = 0
+  let releaseNormal!: () => void
+  const normal = new Promise<void>(resolve => {releaseNormal = resolve})
+  const prReleases: Array<() => void> = []
+  const timers = spyOn(globalThis, 'setInterval').mockImplementation(((callback: () => void) => {
+    timerTick = callback
+    return {unref() {}} as ReturnType<typeof setInterval>
+  }) as typeof setInterval)
+  const clear = spyOn(globalThis, 'clearInterval').mockImplementation(() => {})
+  let stop: (() => Promise<void>) | undefined
+  try {
+    stop = startRoutineWorkReporting({async tick() {normalCalls++; await normal}} as RoutineWorkNotification, 15_000,
+      async () => {reportCalls++; await normal},
+      async () => {prCalls++; await new Promise<void>(resolve => {prReleases.push(resolve)})})
+    expect(timers).toHaveBeenCalledTimes(1)
+    expect(timers.mock.calls[0]![1]).toBe(15_000)
+    expect([normalCalls, reportCalls, prCalls]).toEqual([1, 1, 1])
+    timerTick(); timerTick()
+    expect([normalCalls, reportCalls, prCalls]).toEqual([1, 1, 1])
+    prReleases[0]!()
+    // Flush the callback and its settlement; a later timer tick may begin the next PR report.
+    await new Promise<void>(resolve => queueMicrotask(() => queueMicrotask(() => queueMicrotask(resolve))))
+    timerTick()
+    expect([normalCalls, reportCalls, prCalls]).toEqual([1, 1, 2])
+    timerTick()
+    expect(prCalls).toBe(2)
+    prReleases[1]!()
+    await new Promise<void>(resolve => queueMicrotask(() => queueMicrotask(() => queueMicrotask(resolve))))
+    timerTick()
+    expect([normalCalls, reportCalls, prCalls]).toEqual([1, 1, 3])
+    let drained = false
+    const complete = stop().then(() => {drained = true})
+    await Promise.resolve()
+    expect(drained).toBe(false)
+    releaseNormal()
+    await new Promise<void>(resolve => queueMicrotask(() => queueMicrotask(() => queueMicrotask(resolve))))
+    expect(drained).toBe(false)
+    timerTick()
+    expect([normalCalls, reportCalls, prCalls]).toEqual([1, 1, 3])
+    prReleases[2]!()
+    await complete
+    expect(drained).toBe(true)
+    expect(clear).toHaveBeenCalledTimes(1)
+  } finally {
+    releaseNormal?.()
+    for (const release of prReleases) release()
+    await stop?.()
+    clear.mockRestore()
+    timers.mockRestore()
+  }
+})

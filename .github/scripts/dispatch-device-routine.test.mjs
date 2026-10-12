@@ -177,3 +177,16 @@ test('superseded CI without successful artifact publication never inspects Core 
     assert.deepEqual(await planDeviceDispatches({...f,token:'fixture',fetchImpl:async()=>assert.fail('Unpublished CI must not contact Core')}),[]);
   }
 });
+
+// Signed webhook owns admission; publication callbacks reconcile its existing gate.
+test('checks-only callback reconciles Core gate and never enrolls or admits a parallel original', async () => {
+  const f = fixture()
+  const calls = []
+  const plans = await planDeviceDispatches({...f, token: 'fixture', checksOnly: true, fetchImpl: async (url, init) => {
+    calls.push({url, init}); return new Response('{}', {status: 200})
+  }})
+  assert.deepEqual(plans, [])
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, 'https://core.dev.us-west-2.mentraglass.com/api/internal/pr-routine-checks/intake')
+  assert.equal(JSON.parse(calls[0].init.body).prNumber, f.pr.number)
+})

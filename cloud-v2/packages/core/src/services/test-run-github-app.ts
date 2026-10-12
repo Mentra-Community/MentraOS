@@ -1,13 +1,14 @@
 import { createPrivateKey } from "node:crypto";
 import { SignJWT } from "jose";
 
-type Scope = "source" | "private" | "harness" | "reporter" | "dispatch" | "runner";
+type Scope = "source" | "private" | "harness" | "reporter" | "checks" | "dispatch" | "runner";
 interface Credentials { appId?: string; privateKey?: string; installationId?: string }
 interface InstallationCredential { token: string; expiresAt: number }
 const grants = {
   runner: { repositories: ["Mentra-Automated-Testing"], permissions: { organization_self_hosted_runners: "write" } },
   dispatch: { repositories: ["Mentra-Automated-Testing"], permissions: { actions: "write" } },
   reporter: { repositories: ["MentraOS"], permissions: { pull_requests: "write" } },
+  checks: { repositories: ["MentraOS"], permissions: { checks: "write", pull_requests: "read", contents: "read" } },
   source: { repositories: ["MentraOS"], permissions: { actions: "write", contents: "read", pull_requests: "read" } },
   harness: { repositories: ["Mentra-Automated-Testing"], permissions: { contents: "read", pull_requests: "read" } },
   private: { repositories: ["Mentra-Automated-Testing"], permissions: { actions: "read" } },
@@ -28,6 +29,7 @@ export class TestRunGithubApp {
   }
   get configured() { return !!(this.credentials.appId && this.credentials.privateKey && this.credentials.installationId); }
   get applicationId() { return Number(this.credentials.appId) || null; }
+  get installationId() { return Number(this.credentials.installationId) || null; }
   private now() { return (this.options.now ?? Date.now)(); }
   async token(scope: Scope): Promise<string> {
     return (await this.installationCredential(scope)).token;

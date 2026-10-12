@@ -479,6 +479,8 @@ const en = {
     connectingPhoneToGlasses: "Connecting phone to glasses…",
     transferringToGlasses: "Transferring update to glasses…",
     installingOnGlasses: "Installing update on glasses…",
+    transportHotspot: "Using glasses hotspot",
+    transportWifi: "Using Wi-Fi",
     componentApk: "Glasses software",
     componentMtk: "System firmware",
     componentBes: "Bluetooth firmware",

@@ -150,7 +150,7 @@ describe("the one-time token", () => {
       expect(shown).toContain('role="dialog"');
       expect(shown).toContain("shown only once");
       expect(shown.split(TOKEN)).toHaveLength(2);
-      expect(shown).toContain("Copy credential");
+      expect(shown).toContain("Copy key");
       expect(shown).toContain("Done");
 
       // Done dispatches `dismissed`.

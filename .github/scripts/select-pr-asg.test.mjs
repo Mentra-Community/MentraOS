@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {mkdtempSync, writeFileSync} from "node:fs"
+import {mkdtempSync, readFileSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -60,4 +60,20 @@ test("reads the family base version from the root package manifest", () => {
   assert.equal(readFamilyBaseVersion(root), "3.2.0")
   writeFileSync(path.join(root, "package.json"), JSON.stringify({version: "3.2.0-dev.4"}))
   assert.throws(() => readFamilyBaseVersion(root), /plain X\.Y\.Z family base version/)
+})
+
+test("explicit ASG reuse publishes its manifest without entering the PR-only comment step", () => {
+  const workflow = readFileSync(new URL("../workflows/mentra-asg-client-build.yml", import.meta.url), "utf8")
+  function condition(name) {
+    const expression = workflow.split(`- name: ${name}\n`)[1]?.match(/^\s+if: (.+)$/m)?.[1]
+    assert.ok(expression, `Missing condition for ${name}`)
+    return new Function("github", "steps", `return (${expression});`)
+  }
+  const publish = condition("Publish the OTA manifest for the reused ASG client")
+  const comment = condition("Update PR comment - Reused coordinated build")
+  const steps = {select: {outputs: {mode: "reuse"}}}
+  assert.equal(publish({event_name: "workflow_dispatch"}, steps), true)
+  assert.equal(comment({event_name: "workflow_dispatch"}, steps), false)
+  assert.equal(comment({event_name: "pull_request"}, steps), true)
+  assert.equal(comment({event_name: "pull_request"}, {select: {outputs: {mode: "build"}}}), false)
 })

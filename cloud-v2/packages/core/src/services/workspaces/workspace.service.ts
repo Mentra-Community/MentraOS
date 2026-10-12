@@ -23,6 +23,10 @@
  * later re-join is a new row with a new `membershipId`. Every write that starts
  * a membership or changes its role appends the role to its `roleHistory` in the
  * same update, stamped with the workspace revision that write produced.
+ *
+ * Every membership event names the member in its target: `membershipId`,
+ * `mentraUserId` and `email`, the display address the membership records (null
+ * when it records none), so the audit log can say whose membership it was.
  */
 
 import {
@@ -323,7 +327,7 @@ export async function changeRole(
       workspaceId,
       action: "membership.role_changed",
       actor: auditActor(actor),
-      target: {membershipId, mentraUserId: target.mentraUserId ?? null},
+      target: {membershipId, mentraUserId: target.mentraUserId ?? null, email: target.email ?? null},
       before: {role: fromRole},
       after: {role: toRole},
     })
@@ -387,11 +391,16 @@ export async function leaveWorkspace(actor: Actor & {kind: "user"}, workspaceId:
  * whose account is not deleted (`user_not_found` otherwise): a deleted account
  * keeps its users row as a tombstone, and an owner nobody can sign in as would
  * still count for the last-owner guard.
+ *
+ * `opts.email` is the person's confirmed account address when the caller named
+ * them by it: a new membership records it for display, and the audit event names
+ * it (an existing membership keeps, and the event names, the address it has).
  */
 export async function recoverOwnership(
   actor: Actor,
   workspaceId: string,
   targetMentraUserId: string,
+  opts: {email?: string | null} = {},
 ): Promise<WorkspaceSummary> {
   if (!(actor.kind === "system" || (actor.kind === "user" && actor.isOrganizationAdmin))) {
     fail("forbidden", "only an organization admin can recover workspace ownership")
@@ -411,6 +420,7 @@ export async function recoverOwnership(
     const updated = await bumpRevision(session, workspaceId, undefined)
     const now = new Date()
     const owner = roleEntry("owner", now, updated.authorizationRevision)
+    const email = existing ? (existing.email ?? null) : opts.email?.trim() || null
     let membershipId: string
     if (existing) {
       membershipId = existing.membershipId
@@ -427,6 +437,7 @@ export async function recoverOwnership(
             membershipId,
             workspaceId,
             mentraUserId: target,
+            email,
             role: "owner",
             roleHistory: [owner],
             status: "active",
@@ -440,7 +451,7 @@ export async function recoverOwnership(
       workspaceId,
       action: "membership.ownership_recovered",
       actor: auditActor(actor),
-      target: {membershipId, mentraUserId: target},
+      target: {membershipId, mentraUserId: target, email},
       before: {role: existing ? existing.role : null},
       after: {role: "owner"},
     })
@@ -675,7 +686,11 @@ export async function endMembership(
     workspaceId: workspace.workspaceId,
     action,
     actor: auditActor(actor),
-    target: {membershipId: membership.membershipId, mentraUserId: membership.mentraUserId ?? null},
+    target: {
+      membershipId: membership.membershipId,
+      mentraUserId: membership.mentraUserId ?? null,
+      email: membership.email ?? null,
+    },
     before: {role: membership.role, status: "active"},
     after: {status: "ended", endedReason: reason, revokedCredentialIds, revokedInvitationIds},
   })

@@ -127,7 +127,8 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue((other_runner / "build-device").exists())
 
     def test_bootstrap_precedes_checkout_and_clean_retry_reuses_it(self):
-        self.assertLess(SOURCE.index("mentra-ios-cleanup.py"), SOURCE.index("uses: actions/checkout@v4"))
+        build_source = SOURCE[SOURCE.index("  build:"): ]
+        self.assertLess(build_source.index("mentra-ios-cleanup.py"), build_source.index("uses: actions/checkout@v4"))
         self.assertIn('python3 "$RUNNER_TEMP/mentra-ios-cleanup.py" mobile/ios/Pods mobile/ios/build-device', SOURCE)
         self.assertIn("python3 mobile/ci/pr-ios/test_cleanup_workflow.py", SOURCE)
 

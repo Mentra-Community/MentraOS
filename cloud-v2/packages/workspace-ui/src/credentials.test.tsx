@@ -37,7 +37,8 @@ describe("credentials panel: the token is shown once", () => {
     const markup = screen({ status: "shown", name: "CI publisher", token: TOKEN });
     expect(markup).toContain(TOKEN);
     expect(markup).toMatch(/role="dialog"/);
-    expect(markup).toContain("Copy credential");
+    expect(markup).toContain("Copy key");
+    expect(markup).toContain("Copy your new key");
     expect(markup).toContain("cannot be shown again");
     expect(markup).toContain(">Done<");
   });
@@ -150,6 +151,18 @@ describe("credentials panel: the one-time dialog survives a failed refetch", () 
 });
 
 describe("credentials panel: who sees what", () => {
+  test("is about keys, as the admin portal's Keys tab calls them: title, button, table and empty state", () => {
+    const { api } = offlineApi();
+    const render = (credentials: typeof CREDENTIALS) =>
+      renderSeeded(api, { detail: detailFor("developer"), credentials }, <WorkspaceCredentialsPanel api={api} workspaceId={WORKSPACE_ID} />);
+    const listed = render(CREDENTIALS);
+    expect(listed).toContain('aria-label="Keys"');
+    expect(listed).toContain(">Create key<");
+    expect(listed).toContain(">Key</th>");
+    expect(render([])).toContain("No keys yet.");
+    for (const markup of [listed, render([])]) expect(markup).not.toMatch(/[Cc]redential/);
+  });
+
   test("a member cannot see or create credentials", () => {
     const { api } = offlineApi();
     const markup = renderSeeded(
@@ -157,7 +170,7 @@ describe("credentials panel: who sees what", () => {
       { detail: detailFor("member"), credentials: CREDENTIALS },
       <WorkspaceCredentialsPanel api={api} workspaceId={WORKSPACE_ID} />,
     );
-    expect(markup).toContain("Credentials are available to developers, admins and owners.");
+    expect(markup).toContain("Keys are available to developers, admins and owners.");
     expect(markup).not.toContain("CI publisher");
     expect(markup).not.toContain("<form");
   });
@@ -171,19 +184,19 @@ describe("credentials panel: who sees what", () => {
         <WorkspaceCredentialsPanel api={api} workspaceId={WORKSPACE_ID} />,
       );
     for (const role of ["developer", "admin", "owner"] as const) {
-      expect(render(detailFor(role))).toContain("Create credential");
+      expect(render(detailFor(role))).toContain("Create key");
     }
     // Core ties a key to its creator's membership, so an org admin who is not a member cannot create one...
     const outside = render(organizationAdminDetail());
-    expect(outside).not.toContain("Create credential");
+    expect(outside).not.toContain("Create key");
     expect(outside).not.toContain("<form");
-    expect(outside).toContain("Only members of this workspace with the developer role or above can create credentials");
+    expect(outside).toContain("Only members of this workspace with the developer role or above can create keys");
     // ...but still sees and can revoke the workspace's credentials.
     expect(outside).toContain("CI publisher");
     expect(outside).toContain('aria-label="Revoke CI publisher"');
     // The same for an org admin whose own membership is a role that cannot publish.
     const lowerMember = render({ ...organizationAdminDetail(), membership: { membershipId: "wm_self", role: "member" } });
-    expect(lowerMember).not.toContain("Create credential");
+    expect(lowerMember).not.toContain("Create key");
   });
 
   test("a developer can create and revoke from the same panel, behind a confirm step", () => {
@@ -193,7 +206,7 @@ describe("credentials panel: who sees what", () => {
       { detail: detailFor("developer"), credentials: CREDENTIALS },
       <WorkspaceCredentialsPanel api={api} workspaceId={WORKSPACE_ID} />,
     );
-    expect(markup).toContain("Create credential");
+    expect(markup).toContain("Create key");
     expect(markup).toContain('aria-label="Revoke CI publisher"');
     expect(markup).not.toContain("Confirm revoke");
     expect(markup).toContain("com.acme.scanner");

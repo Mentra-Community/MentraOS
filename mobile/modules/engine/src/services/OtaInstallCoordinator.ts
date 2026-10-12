@@ -177,8 +177,8 @@ export interface OtaInstallSnapshot {
   hotspotPhase: HotspotOtaPhase
   hotspotArtifactPercent: number | null
   hotspotArtifact: OtaArtifactDownloadProgress | null
-  /** Transport selected from the checked glasses capabilities and Wi-Fi state. */
-  transport: "wifi" | "hotspot"
+  /** Known transport for this install; recovered device sessions may not report it. */
+  transport: "wifi" | "hotspot" | null
 }
 
 type OtaStartOutcome = "pending" | "acknowledged" | "rejected"
@@ -195,6 +195,7 @@ class OtaInstallCoordinator {
       this.otaStartOwnership = null
       this.preparedCheckResult = null
       this.selectedTransport = "wifi"
+      this.observedTransport = null
       this.hotspotManifestUrl = null
       this.hotspotPhase = "idle"
       this.hotspotArtifactPercent = null
@@ -210,6 +211,8 @@ class OtaInstallCoordinator {
   private attached = false
   private preparedCheckResult: OtaCheckCurrentGlassesResult | null = null
   private selectedTransport: "wifi" | "hotspot" = "wifi"
+  // The default send policy is not evidence about an adopted device session.
+  private observedTransport: "wifi" | "hotspot" | null = null
   private hotspotManifestUrl: string | null = null
   private hotspotPhase: HotspotOtaPhase = "idle"
   private hotspotArtifactPercent: number | null = null
@@ -329,10 +332,12 @@ class OtaInstallCoordinator {
     }
     this.preparedCheckResult = checkResult
     this.selectedTransport = wifiConnected ? "wifi" : "hotspot"
+    this.observedTransport = this.selectedTransport
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
     this.hotspotArtifactPercent = null
     this.hotspotArtifact = null
+    this.emitInternalChange()
     return this.selectedTransport
   }
 
@@ -489,6 +494,8 @@ class OtaInstallCoordinator {
   async finish(): Promise<void> {
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
+      this.observedTransport = null
+      this.emitInternalChange()
     }
     useGlassesStore.getState().setOtaUpdateAvailable(null)
     if (this.apkStepSeen) {
@@ -546,7 +553,7 @@ class OtaInstallCoordinator {
       hotspotPhase: this.hotspotPhase,
       hotspotArtifactPercent: this.hotspotArtifactPercent,
       hotspotArtifact: this.hotspotArtifact ? {...this.hotspotArtifact} : null,
-      transport: this.selectedTransport,
+      transport: this.observedTransport,
     }
   }
 
@@ -1572,6 +1579,8 @@ class OtaInstallCoordinator {
         throw new Error("OTA is disabled because this build has no immutable manifest pin")
       }
       console.log(`[OTA_PROGRESS] sending ota_start with ${this.selectedTransport} manifest URL: ${otaVersionUrl}`)
+      this.observedTransport = this.selectedTransport
+      this.emitInternalChange()
       nativeStartAttempted = true
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)
       if (!isCurrentAttempt()) return

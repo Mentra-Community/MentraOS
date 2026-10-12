@@ -70,14 +70,13 @@ export function createOrganizationApi(): Hono<AppEnv> {
     requireOrganizationCapability("organization.workspaces.administer"),
     async (c) => {
       const body = await readJsonObject(c)
-      const mentraUserId =
-        body.email !== undefined
-          ? await userIdForEmail(requiredString(body, "email"))
-          : requiredString(body, "mentraUserId").trim()
+      const email = body.email !== undefined ? canonicalOwnerEmail(requiredString(body, "email")) : null
+      const mentraUserId = email !== null ? await userIdForEmail(email) : requiredString(body, "mentraUserId").trim()
       // Owning a workspace needs a person to own it; a typo must not mint a membership nobody can ever use.
       // `recoverOwnership` also refuses an id that names no user, or a deleted account's tombstone.
       if (!mentraUserId) return c.json({error: "user_not_found", error_description: "no such person"}, 404)
-      return c.json(await recoverOwnership(userActor(c), c.req.param("workspaceId"), mentraUserId))
+      // The confirmed address the person was found by is how the members list and the audit log name them.
+      return c.json(await recoverOwnership(userActor(c), c.req.param("workspaceId"), mentraUserId, {email}))
     },
   )
 
@@ -126,10 +125,15 @@ export function createOrganizationApi(): Hono<AppEnv> {
   return app
 }
 
-/** The Core user of the Mentra account whose confirmed email this is (created on first use), or null. */
-async function userIdForEmail(raw: string): Promise<string | null> {
+/** An owner named by email: trimmed and lowercased, and refused (400) unless it is one address. */
+function canonicalOwnerEmail(raw: string): string {
   const email = raw.trim().toLowerCase()
   if (!/^[^@\s]+@[^@\s]+$/.test(email)) throw new InvalidRequest("email must be an email address")
+  return email
+}
+
+/** The Core user of the Mentra account whose confirmed email this is (created on first use), or null. */
+async function userIdForEmail(email: string): Promise<string | null> {
   if (!isGotrueAdminConfigured()) throw new InvalidRequest("this deployment names people by their Mentra user id")
   const identity = await findAccountByEmail(email)
   if (!identity?.emailConfirmed) return null

@@ -162,6 +162,58 @@ afterEach(() => {
 })
 
 describe("OtaInstallCoordinator hotspot transport selection", () => {
+  it("does not infer an adopted install's transport from the default send policy or current Wi-Fi", () => {
+    let restored!: typeof otaInstallCoordinator
+    let restoredStore!: typeof useGlassesStore
+    jest.isolateModules(() => {
+      restored = require("../../modules/engine/src/services/OtaInstallCoordinator").otaInstallCoordinator
+      restoredStore = require("../../modules/engine/src/stores/glasses").useGlassesStore
+    })
+    restoredStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "39",
+      wifi: {state: "connected", ssid: "test"},
+    })
+    restoredStore.getState().setOtaStatus(inProgressStatus())
+    restored.attach()
+    expect(restored.snapshot()).toMatchObject({displayState: "updating", transport: null})
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    restored.detach()
+  })
+
+  it.each(["wifi", "hotspot"] as const)(
+    "retains the selected %s transport across a same-process remount",
+    (transport) => {
+      useGlassesStore.getState().setGlassesInfo({
+        connection: {state: "connected", fullyBooted: true},
+        buildNumber: "39",
+        hotspotOtaVersion: 1,
+        wifi: transport === "wifi" ? {state: "connected", ssid: "test"} : {state: "disconnected"},
+      })
+      otaInstallCoordinator.prepare(checkResult())
+      useGlassesStore.getState().setOtaStatus(inProgressStatus())
+      otaInstallCoordinator.attach()
+      otaInstallCoordinator.detach()
+      useGlassesStore.getState().setGlassesInfo({
+        wifi: transport === "wifi" ? {state: "disconnected"} : {state: "connected", ssid: "test"},
+      })
+      otaInstallCoordinator.attach()
+      expect(otaInstallCoordinator.snapshot()).toMatchObject({displayState: "updating", transport})
+      expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    },
+  )
+
+  it("clears transport evidence when the install finishes", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      wifi: {state: "connected", ssid: "test"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    expect(otaInstallCoordinator.snapshot().transport).toBe("wifi")
+    await otaInstallCoordinator.finish()
+    expect(otaInstallCoordinator.snapshot().transport).toBeNull()
+  })
+
   it("preserves the current file context and clears percentages between files and phases", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},

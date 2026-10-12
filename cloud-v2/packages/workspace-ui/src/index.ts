@@ -10,15 +10,36 @@ export type {
   WorkspaceApi,
   WorkspaceListItem,
 } from "./api";
-export { errorMessage, isWorkspaceChangedError, WORKSPACE_CHANGED_MESSAGE, WorkspaceApiError } from "./errors";
-export { invitationPreviewQuery, workspaceDetailQuery, workspaceKeys, workspaceListQuery } from "./queries";
-export { assignableRoles, can, effectiveRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "./roles";
+export {
+  errorMessage,
+  isInvitationGone,
+  isWorkspaceChangedError,
+  WORKSPACE_CHANGED_MESSAGE,
+  WorkspaceApiError,
+} from "./errors";
+export {
+  invitationPreviewQuery,
+  myInvitationsQuery,
+  workspaceDetailQuery,
+  workspaceKeys,
+  workspaceListQuery,
+} from "./queries";
+export { actsAsOrganizationAdmin, assignableRoles, can, effectiveRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "./roles";
 
 export { WorkspaceAuditPanel } from "./components/audit-panel";
 export { Avatar, ConfirmButton, CopyButton, Count, initials, Spinner, WorkspaceAvatar } from "./components/common";
 export { CreateWorkspaceDialog, CreateWorkspaceForm, useCreateWorkspace } from "./components/create-workspace";
 export { expiryFromDateInput, SecretDialog, WorkspaceCredentialsPanel } from "./components/credentials-panel";
-export { InvitationAcceptView } from "./components/invitation-accept-view";
+export {
+  acceptErrorMessage,
+  InvitationAcceptCard,
+  InvitationAcceptView,
+  isInvitationForOtherAccount,
+  useAcceptInvitation,
+  type InvitationLoad,
+  type InvitationRef,
+} from "./components/invitation-accept-view";
+export { describeAuditEvent, plainText, type AuditDescription, type AuditText } from "./lib/audit";
 export {
   WorkspaceInvitationsPanel,
   WorkspaceInviteDialog,

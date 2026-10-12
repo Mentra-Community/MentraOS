@@ -289,7 +289,8 @@ describe("confirmAccountDeletion", () => {
     expect(byMembership.get(s.teamMembershipId)).toMatchObject({
       workspaceId: s.team.workspaceId,
       actor: {kind: "user", mentraUserId: s.mentraUserId},
-      target: {membershipId: s.teamMembershipId, mentraUserId: s.mentraUserId},
+      // The audit trail keeps the address the membership recorded; the membership row itself loses it.
+      target: {membershipId: s.teamMembershipId, mentraUserId: s.mentraUserId, email: s.email},
       before: {role: "developer", status: "active"},
       after: {status: "ended", endedReason: "account_deleted", revokedCredentialIds: [s.teamKey.credential.credentialId]},
     })
@@ -365,6 +366,7 @@ describe("confirmAccountDeletion", () => {
     expect(revocation).toMatchObject({
       workspaceId: s.elsewhere.workspaceId,
       actor: {kind: "user", mentraUserId: s.mentraUserId},
+      target: {invitationId: sent.invitationId, email: "heir@example.test"},
       after: {status: "revoked", reason: "inviter_account_deleted"},
     })
     expect(await peekInvitation(token)).toBeNull()

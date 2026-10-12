@@ -335,3 +335,15 @@ test('unpublished rejection detail keeps its explicit reason without fabricating
  expect(body).toMatchObject({kind:'request',request:{state:'terminal',terminalStatus:'incomplete',reason:'Publication failed: Invalid frozen fixture action',reasonAt:publicationFailure.rejectedAt}});
  expect(body.run).toBeUndefined();
 });
+
+test('Admin gate cancellation requires operator identity and strict retained generation input', async () => {
+ const calls: any[] = [], checks = {async cancelFromAdmin(...args: any[]) {calls.push(args); return {accepted: true}}};
+ const gateId = 'pr-check-' + 'a'.repeat(64), body = {operationId: '00000000-0000-4000-8000-000000000001', coverageGeneration: 1, attemptGeneration: 2};
+ const unauthenticated = createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, checks as any);
+ expect((await unauthenticated.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}})).status).toBe(403);
+ const app = new Hono<any>(); app.use('*', async (c, next) => {c.set('developer', {developerId: 'operator-one', email: 'operator@example.test'}); await next()});
+ app.route('/', createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, checks as any));
+ expect((await app.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify({...body, shell: 'bad'}), headers: {'Content-Type': 'application/json'}})).status).toBe(400);
+ expect((await app.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}})).status).toBe(202);
+ expect(calls).toEqual([[gateId, body, 'admin:operator-one']]);
+});

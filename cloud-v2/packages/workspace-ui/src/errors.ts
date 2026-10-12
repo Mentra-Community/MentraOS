@@ -43,3 +43,16 @@ export function errorMessage(error: unknown): string {
   }
   return "Something went wrong. Try again.";
 }
+
+/**
+ * Whether `error` says an invitation can never be accepted: unknown, used, revoked, replaced, expired, or
+ * from an inviter who can no longer send it (404 `invitation_not_found`, 410 `invitation_expired`).
+ * Other failures (a dropped connection, a signed-out session) say nothing about the invitation.
+ */
+export function isInvitationGone(error: unknown): boolean {
+  return (
+    error instanceof WorkspaceApiError &&
+    ((error.status === 404 && error.code === "invitation_not_found") ||
+      (error.status === 410 && error.code === "invitation_expired"))
+  );
+}

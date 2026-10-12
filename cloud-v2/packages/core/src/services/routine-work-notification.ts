@@ -203,17 +203,21 @@ export class RoutineWorkNotification {
 }
 /** Durable due dates outlive this process. One immediate overdue update resumes cadence after restart. */
 export function startRoutineWorkReporting(notification = new RoutineWorkNotification(), intervalMs = 30_000,
-  reportNotifications?: () => Promise<void>) {
-  let stopped = false,
-    active: Promise<void> | undefined
+  reportNotifications?: () => Promise<void>, reportPrChecks?: () => Promise<void>) {
+  let stopped = false
+  const callbacks = [async () => {
+    const results = await Promise.allSettled([notification.tick(), reportNotifications?.()])
+    if (results.some(result => result.status === 'rejected')) console.error('Cloud reporting reconciliation is unavailable')
+  }, ...(reportPrChecks ? [reportPrChecks] : [])]
+  const active: Array<Promise<void> | undefined> = []
   const tick = () => {
-    if (stopped || active) return
-    active = Promise.allSettled([notification.tick(), reportNotifications?.()])
-      .then((results) => {if (results.some(result => result.status === 'rejected')) console.error('Cloud reporting reconciliation is unavailable')})
-      .catch(() => console.error('Authoring reporting reconciliation is unavailable'))
-      .finally(() => {
-        active = undefined
-      })
+    if (stopped) return
+    callbacks.forEach((callback, index) => {
+      if (active[index]) return
+      active[index] = (async () => callback())()
+        .catch(() => console.error('Cloud reporting reconciliation is unavailable'))
+        .finally(() => {active[index] = undefined})
+    })
   }
   const timer = setInterval(tick, intervalMs)
   timer.unref()
@@ -221,6 +225,6 @@ export function startRoutineWorkReporting(notification = new RoutineWorkNotifica
   return async () => {
     stopped = true
     clearInterval(timer)
-    await active
+    await Promise.all(active)
   }
 }
