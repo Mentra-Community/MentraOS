@@ -66,3 +66,24 @@ test('malformed successful response does not expose private contents in error ou
       error=>error.message.includes('valid JSON')&&!error.message.includes('private transcript'));
   } finally {await rm(out,{recursive:true});}
 });
+
+test('a verified command bundle is unpacked with original paths and digests in the download receipt',async()=>{
+  const out=await mkdtemp(join(tmpdir(),'routine-bundle-'));
+  const raw=Buffer.from(' {"observed":"exact raw é bytes"} \n');
+  const member={id:'command:original',path:'setup-evidence/mentra-live-command-result-123.json',size:raw.length,
+    sha256:createHash('sha256').update(raw).digest('hex'),bytesBase64:raw.toString('base64')};
+  const data=Buffer.from(JSON.stringify({schemaVersion:1,kind:'setup-diagnostic-bundle',encoding:'base64',files:[member]}));
+  const asset={id:'diagnostic-bundle:one',path:'setup-diagnostic-bundles/one.json',size:data.length,
+    sha256:createHash('sha256').update(data).digest('hex'),mimeType:'application/json'};
+  let calls=0;
+  try {
+    const receipt=await fetchRun({target,token:'fixture',out,assetId:asset.id,fetcher:async()=>++calls===1?
+      Response.json({kind:'run',run:{requestId:target.id,result:{runId:'actual-run'},assets:[asset]},uploadsComplete:true}):new Response(data)});
+    assert.deepEqual(await readFile(join(out,receipt.asset.filename)),data);
+    const bundle=receipt.asset.bundle;
+    assert.equal(bundle.files[0].id,member.id); assert.equal(bundle.files[0].path,member.path);
+    assert.equal(bundle.files[0].sha256,member.sha256);
+    assert.deepEqual(await readFile(join(bundle.directory,bundle.files[0].filename)),raw);
+    assert.deepEqual(JSON.parse(await readFile(join(out,'receipt.json'))).asset.bundle,bundle);
+  } finally {await rm(out,{recursive:true});}
+});

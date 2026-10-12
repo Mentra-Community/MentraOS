@@ -37,6 +37,7 @@ note() { echo "$*" >&2; }
 
 command -v curl >/dev/null || { err "curl is required"; exit 1; }
 command -v jq >/dev/null || { err "jq is required (brew install jq)"; exit 1; }
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 REPORT_ID=""
 OUT_DIR=""
@@ -250,10 +251,14 @@ while IFS=$'\t' read -r ARTIFACT_ID TYPE SOURCE CONTENT_TYPE FILENAME; do
     FAILED=$((FAILED + 1))
     continue
   fi
-  if [ "$EXT" = "json" ] && jq . "$BODY" > "$TMP_DIR/pretty" 2>/dev/null; then
-    mv "$TMP_DIR/pretty" "$OUT_DIR/$FILE"
-  else
-    mv "$BODY" "$OUT_DIR/$FILE"
+  mv "$BODY" "$OUT_DIR/$FILE"
+  if [ "$TYPE" = "state_snapshot" ] && [ "$SOURCE" = "framework-diagnostic" ]; then
+    SIZE=$(jq -r --arg id "$ARTIFACT_ID" '.assets[] | select(.artifactId == $id) | .sizeBytes' "$DETAIL")
+    SHA=$(jq -r --arg id "$ARTIFACT_ID" '.assets[] | select(.artifactId == $id) | .sha256' "$DETAIL")
+    if ! node "$SCRIPT_DIR/unpack-diagnostic-bundle.mjs" "$OUT_DIR/$FILE" "$OUT_DIR" "$SIZE" "$SHA"; then
+      err "framework diagnostic $ARTIFACT_ID failed verification or extraction"
+      FAILED=$((FAILED + 1))
+    fi
   fi
   note "  saved $FILE"
 done < <(jq -r '.report.artifacts[] | [.artifactId, .type, .source, (.contentType // ""), (.filename // "")] | @tsv' "$DETAIL")

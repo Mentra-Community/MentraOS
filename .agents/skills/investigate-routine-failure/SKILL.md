@@ -96,6 +96,12 @@ media tools, starting at the failed step's `recordingLocation.startOffsetMs`.
 Keep personal transcript/audio, raw logs and recordings local; quote only needed
 redacted excerpts.
 
+Command diagnostics may be grouped in lossless JSON bundles. The helper verifies
+and extracts these automatically to `diagnostic-bundle-<sha256>/`; its
+`manifest.json` maps original asset IDs/paths to the extracted files, sizes and
+digests. Search those files rather than trying to interpret base64. Setup
+snapshots, failure screenshots and Mac action journals remain separate assets.
+
 4. If the exact definition is missing or an assertion/helper needs explanation,
    use the existing `gh` login to read `run.routineSource.repository`, `.commit`
    and declared files at that commit. For published definitions, start with

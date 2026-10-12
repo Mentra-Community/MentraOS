@@ -58,6 +58,11 @@ alternative local directory, such as `.context/incidents/<reportId>/`.
 `--json` returns detail only; it does **not** download logs. `--list` lists
 recent reports and supports `--kind`, `--status`, and `--limit`.
 
+Downloads retain the original artifact bytes. Framework diagnostic bundles are
+verified and extracted automatically under `diagnostic-bundle-<sha256>/`;
+`manifest.json` maps each original command file to its extracted filename and
+digest. Search the extracted JSON files alongside the device log bundles.
+
 If the report is still `collecting` or an artifact download failed, distinguish
 partial evidence from a complete bundle. Re-fetch when uploads have finished;
 do not treat absent logs as proof that nothing happened.
