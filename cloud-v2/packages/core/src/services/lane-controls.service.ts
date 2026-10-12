@@ -47,7 +47,7 @@ export class LaneControlsService {
     for (let attempt = 0; attempt < 3; attempt++) {
       const host = await this.rows.get(hostId)
       if (!host) throw new TestRunError(404, 'Testing computer was not found')
-      const records = recordsSchema.parse(host.laneControls ?? []), next = change(host, records)
+      const records = reconcileReservations(recordsSchema.parse(host.laneControls ?? [])), next = change(host, records)
       if (requestInputDigest(records) === requestInputDigest(next.records) ||
         await this.rows.replace(hostId, host.laneControlVersion ?? 0, next.records)) return next.result
     }
@@ -56,7 +56,7 @@ export class LaneControlsService {
   async list(hostId: string, operator: string): Promise<LaneControlsView> {
     const host = await this.rows.get(hostId)
     if (!host) throw new TestRunError(404, 'Testing computer was not found')
-    return {enabled: Boolean(host.snapshot.laneControls), fresh: fresh(host, this.now()), observedAt: host.observedAt.toISOString(), controls: recordsSchema.parse(host.laneControls ?? [])
+    return {enabled: Boolean(host.snapshot.laneControls), fresh: fresh(host, this.now()), observedAt: host.observedAt.toISOString(), controls: reconcileReservations(recordsSchema.parse(host.laneControls ?? []))
       .filter(row => row.command.operatorId === operatorIdentity(operator)).map(view)}
   }
   async submit(value: unknown, operator: string) {
@@ -78,7 +78,8 @@ export class LaneControlsService {
       if (input.action === 'reserve' && lane.dispatchMode === 'paused')
         throw new TestRunError(409, 'Resume scheduling before reserving this lane')
       const unresolved = records.filter(row => !delivered(row) || activeReservation(row))
-      const recent = records.filter(row => delivered(row) && !activeReservation(row)).slice(-Math.max(0, 99 - unresolved.length))
+      const remaining = Math.max(0, 99 - unresolved.length)
+      const recent = remaining ? records.filter(row => delivered(row) && !activeReservation(row)).slice(-remaining) : []
       const retained = records.filter(row => unresolved.includes(row) || recent.includes(row))
       if (retained.length >= 100) throw new TestRunError(409, 'Lane control history is full; unresolved reservations must be returned first')
       if (retained.some(row => row.command.laneId === input.laneId && !delivered(row)))
@@ -112,8 +113,9 @@ export class LaneControlsService {
       // Forgotten receipts cannot perform an operation; retained commands remain the only source of effects.
       if (exchange.receipts.some(receipt => receipt.hostId !== hostId))
         throw new TestRunError(409, 'Lane control receipt names another computer')
-      return {records: next, result: {schemaVersion: 1 as const,
-        commands: next.filter(row => !delivered(row) || activeReservation(row)).map(row => row.command)}}
+      const reconciled = reconcileReservations(next)
+      return {records: reconciled, result: {schemaVersion: 1 as const,
+        commands: reconciled.filter(row => !delivered(row) || activeReservation(row)).map(row => row.command)}}
     })
   }
 }
@@ -146,4 +148,19 @@ function reconcileReceipt(row: LaneControlRecord, receipt: NonNullable<LaneContr
   if (rank[old.state] === 3 && result.reservation.state !== old.state)
     throw new TestRunError(409, 'Lane control receipt changed its terminal reservation')
   return receipt
+}
+
+/** One reservation can appear in both request and return receipts; retain its latest controller observation in both. */
+function reconcileReservations(records: LaneControlRecord[]): LaneControlRecord[] {
+  const rank = {waiting: 0, granted: 1, returning: 2, released: 3, cancelled: 3}
+  const latest = new Map<string, NonNullable<Extract<NonNullable<LaneControlRecord['receipt']>['result'], {status: 'accepted'}>['reservation']>>()
+  for (const row of records) {
+    const value = row.receipt?.result.status === 'accepted' ? row.receipt.result.reservation : undefined
+    if (value && (!latest.has(value.id) || rank[value.state] >= rank[latest.get(value.id)!.state])) latest.set(value.id, value)
+  }
+  return records.map(row => {
+    const receipt = row.receipt, reservation = receipt?.result.status === 'accepted' ? receipt.result.reservation : undefined
+    return reservation && receipt?.result.status === 'accepted'
+      ? {...row, receipt: {...receipt, result: {...receipt.result, reservation: latest.get(reservation.id)!}}} : row
+  })
 }

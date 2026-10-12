@@ -96,3 +96,26 @@ test('returned reservation in a release receipt cannot be resurrected by an olde
  const newReserve=f.input('reserve',{purpose:'New work'})
  expect((await f.service.submit(newReserve,'alice')).operationId).toBe(newReserve.operationId)
 })
+
+test('terminal reservation observation survives history churn without leaking an active reserve record', async()=>{
+ const f=fixture(), reserve=f.input('reserve',{purpose:'Manual work'});await f.service.submit(reserve,'alice')
+ const held={id:'held',laneId:'phone',generation:1,state:'granted' as const,purpose:'Manual work',requestedAt:new Date(f.now).toISOString()}
+ await f.service.exchange('air',{schemaVersion:1,receipts:[f.receipt(reserve,{status:'accepted',reservation:held})]})
+ const release=f.input('release',{reservation:{id:'held',generation:1}});await f.service.submit(release,'alice')
+ const finished=await f.service.exchange('air',{schemaVersion:1,receipts:[f.receipt(release,{status:'accepted',reservation:{...held,state:'released'}})]})
+ expect(finished.commands).toEqual([])
+ for(let i=0;i<105;i++){
+  const pause=f.input('pause');await f.service.submit(pause,'alice')
+  await f.service.exchange('air',{schemaVersion:1,receipts:[f.receipt(pause,{status:'accepted',mode:'paused'})]})
+ }
+ expect((await f.service.submit(f.input('reserve',{purpose:'Again'}),'alice')).action).toBe('reserve')
+})
+test('99 unresolved commands leave one slot after dropping terminal history', async()=>{
+ const f=fixture()
+ f.host().snapshot.lanes=Array.from({length:101},(_,i)=>({id:`lane-${i}`,dispatchMode:'automatic'}))
+ const terminal=f.input('pause',{laneId:'lane-100'});await f.service.submit(terminal,'alice')
+ await f.service.exchange('air',{schemaVersion:1,receipts:[f.receipt(terminal,{status:'accepted',mode:'paused'})]})
+ for(let i=0;i<99;i++)await f.service.submit(f.input('pause',{laneId:`lane-${i}`}), 'alice')
+ expect((await f.service.submit(f.input('pause',{laneId:'lane-99'}),'alice')).laneId).toBe('lane-99')
+ expect(f.rows()).toHaveLength(100)
+})
