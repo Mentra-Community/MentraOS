@@ -14,13 +14,31 @@ public final class GlassesMediaRelayModule: Module {
             // It does not change the network or product UI; this PR must not be merged.
             guard ProcessInfo.processInfo.isiOSAppOnMac else { return }
             let started = ProcessInfo.processInfo.systemUptime
+            let output = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+                .appendingPathComponent("corewlan-readonly-probe.json")
+            let persist: (String) -> Void = { facts in
+                let value: [String: Any] = [
+                    "schemaVersion": 1, "pid": ProcessInfo.processInfo.processIdentifier,
+                    "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+                    "iosOnMac": true, "facts": facts,
+                    "elapsedMs": (ProcessInfo.processInfo.systemUptime - started) * 1000,
+                ]
+                do {
+                    guard let output else { throw CocoaError(.fileNoSuchFile) }
+                    try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]).write(to: output, options: .atomic)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output.path)
+                } catch {
+                    let error = error as NSError
+                    NSLog("COREWLAN_READONLY result_write_failed domain=%@ code=%ld", error.domain, error.code)
+                }
+            }
+            persist("state=entered")
             var finished = false
             let report: (String) -> Void = { facts in
                 self.queue.async {
                     guard !finished else { return }
                     finished = true
-                    NSLog("GLASSES-MEDIA COREWLAN_READONLY ios_on_mac=1 %@ elapsed_ms=%.1f",
-                          facts, (ProcessInfo.processInfo.systemUptime - started) * 1000)
+                    persist(facts)
                 }
             }
             self.queue.asyncAfter(deadline: .now() + 3) { report("state=timeout") }
