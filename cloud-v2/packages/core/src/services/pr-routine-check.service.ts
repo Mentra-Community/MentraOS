@@ -145,6 +145,7 @@ export class PrRoutineCheckService {
         gate.attempt = {...this.attempt(gate.attempt.generation + 1), routineRevision: gate.attempt.routineRevision, suiteId: gate.attempt.suiteId, suiteStartedAt: gate.attempt.suiteStartedAt ?? gate.attempt.acceptedAt,
           members: gate.attempt.members.map(member => ({...member, progress: undefined}))}
         gate.checkExternalId = externalId(gate)
+        delete gate.checkId; delete gate.creation
         delete gate.reporting.intended; delete gate.reporting.deliveredDigest
         delete gate.buildRequests
         const previous = gate.retired.at(-1)!
@@ -514,7 +515,8 @@ export class PrRoutineCheckService {
         gate.retired.push({...gate.attempt, cancellation: {kind: 'superseded', requestedAt: iso(this.now())}})
         gate.context = context; gate.selectionKey = selectionKey(context); gate.coverageGeneration++
         gate.attempt = this.attempt(1); delete gate.routineRevision; delete gate.selectionError; delete gate.selectionComplete; delete gate.buildRequests
-        gate.checkExternalId = externalId(gate); gate.reporting = {nextAt: iso(this.now())}
+        gate.checkExternalId = externalId(gate); delete gate.checkId; delete gate.creation
+        gate.reporting = {nextAt: iso(this.now())}
         const pending = routineCheckPayload(gate, this.now())
         gate.reporting.intended = {revision: row.revision + 1, payload: pending, digest: digest(pending)}
         const saved = await this.rows.save(row, gate, new Date(this.now()))

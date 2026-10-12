@@ -11,6 +11,7 @@ function fixture() {
   let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, contextCalls = 0, loseIntakeWake = false, resolveCount = 0, deliveries = 0, lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false
   const stored = new Map<string, PrRoutineCheckRow>(), events = new Map<string, string>(), requests = new Map<string, any>(), results = new Map<string, any>()
   const controls = new Map<string,{deliveryId:string;digest:string;control:unknown;nextAt:Date}>(), processed = new Set<string>()
+  const nativeIds = new Map<string, number>()
   const checkPayloads: CheckPayload[] = [], submissions: Array<{selection: any; deadline: string}> = [], cancellations: string[] = []
   const context: PrRoutineContext = {number: 12, headSha: 'b'.repeat(40), headRef: 'feature', baseRef: 'dev', open: true,
     sameRepository: true, labels: ['routine:login'], peers: [12]}
@@ -35,7 +36,7 @@ function fixture() {
   const definition = {id: 'login', title: 'Account login', steps: [{id: 'open', instruction: 'Open account'}, {id: 'check', instruction: 'Verify login'}], platforms: ['android']}
   const createService = () => new PrRoutineCheckService(rows, {
     async context() {contextCalls++; return structuredClone(context)}, async permission() {return true}, async ownedCheck() {return true},
-    async findCheck() {findCalls++; return deliveries && !lostDelivery ? 99 : undefined}, async producer() {return producerReceipt}, async deliver(_id, payload) {if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return 99}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
+    async findCheck(payload) {findCalls++; return !lostDelivery ? nativeIds.get(payload.external_id) : undefined}, async producer() {return producerReceipt}, async deliver(_id, payload) {if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (!nativeIds.has(payload.external_id)) nativeIds.set(payload.external_id, 99 + nativeIds.size); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return nativeIds.get(payload.external_id)!}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
   }, {
     async freezeSelection(value: any) {return {...value, build: {repository: 'Mentra-Community/MentraOS', kind: 'android-apk', channel: 'pr', headSha: context.headSha, source: value.source,
       archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 10, sha256: 'd'.repeat(64)}, receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 1, sha256: 'e'.repeat(64)}}} as any},
@@ -457,4 +458,30 @@ test('a new-head event remains recoverable under contention and waits for old-he
  const request=f.requests.get(original);request.state='terminal';request.terminalStatus='cancelled';request.dispatchCompletion={disposition:'clean'};f.build();await f.drain(5);
  expect(f.stored.get(oldId)!.payload.attempt.conclusion).toBe('cancelled');expect(f.stored.get(newId)!.payload.attempt.members[0]!.requestId).toBeDefined();
  expect(f.submissions.length).toBeGreaterThan(before);
+})
+
+test('same-head coverage change replaces completed native identity before new work and rejects historical rerun', async () => {
+ const f=fixture(); f.context.labels=[]; await f.intake(); await f.drain(3);
+ const previous=control(f,'historical-empty-rerun'), id=f.gate().gateId;
+ expect(f.gate().attempt.conclusion).toBe('success'); expect(previous.checkId).toBe(99);
+ f.context.labels=['routine:login']; await f.intake('new-label');
+ expect(f.gate().gateId).toBe(id); expect(f.gate().coverageGeneration).toBe(2);
+ expect(f.gate().checkId).toBe(100); expect(f.gate().checkExternalId).not.toBe(previous.externalId);
+ expect(f.checkPayloads.at(-1)).toMatchObject({status:'queued'});
+ expect(f.checkPayloads.at(-1)).not.toHaveProperty('conclusion');
+ expect(f.submissions).toHaveLength(0);
+ await expect(f.service.control(previous)).rejects.toThrow('obsolete routine check');
+ expect(f.gate().controls).toHaveLength(0); expect(f.gate().attempt.generation).toBe(1);
+})
+
+test('accepted native rerun creates a current check without duplicate jobs or historical controls', async () => {
+ const f=fixture(); await f.intake(); f.build(); await f.drain(); await complete(f);
+ const command=control(f,'fresh-native-rerun'), previousId=f.gate().checkId, count=f.submissions.length;
+ await f.service.control(command); await f.service.control(command);
+ expect(f.gate().checkId).toBeUndefined(); expect(f.gate().creation).toBeUndefined();
+ await f.drain(1);
+ expect(f.gate().checkId).not.toBe(previousId); expect(f.gate().attempt.generation).toBe(2);
+ expect(f.gate().controls).toHaveLength(1); expect(f.submissions.length).toBe(count);
+ await expect(f.service.control({...command, deliveryId:'historical-other-event',digest:requestInputDigest('historical-other-event')})).rejects.toThrow('obsolete routine check');
+ expect(f.gate().attempt.generation).toBe(2); expect(f.gate().controls).toHaveLength(1);
 })
