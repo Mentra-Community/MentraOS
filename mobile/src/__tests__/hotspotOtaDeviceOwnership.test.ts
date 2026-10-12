@@ -1,4 +1,4 @@
-import {hotspotOtaTransport} from "../../modules/engine/src/services/HotspotOtaTransport"
+import {HotspotOtaTransportError, hotspotOtaTransport} from "../../modules/engine/src/services/HotspotOtaTransport"
 import {startOtaDeviceSession, stopOtaDeviceSession} from "../../modules/engine/src/services/OtaDeviceSession"
 import type {OtaCheckCurrentGlassesResult} from "../../modules/engine/src/services/OtaUpdateCheckService"
 import {bluetoothSdkMock, emitBluetoothSdkEvent, resetBluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
@@ -11,6 +11,9 @@ jest.mock("../../modules/engine/src/services/OtaArtifactDownloader", () => ({
   OtaArtifactError: class extends Error {},
 }))
 jest.mock("../../modules/engine/src/services/asg/localNetworkTransport", () => ({
+  localNetworkErrorDetails: jest.fn(() => ({
+    native: {domain: "NEHotspotConfigurationErrorDomain", code: 8, completed: true},
+  })),
   localNetworkTransport: {connect: jest.fn(async () => "192.168.43.2"), disconnect: jest.fn(async () => {})},
 }))
 jest.mock("@mentra/bluetooth-sdk/ota-transport", () => ({
@@ -113,4 +116,30 @@ it("keeps normal same-pair hotspot preparation and cleanup working", async () =>
   expect(bluetoothSdkMock.setHotspotState).toHaveBeenLastCalledWith(false)
   expect(server.stop).toHaveBeenCalledTimes(1)
   expect(localNetwork.disconnect).toHaveBeenCalledTimes(1)
+})
+
+it("retains terminal native join facts and does not repeat downloads or enable requests", async () => {
+  const nativeFailure = Object.assign(new Error("internal error"), {code: "unableToConnect"})
+  bluetoothSdkMock.setHotspotState.mockResolvedValueOnce({
+    type: "hotspot_status",
+    state: "enabled",
+    ssid: "A",
+    password: "password",
+    localIp: "192.168.43.1",
+  })
+  localNetwork.connect.mockRejectedValueOnce(nativeFailure)
+  const failure = await hotspotOtaTransport.prepare(check).catch((error) => error)
+  expect(failure).toBeInstanceOf(HotspotOtaTransportError)
+  expect(JSON.parse(JSON.stringify(failure))).toMatchObject({
+    code: "hotspot_join_failed",
+    nativeError: {
+      native: {domain: "NEHotspotConfigurationErrorDomain", code: 8, completed: true},
+    },
+  })
+  expect(localNetwork.connect).toHaveBeenCalledWith("A", "password", {
+    retryIosInternalError: true,
+    assertCurrent: expect.any(Function),
+  })
+  expect(downloader.prepareArtifacts).toHaveBeenCalledTimes(1)
+  expect(server.start).not.toHaveBeenCalled()
 })

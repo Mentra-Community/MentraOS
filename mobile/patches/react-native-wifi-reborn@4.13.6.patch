@@ -10,7 +10,7 @@ diff --git a/ios/RNWifi.m b/ios/RNWifi.m
  
  
  @interface WifiManager () <CLLocationManagerDelegate>
-@@ -171,6 +173,22 @@
+@@ -171,6 +173,23 @@
  
              [[NEHotspotConfigurationManager sharedManager] applyConfiguration:configuration completionHandler:^(NSError * _Nullable error) {
                  if (error != nil) {
@@ -30,6 +30,7 @@ diff --git a/ios/RNWifi.m b/ios/RNWifi.m
 +                    // UIKit state is read on main; diagnostics never delay or alter rejection.
 +                    if (callbackOnMain) logFailure();
 +                    else dispatch_async(dispatch_get_main_queue(), logFailure);
++                    error = RNWifiErrorWithNativeFacts(error);
                      reject([self parseError:error], [error localizedDescription], error);
                  } else {
                      // It's not guaranteed that the connection is established before completionHandler is called, so
@@ -37,7 +38,7 @@ diff --git a/ios/RNWifiErrorFacts.h b/ios/RNWifiErrorFacts.h
 new file mode 100644
 --- /dev/null
 +++ b/ios/RNWifiErrorFacts.h
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,37 @@
 +#import <Foundation/Foundation.h>
 +
 +// Diagnostic identifiers only: never include localized text, credentials or userInfo.
@@ -58,4 +59,20 @@ new file mode 100644
 +        RNWifiErrorDomain(error.domain), (long)error.code,
 +        underlying ? RNWifiErrorDomain(underlying.domain) : @"none",
 +        underlying ? [NSString stringWithFormat:@"%ld", (long)underlying.code] : @"none"];
++}
++
++// React Native replaces NSError.code with the library string code. Preserve
++// only bounded original facts, and certify that applyConfiguration answered.
++static inline NSError *RNWifiErrorWithNativeFacts(NSError *error) {
++    id value = error.userInfo[NSUnderlyingErrorKey];
++    NSError *underlying = [value isKindOfClass:[NSError class]] ? value : nil;
++    NSMutableDictionary *facts = [@{@"domain": RNWifiErrorDomain(error.domain),
++        @"code": @(error.code), @"completed": @YES} mutableCopy];
++    if (underlying) {
++        facts[@"underlying"] = @{@"domain": RNWifiErrorDomain(underlying.domain),
++            @"code": @(underlying.code)};
++    }
++    NSMutableDictionary *userInfo = [error.userInfo mutableCopy] ?: [NSMutableDictionary new];
++    userInfo[@"RNWifiNativeError"] = facts;
++    return [NSError errorWithDomain:error.domain code:error.code userInfo:userInfo];
 +}
