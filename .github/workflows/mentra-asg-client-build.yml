@@ -225,7 +225,7 @@ jobs:
           echo "Published ${OUTPUT_PATH##*/} pinning coordinated ASG ${ASG_VERSION_CODE} (${ASG_VERSION_NAME})."
 
       - name: Update PR comment - Reused coordinated build
-        if: steps.select.outputs.mode == 'reuse'
+        if: github.event_name == 'pull_request' && steps.select.outputs.mode == 'reuse'
         uses: actions/github-script@v7
         env:
           ASG_VERSION_CODE: ${{ steps.select.outputs.version_code }}

@@ -308,7 +308,8 @@ export class PrRoutineCheckService {
         if (!eligible[0]) {
           const newest = sources.get(member.platform)!.filter(build => build.headSha === gate.headSha && build.source.channel === 'pr')
             .sort((a, b) => b.source.buildRunId - a.source.buildRunId)[0]
-          if (newest?.producerStatus === 'failed' && (!gate.buildRequests?.[member.platform] || Date.parse(newest.createdAt) >= Date.parse(gate.buildRequests[member.platform]!.requestedAt))) {
+          const producerBoundary = gate.buildRequests?.[member.platform]?.requestedAt ?? attempt.acceptedAt
+          if (newest?.producerStatus === 'failed' && Date.parse(newest.createdAt) >= Date.parse(producerBoundary)) {
             member.status = 'not-run'; member.settled = true; member.waitReason = 'App build failed or was cancelled'; continue
           }
           gate.buildRequests ??= {}

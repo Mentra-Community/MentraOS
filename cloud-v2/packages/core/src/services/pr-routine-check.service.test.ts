@@ -55,6 +55,7 @@ function fixture() {
     failSubmit(value = true) {failSubmit = value}, history(value: any[]) {history = value},
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
     get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
+    inventory(value: any[]) {builds = value},
     build() {builds = [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}]},
     async intake(event = 'event-one') {await service.intake(12, event, requestInputDigest(event)); await service.tick()},
     async drain(count = 6) {for (let i = 0; i < count; i++) {now += 30000; await service.tick()}}
@@ -271,6 +272,17 @@ test('producer failure rerun resets unlinked status and actually admits recovere
  expect(f.gate().attempt.generation).toBe(2); expect(f.submissions.length).toBeGreaterThan(0);
  expect(f.gate().attempt.members[0]!.status).toBe('running');
  expect(f.gate().attempt.members[0]!.waitReason).toBeUndefined(); expect(f.previews).toHaveLength(0);
+});
+test('native rerun waits for its replacement producer while the previous failed publication remains visible', async () => {
+ const f = fixture(); await f.intake();
+ f.inventory([{headSha: f.context.headSha, availability: 'unavailable', producerStatus: 'failed',
+   createdAt: new Date(f.now).toISOString(), source: {channel: 'pr', prNumber: 12, buildRunId: 71, publicationAttempt: 1}}]);
+ await f.drain(3); expect(f.gate().attempt.conclusion).toBe('failure'); expect(f.submissions).toHaveLength(0);
+ await f.service.control(control(f, 'old-publication-rerun')); await f.drain(5);
+ expect(f.gate().attempt.generation).toBe(2); expect(f.gate().attempt.conclusion).toBeUndefined();
+ expect(f.gate().attempt.members[0]!.settled).toBe(false); expect(f.buildCalls).toContain('android');
+ f.build(); await f.drain(4); expect(f.submissions.length).toBeGreaterThan(0);
+ expect(f.gate().attempt.members[0]!.status).toBe('running');
 });
 test('terminal and cancelling PATCH projections explicitly remove the Cancel action', async () => {
  const f = fixture(); await f.intake();
