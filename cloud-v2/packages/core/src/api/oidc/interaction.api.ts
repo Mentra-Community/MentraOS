@@ -48,7 +48,7 @@ import {
 import {
   ConfigurationError,
   findProviderBySourceId,
-  portalIdentityProvider,
+  signInSource as configuredSignInSource,
   type WebIdentityProvider,
 } from "../../services/signin/config"
 import {endSupabaseSession, IdentityProviderUnavailableError, verifySupabaseHandoffToken} from "../../services/signin/idp-tokens"
@@ -146,7 +146,7 @@ function txCookieName(issuer: string): string {
 /** The identity provider behind this Core's sign-in: Supabase (hosted) or the customer's (Private Cloud); null when neither is configured. */
 function signInSource(): WebIdentityProvider | null {
   try {
-    return portalIdentityProvider()
+    return configuredSignInSource()
   } catch (err) {
     if (err instanceof ConfigurationError) return null
     throw err

@@ -29,28 +29,36 @@ function toPem(base64Body: string, label: "PRIVATE KEY" | "PUBLIC KEY"): string 
   return `-----BEGIN ${label}-----\n${base64Body}\n-----END ${label}-----`
 }
 
-let signingJwk: Promise<jose.JWK> | null = null
-let verificationKey: Promise<jose.KeyLike> | null = null
+// Cached per key value, so a changed key takes effect on the next use.
+let signingJwk: {source: string; jwk: Promise<jose.JWK>} | null = null
+let verificationKey: {source: string; key: Promise<jose.KeyLike>} | null = null
 
 /** The provider's private signing key as a JWK, for `oidc-provider`'s `jwks` setting. */
 export function oidcSigningJwk(): Promise<jose.JWK> {
-  signingJwk ??= (async () => {
-    const privateKey = await jose.importPKCS8(toPem(requireEnv("MENTRA_JWT_PRIVATE_KEY"), "PRIVATE KEY"), OIDC_TOKEN_ALG, {
-      extractable: true,
-    })
-    const jwk = await jose.exportJWK(privateKey)
-    return {...jwk, kid: OIDC_TOKEN_KID, alg: OIDC_TOKEN_ALG, use: "sig"}
-  })()
-  return signingJwk
+  const source = requireEnv("MENTRA_JWT_PRIVATE_KEY")
+  if (signingJwk?.source !== source) {
+    signingJwk = {
+      source,
+      jwk: (async () => {
+        const privateKey = await jose.importPKCS8(toPem(source, "PRIVATE KEY"), OIDC_TOKEN_ALG, {extractable: true})
+        const jwk = await jose.exportJWK(privateKey)
+        return {...jwk, kid: OIDC_TOKEN_KID, alg: OIDC_TOKEN_ALG, use: "sig"}
+      })(),
+    }
+  }
+  return signingJwk.jwk
 }
 
 /** The public key that verifies the provider's tokens, read locally (no key set fetch). */
 export function oidcVerificationKey(): Promise<jose.KeyLike> {
-  verificationKey ??= jose.importSPKI(toPem(requireEnv("MENTRA_JWT_PUBLIC_KEY"), "PUBLIC KEY"), OIDC_TOKEN_ALG)
-  return verificationKey
+  const source = requireEnv("MENTRA_JWT_PUBLIC_KEY")
+  if (verificationKey?.source !== source) {
+    verificationKey = {source, key: jose.importSPKI(toPem(source, "PUBLIC KEY"), OIDC_TOKEN_ALG)}
+  }
+  return verificationKey.key
 }
 
-/** Forget the cached keys (tests that change `MENTRA_JWT_*`). */
+/** Forget the cached keys (tests). */
 export function resetOidcKeyCache(): void {
   signingJwk = null
   verificationKey = null

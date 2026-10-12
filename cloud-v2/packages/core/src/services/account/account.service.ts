@@ -13,6 +13,7 @@ import {findOrCreateUser} from "../user.service"
 import {sendEmail} from "../email/email.service"
 import * as gotrue from "./gotrue.client"
 import {SupportProfileModel} from "../../models/support-profile.model"
+import {SigninIdentityModel} from "../../models/signin-identity.model"
 import {UserModel} from "../../models/user.model"
 import * as otc from "./one-time-code.service"
 import {AccountError} from "./account-error"
@@ -231,6 +232,8 @@ export async function finishAccountDeletion(mentraUserId: string): Promise<"comp
   await revokeAllSessionsForUser({mentraUserId})
   await removeDeletedUserFromWorkspaces(mentraUserId)
   await SupportProfileModel.deleteOne({mentraUserId})
+  // How the person last signed in to Core's sign-in server, email included.
+  await SigninIdentityModel.deleteOne({mentraUserId})
   if (user.tenantId === MENTRA_TENANT_ID) await gotrue.deleteUser(user.tenantUserId)
   await UserModel.updateOne(
     {mentraUserId, accountDeletionCompletedAt: null},

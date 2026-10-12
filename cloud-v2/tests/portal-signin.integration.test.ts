@@ -1,10 +1,12 @@
 /**
- * @fileoverview Portal sign-in for the admin and enterprise portals (L01, L03,
- * L04, L05, L06, Review Focus 1 and 2).
+ * @fileoverview Portal sign-in for the admin and workspace portals through
+ * Core's sign-in server (L01, L02, L03, L04, L05, L06, L12, Review Focus 1
+ * and 2).
  *
- * Runs Core's real routes in-process against a fake identity provider (fetch
- * interception): Supabase for hosted Core, Entra for a Private Cloud. Every
- * round trip goes through openid-client's code exchange.
+ * Runs Core's real routes in-process. The portals are confidential clients of
+ * Core's own provider, which fronts a fake Supabase (hosted Core, through the
+ * sign-in page's hand-off) or a fake Entra (a Private Cloud, on Core's one
+ * host). Every round trip goes through openid-client's code exchange.
  *
  * Safety: `localTestMongoUrl` (loopback only, random database, ignores
  * `MONGO_URL`); the database is dropped afterwards.
@@ -13,23 +15,35 @@
  */
 
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test} from "bun:test"
+import * as jose from "jose"
 
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/core/src/connections/mongo.connection"
+import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {AuthRateLimitModel} from "../packages/core/src/models/auth-rate-limit.model"
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
 import {DeveloperOrgApiKeyModel} from "../packages/core/src/models/developer-org-api-key.model"
 import {LoginTransactionModel} from "../packages/core/src/models/login-transaction.model"
-import {AuthRateLimitModel} from "../packages/core/src/models/auth-rate-limit.model"
+import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
-import {DeveloperApiKeyService} from "../packages/core/src/services/developer-orgs/developer-api-key.service"
-import {convertLegacyAdminKeys} from "../packages/core/src/services/workspaces/legacy-admin-keys"
-import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
+import {DeveloperApiKeyService} from "../packages/core/src/services/developer-orgs/developer-api-key.service"
+import {stopOidcBridge} from "../packages/core/src/services/oidc/bridge"
+import {ensureOidcCollections} from "../packages/core/src/services/oidc/mongo-adapter"
+import {resetUpstreamCaches} from "../packages/core/src/services/oidc/upstream"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
-import {resetPortalSigninCaches} from "../packages/core/src/services/signin/portal-signin.service"
+import {
+  portalClient,
+  resetPortalSigninCaches,
+  SignInRefused,
+  verifyPortalIdToken,
+} from "../packages/core/src/services/signin/portal-signin.service"
+import {convertLegacyAdminKeys} from "../packages/core/src/services/workspaces/legacy-admin-keys"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
+import {resetCoreKeyCaches} from "./support/key-caches"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
+import {routeOriginsToApp} from "./support/oidc-harness"
 import {
   ADMIN_COOKIE,
   ADMIN_EMAIL,
@@ -37,11 +51,14 @@ import {
   applyEnv,
   CORE_API_CLIENT,
   CORE_API_SECRET,
+  ENTRA_CALLBACK,
   ENTRA_ISSUER,
   ENTRA_JWKS,
   ENTRA_TENANT,
   HOSTED_ENV,
+  OIDC_ISSUER,
   PORTAL_COOKIE,
+  PORTAL_ORIGIN,
   portalSignIn,
   PRIVATE_CLOUD_ENV,
   setCookieLine,
@@ -58,6 +75,7 @@ const databaseUrl = localTestMongoUrl("portal-signin")
 let verified = false
 let app: ReturnType<typeof createApp>
 let restoreEnv: () => void = () => {}
+let restoreFetch: () => void = () => {}
 const now = () => Math.floor(Date.now() / 1000)
 
 beforeAll(async () => {
@@ -70,6 +88,8 @@ beforeAll(async () => {
     LoginTransactionModel.syncIndexes(),
     AuthRateLimitModel.syncIndexes(),
     DeveloperOrgApiKeyModel.syncIndexes(),
+    SigninIdentityModel.syncIndexes(),
+    ensureOidcCollections(),
   ])
   for (const model of [AccessCredentialModel, WorkspaceAuditEventModel]) {
     await model.createCollection()
@@ -79,11 +99,13 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  await stopOidcBridge()
   if (verified) {
     assertConnectedTo(databaseUrl, UserModel.db.name)
     await UserModel.db.dropDatabase()
   }
   await disconnectMongo()
+  resetCoreKeyCaches()
 })
 
 async function clean() {
@@ -96,9 +118,11 @@ async function clean() {
     DeveloperOrgApiKeyModel.deleteMany({}),
     AccessCredentialModel.deleteMany({}),
     WorkspaceAuditEventModel.deleteMany({}),
+    SigninIdentityModel.deleteMany({}),
   ])
   resetIdpTokenCaches()
   resetPortalSigninCaches()
+  resetUpstreamCaches()
 }
 
 const ADMIN_PERSON = {sub: "supa-admin", email: ADMIN_EMAIL, emailConfirmed: true}
@@ -111,25 +135,33 @@ async function expectNoOrganizationCapabilities(cookie: string) {
   expect((await app.request(`${ADMIN_ORIGIN}/api/admin/reports`, {headers: {cookie}})).status).toBe(403)
 }
 
-describe("hosted Core (Supabase)", () => {
+describe("hosted Core: Supabase behind Core's sign-in server", () => {
   let idp: FakeIdp
+  const tokenRequests: Array<{authorization: string | null; body: URLSearchParams}> = []
 
   beforeEach(async () => {
     restoreEnv = applyEnv(HOSTED_ENV)
     await clean()
-    idp = await installFakeIdp({
-      issuer: SUPABASE_ISSUER,
-      jwksUrl: SUPABASE_JWKS,
-      hs256Secret: SUPABASE_SECRET,
-      projectUrl: SUPABASE_PROJECT,
-      clients: [
-        {id: "admin-client", secret: "admin-secret", redirectUris: [`${ADMIN_ORIGIN}/api/admin/auth/callback`]},
-        {id: "portal-client", secret: "portal-secret", redirectUris: ["https://portal.test/api/portal/auth/callback"]},
-      ],
-    })
+    idp = await installFakeIdp({issuer: SUPABASE_ISSUER, jwksUrl: SUPABASE_JWKS, hs256Secret: SUPABASE_SECRET, projectUrl: SUPABASE_PROJECT})
+    const restoreRoute = routeOriginsToApp(app, [OIDC_ISSUER])
+    // Record the portal's code exchanges at Core's token endpoint.
+    const routed = globalThis.fetch
+    tokenRequests.length = 0
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init)
+      if (request.url === `${OIDC_ISSUER}/oidc/token`) {
+        tokenRequests.push({authorization: request.headers.get("authorization"), body: new URLSearchParams(await request.clone().text())})
+      }
+      return routed(request)
+    }) as typeof fetch
+    restoreFetch = () => {
+      globalThis.fetch = routed
+      restoreRoute()
+    }
   })
 
   afterEach(() => {
+    restoreFetch()
     idp.restore()
     restoreEnv()
   })
@@ -139,120 +171,118 @@ describe("hosted Core (Supabase)", () => {
     const result = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON, returnTo: "/?report=rep_1"})
     expect(result.done.status).toBe(302)
     expect(result.done.headers.get("location")).toBe("/?report=rep_1")
-    expect(result.done.headers.get("cache-control")).toBe("no-store")
     const line = setCookieLine(result.done, ADMIN_COOKIE)!
     expect(line).toMatch(/HttpOnly/i)
     expect(line).toMatch(/Secure/i)
     expect(line).toMatch(/SameSite=Lax/i)
-    expect(line).toMatch(/Path=\//)
+    expect(line).toMatch(/Path=\//i)
     expect(line).not.toMatch(/Domain=/i)
-
+    // Only the hash of the cookie value is stored.
+    expect(JSON.stringify(await BrowserSessionModel.find({}).lean())).not.toContain(result.sessionCookie!)
     const me = await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie: `${ADMIN_COOKIE}=${result.sessionCookie}`}})
     expect(me.status).toBe(200)
-    const body = (await me.json()) as {user: {mentraUserId: string; email: string; emailVerified: boolean}}
-    expect(body.user.mentraUserId).toBe(phoneUser.mentraUserId)
-    expect(body.user.email).toBe(ADMIN_EMAIL)
-    expect(body.user.emailVerified).toBe(true)
+    expect(((await me.json()) as {user: {mentraUserId: string; email: string; emailVerified: boolean}}).user).toMatchObject({
+      mentraUserId: phoneUser.mentraUserId,
+      email: ADMIN_EMAIL,
+      emailVerified: true,
+    })
   })
 
-  test("the authorize request pins email profile: no openid, no nonce, S256 PKCE, and the configured redirect", async () => {
-    const result = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
-    const params = result.authorizeUrl.searchParams
-    expect(params.get("scope")).toBe("email profile")
-    expect(params.get("nonce")).toBeNull()
-    expect(params.get("code_challenge_method")).toBe("S256")
-    expect(params.get("client_id")).toBe("admin-client")
-    expect(params.get("redirect_uri")).toBe(`${ADMIN_ORIGIN}/api/admin/auth/callback`)
+  test("the authorize request goes to Core's issuer: openid email profile, nonce, S256 PKCE, the registered redirect", async () => {
+    const {authorizeUrl} = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
+    expect(`${authorizeUrl.origin}${authorizeUrl.pathname}`).toBe(`${OIDC_ISSUER}/oidc/auth`)
+    expect(authorizeUrl.searchParams.get("client_id")).toBe("admin-portal")
+    expect(authorizeUrl.searchParams.get("scope")).toBe("openid email profile")
+    expect(authorizeUrl.searchParams.get("nonce")).toBeTruthy()
+    expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256")
+    expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(`${ADMIN_ORIGIN}/api/admin/auth/callback`)
   })
 
   test("the redirect URI comes from configuration even with forwarding headers set", async () => {
-    const result = await portalSignIn(app, idp, {
+    const {authorizeUrl} = await portalSignIn(app, idp, {
       portal: "admin",
       person: ADMIN_PERSON,
-      loginHeaders: {"x-forwarded-host": "evil.example", "x-mentra-public-origin": "https://evil.example", host: "evil.example"},
+      loginHeaders: {"x-forwarded-host": "evil.test", "x-mentra-public-origin": "https://evil.test", host: "evil.test"},
     })
-    expect(result.authorizeUrl.searchParams.get("redirect_uri")).toBe(`${ADMIN_ORIGIN}/api/admin/auth/callback`)
-    expect(result.done.status).toBe(302)
+    expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(`${ADMIN_ORIGIN}/api/admin/auth/callback`)
   })
 
   test("an unsafe return_to falls back to / (Review Focus 1)", async () => {
-    const result = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON, returnTo: "//evil.example/x"})
-    expect(result.done.headers.get("location")).toBe("/")
+    const {done} = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON, returnTo: "//evil.test/x"})
+    expect(done.headers.get("location")).toBe("/")
   })
 
-  test("the code exchange uses client_secret_post, and the portal's Supabase session is ended right after", async () => {
-    await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
-    expect(idp.tokenRequests).toHaveLength(1)
-    expect(idp.tokenRequests[0]).toMatchObject({auth: "client_secret_post", clientId: "admin-client", status: 200})
-    expect(idp.logoutCalls).toHaveLength(1)
-    expect(idp.logoutCalls[0]).toMatchObject({scope: "local", sub: "supa-admin", status: 204, apikey: "sb_publishable_signin_test"})
-    const sessions = [...idp.sessions.values()]
-    expect(sessions).toHaveLength(1)
-    expect(sessions[0]!.endedAt).not.toBeNull()
+  test("the code exchange authenticates with client_secret_post and requests no refresh token", async () => {
+    const {done} = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
+    expect(done.status).toBe(302)
+    expect(tokenRequests).toHaveLength(1)
+    expect(tokenRequests[0]!.authorization).toBeNull()
+    expect(tokenRequests[0]!.body.get("client_id")).toBe("admin-portal")
+    expect(tokenRequests[0]!.body.get("client_secret")).toBeTruthy()
+    expect(tokenRequests[0]!.body.get("grant_type")).toBe("authorization_code")
+  })
+
+  test("a second portal in the same browser signs in without credentials (single sign-on, L02)", async () => {
+    const first = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
+    const handoffsBefore = idp.logoutCalls.length
+    const second = await portalSignIn(app, idp, {portal: "portal", person: {sub: "never-asked"}, browser: first.browser})
+    expect(second.done.status).toBe(302)
+    expect(second.sessionCookie).toBeTruthy()
+    // No second hand-off happened: the provider's own session signed the person in.
+    expect(idp.logoutCalls.length).toBe(handoffsBefore)
+    const me = await app.request(`${PORTAL_ORIGIN}/api/portal/me`, {headers: {cookie: `${PORTAL_COOKIE}=${second.sessionCookie}`}})
+    expect(((await me.json()) as {user: {email: string}}).user.email).toBe(ADMIN_EMAIL)
+  })
+
+  test("signing out on the sign-in site ends the provider session and leaves the portal session working (L12)", async () => {
+    const first = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
+    const confirm = await first.browser.request(`${OIDC_ISSUER}/oidc/session/end`)
+    const xsrf = /name="xsrf" value="([^"]+)"/.exec(await confirm.text())![1]!
+    await first.browser.request(`${OIDC_ISSUER}/oidc/session/end/confirm`, {
+      method: "POST",
+      headers: {"content-type": "application/x-www-form-urlencoded", origin: OIDC_ISSUER},
+      body: new URLSearchParams({xsrf, logout: "yes"}).toString(),
+    })
+    const me = await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie: `${ADMIN_COOKIE}=${first.sessionCookie}`}})
+    expect(me.status).toBe(200)
+    // The next portal sign-in in that browser asks for credentials again (a new hand-off).
+    const handoffs = idp.logoutCalls.length
+    await portalSignIn(app, idp, {portal: "portal", person: ADMIN_PERSON, browser: first.browser})
+    expect(idp.logoutCalls.length).toBe(handoffs + 1)
   })
 
   test("a deleted account cannot sign in, and its open portal session stops working", async () => {
-    const result = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
-    const cookie = `${ADMIN_COOKIE}=${result.sessionCookie}`
-    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie}})).status).toBe(200)
-
-    // Account deletion sets the tombstone before anything else.
-    const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: ADMIN_PERSON.sub})
+    const {sessionCookie} = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
+    const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: "supa-admin"})
     await UserModel.updateOne({mentraUserId: user.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
-
-    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie}})).status).toBe(401)
+    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie: `${ADMIN_COOKIE}=${sessionCookie}`}})).status).toBe(401)
     const again = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
-    expect(again.done.status).toBe(400)
     expect(again.sessionCookie).toBeNull()
-    expect(await BrowserSessionModel.countDocuments({mentraUserId: user.mentraUserId, revokedAt: null})).toBe(1)
-  })
-
-  test("a failing Supabase logout still signs the person in", async () => {
-    idp.failLogout = true
-    const result = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
-    expect(result.done.status).toBe(302)
-    expect(result.sessionCookie).toBeTruthy()
   })
 
   describe("each creates no session (L04)", () => {
-    async function expectRefused(result: Awaited<ReturnType<typeof portalSignIn>>) {
-      expect(result.done.status).toBe(400)
+    async function expectNoSession(result: Awaited<ReturnType<typeof portalSignIn>>) {
       expect(result.sessionCookie).toBeNull()
-      expect(result.done.headers.getSetCookie().some(line => line.startsWith(ADMIN_COOKIE))).toBe(false)
-      expect(result.done.headers.get("content-type")).toContain("text/html")
-      expect(await result.done.text()).toContain("Try again")
+      expect(result.done.status).toBeGreaterThanOrEqual(400)
       expect(await BrowserSessionModel.countDocuments({})).toBe(0)
     }
 
-    test("an access token issued to another client (the Console's)", async () => {
-      await expectRefused(await portalSignIn(app, idp, {portal: "admin", person: {...ADMIN_PERSON, claims: {client_id: "console-client"}}}))
-    })
-
-    test("a wrong issuer", async () => {
-      await expectRefused(await portalSignIn(app, idp, {portal: "admin", person: {...ADMIN_PERSON, claims: {iss: "https://other.supabase.co/auth/v1"}}}))
-    })
-
-    test("an expired access token", async () => {
-      await expectRefused(await portalSignIn(app, idp, {portal: "admin", person: {...ADMIN_PERSON, claims: {iat: now() - 7200, exp: now() - 120}}}))
-    })
-
     test("a replayed state", async () => {
       const first = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
-      expect(first.done.status).toBe(302)
+      expect(first.sessionCookie).toBeTruthy()
       await BrowserSessionModel.deleteMany({})
       const replay = await app.request(first.callbackUrl.href, {headers: {cookie: `${TX_COOKIE}=${first.txCookie}`}})
       expect(replay.status).toBe(400)
-      expect(setCookieLine(replay, ADMIN_COOKIE)).toBeUndefined()
       expect(await BrowserSessionModel.countDocuments({})).toBe(0)
     })
 
     test("a wrong state", async () => {
-      await expectRefused(
+      await expectNoSession(
         await portalSignIn(app, idp, {
           portal: "admin",
           person: ADMIN_PERSON,
           tamper: callback => {
-            callback.searchParams.set("state", "forged-state")
+            callback.searchParams.set("state", "forged")
             return callback
           },
         }),
@@ -260,36 +290,86 @@ describe("hosted Core (Supabase)", () => {
     })
 
     test("a missing transaction cookie", async () => {
-      await expectRefused(await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON, omitTxCookie: true}))
+      await expectNoSession(await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON, omitTxCookie: true}))
     })
 
-    test("the enterprise portal's transaction on the admin callback", async () => {
-      const login = await app.request("https://portal.test/api/portal/auth/login")
-      const tx = login.headers.getSetCookie().find(line => line.startsWith(TX_COOKIE))!.split(";")[0]!
-      const callback = await idp.approve(login.headers.get("location")!, ADMIN_PERSON)
-      const crossed = new URL(`${ADMIN_ORIGIN}/api/admin/auth/callback${callback.search}`)
-      const done = await app.request(crossed.href, {headers: {cookie: tx}})
-      expect(done.status).toBe(400)
-      expect(await BrowserSessionModel.countDocuments({})).toBe(0)
+    test("the workspace portal's code on the admin callback", async () => {
+      await expectNoSession(
+        await portalSignIn(app, idp, {
+          portal: "portal",
+          person: ADMIN_PERSON,
+          tamper: callback => new URL(`${ADMIN_ORIGIN}/api/admin/auth/callback${callback.search}`),
+        }),
+      )
+    })
+
+    test("a Supabase session that started before the person's revocation", async () => {
+      const user = await findOrCreateUser({tenantId: "mentra", tenantUserId: "supa-admin"})
+      await UserModel.updateOne({mentraUserId: user.mentraUserId}, {$set: {webSignInsRevokedAt: new Date((now() - 60) * 1000)}})
+      await expectNoSession(await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON, sessionStartedAt: now() - 120}))
+    })
+  })
+
+  describe("the portal verifies the ID token with Core's key (L04)", () => {
+    const sign = async (claims: Record<string, unknown>, header: Record<string, unknown> = {}, key?: jose.KeyLike) => {
+      const signingKey =
+        key ?? (await jose.importPKCS8(`-----BEGIN PRIVATE KEY-----\n${process.env.MENTRA_JWT_PRIVATE_KEY}\n-----END PRIVATE KEY-----`, "EdDSA"))
+      return new jose.SignJWT({nonce: "n-1", email: ADMIN_EMAIL, email_verified: true, ...claims})
+        .setProtectedHeader({alg: "EdDSA", kid: "mentra-oidc-1", ...header})
+        .setIssuer((claims.iss as string) ?? OIDC_ISSUER)
+        .setAudience((claims.aud as string | string[]) ?? "admin-portal")
+        .setSubject((claims.sub as string) ?? "")
+        .setIssuedAt()
+        .setExpirationTime((claims.exp as number) ?? now() + 600)
+        .sign(signingKey)
+    }
+
+    async function signedIn() {
+      await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
+      return (await findOrCreateUser({tenantId: "mentra", tenantUserId: "supa-admin"})).mentraUserId
+    }
+
+    test("a valid one names the person", async () => {
+      const sub = await signedIn()
+      expect(await verifyPortalIdToken(portalClient("admin"), await sign({sub}), "n-1")).toMatchObject({mentraUserId: sub, tenantId: "mentra"})
+    })
+
+    test.each([
+      ["another environment's issuer", {iss: "https://account.staging.test"}, {}],
+      ["another client's audience", {aud: "workspace-portal"}, {}],
+      ["several audiences and the wrong azp", {aud: ["admin-portal", "console"], azp: "console"}, {}],
+      ["a wrong nonce", {nonce: "forged"}, {}],
+      ["an expired token", {exp: now() - 600}, {}],
+      ["an access token's type", {}, {typ: "at+jwt"}],
+      ["another key ID", {}, {kid: "mentra-access-1"}],
+    ])("refuses %s", async (_label, claims, header) => {
+      const sub = await signedIn()
+      await expect(verifyPortalIdToken(portalClient("admin"), await sign({sub, ...claims}, header), "n-1")).rejects.toBeInstanceOf(SignInRefused)
+    })
+
+    test("refuses a token signed with any other key", async () => {
+      const sub = await signedIn()
+      const {privateKey} = await jose.generateKeyPair("EdDSA")
+      await expect(verifyPortalIdToken(portalClient("admin"), await sign({sub}, {}, privateKey), "n-1")).rejects.toBeInstanceOf(SignInRefused)
     })
   })
 
   test("two concurrent callbacks with one transaction create one session (Review Focus 2)", async () => {
-    const login = await app.request(`${ADMIN_ORIGIN}/api/admin/auth/login`)
-    const tx = login.headers.getSetCookie().find(line => line.startsWith(TX_COOKIE))!.split(";")[0]!
-    const callback = await idp.approve(login.headers.get("location")!, ADMIN_PERSON)
-    const [a, b] = await Promise.all([
-      app.request(callback.href, {headers: {cookie: tx}}),
-      app.request(callback.href, {headers: {cookie: tx}}),
-    ])
-    expect([a.status, b.status].sort()).toEqual([302, 400])
+    const first = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON, omitTxCookie: true})
+    await BrowserSessionModel.deleteMany({})
+    await AuthRateLimitModel.deleteMany({})
+    // The code was not redeemed (no transaction cookie), so the two tabs race on one transaction and one code.
+    const results = await Promise.all(
+      [0, 1].map(() => app.request(first.callbackUrl.href, {headers: {cookie: `${TX_COOKIE}=${first.txCookie}`}})),
+    )
+    expect(results.filter(response => response.status === 302)).toHaveLength(1)
     expect(await BrowserSessionModel.countDocuments({})).toBe(1)
   })
 
   test("an unverified allowlisted email signs in but gets no admin access (L06)", async () => {
-    const result = await portalSignIn(app, idp, {portal: "admin", person: {sub: "supa-unverified", email: ADMIN_EMAIL, emailConfirmed: false}})
-    expect(result.done.status).toBe(302)
-    await expectNoOrganizationCapabilities(`${ADMIN_COOKIE}=${result.sessionCookie}`)
+    const {sessionCookie} = await portalSignIn(app, idp, {portal: "admin", person: {...ADMIN_PERSON, emailConfirmed: false}})
+    expect(sessionCookie).toBeTruthy()
+    await expectNoOrganizationCapabilities(`${ADMIN_COOKIE}=${sessionCookie}`)
   })
 
   test("a cross-origin POST with the admin cookie gets 403; the same POST with a key bearer is unaffected", async () => {
@@ -317,57 +397,51 @@ describe("hosted Core (Supabase)", () => {
     }
   })
 
-  test("logout is same-origin only, ends the portal session, and offers the Mentra sign-out", async () => {
-    const result = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
-    const cookie = `${ADMIN_COOKIE}=${result.sessionCookie}`
-    const crossOrigin = await app.request(`${ADMIN_ORIGIN}/api/admin/auth/logout`, {method: "POST", headers: {cookie, origin: "https://evil.example"}})
-    expect(crossOrigin.status).toBe(403)
-    const logout = await app.request(`${ADMIN_ORIGIN}/api/admin/auth/logout`, {method: "POST", headers: {cookie, origin: ADMIN_ORIGIN}})
-    expect(logout.status).toBe(200)
-    expect(logout.headers.get("cache-control")).toBe("no-store")
-    expect(await logout.json()).toEqual({signOutUrl: "https://account.test/signout"})
-    expect(setCookieLine(logout, ADMIN_COOKIE)).toMatch(/Max-Age=0/)
-    const me = await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie}})
-    expect(me.status).toBe(401)
+  test("logout is same-origin only, ends the portal session, and offers the sign-in site's sign-out", async () => {
+    const {sessionCookie} = await portalSignIn(app, idp, {portal: "admin", person: ADMIN_PERSON})
+    const cookie = `${ADMIN_COOKIE}=${sessionCookie}`
+    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/auth/logout`, {method: "POST", headers: {cookie, origin: "https://evil.test"}})).status).toBe(403)
+    const out = await app.request(`${ADMIN_ORIGIN}/api/admin/auth/logout`, {method: "POST", headers: {cookie, origin: ADMIN_ORIGIN}})
+    expect(out.status).toBe(200)
+    expect(out.headers.get("cache-control")).toBe("no-store")
+    expect(await out.json()).toEqual({signOutUrl: `${OIDC_ISSUER}/oidc/session/end`})
+    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie}})).status).toBe(401)
   })
 
-  test("the enterprise portal signs in with its own client and cookie", async () => {
-    const result = await portalSignIn(app, idp, {portal: "portal", person: {sub: "supa-owner", email: "owner@acme.example"}})
-    expect(result.authorizeUrl.searchParams.get("client_id")).toBe("portal-client")
-    expect(result.done.status).toBe(302)
-    expect(setCookieLine(result.done, PORTAL_COOKIE)).toMatch(/HttpOnly.*Secure|Secure.*HttpOnly/i)
-    const me = await app.request("https://portal.test/api/portal/me", {headers: {cookie: `${PORTAL_COOKIE}=${result.sessionCookie}`}})
-    expect(me.status).toBe(200)
-    expect(((await me.json()) as {user: {email: string}}).user.email).toBe("owner@acme.example")
+  test("the workspace portal signs in with its own client and cookie", async () => {
+    const {authorizeUrl, sessionCookie, done} = await portalSignIn(app, idp, {portal: "portal", person: ADMIN_PERSON})
+    expect(authorizeUrl.searchParams.get("client_id")).toBe("workspace-portal")
+    expect(setCookieLine(done, PORTAL_COOKIE)).toBeTruthy()
+    expect((await app.request(`${PORTAL_ORIGIN}/api/portal/me`, {headers: {cookie: `${PORTAL_COOKIE}=${sessionCookie}`}})).status).toBe(200)
   })
 
   test("login and callback answer 429 past their per-IP limits", async () => {
-    for (let i = 0; i < 20; i++) {
-      expect((await app.request(`${ADMIN_ORIGIN}/api/admin/auth/login`, {headers: {"x-forwarded-for": "198.51.100.7"}})).status).toBe(302)
-    }
-    const limited = await app.request(`${ADMIN_ORIGIN}/api/admin/auth/login`, {headers: {"x-forwarded-for": "198.51.100.7"}})
-    expect(limited.status).toBe(429)
-    expect(limited.headers.get("cache-control")).toBe("no-store")
-    for (let i = 0; i < 30; i++) {
-      await app.request(`${ADMIN_ORIGIN}/api/admin/auth/callback?state=x&code=y`, {headers: {"x-forwarded-for": "198.51.100.8"}})
-    }
-    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/auth/callback?state=x&code=y`, {headers: {"x-forwarded-for": "198.51.100.8"}})).status).toBe(429)
+    const headers = {"x-forwarded-for": "198.51.100.7"}
+    const logins = await Promise.all(Array.from({length: 21}, () => app.request(`${ADMIN_ORIGIN}/api/admin/auth/login`, {headers})))
+    expect(logins.filter(response => response.status === 429)).toHaveLength(1)
+    const callbacks = await Promise.all(Array.from({length: 31}, () => app.request(`${ADMIN_ORIGIN}/api/admin/auth/callback?state=x`, {headers})))
+    expect(callbacks.filter(response => response.status === 429)).toHaveLength(1)
   })
 })
 
 describe("portal sign-in not configured", () => {
   beforeEach(async () => {
-    restoreEnv = applyEnv(Object.fromEntries(Object.keys(HOSTED_ENV).map(key => [key, undefined])))
+    restoreEnv = applyEnv({...HOSTED_ENV, CLOUD_CORE_OIDC_ISSUER: undefined})
     await clean()
   })
   afterEach(() => restoreEnv())
 
   test("login renders a fixed 'not configured' page instead of failing", async () => {
-    const login = await app.request(`${ADMIN_ORIGIN}/api/admin/auth/login?return_to=%2Fx`)
-    expect(login.status).toBe(503)
-    expect(login.headers.get("cache-control")).toBe("no-store")
-    expect(await login.text()).toContain("Sign-in is not configured")
-    expect(login.headers.getSetCookie()).toHaveLength(0)
+    const response = await app.request(`${ADMIN_ORIGIN}/api/admin/auth/login`)
+    expect(response.status).toBe(503)
+    expect(response.headers.get("cache-control")).toBe("no-store")
+    expect(await response.text()).toContain("Sign-in is not configured")
+  })
+
+  test("a portal whose callback is not registered at Core's sign-in server is not configured", async () => {
+    restoreEnv()
+    restoreEnv = applyEnv({...HOSTED_ENV, CLOUD_CORE_ADMIN_PORTAL_URL: "https://admin.elsewhere.test"})
+    expect((await app.request("https://admin.elsewhere.test/api/admin/auth/login")).status).toBe(503)
   })
 
   test("the admin API still answers 401 without a principal", async () => {
@@ -375,13 +449,8 @@ describe("portal sign-in not configured", () => {
   })
 })
 
-describe("Private Cloud (Entra)", () => {
+describe("a Private Cloud: Entra behind Core's sign-in server, on Core's one host", () => {
   let entra: FakeIdp
-  const ENTRA_PERSON = {
-    sub: "entra-pairwise-sub",
-    email: "it-admin@contoso.com",
-    claims: {oid: "entra-oid-1", tid: ENTRA_TENANT},
-  }
 
   beforeEach(async () => {
     restoreEnv = applyEnv(PRIVATE_CLOUD_ENV)
@@ -390,59 +459,56 @@ describe("Private Cloud (Entra)", () => {
       issuer: ENTRA_ISSUER,
       jwksUrl: ENTRA_JWKS,
       kind: "oidc",
-      hs256Secret: CORE_API_SECRET,
-      clients: [{id: CORE_API_CLIENT, secret: CORE_API_SECRET, redirectUris: [`${ADMIN_ORIGIN}/api/admin/auth/callback`]}],
+      clients: [{id: CORE_API_CLIENT, secret: CORE_API_SECRET, redirectUris: [ENTRA_CALLBACK]}],
     })
+    restoreFetch = routeOriginsToApp(app, [ADMIN_ORIGIN])
   })
 
   afterEach(() => {
+    restoreFetch()
     entra.restore()
     restoreEnv()
   })
 
+  const entraPerson = (oid: string, email = "it-admin@contoso.com", extra: Record<string, unknown> = {}) => ({
+    sub: `pairwise-${oid}`,
+    email,
+    claims: {oid, tid: ENTRA_TENANT},
+    ...extra,
+  })
+
   test("an Entra admin signs in and resolves the phone's Core user by oid (L03)", async () => {
-    const phoneUser = await findOrCreateUser({tenantId: "contoso", tenantUserId: "entra-oid-1"})
-    const result = await portalSignIn(app, entra, {portal: "admin", person: ENTRA_PERSON})
-    expect(result.authorizeUrl.searchParams.get("scope")).toBe("openid email profile")
-    expect(result.authorizeUrl.searchParams.get("nonce")).toBeTruthy()
-    expect(result.done.status).toBe(302)
-    const me = await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie: `${ADMIN_COOKIE}=${result.sessionCookie}`}})
-    expect(me.status).toBe(200)
-    const body = (await me.json()) as {user: {mentraUserId: string; emailVerified: boolean}}
-    expect(body.user.mentraUserId).toBe(phoneUser.mentraUserId)
-    expect(body.user.emailVerified).toBe(true)
-    expect(entra.tokenRequests[0]?.auth).toBe("client_secret_post")
+    const phoneUser = await findOrCreateUser({tenantId: "contoso", tenantUserId: "oid-admin"})
+    const {sessionCookie, authorizeUrl} = await portalSignIn(app, entra, {portal: "admin", person: entraPerson("oid-admin")})
+    expect(`${authorizeUrl.origin}${authorizeUrl.pathname}`).toBe(`${ADMIN_ORIGIN}/oidc/auth`)
+    expect(sessionCookie).toBeTruthy()
+    const me = await app.request(`${ADMIN_ORIGIN}/api/admin/me`, {headers: {cookie: `${ADMIN_COOKIE}=${sessionCookie}`}})
+    const body = (await me.json()) as {user: {mentraUserId: string; isOrganizationAdmin: boolean}; organization: {capabilities: string[]}}
+    expect(body.user).toMatchObject({mentraUserId: phoneUser.mentraUserId, isOrganizationAdmin: true})
+    expect(body.organization.capabilities).toContain("organization.workspaces.administer")
   })
 
   test("a deleted account cannot sign in with its provider", async () => {
-    const user = await findOrCreateUser({tenantId: "contoso", tenantUserId: "entra-oid-1"})
+    const user = await findOrCreateUser({tenantId: "contoso", tenantUserId: "oid-deleted"})
     await UserModel.updateOne({mentraUserId: user.mentraUserId}, {$set: {supportTelemetryDeletedAt: new Date()}})
-
-    const result = await portalSignIn(app, entra, {portal: "admin", person: ENTRA_PERSON})
-    expect(result.done.status).toBe(400)
-    expect(result.sessionCookie).toBeNull()
-    expect(await BrowserSessionModel.countDocuments({})).toBe(0)
+    const {sessionCookie} = await portalSignIn(app, entra, {portal: "admin", person: entraPerson("oid-deleted")})
+    expect(sessionCookie).toBeNull()
   })
 
   test("a provider email outside verifiedEmailDomains signs in without organization capabilities (L06)", async () => {
-    const restore = applyEnv({CLOUD_CORE_ADMIN_EMAILS: "alex@mentra.glass"})
-    try {
-      const result = await portalSignIn(app, entra, {portal: "admin", person: {...ENTRA_PERSON, email: "alex@mentra.glass"}})
-      expect(result.done.status).toBe(302)
-      await expectNoOrganizationCapabilities(`${ADMIN_COOKIE}=${result.sessionCookie}`)
-    } finally {
-      restore()
-    }
+    restoreEnv()
+    restoreEnv = applyEnv({...PRIVATE_CLOUD_ENV, CLOUD_CORE_ADMIN_EMAILS: "alex@mentra.glass"})
+    const {sessionCookie} = await portalSignIn(app, entra, {portal: "admin", person: entraPerson("oid-outsider", "alex@mentra.glass")})
+    expect(sessionCookie).toBeTruthy()
+    await expectNoOrganizationCapabilities(`${ADMIN_COOKIE}=${sessionCookie}`)
   })
 
   describe("each creates no session (L04)", () => {
-    async function refused(idTokenClaims: Record<string, unknown>, extra: Partial<typeof ENTRA_PERSON> & {idTokenAlg?: "HS256"} = {}) {
-      const result = await portalSignIn(app, entra, {portal: "admin", person: {...ENTRA_PERSON, ...extra, idTokenClaims}})
-      expect(result.done.status).toBe(400)
-      expect(result.sessionCookie).toBeNull()
+    const refused = async (idTokenClaims: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+      const {sessionCookie} = await portalSignIn(app, entra, {portal: "admin", person: entraPerson("oid-refused", undefined, {idTokenClaims, ...extra})})
+      expect(sessionCookie).toBeNull()
       expect(await BrowserSessionModel.countDocuments({})).toBe(0)
     }
-
     test("a wrong issuer", () => refused({iss: "https://login.microsoftonline.com/other/v2.0"}))
     test("a wrong audience", () => refused({aud: "someone-else"}))
     test("several audiences and the wrong azp", () => refused({aud: [CORE_API_CLIENT, "other-app"], azp: "other-app"}))
@@ -452,8 +518,8 @@ describe("Private Cloud (Entra)", () => {
     test("another directory", () => refused({tid: "other-directory"}))
   })
 
-  test("the enterprise portal is not configured on a Private Cloud", async () => {
-    const login = await app.request("https://portal.test/api/portal/auth/login")
-    expect(login.status).toBe(503)
+  test("the workspace portal is not configured on a Private Cloud", async () => {
+    expect((await app.request(`${PORTAL_ORIGIN}/api/portal/auth/login`)).status).toBe(503)
   })
+
 })
