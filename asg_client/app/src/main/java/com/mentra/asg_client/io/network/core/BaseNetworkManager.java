@@ -17,6 +17,7 @@ import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
+import com.mentra.asg_client.io.network.interfaces.HotspotState;
 import com.mentra.asg_client.io.network.interfaces.INetworkController;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
