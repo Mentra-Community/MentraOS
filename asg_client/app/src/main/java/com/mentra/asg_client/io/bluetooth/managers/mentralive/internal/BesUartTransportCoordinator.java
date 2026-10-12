@@ -192,6 +192,12 @@ public final class BesUartTransportCoordinator {
     private int safetyRawProbeAttempts;
     private boolean safetyRecoveryListenerReady;
     private boolean safetyAlternateBaudAttempted;
+    // BES can restart after apply without resetting the MTK. The descriptor retired by
+    // onBesOtaApplied then keeps receiving the new BES, and only that activity after the apply wait
+    // expires may reopen the UART in the authorization boot.
+    private SerialSession postApplyRetiredSession;
+    private boolean postApplyActivitySeen;
+    private boolean postApplyWaitExpired;
 
     public BesUartTransportCoordinator(Host host) {
         this(host, () -> SafetyPolicy.NORMAL);
@@ -257,6 +263,14 @@ public final class BesUartTransportCoordinator {
     public InboundRoute inboundRoute(SerialSession session) {
         synchronized (monitor) {
             if (!isCurrentSerialSessionLocked(session) || state == State.CLOSED) {
+                if (session != null
+                        && session == postApplyRetiredSession
+                        && state == State.QUARANTINED) {
+                    postApplyActivitySeen = true;
+                    if (postApplyWaitExpired) {
+                        reopenAfterApplyRebootTimeoutLocked();
+                    }
+                }
                 return InboundRoute.REJECTED;
             }
             if (state == State.QUARANTINED) {
@@ -336,6 +350,7 @@ public final class BesUartTransportCoordinator {
             }
             cancelAllTimersLocked();
             cancelDeferredNormalWritesLocked("serial session replaced");
+            clearPostApplyQuarantineLocked();
             operation = Operation.NONE;
             operationLease = null;
             otaRawRouting = false;
@@ -382,6 +397,7 @@ public final class BesUartTransportCoordinator {
         synchronized (monitor) {
             cancelAllTimersLocked();
             cancelDeferredNormalWritesLocked("serial session closed");
+            clearPostApplyQuarantineLocked();
             phaseGeneration++;
             serialSession = null;
             versionSession = null;
@@ -1060,10 +1076,59 @@ public final class BesUartTransportCoordinator {
         }
     }
 
+    /**
+     * Quarantine after the BES apply wait expired in the authorization boot. If the BES restarted
+     * without resetting the MTK, activity on the retired descriptor reopens bounded recovery.
+     */
     public void quarantineCurrentSession() {
         synchronized (monitor) {
             quarantineCurrentSessionLocked();
+            if (postApplyRetiredSession == null) {
+                return;
+            }
+            postApplyWaitExpired = true;
+            if (postApplyActivitySeen) {
+                reopenAfterApplyRebootTimeoutLocked();
+            }
         }
+    }
+
+    private void reopenAfterApplyRebootTimeoutLocked() {
+        SafetyPolicy policy = safetyState.currentPolicy();
+        clearPostApplyQuarantineLocked();
+        if (policy != SafetyPolicy.RECOVERY_PROBE_ONLY
+                && policy != SafetyPolicy.VERSION_PROBE_ONLY) {
+            Log.e(TAG, "BES spoke after the apply wait; durable policy keeps quarantine: " + policy);
+            return;
+        }
+        cancelAllTimersLocked();
+        cancelDeferredNormalWritesLocked("BES restarted after the apply wait");
+        cancelOutboundDrainLocked();
+        host.invalidateLinkProof();
+        host.setFastReceive(false);
+        operation = Operation.NONE;
+        operationLease = null;
+        serialSession = null;
+        versionSession = null;
+        fastSwitchAttemptSession = null;
+        firmwareVersion = "";
+        versionProbeDeferred = false;
+        otaRawRouting = true;
+        state = State.SAFETY_RECOVERING;
+        safetyRawProbeAttempts = 0;
+        safetyAlternateBaudAttempted = false;
+        long reopenPhase = ++phaseGeneration;
+        Log.w(TAG, "BES spoke after the apply wait; reopening UART for recovery: " + policy);
+        ioLane.submit(
+                () ->
+                        performSafetyRecoveryReopen(
+                                reopenPhase, AsgConstants.UART_RENDEZVOUS_BAUD, 1));
+    }
+
+    private void clearPostApplyQuarantineLocked() {
+        postApplyRetiredSession = null;
+        postApplyActivitySeen = false;
+        postApplyWaitExpired = false;
     }
 
     private void quarantineCurrentSessionLocked() {
@@ -1097,9 +1162,12 @@ public final class BesUartTransportCoordinator {
             versionProbeDeferred = false;
             cancelOutboundDrainLocked();
             host.invalidateLinkProof();
+            SerialSession retiredSession = serialSession;
             serialSession = null;
+            clearPostApplyQuarantineLocked();
             if (safetyState.currentPolicy() == SafetyPolicy.OTA_OWNER_ONLY
                     || safetyState.currentPolicy() == SafetyPolicy.QUARANTINED) {
+                postApplyRetiredSession = retiredSession;
                 state = State.QUARANTINED;
                 phaseGeneration++;
                 Log.i(TAG, "BES apply accepted; waiting for a new Linux boot");
@@ -1158,6 +1226,7 @@ public final class BesUartTransportCoordinator {
         synchronized (monitor) {
             cancelAllTimersLocked();
             cancelDeferredNormalWritesLocked("transport shutdown");
+            clearPostApplyQuarantineLocked();
             state = State.CLOSED;
             operation = Operation.NONE;
             operationLease = null;

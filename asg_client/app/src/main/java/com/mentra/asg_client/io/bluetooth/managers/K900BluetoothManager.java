@@ -1899,7 +1899,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             skipReason = "state_not_recoverable";
         } else if (currentBootId == null) {
             skipReason = "missing_current_boot";
-        } else if (currentBootId.equals(snapshot.getAuthorizationBootId())) {
+        } else if (currentBootId.equals(snapshot.getAuthorizationBootId())
+                && !"apply_reboot_timeout".equals(snapshot.getTerminalCode())) {
             skipReason = "still_authorization_boot";
         }
         Log.i(
@@ -1954,13 +1955,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     private static boolean isRecoverableBesOtaTimeout(BesOtaStateStore.Snapshot snapshot) {
-        if (snapshot.getState() != BesOtaStateStore.State.TERMINAL
-                || snapshot.getTerminalStatus() != BesOtaStateStore.TerminalStatus.FAILURE) {
-            return false;
-        }
-        String terminalCode = snapshot.getTerminalCode();
-        return "recovery_timeout".equals(terminalCode)
-                || "verification_timeout".equals(terminalCode);
+        return snapshot.getState() == BesOtaStateStore.State.TERMINAL
+                && snapshot.getTerminalStatus() == BesOtaStateStore.TerminalStatus.FAILURE
+                && BesOtaStateStore.isSupersedableTimeout(snapshot.getTerminalCode());
     }
 
     private void cacheBesBaudSwitchVersion(JSONObject bData) {

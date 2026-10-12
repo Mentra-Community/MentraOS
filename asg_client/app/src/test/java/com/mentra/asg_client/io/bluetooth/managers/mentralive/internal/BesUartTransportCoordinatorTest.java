@@ -1070,6 +1070,83 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void applyRebootTimeout_thenRetiredSessionFrame_reopensForBoundedProbe()
+            throws Exception {
+        SerialSession retiredSession = enterPostApplyQuarantine();
+
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+        coordinator.quarantineCurrentSession();
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(host.openAttempts).isEmpty();
+
+        assertThat(coordinator.inboundRoute(retiredSession))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.REJECTED);
+
+        awaitPostApplyFramedProbe();
+        assertThat(
+                        coordinator.onSystemVersion(
+                                "17.26.7.4",
+                                coordinator.getSerialSession(),
+                                () ->
+                                        safety.policy =
+                                                BesUartTransportCoordinator.SafetyPolicy.NORMAL))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+    }
+
+    @Test
+    public void retiredSessionFrameBeforeApplyRebootTimeout_reopensWhenTimeoutFires()
+            throws Exception {
+        SerialSession retiredSession = enterPostApplyQuarantine();
+
+        assertThat(coordinator.inboundRoute(retiredSession))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.REJECTED);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(host.openAttempts).isEmpty();
+
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+        coordinator.quarantineCurrentSession();
+
+        awaitPostApplyFramedProbe();
+    }
+
+    @Test
+    public void applyRebootTimeoutWithSilentBes_staysQuarantined() throws Exception {
+        enterPostApplyQuarantine();
+
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+        coordinator.quarantineCurrentSession();
+        Thread.sleep(200);
+
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(host.openAttempts).isEmpty();
+        assertThat(host.rawWrites).isEmpty();
+    }
+
+    private SerialSession enterPostApplyQuarantine() {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        SerialSession retiredSession = coordinator.getSerialSession();
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.OTA_OWNER_ONLY;
+        coordinator.onBesOtaApplied();
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(coordinator.isCurrentSerialSession(retiredSession)).isFalse();
+        host.controlCommands.clear();
+        return retiredSession;
+    }
+
+    private void awaitPostApplyFramedProbe() throws Exception {
+        awaitOpenAttemptCount(AsgConstants.UART_RENDEZVOUS_BAUD, 1);
+        awaitRawWriteCount(1);
+        assertThat(coordinator.inboundRoute(coordinator.getSerialSession()))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
+        awaitControlCommandCount("cs_syvr", 1, 6_000);
+        assertThat(host.rawWrites).hasSize(3);
+    }
+
+    @Test
     public void longNormalWrite_allowsReceiveAndOrdersBaudCommandAfterWrite() throws Exception {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
