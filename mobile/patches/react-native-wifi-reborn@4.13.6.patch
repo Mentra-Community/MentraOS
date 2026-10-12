@@ -161,7 +161,7 @@ diff --git a/ios/RNWifiApplyDiagnostics.h b/ios/RNWifiApplyDiagnostics.h
 new file mode 100644
 --- /dev/null
 +++ b/ios/RNWifiApplyDiagnostics.h
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,74 @@
 +#import <Foundation/Foundation.h>
 +
 +// One invocation's observational facts. No network identities or native userInfo.
@@ -230,6 +230,8 @@ new file mode 100644
 +    return [target isEqualToString:observed] ? @"matched" : @"different";
 +}
 +static inline NSString *RNWifiTargetConfigurationState(NSString *target, NSArray *configured) {
++    // Apple documents nil as no configurations owned by this application.
++    if (!configured) return @"absent";
 +    if (![configured isKindOfClass:NSArray.class]) return @"unavailable";
 +    for (id value in configured) if (![value isKindOfClass:NSString.class]) return @"unavailable";
 +    return [configured containsObject:target] ? @"present" : @"absent";

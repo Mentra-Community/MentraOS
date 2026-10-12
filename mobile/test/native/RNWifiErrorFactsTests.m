@@ -77,7 +77,7 @@ int main(void) {
     check([[[NSString alloc] initWithData:encoded encoding:NSUTF8StringEncoding] rangeOfString:@"private"].location == NSNotFound,
           @"Configuration names never reach emitted facts");
     check([RNWifiTargetConfigurationState(@"private target", @[]) isEqual:@"absent"] &&
-          [RNWifiTargetConfigurationState(@"private target", nil) isEqual:@"unavailable"] &&
+          [RNWifiTargetConfigurationState(@"private target", nil) isEqual:@"absent"] &&
           [RNWifiTargetConfigurationState(@"private target", @[@1]) isEqual:@"unavailable"], @"Validate configured-name observation");
     check([RNWifiAssociationState(@"private target", @"private target") isEqual:@"matched"] &&
           [RNWifiAssociationState(@"private target", @"private other") isEqual:@"different"] &&
