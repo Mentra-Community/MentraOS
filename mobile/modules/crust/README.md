@@ -58,3 +58,11 @@ shutdown cancels only that module's outstanding host requests.
 
 Engine callers use the ordinary cloud-client API with a signal. They do not call
 native start/cancel methods or maintain their own request registry.
+
+Android native HTTP failures carry fixed `E_NATIVE_HTTP_*` codes for DNS,
+connection, timeout, TLS, socket, interrupted I/O, generic I/O, or other failures.
+The cloud client records only those allowlisted codes in its existing network
+warning; report submission still rejects with `NETWORK_ERROR`. Exception text,
+URLs, credentials and stacks are not copied into that warning. These categories
+describe a failed request; they do not establish the phone's network routing or
+why its Internet connection was unavailable.

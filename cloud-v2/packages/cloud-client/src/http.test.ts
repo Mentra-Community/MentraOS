@@ -12,6 +12,62 @@ const logger = {
 };
 
 describe("createHttpClient", () => {
+  test("retains only fixed native failure categories in warnings and still rejects the report POST once", async () => {
+    const codes = ["DNS", "CONNECT", "TIMEOUT", "TLS", "SOCKET", "INTERRUPTED", "IO", "OTHER"];
+    for (const category of codes) {
+      const warnings: Array<{ message: string; meta?: object }> = [];
+      let calls = 0;
+      const http = createHttpClient({
+        baseUrl: "https://private.example",
+        logger: { ...logger, warn: (message, meta) => warnings.push({ message, meta }) },
+        fetch: async () => {
+          calls += 1;
+          throw Object.assign(new Error("Bearer PRIVATE_TOKEN https://private.example SSID PRIVATE_SSID"), {
+            code: `E_NATIVE_HTTP_${category}`,
+            nativeStackAndroid: "PRIVATE_STACK",
+            userInfo: { url: "PRIVATE_URL" },
+          });
+        },
+      });
+      const error = await http.post("/api/client/reports", { privateBody: "PRIVATE_PAYLOAD" }).catch((error) => error);
+      expect(error).toBeInstanceOf(HttpError);
+      if (!(error instanceof HttpError)) throw error;
+      expect(error.code).toBe("NETWORK_ERROR");
+      expect(error.message).toBe("Network request failed: POST /api/client/reports");
+      expect(calls).toBe(1);
+      expect(warnings).toEqual([
+        {
+          message: "http network error",
+          meta: { method: "POST", path: "/api/client/reports", attempt: 0, nativeCode: `E_NATIVE_HTTP_${category}` },
+        },
+      ]);
+      expect(JSON.stringify(warnings)).not.toContain("PRIVATE_");
+      expect(JSON.stringify(error)).not.toContain("PRIVATE_");
+    }
+  });
+
+  test("does not log arbitrary or malformed transport error codes", async () => {
+    for (const code of [
+      "Bearer PRIVATE_TOKEN",
+      "E_NATIVE_HTTP_DNS PRIVATE_TOKEN",
+      "E_NATIVE_HTTP",
+      123,
+      null,
+      { secret: "PRIVATE_TOKEN" },
+    ]) {
+      const warnings: object[] = [];
+      const http = createHttpClient({
+        baseUrl: "https://private.example",
+        logger: { ...logger, warn: (_message, meta) => warnings.push(meta!) },
+        fetch: async () => {
+          throw Object.assign(new Error("PRIVATE_MESSAGE"), { code });
+        },
+      });
+      await expect(http.post("/api/client/reports", {})).rejects.toBeInstanceOf(HttpError);
+      expect(warnings).toEqual([{ method: "POST", path: "/api/client/reports", attempt: 0 }]);
+    }
+  });
+
   test("a pre-aborted request skips authentication and fetch for JSON and form requests", async () => {
     const controller = new AbortController();
     const reason = new Error("collection deadline reached");
