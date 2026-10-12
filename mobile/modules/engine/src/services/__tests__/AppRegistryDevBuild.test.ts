@@ -31,6 +31,7 @@ mock.module("react-native-mmkv", () => ({
   }),
 }))
 mock.module("../../runtime/bootstrap", () => ({
+  assertMiniappDevelopmentAllowed: () => {},
   getConfigValues: () => ({}),
   isDevMiniappAllowed: () => true,
   isInstalledMiniappAllowed: () => true,

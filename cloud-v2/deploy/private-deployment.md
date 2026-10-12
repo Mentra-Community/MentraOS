@@ -264,7 +264,7 @@ Important schema-v1 fields are:
 | `services.coreUrl`, `services.runtimeUrl` | Required by the first template. Null never falls back to Mentra services. |
 | `auth` | Exact Entra tenant, Mentra App public-client id, `mentra.session` scope, optional Teams scopes. |
 | `branding.logoUrls` | Optional light/dark PNGs. |
-| `systemMiniapps.approvedPackageNamesOverride` | Allowlist for SYSTEM miniapps embedded in the Mentra App. |
+| `systemMiniapps.approvedPackageNamesOverride` | Allowlist for SYSTEM miniapps embedded in the Mentra App. Listing `com.mentra.miniappdev` allows miniapp development. |
 | `miniapps.managed` | Userland bundle package, version, URL, and SHA-256 descriptors. |
 | `miniapps.configuration` | Optional non-secret package-scoped string values. |
 | `features` | Explicit mobile/Runtime capability policy. |

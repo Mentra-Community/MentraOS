@@ -171,6 +171,24 @@ export function isOfflineSystemMiniappAllowed(packageName: string): boolean {
   return policy.systemPackageNames === null || policy.systemPackageNames.includes(packageName)
 }
 
+/** The built-in system miniapp that holds the Miniapp Developer tools. */
+const MINIAPP_DEVELOPER_PACKAGE_NAME = "com.mentra.miniappdev"
+
+/**
+ * Whether this deployment allows miniapp development: developer servers,
+ * scanned release QRs and authoring snapshots, of any package. It follows the
+ * deployment's approval of the Miniapp Developer tools; Super Mode never
+ * overrides it.
+ */
+export function isMiniappDevelopmentAllowed(): boolean {
+  return isOfflineSystemMiniappAllowed(MINIAPP_DEVELOPER_PACKAGE_NAME)
+}
+
+/** Refuse to register or install a developer build where development is off. */
+export function assertMiniappDevelopmentAllowed(): void {
+  if (!isMiniappDevelopmentAllowed()) throw new Error("This deployment does not allow miniapp development")
+}
+
 export function isInstalledMiniappAllowed(
   packageName: string,
   version: string | undefined,
@@ -191,6 +209,8 @@ export function isInstalledMiniappAllowed(
   // A compatible update of an approved bundled package, applied by the Store the
   // build assigns to it, keeps the visibility of the bundled release it replaced.
   if (isTrustedSystemMiniappRelease(options?.config ?? {}, packageName, releaseIdentity)) return true
+  // A release a developer installed from the scanner's release QR.
+  if (releaseIdentity?.source === "direct_download") return isMiniappDevelopmentAllowed()
   if (!version || releaseIdentity?.source !== "deployment_manifest") return false
 
   return policy.managed.some(
@@ -204,15 +224,13 @@ export function isInstalledMiniappAllowed(
 }
 
 /**
- * A developer build from the Miniapp Developer scanner. A workspace admits one
- * only in super mode, and only in place of a miniapp it already manages, so a
- * scanned QR can stand in for its Call but never add a package it lacks.
+ * A developer build (live server or `dev-*` snapshot) under `packageName`.
+ * Where development is allowed it may add a package or stand in for an
+ * installed one, managed or not.
  */
-export function isDevMiniappAllowed(packageName: string, superMode: boolean): boolean {
+export function isDevMiniappAllowed(packageName: string): boolean {
   if (options?.config?.isLocalMiniappAllowed?.(packageName) === false) return false
-  const policy = options?.config?.localMiniappPolicy
-  if (!policy) return isLocalMiniappPackageAllowed(packageName)
-  return superMode && policy.managed.some((entry) => entry.packageName === packageName)
+  return isMiniappDevelopmentAllowed()
 }
 
 /** Read a defensive package-scoped configuration snapshot. */

@@ -38,6 +38,7 @@ describe("live iOS miniapp visibility policy", () => {
       manifest: {
         ...consumer.manifest,
         features: {...consumer.manifest.features, nativeMeetings: true},
+        systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
         miniapps: {
           configuration: {},
           managed: [
@@ -68,11 +69,15 @@ describe("live iOS miniapp visibility policy", () => {
     expect(shouldHideMiniapp(mentraCallPackageName, "2.1.18")).toBe(true)
     expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(true)
     expect(shouldHideMiniapp(mentraCallPackageName, "dev-1790681811411")).toBe(true)
+    // Super Mode does not admit a developer build the workspace has not allowed.
     await engine.settings.set(SETTINGS.super_mode.key, true)
+    expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(true)
+    await engine.settings.set(SETTINGS.super_mode.key, false)
+    workspace.manifest.systemMiniapps.approvedPackageNamesOverride = ["com.mentra.settings", "com.mentra.miniappdev"]
     expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(false)
     expect(shouldHideMiniapp(mentraCallPackageName, "dev-1790681811411")).toBe(false)
     expect(shouldHideMiniapp(mentraCallPackageName, "2.1.18")).toBe(true)
-    await engine.settings.set(SETTINGS.super_mode.key, false)
+    workspace.manifest.systemMiniapps.approvedPackageNamesOverride = ["com.mentra.settings"]
     for (const mismatch of [
       {deploymentId: "another-workspace"},
       {deploymentOrigin: "https://another.example"},

@@ -41,13 +41,13 @@ import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {sha256Hex} from "../utils/sha256"
 import {
+  assertMiniappDevelopmentAllowed,
   getConfigValues,
   isDevMiniappAllowed,
   isInstalledMiniappAllowed,
   isMiniappAvailable,
   isOfflineSystemMiniappAllowed,
 } from "../runtime/bootstrap"
-import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {
   type ActivatedInstall,
   type ActivationArtifact,
@@ -1564,13 +1564,10 @@ class AppRegistry {
 
   public async getActiveVersion(packageName: string): Promise<string | undefined> {
     let versions = this.getInstalledVersions(packageName)
-    // A scanned build only stands in for a workspace miniapp while super mode
-    // allows it. Leaving the stored pointer alone lets turning super mode on
-    // bring that scan back; until then the released version stays on screen.
-    const devAllowed = isDevMiniappAllowed(
-      packageName,
-      useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
-    )
+    // A scanned build only stands in while the deployment allows development.
+    // Leaving the stored pointer alone lets re-allowing it bring that scan
+    // back; until then the released version stays on screen.
+    const devAllowed = isDevMiniappAllowed(packageName)
     const selectedSnapshot = devAllowed ? this.getSelectedDevSnapshot(packageName) : null
     if (selectedSnapshot) return selectedSnapshot
     // Treat MMKV as a hint, not authority. A stored version may have been
@@ -1672,15 +1669,17 @@ class AppRegistry {
   private mergeProjectedApps(diskApps: ClientApp[], includeBackgroundOnly = false): ClientApp[] {
     const offline = this.projectOfflineApps().filter((app) => isOfflineSystemMiniappAllowed(app.packageName))
     const offlinePackages = new Set(offline.map((app) => app.packageName))
-    const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
     const dev = this.projectDevApps().filter(
-      (app) => isDevMiniappAllowed(app.packageName, superMode) && !offlinePackages.has(app.packageName) && !this.getSelectedDevSnapshot(app.packageName),
+      (app) =>
+        isDevMiniappAllowed(app.packageName) &&
+        !offlinePackages.has(app.packageName) &&
+        !this.getSelectedDevSnapshot(app.packageName),
     )
     const devPackages = new Set(dev.map((app) => app.packageName))
     const installed = diskApps.filter(
       (app) =>
         (app.version?.startsWith("dev-")
-          ? isDevMiniappAllowed(app.packageName, superMode)
+          ? isDevMiniappAllowed(app.packageName)
           : isInstalledMiniappAllowed(
               app.packageName,
               app.version,
@@ -2126,12 +2125,14 @@ function readStoredMdnsHost(packageName: string): string | undefined {
 }
 
 /**
- * Whether live development code may run under `packageName`. A dev build is the
- * package itself, served unsigned, so it is refused while the installed package
- * carries a publisher signature; uninstalling clears that signature. Throws
- * {@link SignedMiniappDevBuildError} when refused.
+ * Whether live development code may run under `packageName`. The deployment
+ * must allow miniapp development. A dev build is the package itself, served
+ * unsigned, so it is also refused while the installed package carries a
+ * publisher signature (throwing {@link SignedMiniappDevBuildError});
+ * uninstalling clears that signature.
  */
 export function assertDevBuildAllowed(packageName: string): void {
+  assertMiniappDevelopmentAllowed()
   assertUnsignedDevBuildAllowed({
     packageName,
     installedFingerprint: appRegistry.getPublisherKeyFingerprint(packageName),

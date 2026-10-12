@@ -301,6 +301,13 @@ are case-sensitive. The current system package identifiers are:
 | `com.mentra.feedback` | Feedback |
 | `com.mentra.miniappdev` | Miniapp developer tools |
 
+Approving `com.mentra.miniappdev` (or leaving the override `null`) allows
+miniapp development on the workspace. Users get **Settings → Miniapp Developer
+Settings** and can scan or load miniapps from a developer's computer under any
+package name, including one the workspace manages. Leave it out and the Mentra
+App shows no developer options and refuses developer builds. Super Mode does
+not change this.
+
 This list controls approval; it does not download packages or bypass a
 feature, build-region, or hardware restriction. A package must also exist in
 the selected Mentra App release. Downloaded userland miniapps belong in
