@@ -140,7 +140,7 @@ export class PrRoutineCheckService {
         delete gate.buildRequests
         const previous = gate.retired.at(-1)!
         const all = previous.conclusion === 'success'
-        gate.attempt.rerun = {id: `pr-rerun-${digest({gateId: gate.gateId, generation: gate.attempt.generation})}`,
+        gate.attempt.rerun = {id: `pr-rerun-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, generation: gate.attempt.generation})}`,
           memberIds: previous.members.filter(member => all || member.status !== 'pass' || !member.publicationComplete).map(member => member.memberId),
           linkedMemberIds: previous.members.filter(member => member.originalRequestId).map(member => member.memberId)}
       }

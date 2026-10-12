@@ -154,6 +154,18 @@ test('duplicate native rerun retains one generation and fresh absolute deadline'
   expect(f.gate().attempt.deadline).toBe(new Date(accepted + 3 * 3600000).toISOString())
   expect(f.previews[0].deadline).toBe(f.gate().attempt.deadline)
 })
+
+test('linked native rerun IDs remain distinct when a new same-head coverage generation restarts attempt numbering', async () => {
+  const f = fixture(); await f.intake(); f.build(); await f.drain(); await complete(f);
+  await f.service.control(control(f, 'coverage-one-rerun')); await f.drain(1);
+  const first = f.gate().attempt.rerun!.id; expect(f.previews.at(-1)!.rerunId).toBe(first);
+  f.gate().attempt.conclusion = 'failure'; f.gate().attempt.members[0]!.settled = true;
+  f.context.baseRef = 'staging'; await f.drain(6); await complete(f);
+  expect(f.gate().coverageGeneration).toBe(2); expect(f.gate().attempt.generation).toBe(1);
+  await f.service.control(control(f, 'coverage-two-rerun')); await f.drain(1);
+  expect(f.gate().attempt.generation).toBe(2); expect(f.gate().attempt.rerun!.id).not.toBe(first);
+  expect(f.previews).toHaveLength(2); expect(f.previews[1]!.rerunId).not.toBe(f.previews[0]!.rerunId);
+});
 test('pre-admission timeout reruns as new ordinary request without fictional linked original', async () => {
   const f = fixture(); f.failSubmit(); await f.intake(); f.build(); await f.drain()
   const old = f.gate().attempt.members[0]!.requestId!; expect(f.requests.has(old)).toBe(false)
