@@ -7,7 +7,7 @@ import {
 jest.mock("../../../modules/engine/src/facades/reports", () => ({submitAutomaticReport: jest.fn()}))
 const submit = submitAutomaticReport as jest.Mock
 const evidence = (): OtaFailureEvidence => ({
-  attemptId: "attempt-1",
+  attemptId: `attempt-${sequence}`,
   deviceRevision: 1,
   reason: "progress_stalled",
   transport: "hotspot",
@@ -27,7 +27,7 @@ const evidence = (): OtaFailureEvidence => ({
   besRestartDisconnectObserved: false,
   versionChangeInstallStarted: false,
   otaStatus: {
-    sessionId: "session-1",
+    sessionId: `session-${sequence}`,
     totalSteps: 2,
     currentStep: 2,
     stepType: "bes",
@@ -40,9 +40,11 @@ const evidence = (): OtaFailureEvidence => ({
   otaProgress: null,
 })
 
-beforeEach(() =>
-  submit.mockReset().mockResolvedValue({status: "submitted", reportId: "rep_test", reportStatus: "ready"}),
-)
+let sequence = 0
+beforeEach(() => {
+  sequence += 1
+  submit.mockReset().mockResolvedValue({status: "submitted", reportId: "rep_test", reportStatus: "ready"})
+})
 
 it("captures the snapshot and suppresses duplicate reports while submission is pending", async () => {
   let finish!: (value: unknown) => void
@@ -88,4 +90,19 @@ it("keeps distinct failure reasons and redacts free-form device errors", async (
   expect(report.report.actualBehavior).not.toContain("secret")
   expect(report.context.otaFailure.otaStatus.error).toBe("[REDACTED]")
   expect(submit.mock.calls[0][0].throttleKey).not.toEqual(submit.mock.calls[1][0].throttleKey)
+})
+
+it("suppresses repeated durable failure replies beyond the facade throttle window", async () => {
+  const now = jest.spyOn(Date, "now").mockReturnValue(1000)
+  try {
+    const input = evidence()
+    await submitOtaFailureReport(input)
+    now.mockReturnValue(200000)
+    await submitOtaFailureReport({...input, attemptId: "remounted", otaStatus: {...input.otaStatus!}})
+    expect(submit).toHaveBeenCalledTimes(1)
+    await submitOtaFailureReport({...input, otaStatus: {...input.otaStatus!, sessionId: "new-ota-session"}})
+    expect(submit).toHaveBeenCalledTimes(2)
+  } finally {
+    now.mockRestore()
+  }
 })

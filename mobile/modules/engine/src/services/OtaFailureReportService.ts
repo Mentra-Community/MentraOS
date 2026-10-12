@@ -1,6 +1,5 @@
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
 
-import {submitAutomaticReport} from "../facades/reports"
 import {redactOtaDiagnosticError} from "../utils/otaDiagnosticRedaction"
 import {logAutomaticReportSubmissionStatus, toAutomaticReportSubmissionStatus} from "./AutomaticReportResult"
 
@@ -38,6 +37,7 @@ export interface OtaFailureEvidence {
 }
 
 const inFlight = new Set<string>()
+const submittedOccurrences = new Set<string>()
 
 /** Snapshot synchronously so cleanup, retries and reconnects cannot rewrite failure evidence. */
 export async function submitOtaFailureReport(evidence: OtaFailureEvidence): Promise<void> {
@@ -49,9 +49,10 @@ export async function submitOtaFailureReport(evidence: OtaFailureEvidence): Prom
     snapshot.otaProgress.errorMessage = redactOtaDiagnosticError(snapshot.otaProgress.errorMessage) as string
   }
   const key = `ota_failure:${snapshot.deviceRevision}:${snapshot.otaStatus?.sessionId || snapshot.attemptId}:${snapshot.reason}`
-  if (inFlight.has(key)) return
+  if (inFlight.has(key) || submittedOccurrences.has(key)) return
   inFlight.add(key)
   try {
+    const {submitAutomaticReport} = require("../facades/reports") as typeof import("../facades/reports")
     const result = await submitAutomaticReport({
       kind: "automatic",
       trigger: {type: "automatic", source: "glasses_ota", reason: snapshot.reason},
@@ -63,6 +64,11 @@ export async function submitOtaFailureReport(evidence: OtaFailureEvidence): Prom
       context: {otaFailure: snapshot},
       throttleKey: key,
     })
+    if (result.status === "submitted") {
+      submittedOccurrences.add(key)
+      // Retain recent occurrences across remounts, without an unbounded process-lifetime registry.
+      if (submittedOccurrences.size > 128) submittedOccurrences.delete(submittedOccurrences.values().next().value!)
+    }
     logAutomaticReportSubmissionStatus("OtaFailureReport", toAutomaticReportSubmissionStatus(result))
   } catch (error) {
     console.warn("[OtaFailureReport] submission failed", error instanceof Error ? error.name : "unknown")
