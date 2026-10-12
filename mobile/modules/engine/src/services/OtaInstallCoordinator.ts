@@ -97,16 +97,10 @@ function buildProgressStalenessSignature(
   if (otaStatus && (otaStatus.status === "in_progress" || otaStatus.status === "step_complete")) {
     return `s:${otaStatus.sessionId}|${otaStatus.status}|${otaStatus.phase}|${otaStatus.stepType}|${otaStatus.stepPercent}|${otaStatus.overallPercent}`
   }
-  // Legacy-shaped BES download FINISHED (WP 8C): the legacy screen kept a progress
-  // watchdog armed while waiting for the BES install events to start; keep the stall
-  // watchdog armed here too so a wedged flash still fails instead of hanging.
-  if (
-    isLegacyShapedOtaStatus(otaStatus) &&
-    otaStatus?.stepType === "bes" &&
-    otaStatus.phase === "download" &&
-    otaStatus.status === "complete"
-  ) {
-    return "s:legacy-bes-download-complete-await-install"
+  // BES download completion still waits for install events. Keep the stall
+  // watchdog armed for both protocols so a missing handoff cannot hang forever.
+  if (otaStatus?.stepType === "bes" && otaStatus.phase === "download" && otaStatus.status === "complete") {
+    return "s:bes-download-complete-await-install"
   }
   if (otaProgress && (otaProgress.status === "PROGRESS" || otaProgress.status === "STARTED")) {
     return `p:${otaProgress.currentUpdate}|${otaProgress.stage}|${otaProgress.status}|${otaProgress.progress}`
