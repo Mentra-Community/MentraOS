@@ -61,6 +61,7 @@ import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
 import { resetKeySets } from "../packages/core/src/services/signin/key-sets";
 import { installFakeIdp, type FakeIdp } from "./support/fake-idp";
 import { assertConnectedTo, localTestMongoUrl } from "./support/local-mongo";
+import { resetCoreKeyCaches } from "./support/key-caches";
 
 let coreApp: ReturnType<typeof createApp>;
 const databaseUrl = localTestMongoUrl("mentra-user-exchange");
@@ -72,6 +73,8 @@ const SUPABASE_JWKS = "https://testproj.supabase.co/auth/v1/.well-known/jwks.jso
 // === Test lifecycle ===
 
 beforeAll(async () => {
+  // This suite's keys were set when the file loaded; a suite before it may have cached its own.
+  resetCoreKeyCaches();
   await connectMongo(databaseUrl);
   assertConnectedTo(databaseUrl, UserModel.db.name);
   verified = true;
@@ -91,6 +94,7 @@ afterAll(async () => {
     await UserModel.db.dropDatabase();
   }
   await disconnectMongo();
+  resetCoreKeyCaches();
 });
 
 beforeEach(async () => {

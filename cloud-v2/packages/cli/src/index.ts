@@ -294,7 +294,8 @@ admin
 
     try {
       const me = await getAdminMe(creds);
-      console.log(`Admin: ${me.user?.email ?? "unknown"}`);
+      console.log(`Signed in as: ${me.user?.email ?? me.credential?.label ?? "unknown"}`);
+      console.log(`Organization capabilities: ${me.organization.capabilities.join(", ") || "none"}`);
       console.log(`Core: ${creds.coreUrl}`);
     } catch (error) {
       fail(error);

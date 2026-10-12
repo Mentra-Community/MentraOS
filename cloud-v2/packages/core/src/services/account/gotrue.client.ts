@@ -219,6 +219,41 @@ export async function findUserByEmail(email: string): Promise<GotrueIdentity | n
 }
 
 /**
+ * The account with exactly this email, like `findUserByEmail`, for lookups that
+ * grant something (an email resolved for the Store, an owner named by email).
+ * A directory that cannot answer (any status but 200, a network error or a
+ * timeout) throws `AccountError` 503, so an outage is never mistaken for "no
+ * such account".
+ */
+export async function findAccountByEmail(email: string, timeoutMs = 5_000): Promise<GotrueIdentity | null> {
+  const wanted = email.toLowerCase();
+  const PER_PAGE = 200;
+  const MAX_PAGES = 20;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    let response: { status: number; body: any };
+    try {
+      response = await gotrue("/admin/users", {
+        method: "GET",
+        admin: true,
+        query: { filter: email, page: String(page), per_page: String(PER_PAGE) },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      if (err instanceof AccountError) throw err;
+      throw new AccountError("server_error", "account directory unavailable", 503);
+    }
+    if (response.status !== 200 || !Array.isArray(response.body?.users)) {
+      throw new AccountError("server_error", "account directory unavailable", 503);
+    }
+    const users: any[] = response.body.users;
+    const match = users.find((u) => u.email?.toLowerCase() === wanted);
+    if (match) return identityFrom(match);
+    if (users.length < PER_PAGE) break;
+  }
+  return null;
+}
+
+/**
  * Whether the admin directory can be queried at all: both the project URL and
  * the service-role key are set. A deployment without GoTrue (a Private Cloud)
  * has no Mentra accounts.

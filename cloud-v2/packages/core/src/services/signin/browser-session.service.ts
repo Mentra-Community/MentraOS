@@ -20,6 +20,7 @@
 import {ulid} from "ulid"
 
 import {BrowserSessionModel, type BrowserSession} from "../../models/browser-session.model"
+import {isDeletedAccountId} from "../user.service"
 import {isSourceEnabled} from "./config"
 import {randomToken, sha256Hex} from "./random"
 
@@ -94,9 +95,9 @@ async function findByPreviousValue(hash: string, now: Date): Promise<SessionRow 
 }
 
 /**
- * The session a cookie value stands for, or null. When the session is due for
- * rotation, `rotatedCookieValue` is its new value, which the caller must send
- * back in a new cookie.
+ * The session a cookie value stands for, or null. A deleted account's session
+ * is null. When the session is due for rotation, `rotatedCookieValue` is its
+ * new value, which the caller must send back in a new cookie.
  */
 export async function readPortalSession(
   portal: PortalKind,
@@ -109,6 +110,8 @@ export async function readPortalSession(
   const viaPrevious = !row
   if (!row) row = await findByPreviousValue(hash, now)
   if (!row || !usable(row, portal, now)) return null
+  // Deletion revokes the account's sessions; one that slipped past that is refused here.
+  if (await isDeletedAccountId(row.mentraUserId)) return null
 
   let rotatedCookieValue: string | null = null
   if (!viaPrevious && now.getTime() - row.rotatedAt.getTime() >= SESSION_ROTATE_AFTER_MS) {

@@ -13,11 +13,16 @@
  *      logger so every log line in a request is automatically correlated.
  *      The path never includes the query string: sign-in callbacks
  *      (`/api/admin/auth/callback?code=…&state=…`) carry authorization codes there.
+ *
+ *   3. Run the rest of the request with that id as the current request id
+ *      (`services/request-context.ts`), so services without the Hono context,
+ *      such as the workspace audit trail, can record it.
  */
 
 import { createMiddleware } from "hono/factory";
 import { ulid } from "ulid";
 import { createLogger } from "@mentra/cloud-shared";
+import { runWithRequestId } from "../../services/request-context";
 import type { AppEnv } from "../../types/hono.types";
 
 const rootLogger = createLogger("core");
@@ -38,5 +43,5 @@ export const requestContext = createMiddleware<AppEnv>(async (c, next) => {
 
   c.header("x-request-id", reqId);
 
-  await next();
+  await runWithRequestId(reqId, next);
 });

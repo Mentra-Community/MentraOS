@@ -95,7 +95,11 @@ jobs:
             websites/portal/functions \
             websites/admin/functions \
             websites/admin/src/lib/session.test.ts \
-            websites/admin/src/components/signed-out.test.tsx
+            websites/admin/src/lib/admin-access.test.ts \
+            websites/admin/src/lib/shared-react.test.ts \
+            websites/admin/src/components/signed-out.test.tsx \
+            websites/admin/src/pages/workspaces.test.tsx \
+            websites/admin/src/pages/operator-keys.test.tsx
 
       - name: Typecheck backend packages
         working-directory: cloud-v2
@@ -118,7 +122,7 @@ jobs:
           bun run build:account
 
   workspace-integration:
-    name: Sign-in integration tests (local Mongo 7)
+    name: Sign-in and workspace integration tests (Mongo 7 replica set)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
@@ -143,22 +147,27 @@ jobs:
         working-directory: cloud-v2
         run: bun install --frozen-lockfile
 
-      # The port is published on the loopback interface only.
-      - name: Start Mongo 7
+      # Workspace administration uses multi-document transactions, which need a
+      # replica set. A single node is enough. The port is published on the
+      # loopback interface only: `--bind_ip_all` binds inside the container,
+      # never on the runner's network.
+      - name: Start Mongo 7 as a single-node replica set
         run: |
-          docker run -d --name cloud-v2-test-mongo -p 127.0.0.1:27017:27017 mongo:7
+          docker run -d --name cloud-v2-test-mongo -p 127.0.0.1:27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          # Mirrors the healthcheck in cloud-v2/docker-compose.test.yml: initiate
+          # the set on first contact, then wait until this node is primary.
           for attempt in $(seq 1 60); do
-            if docker exec cloud-v2-test-mongo mongosh --quiet --eval "quit(db.adminCommand({ping: 1}).ok ? 0 : 1)"; then
-              echo "Mongo is up (attempt ${attempt})"
+            if docker exec cloud-v2-test-mongo mongosh --quiet --eval "try { rs.status() } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: '127.0.0.1:27017'}]}) } quit(db.hello().isWritablePrimary ? 0 : 1)"; then
+              echo "Mongo replica set rs0 is primary (attempt ${attempt})"
               exit 0
             fi
             sleep 2
           done
-          echo "Mongo did not start in time" >&2
+          echo "Mongo did not become primary in time" >&2
           docker logs cloud-v2-test-mongo >&2
           exit 1
 
-      - name: Run sign-in integration tests
+      - name: Run sign-in and workspace integration tests
         working-directory: cloud-v2
         env:
           # Every one of these tests reads this variable (through
@@ -177,7 +186,17 @@ jobs:
             tests/signin-revocation.integration.test.ts \
             tests/enterprise-portal.integration.test.ts \
             tests/private-cloud-signin.integration.test.ts \
-            tests/signin-security.integration.test.ts
+            tests/signin-security.integration.test.ts \
+            tests/admin-reports.integration.test.ts \
+            tests/workspace-models.integration.test.ts \
+            tests/workspace-service.integration.test.ts \
+            tests/workspace-invitations.integration.test.ts \
+            tests/workspace-credentials.integration.test.ts \
+            tests/workspaces-api.integration.test.ts \
+            tests/admin-capabilities.integration.test.ts \
+            tests/workspaces-internal-api.integration.test.ts \
+            tests/legacy-admin-keys.integration.test.ts \
+            tests/account-deletion.integration.test.ts
 
       - name: Show Mongo logs after a failure
         if: failure()

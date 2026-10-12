@@ -35,6 +35,7 @@ import { EnterpriseOrgModel } from "../packages/core/src/models/enterprise-org.m
 import { TrustedIssuerModel } from "../packages/core/src/models/trusted-issuer.model";
 import { OemModel } from "../packages/core/src/models/oem.model";
 import { DeveloperApiKeyService } from "../packages/core/src/services/developer-orgs/developer-api-key.service";
+import { convertLegacyAdminKeys } from "../packages/core/src/services/workspaces/legacy-admin-keys";
 import {
   EnterpriseService,
   EnterpriseServiceError,
@@ -294,9 +295,18 @@ describe("enterprise portal API on Core users", () => {
   });
 
   test("a key gets 403 and the admin portal's cookie gets 401", async () => {
+    // An admin API key, converted to an operator key at startup: a principal, but not a person.
     const key = await new DeveloperApiKeyService().create("org_x", "ci", "seed", "local");
-    const keyed = await app.request(`${PORTAL_ORIGIN}/api/portal/org`, { headers: { authorization: `Bearer ${key.value}` } });
-    expect(keyed.status).toBe(403);
+    const restoreAllowlist = process.env.CLOUD_CORE_ADMIN_EMAILS;
+    process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${key.id}.local`;
+    try {
+      expect((await convertLegacyAdminKeys()).converted).toEqual([key.id]);
+      const keyed = await app.request(`${PORTAL_ORIGIN}/api/portal/org`, { headers: { authorization: `Bearer ${key.value}` } });
+      expect(keyed.status).toBe(403);
+    } finally {
+      if (restoreAllowlist === undefined) delete process.env.CLOUD_CORE_ADMIN_EMAILS;
+      else process.env.CLOUD_CORE_ADMIN_EMAILS = restoreAllowlist;
+    }
     const { cookieValue } = await createPortalSession("admin", {
       mentraUserId: "mu_1", tenantId: "mentra", sourceId: "mentra", subject: "supa-mu_1",
       email: "owner@acme.example", emailVerified: true, authTime: new Date(),

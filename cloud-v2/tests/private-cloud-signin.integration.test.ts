@@ -23,7 +23,7 @@ import {join} from "node:path"
 import {afterAll, beforeAll, describe, expect, setDefaultTimeout, test} from "bun:test"
 import {startCore, type CoreHandle} from "../packages/core/src/index"
 import {UserModel} from "../packages/core/src/models/user.model"
-import {resetSigningKeyCache} from "../packages/core/src/services/signing-keys.service"
+import {resetCoreKeyCaches} from "./support/key-caches"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
 import {resetPortalSigninCaches} from "../packages/core/src/services/signin/portal-signin.service"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
@@ -76,7 +76,7 @@ beforeAll(async () => {
     MENTRA_JWT_PUBLIC_KEY: strip(access.publicKey.export({type: "spki", format: "pem"}).toString()),
     REFRESH_TOKEN_PEPPER: "private-cloud-signin-pepper",
   })
-  resetSigningKeyCache()
+  resetCoreKeyCaches()
   resetIdpTokenCaches()
   resetPortalSigninCaches()
   entra = await installFakeIdp({
@@ -98,6 +98,7 @@ afterAll(async () => {
   await core?.stop()
   entra?.restore()
   restoreEnv()
+  resetCoreKeyCaches()
   await rm(staticDir, {recursive: true, force: true})
 })
 
@@ -121,9 +122,9 @@ describe("a Private Cloud admin portal on Core's host", () => {
     expect(done.headers.get("location")).toBe("/?report=rep_1")
     const me = await coreRequest("/api/admin/me", {headers: {cookie: `${ADMIN_COOKIE}=${session}`}})
     expect(me.status).toBe(200)
-    const body = (await me.json()) as {admin: boolean; principal: {mentraUserId: string; email: string; emailVerified: boolean}}
-    expect(body.admin).toBe(true)
-    expect(body.principal).toMatchObject({mentraUserId: phoneUser.mentraUserId, email: "it-admin@contoso.com", emailVerified: true})
+    const body = (await me.json()) as {user: {mentraUserId: string; email: string; emailVerified: boolean; isOrganizationAdmin: boolean}; organization: {capabilities: string[]}}
+    expect(body.user).toMatchObject({mentraUserId: phoneUser.mentraUserId, email: "it-admin@contoso.com", emailVerified: true, isOrganizationAdmin: true})
+    expect(body.organization.capabilities).toContain("organization.workspaces.administer")
     // Incident triage is an Organization Admin capability.
     expect((await coreRequest("/api/admin/reports", {headers: {cookie: `${ADMIN_COOKIE}=${session}`}})).status).toBe(200)
   })

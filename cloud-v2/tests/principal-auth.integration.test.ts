@@ -1,10 +1,15 @@
 /**
- * @fileoverview Principal resolution on Core's portal APIs (L05, L06, L07,
- * Review Focus 4): Core credentials, identity-provider bearers and portal
- * session cookies, each only where it belongs.
+ * @fileoverview Principal resolution on Core's portal and workspace APIs (L05,
+ * L06, L07, Review Focus 4): Core credentials, identity-provider bearers and
+ * portal session cookies, each only where it belongs. The workspace API is
+ * mounted under three route groups (`/api/portal/workspaces`,
+ * `/api/admin/workspaces`, `/api/workspaces`); each reads only its own cookie,
+ * and `/api/workspaces` none.
  *
  * Safety: `localTestMongoUrl` (loopback only, random database, ignores
  * `MONGO_URL`); the database is dropped afterwards.
+ *
+ * Converting an admin key runs a transaction, so the Mongo must be a replica set.
  *
  * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/principal-auth.integration.test.ts`
  */
@@ -17,7 +22,12 @@ import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/co
 import {BrowserSessionModel} from "../packages/core/src/models/browser-session.model"
 import {DeveloperOrgApiKeyModel} from "../packages/core/src/models/developer-org-api-key.model"
 import {UserModel} from "../packages/core/src/models/user.model"
+import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
+import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
+import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {DeveloperApiKeyService} from "../packages/core/src/services/developer-orgs/developer-api-key.service"
+import {convertLegacyAdminKeys} from "../packages/core/src/services/workspaces/legacy-admin-keys"
 import {
   createPortalSession,
   SESSION_ROTATE_AFTER_MS,
@@ -46,6 +56,7 @@ import {
 setDefaultTimeout(30_000)
 
 const databaseUrl = localTestMongoUrl("principal-auth")
+const WORKSPACE_MODELS = [AccessCredentialModel, WorkspaceAuditEventModel, WorkspaceMembershipModel, WorkspaceModel] as const
 let verified = false
 let app: ReturnType<typeof createApp>
 let idp: FakeIdp
@@ -66,6 +77,10 @@ beforeAll(async () => {
   assertConnectedTo(databaseUrl, UserModel.db.name)
   verified = true
   await Promise.all([UserModel.syncIndexes(), BrowserSessionModel.syncIndexes(), DeveloperOrgApiKeyModel.syncIndexes()])
+  for (const model of WORKSPACE_MODELS) {
+    await model.createCollection()
+    await model.syncIndexes()
+  }
   app = createApp({readinessChecks: [mongoReadinessCheck]})
 })
 
@@ -80,7 +95,12 @@ afterAll(async () => {
 beforeEach(async () => {
   restoreEnv = applyEnv(HOSTED_ENV)
   assertConnectedTo(databaseUrl, UserModel.db.name)
-  await Promise.all([UserModel.deleteMany({}), BrowserSessionModel.deleteMany({}), DeveloperOrgApiKeyModel.deleteMany({})])
+  await Promise.all([
+    UserModel.deleteMany({}),
+    BrowserSessionModel.deleteMany({}),
+    DeveloperOrgApiKeyModel.deleteMany({}),
+    ...WORKSPACE_MODELS.map(model => model.deleteMany({})),
+  ])
   resetIdpTokenCaches()
   idp = await installFakeIdp({issuer: SUPABASE_ISSUER, jwksUrl: SUPABASE_JWKS, hs256Secret: SUPABASE_SECRET, projectUrl: SUPABASE_PROJECT})
   idp.registerUser({sub: "supa-admin", email: ADMIN_EMAIL, emailConfirmed: true})
@@ -104,7 +124,7 @@ describe("identity-provider bearers", () => {
     const token = await supabaseToken()
     const admin = await adminMe({authorization: `Bearer ${token}`})
     expect(admin.status).toBe(200)
-    expect(((await admin.json()) as {principal: {mentraUserId: string}}).principal.mentraUserId).toBe(phoneUser.mentraUserId)
+    expect(((await admin.json()) as {user: {mentraUserId: string}}).user.mentraUserId).toBe(phoneUser.mentraUserId)
     const portal = await portalMe({authorization: `Bearer ${token}`})
     expect(portal.status).toBe(200)
   })
@@ -176,41 +196,107 @@ describe("portal cookies authenticate only their own route group (L05, Review Fo
   })
 })
 
+const adminReports = (headers: Record<string, string>) => app.request(`${ADMIN_ORIGIN}/api/admin/reports`, {headers})
+const capabilitiesOf = async (response: Response) =>
+  ((await response.json()) as {organization: {capabilities: string[]}}).organization.capabilities
+
 describe("Organization Admins (L06)", () => {
   test("removing an email from CLOUD_CORE_ADMIN_EMAILS removes admin access on the next request", async () => {
     const {cookieValue: session} = await createPortalSession("admin", adminIdentity)
-    expect((await adminMe({cookie: `${ADMIN_COOKIE}=${session}`})).status).toBe(200)
+    expect((await adminReports({cookie: `${ADMIN_COOKIE}=${session}`})).status).toBe(200)
+    expect(await capabilitiesOf(await adminMe({cookie: `${ADMIN_COOKIE}=${session}`}))).toContain("organization.incidents.read")
     process.env.CLOUD_CORE_ADMIN_EMAILS = "someone-else@mentra.glass"
-    expect((await adminMe({cookie: `${ADMIN_COOKIE}=${session}`})).status).toBe(403)
+    expect((await adminReports({cookie: `${ADMIN_COOKIE}=${session}`})).status).toBe(403)
+    // Signing in still works; it grants no organization capability by itself.
+    const me = await adminMe({cookie: `${ADMIN_COOKIE}=${session}`})
+    expect(me.status).toBe(200)
+    expect(await capabilitiesOf(me)).toEqual([])
   })
 
   test("an unverified allowlisted email is not an Organization Admin", async () => {
     const {cookieValue: session} = await createPortalSession("admin", {...adminIdentity, emailVerified: false})
-    expect((await adminMe({cookie: `${ADMIN_COOKIE}=${session}`})).status).toBe(403)
+    expect((await adminReports({cookie: `${ADMIN_COOKIE}=${session}`})).status).toBe(403)
+    expect(await capabilitiesOf(await adminMe({cookie: `${ADMIN_COOKIE}=${session}`}))).toEqual([])
   })
 })
 
 describe("admin keys keep working", () => {
-  test("an existing allowlisted admin key reads incidents", async () => {
+  test("an existing allowlisted admin key reads incidents once Core converts it at startup", async () => {
     const key = await new DeveloperApiKeyService().create("org_ops", "incident reader", "seed", "local")
     process.env.CLOUD_CORE_ADMIN_EMAILS = `${ADMIN_EMAIL},api-key@${key.id}.local`
-    const reports = await app.request(`${ADMIN_ORIGIN}/api/admin/reports`, {headers: {authorization: `Bearer ${key.value}`}})
+    expect((await convertLegacyAdminKeys()).converted).toEqual([key.id])
+    const reports = await adminReports({authorization: `Bearer ${key.value}`})
     expect(reports.status).toBe(200)
     const me = await adminMe({authorization: `Bearer ${key.value}`})
     expect(me.status).toBe(200)
-    expect(((await me.json()) as {principal: {kind: string; credentialId: string}}).principal).toEqual({kind: "credential", credentialId: key.id})
+    const body = (await me.json()) as {credential: {credentialId: string; credentialKind: string}; organization: {capabilities: string[]}}
+    expect(body.credential).toMatchObject({credentialId: key.id, credentialKind: "organization"})
+    expect(body.organization.capabilities.sort()).toEqual([
+      "organization.incidents.read",
+      "organization.supportProfiles.read",
+      "organization.testing.manage",
+      "organization.testing.read",
+    ])
   })
 
-  test("a key that is not allowlisted gets 403, an invalid one 401", async () => {
+  test("a key that is not allowlisted is no principal, and neither is an invalid one", async () => {
     const key = await new DeveloperApiKeyService().create("org_ops", "not admin", "seed", "local")
-    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/reports`, {headers: {authorization: `Bearer ${key.value}`}})).status).toBe(403)
-    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/reports`, {headers: {authorization: "Bearer msk_local_01ABC.secret"}})).status).toBe(401)
-    expect((await app.request(`${ADMIN_ORIGIN}/api/admin/reports`, {headers: {authorization: "Bearer mak_local_01ABC.secret"}})).status).toBe(401)
+    expect((await convertLegacyAdminKeys()).converted).toEqual([])
+    expect((await adminReports({authorization: `Bearer ${key.value}`})).status).toBe(401)
+    expect((await adminReports({authorization: "Bearer msk_local_01ABC.secret"})).status).toBe(401)
+    expect((await adminReports({authorization: "Bearer mak_local_01ABC.secret"})).status).toBe(401)
   })
 
-  test("a key gets 403 on the enterprise portal API, which is for people", async () => {
+  test("a key gets 403 on the enterprise portal API and the workspace API, which are for people", async () => {
     const key = await new DeveloperApiKeyService().create("org_ops", "key", "seed", "local")
     process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${key.id}.local`
+    await convertLegacyAdminKeys()
     expect((await portalMe({authorization: `Bearer ${key.value}`})).status).toBe(403)
+    expect((await app.request(`${ADMIN_ORIGIN}/api/workspaces`, {headers: {authorization: `Bearer ${key.value}`}})).status).toBe(403)
+    expect((await app.request(`${ADMIN_ORIGIN}/api/organization/credentials`, {headers: {authorization: `Bearer ${key.value}`}})).status).toBe(403)
+  })
+})
+
+describe("the workspace API under each route group", () => {
+  const list = (origin: string, path: string, headers: Record<string, string>) =>
+    app.request(`${origin}${path}`, {headers})
+
+  test("each portal's cookie works only under its own group, and /api/workspaces reads no cookie", async () => {
+    const {cookieValue: portalSession} = await createPortalSession("portal", adminIdentity)
+    const {cookieValue: adminSession} = await createPortalSession("admin", adminIdentity)
+    const portalCookie = {cookie: `${PORTAL_COOKIE}=${portalSession}`}
+    const adminCookie = {cookie: `${ADMIN_COOKIE}=${adminSession}`}
+
+    expect((await list(PORTAL_ORIGIN, "/api/portal/workspaces", portalCookie)).status).toBe(200)
+    expect((await list(PORTAL_ORIGIN, "/api/portal/workspaces", adminCookie)).status).toBe(401)
+    expect((await list(ADMIN_ORIGIN, "/api/admin/workspaces", adminCookie)).status).toBe(200)
+    expect((await list(ADMIN_ORIGIN, "/api/admin/workspaces", portalCookie)).status).toBe(401)
+    expect((await list(ADMIN_ORIGIN, "/api/admin/organization/workspaces", adminCookie)).status).toBe(200)
+    expect((await list(PORTAL_ORIGIN, "/api/admin/organization/workspaces", portalCookie)).status).toBe(401)
+    for (const cookie of [portalCookie, adminCookie]) {
+      expect((await list(ADMIN_ORIGIN, "/api/workspaces", cookie)).status).toBe(401)
+      expect((await list(ADMIN_ORIGIN, "/api/organization", cookie)).status).toBe(401)
+    }
+  })
+
+  test("an identity-provider access token works under every group", async () => {
+    const bearer = {authorization: `Bearer ${await supabaseToken()}`}
+    expect((await list(ADMIN_ORIGIN, "/api/workspaces", bearer)).status).toBe(200)
+    expect((await list(PORTAL_ORIGIN, "/api/portal/workspaces", bearer)).status).toBe(200)
+    expect((await list(ADMIN_ORIGIN, "/api/admin/workspaces", bearer)).status).toBe(200)
+    expect((await list(ADMIN_ORIGIN, "/api/organization", bearer)).status).toBe(200)
+  })
+
+  test("a cross-origin POST with the portal cookie is refused before anything is created", async () => {
+    const {cookieValue: session} = await createPortalSession("portal", adminIdentity)
+    const create = (origin: string) =>
+      app.request(`${PORTAL_ORIGIN}/api/portal/workspaces`, {
+        method: "POST",
+        headers: {cookie: `${PORTAL_COOKIE}=${session}`, origin, "content-type": "application/json"},
+        body: JSON.stringify({name: "Acme"}),
+      })
+    expect((await create("https://evil.test")).status).toBe(403)
+    expect(await WorkspaceModel.countDocuments({})).toBe(0)
+    expect((await create(PORTAL_ORIGIN)).status).toBe(201)
   })
 })

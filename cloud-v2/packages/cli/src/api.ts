@@ -110,11 +110,6 @@ export interface SignedBundleMetadata {
 export type PreinstallEnvironment = "debug" | "dev" | "staging" | "prod";
 export type PreinstallPolicy = "install_once" | "keep_updated" | "mandatory";
 
-export interface AdminUser {
-  developerId: string;
-  email: string;
-}
-
 export interface AdminRegistry {
   id: string;
   name: string;
@@ -221,7 +216,15 @@ export async function listApps(credentials: CliCredentials): Promise<{ apps: Dev
   return coreRequest(credentials, "/api/console/apps");
 }
 
-export async function getAdminMe(credentials: CliCredentials): Promise<{ authenticated: true; admin: true; user: AdminUser | null }> {
+/** What `/api/admin/me` answers: who the token is and the organization capabilities it holds. */
+export interface AdminMe {
+  authenticated: true;
+  user: { mentraUserId: string; email: string | null; isOrganizationAdmin: boolean } | null;
+  credential: { credentialId: string; credentialKind: "workspace" | "organization"; label: string } | null;
+  organization: { capabilities: string[] };
+}
+
+export async function getAdminMe(credentials: CliCredentials): Promise<AdminMe> {
   return coreRequest(credentials, "/api/admin/me");
 }
 
