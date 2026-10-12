@@ -238,6 +238,12 @@ account (`revokeAllSessionsForUser`):
 Times are read strictly: a token issued in the revocation's own second counts as
 before it.
 
+The revocation endpoint (`/oidc/token/revocation`) revokes refresh tokens: the
+Developer Console and the CLI revoke theirs when they sign out. A Core access
+token is a signed JWT that Core verifies without a lookup, so revoking one there
+has no effect; it lives out its hour unless the person's sign-ins are revoked
+(above), or its client or sign-in source is removed.
+
 Removing a sign-in source from configuration ends its people's portal sessions,
 sign-in server sessions, access tokens and refreshes on their next request.
 
