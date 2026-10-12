@@ -22,6 +22,7 @@ import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
+import {submitOtaFailureReport, type OtaFailureReason} from "./OtaFailureReportService"
 import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import {otaDeviceSessionRevision, subscribeOtaDeviceSession} from "./OtaDeviceSession"
 import {isOtaCheckForCurrentDevice} from "./OtaUpdateCheckService"
@@ -214,6 +215,8 @@ class OtaInstallCoordinator {
 
   // Genuinely session-local state (was component state/refs).
   private errorMsg = ""
+  private reportAttemptId = `${Date.now()}-0`
+  private reportAttemptSequence = 0
   private versionChangeReconnected = false
   private sawReconnectEdge = false
   private continueButtonDisabled = false
@@ -324,6 +327,7 @@ class OtaInstallCoordinator {
     if (!wifiConnected && !hotspotSupported) {
       throw new Error("Connected glasses require Wi-Fi for OTA")
     }
+    this.reportAttemptId = `${Date.now()}-${++this.reportAttemptSequence}`
     this.preparedCheckResult = checkResult
     this.selectedTransport = wifiConnected ? "wifi" : "hotspot"
     this.observedTransport = this.selectedTransport
@@ -636,6 +640,7 @@ class OtaInstallCoordinator {
       return false
     }
     this.otaStartOwnership = null
+    this.reportAttemptId = `${Date.now()}-${++this.reportAttemptSequence}`
     this.downloadStepKey = ""
     this.downloadByteHighWater = 0
     this.hasFirstActivity = false
@@ -658,9 +663,37 @@ class OtaInstallCoordinator {
 
   // Setters mirror the old setState calls: bail on identical values (React's
   // setState bailout), notify snapshot subscribers, and queue a reaction pass.
-  private setErrorMsg(next: string): void {
+  private reportFailure(reason: OtaFailureReason): void {
+    const state = useGlassesStore.getState()
+    void submitOtaFailureReport({
+      attemptId: this.reportAttemptId,
+      deviceRevision: otaDeviceSessionRevision(),
+      reason,
+      transport: this.observedTransport,
+      hotspotPhase: this.hotspotPhase,
+      connected: isGlassesConnected(state.connection),
+      wifiState: state.wifi.state,
+      buildNumber: state.buildNumber,
+      besFirmwareVersion: state.besFirmwareVersion,
+      mtkFirmwareVersion: state.mtkFirmwareVersion,
+      targetBesVersion: this.preparedCheckResult?.besVersion ?? null,
+      targetRelease: this.preparedCheckResult?.releaseVersion ?? null,
+      targetBuild: this.preparedCheckResult?.latestVersionInfo?.versionCode ?? null,
+      updates: this.preparedCheckResult?.updates ?? [],
+      retryCount: this.retryCount,
+      sawReconnectEdge: this.sawReconnectEdge,
+      besRestartExpected: this.besRestartExpected,
+      besRestartDisconnectObserved: this.besRestartDisconnectObserved,
+      versionChangeInstallStarted: this.versionChangeInstallStarted,
+      otaStatus: state.otaStatus,
+      otaProgress: state.otaProgress,
+    })
+  }
+
+  private setErrorMsg(next: string, failureReason?: OtaFailureReason): void {
     if (this.errorMsg === next) return
     this.errorMsg = next
+    if (next && failureReason) this.reportFailure(failureReason)
     this.emitInternalChange()
     this.react()
   }
@@ -793,6 +826,9 @@ class OtaInstallCoordinator {
       versionChangeConverged: this.versionChangeConverged,
       versionChangeSession: this.versionChangeSession,
     })
+    if (otaStatusChanged && otaStatus?.status === "failed") this.reportFailure("device_failed")
+    else if (otaProgressChanged && !otaStatus && otaProgress?.status === "FAILED") this.reportFailure("device_failed")
+
     const stallSig = buildProgressStalenessSignature(otaStatus, otaProgress, displayState)
     // Percent is a UI projection, not transfer liveness. Repeated status replies (including
     // older replies without bytes) must not keep a stalled download alive.
@@ -1048,7 +1084,7 @@ class OtaInstallCoordinator {
           this.progressTimeout = null
           if (isTerminalForWatchdog(this.computeDisplayStateNow())) return
           console.log(`[OTA_PROGRESS] watchdog: progress stalled for ${duration}ms, failing`)
-          this.setErrorMsg(OtaProgressMessages.stalledOrStuck)
+          this.setErrorMsg(OtaProgressMessages.stalledOrStuck, "progress_stalled")
         }, duration)
       }
     }
@@ -1069,7 +1105,7 @@ class OtaInstallCoordinator {
         this.restartRecoveryTimeout = null
         if (this.computeDisplayStateNow() !== "restarting") return
         console.log(`[OTA_PROGRESS] watchdog: glasses did not finish restarting in ${restartTimeoutMs}ms`)
-        this.setErrorMsg(OtaProgressMessages.restartTimeout)
+        this.setErrorMsg(OtaProgressMessages.restartTimeout, "restart_timeout")
       }, restartTimeoutMs)
     } else if (displayStateChanged) {
       this.clearRestartRecoveryTimeout()
@@ -1468,7 +1504,7 @@ class OtaInstallCoordinator {
       // errorMsg outranks them in the projection, and retry()/last-write-wins reset them).
       this.clearLegacyApkSettleTimer()
       this.clearMtkSimulationTimers()
-      this.setErrorMsg(OtaProgressMessages.globalTimeout)
+      this.setErrorMsg(OtaProgressMessages.globalTimeout, "session_timeout")
     }, globalTimeoutMs)
   }
 
@@ -1491,7 +1527,7 @@ class OtaInstallCoordinator {
       if (pct !== 0) return
       console.log(`[OTA_PROGRESS] watchdog: stuck at 0% for ${stuckTimeoutMs}ms, failing`)
       this.clearRetryTimeout()
-      this.setErrorMsg(OtaProgressMessages.stalledOrStuck)
+      this.setErrorMsg(OtaProgressMessages.stalledOrStuck, "download_stuck")
     }, stuckTimeoutMs)
   }
 
@@ -1590,6 +1626,7 @@ class OtaInstallCoordinator {
       if (this.selectedTransport === "hotspot" && !nativeStartAttempted) {
         ownership.outcome = "rejected"
         this.clearStuckTimeout()
+        this.reportFailure("hotspot_preflight_failed")
         await this.teardownHotspotTransport()
         if (!isCurrentAttempt()) return
         if (this.attached) this.setErrorMsg(hotspotPreflightErrorMessage(err))
@@ -1634,7 +1671,7 @@ class OtaInstallCoordinator {
         }, retryIntervalMs)
       } else {
         console.log("[OTA_PROGRESS] sendOtaStart failed after max retries, failing session")
-        this.setErrorMsg(OtaProgressMessages.sendOtaStartFailed)
+        this.setErrorMsg(OtaProgressMessages.sendOtaStartFailed, "start_failed")
       }
     }
   }

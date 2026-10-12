@@ -19,7 +19,7 @@
 }
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   /* Store palette (light). */
   --bg: #ffffff;
   --surface: #f5f5f5;
@@ -45,23 +45,6 @@
   line-height: 1.5;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #171717;
-    --surface: #1f1f1f;
-    --hover: #292929;
-    --text: #fafafa;
-    --muted: #a3a3a3;
-    --border: #303030;
-    --button: #ffffff;
-    --button-text: #0a0a0a;
-    --error-bg: #302017;
-    --error: #ffd5a3;
-    --brand: #36dd89;
-    --info-bg: #0e2b1d;
-    --info: #9bf2c3;
-  }
-}
 
 *,
 *::before,
