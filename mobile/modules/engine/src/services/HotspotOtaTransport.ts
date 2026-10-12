@@ -15,7 +15,11 @@ import {
   type PreparedOtaArtifact,
 } from "./OtaArtifactDownloader"
 import {disableHotspotWithRetry} from "./HotspotShutdown"
-import {localNetworkTransport} from "./asg/localNetworkTransport"
+import {
+  localNetworkErrorDetails,
+  localNetworkTransport,
+  type LocalNetworkErrorDetails,
+} from "./asg/localNetworkTransport"
 
 export type HotspotOtaPhase = "idle" | "downloading" | "starting_hotspot" | "joining_hotspot" | "serving"
 
@@ -34,6 +38,7 @@ export class HotspotOtaTransportError extends Error {
   constructor(
     public readonly code: HotspotOtaErrorCode,
     message: string,
+    public readonly nativeError?: LocalNetworkErrorDetails,
   ) {
     super(message)
     this.name = "HotspotOtaTransportError"
@@ -113,7 +118,10 @@ class HotspotOtaTransport {
       phase = "joining_hotspot"
       onProgress?.({phase: "joining_hotspot"})
       assertCurrent()
-      const scopedAddress = await localNetworkTransport.connect(hotspot.ssid, hotspot.password)
+      const scopedAddress = await localNetworkTransport.connect(hotspot.ssid, hotspot.password, {
+        retryIosInternalError: true,
+        assertCurrent,
+      })
       this.localNetworkConnected = true
       assertCurrent()
       let localAddress = scopedAddress
@@ -153,7 +161,7 @@ class HotspotOtaTransport {
         throw new HotspotOtaTransportError("hotspot_start_failed", message)
       }
       if (phase === "joining_hotspot" && !joined) {
-        throw new HotspotOtaTransportError("hotspot_join_failed", message)
+        throw new HotspotOtaTransportError("hotspot_join_failed", message, localNetworkErrorDetails(error))
       }
       throw new HotspotOtaTransportError("hotspot_server_failed", message)
     }

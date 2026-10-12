@@ -3,21 +3,26 @@ import {otaLocalNetwork, type OtaLocalNetworkDownloadProgress} from "@mentra/blu
 import {Buffer} from "buffer"
 import {Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
+import {BgTimer} from "../../utils/timers"
 
 type DownloadOptions = Parameters<typeof RNFS.downloadFile>[0]
 type DownloadHandle = ReturnType<typeof RNFS.downloadFile>
 
+let connectionGeneration = 0
 let scopedConnectionActive = false
 let nextJobId = 1_000_000
 const nativeJobs = new Map<number, string>()
 const cancelledNativeJobs = new Set<number>()
 
-/** Keep native connection facts ahead of large stacks and private NSError userInfo. */
-export function localNetworkErrorDetails(error: unknown): {
+export type LocalNetworkErrorDetails = {
   code?: string | number
   domain?: string
   underlying?: {code?: string | number; domain?: string}
-} {
+  native?: {code: number; domain: string; completed: true; underlying?: {code: number; domain: string}}
+}
+
+/** Keep native connection facts ahead of large stacks and private NSError userInfo. */
+export function localNetworkErrorDetails(error: unknown): LocalNetworkErrorDetails {
   const facts = (value: unknown): {code?: string | number; domain?: string} => {
     if (!value || typeof value !== "object") return {}
     const {code, domain} = value as {code?: unknown; domain?: unknown}
@@ -25,8 +30,8 @@ export function localNetworkErrorDetails(error: unknown): {
       ...(typeof code === "number" && Number.isFinite(code)
         ? {code}
         : typeof code === "string" && /^[A-Za-z0-9_.-]{1,128}$/.test(code)
-          ? {code}
-          : {}),
+        ? {code}
+        : {}),
       ...(typeof domain === "string" && /^[A-Za-z0-9_.-]{1,128}$/.test(domain) ? {domain} : {}),
     }
   }
@@ -37,7 +42,35 @@ export function localNetworkErrorDetails(error: unknown): {
       ? (userInfo as {NSUnderlyingError?: unknown}).NSUnderlyingError
       : undefined,
   )
-  return Object.keys(underlying).length ? {...details, underlying} : details
+  const nativeValue =
+    userInfo && typeof userInfo === "object" ? (userInfo as {RNWifiNativeError?: unknown}).RNWifiNativeError : undefined
+  const nativeFacts = facts(nativeValue)
+  const native =
+    nativeValue &&
+    typeof nativeValue === "object" &&
+    (nativeValue as {completed?: unknown}).completed === true &&
+    typeof nativeFacts.code === "number" &&
+    Number.isSafeInteger(nativeFacts.code) &&
+    nativeFacts.domain
+      ? {code: nativeFacts.code, domain: nativeFacts.domain, completed: true as const}
+      : undefined
+  const nativeUnderlying = facts((nativeValue as {underlying?: unknown} | undefined)?.underlying)
+  return {
+    ...details,
+    ...(Object.keys(underlying).length ? {underlying} : {}),
+    ...(native
+      ? {
+          native: {
+            ...native,
+            ...(typeof nativeUnderlying.code === "number" &&
+            Number.isSafeInteger(nativeUnderlying.code) &&
+            nativeUnderlying.domain
+              ? {underlying: {code: nativeUnderlying.code, domain: nativeUnderlying.domain}}
+              : {}),
+          },
+        }
+      : {}),
+  }
 }
 
 export function shouldUseScopedLocalNetwork(os: string, moduleAvailable: boolean): boolean {
@@ -69,12 +102,48 @@ export const localNetworkTransport = {
   supportsScopedConnection: (): boolean => supportsScopedConnection(),
   isScopedConnectionActive: (): boolean => scopedConnectionActive,
 
-  async connect(ssid: string, password: string): Promise<string | undefined> {
+  async connect(
+    ssid: string,
+    password: string,
+    options?: {retryIosInternalError: true; assertCurrent: () => void},
+  ): Promise<string | undefined> {
+    const generation = ++connectionGeneration
+    const assertCurrent = () => {
+      if (generation !== connectionGeneration) throw new Error("Local network connection was superseded")
+      options?.assertCurrent()
+    }
+    assertCurrent()
     scopedConnectionActive = false
     nativeJobs.clear()
     if (!supportsScopedConnection()) {
-      await WifiManager.connectToProtectedSSID(ssid, password, false, false)
-      return undefined
+      // Gallery already owns its retry loop. OTA opts into this same-network
+      // policy only with current-attempt authority; never race a pending native call.
+      const retryDeadline = Date.now() + 30_000
+      for (let attempt = 1; ; attempt += 1) {
+        assertCurrent()
+        try {
+          await WifiManager.connectToProtectedSSID(ssid, password, false, false)
+          // Report acquisition first; the caller records it before its own
+          // identity check and normal teardown of a replaced OTA attempt.
+          return undefined
+        } catch (error) {
+          assertCurrent()
+          const details = localNetworkErrorDetails(error)
+          console.warn("[LocalNetworkTransport] hotspot join rejected", {attempt, ...details})
+          if (
+            !options?.retryIosInternalError ||
+            Platform.OS !== "ios" ||
+            attempt >= 3 ||
+            details.native?.domain !== "NEHotspotConfigurationErrorDomain" ||
+            details.native.code !== 8 ||
+            Date.now() + 3_000 > retryDeadline
+          )
+            throw error
+          await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 3_000))
+          assertCurrent()
+          if (Date.now() > retryDeadline) throw error
+        }
+      }
     }
     const result = await otaLocalNetwork.connect(ssid, password)
     scopedConnectionActive = true
@@ -82,6 +151,7 @@ export const localNetworkTransport = {
   },
 
   async disconnect(): Promise<void> {
+    connectionGeneration += 1
     if (supportsScopedConnection()) {
       await otaLocalNetwork.disconnect()
     }

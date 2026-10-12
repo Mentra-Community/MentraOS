@@ -15,11 +15,26 @@ int main(void) {
     NSError *error = [NSError errorWithDomain:@"NEHotspotConfigurationErrorDomain" code:8
         userInfo:@{NSUnderlyingErrorKey: underlying, @"SSID": @"private network",
                    @"password": @"private passphrase", NSLocalizedDescriptionKey: @"private error text"}];
+    NSError *bridged = RNWifiErrorWithNativeFacts(error);
+    NSDictionary *native = bridged.userInfo[@"RNWifiNativeError"];
+    check([native[@"domain"] isEqual:@"NEHotspotConfigurationErrorDomain"] &&
+          [native[@"code"] isEqual:@8] && [native[@"completed"] isEqual:@YES],
+          @"Preserve answered original error8 through the mapped React Native code");
+    NSData *json = [NSJSONSerialization dataWithJSONObject:native options:0 error:nil];
+    NSString *serialized = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+    check([serialized rangeOfString:@"private"].location == NSNotFound && serialized.length < 400,
+          @"Bridge only numeric identifiers, never credentials or descriptions");
+    check(bridged.code == error.code && [bridged.domain isEqual:error.domain] &&
+          [bridged.userInfo[@"SSID"] isEqual:error.userInfo[@"SSID"]],
+          @"Preserve original NSError fields without rewriting the mapped rejection");
     NSString *facts = RNWifiErrorFacts(error);
     check([facts isEqualToString:@"domain=NEHotspotConfigurationErrorDomain code=8 underlying_domain=NSPOSIXErrorDomain underlying_code=22"],
           @"Preserve original numeric error and one underlying numeric error");
     check([facts rangeOfString:@"private"].location == NSNotFound,
           @"Exclude credentials, descriptions and other userInfo");
+    NSError *denied = [NSError errorWithDomain:@"NEHotspotConfigurationErrorDomain" code:7 userInfo:nil];
+    check([RNWifiErrorWithNativeFacts(denied).userInfo[@"RNWifiNativeError"][@"code"] isEqual:@7],
+          @"Preserve user-denied code so it is never retried as internal");
     NSError *unknown = [NSError errorWithDomain:@"NEHotspotConfigurationErrorDomain" code:107 userInfo:nil];
     check([RNWifiErrorFacts(unknown) isEqualToString:@"domain=NEHotspotConfigurationErrorDomain code=107 underlying_domain=none underlying_code=none"],
           @"Keep unknown numeric codes rather than remapping them");
