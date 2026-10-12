@@ -1,6 +1,6 @@
 import { Count, WorkspaceAvatar } from "@mentra/workspace-ui";
 import { Check, ChevronsUpDown, Mail, Plus } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "@/lib/navigation";
 import { useDismiss } from "@/lib/use-dismiss";
 import { cn } from "@/lib/utils";
@@ -15,10 +15,12 @@ export type SwitcherWorkspace = {
 
 export type SwitcherInvitation = {
   key: string;
-  /** "Join Acme Field Team", or "Invitation" until the invitation has been looked up. */
+  /** "Join Acme Field Team". */
   label: string;
+  /** "Member · from olivia@acme.test", or "For someone@else.test" for another account's invitation. */
   detail: string | null;
-  href: string;
+  /** Accept and Dismiss (menu items), or the way to review it. */
+  actions: ReactNode;
 };
 
 /**
@@ -113,7 +115,8 @@ export function WorkspaceSwitcher({
           <span className="block truncate text-[15px] leading-5 font-semibold">
             {current ? current.name : "Choose a workspace"}
           </span>
-          <span className="text-muted-foreground block truncate text-xs leading-4">
+          {/* Two lines at most, so a longer role ("Member · Organization Admin") is read whole, not cut. */}
+          <span className="text-muted-foreground line-clamp-2 block text-xs leading-4">
             {current
               ? (current.roleLabel ?? "\u00a0")
               : workspaces === undefined
@@ -212,20 +215,22 @@ export function WorkspaceSwitcher({
                 <Count className="ml-2">{invitations.length}</Count>
               </MenuLabel>
               {invitations.map(invitation => (
-                <Link
-                  key={invitation.key}
-                  href={invitation.href}
-                  role="menuitem"
-                  className="flex items-center gap-2.5 hover:bg-hover focus-visible:bg-hover rounded-[12px] px-2 py-1.5 text-sm focus-visible:outline-offset-[-3px]"
-                >
+                <div key={invitation.key} className="flex items-start gap-2.5 rounded-[12px] px-2 py-1.5 text-sm">
                   <span className="bg-info text-info-foreground flex size-8 shrink-0 items-center justify-center rounded-[9px]">
                     <Mail className="size-4" />
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-semibold">{invitation.label}</span>
-                    {invitation.detail ? <span className="text-muted-foreground block truncate text-xs">{invitation.detail}</span> : null}
-                  </span>
-                </Link>
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div>
+                      <span className="block truncate font-semibold">{invitation.label}</span>
+                      {invitation.detail ? (
+                        <span className="text-muted-foreground block truncate text-xs" title={invitation.detail}>
+                          {invitation.detail}
+                        </span>
+                      ) : null}
+                    </div>
+                    {invitation.actions}
+                  </div>
+                </div>
               ))}
             </>
           ) : null}

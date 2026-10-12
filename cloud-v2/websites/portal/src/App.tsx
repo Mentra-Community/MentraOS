@@ -7,12 +7,21 @@ import { SignedOutScreen } from "./components/signed-out";
 import { api, safeLocalStorage, type PortalMe } from "./lib/api";
 import { Redirect, usePathname } from "./lib/navigation";
 import { PortalProvider, portalWorkspaceApi, usePortal, type PortalSession } from "./lib/portal";
-import { homeWorkspace, invitationLanding, parseRoute, recallWorkspace, workspacePath, type PortalRoute } from "./lib/routes";
+import {
+  homeWorkspace,
+  INVITATION_PATH,
+  invitationLanding,
+  parseRoute,
+  recallWorkspace,
+  workspacePath,
+  type PortalRoute,
+} from "./lib/routes";
 import { loginHref, signOutOfEnterprisePortal } from "./lib/session";
-import { forgetPendingInvite, takePendingInvite } from "./lib/workspace-invite";
+import { usePortalInvitations } from "./lib/use-portal-invitations";
+import { takePendingInvite } from "./lib/workspace-invite";
 import { EnterpriseScreen } from "./pages/enterprise";
 import { NotFoundMessage } from "./pages/not-found";
-import { WelcomeScreen } from "./pages/welcome";
+import { InvitationScreen, WelcomeScreen } from "./pages/welcome";
 import { WorkspaceScreen } from "./pages/workspace";
 
 const queryClient = new QueryClient({
@@ -51,7 +60,6 @@ function safeSessionStorage(): Storage | null {
 function PortalPage() {
   const qc = useQueryClient();
   const pathname = usePathname();
-  const [inviteToken, setInviteToken] = useState<string | null>(initialInvite);
   const [signingOut, setSigningOut] = useState(false);
   const [signedOut, setSignedOut] = useState<{ signOutUrl: string | null } | null>(null);
   const me = useQuery({
@@ -59,10 +67,24 @@ function PortalPage() {
     queryFn: () => api<PortalMe>("/api/portal/me"),
     retry: false,
   });
+  const accountEmail = me.data?.user.email?.trim() || null;
+  const invites = usePortalInvitations({
+    initialToken: initialInvite,
+    signedIn: me.data !== undefined,
+    accountEmail,
+    pathname,
+    sessionStore,
+    localStore: safeLocalStorage(),
+    onTokenForgotten: () => {
+      initialInvite = null;
+    },
+  });
 
-  if (signedOut) return <SignedOutScreen signOutUrl={signedOut.signOutUrl} />;
+  if (signedOut) {
+    return <SignedOutScreen signOutUrl={signedOut.signOutUrl} signInHref={invites.inviteToken ? INVITATION_PATH : "/"} />;
+  }
   if (me.isLoading) return <Splash label="Checking your session" />;
-  if (me.isError || !me.data) return <LoginGate invitePending={inviteToken !== null} />;
+  if (me.isError || !me.data) return <LoginGate invitePending={invites.inviteToken !== null} />;
 
   async function signOut() {
     setSigningOut(true);
@@ -73,13 +95,11 @@ function PortalPage() {
 
   const session: PortalSession = {
     userEmail: me.data.user.email || "Signed in",
+    accountEmail,
     creation: me.data.workspaceCreation ?? { allowed: false, reason: null },
-    inviteToken,
-    forgetInvite() {
-      forgetPendingInvite(sessionStore);
-      initialInvite = null;
-      setInviteToken(null);
-    },
+    link: invites.link,
+    invitations: invites.invitations,
+    forgetInvitation: invites.forgetInvitation,
     signOut: () => void signOut(),
     signingOut,
   };
@@ -114,8 +134,11 @@ export function PortalRoutes({ route, me }: { route: PortalRoute; me: PortalMe }
 /** `/`: the last-used workspace, else the first one, else the first run. */
 function HomeRoute() {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
+  const { invitations } = usePortal();
   if (list.data === undefined && !list.isError) return <Splash label="Loading your workspaces" />;
   const target = list.data ? homeWorkspace(list.data, recallWorkspace(safeLocalStorage())) : null;
+  // The first run offers the person's invitations instead of creating a workspace, so it waits for them.
+  if (!target && invitations === undefined) return <Splash label="Looking for your invitations" />;
   if (target) {
     return (
       <>
@@ -127,13 +150,13 @@ function HomeRoute() {
   return <WelcomeScreen />;
 }
 
-/** `/invitation`: the invitation this tab holds; without one, home. */
+/** `/invitation`: the invitation link this tab holds (or, once, that it is no longer valid); without one, home. */
 function InvitationRoute() {
   const list = useQuery(workspaceListQuery(portalWorkspaceApi));
-  const { inviteToken } = usePortal();
-  if (!inviteToken) return <Redirect to="/" />;
-  if (list.data === undefined && !list.isError) return <Splash label="Loading your invitation" />;
-  return <WelcomeScreen />;
+  const { link } = usePortal();
+  if (link.status === "none") return <Redirect to="/" />;
+  if ((list.data === undefined && !list.isError) || link.status === "checking") return <Splash label="Loading your invitation" />;
+  return <InvitationScreen />;
 }
 
 export function LoginGate({ invitePending = false, loginUrl = loginHref() }: { invitePending?: boolean; loginUrl?: string }) {

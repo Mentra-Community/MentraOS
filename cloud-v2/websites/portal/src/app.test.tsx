@@ -11,15 +11,20 @@ import {
   workspaceDetailQuery,
   WorkspaceApiError,
   workspaceKeys,
+  type InvitationPreview,
   type WorkspaceListItem,
 } from "@mentra/workspace-ui";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LoginGate, PortalRoutes } from "./App";
+import { switcherInvitation } from "./components/portal-shell";
 import { WorkspaceSwitcher } from "./components/workspace-switcher";
 import type { PortalMe } from "./lib/api";
+import type { PendingInvitation } from "./lib/invitations";
 import { creationNotice, PortalProvider, portalWorkspaceApi, type PortalSession, type WorkspaceCreation } from "./lib/portal";
 import { parseRoute } from "./lib/routes";
-import { isNoAccess, roleLabel, visibleSections, workspaceNav } from "./pages/workspace";
+import { usePortalInvitations } from "./lib/use-portal-invitations";
+import type { InviteStorage } from "./lib/workspace-invite";
+import { isNoAccess, ORGANIZATION_ADMIN_NOTE, roleLabel, visibleSections, workspaceNav } from "./pages/workspace";
 
 // Synthetic data only. The query cache is seeded, so a server render never reaches the network.
 const api = portalWorkspaceApi;
@@ -58,20 +63,50 @@ const ME: PortalMe = {
 function session(overrides: Partial<PortalSession> = {}): PortalSession {
   return {
     userEmail: "sam@acme.test",
+    accountEmail: "sam@acme.test",
     creation: { allowed: true, reason: null },
-    inviteToken: null,
-    forgetInvite() {},
+    link: { status: "none" },
+    invitations: [],
+    forgetInvitation() {},
     signOut() {},
     signingOut: false,
     ...overrides,
   };
 }
 
+function invitationTo(workspaceName: string, fields: Partial<InvitationPreview> = {}): InvitationPreview {
+  return {
+    invitationId: `winv_${workspaceName.replace(/\W/g, "")}`,
+    workspaceId: `ws_${workspaceName.replace(/\W/g, "").toLowerCase()}`,
+    workspaceName,
+    email: "sam@acme.test",
+    role: "member",
+    invitedByEmail: "olivia@acme.test",
+    expiresAt: "2026-10-26T01:25:48.000Z",
+    ...fields,
+  };
+}
+
+/** A session holding this tab's valid invitation link to `preview`. */
+function withLink(preview: InvitationPreview, accountEmail = "sam@acme.test"): Partial<PortalSession> {
+  const forOtherAccount = preview.email.toLowerCase() !== accountEmail.toLowerCase();
+  return {
+    accountEmail,
+    link: { status: "valid", token: TOKEN, preview },
+    invitations: [{ preview, token: TOKEN, forOtherAccount }],
+  };
+}
+
+/** A session with invitations addressed to the signed-in person (no link). */
+function withMine(...previews: InvitationPreview[]): Partial<PortalSession> {
+  return { invitations: previews.map((preview): PendingInvitation => ({ preview, token: null, forOtherAccount: false })) };
+}
+
 interface Seed {
   list?: WorkspaceListItem[];
   details?: WorkspaceDetail[];
   members?: MemberView[];
-  preview?: { workspaceName: string; email: string; role: WorkspaceRole };
+  preview?: InvitationPreview;
 }
 
 function seeded(seed: Seed, client = new QueryClient()): QueryClient {
@@ -207,19 +242,24 @@ describe("the workspace switcher", () => {
     { workspaceId: ACME, name: "Acme Field Team", roleLabel: "Owner", href: `/w/${ACME}/members` },
     { workspaceId: NORTHWIND, name: "Northwind Pilot", roleLabel: "Developer", href: `/w/${NORTHWIND}/members` },
   ];
-  const invitation = { key: "link", label: "Join Contoso", detail: "As Member", href: "/invitation" };
+  const invitation = switcherInvitation({ preview: invitationTo("Contoso"), token: null, forOtherAccount: false });
+  // In the portal's providers: an invitation entry's Accept talks to the API and tells the portal.
   const open = (props: Partial<Parameters<typeof WorkspaceSwitcher>[0]> = {}) =>
     renderToStaticMarkup(
-      <WorkspaceSwitcher
-        current={workspaces[0]!}
-        workspaces={workspaces}
-        invitations={[]}
-        canCreate
-        createNotice={null}
-        onCreate={() => {}}
-        defaultOpen
-        {...props}
-      />,
+      <QueryClientProvider client={new QueryClient()}>
+        <PortalProvider value={session()}>
+          <WorkspaceSwitcher
+            current={workspaces[0]!}
+            workspaces={workspaces}
+            invitations={[]}
+            canCreate
+            createNotice={null}
+            onCreate={() => {}}
+            defaultOpen
+            {...props}
+          />
+        </PortalProvider>
+      </QueryClientProvider>,
     );
 
   test("lists your workspaces with the current one checked, then Create workspace", () => {
@@ -233,13 +273,31 @@ describe("the workspace switcher", () => {
     expect(markup.indexOf("Northwind Pilot")).toBeLessThan(markup.indexOf("Create workspace"));
   });
 
-  test("pending invitations come last, with a count", () => {
+  test("pending invitations come last, with a count, who sent them, and Accept and Dismiss", () => {
     const markup = open({ invitations: [invitation] });
     expect(markup).toContain("Pending invitations");
     expect(markup).toContain("Join Contoso");
-    expect(markup).toContain('href="/invitation"');
+    expect(markup).toContain("Member · from olivia@acme.test");
+    expect(markup).toMatch(/role="menuitem"[^>]*aria-label="Accept the invitation to Contoso"/);
+    expect(markup).toMatch(/role="menuitem"[^>]*aria-label="Dismiss the invitation to Contoso"/);
     expect(markup).toContain("(1 pending invitation)");
     expect(markup.indexOf("Create workspace")).toBeLessThan(markup.indexOf("Pending invitations"));
+  });
+
+  test("an invitation for another account is named as such and reviewed on the invitation page", () => {
+    const other = switcherInvitation({ preview: invitationTo("Contoso", { email: "b@else.test" }), token: TOKEN, forOtherAccount: true });
+    expect(other.detail).toBe("For b@else.test");
+    const markup = open({ invitations: [other] });
+    expect(markup).toContain('href="/invitation"');
+    expect(markup).toContain(">Review<");
+    expect(markup).not.toContain("Accept the invitation");
+  });
+
+  test("no invitations, no badge and no section", () => {
+    const markup = open({ invitations: [] });
+    expect(markup).not.toContain("Pending invitations");
+    expect(markup).not.toContain("pending invitation");
+    expect(markup).not.toContain("ring-background absolute");
   });
 
   test("says why creating is not offered on this deployment", () => {
@@ -280,31 +338,47 @@ describe("before a workspace", () => {
     expect(markup).not.toContain("Pending invitation");
   });
 
-  test("a first run with a pending invitation shows only the invitation, and its token is never rendered", () => {
-    const preview = { workspaceName: "Acme Field Team", email: "new@acme.test", role: "member" as const };
-    const markup = render("/", { list: [], preview }, { inviteToken: TOKEN });
+  test("a first run with an invitation link shows only the invitation, and its token is never rendered", () => {
+    const markup = render("/", { list: [] }, withLink(invitationTo("Acme Field Team")));
     expect(markup).toContain("Welcome to Mentra");
-    expect(markup).toContain("Join the workspace you were invited to.");
+    expect(markup).toContain("You&#x27;ve been invited to join a workspace.");
     expect(markup).toContain("Join Acme Field Team");
+    expect(markup).toContain(">olivia@acme.test</strong> invited you");
     expect(markup).toContain("Accept invitation");
     expect(markup).toContain("Dismiss");
     expect(markup).not.toContain("Create your workspace");
     expect(markup).not.toContain("Workspace name");
-    expect(markup).not.toContain("create your own");
-    expect(markup).not.toContain(">or<");
     expect(markup).not.toContain(TOKEN);
   });
 
-  test("once the invitation is dismissed, the first run offers Create your workspace", () => {
-    const preview = { workspaceName: "Acme Field Team", email: "new@acme.test", role: "member" as const };
-    const pending = render("/", { list: [], preview }, { inviteToken: TOKEN });
+  test("someone who signs in without the link sees the invitations sent to their address, and only those", () => {
+    const markup = render("/", { list: [] }, withMine(invitationTo("Dev check"), invitationTo("Northwind", { role: "developer" })));
+    expect(markup).toContain("You&#x27;ve been invited to join 2 workspaces.");
+    expect(markup).toMatch(/Pending invitations<span[^>]*>2<\/span>/);
+    expect(markup).toContain("Join Dev check");
+    expect(markup).toContain("Join Northwind");
+    expect(markup.split("Accept invitation")).toHaveLength(3);
+    expect(markup).not.toContain("Create your workspace");
+  });
+
+  test("once the invitations are dismissed, the first run offers Create your workspace", () => {
+    const pending = render("/", { list: [] }, withLink(invitationTo("Acme Field Team")));
     expect(pending).not.toContain("Create your workspace");
-    // Dismiss forgets the invitation (PortalSession.forgetInvite) and returns to `/`, now without a token.
-    const dismissed = render("/", { list: [], preview }, { inviteToken: null });
+    // Dismiss forgets the invitation (PortalSession.forgetInvitation): none is left to offer.
+    const dismissed = render("/", { list: [] }, { link: { status: "none" }, invitations: [] });
     expect(dismissed).toContain("Create your workspace");
     expect(dismissed).toContain("Workspace name");
     expect(dismissed).not.toContain("Pending invitation");
     expect(dismissed).not.toContain("Accept invitation");
+  });
+
+  test("a link for another account says so and offers Switch account, and does not hide Create your workspace", () => {
+    const markup = render("/", { list: [] }, withLink(invitationTo("Acme Field Team", { email: "b@else.test" })));
+    expect(markup).toContain("This invitation is for <strong");
+    expect(markup).toContain(">b@else.test</strong>. You&#x27;re signed in as <strong");
+    expect(markup).toContain(">Switch account<");
+    expect(markup).not.toContain("Accept invitation");
+    expect(markup).toContain("Create your workspace");
   });
 
   test("when creating is not allowed the first run says why", () => {
@@ -314,15 +388,208 @@ describe("before a workspace", () => {
   });
 
   test("an invitation link opens the accept card, with the way back to your workspaces", () => {
-    const preview = { workspaceName: "Northwind Pilot", email: "sam@acme.test", role: "developer" as const };
-    const markup = render("/invitation", { ...TWO_WORKSPACES, preview }, { inviteToken: TOKEN });
+    const markup = render("/invitation", TWO_WORKSPACES, withLink(invitationTo("Northwind Pilot", { role: "developer" })));
     expect(markup).toContain("You&#x27;re invited");
     expect(markup).toContain("Join Northwind Pilot");
     expect(markup).toContain("Developer");
     expect(markup).toContain("Dismiss");
+    expect(markup).toContain("Accept invitation");
     expect(markup).toContain(`href="/w/${ACME}"`);
     expect(markup).not.toContain("Create your workspace");
     expect(markup).not.toContain(TOKEN);
+  });
+
+  test("signed in as someone else, the invitation page says whose it is and offers Switch account, not Accept", () => {
+    const markup = render("/invitation", TWO_WORKSPACES, withLink(invitationTo("Northwind Pilot", { email: "b@else.test" })));
+    expect(markup).toContain("Switch accounts to accept");
+    expect(markup).toContain("This invitation is for <strong");
+    expect(markup).toContain(">b@else.test</strong>. You&#x27;re signed in as <strong");
+    expect(markup).toContain(">sam@acme.test</strong>.");
+    expect(markup).toContain(">Switch account<");
+    expect(markup).toContain(">Dismiss<");
+    expect(markup).not.toContain("Accept invitation");
+    expect(markup).not.toContain("You&#x27;re invited");
+    // Case and spacing aside, the same address is not someone else.
+    const same = render("/invitation", TWO_WORKSPACES, withLink(invitationTo("Northwind Pilot", { email: "Sam@Acme.TEST" })));
+    expect(same).toContain("Accept invitation");
+    expect(same).not.toContain("Switch account");
+  });
+
+  test("a dead link is one consistent page: no longer valid, why, and the way back", () => {
+    const markup = render("/invitation", TWO_WORKSPACES, { link: { status: "gone" } });
+    expect(markup).toContain("Invitation no longer valid");
+    expect(markup).toContain("Ask the person who invited you to send a new one.");
+    expect(markup).toMatch(new RegExp(`href="/w/${ACME}"[^>]*>Go to Acme Field Team<`));
+    for (const contradiction of ["You&#x27;re invited", "Accept to join", "Pending invitation", "Accept invitation", "Join "]) {
+      expect(markup).not.toContain(contradiction);
+    }
+    // With no workspace, the way on is the first run.
+    const firstRun = render("/invitation", { list: [] }, { link: { status: "gone" } });
+    expect(firstRun).toMatch(/href="\/"[^>]*>Continue</);
+  });
+});
+
+/** Session and local storage in memory. */
+function memoryStorage(entries: Record<string, string> = {}): InviteStorage & { data: Map<string, string> } {
+  const data = new Map(Object.entries(entries));
+  return {
+    data,
+    getItem: key => data.get(key) ?? null,
+    setItem: (key, value) => void data.set(key, value),
+    removeItem: key => void data.delete(key),
+  };
+}
+
+/** The portal as the app wires it: invitations from the real hook, over a seeded query cache. */
+function HookedPortal({ path, token, local }: { path: string; token: string | null; local?: InviteStorage }) {
+  const invites = usePortalInvitations({
+    initialToken: token,
+    signedIn: true,
+    accountEmail: "sam@acme.test",
+    pathname: path,
+    sessionStore: memoryStorage(),
+    localStore: local ?? memoryStorage(),
+  });
+  return (
+    <PortalProvider value={session({ link: invites.link, invitations: invites.invitations, forgetInvitation: invites.forgetInvitation })}>
+      <PortalRoutes route={parseRoute(path)} me={ME} />
+    </PortalProvider>
+  );
+}
+
+describe("invitations as the app finds them", () => {
+  let restore: (() => void) | null = null;
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+
+  /** A client where the link's look-up has already answered `peek` and the person's list `mine`. */
+  async function client(peek: Response | InvitationPreview | null, mine: InvitationPreview[] | Response, seed: Seed = { list: [] }) {
+    const spy = spyOn(globalThis, "fetch").mockImplementation((async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/invitations/peek")) return peek instanceof Response ? peek.clone() : Response.json(peek);
+      if (url.endsWith("/invitations/mine")) return mine instanceof Response ? mine.clone() : Response.json({ items: mine });
+      throw new Error(`unexpected request ${url}`);
+    }) as unknown as typeof fetch);
+    restore = () => spy.mockRestore();
+    // A server render would otherwise show the refetch a mounted observer starts for a failed query.
+    const qc = seeded(seed, new QueryClient({ defaultOptions: { queries: { retryOnMount: false } } }));
+    if (peek !== null) await qc.prefetchQuery(invitationPreviewQuery(api, TOKEN));
+    await qc.prefetchQuery({ queryKey: workspaceKeys.myInvitations(api), queryFn: () => api.listMyInvitations(), retry: false });
+    return qc;
+  }
+
+  const gone = () => Response.json({ error: "invitation_not_found", error_description: "invitation not found" }, { status: 404 });
+
+  const renderHooked = (qc: QueryClient, path: string, token: string | null, local?: InviteStorage) =>
+    renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <HookedPortal path={path} token={token} local={local} />
+      </QueryClientProvider>,
+    );
+
+  test("no workspaces and a dead stored link: the first run is Create your workspace, with no invitation copy", async () => {
+    const markup = renderHooked(await client(gone(), []), "/", TOKEN);
+    expect(markup).toContain("Create your workspace");
+    expect(markup).toContain("Workspace name");
+    for (const copy of ["Pending invitation", "invited", "no longer valid", "Accept invitation", "Join the workspace"]) {
+      expect(markup).not.toContain(copy);
+    }
+  });
+
+  test("the dead link's own page says so once, on /invitation", async () => {
+    const markup = renderHooked(await client(gone(), []), "/invitation", TOKEN);
+    expect(markup).toContain("Invitation no longer valid");
+    expect(markup).not.toContain("Pending invitation");
+  });
+
+  test("a dead link never shows in the switcher: no entry, no badge", async () => {
+    const markup = renderHooked(await client(gone(), [], TWO_WORKSPACES), `/w/${ACME}/members`, TOKEN);
+    expect(markup).toContain('aria-label="Workspace: Acme Field Team. Switch workspace"');
+    expect(markup).not.toContain("pending invitation");
+  });
+
+  test("an invitation that arrived by link and is also addressed to the person is offered once", async () => {
+    const preview = invitationTo("Dev check");
+    const markup = renderHooked(await client(preview, [preview, invitationTo("Northwind")], TWO_WORKSPACES), `/w/${ACME}/members`, TOKEN);
+    expect(markup).toContain("(2 pending invitations)");
+  });
+
+  test("a valid link stays stored (the reason it is stored); accepting forgets it, dismissing another does not", async () => {
+    const preview = invitationTo("Dev check");
+    const qc = await client(preview, [preview, invitationTo("Northwind")]);
+    const sessionStore = memoryStorage({ "mentra.workspaceInvite": TOKEN });
+    const local = memoryStorage();
+    let captured: ReturnType<typeof usePortalInvitations> | null = null;
+    function Probe() {
+      captured = usePortalInvitations({
+        initialToken: TOKEN,
+        signedIn: true,
+        accountEmail: "sam@acme.test",
+        pathname: "/",
+        sessionStore,
+        localStore: local,
+      });
+      return null;
+    }
+    renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <Probe />
+      </QueryClientProvider>,
+    );
+    const invites = captured!;
+    expect(invites.inviteToken).toBe(TOKEN);
+    expect(invites.link.status).toBe("valid");
+    expect(sessionStore.data.get("mentra.workspaceInvite")).toBe(TOKEN);
+
+    invites.forgetInvitation({ invitationId: "winv_Northwind", token: null }, "dismissed");
+    expect(sessionStore.data.get("mentra.workspaceInvite")).toBe(TOKEN);
+    expect(JSON.parse(local.data.get("mentra.dismissedInvitations")!)).toEqual(["winv_Northwind"]);
+
+    invites.forgetInvitation({ invitationId: preview.invitationId, token: TOKEN }, "accepted");
+    expect(sessionStore.data.has("mentra.workspaceInvite")).toBe(false);
+  });
+
+  test("invitations dismissed in this browser are not offered again; one Core will not list counts as none", async () => {
+    const preview = invitationTo("Dev check");
+    const local = memoryStorage({ "mentra.dismissedInvitations": JSON.stringify([preview.invitationId]) });
+    const dismissed = renderHooked(await client(null, [preview]), "/", null, local);
+    expect(dismissed).toContain("Create your workspace");
+    expect(dismissed).not.toContain("Join Dev check");
+
+    const unverified = Response.json({ error: "email_unverified", error_description: "verify your email" }, { status: 403 });
+    const refused = renderHooked(await client(null, unverified), "/", null);
+    expect(refused).toContain("Create your workspace");
+
+    const listed = renderHooked(await client(null, [preview]), "/", null);
+    expect(listed).toContain("Join Dev check");
+    expect(listed).not.toContain("Create your workspace");
+  });
+});
+
+describe("an Organization Admin is labelled by their own role", () => {
+  const memberAdmin: WorkspaceDetail = { ...detail(ACME, "Dev check", "owner"), membership: { membershipId: "wm_x", role: "member" }, organizationAdmin: true };
+
+  test("the switcher says Member · Organization Admin, not Owner; an owner is just Owner", () => {
+    expect(roleLabel(memberAdmin)).toBe("Member · Organization Admin");
+    expect(roleLabel({ ...detail(ACME, "Dev check", "owner"), organizationAdmin: true })).toBe("Owner");
+    expect(roleLabel({ ...detail(ACME, "Dev check", "owner", false), organizationAdmin: true })).toBe("Organization Admin");
+    expect(roleLabel({ ...detail(ACME, "Dev check", "developer"), organizationAdmin: false })).toBe("Developer");
+  });
+
+  test("their Members and Settings pages say where their powers come from; their controls stay", () => {
+    const seed: Seed = { list: [listItem(ACME, "Dev check", "member")], details: [memberAdmin], members: MEMBERS };
+    const members = render(`/w/${ACME}/members`, seed);
+    // The switcher names their own role; the member table (seeded with another role for them) is unchanged.
+    expect(members).toContain(">Member · Organization Admin</span>");
+    expect(members).toContain(ORGANIZATION_ADMIN_NOTE.replace("'", "&#x27;"));
+    expect(members).toContain(">Invite<");
+    const settings = render(`/w/${ACME}/settings`, seed);
+    expect(settings).toContain(ORGANIZATION_ADMIN_NOTE.replace("'", "&#x27;"));
+    expect(settings).toContain("Save name");
+    // Someone whose powers are their own gets no note.
+    expect(render(`/w/${ACME}/members`, TWO_WORKSPACES)).not.toContain("Organization Admin");
   });
 });
 

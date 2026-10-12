@@ -10,6 +10,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { WorkspaceCapability, WorkspaceDetail } from "@mentra/workspace-contract";
 import {
+  actsAsOrganizationAdmin,
   Button,
   can,
   effectiveRole,
@@ -25,7 +26,7 @@ import {
   workspaceDetailQuery,
   workspaceListQuery,
 } from "@mentra/workspace-ui";
-import { ScrollText, Settings, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { ScrollText, Settings, ShieldCheck, UserPlus, Users, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NavGroup } from "@/components/app-shell";
 import { PortalShell } from "@/components/portal-shell";
@@ -97,12 +98,20 @@ export function workspaceNav(workspaceId: string, sections: readonly WorkspaceSe
   }));
 }
 
-/** How the viewer appears in the switcher: their role, or "Organization Admin" when they are not a member. */
+/**
+ * How the viewer appears in the switcher: their membership's role, as the member list shows it, with
+ * "Organization Admin" when that is where their powers here come from ("Member · Organization Admin"),
+ * or just "Organization Admin" when they are not a member at all.
+ */
 export function roleLabel(detail: WorkspaceDetail): string | null {
-  const role = effectiveRole(detail);
-  if (!role) return null;
-  return detail.membership === null ? "Organization Admin" : ROLE_LABELS[role];
+  const elevated = actsAsOrganizationAdmin(detail);
+  if (!detail.membership) return elevated || effectiveRole(detail) ? "Organization Admin" : null;
+  const role = ROLE_LABELS[detail.membership.role];
+  return elevated ? `${role} · Organization Admin` : role;
 }
+
+/** Why the viewer can manage a workspace their own role would not let them, on the pages where it shows. */
+export const ORGANIZATION_ADMIN_NOTE = "You can manage this workspace because you're an Organization Admin.";
 
 /** Core answers 404 for a workspace that does not exist (or was deleted) and 403 for one the viewer is not in. */
 export function isNoAccess(error: unknown): boolean {
@@ -182,21 +191,34 @@ export function WorkspaceScreen({ workspaceId, section }: { workspaceId: string;
         <Redirect to={workspacePath(workspaceId, sections[0] ?? "settings")} />
       ) : active === "members" ? (
         <div className="space-y-6">
+          {actsAsOrganizationAdmin(data) ? <OrganizationAdminNote /> : null}
           <WorkspaceMembersPanel api={api} workspaceId={workspaceId} />
           <WorkspacePendingInvitationsPanel api={api} workspaceId={workspaceId} />
           <WorkspaceInviteDialog api={api} workspaceId={workspaceId} open={inviting} onClose={() => setInviting(false)} />
         </div>
       ) : active === "settings" ? (
-        <WorkspaceSettingsPanel
-          api={api}
-          workspaceId={workspaceId}
-          onDeleted={gone}
-          onLeft={gone}
-          deleteNotice={STORE_DELETE_NOTICE}
-        />
+        <div className="space-y-6">
+          {actsAsOrganizationAdmin(data) && can(data, "workspace.settings.manage") ? <OrganizationAdminNote /> : null}
+          <WorkspaceSettingsPanel
+            api={api}
+            workspaceId={workspaceId}
+            onDeleted={gone}
+            onLeft={gone}
+            deleteNotice={STORE_DELETE_NOTICE}
+          />
+        </div>
       ) : (
         <WorkspaceAuditPanel api={api} workspaceId={workspaceId} />
       )}
     </PortalShell>
+  );
+}
+
+function OrganizationAdminNote() {
+  return (
+    <p role="note" className="rounded-notice bg-info text-info-foreground flex items-start gap-2.5 px-4 py-3 text-sm">
+      <ShieldCheck className="mt-0.5 size-4 shrink-0" />
+      {ORGANIZATION_ADMIN_NOTE}
+    </p>
   );
 }

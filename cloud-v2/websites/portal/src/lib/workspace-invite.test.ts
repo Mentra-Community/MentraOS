@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { forgetPendingInvite, readWorkspaceInvite, takePendingInvite, withoutWorkspaceInvite, type InviteStorage } from "./workspace-invite";
+import {
+  dismissedInvitations,
+  forgetPendingInvite,
+  readWorkspaceInvite,
+  rememberDismissedInvitation,
+  takePendingInvite,
+  withoutWorkspaceInvite,
+  type InviteStorage,
+} from "./workspace-invite";
 
 function memoryStorage(): InviteStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -62,5 +70,28 @@ describe("the pending invitation", () => {
     const replaced: string[] = [];
     expect(takePendingInvite(at("https://portal.test/?workspaceInvite=a&workspaceInvite=b"), memoryStorage(), url => replaced.push(url))).toBeNull();
     expect(replaced).toEqual(["/"]);
+  });
+});
+
+describe("dismissed invitations", () => {
+  test("are remembered in this browser, newest last, a bounded number of them", () => {
+    const storage = memoryStorage();
+    expect([...dismissedInvitations(storage)]).toEqual([]);
+    rememberDismissedInvitation(storage, "winv_a");
+    rememberDismissedInvitation(storage, "winv_b");
+    rememberDismissedInvitation(storage, "winv_a");
+    expect([...dismissedInvitations(storage)]).toEqual(["winv_b", "winv_a"]);
+    for (let i = 0; i < 150; i++) rememberDismissedInvitation(storage, `winv_${i}`);
+    const kept = [...dismissedInvitations(storage)];
+    expect(kept).toHaveLength(100);
+    expect(kept.at(-1)).toBe("winv_149");
+  });
+
+  test("unreadable or missing storage is none dismissed", () => {
+    expect([...dismissedInvitations(null)]).toEqual([]);
+    const storage = memoryStorage();
+    storage.setItem("mentra.dismissedInvitations", "{not json");
+    expect([...dismissedInvitations(storage)]).toEqual([]);
+    rememberDismissedInvitation(null, "winv_a");
   });
 });

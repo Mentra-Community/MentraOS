@@ -1,32 +1,33 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  CreateWorkspaceDialog,
-  invitationPreviewQuery,
-  ROLE_LABELS,
-  workspaceListQuery,
-  type InvitationPreview,
-} from "@mentra/workspace-ui";
+import { CreateWorkspaceDialog, ROLE_LABELS, workspaceListQuery } from "@mentra/workspace-ui";
 import { useState, type ReactNode } from "react";
 import { AppShell, type NavGroup } from "@/components/app-shell";
+import { SwitcherInvitationActions } from "@/components/pending-invitation";
 import { WorkspaceSwitcher, type SwitcherInvitation, type SwitcherWorkspace } from "@/components/workspace-switcher";
+import type { PendingInvitation } from "@/lib/invitations";
 import { navigate } from "@/lib/navigation";
 import { creationNotice, portalWorkspaceApi, usePortal } from "@/lib/portal";
-import { INVITATION_PATH, workspacePath, type WorkspaceSection } from "@/lib/routes";
+import { workspacePath, type WorkspaceSection } from "@/lib/routes";
 
-/** The pending invitation of this tab as a switcher entry: looked up by its token, which is never shown. */
+/**
+ * The person's valid invitations as switcher entries, with Accept and Dismiss: the one this tab's link
+ * holds and those addressed to their verified email, each once (lib/invitations). Nothing while they are
+ * being looked up, and never a link that is no longer valid.
+ */
 export function useSwitcherInvitations(): SwitcherInvitation[] {
-  const { inviteToken } = usePortal();
-  const preview = useQuery({ ...invitationPreviewQuery(portalWorkspaceApi, inviteToken ?? ""), enabled: inviteToken !== null });
-  if (!inviteToken) return [];
-  return [switcherInvitation(preview.data, preview.isError)];
+  const { invitations } = usePortal();
+  return (invitations ?? []).map(switcherInvitation);
 }
 
-export function switcherInvitation(preview: InvitationPreview | undefined, failed: boolean): SwitcherInvitation {
+export function switcherInvitation(invitation: PendingInvitation): SwitcherInvitation {
+  const { preview } = invitation;
   return {
-    key: "link",
-    label: preview ? `Join ${preview.workspaceName}` : "Invitation",
-    detail: preview ? `As ${ROLE_LABELS[preview.role]}` : failed ? "No longer valid" : null,
-    href: INVITATION_PATH,
+    key: preview.invitationId,
+    label: `Join ${preview.workspaceName}`,
+    detail: invitation.forOtherAccount
+      ? `For ${preview.email}`
+      : [ROLE_LABELS[preview.role], preview.invitedByEmail ? `from ${preview.invitedByEmail}` : null].filter(Boolean).join(" · "),
+    actions: <SwitcherInvitationActions invitation={invitation} />,
   };
 }
 
