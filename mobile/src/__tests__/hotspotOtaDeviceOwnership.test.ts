@@ -136,7 +136,7 @@ it("retains terminal native join facts and does not repeat downloads or enable r
       native: {domain: "NEHotspotConfigurationErrorDomain", code: 8, completed: true},
     },
   })
-  expect(localNetwork.connect).toHaveBeenCalledWith("A", "password", {
+  expect(localNetwork.connect).toHaveBeenCalledWith(expect.any(Symbol), "A", "password", {
     retryIosInternalError: true,
     assertCurrent: expect.any(Function),
     gateway: "192.168.43.1",

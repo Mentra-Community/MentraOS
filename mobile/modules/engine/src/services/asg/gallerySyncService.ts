@@ -147,6 +147,7 @@ type SyncManifestData = {
 }
 
 class GallerySyncService {
+  private readonly networkOwner = Symbol("gallery-sync")
   private static instance: GallerySyncService
   private hotspotListenerRegistered = false
   private hotspotConnectionTimeout: number | null = null
@@ -286,7 +287,7 @@ class GallerySyncService {
       const failure = await this.closeHotspot()
       if (failure) throw failure
     } else {
-      await localNetworkTransport.disconnect()
+      await localNetworkTransport.disconnect(this.networkOwner)
     }
     console.log("[GallerySyncService] Cleaned up")
   }
@@ -329,7 +330,7 @@ class GallerySyncService {
     }
 
     gallerySyncNotifications.showSyncError("Glasses disconnected")
-    const cleanup = store.syncServiceOpenedHotspot ? this.closeHotspot() : localNetworkTransport.disconnect()
+    const cleanup = store.syncServiceOpenedHotspot ? this.closeHotspot() : localNetworkTransport.disconnect(this.networkOwner)
     void cleanup.catch((error) => {
       console.error("[GallerySyncService] Failed to release routing after glasses disconnected:", error)
     })
@@ -554,7 +555,7 @@ class GallerySyncService {
         const failure = await this.closeHotspot()
         if (failure) throw failure
       } else {
-        await localNetworkTransport.disconnect()
+        await localNetworkTransport.disconnect(this.networkOwner)
       }
     }
     if (signal.aborted) return
@@ -1229,7 +1230,7 @@ class GallerySyncService {
           appBackgroundTime = null
 
           if (signal?.aborted) return
-          const joinedAddress = await localNetworkTransport.connect(hotspotInfo.ssid, hotspotInfo.password, {
+          const joinedAddress = await localNetworkTransport.connect(this.networkOwner, hotspotInfo.ssid, hotspotInfo.password, {
             gateway: hotspotInfo.ip,
           })
           if (signal?.aborted) return
@@ -1551,7 +1552,7 @@ class GallerySyncService {
           if (attempt < TIMING.IOS_WIFI_MAX_RETRIES) {
             // A completed join can outlive a failed health/download probe.
             // Release its owner before admitting another Mac association.
-            if (CrustModule.isIOSAppOnMac) await localNetworkTransport.disconnect()
+            if (CrustModule.isIOSAppOnMac) await localNetworkTransport.disconnect(this.networkOwner)
             const reason =
               Platform.OS === "ios" ? "user may be seeing system dialog" : "hotspot may still be initializing"
             console.log("[GallerySyncService] ----------------------------------------")
@@ -1609,7 +1610,7 @@ class GallerySyncService {
       try {
         // Cleanup already released an aborted attempt. Its late continuation
         // must not disconnect a subsequent Gallery session.
-        if (!signal?.aborted) await localNetworkTransport.disconnect()
+        if (!signal?.aborted) await localNetworkTransport.disconnect(this.networkOwner)
       } finally {
         // A failed network release cannot skip listener cleanup.
         appStateSubscription.remove()
@@ -2545,7 +2546,7 @@ class GallerySyncService {
     } else {
       // Phone transport belongs to this sync even when the AP pre-existed it.
       try {
-        await localNetworkTransport.disconnect()
+        await localNetworkTransport.disconnect(this.networkOwner)
       } catch (error) {
         failures.push(error)
       }
@@ -2580,7 +2581,7 @@ class GallerySyncService {
     const failures: unknown[] = []
     console.log("[GallerySyncService] Closing hotspot...")
     try {
-      await localNetworkTransport.disconnect()
+      await localNetworkTransport.disconnect(this.networkOwner)
     } catch (error) {
       failures.push(error)
     }

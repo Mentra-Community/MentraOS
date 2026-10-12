@@ -15,7 +15,7 @@ let scopedConnectionActive = false
 let nextJobId = 1_000_000
 const nativeJobs = new Map<number, string>()
 const cancelledNativeJobs = new Set<number>()
-let macHotspotOwner: string | null = null
+let macHotspotOwner: {caller: symbol; nativeId: string} | null = null
 
 export type LocalNetworkErrorDetails = {
   code?: string | number
@@ -106,6 +106,7 @@ export const localNetworkTransport = {
   isScopedConnectionActive: (): boolean => scopedConnectionActive,
 
   async connect(
+    caller: symbol,
     ssid: string,
     password: string,
     options?: {retryIosInternalError?: true; assertCurrent?: () => void; gateway?: string},
@@ -122,7 +123,7 @@ export const localNetworkTransport = {
     nativeJobs.clear()
     if (isMac) {
       const owner = requestId("mac_hotspot")
-      macHotspotOwner = owner
+      macHotspotOwner = {caller, nativeId: owner}
       try {
         const address = await glassesHotspot.join(owner, ssid, password, options?.gateway)
         assertCurrent()
@@ -134,7 +135,7 @@ export const localNetworkTransport = {
           console.warn("[LocalNetworkTransport] Mac hotspot cleanup failed", localNetworkErrorDetails(cleanupError))
           throw error
         }
-        if (macHotspotOwner === owner) macHotspotOwner = null
+        if (macHotspotOwner?.nativeId === owner) macHotspotOwner = null
         throw error
       }
     }
@@ -173,12 +174,13 @@ export const localNetworkTransport = {
     return result.localAddress
   },
 
-  async disconnect(): Promise<void> {
+  async disconnect(caller: symbol): Promise<void> {
+    if (macHotspotOwner && macHotspotOwner.caller !== caller) return
     connectionGeneration += 1
     if (macHotspotOwner) {
-      const owner = macHotspotOwner
+      const owner = macHotspotOwner.nativeId
       await glassesHotspot.leave(owner)
-      if (macHotspotOwner === owner) macHotspotOwner = null
+      if (macHotspotOwner?.nativeId === owner) macHotspotOwner = null
     }
     if (supportsScopedConnection()) {
       await otaLocalNetwork.disconnect()

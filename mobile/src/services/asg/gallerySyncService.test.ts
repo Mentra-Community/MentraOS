@@ -351,7 +351,9 @@ describe("GallerySyncService", () => {
 
     await (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
 
-    expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO.ssid, HOTSPOT_INFO.password, {gateway: HOTSPOT_INFO.ip})
+    expect(connectSpy).toHaveBeenCalledWith(expect.any(Symbol), HOTSPOT_INFO.ssid, HOTSPOT_INFO.password, {
+      gateway: HOTSPOT_INFO.ip,
+    })
     expect(fetchSpy).toHaveBeenCalledWith(
       `http://${HOTSPOT_INFO.ip}:8089/api/health`,
       expect.objectContaining({method: "GET"}),
@@ -374,7 +376,9 @@ describe("GallerySyncService", () => {
 
     await (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
 
-    expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO.ssid, HOTSPOT_INFO.password, {gateway: HOTSPOT_INFO.ip})
+    expect(connectSpy).toHaveBeenCalledWith(expect.any(Symbol), HOTSPOT_INFO.ssid, HOTSPOT_INFO.password, {
+      gateway: HOTSPOT_INFO.ip,
+    })
     expect(mockGetCurrentWifiSSID).toHaveBeenCalledTimes(1)
     expect(startDownloadSpy).toHaveBeenCalledWith(HOTSPOT_INFO, undefined)
     expect(releaseSpy).toHaveBeenCalled()

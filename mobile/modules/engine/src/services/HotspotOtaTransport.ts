@@ -47,6 +47,7 @@ export class HotspotOtaTransportError extends Error {
 
 /** Owns the single phone-side endpoint and network lease for one hotspot OTA attempt. */
 class HotspotOtaTransport {
+  private readonly networkOwner = Symbol("hotspot-ota")
   private active = false
   private prepared: PreparedOtaArtifact[] = []
   private hotspotRequested = false
@@ -133,7 +134,7 @@ class HotspotOtaTransport {
       onProgress?.({phase: "joining_hotspot"})
       assertCurrent()
       this.localNetworkRequested = true
-      const scopedAddress = await localNetworkTransport.connect(hotspot.ssid, hotspot.password, {
+      const scopedAddress = await localNetworkTransport.connect(this.networkOwner, hotspot.ssid, hotspot.password, {
         retryIosInternalError: true,
         assertCurrent,
         gateway: hotspot.localIp,
@@ -248,7 +249,7 @@ class HotspotOtaTransport {
       }
       if (this.localNetworkRequested) {
         try {
-          await localNetworkTransport.disconnect()
+          await localNetworkTransport.disconnect(this.networkOwner)
           this.localNetworkRequested = false
           this.localNetworkConnected = false
         } catch (error) {
