@@ -180,7 +180,7 @@ test('routed queued, rejected and cancelled requests need a matching acceptance 
     {...routed, state: 'accepted', hostReceipt: receipt}, {...routed, state: 'running', hostReceipt: receipt},
     {...routed, state: 'terminal', terminalStatus: 'fail', hostReceipt: receipt}]
   for (const row of cases) {
-    const f = fixture(), lookup = acceptedRequestLookup(row), allowed = row.hostReceipt === receipt
+    const f = fixture(), lookup = acceptedRequestLookup(row), allowed = 'hostReceipt' in row && row.hostReceipt === receipt
     try {
       const value = runningSnapshot()
       if (row.state === 'terminal') {value.lanes[0]!.progress.phase = 'publication'; delete (value.lanes[0]!.progress as Record<string, unknown>).currentStep}
