@@ -1017,6 +1017,37 @@ describe("GallerySyncService", () => {
     },
   )
 
+  it("admits a fresh sync after cancelling an unresolved permission prompt", async () => {
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    let releaseOld!: () => void, releaseFresh!: () => void
+    ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseOld = resolve
+        }),
+    )
+    const oldStart = gallerySyncService.startSync()
+    for (let i = 0; i < 20 && !releaseOld; i++) await Promise.resolve()
+    await gallerySyncService.cancelSync()
+    expect(gallerySyncService.isSyncStarting()).toBe(false)
+    ;(gallerySyncNotifications.requestPermissions as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseFresh = resolve
+        }),
+    )
+    const fresh = gallerySyncService.startSync()
+    for (let i = 0; i < 20 && !releaseFresh; i++) await Promise.resolve()
+    expect(gallerySyncNotifications.requestPermissions).toHaveBeenCalledTimes(2)
+    releaseOld()
+    await oldStart
+    expect(gallerySyncService.isSyncStarting()).toBe(true)
+    releaseFresh()
+    await fresh
+    expect(BluetoothSdk.setHotspotState).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
+  })
+
   it("does not transfer retained AP ownership to a different pair", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},

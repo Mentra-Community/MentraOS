@@ -227,17 +227,21 @@ class GallerySyncService {
     return cleanup
   }
 
+  private invalidateAttempt(): void {
+    this.syncStartPromise = null
+    this.startAborted = true
+    this.abortController?.abort()
+    this.abortController = null
+    useGallerySyncStore.getState().setSyncStarting(false)
+  }
+
   private async performCleanup(): Promise<void> {
     if (this.cancellationPromise) {
       // Cancellation retains its own failure; teardown still attempts final cleanup.
       await this.cancellationPromise.catch(() => undefined)
     }
     // Engine teardown owns the same Gallery session, including a failed transfer.
-    const starting = this.syncStartPromise
-    this.syncStartPromise = null
-    this.startAborted = true
-    this.abortController?.abort()
-    this.abortController = null
+    this.invalidateAttempt()
     mediaProcessingQueue.abort()
     // Teardown is terminal for an active attempt. Preserve queue/error evidence,
     // while letting a later engine session admit a fresh sync.
@@ -276,7 +280,6 @@ class GallerySyncService {
     this.wifiSettingsOpenedAt = null
     // Keep the existing pre-flight guard armed until the admitted start resumes.
     // A permission prompt must not block teardown or later enable the AP.
-    this.startAborted = starting !== null
     this.ssidReadable = true
     this.isInitialized = false
     if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
@@ -300,7 +303,7 @@ class GallerySyncService {
     // Pre-flight has no sync state yet — abort quietly; runStartSync checks this flag after awaits
     if (this.syncStartPromise && !this.isSyncing()) {
       console.log("[GallerySyncService] Glasses disconnected during pre-flight — aborting start")
-      this.startAborted = true
+      this.invalidateAttempt()
       return
     }
 
@@ -313,10 +316,7 @@ class GallerySyncService {
     store.setSyncError("Glasses disconnected")
 
     // Abort ongoing downloads
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
-    }
+    this.invalidateAttempt()
 
     // Clear timeouts
     if (this.hotspotConnectionTimeout) {
@@ -2510,10 +2510,7 @@ class GallerySyncService {
     console.log("[GallerySyncService] Cancelling sync...")
 
     // Abort any ongoing downloads
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
-    }
+    this.invalidateAttempt()
 
     // Clear timeout
     if (this.hotspotConnectionTimeout) {
