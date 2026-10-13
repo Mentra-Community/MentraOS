@@ -272,7 +272,7 @@ function nightlyFixture() {
  return {...f, archive, planUrl: `${CDN}${tag}/mentra-release-plan-${identity}.json`};
 }
 
-test("coordinated Android publication retains source-bound manifest URL, size and digest", async () => {
+function coordinatedFixture() {
  const f = nightlyFixture(), identity = "3.2.1-dev.20", tag = "mentra-builds-v3.2.1";
  const plan = f.rows.get(f.planUrl) as {native: {buildNumber: number; marketingVersion: string}; artifactNames: Record<string, string>};
  plan.artifactNames.androidApp = `mentraos-${identity}-android.apk`;
@@ -282,11 +282,77 @@ test("coordinated Android publication retains source-bound manifest URL, size an
   sourceCommit: HEAD, releasePlanSha256: createHash("sha256").update(JSON.stringify(plan)).digest("hex"), channel: "dev", native: plan.native,
   artifacts: [{coordinate: plan.artifactNames.androidApp, url: `${CDN}${tag}/${plan.artifactNames.androidApp}`, sha256: HASH, size: 100, status: "published"}]});
  f.rows.set(`HEAD ${CDN}${tag}/${plan.artifactNames.androidApp}`, new Response(null, {headers: {"Content-Length": "100"}}));
+ return {...f, identity, tag, source: {channel: "dev" as const, buildRunId: 50, publicationAttempt: 1}};
+}
+
+test("coordinated Android publication retains source-bound manifest URL, size and digest", async () => {
+ const f = coordinatedFixture(), {identity, tag} = f;
  const selected = await f.gateway.resolve({channel: "dev", buildRunId: 50, publicationAttempt: 1}, "android");
  const bytes = JSON.stringify({releaseVersion: identity});
  expect(selected).toMatchObject({availability: "available", release: identity, manifest: {url: `${CDN}${tag}/mentra-live-ota-${identity}.json`,
   sha256: createHash("sha256").update(bytes).digest("hex"), size: Buffer.byteLength(bytes)}});
  expect(selected.manifestSha256).toBe(selected.manifest!.sha256);
+});
+
+
+test("successful coordinated finalizers with omitted steps still require exact immutable Android and Mac publication", async () => {
+ for (const stepMetadata of [{steps: []}, {}]) {
+  const f = coordinatedFixture();
+  const {steps, ...withoutSteps} = finalizer;
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1,
+   jobs: [{...withoutSteps, ...stepMetadata}]});
+  for (const platform of ["android", "ios-on-mac"] as const) {
+   expect(await f.gateway.resolve(f.source, platform)).toMatchObject({availability: "available", release: f.identity,
+    source: f.source, headSha: HEAD, archive: {sha256: HASH, size: 100}});
+   expect(await f.gateway.latestDev(platform, before)).toMatchObject({availability: "available", release: f.identity, source: f.source});
+  }
+  expect(f.calls.every(call => !call.init?.method || ["GET", "HEAD"].includes(call.init.method))).toBe(true);
+ }
+});
+
+test("omitted finalizer steps never admit unsuccessful, incomplete or ambiguous finalizers", async () => {
+ for (const rows of [[], [{...finalizer, steps: [], status: "in_progress", conclusion: null}],
+  [{...finalizer, steps: [], conclusion: "failure"}], [{...finalizer, steps: []}, {...finalizer, id: 71, steps: []}]]) {
+  const f = coordinatedFixture();
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: rows.length, jobs: rows});
+  for (const platform of ["android", "ios-on-mac"] as const) {
+   expect(await f.gateway.resolve(f.source, platform)).toMatchObject({availability: "unavailable",
+    reason: "Selected coordinated attempt did not publish immutable assets"});
+  }
+ }
+});
+
+test("successful finalizers without readable immutable platform receipts remain unavailable", async () => {
+ for (const platform of ["android", "ios-on-mac"] as const) {
+  const f = coordinatedFixture();
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{...finalizer, steps: []}]});
+  const receipt = platform === "android" ? `mentra-release-${f.identity}.json` : `mentraos-${f.identity}-apple-downloads.json`;
+  f.rows.delete(`${CDN}${f.tag}/${receipt}`);
+  await expect(f.gateway.resolve(f.source, platform)).rejects.toThrow("Build metadata unavailable (HTTP 404)");
+  await expect(f.gateway.latestDev(platform, before)).rejects.toThrow("Build metadata unavailable (HTTP 404)");
+ }
+});
+
+test("omitted finalizer steps cannot bypass source, plan digest, native identity or archive length checks", async () => {
+ for (const mismatch of ["plan-source", "plan-digest", "android-native", "mac-source", "android-size", "mac-size"]) {
+  const f = coordinatedFixture();
+  f.rows.set(`${API}/actions/runs/50/jobs?filter=all&per_page=100&page=1`, {total_count: 1, jobs: [{...finalizer, steps: []}]});
+  const androidUrl = `${CDN}${f.tag}/mentra-release-${f.identity}.json`;
+  const macUrl = `${CDN}${f.tag}/mentraos-${f.identity}-apple-downloads.json`;
+  if (mismatch === "plan-source") (f.rows.get(f.planUrl) as {sourceCommit: string}).sourceCommit = BASE;
+  if (mismatch === "plan-digest") (f.rows.get(androidUrl) as {releasePlanSha256: string}).releasePlanSha256 = "e".repeat(64);
+  if (mismatch === "android-native") {
+   const receipt = f.rows.get(androidUrl) as {native: {buildNumber: number; marketingVersion: string}};
+   receipt.native = {...receipt.native, buildNumber: 99};
+  }
+  if (mismatch === "mac-source") (f.rows.get(macUrl) as {sourceCommit: string}).sourceCommit = BASE;
+  const platform = mismatch.startsWith("mac") ? "ios-on-mac" : "android";
+  if (mismatch.endsWith("size")) {
+   const name = platform === "android" ? `mentraos-${f.identity}-android.apk` : f.archive.name;
+   f.rows.set(`HEAD ${CDN}${f.tag}/${name}`, new Response(null, {headers: {"Content-Length": "99"}}));
+  }
+  expect((await f.gateway.resolve(f.source, platform)).availability).toBe("unavailable");
+ }
 });
 
 test("nightly latest dev selection passes newer unpublished runs and pins the publication before its boundary", async () => {

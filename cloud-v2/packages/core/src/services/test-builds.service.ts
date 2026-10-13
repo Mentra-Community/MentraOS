@@ -8,7 +8,6 @@ const REPOSITORY = "Mentra-Community/MentraOS";
 const prWorkflow = (platform: TestBuildPlatform) => platform === "android" ? "mentra-app-android-build.yml" : "mentra-app-ios-build.yml";
 const RELEASE_WORKFLOW = "coordinated-release.yml";
 const RELEASE_FINALIZE_JOB = "Finalize immutable release bill of materials";
-const RELEASE_PUBLISH_STEP = "Publish immutable plan, package, and manifest assets";
 const CDN = `https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/`;
 // Google Play's largest accepted version code.
 const ANDROID_MAX_VERSION_CODE = 2_100_000_000;
@@ -197,7 +196,6 @@ export class GithubTestBuildGateway implements TestBuildGateway {
         const current = finalizers.filter(job => job.run_attempt === latest);
         if (current.length > 1) throw new TestDispatchError(502, "Nightly publication is ambiguous");
         if (current[0]?.status !== "completed" || current[0]?.conclusion !== "success"
-          || !current[0]?.steps?.some(step => step.name === RELEASE_PUBLISH_STEP && step.status === "completed" && step.conclusion === "success")
           || !current[0]?.completed_at || !Number.isFinite(Date.parse(current[0].completed_at))
           || Date.parse(current[0].completed_at) > boundary) continue;
         // A published but missing platform artifact remains unavailable; do not silently use an older release.
@@ -325,8 +323,8 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const finalizers = (await this.jobs(run.id)).filter(job => job.name === RELEASE_FINALIZE_JOB && job.run_attempt <= run.run_attempt);
     const latestAttempt = Math.max(0, ...finalizers.map(job => job.run_attempt));
     const published = finalizers.filter(job => job.run_attempt === latestAttempt);
-    requireThat(published.length === 1 && published[0]!.status === "completed" && published[0]!.conclusion === "success"
-      && published[0]!.steps?.some(step => step.name === RELEASE_PUBLISH_STEP && step.status === "completed" && step.conclusion === "success"),
+    // Successful finalization plus the immutable receipts below prove publication; GitHub can omit job steps.
+    requireThat(published.length === 1 && published[0]!.status === "completed" && published[0]!.conclusion === "success",
       "Selected coordinated attempt did not publish immutable assets");
     const job = published[0]!;
     // GitHub can repeat a retained successful job in a later attempt's history.
