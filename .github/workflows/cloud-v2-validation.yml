@@ -91,6 +91,7 @@ jobs:
         run: |
           bun test --max-concurrency=1 \
             websites/account/src \
+            websites/account/functions \
             websites/portal/src \
             websites/portal/functions \
             websites/admin/functions \
@@ -180,6 +181,9 @@ jobs:
           bun test --max-concurrency=1 --timeout 30000 \
             tests/auth.mentra-user-exchange.integration.test.ts \
             tests/idp-tokens.integration.test.ts \
+            tests/oidc-provider.integration.test.ts \
+            tests/oidc-clients.integration.test.ts \
+            tests/oidc-interaction.integration.test.ts \
             tests/signin-sessions.integration.test.ts \
             tests/portal-signin.integration.test.ts \
             tests/principal-auth.integration.test.ts \

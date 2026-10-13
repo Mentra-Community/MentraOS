@@ -32,6 +32,8 @@ import {ReportSlackDeliveryService} from "./services/report-slack-delivery.servi
 import {ReportServerLogCollectionService} from './services/report-server-log-collection.service'
 import {assertSupabaseApiKeys} from "./services/account/gotrue.client"
 import {assertSigninConfiguration} from "./services/signin/config"
+import {assertOidcConfiguration} from "./services/oidc/startup"
+import {stopOidcBridge} from "./services/oidc/bridge"
 import {assertOrganizationConfiguration} from "./services/workspaces/organization"
 
 const logger = createLogger("core")
@@ -63,6 +65,8 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     // Refuse sign-in configuration that is incomplete or would let one source
     // vouch for another's people. With none of it set, Core starts as before.
     await assertSigninConfiguration()
+    // Core's sign-in server: its issuer, cookie keys and clients.
+    assertOidcConfiguration()
   } catch (error) {
     // Disconnect best-effort: a secondary disconnect failure must not mask the
     // original startup error, which is what we rethrow.
@@ -97,6 +101,7 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
       await stopSummaryBackfill()
       await stopAccountDeletionCompletion()
       await stopRoutineWorkReporting()
+      await stopOidcBridge()
       await disconnectMongo()
     }),
   }

@@ -2587,6 +2587,7 @@ public class OtaHelper {
         Log.d(TAG, "Downloading BES firmware from: " + firmwareUrl);
 
         long fileSize;
+        long total;
         try (OtaHttpRequest request = new OtaHttpRequest(context, firmwareUrl, "bes");
                 InputStream in = request.openStream()) {
             // 2 MiB hard cap. Server-advertised content-length is checked first; we also
@@ -2603,31 +2604,7 @@ public class OtaHelper {
             }
 
             try (FileOutputStream out = new FileOutputStream(firmwareFile)) {
-                byte[] buffer = new byte[4096];
-                int len;
-                long total = 0;
-                int lastProgress = 0;
-
-                Log.d(TAG, "Downloading BES firmware, size: " + fileSize + " bytes");
-
-                currentUpdateType = "bes";
-
-                while ((len = in.read(buffer)) > 0) {
-                    total += len;
-                    if (total > maxBytes) {
-                        throw new FirmwareDownloadException(
-                            FirmwareDownloadException.CODE_FILE_TOO_LARGE,
-                            "BES firmware exceeded " + maxBytes + " bytes during streaming (Content-Length=" + fileSize + ")"
-                        );
-                    }
-                    out.write(buffer, 0, len);
-
-                    int progress = fileSize > 0 ? (int) (total * 100 / fileSize) : 0;
-                    if (progress >= lastProgress + 10 || progress == 100) {
-                        Log.d(TAG, "BES firmware download progress: " + progress + "%");
-                        lastProgress = progress;
-                    }
-                }
+                total = copyBesFirmwareDownload(in, out, fileSize);
             }
         }
 
@@ -2636,6 +2613,7 @@ public class OtaHelper {
         boolean verified = verifyFirmwareFile(firmwareFile.getAbsolutePath(), firmwareInfo);
         if (verified) {
             Log.i(TAG, "Firmware file verified successfully");
+            sendProgressToPhone("download", 100, total, total, "FINISHED", null);
             return true;
         } else {
             firmwareFile.delete();
@@ -2644,6 +2622,29 @@ public class OtaHelper {
                 "BES firmware sha256 verification failed"
             );
         }
+    }
+
+    /** Stream BES bytes through the same throttled phone/session progress path as MTK. */
+    long copyBesFirmwareDownload(InputStream in, OutputStream out, long fileSize) throws Exception {
+        currentUpdateType = "bes";
+        sendProgressToPhone("download", 0, 0, Math.max(0, fileSize), "STARTED", null);
+        byte[] buffer = new byte[4096];
+        int len;
+        long total = 0;
+        while ((len = in.read(buffer)) != -1) {
+            if (len == 0) continue;
+            total += len;
+            if (total > 2L * 1024 * 1024) {
+                throw new FirmwareDownloadException(
+                        FirmwareDownloadException.CODE_FILE_TOO_LARGE,
+                        "BES firmware exceeded its download limit");
+            }
+            out.write(buffer, 0, len);
+            // Transfer completion is published only after SHA-256 verification below.
+            int progress = fileSize > 0 ? (int) Math.min(99, total * 100 / fileSize) : 0;
+            sendProgressToPhone("download", progress, total, Math.max(0, fileSize), "PROGRESS", null);
+        }
+        return total;
     }
 
     /** Build the phone guard and let the BES controller order it immediately before mh_ota. */

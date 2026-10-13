@@ -32,13 +32,13 @@ function fixture() {
     async eventsDue(date) {return [...controls.values()].filter(row=>!processed.has(row.deliveryId)&&row.nextAt<=date)}, async eventSettled(id,nextAt) {if(nextAt) controls.get(id)!.nextAt=nextAt;else processed.add(id)}, async event(id, hash, _gateId, control) {if (events.has(id) && events.get(id) !== hash) throw Error('conflict'); events.set(id, hash); if(control && !controls.has(id)) controls.set(id,{deliveryId:id,digest:hash,control:structuredClone(control),nextAt:new Date(now)})},
   }
   let builds: any[] = [], history: any[] = [], failSubmit = false, failHistory = false, failCancellation: string | undefined, holdCancellation: Promise<void> | undefined, dispatchFailure: boolean | undefined
-  const buildCalls: string[] = []
+  const buildCalls: string[] = [], retainedProducerIds: Array<number | undefined> = []
   let producerReceipt: {id: number; failed: boolean} | undefined, findCalls = 0
   const previews: any[] = [], rerunSubmits: any[] = []
   const definition = {id: 'login', title: 'Account login', steps: [{id: 'open', instruction: 'Open account'}, {id: 'check', instruction: 'Verify login'}], platforms: ['android']}
   const createService = () => new PrRoutineCheckService(rows, {
     async context() {contextCalls++; return structuredClone(context)}, async permission() {return canWrite}, async ownedCheck() {return true},
-    async findCheck(payload) {findCalls++; return !lostDelivery ? nativeIds.get(payload.external_id) : undefined}, async producer() {return producerReceipt}, async deliver(_id, payload) {if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (!nativeIds.has(payload.external_id)) nativeIds.set(payload.external_id, 99 + nativeIds.size); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return nativeIds.get(payload.external_id)!}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
+    async findCheck(payload) {findCalls++; return !lostDelivery ? nativeIds.get(payload.external_id) : undefined}, async producer(_platform, _context, _operationId, retainedRunId) {retainedProducerIds.push(retainedRunId); return producerReceipt}, async deliver(_id, payload) {if (unavailableDelivery) throw Error('outage'); deliveries++; checkPayloads.push(structuredClone(payload)); if (!nativeIds.has(payload.external_id)) nativeIds.set(payload.external_id, 99 + nativeIds.size); if (lostDelivery) {lostDelivery = false, unavailableDelivery = false, crashCreation = false, crashProducer = false; throw Error('lost')} return nativeIds.get(payload.external_id)!}, async requestBuild(platform) {buildCalls.push(platform); if (dispatchFailure !== undefined) throw new PrBuildDispatchFailure(dispatchFailure)},
   }, {
     async freezeSelection(value: any) {return {...value, build: {repository: 'Mentra-Community/MentraOS', kind: 'android-apk', channel: 'pr', headSha: context.headSha, source: value.source,
       archive: {name: 'app.apk', url: 'https://artifactscdn.mentraglass.com/app.apk', size: 10, sha256: 'd'.repeat(64)}, receipt: {url: 'https://artifactscdn.mentraglass.com/receipt', size: 1, sha256: 'e'.repeat(64)}}} as any},
@@ -62,6 +62,7 @@ function fixture() {
     gate: () => stored.get(gateId)!.payload, advance(ms = 30000) {now += ms}, get now() {return now},
     get contextCalls() {return contextCalls}, get resolves() {return resolveCount}, get deliveries() {return deliveries}, get findCalls() {return findCalls}, outage(value = true) {unavailableDelivery = value}, crashAtCreation() {crashCreation = true}, crashAtProducer() {crashProducer = true}, receipt(value: typeof producerReceipt) {producerReceipt = value}, loseDelivery() {lostDelivery = true},
     inventory(value: any[]) {builds = value},
+    retainedProducerIds,
     build() {builds = [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}]},
     async intake(event = 'event-one') {await service.intake(12, event, requestInputDigest(event)); await service.tick()},
     async drain(count = 6) {for (let i = 0; i < count; i++) {now += 30000; await service.tick()}}
@@ -323,6 +324,25 @@ test('late producer acknowledgement adopts exact run and failed requested produc
   expect(f.buildCalls).toEqual(['asg']); f.receipt({id: 71, failed: true}); await f.drain(2)
   expect(f.buildCalls).toEqual(['asg']); expect(f.gate().attempt.members[0]!.status).toBe('not-run')
   expect(f.gate().attempt.conclusion).toBe('failure'); expect(f.gate().buildRequests!.asg!.runId).toBe(71)
+})
+
+test('initial routine intake adopts an existing native producer without another dispatch across restart', async () => {
+  const f = fixture(); f.receipt({id: 71, failed: false}); await f.intake(); await f.drain(4)
+  expect(f.buildCalls).toHaveLength(0)
+  expect(f.gate().buildRequests!.asg).toMatchObject({state: 'answered', runId: 71})
+  f.restart(); await f.drain(3)
+  expect(f.buildCalls).toHaveLength(0)
+  expect(f.gate().attempt.members[0]!.settled).toBe(false)
+})
+test('adopted running producer fails coverage promptly after restart instead of waiting for its deadline', async () => {
+  const f = fixture(); f.receipt({id: 71, failed: false}); await f.intake(); await f.drain(4)
+  expect(f.gate().buildRequests!.asg).toMatchObject({state: 'answered', runId: 71})
+  const before = f.retainedProducerIds.length
+  f.restart(); f.receipt({id: 71, failed: true}); await f.drain(2)
+  expect(f.retainedProducerIds.slice(before)).toEqual([71])
+  expect(f.gate().attempt.conclusion).toBe('failure')
+  expect(f.gate().attempt.members[0]).toMatchObject({status: 'not-run', settled: true, waitReason: 'Glasses build failed or was cancelled'})
+  expect(f.buildCalls).toHaveLength(0)
 })
 test('delivery outage cannot starve timeout, head supersession or linked cancellation custody', async () => {
   const f = fixture(); await f.intake(); f.build(); await f.drain(); const requestId = f.gate().attempt.members[0]!.requestId!

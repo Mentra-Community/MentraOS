@@ -22,7 +22,7 @@ export interface PrRoutineGithub {
   ownedCheck(id: number, headSha: string, externalId: string): Promise<boolean>
   deliver(checkId: number | undefined, payload: CheckPayload, allowCreate?: boolean): Promise<number>
   findCheck(payload: CheckPayload): Promise<number | undefined>
-  producer(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string): Promise<{id: number; failed: boolean} | undefined>
+  producer(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string, retainedRunId?: number): Promise<{id: number; failed: boolean} | undefined>
   requestBuild(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string): Promise<void>
 }
 /** All writes use the existing testing App, constrained to this repository. */
@@ -112,13 +112,27 @@ export class GithubPrRoutineChecks implements PrRoutineGithub {
     }
     throw new TestRunError(503, 'Routine check history exceeds its bounded reconciliation inventory')
   }
-  async producer(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string) {
+  async producer(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string, retainedRunId?: number) {
     if (!/^[a-f0-9]{64}$/.test(operationId)) throw new TestRunError(400, 'Invalid retained producer operation')
     const name = platform === 'asg' ? 'mentra-asg-client-build.yml' : platform === 'android' ? 'mentra-app-android-build.yml' : 'mentra-app-ios-build.yml'
     const title = `Routine PR #${context.number} ${context.headSha} ${context.baseRef} ${operationId}`
     const schema = z.object({id: positive, display_title: z.string(), path: z.string(), event: z.string(), head_branch: z.string(),
       status: z.string(), conclusion: z.string().nullable(), repository: z.object({full_name: z.string()}), head_repository: z.object({full_name: z.string()})})
     const matches: Array<z.infer<typeof schema>> = [], seen = new Set<number>(), deadline = Date.now() + 90_000
+    const nativeSchema = schema.extend({head_sha: sha, pull_requests: z.array(z.object({number: positive,
+      head: z.object({sha}), base: z.object({ref: z.string()})}))})
+    const ownedNative = (row: z.infer<typeof nativeSchema>) => row.path === `.github/workflows/${name}` && row.event === 'pull_request' &&
+      row.head_sha === context.headSha && row.repository.full_name === ROUTINE_CHECK_REPOSITORY &&
+      row.head_repository.full_name === ROUTINE_CHECK_REPOSITORY &&
+      row.pull_requests.some(pr => pr.number === context.number && pr.head.sha === context.headSha && pr.base.ref === context.baseRef)
+    if (retainedRunId !== undefined) {
+      positive.parse(retainedRunId)
+      const row = nativeSchema.parse(await this.api(`actions/runs/${retainedRunId}`, {}, 'source', deadline))
+      const ownedDispatch = row.display_title === title && row.path === `.github/workflows/${name}` && row.event === 'workflow_dispatch' &&
+        row.head_branch === 'dev' && row.repository.full_name === ROUTINE_CHECK_REPOSITORY && row.head_repository.full_name === ROUTINE_CHECK_REPOSITORY
+      if (row.id !== retainedRunId || !ownedNative(row) && !ownedDispatch) throw new TestRunError(409, 'Retained producer ownership differs from its exact run')
+      return {id: row.id, failed: row.status === 'completed' && row.conclusion !== 'success'}
+    }
     for (let page = 1; page <= 5; page++) {
       const rows = z.object({workflow_runs: z.array(schema).max(100)}).parse(await this.api(`actions/workflows/${name}/runs?event=workflow_dispatch&branch=dev&per_page=100&page=${page}`, {}, 'source', deadline)).workflow_runs
       for (const row of rows) {
@@ -128,9 +142,26 @@ export class GithubPrRoutineChecks implements PrRoutineGithub {
           row.repository.full_name === ROUTINE_CHECK_REPOSITORY && row.head_repository.full_name === ROUTINE_CHECK_REPOSITORY) matches.push(row)
       }
       if (matches.length > 1) throw new TestRunError(409, 'Producer dispatch receipts are ambiguous')
-      if (rows.length < 100) return matches[0] ? {id: matches[0].id, failed: matches[0].status === 'completed' && matches[0].conclusion !== 'success'} : undefined
+      if (rows.length < 100) {
+        if (matches[0]) return {id: matches[0].id, failed: matches[0].status === 'completed' && matches[0].conclusion !== 'success'}
+        break
+      }
+      if (page === 5) throw new TestRunError(503, 'Producer history exceeds its bounded reconciliation inventory')
     }
-    throw new TestRunError(503, 'Producer history exceeds its bounded reconciliation inventory')
+    // The native PR event already builds this exact source. Adopt it instead of
+    // dispatching an overlapping compilation just because a routine label was added.
+    for (let page = 1; page <= 5; page++) {
+      const rows = z.object({workflow_runs: z.array(nativeSchema).max(100)}).parse(await this.api(
+        `actions/workflows/${name}/runs?event=pull_request&head_sha=${context.headSha}&per_page=100&page=${page}`, {}, 'source', deadline)).workflow_runs
+      const eligible = rows.filter(row => ownedNative(row) &&
+        (row.status !== 'completed' || row.conclusion === 'success'))
+      if (eligible.length) {
+        const selected = eligible.sort((a, b) => b.id - a.id)[0]!
+        return {id: selected.id, failed: selected.status === 'completed' && selected.conclusion !== 'success'}
+      }
+      if (rows.length < 100) return undefined
+    }
+    throw new TestRunError(503, 'Native producer history exceeds its bounded reconciliation inventory')
   }
   async requestBuild(platform: 'android' | 'ios-on-mac' | 'asg', context: PrRoutineContext, operationId: string) {
     if (!/^[a-f0-9]{64}$/.test(operationId)) throw new TestRunError(400, 'Invalid retained producer operation')

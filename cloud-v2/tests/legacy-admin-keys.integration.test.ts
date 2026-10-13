@@ -46,6 +46,7 @@ import {OPERATOR_KEY_SCOPES} from "../packages/workspace-contract/src/index"
 import {installFakeIdp, type FakeIdp} from "./support/fake-idp"
 import {assertConnectedTo, localTestMongoUrl} from "./support/local-mongo"
 import {
+  coreAccessToken,
   ADMIN_EMAIL,
   applyEnv,
   HOSTED_ENV,
@@ -87,13 +88,13 @@ let restoreEnv: () => void = () => {}
 // --- Fixtures --------------------------------------------------------------
 
 /**
- * A person with a confirmed Supabase account, reachable with the returned bearer: a Supabase access
- * token issued to one of this deployment's web clients.
+ * A person with a confirmed Supabase account, reachable with the returned bearer: a Core access
+ * token from Core's sign-in server.
  */
 async function person(key: string, email = `${key}@example.test`): Promise<string> {
   const sub = `supa-${key}`
   idp.registerUser({sub, email, emailConfirmed: true})
-  return idp.mint({sub, aud: "authenticated", client_id: "console-client", email})
+  return coreAccessToken({sub, email, emailVerified: true})
 }
 
 interface LegacyKey {

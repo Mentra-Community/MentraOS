@@ -301,7 +301,7 @@ test("admin portal sign-in adds Core's redirect, email claim and sign-in scopes 
   assert.deepEqual(JSON.parse(result.stdout), {
     tenantId: "tenant",
     coreApiClientId: CORE,
-    adminPortalRedirectUri: "https://core.acme.example/api/admin/auth/callback",
+    adminPortalRedirectUri: "https://core.acme.example/interaction/callback/workforce",
   })
   // One change, to the Core registration only: no Mobile, service principal or consent writes.
   assert.equal(result.writes.length, 1)
@@ -309,7 +309,7 @@ test("admin portal sign-in adds Core's redirect, email claim and sign-in scopes 
   assert.equal(method, "PATCH")
   assert.equal(uri, "https://graph.microsoft.com/v1.0/applications/core-object")
   assert.deepEqual(body.web.redirectUris.sort(), [
-    "https://core.acme.example/api/admin/auth/callback",
+    "https://core.acme.example/interaction/callback/workforce",
     "https://other.acme.example/callback",
   ])
   assert.equal(body.web.homePageUrl, "https://intranet.acme.example")
@@ -325,14 +325,14 @@ test("admin portal sign-in adds Core's redirect, email claim and sign-in scopes 
 
 test("admin portal sign-in is idempotent", (t) => {
   const configured = coreApp({
-    web: {redirectUris: ["https://core.acme.example/api/admin/auth/callback"]},
+    web: {redirectUris: ["https://core.acme.example/interaction/callback/workforce"]},
     optionalClaims: {idToken: [{name: "email", source: null, essential: true, additionalProperties: ["include_externally_authenticated_upn"]}]},
     requiredResourceAccess: [{resourceAppId: GRAPH, resourceAccess: ["id-openid", "id-email", "id-profile"].map((id) => ({id, type: "Scope"}))}],
   })
   const result = entra(t, ["--admin-portal-only", "--core-client-id", CORE, "--admin-portal-url", "https://core.acme.example"], {apps: [configured]})
   assert.equal(result.status, 0, result.stderr)
   const {body} = result.writes[0]
-  assert.deepEqual(body.web.redirectUris, ["https://core.acme.example/api/admin/auth/callback"])
+  assert.deepEqual(body.web.redirectUris, ["https://core.acme.example/interaction/callback/workforce"])
   // An administrator's own email claim settings are kept, not duplicated.
   assert.deepEqual(body.optionalClaims.idToken, configured.optionalClaims.idToken)
   assert.equal(body.requiredResourceAccess.length, 1)
@@ -399,7 +399,7 @@ test("reconciling both apps also sets up Core's admin portal sign-in and consent
     "--core-owner", OPERATOR, "--grant-admin-consent"], {apps: [coreApp(), mobile]})
   assert.equal(result.status, 0, result.stderr)
   const output = JSON.parse(result.stdout)
-  assert.equal(output.adminPortalRedirectUri, "https://core.acme.example/api/admin/auth/callback")
+  assert.equal(output.adminPortalRedirectUri, "https://core.acme.example/interaction/callback/workforce")
   assert.equal(output.mobileClientId, MOBILE)
   const corePatches = result.writes.filter((write) => write.uri.endsWith("/applications/core-object"))
   // The existing Core reconcile, then admin portal sign-in.

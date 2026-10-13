@@ -14,6 +14,8 @@ import { UserModel } from "../models/user.model";
 import { BrowserSessionModel } from "../models/browser-session.model";
 import { LoginTransactionModel } from "../models/login-transaction.model";
 import { AuthRateLimitModel } from "../models/auth-rate-limit.model";
+import { SigninIdentityModel } from "../models/signin-identity.model";
+import { ensureOidcCollections } from "../services/oidc/mongo-adapter";
 import { OemModel } from "../models/oem.model";
 import {TestHostStateModel} from "../models/test-host-state.model";
 import {TestRerunModel} from "../models/test-rerun.model";
@@ -68,6 +70,10 @@ export async function runStartupMigrations(): Promise<void> {
   await BrowserSessionModel.createIndexes();
   await LoginTransactionModel.createIndexes();
   await AuthRateLimitModel.createIndexes();
+  // Core's sign-in server: the provider's collections (TTL, grant, uid and
+  // account indexes) and each person's sign-in identity.
+  await ensureOidcCollections();
+  await SigninIdentityModel.createIndexes();
   // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
   await RefreshTokenModel.createIndexes();
   // Immutable run/asset insertion relies on these uniqueness constraints before serving requests.

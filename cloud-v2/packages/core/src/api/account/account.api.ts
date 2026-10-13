@@ -70,6 +70,12 @@ app.post(
     const code = str(body.code);
     const newPassword = str(body.newPassword);
     if (!email || !code || !newPassword) throw new InvalidRequest("email, code, newPassword required");
+    // The sign-in page resets without signing in: it never holds a phone session.
+    if (body.signIn === false) {
+      await account.resetPassword(email, code, newPassword, { signIn: false });
+      c.header("cache-control", "no-store");
+      return c.json({ status: "password_updated" });
+    }
     return c.json(await account.resetPassword(email, code, newPassword));
   },
 );

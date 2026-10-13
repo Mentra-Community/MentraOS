@@ -1,13 +1,16 @@
 /**
  * Builds the Mentra account site into dist/ for Cloudflare Pages.
  *
+ * Each environment's sign-in site (account.dev, account.staging and account
+ * .mentraglass.com) is this build, with the provider's routes relayed to that
+ * environment's Core by the Pages Function in functions/.
+ *
  * Public build-time configuration, read from the environment:
  * - SUPABASE_URL: the Supabase project URL (hosted: https://auth.mentra.glass).
  * - SUPABASE_ANON_KEY: the project's publishable key.
- * - FIRST_PARTY_CLIENT_IDS: comma-separated OAuth client IDs approved without consent.
  *
- * All three may be unset (CI builds without configuration). The site then
- * shows "Sign-in is not configured." on every route.
+ * Both may be unset (CI builds without configuration). The sign-in routes then
+ * show "Sign-in is not configured.".
  */
 import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -24,7 +27,6 @@ const FONTS = ["/fonts/RedHatDisplay-Regular.ttf", "/fonts/RedHatDisplay-SemiBol
 const config = {
   SUPABASE_URL: (process.env.SUPABASE_URL ?? "").trim(),
   SUPABASE_ANON_KEY: (process.env.SUPABASE_ANON_KEY ?? "").trim(),
-  FIRST_PARTY_CLIENT_IDS: (process.env.FIRST_PARTY_CLIENT_IDS ?? "").trim(),
 };
 
 async function build() {
@@ -50,7 +52,6 @@ async function build() {
       "process.env.NODE_ENV": JSON.stringify("production"),
       "process.env.SUPABASE_URL": JSON.stringify(config.SUPABASE_URL),
       "process.env.SUPABASE_ANON_KEY": JSON.stringify(config.SUPABASE_ANON_KEY),
-      "process.env.FIRST_PARTY_CLIENT_IDS": JSON.stringify(config.FIRST_PARTY_CLIENT_IDS),
     },
   });
 

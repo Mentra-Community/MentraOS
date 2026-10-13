@@ -9,7 +9,7 @@
  * The session cookie a request may use belongs to its route group: the admin
  * portal's for `/api/admin`, the workspace portal's for `/api/portal`, and none
  * for `/api/workspaces` and `/api/organization`, which take bearers only (Core
- * keys and identity-provider access tokens). The same workspace handlers are
+ * keys and Core access tokens). The same workspace handlers are
  * mounted under each group, so each portal reaches them with its own session.
  *
  * Unsafe requests authenticated by a portal cookie (no bearer) must come from
@@ -19,7 +19,6 @@
  *
  * Status mapping:
  *  - no principal: 401 `{error: "unauthorized"}`;
- *  - the identity provider could not be asked: 503 `{error: "temporarily_unavailable"}`;
  *  - a cross-origin cookie request, a credential where a person is required, or a
  *    missing organization capability: 403 `{error: "forbidden"}`;
  *  - an unknown or deleted workspace: 404 `{error: "workspace_not_found"}`;
@@ -31,8 +30,7 @@ import type {MiddlewareHandler} from "hono"
 import {createMiddleware} from "hono/factory"
 
 import type {PortalKind} from "../../services/signin/browser-session.service"
-import {IdentityProviderUnavailableError} from "../../services/signin/idp-tokens"
-import {isSameOrigin, portalClientIfConfigured} from "../../services/signin/portal-signin.service"
+import {isSameOrigin, portalSite} from "../../services/signin/portal-signin.service"
 import {
   bearerToken,
   principalFromBearerOrSession,
@@ -62,20 +60,12 @@ async function requirePrincipal(c: AppContext, portal: PortalKind | null): Promi
   if (existing) return {principal: existing}
   const cookieAuthenticated = bearerToken(c.req.header("authorization")) === null
   if (portal && cookieAuthenticated && !SAFE_METHODS.has(c.req.method)) {
-    const pc = portalClientIfConfigured(portal)
+    const pc = portalSite(portal)
     if (!pc || !isSameOrigin(c, pc.origin)) {
       return {response: c.json({error: "forbidden", error_description: "cross-origin request refused"}, 403)}
     }
   }
-  let principal: CorePrincipal | null
-  try {
-    principal = await principalFromBearerOrSession(c, {sessionCookie: portal})
-  } catch (err) {
-    if (err instanceof IdentityProviderUnavailableError) {
-      return {response: c.json({error: "temporarily_unavailable", error_description: "identity provider unavailable"}, 503)}
-    }
-    throw err
-  }
+  const principal = await principalFromBearerOrSession(c, {sessionCookie: portal})
   if (!principal) return {response: c.json({error: "unauthorized", error_description: "sign-in required"}, 401)}
   c.set("principal", principal)
   return {principal}

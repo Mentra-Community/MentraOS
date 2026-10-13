@@ -87,8 +87,10 @@ getter shortcuts.
 
 ## On your backend
 
-`createMentraAuth({ packageName })` checks the signature against MentraOS's JWKS,
-the issuer, and the audience (your `packageName`), and rejects expired tokens.
+`createMentraAuth({ packageName })` checks the signature against MentraOS's JWKS
+(only the miniapp token key, `mentra-miniapp-1`), the issuer, and the audience
+(your `packageName`), and rejects expired tokens. Other tokens MentraOS signs,
+which share that key set, never pass.
 `packageName` can also come from the `MENTRA_PACKAGE_NAME` environment variable.
 
 Not on Hono? Verify directly:

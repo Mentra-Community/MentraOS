@@ -336,6 +336,10 @@ The supported-source invariant must continue to hold when the floor increases. E
 floor overrides used by tests do not change this release policy.
 
 Update flows must preserve device recoverability, report progress where possible, and avoid interrupting active media operations without cleanup.
+BES artifact downloads publish received bytes and throttled progress to the phone on both
+Wi-Fi and phone-served hotspot paths, including when Content-Length is unknown. Download
+completion waits for integrity verification and remains an in-flight state until install
+progress arrives; only BES install completion can establish an expected restart.
 
 An `ota_query_status` with `include_activity: true` and a bounded `request_id`
 also records a read-only activity snapshot in local diagnostics. It identifies

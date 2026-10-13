@@ -4,6 +4,9 @@
  * Layout:
  *   /healthz, /ready            — health, no middleware (kept lightweight)
  *   /.well-known/jwks.json      — public signing keys (JWKS), unauthenticated
+ *   /.well-known/openid-configuration, /oidc/*, /interaction/*
+ *                               — Core's sign-in server (OpenID Connect provider),
+ *                                 on the issuer CLOUD_CORE_OIDC_ISSUER
  *   /api/* + request-context    — per-request reqId + logger
  *   /api/client/auth/*          — device-called auth: exchange, refresh,
  *                                 miniapp-token
@@ -72,6 +75,7 @@ import { createWorkspacesApi } from "./workspaces/workspaces.api";
 import { WorkspaceError } from "../services/workspaces/workspace-error";
 import wellKnown from "./well-known.api";
 import { createAdminStaticApp } from "./admin-static";
+import { createOidcApi } from "./oidc/oidc.api";
 
 const logger = createLogger("core").child({ service: "app" });
 
@@ -99,6 +103,10 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   // at the standard /.well-known/jwks.json. Unauthenticated by design: it only
   // exposes public keys.
   app.route("/", wellKnown);
+
+  // Core's sign-in server (OpenID Connect provider): discovery, /oidc/* and
+  // /interaction/*. Answers 404 unless CLOUD_CORE_OIDC_ISSUER is set.
+  app.route("/", createOidcApi());
 
   // Per-request context (reqId, logger) for everything under /api/*.
   app.use("/api/*", requestContext);

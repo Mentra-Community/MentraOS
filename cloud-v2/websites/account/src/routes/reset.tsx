@@ -1,136 +1,123 @@
-import { useEffect, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
-import { requestPasswordReset, updatePassword } from "../lib/account-actions";
-import { authorizePath, readAuthorizationId } from "../lib/links";
+import { useState, type FormEvent, type ReactNode } from "react";
+import type { AccountApi, ResetResult } from "../lib/account-api";
+import { loginPath, readInteractionId } from "../lib/links";
 import { MESSAGES } from "../lib/messages";
-import type { RecoveryState } from "../lib/recovery";
-import type { AccountAuthClient } from "../lib/supabase";
-import { Loading, Notice, Page, TextField } from "../ui";
+import { Notice, Page, TextField } from "../ui";
 
 export interface ResetRouteProps {
-  auth: AccountAuthClient;
-  origin: string;
+  api: AccountApi;
   search: string;
-  recovery: RecoveryState;
 }
 
-type Outcome = "none" | "updated" | "expired";
+type Step = { kind: "request" } | { kind: "code"; email: string } | { kind: "updated" };
 
 /**
- * `/reset`: asks for a reset link, or, when the page was opened from that
- * link (a recovery session), sets a new password.
+ * `/reset`: password reset through Core's account API. Core emails a code;
+ * the new password takes effect with it and ends every session of the
+ * account, as any password reset does. The person then signs in again.
  */
-export function ResetRoute({ auth, origin, search, recovery }: ResetRouteProps) {
-  const [authorizationId] = useState(() => readAuthorizationId(search));
-  const recovering = useSyncExternalStore(recovery.subscribe, recovery.isActive, recovery.isActive);
-  // Wait for supabase-js to finish reading the link before choosing a form.
-  const [ready, setReady] = useState(false);
-  const [outcome, setOutcome] = useState<Outcome>("none");
+export function ResetRoute({ api, search }: ResetRouteProps) {
+  const [interactionId] = useState(() => readInteractionId(search));
+  const [step, setStep] = useState<Step>({ kind: "request" });
 
-  useEffect(() => {
-    let active = true;
-    auth
-      .getSession()
-      .then(({ data }) => {
-        if (!data.session) recovery.clear();
-      })
-      .catch(() => recovery.clear())
-      .finally(() => {
-        if (active) setReady(true);
-      });
-    return () => {
-      active = false;
-    };
-  }, [auth, recovery]);
-
-  const finish = (next: Outcome) => {
-    setOutcome(next);
-    recovery.clear();
-  };
-
-  if (outcome === "updated") return <PasswordUpdated authorizationId={authorizationId} />;
-  if (!ready) return <Loading label="Loading…" />;
-  if (recovering) {
-    return <SetPasswordForm auth={auth} onUpdated={() => finish("updated")} onExpired={() => finish("expired")} />;
+  if (step.kind === "updated") {
+    return (
+      <Page title="Password updated">
+        <Notice>{MESSAGES.passwordUpdated}</Notice>
+        <BackToSignIn interactionId={interactionId}>Continue signing in</BackToSignIn>
+      </Page>
+    );
   }
-  return (
-    <RequestResetForm
-      auth={auth}
-      origin={origin}
-      authorizationId={authorizationId}
-      initialError={outcome === "expired" ? MESSAGES.resetExpired : null}
-    />
-  );
+  if (step.kind === "code") {
+    return (
+      <SetPasswordForm
+        api={api}
+        email={step.email}
+        interactionId={interactionId}
+        onUpdated={() => setStep({ kind: "updated" })}
+        onStartOver={() => setStep({ kind: "request" })}
+      />
+    );
+  }
+  return <RequestResetForm api={api} interactionId={interactionId} onSent={(email) => setStep({ kind: "code", email })} />;
 }
 
-function BackToSignIn({ authorizationId, children = "Back to sign in" }: { authorizationId: string | null; children?: ReactNode }) {
-  if (!authorizationId) return null;
+function BackToSignIn({ interactionId, children = "Back to sign in" }: { interactionId: string | null; children?: ReactNode }) {
+  if (!interactionId) return null;
   return (
     <nav className="links" aria-label="Account help">
-      <a href={authorizePath(authorizationId)}>{children}</a>
+      <a href={loginPath(interactionId)}>{children}</a>
     </nav>
   );
 }
 
+function resetMessage(result: Exclude<ResetResult, { kind: "ok" }>): string {
+  switch (result.kind) {
+    case "invalid-code":
+      return MESSAGES.invalidCode;
+    case "weak-password":
+      return MESSAGES.weakPassword;
+    case "rate-limited":
+      return MESSAGES.rateLimited;
+    case "error":
+      return MESSAGES.resetFailed;
+  }
+}
+
 export function RequestResetForm({
-  auth,
-  origin,
-  authorizationId,
-  initialError = null,
+  api,
+  interactionId,
+  onSent,
 }: {
-  auth: AccountAuthClient;
-  origin: string;
-  authorizationId: string | null;
-  initialError?: string | null;
+  api: AccountApi;
+  interactionId: string | null;
+  onSent: (email: string) => void;
 }) {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(initialError);
-  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
     setBusy(true);
     setError(null);
-    const result = await requestPasswordReset(auth, { email: email.trim(), origin, authorizationId });
+    const address = email.trim();
+    const result = await api.requestReset(address);
     setBusy(false);
-    if (result.ok) setSent(true);
-    else setError(result.message);
-  }
-
-  if (sent) {
-    return (
-      <Page title="Check your email">
-        <Notice>{MESSAGES.resetSent}</Notice>
-        <BackToSignIn authorizationId={authorizationId} />
-      </Page>
-    );
+    if (result.kind === "ok") onSent(address);
+    else setError(resetMessage(result));
   }
 
   return (
     <Page title="Reset your password">
-      <p className="muted">Enter the email for your Mentra account. We will send you a link to set a new password.</p>
+      <p className="muted">Enter the email for your Mentra account. We will send you a code to set a new password.</p>
       {error ? <Notice tone="error">{error}</Notice> : null}
       <form className="form" onSubmit={submit}>
         <TextField id="email" label="Email" type="email" autoComplete="email" value={email} onChange={setEmail} disabled={busy} />
         <button className="button button-primary" type="submit" disabled={busy}>
-          Send reset link
+          Send reset code
         </button>
       </form>
-      <BackToSignIn authorizationId={authorizationId} />
+      <BackToSignIn interactionId={interactionId} />
     </Page>
   );
 }
 
 export function SetPasswordForm({
-  auth,
+  api,
+  email,
+  interactionId,
   onUpdated,
-  onExpired,
+  onStartOver,
 }: {
-  auth: AccountAuthClient;
+  api: AccountApi;
+  email: string;
+  interactionId: string | null;
   onUpdated: () => void;
-  onExpired: () => void;
+  onStartOver: () => void;
 }) {
+  const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -140,18 +127,19 @@ export function SetPasswordForm({
     if (busy) return;
     setBusy(true);
     setError(null);
-    const result = await updatePassword(auth, password);
-    if (result.ok) return onUpdated();
-    if (result.expired) return onExpired();
+    const result = await api.resetPassword({ email, code: code.trim(), newPassword: password });
+    if (result.kind === "ok") return onUpdated();
     setBusy(false);
     setPassword("");
-    setError(result.message);
+    setError(resetMessage(result));
   }
 
   return (
     <Page title="Set a new password">
+      <Notice>{MESSAGES.resetSent}</Notice>
       {error ? <Notice tone="error">{error}</Notice> : null}
       <form className="form" onSubmit={submit}>
+        <TextField id="code" label="Reset code" type="text" autoComplete="one-time-code" value={code} onChange={setCode} disabled={busy} />
         <TextField
           id="new-password"
           label="New password"
@@ -165,15 +153,12 @@ export function SetPasswordForm({
           Save password
         </button>
       </form>
-    </Page>
-  );
-}
-
-function PasswordUpdated({ authorizationId }: { authorizationId: string | null }) {
-  return (
-    <Page title="Password updated">
-      <Notice>{MESSAGES.passwordUpdated}</Notice>
-      <BackToSignIn authorizationId={authorizationId}>Continue signing in</BackToSignIn>
+      <nav className="links" aria-label="Account help">
+        <button className="link-button" type="button" disabled={busy} onClick={onStartOver}>
+          Use a different email
+        </button>
+        {interactionId ? <a href={loginPath(interactionId)}>Back to sign in</a> : null}
+      </nav>
     </Page>
   );
 }

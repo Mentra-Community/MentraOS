@@ -26,8 +26,8 @@
  * (`WorkspaceError`) are rendered by the app's error handler.
  *
  * A bearer credential is what a person or a key presented to the Store: a Core
- * key, or an access token from the deployment's identity provider. Phone Core
- * tokens and ID tokens are refused. A `mentra_user` credential is the service
+ * key, or a Core access token from Core's sign-in server. Phone tokens, ID
+ * tokens and tokens from another issuer are refused. A `mentra_user` credential is the service
  * vouching for a person it already authenticated; Core trusts that assertion,
  * so the person is never an Organization Admin here: that standing comes only
  * from a verified identity (`bearer`).
@@ -56,7 +56,6 @@ import {
 import {Hono} from "hono"
 import {z} from "zod"
 import {findAccountByEmail, isGotrueAdminConfigured} from "../../services/account/gotrue.client"
-import {IdentityProviderUnavailableError} from "../../services/signin/idp-tokens"
 import {principalFromToken, wirePrincipal, type CorePrincipal} from "../../services/signin/principal.service"
 import {MENTRA_TENANT_ID} from "../../services/signin/config"
 import {findOrCreateUser, isDeletedAccount, isDeletedAccountId} from "../../services/user.service"
@@ -83,14 +82,8 @@ app.post("/authorize", async c => {
   const credential = parseCredential(body.credential)
   const request = authorizeFields(body)
 
-  let principal: CorePrincipal | WirePrincipal | null
-  try {
-    principal =
-      credential.type === "bearer" ? await principalFromToken(credential.token) : await mentraUserPrincipal(credential)
-  } catch (err) {
-    if (err instanceof IdentityProviderUnavailableError) return identityUnavailable(c)
-    throw err
-  }
+  const principal: CorePrincipal | WirePrincipal | null =
+    credential.type === "bearer" ? await principalFromToken(credential.token) : await mentraUserPrincipal(credential)
 
   const decision = wireDecision(await authorize(principal, request))
   // A Core credential that does not validate is a different failure from a person nobody knows.
@@ -105,13 +98,7 @@ app.post("/principal", async c => {
   const {token} = jsonBody(c)
   if (typeof token !== "string") throw new InvalidRequest("token must be a string")
 
-  let principal: CorePrincipal | null
-  try {
-    principal = await principalFromToken(token)
-  } catch (err) {
-    if (err instanceof IdentityProviderUnavailableError) return identityUnavailable(c)
-    throw err
-  }
+  const principal: CorePrincipal | null = await principalFromToken(token)
   // 401 `invalid_token` is the one 401 the client reads as "this bearer token is not valid".
   if (!principal) return c.json({error: INVALID_TOKEN_ERROR}, 401)
 
@@ -282,11 +269,6 @@ async function mentraUserPrincipal(
 /** The decision with its principal in the contract's shape. */
 function wireDecision(decision: AuthorizeResponse): AuthorizeResponse {
   return {...decision, principal: decision.principal ? wirePrincipal(decision.principal) : null}
-}
-
-/** Nothing was written, and trying again once the identity provider answers works. */
-function identityUnavailable(c: AppContext) {
-  return c.json({error: "temporarily_unavailable", error_description: "identity provider unavailable"}, 503)
 }
 
 export default app

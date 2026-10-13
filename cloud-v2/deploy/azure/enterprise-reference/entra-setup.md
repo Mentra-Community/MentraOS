@@ -169,8 +169,9 @@ Setup configures these on the Core API app registration and keeps everything
 else on it:
 
 - Redirect URI (Web platform):
-  `https://<core host>/api/admin/auth/callback`. It must match exactly.
-  Setup adds it once Core's address exists, after the first deployment.
+  `https://<core host>/interaction/callback/workforce`, where Entra returns
+  people to Core's sign-in server. It must match exactly. Setup adds it once
+  Core's address exists, after the first deployment.
 - The `email` optional claim on ID tokens. Without it, Entra leaves members'
   email out of the token.
 - Delegated Microsoft Graph `openid`, `email` and `profile`, with tenant-wide
@@ -182,8 +183,10 @@ else on it:
   Core can read it. The setup summary shows the expiry date. To rotate it, see
   [operations](./operations.md#customer-configuration-checklist).
 
-The portal's signed-out screen links to the directory's sign-out page,
-`https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/logout`.
+The admin portal signs in through Core's sign-in server on Core's own host,
+which signs people in with Entra as the Core API app. The portal's signed-out
+screen links to the sign-in server's sign-out, `https://<core host>/oidc/session/end`;
+Entra keeps its own session.
 
 When the operator cannot change the Core app, setup stops before deploying and
 prints an `az ad app owner add` command for an Application Administrator or
@@ -237,9 +240,13 @@ allowed Mobile client id. The same provider lists the deployment's
 `verifiedEmailDomains` and, with `adminPortalSignIn` on, the admin portal's
 `browser` sign-in: the Core API client ID, the scopes `openid email profile`,
 the `email` claim, and the client secret in `ENTRA_BROWSER_CLIENT_SECRET`, read
-from Key Vault. Core also receives
-`CLOUD_CORE_ADMIN_PORTAL_URL` (its own origin), `CLOUD_CORE_ADMIN_STATIC_DIR`
-(the portal built into the image) and `CLOUD_CORE_IDP_SIGNOUT_URL`. See
+from Key Vault. Core also receives `CLOUD_CORE_ADMIN_PORTAL_URL` (its own
+origin) and `CLOUD_CORE_ADMIN_STATIC_DIR` (the portal built into the image),
+and, with `adminPortalSignIn` on, its sign-in server's settings:
+`CLOUD_CORE_OIDC_ISSUER` (its own origin), `CLOUD_CORE_OIDC_COOKIE_KEYS` and
+`CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET` (generated into Key Vault as
+`oidc-cookie-keys` and `oidc-admin-portal-client-secret`), and
+`CLOUD_CORE_OIDC_CLIENTS` with the admin portal as its one client. See
 [the cloud-neutral contract](../../private-deployment.md).
 
 Runtime receives the Core issuer/JWKS as `CLOUD_RUNTIME_AUTH_ISSUERS`, plus

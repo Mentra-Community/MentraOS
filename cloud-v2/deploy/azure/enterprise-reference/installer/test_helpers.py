@@ -228,8 +228,8 @@ else:sys.exit(9)
             self.assertNotIn(name, parameters)
         template = (ROOT / 'main.bicep').read_text()
         self.assertNotIn('@secure()', template)
-        # 5 Core secrets, the admin portal secret, the Graph secret and the demo's 2 speech keys.
-        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 9)
+        # 5 Core secrets, the admin portal's 3 sign-in secrets, the Graph secret and the demo's 2 speech keys.
+        self.assertEqual(template.count("keyVaultUrl: '${vaultUri}secrets/"), 11)
         # Each app reads only its own secrets with its own identity; nothing reads the admin key.
         core = template[template.index("resource core '"):template.index("resource runtime '")]
         runtime = template[template.index("resource runtime '"):]
@@ -272,9 +272,14 @@ else:sys.exit(9)
         # Present either way: Core serves the admin portal, and its sign-in answers "not configured" when off.
         for line in ("{ name: 'CLOUD_CORE_OIDC_PROVIDERS', value: string(oidcProviders) }",
                      "{ name: 'CLOUD_CORE_ADMIN_PORTAL_URL', value: coreOrigin }",
-                     "{ name: 'CLOUD_CORE_ADMIN_STATIC_DIR', value: '/app/admin-dist' }",
-                     "{ name: 'CLOUD_CORE_IDP_SIGNOUT_URL', value: '${loginEndpoint}${tenantId}/oauth2/v2.0/logout' }"):
+                     "{ name: 'CLOUD_CORE_ADMIN_STATIC_DIR', value: '/app/admin-dist' }"):
             self.assertIn(line, core)
+        # The admin portal signs in through Core's sign-in server on Core's host; there is no separate sign-out URL.
+        self.assertNotIn('CLOUD_CORE_IDP_SIGNOUT_URL', template)
+        clients = template[template.index('var oidcClients = ['):template.index('var mongoConnectionString')]
+        for line in ("clientId: 'admin-portal'", "kind: 'admin_portal'", "secretEnv: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET'",
+                     "redirectUris: ['${coreOrigin}/api/admin/auth/callback']"):
+            self.assertIn(line, clients)
         # The phone's provider settings are unchanged, and the email domains are always listed.
         for line in ("audience: coreApiClientId", "subjectClaim: 'oid'", "directoryTenantClaim: 'tid'",
                      "expectedDirectoryTenantId: tenantId", "requiredScopes: ['mentra.session']",
@@ -286,9 +291,16 @@ else:sys.exit(9)
         # With it off, each of these is an empty array or object.
         gated = [
             (core, r"\], adminPortalSignIn \? \[\s*\{ name: 'entra-browser-client-secret', "
-                   r"keyVaultUrl: '\$\{vaultUri\}secrets/entra-browser-client-secret', identity: coreIdentity\.id \}\s*\] : \[\]\)"),
-            (core, r"\], adminPortalSignIn \? \[\s*\{ name: 'ENTRA_BROWSER_CLIENT_SECRET', "
-                   r"secretRef: 'entra-browser-client-secret' \}\s*\] : \[\]\)"),
+                   r"keyVaultUrl: '\$\{vaultUri\}secrets/entra-browser-client-secret', identity: coreIdentity\.id \}\s*"
+                   r"\{ name: 'oidc-cookie-keys', keyVaultUrl: '\$\{vaultUri\}secrets/oidc-cookie-keys', identity: coreIdentity\.id \}\s*"
+                   r"\{ name: 'oidc-admin-portal-client-secret', keyVaultUrl: '\$\{vaultUri\}secrets/oidc-admin-portal-client-secret', "
+                   r"identity: coreIdentity\.id \}\s*\] : \[\]\)"),
+            (core, r"\], adminPortalSignIn \? \[\s*(?://[^\n]*\s*)*\{ name: 'ENTRA_BROWSER_CLIENT_SECRET', "
+                   r"secretRef: 'entra-browser-client-secret' \}\s*"
+                   r"\{ name: 'CLOUD_CORE_OIDC_ISSUER', value: coreOrigin \}\s*"
+                   r"\{ name: 'CLOUD_CORE_OIDC_COOKIE_KEYS', secretRef: 'oidc-cookie-keys' \}\s*"
+                   r"\{ name: 'CLOUD_CORE_OIDC_CLIENTS', value: string\(oidcClients\) \}\s*"
+                   r"\{ name: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET', secretRef: 'oidc-admin-portal-client-secret' \}\s*\] : \[\]\)"),
             (provider, r"\}, adminPortalSignIn \? \{\s*browser: \{\s*clientId: coreApiClientId\s*"
                        r"clientSecretEnv: 'ENTRA_BROWSER_CLIENT_SECRET'\s*scopes: \['openid', 'email', 'profile'\]\s*"
                        r"emailClaim: 'email'\s*displayName: displayName\s*\}\s*\} : \{\}\)"),
@@ -299,13 +311,15 @@ else:sys.exit(9)
             self.assertIsNotNone(match, pattern)
             ungated = ungated.replace(match.group(0), '')
         # Off renders no secret reference, no secretRef and no browser settings.
-        for name in ('entra-browser-client-secret', 'ENTRA_BROWSER_CLIENT_SECRET', 'browser'):
+        for name in ('entra-browser-client-secret', 'ENTRA_BROWSER_CLIENT_SECRET', 'browser', 'oidc-cookie-keys',
+                     'oidc-admin-portal-client-secret', 'CLOUD_CORE_OIDC_ISSUER', 'CLOUD_CORE_OIDC_CLIENTS'):
             self.assertNotIn(name, ungated)
         self.assertNotIn('entra-browser-client-secret', template[template.index("resource runtime '"):])
         # Only Core is granted the secret, under the same setting, once it exists.
         access = (ROOT / 'access.bicep').read_text()
         self.assertIn('param adminPortalSignIn bool = false', access)
-        self.assertRegex(access, r"var coreSecrets = concat\(\[[^\]]*\], adminPortalSignIn \? \['entra-browser-client-secret'\] : \[\]\)")
+        self.assertRegex(access, r"var coreSecrets = concat\(\[[^\]]*\], adminPortalSignIn \? \['entra-browser-client-secret', "
+                                 r"'oidc-cookie-keys', 'oidc-admin-portal-client-secret'\] : \[\]\)")
         self.assertEqual(access.count("'entra-browser-client-secret'"), 1)
 
     def test_configuration_requires_canonical_email_domains(self):
@@ -411,7 +425,7 @@ else:sys.exit(9)
         result = self.ensure()
         self.assertEqual(result.returncode, 0, result.stderr)
         names = {'refresh-token-pepper', 'mentra-jwt-private-key', 'mentra-jwt-public-key',
-                 'miniapp-jwt-private-key', 'miniapp-jwt-public-key'}
+                 'miniapp-jwt-private-key', 'miniapp-jwt-public-key', 'oidc-cookie-keys', 'oidc-admin-portal-client-secret'}
         self.assertEqual({x.name for x in store.iterdir()}, names)
         original = {x.name: x.read_bytes() for x in store.iterdir()}
         calls = (self.path / 'calls').read_text()
@@ -460,7 +474,7 @@ print('ERROR: (Forbidden) Client address is not authorized. Inner error: {"code"
         (store / 'mentra-jwt-public-key').write_text('from-an-interrupted-run')
         self.assertEqual(self.ensure().returncode, 0)
         self.assertNotEqual((store / 'mentra-jwt-public-key').read_text(), 'from-an-interrupted-run')
-        self.assertEqual(len(list(store.iterdir())), 5)
+        self.assertEqual(len(list(store.iterdir())), 7)
 
     def import_with(self, fake):
         self.env.update(HELPER_TEST_DIRECTORY=str(self.path), MENTRA_ACR_DNS_RETRY_SECONDS='0', TMPDIR=str(self.path))
