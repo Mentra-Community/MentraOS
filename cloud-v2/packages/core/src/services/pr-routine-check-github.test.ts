@@ -167,6 +167,29 @@ test('first routine intake adopts its exact existing native PR producer instead 
   }
 })
 
+test('retained native and explicit producers are observed through failure or cancellation without another discovery', async () => {
+  const operation = 'c'.repeat(64), context: PrRoutineContext = {number: 12, headSha: head, baseRef: 'dev', headRef: 'feature', sameRepository: true, open: true, labels: [], peers: [12]}
+  const row = {id: 44, display_title: 'Native PR build', path: '.github/workflows/mentra-asg-client-build.yml',
+    event: 'pull_request', head_sha: head, head_branch: 'feature', status: 'completed', conclusion: 'failure',
+    repository: {full_name: ROUTINE_CHECK_REPOSITORY}, head_repository: {full_name: ROUTINE_CHECK_REPOSITORY},
+    pull_requests: [{number: 12, head: {sha: head}, base: {ref: 'dev'}}]}
+  for (const conclusion of ['failure', 'cancelled', 'success']) {
+    const f = fixture(() => reply({...row, conclusion}))
+    expect(await f.github.producer('asg', context, operation, 44)).toEqual({id: 44, failed: conclusion !== 'success'})
+    expect(f.calls.map(call => call.path)).toEqual(['actions/runs/44'])
+    expect(f.calls.every(call => call.method === 'GET')).toBe(true)
+  }
+  const dispatch = {...row, event: 'workflow_dispatch', head_branch: 'dev', head_sha: otherHead, pull_requests: [],
+    display_title: `Routine PR #12 ${head} dev ${operation}`}
+  expect(await fixture(() => reply(dispatch)).github.producer('asg', context, operation, 44)).toEqual({id: 44, failed: true})
+  for (const changed of [{id: 45}, {head_sha: otherHead}, {path: '.github/workflows/other.yml'},
+    {head_repository: {full_name: 'someone/fork'}}]) {
+    const f = fixture(() => reply({...row, ...changed}))
+    await expect(f.github.producer('asg', context, operation, 44)).rejects.toThrow('ownership differs')
+    expect(f.calls.map(call => call.path)).toEqual(['actions/runs/44'])
+  }
+})
+
 // GitHub retains omitted terminal fields on PATCH and a conclusion keeps the run completed.
 function nativeFixture() {
   const checks: Array<ReturnType<typeof check>> = []

@@ -372,7 +372,7 @@ export class PrRoutineCheckService {
       const dispatch = gate.buildRequests?.[platform]
       if (!dispatch || !gate.attempt.members.some(member => !member.selection && !member.settled && (platform === 'asg' || member.platform === platform))) continue
       dispatch.operationId ??= digest({gateId: gate.gateId, coverage: gate.coverageGeneration, attempt: gate.attempt.generation, platform})
-      const receipt = await this.github.producer(platform, gate.context, dispatch.operationId)
+      const receipt = await this.github.producer(platform, gate.context, dispatch.operationId, dispatch.runId)
       if (receipt) {
         dispatch.state = 'answered'; dispatch.runId = receipt.id; delete dispatch.error; delete dispatch.absenceObservedAt
         if (receipt.failed) for (const member of gate.attempt.members.filter(member => !member.selection && (platform === 'asg' || member.platform === platform))) {
