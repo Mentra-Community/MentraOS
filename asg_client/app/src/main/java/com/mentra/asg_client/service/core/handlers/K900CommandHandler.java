@@ -58,7 +58,15 @@ public class K900CommandHandler {
             JSONObject bData = json.optJSONObject("B");
             Log.d(TAG, "📦 Received K900 command: " + command);
             if ("hm_pairlog".equals(command) || "hm_pairexit".equals(command) || "hm_spkcode".equals(command)) {
-                Log.i("PAIRFLOW", command + " " + (bData != null ? bData.toString() : "{}"));
+                JSONObject logData = bData;
+                // hm_spkcode carries the 4-char secure pairing code (B.code). It must never reach
+                // logcat at INFO or above (release-hygiene invariant NEW-9), so redact the code
+                // field on a copy before dumping — never mutate bData, which McuEventParser reads.
+                if ("hm_spkcode".equals(command) && bData != null && bData.has("code")) {
+                    logData = new JSONObject(bData.toString());
+                    logData.put("code", "<redacted>");
+                }
+                Log.i("PAIRFLOW", command + " " + (logData != null ? logData.toString() : "{}"));
             }
 
             // sr_log is consumed here directly: packets are reassembled into the BES log session

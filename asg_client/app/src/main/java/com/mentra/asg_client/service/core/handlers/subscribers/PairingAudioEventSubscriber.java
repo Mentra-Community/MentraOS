@@ -34,7 +34,9 @@ public final class PairingAudioEventSubscriber implements IPeripheralBus.McuEven
             return;
         }
         SpeakPairingCodeEvent speakEvent = (SpeakPairingCodeEvent) event;
-        Log.i(TAG, "hm_spkcode received code=" + speakEvent.getCode());
+        // Never log the 4-char secure pairing code at INFO or above (release-hygiene invariant
+        // NEW-9); redact the value while keeping the "code=" marker for pairing-flow diagnostics.
+        Log.i(TAG, "hm_spkcode received code=<redacted>");
         PairingCodeSpeaker.speak(context, hardwareManager, speakEvent.getCode());
     }
 }

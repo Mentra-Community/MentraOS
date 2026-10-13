@@ -404,7 +404,12 @@ def d1_first_pair(ctx: Ctx):
     ctx.check("owner committed", hit is not None, hit[1] if hit else "")
     close = ctx.bes_wait(r"state PAIRING -> OWNER_ONLY", 20)
     ctx.check("window closed on commit", close is not None, close[1] if close else "")
-    ctx.check("R13 pairing-exit phrase on commit", ctx.log_wait(ctx.g, r"hm_pairexit received", 20) is not None)
+    # 3.3 spec: BES omits hm_pairexit on a successful pair when "Connected" is the next prompt
+    # (ASG_CLIENT_API.md, Spoken pairing code). Accept the skip, like MAC_OWNER/D5D7/D4BFIX.
+    exit_line = ctx.bes_wait(
+        r"hm_pairexit sent reason=paired|hm_pairexit skipped, connected follows", 20)
+    ctx.check("R13 pairing-exit phrase on commit, or skipped because Connected follows",
+              exit_line is not None)
     time.sleep(20)
     conn = ctx.bes(r"logical session connected")
     ctx.check("Connected plays exactly once", len(conn) == 1, str(conn))
