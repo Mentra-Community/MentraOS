@@ -27,11 +27,27 @@ describe("account actions", () => {
     expect(await signUpWithEmail(auth, { ...input, interactionId: null })).toEqual({ kind: "signed-in" });
   });
 
-  test("Google and Apple return to the login route of the same sign-in", async () => {
+  test("Google asks for account selection on each sign-in, including a repeated attempt", async () => {
     const auth = createFakeAuth({ session: null });
     await startSocialSignIn(auth, "google", ORIGIN, "uid-1234567890");
+    await startSocialSignIn(auth, "google", ORIGIN, "uid-second12345");
+    expect(auth.signInWithOAuth.mock.calls.map(([credentials]) => credentials)).toEqual([
+      {
+        provider: "google",
+        options: { redirectTo: `${ORIGIN}/login?interaction=uid-1234567890`, queryParams: { prompt: "select_account" } },
+      },
+      {
+        provider: "google",
+        options: { redirectTo: `${ORIGIN}/login?interaction=uid-second12345`, queryParams: { prompt: "select_account" } },
+      },
+    ]);
+  });
+
+  test("Apple returns to the same login without Google-specific options", async () => {
+    const auth = createFakeAuth({ session: null });
+    await startSocialSignIn(auth, "apple", ORIGIN, "uid-1234567890");
     expect(auth.signInWithOAuth.mock.calls[0]![0]).toEqual({
-      provider: "google",
+      provider: "apple",
       options: { redirectTo: `${ORIGIN}/login?interaction=uid-1234567890` },
     });
   });
