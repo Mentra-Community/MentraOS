@@ -557,6 +557,12 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
       ["eo_other", "user_01OTHER"],
     ])
     expect(await identity("user_01ENT")).toMatchObject({claimedBy: owner})
+
+    // An enterprise org added later under the WorkOS user (a re-run or a repair) goes to the person
+    // at their next sign-in, though they have no pending membership left.
+    await EnterpriseOrgModel.create(org("eo_added_later", "user_01ENT"))
+    await claimLegacyIdentities({mentraUserId: owner, email: "ent@studio.example", emailVerified: true})
+    expect((await EnterpriseOrgModel.findOne({enterpriseOrgId: "eo_added_later"}).lean())?.ownerUserId).toBe(owner)
   })
 
   test("the phone token exchange claims nothing, and its token claims nothing at Core's API", async () => {

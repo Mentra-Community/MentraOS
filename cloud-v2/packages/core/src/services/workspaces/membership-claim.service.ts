@@ -31,7 +31,8 @@
  * finds them.
  *
  * An identity its person already claimed is checked again at their later sign-ins:
- * a membership an import re-run adds under that WorkOS user goes to them.
+ * a membership an import re-run adds under that WorkOS user, or an enterprise org
+ * still owned by it, goes to them.
  *
  * Most sign-ins have nothing to claim: one indexed read finds that out, and a
  * transaction is opened only when there is something to claim.
@@ -303,10 +304,12 @@ export async function claimLegacyIdentities(input: ClaimInput): Promise<{claimed
     .lean()
   if (candidates.length === 0) return none
   if (candidates.every(candidate => candidate.claimedAt)) {
-    const waiting = await WorkspaceMembershipModel.exists({
-      pendingWorkosUserId: {$in: candidates.map(candidate => candidate.workosUserId)},
-      status: "active",
-    })
+    // Everything was claimed before: anything new under these ids (a re-run's membership, an
+    // enterprise org) still goes to the person.
+    const workosUserIds = candidates.map(candidate => candidate.workosUserId)
+    const waiting =
+      (await WorkspaceMembershipModel.exists({pendingWorkosUserId: {$in: workosUserIds}, status: "active"})) ||
+      (await EnterpriseOrgModel.exists({ownerUserId: {$in: workosUserIds}}))
     if (!waiting) return none
   }
 
