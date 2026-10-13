@@ -250,7 +250,8 @@ export async function downloadAsset(repository, asset, file, {store} = {}) {
         const parts = key.split("/")
         if (parts.length !== 5 || artifactKey(repository, parts[3], parts[4]) !== key)
           throw new Error("Invalid R2 asset ID")
-        const object = await store.get(key)
+        const signal = AbortSignal.timeout(15 * 60_000)
+        const object = await store.get(key, {signal})
         if (!object) throw new Error(`R2 artifact ${key} is missing`)
         try {
           // Internal release recovery reads the authoritative object, not its
@@ -259,7 +260,7 @@ export async function downloadAsset(repository, asset, file, {store} = {}) {
           if ((asset.size !== undefined && asset.size !== record.size) || (asset.digest && asset.digest !== record.digest))
             throw new Error("R2 artifact metadata does not match its record")
           asset = record
-          await pipeline(object.Body, createWriteStream(temporary))
+          await pipeline(object.Body, createWriteStream(temporary), {signal})
         } finally {
           object.Body?.destroy()
         }
@@ -335,7 +336,7 @@ export async function createR2Store(env = process.env) {
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
   })
-  const send = (command, input) => client.send(new sdk[command]({Bucket: bucket, ...input}))
+  const send = (command, input, options) => client.send(new sdk[command]({Bucket: bucket, ...input}), options)
   return {
     async list(prefix) {
       const objects = []
@@ -355,9 +356,9 @@ export async function createR2Store(env = process.env) {
         throw error
       }
     },
-    async get(key) {
+    async get(key, {signal} = {}) {
       try {
-        return await send("GetObjectCommand", {Key: key})
+        return await send("GetObjectCommand", {Key: key}, {abortSignal: signal})
       } catch (error) {
         if (error.$metadata?.httpStatusCode === 404) return null
         throw error

@@ -179,6 +179,36 @@ test("internal R2 corruption or missing checksum cannot replace a previously ver
   }
 })
 
+test("internal R2 recovery keeps one deadline across the authenticated request and stream", async (t) => {
+  const {file, store} = await fixture(t)
+  const original = await readFile(file)
+  const controller = new AbortController()
+  t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+    assert.equal(milliseconds, 15 * 60_000)
+    return controller.signal
+  })
+  let body
+  store.get = async (_key, {signal}) => {
+    assert.equal(signal, controller.signal)
+    return {
+      ContentLength: 100,
+      Metadata: {sha256: digest},
+      LastModified: new Date(),
+      Body: (body = new Readable({
+        read() {
+          this.push("partial bytes")
+          controller.abort()
+        },
+      })),
+    }
+  }
+  await assert.rejects(downloadAsset(repository, {id: asset().id}, file, {store}), /aborted/)
+  assert.ok(body.destroyed)
+  assert.deepEqual(await readFile(file), original)
+  assert.deepEqual(await readdir(path.dirname(file)), [path.basename(file)])
+  assert.equal(AbortSignal.timeout.mock.callCount(), 1)
+})
+
 test("internal R2 recovery rejects foreign or malformed IDs before reading and never treats a missing object as success", async (t) => {
   const {file, store} = await fixture(t)
   const requests = []
