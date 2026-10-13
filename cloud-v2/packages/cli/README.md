@@ -65,8 +65,8 @@ mentra logout
 `mentra logout` ends this login at Mentra's sign-in server and deletes it from
 this computer. It prints `Signed out`, or `Signed out locally; server sign-out
 not confirmed` when the sign-in server could not confirm it; the login is
-deleted from this computer either way. Your logins on other computers and the
-Developer Console stay signed in.
+deleted from this computer either way. It ends only this login: your other CLI
+logins and the Developer Console stay signed in.
 
 ### Without a local browser
 
