@@ -151,6 +151,17 @@ export function takeOverStaleLock(path: string, seen: InspectedLock): boolean {
     // Gone already (no lock, or this holder's tombstone exists): nothing of ours to move.
     return false
   }
+  // What was moved must be the lock inspected. A command delayed past `tombstoneMs` after inspecting
+  // (its holder's tombstone since cleared) could have moved a newer lock: put that one back.
+  const moved = readHolder(tombstone)
+  if (moved !== null && moved !== seen.holder) {
+    try {
+      renameSync(tombstone, path)
+    } catch {
+      // Yet another command holds the lock now; the moved holder finds it lost (`held()`).
+    }
+    return false
+  }
   // Date the tombstone from now, for `tombstoneMs`; a holder-less directory gets a holder so a
   // later rename onto its tombstone fails too.
   try {

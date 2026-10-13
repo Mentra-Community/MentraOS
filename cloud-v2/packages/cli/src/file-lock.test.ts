@@ -102,6 +102,18 @@ test("a command that saw a stale lock late never moves the lock that replaced it
   })
 })
 
+test("a takeover that moves a lock other than the one it inspected puts it back", async () => {
+  // A command saw a stale holder and was suspended long enough for that holder's tombstone to be
+  // cleared and a new command to take the lock.
+  const seen = {holder: "long-gone", touchedAt: Date.now() - 60 * 60_000}
+  await withFileLock(lock, options, async lease => {
+    const mine = holderOf()
+    expect(takeOverStaleLock(lock, seen)).toBe(false)
+    expect(holderOf()).toBe(mine)
+    expect(lease.held()).toBe(true)
+  })
+})
+
 test("a holder whose lock was taken over does not release its successor's lock", async () => {
   const slow: FileLockOptions = {staleMs: 200, waitMs: 5_000, busyMessage: "busy", heartbeatMs: 60_000}
   let successorHolder = ""
