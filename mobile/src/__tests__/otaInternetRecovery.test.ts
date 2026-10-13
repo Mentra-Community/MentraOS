@@ -55,7 +55,7 @@ it("holds the final check across the observed ten-second gap, until the returned
   mentraLocalNetworkMock.getNetworkDiagnostics.mockReturnValue(observation({activeNetwork: internet}))
   await jest.advanceTimersByTimeAsync(250)
   await completion
-  expect(finalCheck).toHaveBeenCalledTimes(1)
+  expect(finalCheck).toHaveBeenCalledWith("ready")
   expect(jest.getTimerCount()).toBe(0)
 })
 
@@ -75,7 +75,7 @@ it("does not accept a local hotspot binding even when the default has Internet",
   mentraLocalNetworkMock.getNetworkDiagnostics.mockReturnValue(observation({activeNetwork: internet}))
   await jest.advanceTimersByTimeAsync(250)
   await completion
-  expect(finalCheck).toHaveBeenCalledTimes(1)
+  expect(finalCheck).toHaveBeenCalledWith("ready")
 })
 
 it("does not add a delay when the phone retained validated cellular Internet", async () => {
@@ -84,7 +84,7 @@ it("does not add a delay when the phone retained validated cellular Internet", a
       activeNetwork: {...internet, capabilities: {...internet.capabilities!, wifi: false, cellular: true}},
     }),
   )
-  await waitForOtaInternet(() => true)
+  await expect(waitForOtaInternet(() => true)).resolves.toBe("ready")
   expect(jest.getTimerCount()).toBe(0)
 })
 
@@ -97,7 +97,7 @@ it("bounds permanent disconnection so the ordinary check can report its real fai
     expect(finalCheck).not.toHaveBeenCalled()
     await jest.advanceTimersByTimeAsync(1)
     await completion
-    expect(finalCheck).toHaveBeenCalledTimes(1)
+    expect(finalCheck).toHaveBeenCalledWith("timed-out")
     expect(warn).toHaveBeenCalledTimes(1)
     expect(jest.getTimerCount()).toBe(0)
   } finally {
@@ -111,21 +111,23 @@ it("ends a stale device's wait without observing or changing the replacement dev
   expect(mentraLocalNetworkMock.getNetworkDiagnostics).toHaveBeenCalledTimes(1)
   current = false
   await jest.advanceTimersByTimeAsync(250)
-  await completion
+  await expect(completion).resolves.toBe("cancelled")
   expect(mentraLocalNetworkMock.getNetworkDiagnostics).toHaveBeenCalledTimes(1)
   expect(jest.getTimerCount()).toBe(0)
 })
 
-it("leaves iOS and native hosts without the observation on their existing check path", async () => {
-  Platform.OS = "ios"
-  await waitForOtaInternet(() => true)
-  expect(mentraLocalNetworkMock.getNetworkDiagnostics).not.toHaveBeenCalled()
-  Platform.OS = "android"
-  mentraLocalNetworkMock.getNetworkDiagnostics.mockReturnValue(null)
-  await waitForOtaInternet(() => true)
-  mentraLocalNetworkMock.getNetworkDiagnostics.mockImplementationOnce(() => {
-    throw new Error("native unavailable")
-  })
-  await waitForOtaInternet(() => true)
-  expect(jest.getTimerCount()).toBe(0)
+it("reports unavailable required diagnostics as an observation error, not readiness", async () => {
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {})
+  try {
+    mentraLocalNetworkMock.getNetworkDiagnostics.mockReturnValue(null)
+    await expect(waitForOtaInternet(() => true)).resolves.toBe("unavailable")
+    mentraLocalNetworkMock.getNetworkDiagnostics.mockImplementationOnce(() => {
+      throw new Error("native read failed")
+    })
+    await expect(waitForOtaInternet(() => true)).resolves.toBe("unavailable")
+    expect(warn).toHaveBeenCalledTimes(2)
+    expect(jest.getTimerCount()).toBe(0)
+  } finally {
+    warn.mockRestore()
+  }
 })

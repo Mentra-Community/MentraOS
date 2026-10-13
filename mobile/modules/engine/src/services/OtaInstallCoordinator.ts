@@ -17,6 +17,7 @@
  * state written mid-pass queues a follow-up pass — the same way a setState
  * during React effects scheduled a re-render after the current effect batch.
  */
+import {Platform} from "react-native"
 import BluetoothSdk, {type OtaProgress, type OtaStatus} from "@mentra/bluetooth-sdk"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
@@ -505,7 +506,10 @@ class OtaInstallCoordinator {
     // The post-install check needs internet again. Do not let callers leave the
     // terminal screen while Android still owns the no-internet hotspot route.
     await this.teardownHotspotTransport()
-    if (usedHotspot) await waitForOtaInternet(() => deviceRevision === otaDeviceSessionRevision())
+    // Recovery does not imply request success: the final check owns its real result.
+    if (usedHotspot && Platform.OS === "android") {
+      await waitForOtaInternet(() => deviceRevision === otaDeviceSessionRevision())
+    }
   }
 
   /**
