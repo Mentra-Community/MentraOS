@@ -4,7 +4,7 @@ import {COORDINATED_WORKFLOW} from "./coordinated-routine-request.mjs"
 import {selectedRoutinePlatforms, reportUnsupportedRoutinePlatforms, retainedAutomaticPlan} from './routine-platforms.mjs'
 
 /** Reauthenticate the completed public producer; application archives are resolved by Core. */
-export async function planDeviceDispatches({github, context, token, fetchImpl = fetch}) {
+export async function planDeviceDispatches({github, context, token, fetchImpl = fetch, checksOnly = false}) {
   const candidate = context.payload.workflow_run
   ensure(context.eventName === "workflow_run" && positive(candidate?.id) && positive(candidate.run_attempt) &&
     `${context.repo.owner}/${context.repo.repo}` === "Mentra-Community/MentraOS", "Invalid public producer callback")
@@ -25,6 +25,15 @@ export async function planDeviceDispatches({github, context, token, fetchImpl = 
   ensure(numbers.length === 1 && positive(numbers[0]), "App publication has ambiguous PR metadata")
   const pr = await authenticatedPr(github, context, numbers[0])
   if (pr.head.sha !== run.head_sha || pr.head.ref !== run.head_branch) return []
+  if (checksOnly) {
+    const response = await fetchImpl('https://core.dev.us-west-2.mentraglass.com/api/internal/pr-routine-checks/intake', {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20000),
+      headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+      body: JSON.stringify({prNumber: pr.number, deliveryId: `producer-${run.id}-${run.run_attempt}`}),
+    })
+    ensure(response.ok, 'PR routine check reconciliation is unavailable')
+    return []
+  }
   const ids = routineLabelIds(pr)
   if (!ids.length) return []
   ensure(ids.every(routineId), "Invalid routine label")

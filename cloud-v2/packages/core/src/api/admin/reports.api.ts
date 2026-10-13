@@ -16,9 +16,9 @@ import { z } from "zod";
 import {
   getReport,
   listReports,
-  readReportArtifactPayload,
+  readReportArtifact,
 } from "../../services/report.service";
-import { bufferedRangeResponse } from "../../services/storage/byte-range";
+import { streamedRangeResponse } from "../../services/storage/byte-range";
 import type { AppContext, AppEnv } from "../../types/hono.types";
 import { InvalidRequest } from "../../types/oauth.types";
 
@@ -60,9 +60,22 @@ export async function getReportArtifact(c: AppContext) {
   const reportId = requiredParam(c, "reportId");
   const artifactId = requiredParam(c, "artifactId");
 
-  let payload: Awaited<ReturnType<typeof readReportArtifactPayload>>;
   try {
-    payload = await readReportArtifactPayload(reportId, artifactId);
+    const payload = await readReportArtifact(reportId, artifactId);
+    if (!payload) return c.json({ error: "not_found", error_description: "artifact not found" }, 404);
+
+    // User-submitted content stays inert even when its declared type is wrong.
+    // HEAD and Range use verified metadata; bytes stream from the original key.
+    const contentType = (payload.contentType || "").split(";")[0].trim().toLowerCase();
+    const inline = INLINE_CONTENT_TYPES.has(contentType);
+    return await streamedRangeResponse(c.req.raw, payload.sizeBytes, new Headers({
+      "content-type": inline ? contentType : "application/octet-stream",
+      "content-disposition": `${inline ? "inline" : "attachment"}; filename="${safeFilename(payload.fileName, artifactId)}"`,
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox",
+      "cache-control": "private, max-age=300",
+      etag: `"${payload.sha256}"`,
+    }), payload.stream);
   } catch (error) {
     // The asset row exists but its blob is unreadable (rolled back or storage
     // trouble). Surface as missing rather than a bare 500; the log keeps the
@@ -70,25 +83,6 @@ export async function getReportArtifact(c: AppContext) {
     c.var.logger.warn({ reportId, artifactId, error: (error as Error)?.message }, "report artifact payload unreadable");
     return c.json({ error: "not_found", error_description: "artifact payload unavailable" }, 404);
   }
-  if (!payload) return c.json({ error: "not_found", error_description: "artifact not found" }, 404);
-
-  // Artifact bytes are user-submitted. Only content types a browser cannot
-  // script are served inline (SVG stays out — it can run script); everything
-  // else downloads as an opaque attachment. nosniff plus a deny-all sandbox
-  // CSP keeps even a mislabeled body inert when opened as a document.
-  // Payloads are bounded and already in memory. A single Range gets a 206
-  // with exact lengths (media players probe the start and seek to the MP4
-  // index at the tail), and HEAD returns headers only.
-  const contentType = (payload.contentType || "").split(";")[0].trim().toLowerCase();
-  const inline = INLINE_CONTENT_TYPES.has(contentType);
-  return bufferedRangeResponse(c.req.raw, payload.bytes, new Headers({
-    "content-type": inline ? contentType : "application/octet-stream",
-    "content-disposition": `${inline ? "inline" : "attachment"}; filename="${safeFilename(payload.fileName, artifactId)}"`,
-    "x-content-type-options": "nosniff",
-    "content-security-policy": "default-src 'none'; sandbox",
-    "cache-control": "private, max-age=300",
-    etag: `"${payload.sha256}"`,
-  }));
 }
 
 const INLINE_CONTENT_TYPES = new Set([

@@ -6,11 +6,12 @@
 #
 # Runs in Azure Cloud Shell (Bash) from any browser, or any Bash terminal with
 # Azure CLI and Python 3. It downloads the latest published release, verifies
-# its SHA-256 checksum and unpacks it into ~/mentra-install. It does not sign in
-# to Azure or change anything there.
+# its SHA-256 checksum, unpacks it into ~/mentra-install, then starts guided
+# setup. Run it again to continue an interrupted setup or to upgrade.
 #
 #   MENTRA_VERSION=3.3.0-dev.711   use that exact release instead of the latest
 #   MENTRA_INSTALL_DIR=PATH        use another folder (default ~/mentra-install)
+#   MENTRA_START=0                 only download; print the setup command
 #
 # CI publishes this file with the channel filled in. Everything runs from
 # main() on the last line, so a truncated download executes nothing.
@@ -21,8 +22,16 @@ main() {
     printf 'Python 3 is required. Azure Cloud Shell (Bash) includes it.\n' >&2
     exit 1
   }
+  # Guided setup asks questions, so it starts only when a person is at the terminal.
+  local start="${MENTRA_START:-auto}"
+  if [[ "$start" == auto ]]; then
+    if [[ -t 0 && -t 1 ]]; then start=1; else start=0; fi
+  fi
+  NEXT_FILE="$(mktemp)"
+  trap 'rm -f "${NEXT_FILE:-}"' EXIT
   MENTRA_CHANNEL="${MENTRA_CHANNEL:-__MENTRA_CHANNEL__}" \
     MENTRA_DOWNLOAD_ORIGIN="${MENTRA_DOWNLOAD_ORIGIN:-https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS}" \
+    MENTRA_START="$start" MENTRA_NEXT="$NEXT_FILE" \
     python3 - "$@" <<'PY'
 import hashlib, json, os, re, shutil, stat, sys, tarfile, tempfile, urllib.error, urllib.request
 from pathlib import Path
@@ -147,7 +156,7 @@ def main():
     # Packages before 3.3.0-dev.712 default the state folder to mentra-setup.
     state_dir = next((home / name for name in ('mentra-state', 'mentra-setup') if (home / name / 'state.json').exists()),
                      home / 'mentra-state')
-    active, message = deployment_plan(home, package, state_dir)
+    active, runner, message = deployment_plan(home, package, state_dir)
     if link.exists() and not link.is_symlink():
         print(f'\n{link} already exists and was left unchanged. The new package is in {package}.')
         return
@@ -157,7 +166,19 @@ def main():
         temporary.unlink(missing_ok=True)
         temporary.symlink_to(target)
         temporary.replace(link)
-    print('\n' + message.replace('STATE', f'./{state_dir.name}').replace('HOME', str(home)))
+    if message:
+        print('\n' + message)
+    if not runner:
+        return
+    if active and runner[0] == str(home / 'packages' / active.name / 'mentra-private-cloud/setup.sh'):
+        runner[0] = str(link / 'setup.sh')
+    command = runner + ['--directory', str(state_dir)]
+    if os.environ.get('MENTRA_START') == '1':
+        # The shell starts guided setup once this download step has exited.
+        Path(os.environ['MENTRA_NEXT']).write_text('\n'.join([str(home)] + command) + '\n')
+    else:
+        relative = ' '.join(c.replace(str(home) + '/', './') for c in command)
+        print(f'\nNext, run:\n\n  cd {home}\n  {relative}')
 
 
 def release_hash(package):
@@ -172,64 +193,56 @@ def order(version):
     return tuple(int(x) for x in base.split('.')) + ((0, parts) if suffix else (1, ()))
 
 
-def ready(version, command):
-    return f'''Mentra Private Cloud {version} is ready in HOME.
-Next, run:
-
-  cd HOME
-  ./mentra-private-cloud/setup.sh {command} --directory STATE'''
-
-
 def deployment_plan(home, package, state_dir):
     """Mirror the installer's rule that saved state belongs to one release.
 
-    Returns the package the link must point at (None leaves it alone) and
-    what to tell the operator about the newly downloaded package.
+    Returns the package the link must point at (None leaves it alone), the
+    setup command to run next (None for nothing) and a message for the operator.
     """
+    def setup(p):
+        return [str(home / 'packages' / p.name / 'mentra-private-cloud/setup.sh')]
     if not (state_dir / 'state.json').exists():
-        return package, ready(package.name, 'init')
+        return package, setup(package), f'Mentra Private Cloud {package.name} is ready in {home}.'
     try:
         state = json.loads((state_dir / 'state.json').read_text())
         pending = json.loads((state_dir / 'upgrade.pending.json').read_text()) \
             if (state_dir / 'upgrade.pending.json').exists() else {}
     except (OSError, ValueError):
-        return None, f'Cannot read {state_dir}; the active package was left unchanged.'
+        return None, None, f'Cannot read {state_dir}; the active package was left unchanged.'
     # The only package that can operate this state, including a pending upgrade's target.
     required = pending.get('targetReleaseHash') or state.get('releaseHash')
-    current = next((p for p in sorted((home / 'packages').iterdir()) if release_hash(p) == required), None)
+    # Only finished downloads; a killed one leaves a hidden staging folder behind.
+    packages = sorted(p for p in (home / 'packages').iterdir() if p.is_dir() and VERSION.fullmatch(p.name))
+    current = next((p for p in packages if release_hash(p) == required), None)
+    try:
+        config = json.loads((state_dir / 'deployment.config.json').read_text())
+    except (OSError, ValueError):
+        config = {}
     if current is None:
-        return None, (f'The package for the deployment in {state_dir} is not in {home / "packages"}, '
-                      'so the active package was left unchanged.')
-    upgrading = bool(pending) or state.get('phase') == 'upgrade_ready'
-    settled = state.get('phase') == 'infrastructure_verified' and not pending
-    if current == package:
-        return current, ready(current.name, 'status' if settled else 'resume')
-    newer = order(package.name) > order(current.name)
-    if upgrading:
-        return current, (f'An upgrade to {current.name} is in progress; mentra-private-cloud now points at it.\n'
-                         f'Finish it with `./mentra-private-cloud/setup.sh resume --directory STATE`, then `verify`.'
-                         + (f'\nRerun this command afterwards to upgrade to {package.name}.' if newer else ''))
-    if not newer:
-        return current, (f'The deployment in {state_dir} already runs {current.name}, which is not older than '
-                         f'{package.name}. Nothing was changed; downgrades are not supported.')
-    if not settled:
-        return current, (f'Setup in {state_dir} is still in progress with {current.name} (step: {state.get("phase")}).\n'
-                         f'Finish it with the current package, which stays active. Upgrading to {package.name} works once\n'
-                         '`verify` succeeds: then rerun this command for the exact upgrade commands.')
-    upgrade_target = f'packages/{package.name}/mentra-private-cloud'
-    return current, f'''A deployment in {state_dir} runs {current.name}, which stays active.
-To upgrade it to {package.name}, first back up as described under "Upgrades" in the IT guide, then run:
-
-  cd HOME
-  ./{upgrade_target}/setup.sh upgrade --directory STATE --previous-package ./packages/{current.name}/mentra-private-cloud --backup-confirmed
-  ln -sfn {upgrade_target} mentra-private-cloud
-  ./mentra-private-cloud/setup.sh resume --directory STATE
-  ./mentra-private-cloud/setup.sh verify --directory STATE
-
-If the session disconnects after `upgrade`, rerun the install command; it finishes switching packages.'''
+        tag = config.get('releaseTag', '')
+        return None, None, (f'The package this deployment runs ({tag or "unknown"}) is not in {home / "packages"}. '
+                            + (f'Get it with: MENTRA_VERSION={tag} bash mentra-install.sh' if VERSION.fullmatch(tag) else
+                               'The active package was left unchanged.'))
+    if current == package or order(package.name) <= order(current.name):
+        return current, setup(current), None
+    # Mirrors setup's upgradable_phase: verified, or deployed but failing verification.
+    deployed = state.get('phase') == 'deployed' and (not config.get('workspaceHostname') or state.get('domainVerified'))
+    if (state.get('phase') == 'infrastructure_verified' or deployed) and not pending:
+        # Guided setup in the new package previews the upgrade and asks before changing anything.
+        return current, setup(package), (f'Upgrade available: {current.name} -> {package.name}. '
+                                                       'Your deployment keeps running until you confirm.')
+    return current, setup(current), (f'Setup with {current.name} is not finished yet; it continues now. '
+                                     f'Run this command again afterwards to upgrade to {package.name}.')
 
 main()
 PY
+  if [[ -s "$NEXT_FILE" ]]; then
+    local lines=() line
+    while IFS= read -r line; do lines+=("$line"); done < "$NEXT_FILE"
+    rm -f "$NEXT_FILE"
+    cd "${lines[0]}"
+    exec "${lines[@]:1}"
+  fi
 }
 
 main "$@"

@@ -90,6 +90,15 @@ public class AsgConstants {
     /** Canonical network interface used by the Mentra Live WiFi hotspot. */
     public static final String MENTRA_LIVE_HOTSPOT_INTERFACE = "ap0";
 
+    /** SystemUI receiver that owns the K900 vendor hotspot across ASG process restarts. */
+    public static final String K900_SYSTEM_UI_RECEIVER = "com.android.systemui.CTReceiver";
+
+    /** Android's hidden FLAG_RECEIVER_INCLUDE_BACKGROUND for privileged SystemUI commands. */
+    public static final int K900_INCLUDE_BACKGROUND_RECEIVERS = 0x00400000;
+
+    /** Native WifiManager AP state after Android has stopped the access point. */
+    public static final int WIFI_AP_STATE_DISABLED = 11;
+
     /** SmartXY setting containing the Mentra Live hotspot SSID. */
     public static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
 
@@ -394,6 +403,14 @@ public class AsgConstants {
 
     /** Allowed parent prefix for owned shared-provider BES staging directories. */
     public static final String DEBUG_BES_OTA_STAGING_PREFIX = "/data/local/tmp/mentra-live-";
+
+    /** Bounded inline manifest for one privileged MTK restoration request. */
+    public static final String DEBUG_MTK_OTA_MANIFEST_EXTRA = "manifest_json";
+    public static final String DEBUG_MTK_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
+    public static final int DEBUG_MTK_OTA_MANIFEST_MAX_BYTES = 64 * 1024;
+    /** Inline A/B metadata inspection uses fixed memory and entry bounds. */
+    public static final int MTK_OTA_MAX_ZIP_ENTRIES = 128;
+    public static final int MTK_OTA_MAX_PAYLOAD_MANIFEST_BYTES = 4 * 1024 * 1024;
 
     /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
     public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =

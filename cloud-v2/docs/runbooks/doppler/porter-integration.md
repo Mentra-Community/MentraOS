@@ -13,21 +13,39 @@ Always specify project 15081 and the intended cluster: 5690 (legacy east), 5692 
 
 ## Cloud configuration
 
-| Porter app                                            | Doppler config in `cloud-v2` | Direct group                 |
-| ----------------------------------------------------- | ---------------------------- | ---------------------------- |
-| cloud-dev, legacy cloud-v2 west                       | dev_aws                      | cloud-v2-dev-doppler         |
-| cloud-prod                                            | prod                         | cloud-v2-prod-doppler-sync   |
-| cloud-staging                                         | staging                      | cloud-v2-staging-doppler     |
-| cloud-debug                                           | dev_debug                    | cloud-v2-debug-doppler       |
-| cloud-isaiah                                          | dev_isaiah                   | cloud-v2-isaiah-doppler      |
-| legacy cloud-v2 east (retired; zero replicas)         | legacy_east                  | cloud-v2-legacy-east-doppler |
-| Miniapp Store (historical app name miniapp-store-dev) | store_prod                   | miniapp-store-prod-doppler   |
+| Porter app                                            | Doppler config in `cloud-v2` | Direct group                  |
+| ----------------------------------------------------- | ---------------------------- | ----------------------------- |
+| cloud-dev, legacy cloud-v2 west                       | dev_aws                      | cloud-v2-dev-doppler          |
+| cloud-prod                                            | prod                         | cloud-v2-prod-doppler-sync    |
+| cloud-staging                                         | staging                      | cloud-v2-staging-doppler      |
+| cloud-debug                                           | dev_debug                    | cloud-v2-debug-doppler        |
+| cloud-isaiah                                          | dev_isaiah                   | cloud-v2-isaiah-doppler       |
+| legacy cloud-v2 east (retired; zero replicas)         | legacy_east                  | cloud-v2-legacy-east-doppler  |
+| Miniapp Store (historical app name miniapp-store-dev) | store_prod                   | miniapp-store-prod-doppler    |
+| Staging Store (miniapp-store-staging)                 | store_staging                | miniapp-store-staging-doppler |
+| Development Store (miniapp-store-development)         | store_dev                    | miniapp-store-dev-doppler     |
 
-Store is production despite its historical `dev` resource names. Its isolated Doppler environment preserves its existing production database, storage, auth, and URLs. Do not copy the main cloud config into it. Legacy east has different regional/database/auth settings. Its application services were retired at the owner’s request: both have zero replicas, and their existing settings and image are preserved with the native Doppler group attached. The separate database infrastructure was preserved. Repair its invalid Mongo/Redis settings before any restart; configuration ownership is still monitored while the app is stopped. The contract also documents the unused, failing `peg-merge-prod-doppler` AWS resources, whose deletion requires a Porter administrator.
+Store is production despite its historical `dev` resource names. Its isolated Doppler environment preserves its existing production database, storage, auth, and URLs. The staging and development Stores are separate apps paired with staging and dev Core, with their own `store_staging` and `store_dev` configs in the same `store` environment, and their own databases and buckets. All three Store manifests (production, staging and development, in the private `miniapp-store` repository) link only their group and set no Porter `env`; the Store's deployment checks the group's settings before applying. Do not copy the main cloud config into a Store config. Legacy east has different regional/database/auth settings. Its application services were retired at the owner’s request: both have zero replicas, and their existing settings and image are preserved with the native Doppler group attached. The separate database infrastructure was preserved. Repair its invalid Mongo/Redis settings before any restart; configuration ownership is still monitored while the app is stopped. The contract also documents the unused, failing `peg-merge-prod-doppler` AWS resources, whose deletion requires a Porter administrator.
 
 Enterprise has a separate `mentra-enterprise/prd` project/config. Intentionally shared Merge credentials use Doppler references to `local-merge/prd`, so future shared rotations propagate without duplicating those values. App-specific settings belong to Enterprise.
 
 ## Adding or changing a setting
+
+Use [manage-cloud-env](../../../../.agents/skills/manage-cloud-env/SKILL.md) when a
+feature requires a deployment setting. Check the actual Doppler connection first;
+repair a broken connection or create a Doppler project and native group if missing.
+New projects should have a dedicated inheritable `shared` config from the start,
+even with only one deployment environment. Put suitable provider credentials and
+common settings there; keep database destinations, bucket names, URLs, and values
+that require environment isolation in each child config. Attach Porter to the
+complete child config, not directly to the shared parent.
+
+For existing configurations, use verified working production values as the source
+for shared settings. Attach inheritance before removing child copies, verify all
+resolved values, and preserve a rollback path. Child copies override shared values.
+Inspect all inheritors before editing a shared parent; a parent change can affect
+multiple deployed environments. Follow the authorized rollout sequence and preserve
+production's resolved values during a storage-only migration.
 
 Change the correct Doppler config first. Verify the native group contains the updated value using an in-memory comparison that prints only key names and match status. Never dump `porter env pull`, Doppler JSON, or service tokens into logs. Confirm both SecretStore and ExternalSecret have Ready=True, and ExternalSecret has a recent advancing refresh timestamp. A green historical deploy or an old exported value alone does not prove a working sync.
 

@@ -1,13 +1,16 @@
 import assert from "node:assert/strict"
-import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises"
+import {createHash} from "node:crypto"
+import {mkdtemp, readFile, readdir, rm, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import path from "node:path"
+import {Readable} from "node:stream"
 import test from "node:test"
 
 import {
   artifactKey,
   artifactHeaders,
   artifactUrl,
+  downloadAsset,
   mergeAssets,
   publishR2Artifact,
   readArtifactIndex,
@@ -132,6 +135,114 @@ test("artifact keys preserve release identity and reject traversal/reserved inde
   assert.throws(() => artifactKey(repository, "../v1", "a.apk"))
 })
 
+test("internal R2 recovery streams authoritative bytes when the public CDN is unavailable", async (t) => {
+  const {file, store} = await fixture(t)
+  const chunks = [Buffer.from('{"owner":"coordinated-run:38421666968",'), Buffer.from('"buildNumber":310000543}')]
+  const bytes = Buffer.concat(chunks)
+  const key = artifactKey(repository, release.tag_name, "mentra-build-number-310000543.json")
+  const requests = []
+  store.get = async (actual) => {
+    requests.push(actual)
+    return {
+      Body: Readable.from(chunks),
+      ContentLength: bytes.length,
+      Metadata: {sha256: createHash("sha256").update(bytes).digest("hex")},
+      LastModified: new Date(),
+      ETag: "marker-etag",
+    }
+  }
+  t.mock.method(globalThis, "fetch", () => {
+    throw new Error("Public CDN is unavailable")
+  })
+  await downloadAsset(repository, {id: `r2:${key}`}, file, {store})
+  assert.deepEqual(await readFile(file), bytes)
+  assert.deepEqual(requests, [key])
+  assert.equal(globalThis.fetch.mock.callCount(), 0)
+})
+
+test("internal R2 corruption or missing checksum cannot replace a previously verified file", async (t) => {
+  const {file, store} = await fixture(t)
+  const original = await readFile(file)
+  const key = artifactKey(repository, release.tag_name, "mentra-build-number-310000543.json")
+  const cases = [
+    {ContentLength: 10, Metadata: {sha256: digest}, expected: /size mismatch/},
+    {ContentLength: 3, Metadata: {sha256: digest}, expected: /SHA-256 mismatch/},
+    {ContentLength: 3, Metadata: {}, expected: /invalid checksum/},
+  ]
+  for (const {expected, ...metadata} of cases) {
+    let body
+    store.get = async () => ({...metadata, LastModified: new Date(), Body: (body = Readable.from(["bad"]))})
+    await assert.rejects(downloadAsset(repository, {id: `r2:${key}`}, file, {store}), expected)
+    assert.ok(body.destroyed)
+    assert.deepEqual(await readFile(file), original)
+    assert.deepEqual(await readdir(path.dirname(file)), [path.basename(file)])
+  }
+})
+
+test("internal R2 recovery keeps one deadline across the authenticated request and stream", async (t) => {
+  const {file, store} = await fixture(t)
+  const original = await readFile(file)
+  const controller = new AbortController()
+  t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+    assert.equal(milliseconds, 15 * 60_000)
+    return controller.signal
+  })
+  let body
+  store.get = async (_key, {signal}) => {
+    assert.equal(signal, controller.signal)
+    return {
+      ContentLength: 100,
+      Metadata: {sha256: digest},
+      LastModified: new Date(),
+      Body: (body = new Readable({
+        read() {
+          this.push("partial bytes")
+          controller.abort()
+        },
+      })),
+    }
+  }
+  await assert.rejects(downloadAsset(repository, {id: asset().id}, file, {store}), /aborted/)
+  assert.ok(body.destroyed)
+  assert.deepEqual(await readFile(file), original)
+  assert.deepEqual(await readdir(path.dirname(file)), [path.basename(file)])
+  assert.equal(AbortSignal.timeout.mock.callCount(), 1)
+})
+
+test("internal R2 recovery rejects foreign or malformed IDs before reading and never treats a missing object as success", async (t) => {
+  const {file, store} = await fixture(t)
+  const requests = []
+  store.get = async (key) => {
+    requests.push(key)
+    return null
+  }
+  for (const id of [
+    "r2:Other/Repo/releases/v1/marker.json",
+    `r2:${repository}/releases/v1/../marker.json`,
+    `r2:${repository}/releases/v1/nested/marker.json`,
+    `r2:${repository}/releases/v1/_assets.json`,
+  ]) {
+    await assert.rejects(downloadAsset(repository, {id}, file, {store}), /different repository|Invalid/)
+  }
+  assert.deepEqual(requests, [])
+  const key = artifactKey(repository, release.tag_name, "mentra-build-number-310000543.json")
+  await assert.rejects(downloadAsset(repository, {id: `r2:${key}`}, file, {store}), /is missing/)
+  assert.deepEqual(requests, [key])
+})
+
+test("public download verification still uses the CDN and verifies the recorded bytes", async (t) => {
+  const {file} = await fixture(t)
+  const bytes = Buffer.from("signed public APK")
+  const record = {...asset(), size: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`}
+  t.mock.method(globalThis, "fetch", async (url) => {
+    assert.equal(url, record.url)
+    return new Response(bytes)
+  })
+  await downloadAsset(repository, record, file)
+  assert.deepEqual(await readFile(file), bytes)
+  assert.equal(globalThis.fetch.mock.callCount(), 1)
+})
+
 test("public index fails closed on wrong release, altered download URLs, and duplicate entries", () => {
   const index = {schemaVersion: 1, repository, tag: release.tag_name, assets: [asset()]}
   assert.equal(validateIndex(index, repository, release.tag_name), index)
@@ -221,6 +332,31 @@ test("concurrent publishers preserve both artifact records through conditional i
     index.assets.map((a) => a.name),
     ["one.apk", "two.apk"],
   )
+})
+
+test("exact PR ASG artifacts reject replacement before storage access", async (t) => {
+  const options = await fixture(t)
+  for (const name of ['asg-pr-12-source-digest.apk', 'ota-pr-12-source.json']) {
+    await assert.rejects(publishR2Artifact({...options, release: {...release, tag_name: 'pr-builds'}, name,
+      replace: true}), /cannot be replaced/)
+  }
+  assert.equal(options.store.uploads, 0)
+})
+
+test("concurrent PR manifest publishers cannot replace the first committed different bytes", async (t) => {
+  const options = await fixture(t)
+  const second = path.join(path.dirname(options.file), 'other.json')
+  await writeFile(second, 'different signed APK manifest')
+  const scope = {...options, release: {...release, tag_name: 'pr-builds'}, name: 'ota-pr-12-source.json'}
+  const results = await Promise.allSettled([publishR2Artifact(scope), publishR2Artifact({...scope, file: second})])
+  assert.equal(results.filter(row => row.status === 'fulfilled').length, 1)
+  assert.equal(results.filter(row => row.status === 'rejected').length, 1)
+  const committed = await options.store.head(artifactKey(repository, 'pr-builds', scope.name))
+  const winner = results.find(row => row.status === 'fulfilled').value
+  assert.equal(`sha256:${committed.Metadata.sha256}`, winner.digest)
+  const old = committed.Metadata.sha256
+  await assert.rejects(publishR2Artifact({...scope, file: old === await sha256File(second) ? options.file : second}), /overwrite immutable/)
+  assert.equal((await options.store.head(artifactKey(repository, 'pr-builds', scope.name))).Metadata.sha256, old)
 })
 
 test("an upload-completion response lost after commit reconciles and publishes verified bytes", async (t) => {

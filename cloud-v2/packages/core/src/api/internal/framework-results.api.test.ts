@@ -97,7 +97,7 @@ test("a 2437-asset frozen result publishes unchanged through the authenticated r
     if (stored) throw Object.assign(new Error("duplicate"), {code: 11000});
     stored = {payload, payloadSha256, uploadsComplete: false};
   }, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset(_identity, assetId) {
-    return stored ? {runId: stored.payload.result.runId, asset: stored.payload.assets.find(asset => asset.id === assetId) ?? null} : null;
+    return stored ? {runId: stored.payload.result.runId, asset: stored.payload.assets.find(asset => asset.id === assetId) ?? null, accepted: null} : null;
   }},
     async () => ({
       hostId: "mini",
@@ -113,7 +113,7 @@ test("a 2437-asset frozen result publishes unchanged through the authenticated r
     async () => {},
     async () => ({definition: {steps: [{id: "OTA-04-requested"}]}}) as unknown as RoutineEnrollment,
     undefined,
-    {async list() {return [];}, async complete() {throw Error("Incomplete uploads cannot be acknowledged");}},
+    {async complete(row) {if (!row.uploadsComplete) throw new FrameworkResultConflict("Incomplete uploads cannot be acknowledged");}},
     {async complete() {return undefined;}},
   )
   const token = "synthetic-controller-credential-" + "x".repeat(32);

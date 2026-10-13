@@ -10,23 +10,21 @@ param cloudImage string
 @description('Existing Azure Container Registry created by bootstrap.bicep.')
 param registryName string
 
+@description('Existing Key Vault created by bootstrap.bicep. It holds refresh-token-pepper, the mentra- and miniapp- JWT key pairs, oidc-cookie-keys and oidc-admin-portal-client-secret (Core\'s sign-in server), entra-browser-client-secret (the Core API app\'s client secret, with which Core\'s sign-in server signs people in through Entra) and, when Graph meeting creation is enabled, teams-graph-client-secret-<teamsGraphClientId>.')
+param keyVaultName string
+
 param tenantId string
 param coreApiClientId string
 param mobileClientId string
 
-@secure()
-param refreshTokenPepper string
-@secure()
-param mentraJwtPrivateKey string
-@secure()
-param mentraJwtPublicKey string
-@secure()
-param miniappJwtPrivateKey string
-@secure()
-param miniappJwtPublicKey string
-
 @description('Comma-separated administrator emails for existing Core admin authorization. For an org API key, allowlist api-key@<keyId>.local. This is not a bearer credential.')
 param coreAdminEmails string = ''
+
+@description('Email domains the customer\'s Entra directory issues, each subdomain listed separately: lowercase, no trailing dot, no Mentra domain. Core treats an Entra email as verified only in these domains.')
+param verifiedEmailDomains array = []
+
+@description('Admin portal sign-in with the customer\'s Entra directory, through Core\'s sign-in server on Core\'s host. Requires the Key Vault secrets entra-browser-client-secret (the Core API app\'s client secret), oidc-cookie-keys and oidc-admin-portal-client-secret, granted to Core by access.bicep with the same setting. When false, Core serves the admin portal but its sign-in is not configured.')
+param adminPortalSignIn bool = false
 
 @description('Durable Core attachment storage account. The default is stable for this resource group.')
 param reportStorageAccountName string = 'mentra${uniqueString(subscription().id, resourceGroup().id)}'
@@ -40,9 +38,6 @@ param workspaceCertificateName string = '${runtimeName}-workspace'
 @description('Existing hostname bindings to retain during a migration. Each entry has hostname and certificateName; the managed certificate must already exist in this Container Apps environment.')
 param additionalWorkspaceDomains array = []
 
-@description('Create the AcrPull assignment. Set false for CI after an administrator has bootstrapped it.')
-param manageAcrPullRoleAssignment bool = true
-
 @description('Oldest Mentra App version allowed to use this deployment (SemVer).')
 param clientMinVersion string = '0.0.0'
 
@@ -55,16 +50,16 @@ param environmentName string = 'cae-mentra-enterprise-reference'
 param runtimeName string = 'ca-mentra-enterprise-reference'
 param coreName string = 'ca-mentra-ent-ref-core'
 param mongoAccountName string = take('cosmos-${uniqueString(subscription().id, resourceGroup().id)}', 44)
-param pullIdentityName string = 'id-mentra-enterprise-reference-pull'
+@description('Existing per-app identities created by bootstrap.bicep. Each pulls the image and reads only its own secrets.')
+param coreIdentityName string = 'id-mentra-enterprise-reference-core'
+param runtimeIdentityName string = 'id-mentra-enterprise-reference-runtime'
 param communicationName string = take('mentra-${uniqueString(subscription().id, resourceGroup().id)}', 63)
 @description('ACS data location approved by the customer, for example United States or Europe.')
 param communicationDataLocation string = 'United States'
 @description('Microsoft Graph tenant for meeting creation. Employee organizers must belong to this tenant.')
 param teamsGraphTenantId string = tenantId
-@description('Graph application with OnlineMeetings.ReadWrite.All and a Teams application access policy.')
+@description('Graph application with OnlineMeetings.ReadWrite.All and a Teams application access policy. Its client secret is the Key Vault secret teams-graph-client-secret-<this ID>, so a new app ID and its secret take effect together.')
 param teamsGraphClientId string = ''
-@secure()
-param teamsGraphClientSecret string = ''
 @description('Licensed organizer object ID used when the caller has no eligible Teams identity.')
 param teamsGraphOrganizerId string = ''
 param approvedSystemMiniapps array = ['com.mentra.settings']
@@ -77,6 +72,11 @@ param managedMiniappDirectory string = '/app/cloud-v2/deploy/azure/enterprise-re
 param allowedGlassesModels array = ['mentra-live']
 param telemetryEnabled bool = false
 
+@description('Reference demo only, not offered by the installer: Runtime also runs cloud speech-to-text (Soniox), text-to-speech (ElevenLabs) and glasses photos, with Redis as a sidecar. The Key Vault secrets soniox-api-key and elevenlabs-api-key, and the Runtime identity\'s read access to them, are set up by hand.')
+param cloudSpeechAndPhotos bool = false
+@description('Digest-pinned Redis image in this deployment\'s registry, for cloudSpeechAndPhotos.')
+param redisImage string = ''
+
 @description('Organization privacy-policy URL. Empty serves the image-bundled same-origin document.')
 param privacyPolicyUrl string = ''
 @description('Organization terms URL. Empty serves the image-bundled same-origin document.')
@@ -86,30 +86,25 @@ param supportUrl string = ''
 
 var loginEndpoint = az.environment().authentication.loginEndpoint
 var effectiveClientRecommendedVersion = empty(clientRecommendedVersion) ? clientMinVersion : clientRecommendedVersion
-var acrPullRoleDefinitionId = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions',
-  '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-)
-
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: registryName
 }
 
-resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: pullIdentityName
-  location: location
-  tags: resourceTags
+resource coreIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: coreIdentityName
 }
 
-resource registryPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (manageAcrPullRoleAssignment) {
-  name: guid(registry.id, pullIdentity.id, acrPullRoleDefinitionId)
-  scope: registry
-  properties: {
-    principalId: pullIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: acrPullRoleDefinitionId
-  }
+resource runtimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: runtimeIdentityName
 }
+
+resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
+// Container Apps read the latest version of each secret with their own
+// identity; nothing secret passes through deployment parameters.
+var vaultUri = vault.properties.vaultUri
 
 resource communication 'Microsoft.Communication/communicationServices@2023-04-01' = {
   name: communicationName
@@ -147,6 +142,8 @@ resource mongo 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' = {
       { name: 'DisableRateLimitingResponses' }
     ]
     consistencyPolicy: { defaultConsistencyLevel: 'Session' }
+    // Azure's periodic backup. Continuous backup is not used: on API for MongoDB
+    // accounts it forbids adding unique indexes, which Core creates at startup.
     // Documented tradeoff: Core reaches Cosmos over the authenticated public
     // endpoint because this reference environment has no VNet. Disabling public
     // access requires a VNet-integrated Container Apps environment plus a Cosmos
@@ -216,6 +213,43 @@ var generatedRuntimeHostname = '${runtimeName}.${environment.properties.defaultD
 var generatedCoreHostname = '${coreName}.${environment.properties.defaultDomain}'
 var workspaceOrigin = 'https://${empty(workspaceHostname) ? generatedRuntimeHostname : workspaceHostname}'
 var coreOrigin = 'https://${generatedCoreHostname}'
+// The workforce directory. The Mentra App signs in through the Mobile client;
+// the admin portal, served by Core on its own host, signs in through the Core
+// API app itself, so both tokens carry the same audience and the same oid.
+var oidcProviders = [
+  union({
+    id: 'workforce'
+    protocol: 'oidc'
+    providerKind: 'microsoft-entra'
+    tenantId: deploymentId
+    issuer: '${loginEndpoint}${tenantId}/v2.0'
+    jwksUrl: '${loginEndpoint}${tenantId}/discovery/v2.0/keys'
+    audience: coreApiClientId
+    subjectClaim: 'oid'
+    directoryTenantClaim: 'tid'
+    expectedDirectoryTenantId: tenantId
+    requiredScopes: ['mentra.session']
+    allowedClientIds: [mobileClientId]
+    verifiedEmailDomains: verifiedEmailDomains
+  }, adminPortalSignIn ? {
+    browser: {
+      clientId: coreApiClientId
+      clientSecretEnv: 'ENTRA_BROWSER_CLIENT_SECRET'
+      scopes: ['openid', 'email', 'profile']
+      emailClaim: 'email'
+      displayName: displayName
+    }
+  } : {})
+]
+// The admin portal is the one client of Core's sign-in server on a Private Cloud.
+var oidcClients = [
+  {
+    clientId: 'admin-portal'
+    kind: 'admin_portal'
+    secretEnv: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET'
+    redirectUris: ['${coreOrigin}/api/admin/auth/callback']
+  }
+]
 var mongoConnectionString = replace(mongo.listConnectionStrings().connectionStrings[0].connectionString, '/?', '/mentra-private?')
 var resolvedManagedMiniapps = map(managedMiniapps, app => {
       packageName: app.packageName
@@ -270,16 +304,39 @@ var deploymentManifest = {
     configuration: miniappConfiguration
   }
   glasses: { allowedModelsOverride: allowedGlassesModels }
+  // Runtime requires these to match its services: realtime-audio turns on the
+  // realtime session and cloud speech, and camera turns on managed streams.
   features: {
-    runtimeRealtimeSession: false
-    managedStreams: false
+    runtimeRealtimeSession: cloudSpeechAndPhotos
+    managedStreams: cloudSpeechAndPhotos
     nativeMeetings: true
-    cloudSpeech: false
+    cloudSpeech: cloudSpeechAndPhotos
     onDeviceSpeech: false
     navigation: false
   }
   telemetry: telemetryEnabled
 }
+
+var speechAndPhotosEnv = cloudSpeechAndPhotos ? [
+  { name: 'SONIOX_API_KEY', secretRef: 'soniox-api-key' }
+  { name: 'ELEVENLABS_API_KEY', secretRef: 'elevenlabs-api-key' }
+  { name: 'AUDIO_PROVIDER', value: 'soniox' }
+  // Photos are stored on the replica and served from /api/camera/blob.
+  { name: 'STORAGE_PROVIDER', value: 'local' }
+  { name: 'REDIS_URL', value: 'redis://127.0.0.1:6379' }
+  // Container Apps ingress carries no UDP, so the phone streams audio over the realtime WebSocket.
+  { name: 'AUDIO_UDP_AUTO_DETECT_LAN', value: 'false' }
+  { name: 'AUDIO_WORKERS', value: '1' }
+] : []
+var redisSidecar = cloudSpeechAndPhotos ? [
+  {
+    name: 'redis'
+    image: redisImage
+    // Sessions, audio and pending photos are transient; a failed snapshot must not stop writes.
+    args: ['--appendonly', 'no', '--stop-writes-on-bgsave-error', 'no']
+    resources: { cpu: json('0.25'), memory: '0.5Gi' }
+  }
+] : []
 
 resource core 'Microsoft.App/containerApps@2024-03-01' = {
   name: coreName
@@ -287,7 +344,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
   tags: resourceTags
   identity: {
     type: 'UserAssigned'
-    userAssignedIdentities: { '${pullIdentity.id}': {} }
+    userAssignedIdentities: { '${coreIdentity.id}': {} }
   }
   properties: {
     managedEnvironmentId: environment.id
@@ -302,17 +359,21 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: registry.properties.loginServer
-          identity: pullIdentity.id
+          identity: coreIdentity.id
         }
       ]
-      secrets: [
+      secrets: concat([
         { name: 'mongo-url', value: mongoConnectionString }
-        { name: 'refresh-token-pepper', value: refreshTokenPepper }
-        { name: 'mentra-jwt-private-key', value: mentraJwtPrivateKey }
-        { name: 'mentra-jwt-public-key', value: mentraJwtPublicKey }
-        { name: 'miniapp-jwt-private-key', value: miniappJwtPrivateKey }
-        { name: 'miniapp-jwt-public-key', value: miniappJwtPublicKey }
-      ]
+        { name: 'refresh-token-pepper', keyVaultUrl: '${vaultUri}secrets/refresh-token-pepper', identity: coreIdentity.id }
+        { name: 'mentra-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-private-key', identity: coreIdentity.id }
+        { name: 'mentra-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/mentra-jwt-public-key', identity: coreIdentity.id }
+        { name: 'miniapp-jwt-private-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-private-key', identity: coreIdentity.id }
+        { name: 'miniapp-jwt-public-key', keyVaultUrl: '${vaultUri}secrets/miniapp-jwt-public-key', identity: coreIdentity.id }
+      ], adminPortalSignIn ? [
+        { name: 'entra-browser-client-secret', keyVaultUrl: '${vaultUri}secrets/entra-browser-client-secret', identity: coreIdentity.id }
+        { name: 'oidc-cookie-keys', keyVaultUrl: '${vaultUri}secrets/oidc-cookie-keys', identity: coreIdentity.id }
+        { name: 'oidc-admin-portal-client-secret', keyVaultUrl: '${vaultUri}secrets/oidc-admin-portal-client-secret', identity: coreIdentity.id }
+      ] : [])
     }
     template: {
       containers: [
@@ -320,7 +381,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'core'
           image: cloudImage
           command: ['bun', 'packages/core/src/index.ts']
-          env: [
+          env: concat([
             { name: 'PORT', value: '3000' }
             { name: 'MONGO_URL', secretRef: 'mongo-url' }
             { name: 'REFRESH_TOKEN_PEPPER', secretRef: 'refresh-token-pepper' }
@@ -332,13 +393,22 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'CLOUD_CORE_ADMIN_EMAILS', value: coreAdminEmails }
             { name: 'CLOUD_STORAGE_PROVIDER', value: 'local' }
             { name: 'CLOUD_STORAGE_LOCAL_DIR', value: '/mnt/core-attachments' }
-            {
-              name: 'CLOUD_CORE_OIDC_PROVIDERS'
-              value: '[{"id":"workforce","protocol":"oidc","providerKind":"microsoft-entra","tenantId":"${deploymentId}","issuer":"${loginEndpoint}${tenantId}/v2.0","jwksUrl":"${loginEndpoint}${tenantId}/discovery/v2.0/keys","audience":"${coreApiClientId}","subjectClaim":"oid","directoryTenantClaim":"tid","expectedDirectoryTenantId":"${tenantId}","requiredScopes":["mentra.session"],"allowedClientIds":["${mobileClientId}"]}]'
-            }
+            { name: 'CLOUD_CORE_OIDC_PROVIDERS', value: string(oidcProviders) }
+            // The admin portal is the image's built portal, served by Core on
+            // Core's host, and signs in through Core's sign-in server there.
+            { name: 'CLOUD_CORE_ADMIN_PORTAL_URL', value: coreOrigin }
+            { name: 'CLOUD_CORE_ADMIN_STATIC_DIR', value: '/app/admin-dist' }
             { name: 'LOG_STDOUT_JSON', value: 'true' }
             { name: 'SERVICE_NAME', value: 'core-enterprise-reference' }
-          ]
+          ], adminPortalSignIn ? [
+            // Core's sign-in server, on Core's host; Entra returns people to
+            // <core>/interaction/callback/workforce.
+            { name: 'ENTRA_BROWSER_CLIENT_SECRET', secretRef: 'entra-browser-client-secret' }
+            { name: 'CLOUD_CORE_OIDC_ISSUER', value: coreOrigin }
+            { name: 'CLOUD_CORE_OIDC_COOKIE_KEYS', secretRef: 'oidc-cookie-keys' }
+            { name: 'CLOUD_CORE_OIDC_CLIENTS', value: string(oidcClients) }
+            { name: 'CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET', secretRef: 'oidc-admin-portal-client-secret' }
+          ] : [])
           resources: { cpu: json('0.5'), memory: '1Gi' }
           volumeMounts: [{ volumeName: 'core-attachments', mountPath: '/mnt/core-attachments' }]
           probes: [
@@ -352,7 +422,6 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
       volumes: [{ name: 'core-attachments', storageType: 'AzureFile', storageName: reportMount.name }]
     }
   }
-  dependsOn: [registryPull]
 }
 
 var additionalWorkspaceBindings = [for domain in additionalWorkspaceDomains: {
@@ -368,7 +437,7 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
   tags: resourceTags
   identity: {
     type: 'UserAssigned'
-    userAssignedIdentities: { '${pullIdentity.id}': {} }
+    userAssignedIdentities: { '${runtimeIdentity.id}': {} }
   }
   properties: {
     managedEnvironmentId: environment.id
@@ -392,22 +461,27 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: registry.properties.loginServer
-          identity: pullIdentity.id
+          identity: runtimeIdentity.id
         }
       ]
       secrets: concat([
         { name: 'acs-connection-string', value: communication.listKeys().primaryConnectionString }
-      ], empty(teamsGraphClientSecret) ? [] : [{ name: 'teams-graph-client-secret', value: teamsGraphClientSecret }])
+      ], empty(teamsGraphClientId) ? [] : [
+        { name: 'teams-graph-client-secret', keyVaultUrl: '${vaultUri}secrets/teams-graph-client-secret-${teamsGraphClientId}', identity: runtimeIdentity.id }
+      ], cloudSpeechAndPhotos ? [
+        { name: 'soniox-api-key', keyVaultUrl: '${vaultUri}secrets/soniox-api-key', identity: runtimeIdentity.id }
+        { name: 'elevenlabs-api-key', keyVaultUrl: '${vaultUri}secrets/elevenlabs-api-key', identity: runtimeIdentity.id }
+      ] : [])
     }
     template: {
-      containers: [
+      containers: concat([
         {
           name: 'runtime'
           image: cloudImage
           command: ['bun', 'packages/runtime/src/index.ts']
-          env: [
+          env: concat([
             { name: 'PORT', value: '3001' }
-            { name: 'RUNTIME_SERVICES', value: 'meetings' }
+            { name: 'RUNTIME_SERVICES', value: cloudSpeechAndPhotos ? 'meetings,realtime-audio,tts,camera' : 'meetings' }
             { name: 'MEETING_PROVIDERS', value: 'acs-teams' }
             { name: 'CLOUD_CLIENT_MIN_VERSION', value: clientMinVersion }
             { name: 'CLOUD_CLIENT_RECOMMENDED_VERSION', value: effectiveClientRecommendedVersion }
@@ -441,21 +515,21 @@ resource runtime 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'TEAMS_GRAPH_TENANT_ID', value: teamsGraphTenantId }
             { name: 'TEAMS_GRAPH_CLIENT_ID', value: teamsGraphClientId }
             { name: 'TEAMS_GRAPH_ORGANIZER_ID', value: teamsGraphOrganizerId }
-            union({ name: 'TEAMS_GRAPH_CLIENT_SECRET' }, empty(teamsGraphClientSecret) ? { value: '' } : { secretRef: 'teams-graph-client-secret' })
+            union({ name: 'TEAMS_GRAPH_CLIENT_SECRET' }, empty(teamsGraphClientId) ? { value: '' } : { secretRef: 'teams-graph-client-secret' })
             { name: 'LOG_STDOUT_JSON', value: 'true' }
             { name: 'SERVICE_NAME', value: 'runtime-enterprise-reference' }
-          ]
-          resources: { cpu: json('0.5'), memory: '1Gi' }
+          ], speechAndPhotosEnv)
+          // With the Redis sidecar the app totals 1 CPU and 2 GiB, a valid Container Apps size.
+          resources: cloudSpeechAndPhotos ? { cpu: json('0.75'), memory: '1.5Gi' } : { cpu: json('0.5'), memory: '1Gi' }
           probes: [
             { type: 'Liveness', httpGet: { path: '/healthz', port: 3001 }, initialDelaySeconds: 10, periodSeconds: 10 }
             { type: 'Readiness', httpGet: { path: '/ready', port: 3001 }, initialDelaySeconds: 5, periodSeconds: 5 }
           ]
         }
-      ]
+      ], redisSidecar)
       scale: { minReplicas: 1, maxReplicas: 1 }
     }
   }
-  dependsOn: [registryPull]
 }
 
 output workspaceOrigin string = workspaceOrigin
@@ -465,3 +539,4 @@ output generatedCoreHostname string = generatedCoreHostname
 output customDomainVerificationId string = environment.properties.customDomainConfiguration.customDomainVerificationId
 output communicationResourceId string = communication.id
 output registryLoginServer string = registry.properties.loginServer
+output keyVaultName string = vault.name

@@ -57,13 +57,25 @@ while accepted work depends on them; this skill does not perform deployment.
 Keep one small durable ledger in existing task state: routine/run, failing
 phase/step, original error and evidence links, exact provenance, classification,
 causal group and supporting evidence, existing fix/job, PR/head/review, next action
-and verification result. Fetch the first useful framework result and setup/teardown
-journal before expanding into screenshots, recordings or command logs.
+and verification result. Read the framework result and setup/teardown journal,
+the failure screenshot or recording, and the incident's relevant phone, glasses,
+firmware and cloud logs. Accessibility trees complement the screen; they do not
+replace it. Record missing evidence explicitly. For a permission or preflight stall,
+first inspect both app and full-desktop failure captures using
+[investigate-routine-failure's permission guidance](../investigate-routine-failure/SKILL.md#inspect-permission-stalls-before-another-attempt).
+Name an observed human-only dialog and its machine/action immediately; a passing
+automation doctor does not establish Mentra App permission readiness.
 
-Classify app, harness, machine/fixture state or unknown on evidence. Compare the
+Classify app, routine, framework, machine/fixture state or unknown on evidence. Compare the
 failing source with current source before fixing it. Reuse the relevant diagnosis
 mechanics in `fix-routine-failure`; this suite's completion boundary takes
 precedence over that skill's deployment/rerun loop.
+
+Inspect each original's canonical follow-up and existing intended fixing PRs
+before creating another owner or repair. Use `fix-routine-failure`'s authenticated
+revision-fenced facade for durable diagnosis; keep this task ledger as a small
+progress receipt, not a competing cause/claim store. Original → latest result
+comparisons do not replace recorded classification or verification provenance.
 
 Group failures when evidence demonstrates the same cause in a shared provider or
 action at compatible source/build and triggering conditions. Matching wording
@@ -88,8 +100,13 @@ or repair in orchestration. Follow repository guidance and proven actions;
 avoid new compatibility paths, runners or arbitrary sleeps.
 
 Run meaningful source checks, open a focused PR with diagnosis and validation,
-and use `select-pr-routines` for applicable coverage (`bug:app`/`bug:harness` and
-relevant routine labels). Documentation-only changes need no device coverage.
+and use `select-pr-routines` for applicable coverage. Label product app fixes
+`bug:app`, wrong routine actions/expectations/fixtures `bug:routine`, and shared
+execution/orchestration/recording/infrastructure `bug:framework`; use multiple
+labels only for multiple corrected components, never `bug:harness`. A routine's
+Super Mode transition expectation is routine behavior; shared Mac scan-row reveal
+is framework behavior. Add relevant routine coverage labels separately.
+Documentation-only changes need no device coverage.
 Use the canonical independent `codex-pr-review` skill and its existing launcher
 on every opened or updated PR. Read its verdict and all relevant requested
 changes; address real findings, explain evidence-backed disagreements, and rerun
@@ -104,13 +121,33 @@ logs and recordings out of public PRs/comments.
 
 ## Choose useful verification
 
-Use the smallest verification that can distinguish the cause. Strong causal
-source evidence may need focused regression checks and ordinary targeted replay;
-source-only fixes do not need an authoring session. When device inspection or
-action iteration is genuinely necessary, reuse a compatible built-in
-`routine-work` create/edit job or submit one for a representative routine with
-the group's evidence and needed observation. Follow
-[authoring operations](references/operations.md#built-in-authoring).
+First assess whether the evidence supports a one-shot fix: the cause is clear, the
+change is small, and focused checks plus a targeted run can verify it. If so,
+implement it and run that verification. A failed attempt or uncertain cause calls
+for live investigation rather than repeated full-suite replays.
+
+Otherwise reserve a compatible lane through the built-in authoring system and
+fix it there. Reuse a compatible `routine-work` create/edit job, or submit one for
+a representative routine with the group's evidence. Follow
+[authoring operations](references/operations.md#built-in-authoring). Request the
+reservation while preparing the investigation; the controller grants it when the
+current owner returns. Keep other lanes and suite members running independently.
+
+Open the app, inspect its screenshot and accessibility tree, and reproduce the
+failing action from the held session's current state. Inspect the actual permission,
+Bluetooth or network sheet instead of guessing from command traces. Use individual
+setup actions, saved product steps and teardown actions to isolate the cause. Keep
+the passing prefix when it is still valid; repeat setup only when the changed
+component or device state requires it.
+
+MentraOS may be built and installed directly on the reserved machine for this
+iteration. Use its existing clone and build/install tools; keep source changes in
+an isolated worktree. CI publication and framework deployment are not prerequisites
+for each app debugging attempt. Record the local source revision and build identity,
+and distinguish local diagnostic results from an original-artifact replay or final
+PR qualification. Do not replace an app or framework used by another accepted job.
+Use the existing authoring lifecycle to restart a changed native app or shared
+component when necessary; keep the reservation's custody and return it normally.
 
 Each job names one routine and target. Distinct unresolved device work or
 incompatible platform/source/build targeting can require separate jobs. The
@@ -133,9 +170,28 @@ Read latest attempts first and adopt accepted equivalent work. Retain stable rer
 IDs and preview digests across uncertain transport retries. For an unaccepted
 preview that has definitively expired, create a new ID and preview; accepted
 submissions always reconcile their existing identity. A deliberate next
-attempt gets a new ID and terminal predecessor. Never repeat passing long tests
-merely to verify a shared fix. See the linked API in operations.
+attempt gets a new ID and terminal predecessor. See the linked API in operations.
 A new failure returns to diagnosis, not an automatic full-suite retry loop.
+
+### Apply the requested verification policy
+
+Use the task's current verification policy, including later user overrides. Local
+debugging iterations do not need the final verification sequence before continuing.
+When a manual reliability campaign requests three consecutive passing linked
+reruns, require them for each failed routine covered by a fix before a fresh suite.
+Keep the selected app artifacts, routine definitions and installed framework
+revision unchanged across that sequence. Start the next attempt only after its
+predecessor has finished setup, test and teardown with required evidence published.
+Only distinct successful executions count; retries of the same submission or
+publication do not. Any failure or change to the selected versions resets the
+count and returns to diagnosis or verification of the new fix.
+
+Record each attempt's ID, result link, selected versions and current count in the
+existing ledger. Compatible routines can verify in parallel, but a shared cause
+still needs three passes per failed routine; a representative's passes do not
+qualify other members. Unaffected routines need no extra reruns. These manual
+verification passes leave original outcomes unchanged and do not count toward a
+streak of actual scheduled 4 a.m. nightly passes.
 
 ## Continue efficiently through long waits
 
@@ -158,7 +214,8 @@ bounded waiting while preserving work; do not introduce a queue/timer framework.
 ## Report merged fixes and honest limits
 
 Finish when each observed failure has a targeted verification result for its
-approved merged fix or equivalent, an evidence-backed machine/fixture conclusion,
+approved merged fix or equivalent under the task's verification policy,
+an evidence-backed machine/fixture conclusion,
 or an explicitly unavailable deployment/access prerequisite with next action and
 owner. A source fix with available verification is not completion; dispatch it
 and consume its result. Do not hide an

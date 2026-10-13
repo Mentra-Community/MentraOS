@@ -18,6 +18,7 @@ import {SETTINGS, useSettingsStore} from "../../stores/settings"
 import {PhotoInfo, CaptureGroup} from "../../types/asg"
 import GlobalEventEmitter from "../../utils/GlobalEventEmitter"
 import {BgTimer} from "../../utils/timers"
+import {acquireGlassesHotspot} from "../GlassesHotspotLease"
 import {fixGlassesClockIfSkewed} from "../glassesClockSync"
 import {detectClockSkew, isSyncManifestEmpty} from "../gallerySyncClock"
 import {MediaLibraryPermissions} from "../../utils/permissions/MediaLibraryPermissions"
@@ -128,6 +129,13 @@ const TIMING = {
   LOCATION_SERVICES_CHECK_TIMEOUT_MS: 5000,
 } as const
 
+function assertSyncNotAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  const error = new Error("Gallery sync aborted")
+  error.name = "AbortError"
+  throw error
+}
+
 type SyncManifestData = {
   api_version?: number
   client_id: string
@@ -140,11 +148,15 @@ type SyncManifestData = {
 }
 
 class GallerySyncService {
+  private readonly networkOwner = Symbol("gallery-sync")
+  private releaseHotspot: (() => void) | null = null
+  private hotspotEnablePromise: Promise<unknown> | null = null
   private static instance: GallerySyncService
   private hotspotListenerRegistered = false
   private hotspotConnectionTimeout: number | null = null
   private hotspotRequestTimeout: number | null = null
   private abortController: AbortController | null = null
+  private hotspotOwner: string | null = null
   private isInitialized = false
   private glassesStoreUnsubscribe: (() => void) | null = null
   private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null
@@ -155,6 +167,9 @@ class GallerySyncService {
   private lastFullSyncRetryKey: string | null = null
   private wifiSettingsOpenedAt: number | null = null // Timestamp when user was sent to WiFi settings
   private syncStartPromise: Promise<void> | null = null
+  private cleanupPromise: Promise<void> | null = null
+  private cancellationPromise: Promise<void> | null = null
+  private hotspotClosePromise: Promise<Error | null> | null = null
   private startAborted = false
   // Authoritative answer to "can this run read the phone's WiFi SSID?", captured from the
   // Location permission gate in pre-flight. Every SSID comparison below is advisory only:
@@ -207,8 +222,34 @@ class GallerySyncService {
   /**
    * Cleanup - remove event listeners
    */
-  cleanup(): void {
-    void localNetworkTransport.disconnect()
+  cleanup(): Promise<void> {
+    if (this.cleanupPromise) return this.cleanupPromise
+    const cleanup = this.performCleanup().finally(() => {
+      if (this.cleanupPromise === cleanup) this.cleanupPromise = null
+    })
+    this.cleanupPromise = cleanup
+    return cleanup
+  }
+
+  private invalidateAttempt(): void {
+    this.syncStartPromise = null
+    this.startAborted = true
+    this.abortController?.abort()
+    this.abortController = null
+    useGallerySyncStore.getState().setSyncStarting(false)
+  }
+
+  private async performCleanup(): Promise<void> {
+    if (this.cancellationPromise) {
+      // Cancellation retains its own failure; teardown still attempts final cleanup.
+      await this.cancellationPromise.catch(() => undefined)
+    }
+    // Engine teardown owns the same Gallery session, including a failed transfer.
+    this.invalidateAttempt()
+    mediaProcessingQueue.abort()
+    // Teardown is terminal for an active attempt. Preserve queue/error evidence,
+    // while letting a later engine session admit a fresh sync.
+    if (this.isSyncing()) useGallerySyncStore.getState().setSyncState("cancelled")
     if (this.hotspotListenerRegistered) {
       GlobalEventEmitter.removeListener("hotspot_status_change", this.handleHotspotStatusChange)
       GlobalEventEmitter.removeListener("hotspot_error", this.handleHotspotError)
@@ -237,14 +278,16 @@ class GallerySyncService {
       this.hotspotRequestTimeout = null
     }
 
-    this.syncStartPromise = null
     useGallerySyncStore.getState().setSyncStarting(false)
     useGallerySyncStore.getState().clearGlassesGalleryStatus()
     this.waitingForWifiRetry = false
     this.wifiSettingsOpenedAt = null
-    this.startAborted = false
+    // Keep the existing pre-flight guard armed until the admitted start resumes.
+    // A permission prompt must not block teardown or later enable the AP.
     this.ssidReadable = true
     this.isInitialized = false
+    const failure = await this.closeHotspot()
+    if (failure) throw failure
     console.log("[GallerySyncService] Cleaned up")
   }
 
@@ -260,7 +303,7 @@ class GallerySyncService {
     // Pre-flight has no sync state yet — abort quietly; runStartSync checks this flag after awaits
     if (this.syncStartPromise && !this.isSyncing()) {
       console.log("[GallerySyncService] Glasses disconnected during pre-flight — aborting start")
-      this.startAborted = true
+      this.invalidateAttempt()
       return
     }
 
@@ -273,10 +316,7 @@ class GallerySyncService {
     store.setSyncError("Glasses disconnected")
 
     // Abort ongoing downloads
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
-    }
+    this.invalidateAttempt()
 
     // Clear timeouts
     if (this.hotspotConnectionTimeout) {
@@ -289,7 +329,12 @@ class GallerySyncService {
     }
 
     gallerySyncNotifications.showSyncError("Glasses disconnected")
-    void localNetworkTransport.disconnect()
+    const cleanup = this.closeHotspot().then((failure) => {
+      if (failure) throw failure
+    })
+    void cleanup.catch((error) => {
+      console.error("[GallerySyncService] Failed to release routing after glasses disconnected:", error)
+    })
   }
 
   /**
@@ -309,6 +354,8 @@ class GallerySyncService {
       return
     }
 
+    const signal = this.abortController?.signal
+    if (signal?.aborted) return
     console.log("[GallerySyncService] App returned to foreground - checking if WiFi is enabled")
 
     const store = useGallerySyncStore.getState()
@@ -342,10 +389,12 @@ class GallerySyncService {
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
           await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), RETRY_DELAY_MS))
+          if (signal?.aborted) return
 
           // NetInfo can remain stale after Android's WiFi settings close. Use
           // the same native source as the normal sync preflight.
           const wifiEnabled = await WifiManager.isEnabled()
+          if (signal?.aborted) return
           console.log(`[GallerySyncService] WiFi check attempt ${attempt}/${MAX_RETRIES}: enabled=${wifiEnabled}`)
 
           if (wifiEnabled) {
@@ -357,11 +406,13 @@ class GallerySyncService {
             return
           }
         } catch (error) {
+          if (signal?.aborted) return
           console.warn(`[GallerySyncService] Failed to check WiFi status on attempt ${attempt}:`, error)
           // Continue to next retry
         }
       }
 
+      if (signal?.aborted) return
       console.log("[GallerySyncService] WiFi not detected after retries - leaving sync available for manual retry")
       this.waitingForWifiRetry = false
       this.wifiSettingsOpenedAt = null
@@ -384,6 +435,8 @@ class GallerySyncService {
    */
   private handleHotspotStatusChange = async (eventData: any): Promise<void> => {
     console.log("[GallerySyncService] Hotspot status changed:", eventData)
+    const signal = this.abortController?.signal
+    if (signal?.aborted) return
 
     const store = useGallerySyncStore.getState()
 
@@ -431,6 +484,7 @@ class GallerySyncService {
     }
 
     this.hotspotConnectionTimeout = BgTimer.setTimeout(() => {
+      if (signal?.aborted) return
       this.hotspotConnectionTimeout = null
       // Pre-flight: abort if Bluetooth disconnected during the wait
       const stillConnected = isGlassesConnected(useGlassesStore.getState().connection)
@@ -442,7 +496,7 @@ class GallerySyncService {
         return
       }
       console.log("[GallerySyncService] ✅ Hotspot broadcast window complete - attempting connection")
-      this.connectToHotspotWifi(hotspotInfo)
+      this.connectToHotspotWifi(hotspotInfo, signal)
     }, TIMING.HOTSPOT_CONNECT_DELAY_MS)
   }
 
@@ -460,6 +514,7 @@ class GallerySyncService {
     }
 
     store.setSyncError(eventData.error_message || "Failed to start hotspot")
+    if (store.syncServiceOpenedHotspot) void this.closeHotspot()
     gallerySyncNotifications.showSyncError("Failed to start hotspot")
   }
 
@@ -467,17 +522,41 @@ class GallerySyncService {
    * Start the sync process
    */
   async startSync(): Promise<void> {
+    while (this.cleanupPromise || this.cancellationPromise || this.hotspotClosePromise) {
+      if (this.cleanupPromise) await this.cleanupPromise
+      if (this.cancellationPromise) await this.cancellationPromise
+      if (this.hotspotClosePromise) {
+        const failure = await this.hotspotClosePromise
+        if (failure) throw failure
+      }
+    }
     if (this.syncStartPromise) {
       console.log("[GallerySyncService] ⚠️ Sync start already in progress, joining existing attempt")
       return this.syncStartPromise
     }
 
+    if (this.isSyncing()) return
+    const previous = this.abortController
+    previous?.abort()
+    const signal = (this.abortController = new AbortController()).signal
     useGallerySyncStore.getState().setSyncStarting(true)
-    this.syncStartPromise = this.runStartSync().finally(() => {
+    const starting = this.admitStartSync(previous !== null, signal).finally(() => {
+      if (this.syncStartPromise !== starting) return
       this.syncStartPromise = null
       useGallerySyncStore.getState().setSyncStarting(false)
     })
-    return this.syncStartPromise
+    this.syncStartPromise = starting
+    return starting
+  }
+
+  private async admitStartSync(replacingAttempt: boolean, signal: AbortSignal): Promise<void> {
+    if (replacingAttempt) {
+      mediaProcessingQueue.abort()
+      const failure = await this.closeHotspot()
+      if (failure) throw failure
+    }
+    if (signal.aborted) return
+    await this.runStartSync(signal)
   }
 
   /**
@@ -532,7 +611,8 @@ class GallerySyncService {
     }
   }
 
-  private shouldAbortPreFlight(): boolean {
+  private shouldAbortPreFlight(signal?: AbortSignal): boolean {
+    if (signal?.aborted) return true
     if (this.startAborted) {
       this.startAborted = false
       return true
@@ -543,7 +623,7 @@ class GallerySyncService {
     return false
   }
 
-  private async runStartSync(): Promise<void> {
+  private async runStartSync(signal: AbortSignal): Promise<void> {
     // Clear stale abort flag — it can persist when a prior pre-flight exited through
     // a non-shouldAbortPreFlight path (e.g. connectivity failed, disk full), which
     // would otherwise cause the next sync attempt to abort spuriously.
@@ -555,6 +635,16 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     const glassesStore = useGlassesStore.getState()
+    if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
+      const ownership = this.hotspotOwnership()
+      if (ownership === "different") {
+        this.hotspotOwner = null
+        store.setSyncServiceOpenedHotspot(false)
+      } else if (ownership === "unknown") {
+        store.setSyncError("Gallery hotspot owner identity is unavailable")
+        return
+      }
+    }
     const glassesConnected = isGlassesConnected(glassesStore.connection)
     const glassesHotspot =
       glassesStore.hotspot.state === "enabled"
@@ -581,7 +671,9 @@ class GallerySyncService {
       return
     }
 
-    if (!(await this.isBluetoothAdapterEnabled())) {
+    const bluetoothEnabled = await this.isBluetoothAdapterEnabled()
+    if (signal?.aborted) return
+    if (!bluetoothEnabled) {
       console.warn("[GallerySyncService] Sync aborted - Bluetooth is disabled")
       store.setSyncError("Bluetooth disabled - enable Bluetooth and try again")
       emitGalleryNotice({code: "bluetooth_off"})
@@ -600,7 +692,7 @@ class GallerySyncService {
     // 1. Notification permission (for background sync progress)
     console.log("[GallerySyncService]   📱 Requesting notification permission...")
     await gallerySyncNotifications.requestPermissions()
-    if (this.shouldAbortPreFlight()) {
+    if (this.shouldAbortPreFlight(signal)) {
       console.log("[GallerySyncService] Pre-flight aborted after notification permission")
       return
     }
@@ -611,9 +703,11 @@ class GallerySyncService {
     // SSID check consult `this.ssidReadable` instead of re-deriving it from a native error.
     console.log("[GallerySyncService]   📍 Checking location permission...")
     const hasLocationPermission = await permissions.check(PermissionFeatures.LOCATION)
+    if (signal.aborted) return
     if (!hasLocationPermission) {
       console.log("[GallerySyncService]   ⚠️ Location permission not granted - requesting...")
       const granted = await permissions.request(PermissionFeatures.LOCATION)
+      if (signal.aborted) return
       this.ssidReadable = granted
       if (!granted) {
         console.warn("[GallerySyncService]   ❌ Location permission denied - skipping all SSID verification")
@@ -625,7 +719,7 @@ class GallerySyncService {
       this.ssidReadable = true
       console.log("[GallerySyncService]   ✅ Location permission already granted")
     }
-    if (this.shouldAbortPreFlight()) {
+    if (this.shouldAbortPreFlight(signal)) {
       console.log("[GallerySyncService] Pre-flight aborted after location permission")
       return
     }
@@ -633,15 +727,17 @@ class GallerySyncService {
     if (Platform.OS === "android") {
       console.log("[GallerySyncService]   📡 Checking local WiFi permission...")
       const hasLocalWifiPermission = await permissions.check(PermissionFeatures.LOCAL_WIFI)
+      if (signal.aborted) return
       if (!hasLocalWifiPermission) {
         const granted = await permissions.request(PermissionFeatures.LOCAL_WIFI)
+        if (signal.aborted) return
         if (!granted) {
           store.setSyncError("Local WiFi permission is required for gallery sync")
           await gallerySyncNotifications.showSyncError("Allow WiFi access to connect to your glasses")
           return
         }
       }
-      if (this.shouldAbortPreFlight()) {
+      if (this.shouldAbortPreFlight(signal)) {
         console.log("[GallerySyncService] Pre-flight aborted after local WiFi permission")
         return
       }
@@ -649,13 +745,16 @@ class GallerySyncService {
 
     // 3. Camera roll permission (if auto-save is enabled)
     const shouldAutoSave = await gallerySettingsService.getAutoSaveToCameraRoll()
+    if (signal?.aborted) return
     console.log(`[GallerySyncService]   📸 Auto-save to camera roll: ${shouldAutoSave}`)
     if (shouldAutoSave) {
       console.log("[GallerySyncService]   📸 Checking camera roll permission...")
       const hasPermission = await MediaLibraryPermissions.checkPermission()
+      if (signal.aborted) return
       if (!hasPermission) {
         console.log("[GallerySyncService]   ⚠️ Camera roll permission not granted - requesting...")
         const granted = await MediaLibraryPermissions.requestPermission()
+        if (signal.aborted) return
         if (!granted) {
           console.warn("[GallerySyncService]   ❌ Camera roll permission denied - auto-save sync cannot continue")
           store.setSyncError("Camera-roll permission required while automatic saving is enabled")
@@ -668,7 +767,7 @@ class GallerySyncService {
         console.log("[GallerySyncService]   ✅ Camera roll permission already granted")
       }
     }
-    if (this.shouldAbortPreFlight()) {
+    if (this.shouldAbortPreFlight(signal)) {
       console.log("[GallerySyncService] Pre-flight aborted after camera roll permission")
       return
     }
@@ -676,6 +775,7 @@ class GallerySyncService {
     // S1: Disk space check — abort early if insufficient space
     try {
       const fsInfo = await RNFS.getFSInfo()
+      if (signal.aborted) return
       const freeSpaceMB = fsInfo.freeSpace / (1024 * 1024)
       console.log(`[GallerySyncService]   💾 Free disk space: ${freeSpaceMB.toFixed(0)} MB`)
       if (fsInfo.freeSpace < 500 * 1024 * 1024) {
@@ -688,13 +788,10 @@ class GallerySyncService {
       console.warn("[GallerySyncService]   ⚠️ Could not check disk space:", fsError)
       // Continue — don't block sync if check fails
     }
-    if (this.shouldAbortPreFlight()) {
+    if (this.shouldAbortPreFlight(signal)) {
       console.log("[GallerySyncService] Pre-flight aborted after disk space check")
       return
     }
-
-    // Reset abort controller
-    this.abortController = new AbortController()
 
     // COOLDOWN CHECK: If user just went to WiFi settings, show a "please wait" message
     // This prevents showing "enable WiFi" alert repeatedly while WiFi is initializing
@@ -727,10 +824,12 @@ class GallerySyncService {
       try {
         // Use WifiManager.isEnabled() for accurate WiFi state (NetInfo can be stale)
         const wifiEnabled = await WifiManager.isEnabled()
+        if (signal.aborted) return
         console.log("[GallerySyncService]   📡 WiFi enabled (WifiManager):", wifiEnabled)
 
         // Also log NetInfo for debugging comparison
         const netState = await NetInfo.fetch()
+        if (signal.aborted) return
         console.log("[GallerySyncService]   📡 WiFi enabled (NetInfo):", netState.isWifiEnabled)
         console.log("[GallerySyncService]   📡 Connected:", netState.isConnected)
         console.log("[GallerySyncService]   📡 Internet reachable:", netState.isInternetReachable)
@@ -748,6 +847,7 @@ class GallerySyncService {
           emitGalleryNotice({
             code: "wifi_off",
             ack: () => {
+              if (signal.aborted) return
               this.waitingForWifiRetry = true
               this.wifiSettingsOpenedAt = Date.now()
             },
@@ -765,7 +865,7 @@ class GallerySyncService {
         console.warn("[GallerySyncService]   ⚠️ Failed to check WiFi status:", error)
         // Continue with sync attempt - don't block if check fails
       }
-      if (this.shouldAbortPreFlight()) {
+      if (this.shouldAbortPreFlight(signal)) {
         console.log("[GallerySyncService] Pre-flight aborted after WiFi check")
         return
       }
@@ -779,6 +879,7 @@ class GallerySyncService {
       console.log("[GallerySyncService]   📍 Checking Location Services status...")
       try {
         const locationServicesEnabled = await this.isLocationServicesEnabled()
+        if (signal.aborted) return
         console.log("[GallerySyncService]   📍 Location Services enabled:", locationServicesEnabled)
 
         if (!locationServicesEnabled) {
@@ -798,7 +899,7 @@ class GallerySyncService {
         console.warn("[GallerySyncService]   ⚠️ Failed to check Location Services status:", error)
         // Continue with sync attempt - don't block if check fails
       }
-      if (this.shouldAbortPreFlight()) {
+      if (this.shouldAbortPreFlight(signal)) {
         console.log("[GallerySyncService] Pre-flight aborted after location services check")
         return
       }
@@ -844,7 +945,7 @@ class GallerySyncService {
       } else {
         try {
           const currentSSID = await WifiManager.getCurrentWifiSSID()
-          if (this.shouldAbortPreFlight()) {
+          if (this.shouldAbortPreFlight(signal)) {
             console.log("[GallerySyncService] Pre-flight aborted after SSID check")
             return
           }
@@ -861,6 +962,7 @@ class GallerySyncService {
             console.log("[GallerySyncService]   ⚠️ Phone not connected to any WiFi network")
           }
         } catch (error) {
+          if (this.shouldAbortPreFlight(signal)) return
           console.warn("[GallerySyncService]   ⚠️ Could not verify current WiFi SSID:", error)
           isAlreadyConnected = false
           // Permission was granted at pre-flight but the read still hit a wall (revoked
@@ -878,6 +980,16 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ➡️ Will request hotspot activation")
     }
 
+    if (this.shouldAbortPreFlight(signal)) return
+
+    // The same reservation protects Gallery, OTA, calls and streams before any
+    // BLE AP mutation or association. A refused start has no network cleanup.
+    try {
+      this.reserveHotspot()
+    } catch (error) {
+      store.setSyncError(error instanceof Error ? error.message : String(error))
+      return
+    }
     // Every fallible pre-flight gate has passed. It is now safe to replace the previous
     // in-memory queue; startFileDownload immediately recovers its durable ledger work.
     mediaProcessingQueue.reset()
@@ -890,7 +1002,7 @@ class GallerySyncService {
       const hotspotInfo: HotspotInfo = currentGlassesHotspot
       store.setHotspotInfo(hotspotInfo)
       store.setSyncState("connecting_wifi")
-      await this.connectToHotspotWifi(hotspotInfo)
+      await this.connectToHotspotWifi(hotspotInfo, signal)
       return
     }
 
@@ -898,28 +1010,40 @@ class GallerySyncService {
       const hotspotInfo: HotspotInfo = currentGlassesHotspot
       store.setHotspotInfo(hotspotInfo)
       store.setSyncState("connecting_wifi")
-      if (localNetworkTransport.supportsScopedConnection() && !localNetworkTransport.isScopedConnectionActive()) {
+      if (
+        CrustModule.isIOSAppOnMac ||
+        (localNetworkTransport.supportsScopedConnection() && !localNetworkTransport.isScopedConnectionActive())
+      ) {
         console.log("[GallerySyncService] 📡 System SSID matches; establishing scoped glasses transport")
-        await this.connectToHotspotWifi(hotspotInfo)
+        await this.connectToHotspotWifi(hotspotInfo, signal)
       } else {
         console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
-        await this.startFileDownload(hotspotInfo)
+        await this.startFileDownload(hotspotInfo, signal)
       }
       return
     }
 
     // Request hotspot
     console.log("[GallerySyncService] 📡 Step 4/6: Requesting hotspot from glasses...")
+    this.hotspotOwner = this.connectedGlassesIdentity()
+    if (!this.hotspotOwner) {
+      store.setSyncError("Connected glasses identity is unavailable")
+      await this.closeHotspot()
+      return
+    }
     store.setRequestingHotspot()
     store.setSyncServiceOpenedHotspot(true)
 
     // Set timeout for hotspot request - if we don't get a response, fail gracefully
     this.hotspotRequestTimeout = BgTimer.setTimeout(() => {
       const currentStore = useGallerySyncStore.getState()
+      if (signal?.aborted) return
       if (currentStore.syncState === "requesting_hotspot") {
         console.error("[GallerySyncService] Hotspot request timed out")
         currentStore.setSyncError("Hotspot request timed out")
-        currentStore.setSyncServiceOpenedHotspot(false)
+        // A missing reply does not prove the requested AP never started. Retain
+        // ownership until the existing stop command confirms its closure.
+        void this.closeHotspot()
         gallerySyncNotifications.showSyncError("Could not start hotspot - please try again")
       }
       this.hotspotRequestTimeout = null
@@ -927,9 +1051,16 @@ class GallerySyncService {
 
     try {
       console.log("[GallerySyncService]   📤 Sending hotspot enable command to glasses...")
-      await BluetoothSdk.setHotspotState(true)
+      const enabling = BluetoothSdk.setHotspotState(true)
+      this.hotspotEnablePromise = enabling
+      try {
+        await enabling
+      } finally {
+        if (this.hotspotEnablePromise === enabling) this.hotspotEnablePromise = null
+      }
       console.log("[GallerySyncService]   ✅ Hotspot enabled by glasses")
     } catch (error) {
+      if (signal?.aborted) return
       // Clear the timeout since we got an immediate error
       if (this.hotspotRequestTimeout) {
         BgTimer.clearTimeout(this.hotspotRequestTimeout!)
@@ -937,7 +1068,7 @@ class GallerySyncService {
       }
       console.error("[GallerySyncService]   ❌ Failed to request hotspot:", error)
       store.setSyncError("Failed to start hotspot")
-      store.setSyncServiceOpenedHotspot(false)
+      await this.closeHotspot()
     }
   }
 
@@ -945,7 +1076,7 @@ class GallerySyncService {
    * Show explanation dialog before WiFi connection (first time only)
    * Returns true if user wants to proceed, false if cancelled
    */
-  private async showWifiJoinExplanation(ssid: string): Promise<boolean> {
+  private async showWifiJoinExplanation(ssid: string, signal?: AbortSignal): Promise<boolean> {
     const settingsStore = useSettingsStore.getState()
     const hasSeenExplanation = settingsStore.getSetting(SETTINGS.gallery_sync_explained.key)
 
@@ -958,6 +1089,10 @@ class GallerySyncService {
 
     return new Promise<boolean>((resolve) => {
       const proceed = () => {
+        if (signal?.aborted) {
+          resolve(false)
+          return
+        }
         // Mark as explained so we don't show again.
         settingsStore.setSetting(SETTINGS.gallery_sync_explained.key, true, false)
         resolve(true)
@@ -981,7 +1116,8 @@ class GallerySyncService {
    * - iOS: Library throws "internal error" before user responds to system dialog
    * - Android: Hotspot needs time to initialize, especially when glasses WiFi was cold
    */
-  private async connectToHotspotWifi(hotspotInfo: HotspotInfo): Promise<void> {
+  private async connectToHotspotWifi(hotspotInfo: HotspotInfo, signal = this.abortController?.signal): Promise<void> {
+    if (signal?.aborted) return
     const store = useGallerySyncStore.getState()
 
     // Pre-flight: do not attempt WiFi connection if Bluetooth already disconnected
@@ -992,8 +1128,16 @@ class GallerySyncService {
       return
     }
 
+    // Direct status/retry entrypoints require the same reservation as startSync.
+    try {
+      this.reserveHotspot()
+    } catch (error) {
+      store.setSyncError(error instanceof Error ? error.message : String(error))
+      return
+    }
     // Show explanation dialog on first sync (user must acknowledge before proceeding)
-    await this.showWifiJoinExplanation(hotspotInfo.ssid)
+    await this.showWifiJoinExplanation(hotspotInfo.ssid, signal)
+    if (signal?.aborted) return
 
     let lastError: any = null
     const wifiConnectStartTime = Date.now()
@@ -1039,9 +1183,8 @@ class GallerySyncService {
         const attemptStartTime = Date.now()
 
         // Check if cancelled
-        if (this.abortController?.signal.aborted) {
+        if (signal?.aborted) {
           console.log("[GallerySyncService] 🛑 Sync was cancelled - aborting WiFi connection")
-          store.setSyncError("Sync cancelled")
           return
         }
 
@@ -1061,10 +1204,15 @@ class GallerySyncService {
           } else {
             try {
               const preConnectSSID = await WifiManager.getCurrentWifiSSID()
+              if (signal?.aborted) return
               console.log(`[GallerySyncService] 📡 Current WiFi SSID: "${preConnectSSID}"`)
 
               // Check if already connected (shouldn't happen, but good to verify)
-              if (!localNetworkTransport.supportsScopedConnection() && preConnectSSID === hotspotInfo.ssid) {
+              if (
+                !CrustModule.isIOSAppOnMac &&
+                !localNetworkTransport.supportsScopedConnection() &&
+                preConnectSSID === hotspotInfo.ssid
+              ) {
                 console.log("[GallerySyncService] ✅ Already connected to target SSID! Proceeding to download.")
                 appStateSubscription.remove()
 
@@ -1075,10 +1223,12 @@ class GallerySyncService {
                 console.log(`[GallerySyncService] ⏱️ Total WiFi phase duration: ${totalWifiDuration}ms`)
                 console.log(`[GallerySyncService] 🚀 Proceeding to file download from ${hotspotInfo.ip}:8089`)
 
-                await this.startFileDownload(hotspotInfo)
+                if (signal?.aborted) return
+                await this.startFileDownload(hotspotInfo, signal)
                 return // Exit function successfully
               }
             } catch (preError: unknown) {
+              if (signal?.aborted) return
               const message = preError instanceof Error ? preError.message : String(preError)
               console.warn(`[GallerySyncService] ⚠️ Could not get current SSID: ${message}`)
               console.warn("[GallerySyncService] ⚠️ Error code:", (preError as {code?: unknown} | null)?.code)
@@ -1098,7 +1248,11 @@ class GallerySyncService {
           appBackgrounded = false // Reset flag for this attempt
           appBackgroundTime = null
 
-          await localNetworkTransport.connect(hotspotInfo.ssid, hotspotInfo.password)
+          if (signal?.aborted) return
+          const joinedAddress = await localNetworkTransport.connect(this.networkOwner, hotspotInfo.ssid, hotspotInfo.password, {
+            gateway: hotspotInfo.ip,
+          })
+          if (signal?.aborted) return
 
           const connectCallDuration = Date.now() - connectCallStartTime
           console.log(`[GallerySyncService] ✅ Glasses-local transport connected successfully`)
@@ -1115,7 +1269,10 @@ class GallerySyncService {
           // The poll below is a second opinion, not the primary gate — never fail on it
           // when the SSID simply cannot be read.
 
-          if (Platform.OS === "ios" && !this.ssidReadable) {
+          if (Platform.OS === "ios" && joinedAddress) {
+            // The shared native owner already verified association, interface and DHCP.
+            console.log("[GallerySyncService] Native hotspot association verified")
+          } else if (Platform.OS === "ios" && !this.ssidReadable) {
             console.log(
               `[GallerySyncService] 🍎 Skipping SSID verification (Location denied) - using glasses connectivity probe`,
             )
@@ -1128,7 +1285,9 @@ class GallerySyncService {
               hotspotInfo.ssid,
               async (pollNumber) => {
                 try {
+                  if (signal?.aborted) return ""
                   const currentSsid = await WifiManager.getCurrentWifiSSID()
+                  if (signal?.aborted) return ""
                   console.log(
                     `[GallerySyncService] 🍎 Verify poll ${pollNumber}/${maxVerifyAttempts}: Current="${currentSsid}", Target="${hotspotInfo.ssid}"`,
                   )
@@ -1139,10 +1298,14 @@ class GallerySyncService {
                   throw error
                 }
               },
-              () => new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500)),
+              () =>
+                signal?.aborted
+                  ? Promise.resolve()
+                  : new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500)),
               maxVerifyAttempts,
             )
 
+            if (signal?.aborted) return
             if (verification.status === "mismatched") {
               console.error(`[GallerySyncService] 🍎 ❌ VERIFICATION FAILED after 15 seconds`)
               console.error(`[GallerySyncService] 🍎 Last seen SSID: "${verification.lastSeenSsid}"`)
@@ -1173,6 +1336,7 @@ class GallerySyncService {
             }
           }
 
+          if (signal?.aborted) return
           const attemptDuration = Date.now() - attemptStartTime
           console.log(`[GallerySyncService] ✅ WiFi connection successful!`)
           console.log(`[GallerySyncService] ⏱️ Total attempt duration: ${attemptDuration}ms`)
@@ -1192,16 +1356,18 @@ class GallerySyncService {
             console.log("[GallerySyncService] 📶 Skipping final SSID check (Location denied)")
           } else {
             try {
-              finalSSID = localNetworkTransport.isScopedConnectionActive()
+              finalSSID = joinedAddress || localNetworkTransport.isScopedConnectionActive()
                 ? hotspotInfo.ssid
                 : await WifiManager.getCurrentWifiSSID()
               console.log(`[GallerySyncService] 📶 Final SSID check before download: "${finalSSID}"`)
             } catch (finalError: unknown) {
+              if (signal?.aborted) return
               const message = finalError instanceof Error ? finalError.message : String(finalError)
               console.warn(`[GallerySyncService] ⚠️ Could not perform final SSID check: ${message}`)
               // Continue anyway - we've done our best to verify
             }
           }
+          if (signal?.aborted) return
           if (Platform.OS === "android") {
             // Some local builds can have stale generated typings for the Bluetooth SDK module.
             ;(BluetoothSdk as any).logCurrentWifiFrequency?.()
@@ -1224,6 +1390,7 @@ class GallerySyncService {
             let networkReady = false
 
             for (let probeNum = 1; probeNum <= maxProbeAttempts; probeNum++) {
+              if (signal?.aborted) return
               // Declared outside the try so the `finally` can always clear it — the fetch
               // rejects on most early probes, and an un-cleared BgTimer is a live native
               // timer (up to 20 per attempt, 100 per sync).
@@ -1241,6 +1408,7 @@ class GallerySyncService {
                   signal: probeController.signal,
                 })
 
+                if (signal?.aborted) return
                 const probeDuration = Date.now() - probeStartTime
                 console.log(
                   `[GallerySyncService] 🍎 Probe ${probeNum} response: HTTP ${probeResponse.status} (${probeDuration}ms)`,
@@ -1254,6 +1422,7 @@ class GallerySyncService {
                   break
                 }
               } catch (probeError: unknown) {
+                if (signal?.aborted) return
                 const errorMsg = probeError instanceof Error ? probeError.message : String(probeError)
                 console.log(
                   `[GallerySyncService] 🍎 Probe ${probeNum} failed: ${errorMsg.substring(0, 50)}${
@@ -1291,10 +1460,13 @@ class GallerySyncService {
           console.log(`[GallerySyncService] 🎯 Attempts used: ${attempt}/${TIMING.IOS_WIFI_MAX_RETRIES}`)
           console.log(`[GallerySyncService] 🚀 Proceeding to file download from ${hotspotInfo.ip}:8089`)
 
-          await this.startFileDownload(hotspotInfo)
+          if (signal?.aborted) return
+          await this.startFileDownload(hotspotInfo, signal)
           return // Success - exit the retry loop
         } catch (error: any) {
+          if (signal?.aborted) return
           lastError = error
+          if (signal?.aborted) return
           const attemptDuration = Date.now() - attemptStartTime
 
           console.error("[GallerySyncService] ❌ ========================================")
@@ -1309,14 +1481,17 @@ class GallerySyncService {
           if (appBackgrounded && appBackgroundTime) {
             console.error(`[GallerySyncService] ❌ Time in background: ${Date.now() - appBackgroundTime}ms`)
           }
-          console.error(`[GallerySyncService] ❌ Native connection error:`, JSON.stringify(localNetworkErrorDetails(error)))
+          console.error(
+            `[GallerySyncService] ❌ Native connection error:`,
+            JSON.stringify(localNetworkErrorDetails(error)),
+          )
 
           // If user explicitly denied, don't retry
           if (error?.code === "userDenied" || error?.message?.includes("cancel")) {
             console.warn("[GallerySyncService] 🚫 User cancelled WiFi connection - aborting")
             appStateSubscription.remove()
             store.setSyncError("WiFi connection cancelled")
-            if (store.syncServiceOpenedHotspot) {
+            if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
               await this.closeHotspot()
             }
             return
@@ -1358,7 +1533,7 @@ class GallerySyncService {
           //         this.waitingForWifiRetry = false
           //         this.wifiSettingsOpenedAt = null
           //         store.setSyncError("WiFi disabled - enable WiFi and try again")
-          //         if (store.syncServiceOpenedHotspot) {
+          //         if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
           //           this.closeHotspot()
           //         }
           //       },
@@ -1370,7 +1545,7 @@ class GallerySyncService {
           //         this.wifiSettingsOpenedAt = Date.now()
           //         await SettingsNavigationUtils.openWifiSettings()
           //         store.setSyncError("Enable WiFi and try sync again")
-          //         if (store.syncServiceOpenedHotspot) {
+          //         if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
           //           await this.closeHotspot()
           //         }
           //       },
@@ -1384,7 +1559,7 @@ class GallerySyncService {
             console.error("[GallerySyncService] 🚫 WiFi was disabled during connection - aborting")
             appStateSubscription.remove()
             store.setSyncError("Could not connect - check WiFi is enabled")
-            if (store.syncServiceOpenedHotspot) {
+            if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
               await this.closeHotspot()
             }
             return
@@ -1394,6 +1569,9 @@ class GallerySyncService {
           // iOS: Gives user time to interact with system dialog
           // Android: Gives hotspot time to fully initialize and start broadcasting
           if (attempt < TIMING.IOS_WIFI_MAX_RETRIES) {
+            // A completed join can outlive a failed health/download probe.
+            // Release its owner before admitting another Mac association.
+            if (CrustModule.isIOSAppOnMac) await localNetworkTransport.disconnect(this.networkOwner)
             const reason =
               Platform.OS === "ios" ? "user may be seeing system dialog" : "hotspot may still be initializing"
             console.log("[GallerySyncService] ----------------------------------------")
@@ -1408,6 +1586,7 @@ class GallerySyncService {
         }
       }
 
+      if (signal?.aborted) return
       // All retries exhausted
       const totalWifiDuration = Date.now() - wifiConnectStartTime
 
@@ -1441,22 +1620,35 @@ class GallerySyncService {
 
       store.setSyncError(userErrorMessage)
 
-      if (store.syncServiceOpenedHotspot) {
+      if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
         await this.closeHotspot()
       }
     } finally {
-      // Release the scoped Android Network on every terminal path. This is idempotent with
-      // closeHotspot(), and intentionally leaves Android 9/iOS legacy routing unchanged.
-      await localNetworkTransport.disconnect()
-      // L2: Guarantee listener cleanup on all exit paths (cancel, success, error, exhaustion)
-      appStateSubscription.remove()
+      try {
+        // Cancellation already owns an aborted attempt's cleanup. Its late
+        // continuation must not release a subsequent Gallery session.
+        if (!signal?.aborted) {
+          const failure = await this.closeHotspot()
+          if (failure) throw failure
+        }
+      } finally {
+        // A failed network release cannot skip listener cleanup.
+        appStateSubscription.remove()
+      }
     }
   }
 
-  private async fetchSyncManifest(clientId: string, lastSyncTime: number): Promise<SyncManifestData> {
+  private async fetchSyncManifest(
+    clientId: string,
+    lastSyncTime: number,
+    signal?: AbortSignal,
+  ): Promise<SyncManifestData> {
+    assertSyncNotAborted(signal)
     const v3 = typeof asgCameraApi.getV3Manifest === "function" ? await asgCameraApi.getV3Manifest() : null
+    assertSyncNotAborted(signal)
     if (v3) {
       const downloadedFiles = await localStorageService.getDownloadedFiles()
+      assertSyncNotAborted(signal)
       await localStorageService.reconcileRemoteCaptures(
         v3.captures.map((capture) => capture.capture_id),
         downloadedFiles,
@@ -1480,6 +1672,7 @@ class GallerySyncService {
     // Old firmware remains on the exact v2 endpoint/schema. Avoid expensive inline thumbnails;
     // video thumbnails are fetched as small side downloads with their primary media.
     const syncResponse = await asgCameraApi.syncWithServer(clientId, lastSyncTime, false)
+    assertSyncNotAborted(signal)
     const data = (syncResponse.data || syncResponse) as SyncManifestData
     if (data.captures) {
       data.captures = data.captures.filter((capture) => !galleryTransferLedger.isLocallyCommitted(capture.capture_id))
@@ -1496,17 +1689,19 @@ class GallerySyncService {
   private async resolveSyncManifest(
     clientId: string,
     lastSyncTime: number,
+    signal?: AbortSignal,
   ): Promise<{syncData: SyncManifestData; usedFullSync: boolean} | null> {
     const store = useGallerySyncStore.getState()
-    let syncData = await this.fetchSyncManifest(clientId, lastSyncTime)
+    let syncData = await this.fetchSyncManifest(clientId, lastSyncTime, signal)
     let clockFixed = false
 
     const skewOnFirst = detectClockSkew(Date.now(), syncData.server_time, lastSyncTime)
     if (skewOnFirst.skewed) {
       clockFixed = await fixGlassesClockIfSkewed(syncData.server_time, lastSyncTime)
+      assertSyncNotAborted(signal)
       if (clockFixed) {
         console.log("[GallerySyncService]   🔄 Retrying /api/sync with last_sync_time=0 after clock fix")
-        syncData = await this.fetchSyncManifest(clientId, 0)
+        syncData = await this.fetchSyncManifest(clientId, 0, signal)
       }
     }
 
@@ -1522,7 +1717,7 @@ class GallerySyncService {
     if (!clockFixed && store.glassesHasContent && lastSyncTime !== 0 && !alreadyRetriedForThisWatermark) {
       this.lastFullSyncRetryKey = retryKey
       console.log("[GallerySyncService]   🔄 Empty sync but glasses report content — retrying with last_sync_time=0")
-      syncData = await this.fetchSyncManifest(clientId, 0)
+      syncData = await this.fetchSyncManifest(clientId, 0, signal)
       if (!isSyncManifestEmpty(syncData)) {
         return {syncData, usedFullSync: true}
       }
@@ -1543,7 +1738,8 @@ class GallerySyncService {
   /**
    * Start downloading files
    */
-  private async startFileDownload(hotspotInfo: HotspotInfo): Promise<void> {
+  private async startFileDownload(hotspotInfo: HotspotInfo, signal = this.abortController?.signal): Promise<void> {
+    if (signal?.aborted) return
     const store = useGallerySyncStore.getState()
 
     console.log("[GallerySyncService] ========================================")
@@ -1562,6 +1758,7 @@ class GallerySyncService {
       store.setSyncState("preparing")
 
       const recovery = await mediaProcessingQueue.retryPending()
+      if (signal?.aborted) return
       if (recovery.retried > 0 || recovery.failed > 0) {
         console.log(
           `[GallerySyncService]   ♻️ Recovery: ${recovery.retried} completed, ${recovery.failed} still pending`,
@@ -1574,6 +1771,7 @@ class GallerySyncService {
       // They will be detected in the next sync when we query gallery status again.
       console.log("[GallerySyncService]   📊 Fetching sync state from local storage...")
       const syncState = await localStorageService.getSyncState()
+      if (signal?.aborted) return
       console.log("[GallerySyncService]   📊 Sync state:", {
         client_id: syncState.client_id,
         last_sync_time: syncState.last_sync_time,
@@ -1584,7 +1782,8 @@ class GallerySyncService {
 
       console.log("[GallerySyncService]   📡 Calling /api/sync endpoint...")
       const syncStartTime = Date.now()
-      const resolved = await this.resolveSyncManifest(syncState.client_id, syncState.last_sync_time)
+      const resolved = await this.resolveSyncManifest(syncState.client_id, syncState.last_sync_time, signal)
+      if (signal?.aborted) return
       const _syncDuration = Date.now() - syncStartTime
       console.log(`[GallerySyncService]   ✅ /api/sync completed in ${_syncDuration}ms`)
 
@@ -1592,9 +1791,6 @@ class GallerySyncService {
         const syncErrorMessage = "Could not sync gallery — try again"
         store.setSyncError(syncErrorMessage)
         await gallerySyncNotifications.showSyncError(syncErrorMessage)
-        if (store.syncServiceOpenedHotspot) {
-          await this.closeHotspot()
-        }
         return
       }
 
@@ -1612,7 +1808,7 @@ class GallerySyncService {
         } else {
           store.setSyncComplete()
         }
-        await this.onSyncComplete(0, 0)
+        await this.onSyncComplete(0, 0, signal)
         return
       }
 
@@ -1661,10 +1857,12 @@ class GallerySyncService {
           hotspotInfo,
         })
 
+        if (signal?.aborted) return
         await gallerySyncNotifications.showSyncStarted(captures.length)
+        if (signal?.aborted) return
 
         console.log("[GallerySyncService]   🚀 Beginning capture download execution...")
-        await this.executeCaptureDownload(captures, syncData.server_time)
+        await this.executeCaptureDownload(captures, syncData.server_time, signal)
       } else {
         // Legacy flat file sync path
         const filesToSync = syncData.changed_files
@@ -1697,18 +1895,25 @@ class GallerySyncService {
           hotspotInfo,
         })
 
+        if (signal?.aborted) return
         await gallerySyncNotifications.showSyncStarted(userVisibleCount)
+        if (signal?.aborted) return
 
         console.log("[GallerySyncService]   🚀 Beginning download execution (legacy)...")
-        await this.executeDownload(filesToSync, syncData.server_time)
+        await this.executeDownload(filesToSync, syncData.server_time, signal)
       }
     } catch (error: any) {
+      if (signal?.aborted) return
       console.error("[GallerySyncService] Failed to start download:", error)
       store.setSyncError(error?.message || "Failed to start download")
       await gallerySyncNotifications.showSyncError("Failed to start download")
-
-      if (store.syncServiceOpenedHotspot) {
-        await this.closeHotspot()
+    } finally {
+      // Every admitted transfer releases phone routing and its reservation,
+      // including shortcuts onto a pre-existing AP. closeHotspot only disables
+      // an AP opened by this Gallery session; failed cleanup retains custody.
+      if (!signal?.aborted) {
+        const failure = await this.closeHotspot()
+        if (failure) throw failure
       }
     }
   }
@@ -1719,7 +1924,8 @@ class GallerySyncService {
    * NOTE: The sidecar/bracket filtering within is likely dead code — old firmware
    * only produces flat photos/videos with no sidecars or HDR brackets.
    */
-  private async executeDownload(files: PhotoInfo[], serverTime: number): Promise<void> {
+  private async executeDownload(files: PhotoInfo[], serverTime: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return
     const downloadStartTime = Date.now()
     console.log("[GallerySyncService] ========================================")
     console.log("[GallerySyncService] ⬇️ DOWNLOAD EXECUTION STARTED")
@@ -1735,6 +1941,7 @@ class GallerySyncService {
 
     // Check if auto-save to camera roll is enabled (we'll save each file immediately after download)
     const shouldAutoSave = await gallerySettingsService.getAutoSaveToCameraRoll()
+    if (signal?.aborted) return
     const shouldProcessImages = useSettingsStore.getState().getSetting(SETTINGS.media_post_processing.key)
     console.log(`[GallerySyncService]   📸 Auto-save to camera roll: ${shouldAutoSave}`)
     console.log(`[GallerySyncService]   🎨 Image processing: ${shouldProcessImages}`)
@@ -1749,7 +1956,7 @@ class GallerySyncService {
           // EXC_BAD_ACCESS. Cancellation is handled via AbortSignal → the active transport.
 
           // Check if cancelled — just return, abort signal will stop the download
-          if (this.abortController?.signal.aborted) {
+          if (signal?.aborted) {
             return
           }
 
@@ -1852,9 +2059,10 @@ class GallerySyncService {
           // Update notification
           gallerySyncNotifications.updateProgress(current, total, fileName, fileProgress || 0)
         },
-        this.abortController?.signal,
+        signal,
       )
 
+      if (signal?.aborted) return
       downloadedCount = downloadResult.downloaded.length
       failedCount = downloadResult.failed.length
 
@@ -1883,6 +2091,7 @@ class GallerySyncService {
 
       // Update queue index to final position
       await localStorageService.updateSyncQueueIndex(files.length)
+      if (signal?.aborted) return
 
       // Mark failed files in store
       for (const failedFileName of downloadResult.failed) {
@@ -1893,6 +2102,7 @@ class GallerySyncService {
       // Wait for processing queue to finish before marking complete
       console.log("[GallerySyncService]   ⏳ Waiting for processing queue to drain...")
       await mediaProcessingQueue.waitUntilDrained()
+      if (signal?.aborted) return
       console.log("[GallerySyncService]   ✅ Processing queue drained")
 
       // Download success is not destination success. Export, validation, metadata, and
@@ -1911,6 +2121,7 @@ class GallerySyncService {
       let syncWatermark = serverTime
       if (downloadedCount === 0) {
         const currentSyncState = await localStorageService.getSyncState()
+        if (signal?.aborted) return
         syncWatermark = currentSyncState.last_sync_time
         console.log("[GallerySyncService]   ℹ️ No files downloaded — last_sync_time unchanged")
       } else if (downloadResult.failed.length > 0) {
@@ -1942,6 +2153,7 @@ class GallerySyncService {
       }
       console.log("[GallerySyncService]   💾 Updating sync state in local storage...")
       const currentSyncState = await localStorageService.getSyncState()
+      if (signal?.aborted) return
       // Persist if we downloaded anything OR if a failure needs the watermark rolled back.
       // (Otherwise a clock-skew-triggered full sync where every legacy file fails would
       // leave the stale future watermark on disk and never retry those files.)
@@ -1969,13 +2181,15 @@ class GallerySyncService {
         ).toFixed(2)} MB`,
       )
 
+      if (signal?.aborted) return
       if (failedCount > 0 || galleryTransferLedger.hasPendingRecovery()) {
         store.setSyncError(`${failedCount || "Some"} gallery items need retry`)
       } else {
         store.setSyncComplete()
       }
-      await this.onSyncComplete(downloadedCount, failedCount)
+      await this.onSyncComplete(downloadedCount, failedCount, signal)
     } catch (error: any) {
+      if (signal?.aborted) return
       mediaProcessingQueue.abort()
       if (error?.message === "Sync cancelled") {
         console.log("[GallerySyncService] Sync was cancelled")
@@ -1987,7 +2201,7 @@ class GallerySyncService {
         await gallerySyncNotifications.showSyncError(error?.message || "Download failed")
       }
 
-      if (store.syncServiceOpenedHotspot) {
+      if (!signal?.aborted && useGallerySyncStore.getState().syncServiceOpenedHotspot) {
         await this.closeHotspot()
       }
     }
@@ -1997,7 +2211,12 @@ class GallerySyncService {
    * Execute capture-aware download (api_version=2).
    * Downloads captures as groups, runs HDR merge, saves single metadata entry per capture.
    */
-  private async executeCaptureDownload(captures: CaptureGroup[], serverTime: number): Promise<void> {
+  private async executeCaptureDownload(
+    captures: CaptureGroup[],
+    serverTime: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (signal?.aborted) return
     const downloadStartTime = Date.now()
     console.log("[GallerySyncService] ========================================")
     console.log("[GallerySyncService] ⬇️ CAPTURE DOWNLOAD EXECUTION STARTED")
@@ -2015,6 +2234,7 @@ class GallerySyncService {
     let maxSuccessfulTimestamp = 0
 
     const shouldAutoSave = await gallerySettingsService.getAutoSaveToCameraRoll()
+    if (signal?.aborted) return
     const shouldProcessImages = useSettingsStore.getState().getSetting(SETTINGS.media_post_processing.key)
 
     try {
@@ -2022,7 +2242,7 @@ class GallerySyncService {
         const capture = captures[i]
 
         // Check cancellation
-        if (this.abortController?.signal.aborted) {
+        if (signal?.aborted) {
           throw new Error("Sync cancelled")
         }
 
@@ -2033,6 +2253,7 @@ class GallerySyncService {
           currentStore.onFileComplete(captures[i - 1].capture_id)
           await localStorageService.updateSyncQueueIndex(i)
         }
+        if (signal?.aborted) return
         currentStore.setCurrentFile(capture.capture_id, 0)
 
         try {
@@ -2049,15 +2270,16 @@ class GallerySyncService {
             capture,
             (bytesDownloaded, totalBytes) => {
               // Don't throw in progress callbacks — abort signal stops the download
-              if (this.abortController?.signal.aborted) return
+              if (signal?.aborted) return
               const progress = totalBytes > 0 ? Math.round((bytesDownloaded / totalBytes) * 100) : 0
               const cs = useGallerySyncStore.getState()
               cs.onFileProgress(capture.capture_id, Math.min(progress, 99))
               gallerySyncNotifications.updateProgress(i + 1, captures.length, capture.capture_id, progress)
             },
-            this.abortController?.signal,
+            signal,
           )
 
+          if (signal?.aborted) return
           // Mark 100% progress
           const cs2 = useGallerySyncStore.getState()
           cs2.onFileProgress(capture.capture_id, 100)
@@ -2089,6 +2311,7 @@ class GallerySyncService {
             protocolVersion: capture.files.some((file) => !!file.etag) ? 3 : 2,
           })
         } catch (captureError: any) {
+          if (signal?.aborted) return
           if (captureError?.message === "Sync cancelled") throw captureError
           const errMsg = captureError?.message || captureError?.toString?.() || JSON.stringify(captureError)
           console.error(`[GallerySyncService]   ❌ Failed to download capture ${capture.capture_id}: ${errMsg}`)
@@ -2102,6 +2325,7 @@ class GallerySyncService {
         }
       }
 
+      if (signal?.aborted) return
       // Mark last capture as complete
       if (captures.length > 0) {
         const lastCapture = captures[captures.length - 1]
@@ -2110,6 +2334,7 @@ class GallerySyncService {
       }
 
       await localStorageService.updateSyncQueueIndex(captures.length)
+      if (signal?.aborted) return
 
       const downloadDuration = Date.now() - downloadStartTime
       console.log("[GallerySyncService] ========================================")
@@ -2121,6 +2346,7 @@ class GallerySyncService {
       // Wait for processing queue to finish before marking complete
       console.log("[GallerySyncService]   ⏳ Waiting for processing queue to drain...")
       await mediaProcessingQueue.waitUntilDrained()
+      if (signal?.aborted) return
       console.log("[GallerySyncService]   ✅ Processing queue drained")
 
       // Reconcile failures from the processing queue. validateDownloadedMediaFile
@@ -2152,6 +2378,7 @@ class GallerySyncService {
       // Update sync state — only advance watermark when captures were downloaded.
       let syncWatermark = serverTime
       const currentSyncState = await localStorageService.getSyncState()
+      if (signal?.aborted) return
       if (failedCount > 0 && oldestFailedTimestamp < Infinity) {
         // Failures take priority — roll the watermark back before the oldest failure so it
         // gets retried, regardless of whether anything else succeeded in this batch.
@@ -2175,13 +2402,15 @@ class GallerySyncService {
         })
       }
 
+      if (signal?.aborted) return
       if (failedCount > 0 || galleryTransferLedger.hasPendingRecovery()) {
         store.setSyncError(`${failedCount || "Some"} gallery items need retry`)
       } else {
         store.setSyncComplete()
       }
-      await this.onSyncComplete(downloadedCount, failedCount)
+      await this.onSyncComplete(downloadedCount, failedCount, signal)
     } catch (error: any) {
+      if (signal?.aborted) return
       mediaProcessingQueue.abort()
       if (error?.message === "Sync cancelled") {
         console.log("[GallerySyncService] Sync was cancelled")
@@ -2193,7 +2422,7 @@ class GallerySyncService {
         await gallerySyncNotifications.showSyncError(error?.message || "Download failed")
       }
 
-      if (store.syncServiceOpenedHotspot) {
+      if (!signal?.aborted && useGallerySyncStore.getState().syncServiceOpenedHotspot) {
         await this.closeHotspot()
       }
     }
@@ -2202,7 +2431,8 @@ class GallerySyncService {
   /**
    * Handle sync completion
    */
-  private async onSyncComplete(downloadedCount: number, failedCount: number): Promise<void> {
+  private async onSyncComplete(downloadedCount: number, failedCount: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return
     console.log("[GallerySyncService] ========================================")
     console.log("[GallerySyncService] 🎉 Step 6/6: Sync completion")
     console.log("[GallerySyncService] ========================================")
@@ -2247,6 +2477,7 @@ class GallerySyncService {
     if (!hasPendingRecovery && failedCount === 0) {
       console.log("[GallerySyncService]   🧹 Clearing completed sync queue...")
       await localStorageService.clearSyncQueue()
+      if (signal?.aborted) return
     } else {
       console.log("[GallerySyncService]   ♻️ Keeping recovery state for unfinished export/ack work")
     }
@@ -2263,15 +2494,13 @@ class GallerySyncService {
       await gallerySyncNotifications.showSyncComplete(downloadedCount, 0)
     }
 
-    // Close hotspot if we opened it
+    if (signal?.aborted) return
+    // Release the admitted phone transport even when the AP pre-existed Gallery.
     const store = useGallerySyncStore.getState()
-    if (store.syncServiceOpenedHotspot) {
-      console.log("[GallerySyncService]   📡 Closing hotspot (service opened it)...")
-      await this.closeHotspot()
-    } else {
-      console.log("[GallerySyncService]   ℹ️ Hotspot was not opened by service - leaving it enabled")
-    }
+    const failure = await this.closeHotspot()
+    if (failure) throw failure
 
+    if (signal?.aborted) return
     // Record a known empty gallery immediately after successful sync.
     // This ensures UI shows 0 items remaining right away
     // The subsequent query will update this if new photos were taken during sync
@@ -2287,6 +2516,7 @@ class GallerySyncService {
     // making it look like sync accomplished nothing (circular sync loop).
     console.log("[GallerySyncService]   ⏲️ Scheduling auto-reset to idle in 4 seconds...")
     BgTimer.setTimeout(async () => {
+      if (signal?.aborted) return
       const currentStore = useGallerySyncStore.getState()
       if (currentStore.syncState === "complete") {
         console.log("[GallerySyncService]   🔄 Auto-resetting sync state to idle")
@@ -2306,14 +2536,20 @@ class GallerySyncService {
   /**
    * Cancel the current sync
    */
-  async cancelSync(): Promise<void> {
+  cancelSync(): Promise<void> {
+    if (this.cancellationPromise) return this.cancellationPromise
+    const cancellation = this.performCancel().finally(() => {
+      if (this.cancellationPromise === cancellation) this.cancellationPromise = null
+    })
+    this.cancellationPromise = cancellation
+    return cancellation
+  }
+
+  private async performCancel(): Promise<void> {
     console.log("[GallerySyncService] Cancelling sync...")
 
     // Abort any ongoing downloads
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
-    }
+    this.invalidateAttempt()
 
     // Clear timeout
     if (this.hotspotConnectionTimeout) {
@@ -2323,37 +2559,99 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
 
-    // Close hotspot if we opened it
-    if (store.syncServiceOpenedHotspot) {
-      await this.closeHotspot()
-    }
-
-    // Update store
     store.setSyncCancelled()
-
-    // Clear queue
-    await localStorageService.clearSyncQueue()
-
-    // Dismiss notification
-    await gallerySyncNotifications.showSyncCancelled()
+    const failures: unknown[] = []
+    const networkFailure = await this.closeHotspot()
+    if (networkFailure) failures.push(...(networkFailure instanceof AggregateError ? networkFailure.errors : [networkFailure]))
+    try {
+      await localStorageService.clearSyncQueue()
+    } catch (error) {
+      failures.push(error)
+    }
+    try {
+      await gallerySyncNotifications.showSyncCancelled()
+    } catch (error) {
+      failures.push(error)
+    }
+    if (failures.length) throw new AggregateError(failures, "Gallery cancellation cleanup failed", {cause: failures[0]})
   }
 
   /**
    * Close the hotspot
    */
-  private async closeHotspot(): Promise<void> {
-    const store = useGallerySyncStore.getState()
+  private closeHotspot(): Promise<Error | null> {
+    if (this.hotspotClosePromise) return this.hotspotClosePromise
+    const closing = this.performHotspotClose().finally(() => {
+      if (this.hotspotClosePromise === closing) this.hotspotClosePromise = null
+    })
+    this.hotspotClosePromise = closing
+    return closing
+  }
 
+  private reserveHotspot(): void {
+    this.releaseHotspot ??= acquireGlassesHotspot()
+  }
+
+  private async performHotspotClose(): Promise<Error | null> {
+    // A refused start never owned the AP or phone association.
+    if (!this.releaseHotspot) return null
+    // A cancelled BLE enable may finish late; retain custody until it returns
+    // before stopping the AP and admitting another caller.
+    if (this.hotspotEnablePromise) await this.hotspotEnablePromise.catch(() => undefined)
+    const store = useGallerySyncStore.getState()
+    const failures: unknown[] = []
+    console.log("[GallerySyncService] Closing hotspot...")
     try {
-      console.log("[GallerySyncService] Closing hotspot...")
-      await localNetworkTransport.disconnect()
-      await BluetoothSdk.setHotspotState(false)
-      store.setSyncServiceOpenedHotspot(false)
-      store.setHotspotInfo(null)
-      console.log("[GallerySyncService] Hotspot closed")
+      await localNetworkTransport.disconnect(this.networkOwner)
     } catch (error) {
-      console.error("[GallerySyncService] Failed to close hotspot:", error)
+      failures.push(error)
     }
+    // Phone routing and the glasses AP have independent stop operations.
+    // Always attempt the owned AP stop even if routing cleanup rejects.
+    try {
+      // Retained failure ownership cannot authorize a command to another pair.
+      if (useGallerySyncStore.getState().syncServiceOpenedHotspot) {
+        const ownership = this.hotspotOwnership()
+        if (ownership === "unknown") throw new Error("Gallery hotspot owner identity is unavailable")
+        if (ownership === "same") {
+          const stopped = await BluetoothSdk.setHotspotState(false)
+          if (stopped.state !== "disabled") throw new Error("Gallery hotspot shutdown was not confirmed")
+        }
+        this.hotspotOwner = null
+        store.setSyncServiceOpenedHotspot(false)
+        store.setHotspotInfo(null)
+      }
+    } catch (error) {
+      failures.push(error)
+    }
+    if (failures.length) {
+      const failure = new AggregateError(failures, "Gallery network cleanup failed", {cause: failures[0]})
+      console.error("[GallerySyncService] Failed to close hotspot:", failure)
+      return failure
+    }
+    this.releaseHotspot()
+    this.releaseHotspot = null
+    console.log("[GallerySyncService] Hotspot closed")
+    return null
+  }
+
+  private connectedGlassesIdentity(): string | null {
+    const {bluetoothMacAddress, serialNumber} = useGlassesStore.getState()
+    return bluetoothMacAddress
+      ? `mac:${bluetoothMacAddress.toUpperCase()}`
+      : serialNumber
+        ? `serial:${serialNumber}`
+        : null
+  }
+
+  private hotspotOwnership(): "same" | "different" | "unknown" {
+    const connected = this.connectedGlassesIdentity()
+    // A missing identity or a different identity field cannot prove replacement.
+    // Retain ownership until the original pair can confirm its AP is stopped.
+    if (!this.hotspotOwner || !connected || connected.split(":", 1)[0] !== this.hotspotOwner.split(":", 1)[0]) {
+      return "unknown"
+    }
+    return connected === this.hotspotOwner ? "same" : "different"
   }
 
   /**
@@ -2375,7 +2673,10 @@ class GallerySyncService {
    * Resume a previously interrupted sync
    */
   async resumeSync(): Promise<void> {
+    const signal = (this.abortController ??= new AbortController()).signal
+    if (signal.aborted) return
     const queue = await localStorageService.getSyncQueue()
+    if (signal.aborted) return
 
     if (!queue || queue.currentIndex >= queue.files.length) {
       console.log("[GallerySyncService] No queue to resume")

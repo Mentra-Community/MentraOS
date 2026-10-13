@@ -1,13 +1,20 @@
 import {afterEach, describe, expect, test} from "bun:test"
 
 import {
+  assertMiniappDevelopmentAllowed,
   configure,
+  getConfigValues,
+  getMiniappConfiguration,
   isDevMiniappAllowed,
   isFeatureEnabled,
   isInstalledMiniappAllowed,
   isLocalMiniappPackageAllowed,
+  isMiniappAvailable,
+  isMiniappDevelopmentAllowed,
   isOfflineSystemMiniappAllowed,
   resetForTests,
+  start,
+  updateMiniappPolicy,
 } from "../bootstrap"
 
 describe("deployment feature policy", () => {
@@ -75,12 +82,16 @@ describe("deployment feature policy", () => {
     ).toBe(false)
   })
 
-  test("admits a developer build only in super mode, and only for a managed package", () => {
+  test.each([
+    [["com.mentra.settings"], false],
+    [["com.mentra.settings", "com.mentra.miniappdev"], true],
+    [null, true],
+  ])("admits developer builds of any package only where the developer tools are approved (%j)", (approved, allowed) => {
     configure({
       auth: {},
       config: {
         localMiniappPolicy: {
-          systemPackageNames: ["com.mentra.settings"],
+          systemPackageNames: approved,
           managed: [
             {
               packageName: "com.example.call",
@@ -94,15 +105,18 @@ describe("deployment feature policy", () => {
       },
     })
 
-    expect(isDevMiniappAllowed("com.example.call", true)).toBe(true)
-    expect(isDevMiniappAllowed("com.example.call", false)).toBe(false)
-    expect(isDevMiniappAllowed("com.example.other", true)).toBe(false)
-    expect(isDevMiniappAllowed("com.mentra.settings", true)).toBe(false)
+    expect(isMiniappDevelopmentAllowed()).toBe(allowed)
+    expect(isDevMiniappAllowed("com.example.call")).toBe(allowed)
+    expect(isDevMiniappAllowed("com.example.other")).toBe(allowed)
+    expect(isInstalledMiniappAllowed("com.example.other", "1.0.0", {source: "direct_download"})).toBe(allowed)
+    if (allowed) expect(() => assertMiniappDevelopmentAllowed()).not.toThrow()
+    else expect(() => assertMiniappDevelopmentAllowed()).toThrow("does not allow miniapp development")
   })
 
-  test("keeps consumer developer builds independent of super mode", () => {
+  test("allows consumer developer builds", () => {
     configure({auth: {}})
-    expect(isDevMiniappAllowed("com.example.call", false)).toBe(true)
+    expect(isMiniappDevelopmentAllowed()).toBe(true)
+    expect(isDevMiniappAllowed("com.example.call")).toBe(true)
   })
 
   test("applies a live Super Mode gate to listing, cached releases and direct/dev launches", () => {
@@ -113,7 +127,7 @@ describe("deployment feature policy", () => {
       isLocalMiniappPackageAllowed(packageName),
       isOfflineSystemMiniappAllowed(packageName),
       isInstalledMiniappAllowed(packageName, "1.0.18", {source: "bundled_asset"}),
-      isDevMiniappAllowed(packageName, true),
+      isDevMiniappAllowed(packageName),
     ]
     expect(check()).toEqual([false, false, false, false])
     expect(isLocalMiniappPackageAllowed("com.mentra.notes")).toBe(true)
@@ -152,11 +166,118 @@ describe("deployment feature policy", () => {
     })
     expect(isInstalledMiniappAllowed(packageName, "1.0.18", identity)).toBe(false)
     expect(isOfflineSystemMiniappAllowed(packageName)).toBe(false)
-    expect(isDevMiniappAllowed(packageName, true)).toBe(false)
+    expect(isDevMiniappAllowed(packageName)).toBe(false)
     allowed = true
     expect(isInstalledMiniappAllowed(packageName, "1.0.18", identity)).toBe(true)
     expect(isInstalledMiniappAllowed(packageName, "1.0.17", identity)).toBe(false)
-    expect(isDevMiniappAllowed(packageName, false)).toBe(false)
-    expect(isDevMiniappAllowed(packageName, true)).toBe(true)
+    expect(isDevMiniappAllowed(packageName)).toBe(true)
+  })
+})
+
+describe("Store-updated bundled releases", () => {
+  afterEach(resetForTests)
+  const identity = {source: "system_store", storePackageName: "com.mentra.store"}
+  function configureOrganization(approved: string[] | null, managed = false) {
+    configure({
+      auth: {},
+      config: {
+        bundledSystemMiniappPackages: ["com.mentra.notes", "com.mentra.store"],
+        bundledStoreMiniappPackages: ["com.mentra.store"],
+        bundledSystemMiniappStoreOwners: {"com.mentra.notes": "com.mentra.store"},
+        localMiniappPolicy: {
+          systemPackageNames: approved,
+          managed: managed
+            ? [
+                {
+                  packageName: "com.mentra.notes",
+                  version: "1.0.0",
+                  sha256: "abc",
+                  deploymentId: "acme",
+                  deploymentOrigin: "https://acme.example",
+                },
+              ]
+            : [],
+        },
+      },
+    })
+  }
+
+  test.each([null, ["com.mentra.notes"]])("stay visible where the bundled release is approved (%j)", (approved) => {
+    configureOrganization(approved)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(true)
+    expect(
+      isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", {...identity, storePackageName: "com.other.store"}),
+    ).toBe(false)
+  })
+
+  test("do not bypass an excluded package or an organization pin", () => {
+    configureOrganization([])
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(false)
+    configureOrganization(null, true)
+    expect(isInstalledMiniappAllowed("com.mentra.notes", "2.0.0", identity)).toBe(false)
+  })
+
+  test("the host's availability gate separates launches from background maintenance", () => {
+    expect(isMiniappAvailable("com.mentra.store")).toBe(true)
+    configure({
+      auth: {},
+      config: {isMiniappAvailable: (packageName, mode) => mode === "background" || packageName !== "com.mentra.store"},
+    })
+    expect(isMiniappAvailable("com.mentra.store")).toBe(false)
+    expect(isMiniappAvailable("com.mentra.store", "background")).toBe(true)
+    expect(isMiniappAvailable("com.mentra.notes")).toBe(true)
+  })
+})
+
+describe("updateMiniappPolicy", () => {
+  afterEach(() => resetForTests())
+
+  const acme = (packageName: string, sha256: string) => ({
+    packageName,
+    version: "1.0.0",
+    sha256,
+    deploymentId: "acme",
+    deploymentOrigin: "https://acme.example",
+  })
+  const managedInstall = (packageName: string, bundleSha256: string) =>
+    isInstalledMiniappAllowed(packageName, "1.0.0", {
+      source: "deployment_manifest",
+      bundleSha256,
+      deploymentId: "acme",
+      deploymentOrigin: "https://acme.example",
+    })
+
+  test("admits a newly managed miniapp on a running runtime and keeps the session's other settings", async () => {
+    configure({
+      auth: {},
+      config: {
+        coreUrl: "https://core.acme.example",
+        localMiniappPolicy: {systemPackageNames: ["com.mentra.settings"], managed: [acme("com.mentra.call", "aa")]},
+        features: {cloudSpeech: true, navigation: false},
+      },
+    })
+    await start()
+    expect(managedInstall("com.mentra.enterprise", "bb")).toBe(false)
+
+    updateMiniappPolicy({
+      localMiniappPolicy: {
+        systemPackageNames: ["com.mentra.settings"],
+        managed: [acme("com.mentra.call", "aa"), acme("com.mentra.enterprise", "BB")],
+      },
+      miniappConfiguration: {"com.mentra.enterprise": {backendUrl: "https://backend.acme.example"}},
+    })
+
+    expect(managedInstall("com.mentra.enterprise", "bb")).toBe(true)
+    expect(managedInstall("com.mentra.call", "aa")).toBe(true)
+    expect(getMiniappConfiguration("com.mentra.enterprise")).toEqual({backendUrl: "https://backend.acme.example"})
+    // Endpoints and feature switches belong to the started session.
+    expect(getConfigValues().coreUrl).toBe("https://core.acme.example")
+    expect(isFeatureEnabled("cloudSpeech")).toBe(true)
+    expect(isFeatureEnabled("navigation")).toBe(false)
+  })
+
+  test("is ignored before configure()", () => {
+    updateMiniappPolicy({localMiniappAllowlist: ["com.mentra.settings"]})
+    expect(getConfigValues().localMiniappAllowlist).toBeUndefined()
   })
 })

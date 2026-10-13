@@ -146,3 +146,17 @@ test("unrecognized accessibility actions do not launch a miniapp", async () => {
   expect(mockStart).not.toHaveBeenCalled()
   expect(mockPush).not.toHaveBeenCalled()
 })
+
+test.each(["press", "accessibilityTap"] as const)(
+  "%s on an updating miniapp explains the update instead of opening it",
+  async (event) => {
+    mockApps[0] = {...mockApps[0], updating: true} as ClientApp
+    await activate(event)
+    expect(mockAlert).toHaveBeenCalledWith(expect.objectContaining({title: "home:miniappUpdatingTitle"}))
+    expect(mockPermissions).not.toHaveBeenCalled()
+    expect(mockStart).not.toHaveBeenCalled()
+    const target = screen.getByTestId("home.miniapp.com.mentra.settings")
+    expect(target.props.accessibilityLabel).toBe("home:miniappUpdatingLabel")
+    expect(target.props.accessibilityState).toEqual({busy: true})
+  },
+)

@@ -16,7 +16,7 @@ const host: LaneRestorationHost = {hostId: "mini", receivedAt: at, observedAt: a
 const render = (value = host, fresh = true) => renderToStaticMarkup(createElement(RestorationHost, {host: value, fresh}));
 test("a resume intention and stopped agent do not become successful scheduling", () => {
   const markup = render();
-  expect(markup).toContain("Stopped before resumption"); expect(markup).toContain("intention to resume");
+  expect(markup).toContain("Repair stopped"); expect(markup).toContain("intention to resume");
   expect(markup).toContain("Resume call and acceptance: unknown"); expect(markup).not.toContain("Scheduling resumed");
   expect(markup).toContain("2m 03s"); expect(markup).toContain("testRun=nightly%3Afirst");
 });
@@ -27,7 +27,7 @@ test("accepted receipt, refusal and human question stay separate", () => {
   const needsInput = {...attempt, state: "needs-input" as const, report: {...attempt.report!, decision: "needs-input" as const, question: "Please connect the charger"},
     resume: {status: "refused" as const, decisionId: "resume:no", calledAt: at, reason: "Writer remains active"}};
   const markup = render({...host, restoration: {...host.restoration!, attempts: [needsInput]}});
-  expect(markup).toContain("Needs human input"); expect(markup).toContain("Please connect the charger");
+  expect(markup).toContain("Repair needs human input"); expect(markup).toContain("Please connect the charger");
   expect(markup).toContain("called and refused"); expect(markup).toContain("Writer remains active");
 });
 test("missing records, stale host and unfinished durations remain honest", () => {
@@ -58,4 +58,23 @@ test("restoration freshness requires both recent observation and receipt with bo
     expect(restorationHostIsFresh({...host, [key]: new Date(now + 5_001).toISOString()}, now, window)).toBe(false);
     expect(restorationHostIsFresh({...host, [key]: "invalid"}, now, window)).toBe(false);
   }
+});
+
+test('restoration uses the same exact-owner invocation evidence as System health', () => {
+  const working = {...attempt, state: 'working' as const, report: null, finishedAt: null};
+  const lane = {...host.lanes[0], activity: {generation: 1, owner: {id: attempt.executionId, kind: 'fixer' as const}}};
+  const current = {...host, lanes: [lane], restoration: {schemaVersion: 1 as const, attempts: [working], truncated: false}};
+  expect(render(current)).toContain('Repair running');
+  for (const changed of [{...working, startedAt: null}, {...working, current: false}, {...working, finishedAt: at}]) {
+    const markup = render({...current, restoration: {...current.restoration, attempts: [changed]}});
+    expect(markup).toContain('Repair execution unknown');
+    expect(markup).not.toContain('Repair running');
+  }
+  expect(render({...current, lanes: [{...lane, activity: {...lane.activity, owner: {id: 'fixer:other', kind: 'fixer'}}}]}))
+    .not.toContain('Repair running');
+  const stale = render(current, false);
+  expect(stale).toContain('Last reported: Repair running');
+  expect(stale).toContain('Current repair execution is unknown');
+  expect(render({...current, restoration: {...current.restoration, attempts: [{...working, state: 'halted', current: false}]}}))
+    .toContain('Repair halted');
 });

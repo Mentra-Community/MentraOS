@@ -6,6 +6,7 @@ export interface PutObjectInput {
   key: string;
   body: Uint8Array;
   contentType: string;
+  signal?: AbortSignal;
 }
 
 export interface StoredObject {
@@ -17,10 +18,10 @@ export interface StoredObject {
 
 export interface StorageProvider {
   putObject(input: PutObjectInput): Promise<StoredObject>;
-  getObject(key: string): Promise<Uint8Array>;
+  getObject(key: string, signal?: AbortSignal): Promise<Uint8Array>;
   deleteObject(key: string): Promise<void>;
   putFile(input: { key: string; path: string; contentType: string }): Promise<void>;
-  statObject(key: string): Promise<{ sizeBytes: number }>;
+  statObject(key: string, signal?: AbortSignal): Promise<{ sizeBytes: number }>;
   streamObject(key: string, range?: { start: number; end: number }): Promise<ReadableStream<Uint8Array> | Blob>;
 }
 
@@ -31,8 +32,8 @@ export class StorageService {
     return this.provider.putObject(input);
   }
 
-  getObject(key: string): Promise<Uint8Array> {
-    return this.provider.getObject(key);
+  getObject(key: string, signal?: AbortSignal): Promise<Uint8Array> {
+    return this.provider.getObject(key, signal);
   }
 
   deleteObject(key: string): Promise<void> {
@@ -43,8 +44,8 @@ export class StorageService {
     return this.provider.putFile(input);
   }
 
-  statObject(key: string): Promise<{ sizeBytes: number }> {
-    return this.provider.statObject(key);
+  statObject(key: string, signal?: AbortSignal): Promise<{ sizeBytes: number }> {
+    return this.provider.statObject(key, signal);
   }
 
   streamObject(key: string, range?: { start: number; end: number }): Promise<ReadableStream<Uint8Array> | Blob> {

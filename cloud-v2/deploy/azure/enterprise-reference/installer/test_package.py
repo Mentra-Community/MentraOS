@@ -62,13 +62,19 @@ class PackageTests(unittest.TestCase):
         with patch.object(package, 'REPO', self.repo):
             return package.build(self.publication, self.sbom, self.output)
 
+    def test_minimum_app_version_never_exceeds_the_app_built_with_the_image(self):
+        with patch.object(package, 'CLIENT_MIN_VERSION', '3.3.0'):
+            self.assertEqual(self.build()['clientMinVersion'], '3.3.0')
+        with patch.object(package, 'CLIENT_MIN_VERSION', '3.4.0'), self.assertRaisesRegex(ValueError, 'no newer than'):
+            self.build()
+
     def test_archive_uses_committed_bytes_and_separates_image_and_installer_revisions(self):
         script = self.repo / PREFIX / 'setup.sh'
         script.write_text('new installer revision\n')
         installer = self.commit()
         script.write_text('uncommitted change must not be shipped\n')
         release = self.build()
-        self.assertEqual(release['clientMinVersion'], '3.3.0')
+        self.assertEqual(release['clientMinVersion'], package.CLIENT_MIN_VERSION)
         self.assertEqual(release['imageSourceCommit'], self.source)
         self.assertEqual(release['installerSourceCommit'], installer)
         with tarfile.open(self.output) as archive:
@@ -79,6 +85,14 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(release['files']['setup.sh'], package.sha(data))
         self.assertEqual(self.output.with_name('release.tar.gz.sha256').read_text().split()[0],
                          package.sha(self.output.read_bytes()))
+
+    def test_install_guide_names_the_operator_key_flow(self):
+        self.build()
+        with tarfile.open(self.output) as archive:
+            guide = archive.extractfile('mentra-private-cloud/INSTALL.txt').read().decode()
+        self.assertIn('operator key (mak_)', guide)
+        self.assertIn('operator@private-cloud.local', guide)
+        self.assertNotIn('api-key@', guide)
 
     def test_same_committed_release_packages_identical_bytes_on_rerun(self):
         self.build()

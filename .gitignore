@@ -46,6 +46,8 @@ node_modules/
 web-build/
 .DS_Store
 *.tgz
+# Pinned publishing tools for the first-party miniapp Store action.
+!.github/actions/publish-miniapp/tooling/vendor/*.tgz
 my-app*
 template/src/__tests__/__snapshots__/
 lerna-debug.log
@@ -397,6 +399,14 @@ MEMORY.md
 # Cursor IDE local config (MCP, etc.)
 .cursor/*
 !.cursor/BUGBOT.md
+# Shared with cloud agents. Other .cursor files stay local.
+!.cursor/agents/
+.cursor/agents/*
+!.cursor/agents/plan-reviewer.md
+!.cursor/skills/
+.cursor/skills/*
+!.cursor/skills/plan-review-replan/
+!.cursor/skills/plan-review-replan/**
 
 # PR agent orchestrator local outputs
 .pr-agent/

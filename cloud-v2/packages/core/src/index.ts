@@ -1,6 +1,6 @@
 /**
  * `@mentra/cloud-core` — Mentra Services. OEM auth runtime, OEM portal backend,
- * miniapp store, REST endpoints.
+ * REST endpoints.
  *
  * Boot order:
  *   1. Connect Mongo (fail-fast on misconfiguration).
@@ -13,19 +13,30 @@
  * `bun packages/core/src/index.ts`, the `import.meta.main` block at the
  * bottom drives the boot from env vars.
  *
- * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/, miniapp store work.
+ * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/.
  */
 
+import {ensureRoutineCaseIndexes} from './models/routine-case.model'
 import {createLogger} from "@mentra/cloud-shared"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "./connections/mongo.connection"
 import {createApp} from "./api/app"
 import {runStartupMigrations} from "./migrations/startup.migrations"
+import {startAccountDeletionCompletion} from "./services/account/account.service"
 import {createCoreStop, serveCore} from "./http-server"
-import {startFrameworkRunSummaryBackfill} from "./services/framework-run-summary.service"
 import {startRoutineWorkReporting} from "./services/routine-work-notification"
 import {RoutineJobService} from './services/routine-job.service'
+import {PrRoutineCheckService} from './services/pr-routine-check.service'
 import {RoutineWorkService} from './services/routine-work.service'
+import {NightlyRoutineService} from "./services/nightly-routine.service"
 import {ReportSlackDeliveryService} from "./services/report-slack-delivery.service"
+import {ReportServerLogCollectionService} from './services/report-server-log-collection.service'
+import {assertSupabaseApiKeys} from "./services/account/gotrue.client"
+import {assertSigninConfiguration} from "./services/signin/config"
+import {assertOidcConfiguration} from "./services/oidc/startup"
+import {stopOidcBridge} from "./services/oidc/bridge"
+import {assertOrganizationConfiguration} from "./services/workspaces/organization"
+import {registerAfterSignInHook} from "./services/oidc/interactions"
+import {claimLegacyIdentitiesAfterSignIn} from "./services/workspaces/membership-claim.service"
 
 const logger = createLogger("core")
 
@@ -47,14 +58,25 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const port = opts.port ?? Number.parseInt(process.env.PORT ?? "3000", 10)
   const mongoUrl = opts.mongoUrl ?? process.env.MONGO_URL ?? "mongodb://127.0.0.1:27017/mentra-cloud-v2"
 
+  assertSupabaseApiKeys()
+  // A malformed workspace setting (CLOUD_CORE_WORKSPACE_CREATION) stops Core here, not at the first request.
+  assertOrganizationConfiguration()
   await connectMongo(mongoUrl)
   try {
+    if (process.env.ROUTINE_CASE_API_ENABLED === 'true') await ensureRoutineCaseIndexes()
     await runStartupMigrations()
+    // Refuse sign-in configuration that is incomplete or would let one source
+    // vouch for another's people. With none of it set, Core starts as before.
+    await assertSigninConfiguration()
+    // Core's sign-in server: its issuer, cookie keys and clients.
+    assertOidcConfiguration()
+    // A person's sign-in claims the Store-imported memberships waiting under their verified email.
+    registerAfterSignInHook(claimLegacyIdentitiesAfterSignIn)
   } catch (error) {
     // Disconnect best-effort: a secondary disconnect failure must not mask the
-    // original migration error, which is what we rethrow.
+    // original startup error, which is what we rethrow.
     await disconnectMongo().catch((disconnectError) => {
-      logger.warn({disconnectError}, "failed to disconnect mongo after migration failure")
+      logger.warn({disconnectError}, "failed to disconnect mongo after startup failure")
     })
     throw error
   }
@@ -62,13 +84,17 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
   const app = createApp({readinessChecks: [mongoReadinessCheck]})
   const server = serveCore(app.fetch, port)
   const boundPort = server.port!
-  const stopSummaryBackfill = startFrameworkRunSummaryBackfill()
+  // Confirmed account deletions are finished by Core itself, after a crash or an account-directory outage too.
+  const stopAccountDeletionCompletion = startAccountDeletionCompletion()
   const reportNotifications = new ReportSlackDeliveryService()
+  const reportServerLogs = new ReportServerLogCollectionService()
   const routineJobs = new RoutineJobService()
+  const prRoutineChecks = new PrRoutineCheckService()
   const routineAuthors = new RoutineWorkService()
-  const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, undefined, async () => {
-    await Promise.allSettled([reportNotifications.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending()])
-  })
+  const nightlyRoutines = new NightlyRoutineService()
+  const stopRoutineWorkReporting = startRoutineWorkReporting(undefined, 15_000, async () => {
+    await Promise.allSettled([reportNotifications.tick(), reportServerLogs.tick(), routineJobs.reconcilePending(), routineAuthors.reconcilePending(), nightlyRoutines.reconcilePending()])
+  }, () => prRoutineChecks.tick())
 
   logger.info({port: boundPort}, "cloud-v2 core listening")
 
@@ -76,8 +102,9 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     port: boundPort,
     url: `http://localhost:${boundPort}`,
     stop: createCoreStop(server, async () => {
-      await stopSummaryBackfill()
+      await stopAccountDeletionCompletion()
       await stopRoutineWorkReporting()
+      await stopOidcBridge()
       await disconnectMongo()
     }),
   }

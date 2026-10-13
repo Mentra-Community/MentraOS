@@ -10,13 +10,12 @@ const getDeployment = () => deploymentStore.getActive()
 /** Platform restrictions also apply to All Apps, which ignores home hiding. */
 export const useAvailableApps = () => {
   const apps = useApps()
-  const [showIosCall] = useSetting<boolean>(SETTINGS.show_mentra_call_ios.key)
   const [showIosNotify] = useSetting<boolean>(SETTINGS.show_notify_ios.key)
   const [superMode] = useSetting<boolean>(SETTINGS.super_mode.key)
   const deployment = useSyncExternalStore(subscribeDeployment, getDeployment)
   return useMemo(
     () => apps.filter((app) => !shouldHideMiniapp(app.packageName, app.version, {dev: app.isMiniappDev})),
-    [apps, showIosCall, showIosNotify, superMode, deployment],
+    [apps, showIosNotify, superMode, deployment],
   )
 }
 

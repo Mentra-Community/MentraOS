@@ -292,6 +292,44 @@ test("nightly preserves a host's precise rejected-member reason without inventin
   expect(await state.service.detail(occurrence.occurrenceId)).toEqual(terminal);
 });
 
+test("nightly completes a rejected publication immediately with its exact reason after a result 404", async () => {
+  const state = fixture([row("publication-rejected", "android")]);
+  const {plan} = await state.service.start(occurrence), member = plan.members[0]!;
+  const request = state.requestRows.get(member.requestId);
+  const failure = {entityId: member.requestId, payloadSha256: "d".repeat(64), manifestSha256: "e".repeat(64),
+    operation: "result-create", status: 409, code: "result_conflict", message: "Invalid frozen fixture action", rejectedAt: startedAt};
+  Object.assign(request, {state: "terminal", terminalStatus: "incomplete", publicationFailure: failure,
+    hostReceipt: {requestId: member.requestId, hostId: request.hostId, inputSha256: request.inputSha256, acceptedAt: startedAt}});
+  expect(await state.service.snapshot(plan)).toMatchObject({status: "incomplete", expectedCount: 1, passed: 0,
+    members: [{status: "incomplete", publicationComplete: false, unavailableReason: "Publication failed: Invalid frozen fixture action"}]});
+  for (const change of [{entityId: "other"}, {code: "unknown"}]) {
+    request.publicationFailure = {...failure, ...change};
+    expect((await state.service.snapshot(plan)).members[0]).toMatchObject({status: "incomplete", publicationComplete: false,
+      unavailableReason: "Publication failure identity differs from the frozen request."});
+  }
+  request.publicationFailure = failure;
+  request.hostReceipt.inputSha256 = "f".repeat(64);
+  expect((await state.service.snapshot(plan)).members[0]!.unavailableReason).toContain("identity differs");
+  request.hostReceipt.inputSha256 = request.inputSha256;
+  const terminal = await state.service.complete(occurrence.occurrenceId);
+  expect(terminal.finishedAt).toBe(new Date(startedAt).toISOString());
+  expect(state.cancelled).toEqual([member.requestId]);
+  expect(terminal.members[0]!.runId).toBeUndefined();
+  request.publicationFailure.message = "changed later";
+  expect(await state.service.detail(occurrence.occurrenceId)).toEqual(terminal);
+});
+
+test("a valid published nightly result wins over a retained publication failure", async () => {
+  const state = fixture([row("publication-recovered", "android")]);
+  const {plan} = await state.service.start(occurrence), member = plan.members[0]!;
+  Object.assign(state.requestRows.get(member.requestId), {state: "terminal", terminalStatus: "incomplete",
+    publicationFailure: {entityId: member.requestId, payloadSha256: "d".repeat(64), manifestSha256: "e".repeat(64),
+      operation: "result-create", status: 409, code: "result_conflict", message: "Original publication rejection", rejectedAt: startedAt}});
+  state.resultRows.set(member.requestId, publishedResult(member, true));
+  expect(await state.service.snapshot(plan)).toMatchObject({status: "pass", passed: 1,
+    members: [{status: "pass", publicationComplete: true, runId: member.requestId}]});
+});
+
 test("deadline cancellation uses the original requests and prevents retrying pending work", async () => {
   const state = fixture(), {plan} = await state.service.start(occurrence);
   expect(state.cancelled).toEqual([]);
@@ -737,4 +775,90 @@ test('actual fleet service preserves every nightly member through preparation, b
   const before = reads; requestRows.clear(); results.clear();
   expect(await create().detail(occurrence.occurrenceId)).toEqual(terminal); expect(reads).toBe(before);
   expect(await repository.get()).toEqual(frozenPlan); expect(dispatches).toBe(2);
+});
+
+
+test("stopped CI occurrences reconcile cancellation and deadlines independently without rewriting terminal receipts", async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  const second = {occurrenceId: "different-stopped-ci", suiteId: "nightly-different-stopped-ci"};
+  const rows = [{suiteId: plan.suiteId, startedAt: new Date(startedAt), nightlyPlan: {occurrenceId: plan.occurrenceId}},
+    {suiteId: second.suiteId, startedAt: new Date(startedAt), nightlyPlan: {occurrenceId: second.occurrenceId}}];
+  const query = spyOn(TestSuiteModel, "find").mockImplementation(((filter: any) => {
+    expect(filter.nightlyResult).toEqual({$exists: false});
+    expect(filter["nightlyPlan.members.input"]).toEqual({$exists: false});
+    expect(filter.$or).toEqual([{nightlyCancellation: {$exists: true}},
+      {startedAt: {$lte: new Date(now - 3 * 3600_000)}}]);
+    return {select(fields: unknown) {expect(fields).toEqual({"nightlyPlan.occurrenceId": 1, suiteId: 1, startedAt: 1}); return this;},
+      sort() {return this;}, limit(value: number) {expect(value).toBe(20); return this;}, read() {return this;},
+      setOptions(value: unknown) {expect(value).toEqual({timeoutMS: 10_000}); return this;},
+      readConcern() {return this;}, async lean() {return rows;}};
+  }) as any);
+  const calls: string[] = [];
+  const complete = spyOn(state.service, "complete").mockImplementation(async (id: string) => {
+    calls.push(id);
+    if (id === plan.occurrenceId) throw new TestRunError(503, "Temporary cancellation custody failure");
+    return {finishedAt: startedAt} as NightlyResult;
+  });
+  try {
+    await state.service.reconcilePending();
+    expect(calls).toEqual([plan.occurrenceId, second.occurrenceId]);
+    await state.service.reconcilePending();
+    expect(calls).toEqual([plan.occurrenceId, second.occurrenceId, plan.occurrenceId, second.occurrenceId]);
+    expect(state.plan).toBe(plan);
+  } finally {query.mockRestore(); complete.mockRestore();}
+});
+
+test("completion scans advance past failing batches and wrap to retry them", async () => {
+  const state = fixture();
+  const rows = Array.from({length: 45}, (_, index) => ({suiteId: `nightly-${String(index).padStart(3, "0")}`,
+    startedAt: new Date(startedAt), nightlyPlan: {occurrenceId: `occurrence-${index}`}}));
+  const query = spyOn(TestSuiteModel, "find").mockImplementation(((filter: any) => {
+    const after = filter.$and?.[0].$or?.[1].suiteId.$gt;
+    const batch = rows.filter(row => !after || row.suiteId > after).slice(0, 20);
+    return {select() {return this;}, sort() {return this;}, limit(value: number) {expect(value).toBe(20); return this;},
+      read() {return this;}, readConcern() {return this;}, setOptions() {return this;}, async lean() {return batch;}};
+  }) as any);
+  const calls: string[] = [];
+  const complete = spyOn(state.service, "complete").mockImplementation(async (id: string) => {
+    calls.push(id);
+    if (Number(id.split("-")[1]) < 20) throw new TestRunError(503, "Persistent custody failure");
+    return {finishedAt: startedAt} as NightlyResult;
+  });
+  try {
+    await state.service.reconcilePending();
+    await state.service.reconcilePending();
+    await state.service.reconcilePending();
+    expect(calls).toEqual(rows.map(row => row.nightlyPlan.occurrenceId));
+    await state.service.reconcilePending();
+    expect(calls.slice(45)).toEqual(rows.slice(0, 20).map(row => row.nightlyPlan.occurrenceId));
+    expect(query).toHaveBeenCalledTimes(5);
+  } finally {query.mockRestore(); complete.mockRestore();}
+});
+
+test('unbound permanent source failures settle nightly members through their cancellation fence', async () => {
+ const state=fixture(),{plan}=await state.service.start(occurrence);
+ for(const member of plan.members){const row=state.requestRows.get(member.requestId);state.requestRows.set(member.requestId,{...row,fleetBinding:undefined,state:'terminal',terminalStatus:'not-applicable',fleetCancellation:{requestedAt:new Date().toISOString(),reason:'Routine does not support selected platform.'}})}
+ const result=await state.service.snapshot(plan);
+ expect(result.status).toBe('incomplete');expect(result.members.every(member=>member.status==='incomplete')).toBe(true);
+ expect(result.members[0]!.unavailableReason).toContain('does not support selected platform');
+});
+
+test('nightly terminal evidence failures survive the frozen receipt and compact suite projection', async () => {
+  const state = fixture(), {plan} = await state.service.start(occurrence);
+  state.resultRows.set(plan.members[0]!.requestId, {...publishedResult(plan.members[0]!, true), evidenceStatus: 'failed'});
+  state.resultRows.set(plan.members[1]!.requestId, publishedResult(plan.members[1]!, true));
+  const frozen = await state.service.complete(occurrence.occurrenceId);
+  expect(frozen).toMatchObject({status: 'failed', passed: 1, members: [
+    {status: 'pass', publicationComplete: false, evidenceStatus: 'failed'},
+    {status: 'pass', publicationComplete: true, evidenceStatus: 'complete'}]});
+  // Restart does not reinterpret this original result from later evidence reads.
+  state.resultRows.clear();
+  expect(await state.service.detail(occurrence.occurrenceId)).toEqual(frozen);
+  const {nightlySuiteProjection} = await import('./test-suite.service');
+  const projected = nightlySuiteProjection(structuredClone(plan.suite!), structuredClone(plan), structuredClone(frozen));
+  expect(projected.members[0]).toMatchObject({status: 'pass', publicationComplete: false, evidenceStatus: 'failed'});
+  const {testStatusCounts, observedTestStatus} = await import('../types/test-status-comparison');
+  expect(observedTestStatus({...projected.members[0]!, publicationComplete: false})).toBe('evidence-failed');
+  expect(testStatusCounts(projected.members.map(member => ({...member, publicationComplete: member.publicationComplete === true}))))
+    .toEqual({failed: 1, total: 2, skipped: 0, pending: 0, incomplete: 0});
 });

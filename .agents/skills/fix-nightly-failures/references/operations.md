@@ -7,6 +7,11 @@ provisioned environment/configuration and private diagnostics outside Git.
 
 ## Discover access and read evidence
 
+For a single Admin run URL or run/request ID, use
+[investigate-routine-failure](../../investigate-routine-failure/SKILL.md). Its
+read-only helper reuses the incident-report admin token and verifies artifacts;
+no Admin browser login or new host credential is needed.
+
 Discover the current repository guidance, installed harness CLI/help, available
 connectors and provisioned Core/operator configuration before constructing calls.
 Use existing credentials privately; inspect only safe endpoint/path fields and
@@ -130,11 +135,20 @@ demonstrated adapter gap through the job and assign its shared fix; do not creat
 another runner or manufacture a cleanup/resume receipt. Ordinary targeted runs
 remain separate and need no authoring job when the evidence supports that choice.
 
-If the selected source is not installed, record the exact source and deployment
-owner as a device-verification prerequisite. Do not mutate live candidate/release
-files, controller SQLite or installation state. Source preparation, PR review
-and merge continue independently. `source.enroll` and candidate installation are
-not generic framework deployment operations.
+For app debugging inside the granted reservation, build MentraOS on that machine
+and install the local build with the existing platform tools. Read the owning
+module's build instructions; record its source revision and executable/package
+identity. Reproduce the specific failing action, inspect the screen and logs, and
+iterate without waiting for a new CI publication each time. The selected job's
+published build remains its recorded input; a local replacement is diagnostic
+provenance, not a passing replay of that published build. Final PR verification
+uses the reviewed head and the task's requested recorded-run policy.
+
+A changed framework provider still needs its source installed through the existing
+owned activation process before the session can use it. If that deployment is not
+available, record the exact prerequisite and owner while app/source work continues.
+Do not mutate live candidate/release files or controller SQLite. `source.enroll`
+and candidate installation are not generic framework deployment operations.
 
 ## Review and merge
 

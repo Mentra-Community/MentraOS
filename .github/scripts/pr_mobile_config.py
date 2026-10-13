@@ -23,7 +23,7 @@ def pr_backend(base_ref):
 
 
 def build_info(env=os.environ):
-    return {'commit': env['PR_HEAD_SHA'], 'branch': env['GITHUB_HEAD_REF'],
+    return {'commit': env['PR_HEAD_SHA'], 'branch': env.get('MENTRA_PR_HEAD_REF') or env['GITHUB_HEAD_REF'],
             'user': env['GITHUB_ACTOR'], 'time': dt.datetime.now(dt.timezone.utc).isoformat()}
 
 

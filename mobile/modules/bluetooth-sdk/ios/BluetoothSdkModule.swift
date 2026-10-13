@@ -27,6 +27,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "glasses_status",
             "bluetooth_status",
             "log",
+            "sdk_update_notice",
             "device_discovered",
             "default_device_changed",
             // Individual event handlers
@@ -368,8 +369,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         // MARK: - Incident Reporting
 
         AsyncFunction("sendIncidentId") { (incidentId: String, apiBaseUrl: String?) in
-            await MainActor.run {
-                self.bluetoothSdk().sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
+            try await MainActor.run {
+                try self.bluetoothSdk().sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
             }
         }
 

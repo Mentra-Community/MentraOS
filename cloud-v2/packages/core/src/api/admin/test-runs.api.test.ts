@@ -11,6 +11,30 @@ import {TestRunError} from "../../services/test-result-error";
 import {requestInputDigest, TestRequestService, type StoredTestRequest, type StoredPreparingRequest, type TestRequestRepository} from "../../services/test-request.service";
 import {routineEnrollmentSchema} from "../../types/routine-definition.types";
 import {frameworkRunSchema} from "../../types/framework-run.types";
+import {TestRequestProgressService} from '../../services/test-request-progress.service';
+
+test('the ordinary run detail carries live progress until its published result replaces the request', async () => {
+  const input = {routineSource: testRoutineSource(), routineId: 'miniapps', definitionRevision: 'a'.repeat(40), platform: 'android',
+    laneId: 'phone', resources: [], build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)}};
+  const row = {requestId: 'active-request', hostId: 'pro', input, inputSha256: requestInputDigest(input), state: 'accepted' as const};
+  const live = {title: 'Miniapps', steps: [{id: 'open', instruction: 'Open miniapp'}], progress: {phase: 'test'}};
+  const detail = spyOn(FrameworkResultService.prototype, 'detailByRun').mockRejectedValue(new TestRunError(404, 'pending'));
+  const byRequest = spyOn(FrameworkResultService.prototype, 'detail').mockRejectedValue(new TestRunError(404, 'pending'));
+  const requests = spyOn(TestRequestService.prototype, 'get').mockResolvedValue(row);
+  const progress = spyOn(TestRequestProgressService.prototype, 'get').mockResolvedValue(live as never);
+  try {
+    const app = createTestRunAdminApi();
+    expect(await (await app.request('/active-request')).json()).toMatchObject({kind: 'request', request: {live}});
+    expect(progress).toHaveBeenCalledWith(row);
+    progress.mockRejectedValueOnce(new Error('Host observation unavailable'));
+    const unavailable = await app.request('/active-request');
+    expect(unavailable.status).toBe(200);
+    expect(await unavailable.json()).toMatchObject({kind: 'request', request: {state: 'accepted', liveUnavailable: true}});
+    progress.mockClear(); byRequest.mockResolvedValue({run: {requestId: 'active-request'}, outcome: 'pass'} as never);
+    expect(await (await app.request('/active-request')).json()).toMatchObject({kind: 'run', outcome: 'pass'});
+    expect(progress).not.toHaveBeenCalled();
+  } finally {detail.mockRestore(); byRequest.mockRestore(); requests.mockRestore(); progress.mockRestore();}
+});
 
 test("mounted lane run history forwards host, lane and pagination at the collection URL", async () => {
   const calls: Record<string, string>[] = [];
@@ -61,7 +85,7 @@ test("the valid run ID history still opens its individual result", async () => {
     const response = await createTestRunAdminApi().request("/history");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({kind: "run", runId: "history"});
-    expect(detail).toHaveBeenCalledWith("history");
+    expect(detail).toHaveBeenCalledWith("history", true);
   } finally {detail.mockRestore();}
 });
 
@@ -322,4 +346,40 @@ test("suite summary preserves missing and invalid-receipt errors", async () => {
     const response=await createTestRunAdminApi().request("/suites/invalid/summary");
     expect(response.status).toBe(503);expect(await response.json()).toEqual({error:"test_run_error",message:"Receipt differs"});
   } finally {reads.mockRestore();}
+});
+
+test('unpublished rejection detail keeps its explicit reason without fabricating a run',async()=>{
+ const input={routineSource:testRoutineSource(),routineId:'arbitrary',definitionRevision:'a'.repeat(40),platform:'ios-on-mac',laneId:'mac',resources:[],
+  build:{repository:'Mentra-Community/MentraOS',channel:'dev',headSha:'b'.repeat(40),kind:'mac-ci-package',source:{channel:'dev',buildRunId:1,publicationAttempt:1},
+  archive:{name:'app.zip',url:'https://artifactscdn.mentraglass.com/app.zip',size:100,sha256:'c'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:10,sha256:'d'.repeat(64)}}};
+ const publicationFailure={entityId:'original',payloadSha256:'d'.repeat(64),manifestSha256:'e'.repeat(64),operation:'result-create' as const,status:409 as const,code:'result_conflict' as const,message:'Invalid frozen fixture action',rejectedAt:'2026-10-09T00:00:00.000Z'};
+ class Results extends FrameworkResultService {override async detailByRun():Promise<any>{throw new TestRunError(404,'missing')};override async detail():Promise<any>{throw new TestRunError(404,'missing')}}
+ class Requests extends TestRequestService {override async get():Promise<any>{return{requestId:'original',hostId:'mini',inputSha256:requestInputDigest(input),input,state:'terminal',terminalStatus:'incomplete',publicationFailure}}}
+ const body:any=await(await createTestRunAdminApi(undefined,undefined,new Results(),new Requests()).request('/original')).json();
+ expect(body).toMatchObject({kind:'request',request:{state:'terminal',terminalStatus:'incomplete',reason:'Publication failed: Invalid frozen fixture action',reasonAt:publicationFailure.rejectedAt}});
+ expect(body.run).toBeUndefined();
+});
+
+test('Admin gate cancellation requires operator identity and strict retained generation input', async () => {
+ const calls: any[] = [], checks = {async cancelFromAdmin(...args: any[]) {calls.push(args); return {accepted: true}}};
+ const gateId = 'pr-check-' + 'a'.repeat(64), body = {operationId: '00000000-0000-4000-8000-000000000001', coverageGeneration: 1, attemptGeneration: 2};
+ const unauthenticated = createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, checks as any);
+ expect((await unauthenticated.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}})).status).toBe(403);
+ const app = new Hono<any>(); app.use('*', async (c, next) => {c.set('developer', {developerId: 'operator-one', email: 'operator@example.test'}); await next()});
+ app.route('/', createTestRunAdminApi(undefined, undefined, undefined, undefined, undefined, checks as any));
+ expect((await app.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify({...body, shell: 'bad'}), headers: {'Content-Type': 'application/json'}})).status).toBe(400);
+ expect((await app.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}})).status).toBe(202);
+ expect(calls).toEqual([[gateId, body, 'admin:operator-one']]);
+});
+
+test('activity reads and displays bounded fleet preparation failures', async () => {
+ const {TestRequestModel}=await import('../../models/test-request.model');
+ const {portableRoutineSelectionSchema}=await import('../../types/routine-job.types');
+ const source={channel:'dev',buildRunId:1,publicationAttempt:1},selected=portableRoutineSelectionSchema.parse({requestId:'fleet-failure',routineId:'sample',platform:'android',routineRevision:'a'.repeat(40),source,
+  build:{repository:'Mentra-Community/MentraOS',headSha:'b'.repeat(40),channel:'dev',kind:'android-apk',source,archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:10,sha256:'d'.repeat(64)}}});
+ const row={requestId:selected.requestId,state:'awaiting-source',fleetSelection:selected,fleetSelectionSha256:requestInputDigest(selected),fleetPreparationStatus:{reason:'Routine source preparation failed during Git blobs; retrying the same request.'}};
+ let projection:any;
+ const find=spyOn(TestRequestModel,'find').mockReturnValue({sort(){return this},limit(){return this},select(value:any){projection=value;return this},read(){return this},readConcern(){return this},lean:async()=>[{...row,fleetPreparationStatus:projection?.fleetPreparationStatus?row.fleetPreparationStatus:undefined}]} as any);
+ try{const response=await createTestRunAdminApi().request('/activity');expect(response.status).toBe(200);expect(await response.json()).toMatchObject({requests:[{requestId:selected.requestId,reason:row.fleetPreparationStatus.reason}]});expect(projection).toMatchObject({fleetPreparationStatus:1});}
+ finally{find.mockRestore();}
 });

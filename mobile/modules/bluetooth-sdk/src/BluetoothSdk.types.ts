@@ -1125,6 +1125,7 @@ export type BluetoothSdkModuleEvents = {
   glasses_status: (changed: Partial<GlassesStatus>) => void
   bluetooth_status: (changed: Partial<BluetoothStatus>) => void
   log: (event: LogEvent) => void
+  sdk_update_notice: (event: {message: string}) => void
   device_discovered: (device: Device) => void
   default_device_changed: (event: {device?: Device}) => void
   // Individual event handlers

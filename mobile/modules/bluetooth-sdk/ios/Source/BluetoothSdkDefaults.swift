@@ -9,7 +9,7 @@ enum BluetoothSdkDefaults {
     }
 
     static let voiceActivityDetectionEnabled = false
-    static let loudnessGateEnabled = false
+    static let loudnessGateEnabled = true
 
     /// Must stay true. The firmware defaults auto power-off on, and we re-push
     /// every Bluetooth setting on connect, so a false default here would

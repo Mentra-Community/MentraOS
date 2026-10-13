@@ -34,9 +34,23 @@ export const routineJobBindingSchema = z.object({jobId: frameworkIdentitySchema,
   boundAt: z.string().datetime({offset: true})}).strict();
 export const routineJobBindInputSchema = routineJobBindingSchema.pick({laneId: true, descriptorRevision: true, actionsRunId: true, actionsJobId: true})
   .extend({inputSha256: jobHashSchema});
+export const routinePublicationFailureSchema = z.object({entityId: frameworkIdentitySchema,
+  payloadSha256: jobHashSchema, manifestSha256: jobHashSchema, operation: z.literal('result-create'),
+  status: z.literal(409), code: z.literal('result_conflict'), message: z.string().min(1).max(1024),
+  rejectedAt: z.string().datetime({offset: true})}).strict();
 export const routineJobCompletionSchema = z.object({inputSha256: jobHashSchema, disposition: z.enum(['clean', 'repair']),
   completedAt: z.string().datetime({offset: true})}).strict();
+export const routineJobCompletionReportSchema = routineJobCompletionSchema.extend({publicationFailure: routinePublicationFailureSchema.optional()}).strict();
 export const routineJobActionsSchema = z.object({inputSha256: jobHashSchema, actionsRunId: z.string().regex(/^[1-9][0-9]{0,19}$/)}).strict();
+export const routinePreparationStatusSchema = z.object({inputSha256: jobHashSchema,
+  actionsRunId: z.string().regex(/^[1-9][0-9]{0,19}$/),
+  phase: z.enum(['workflow registration', 'source cleanup', 'selected archive', 'Git inventory', 'Git blobs', 'routine description', 'routine bundle',
+    'bundle publication', 'prepared job commit', 'prepared job readback']),
+  code: z.enum(['source-unavailable', 'source-invalid', 'not-applicable']), retryable: z.boolean(),
+}).strict().refine(value => value.code === 'source-unavailable' ? value.retryable : !value.retryable,
+  'Only unavailable source can retry');
+export type RoutinePreparationStatus = z.infer<typeof routinePreparationStatusSchema> & {observedAt: string; reason: string};
+export type RoutinePublicationFailure = z.infer<typeof routinePublicationFailureSchema>;
 export type RoutineJobCompletion = z.infer<typeof routineJobCompletionSchema>;
 export type PortableRoutineSelection = z.infer<typeof portableRoutineSelectionSchema>;
 export type PortableRequirements = z.infer<typeof portableRequirementsSchema>;
@@ -48,16 +62,21 @@ export interface StoredRoutineJob {
   fleetSelection: PortableRoutineSelection;
   fleetSelectionSha256: string;
   fleetPreparation?: RoutineJobPreparation;
+  fleetPreparationStatus?: RoutinePreparationStatus;
   fleetInputSha256?: string;
   fleetDeadline: Date;
   fleetTarget?: z.infer<typeof routineJobTargetSchema>;
   fleetBinding?: RoutineJobBinding;
   dispatchCompletion?: RoutineJobCompletion;
+  publicationFailure?: RoutinePublicationFailure;
+  hostReceipt?: import('../services/test-request.service').HostAcceptance;
   fleetDispatch?: import('../services/routine-job-actions.service').RoutineActionsDispatch;
   fleetActionsCancellation?: import('../services/routine-job-actions.service').RoutineActionsCancellation;
   fleetActions?: Array<{actionsRunId: string; recordedAt: string}>;
   fleetCancellation?: {requestedAt: string; reason: string};
   hostId?: string;
+  /** Retained executable input digest after host-specific preparation. */
+  inputSha256?: string;
   dispatchIntent?: unknown;
   dispatchIntentSha256?: string;
   preparation?: {code: string; reason: string; observedAt: string};

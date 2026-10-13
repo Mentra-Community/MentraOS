@@ -7,6 +7,7 @@ import {RoutineDefinitionConflict, RoutineDefinitionService} from "../../service
 import {createTestHostAuth, type TestHostEnv} from "../middleware/test-host-auth.middleware";
 import {createHash, timingSafeEqual} from "node:crypto";
 import {routineIdentitySchema, routinePlatformSchema} from '../../types/routine-definition.types';
+import {publicationErrorDetails} from './publication-error-details';
 
 /** Trusted controller source enrollment, separate from device result ingestion. */
 export function createRoutineDefinitionsApi(service = new RoutineDefinitionService(), credentials?: () => string | undefined) {
@@ -23,7 +24,7 @@ export function createRoutineDefinitionsApi(service = new RoutineDefinitionServi
   app.onError((error, c) => {
     if (error instanceof TestRunError) return c.json({error: "invalid_definition", message: error.message}, error.status);
     if (error instanceof RoutineDefinitionConflict) return c.json({error: "definition_conflict", message: error.message}, 409);
-    c.var.logger?.error({errorName: error.name}, "routine definition enrollment failed");
+    c.var.logger?.error(publicationErrorDetails(error), "routine definition enrollment failed");
     return c.json({error: "definition_enrollment_unavailable"}, 503);
   });
   const bundles = new RoutineSourceBundleService();

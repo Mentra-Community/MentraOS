@@ -1,11 +1,16 @@
+import {requestInputDigest} from './test-request.service';
+import {readNativeReportAssets, reportNativeSnapshotSchema} from './report-native-detail.service';
+import {TestingDetailStorage} from './testing-detail-storage.service';
+import {readStoredRun} from './framework-run-detail.service';
+import {TestRunModel} from '../models/test-run.model';
 /**
  * @fileoverview Report service for Cloud V2 core.
  *
  * Artifact payloads (screenshot/video bytes, serialized log bundles) never live in
  * the report document: each one is written to blob storage and described by a
  * `report_assets` row (same pattern as miniapp assets), while the report
- * embeds only artifact metadata. A report therefore stays a few KB no matter
- * how many attachments it collects.
+ * embeds only artifact metadata. List reads project an artifact count so reports
+ * with many attachments do not transfer their full inventory during triage.
  */
 
 import { ulid } from "ulid";
@@ -13,7 +18,6 @@ import { createHash } from "node:crypto";
 import { createLogger } from "@mentra/cloud-shared";
 import { ReportModel } from "../models/report.model";
 import { ReportAssetModel } from "../models/report-asset.model";
-import { TestAssetModel } from "../models/test-run.model";
 import type { RecordedFrameworkRun } from "../types/framework-run.types";
 import { notifyReportSlack } from "./report-slack.service";
 import { REPORT_TESTING_SOURCE, type ReportCategory } from "./report-category";
@@ -22,6 +26,9 @@ import { UserModel } from "../models/user.model";
 import { findUsersByEmailFilters, getUserById } from "./account/gotrue.client";
 import { getAdminEmailAllowlist, isAdminEmail } from "./admin-email-policy";
 import { createStorageService, type StorageService } from "./storage/storage.service";
+import type { ByteRange } from "./storage/byte-range";
+import {REPORT_LOG_SOURCES, initialReportLogCollection, isReportLogSource, visibleReportLogCollection, type ReportLogCollection, type ReportLogSource} from './report-log-collection';
+import {reportAutomationCorrelation, type ReportAutomationCorrelation} from '@mentra/cloud-protocol/report-automation';
 
 const logger = createLogger("core").child({ service: "report.service" });
 const attachmentWriteConcern = { w: "majority" as const, j: true, wtimeout: 10_000 };
@@ -59,31 +66,41 @@ export interface ReportDetails {
 
 export interface ReportContext extends Record<string, unknown> {}
 
-export type SubmitReportInput =
-  | {
+interface IncidentKeyInput {
+  /** Device identity of one bug or automatic event; repeats return the user's existing report. */
+  incidentKey?: string;
+}
+
+export type SubmitReportInput = (
+  | ({
       mentraUserId: string;
       kind: "bug";
       trigger: ReportTrigger;
       report: ReportDetails;
       context: ReportContext;
-    }
-  | {
+    } & IncidentKeyInput)
+  | ({
       mentraUserId: string;
       kind: "automatic";
+      automationCorrelation?: ReportAutomationCorrelation;
       trigger: Extract<ReportTrigger, { type: "automatic" }>;
       report: ReportDetails;
       context: ReportContext;
-    }
+    } & IncidentKeyInput)
   | {
       mentraUserId: string;
       kind: "feedback";
+      incidentKey?: never;
       feedback: string | Record<string, unknown>;
       context: ReportContext;
-    };
+    }
+);
 
 export interface SubmitReportResult {
   reportId: string;
   status: ReportStatus;
+  /** Present only when an existing report for the incident key was returned. */
+  deduplicated?: true;
 }
 
 export interface ReportLogEntry {
@@ -117,13 +134,37 @@ function stableReportId(prefix: "rep" | "art", binding: string): string {
   return `${prefix}_${BigInt(`0x${hex}`).toString(32).padStart(26, "0").toUpperCase()}`;
 }
 
+const CROCKFORD_BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/** The reportId of a keyed submission: the user and incident key hashed into the
+ * same `rep_` + 26-character ULID alphabet as every other device report. The
+ * long-standing unique reportId index then deduplicates keyed submissions, so
+ * no new unique index is needed (Cosmos DB, which Private Cloud uses, cannot
+ * add one to a collection that already holds reports). */
+export function incidentReportId(mentraUserId: string, incidentKey: string): string {
+  let value = BigInt(`0x${createHash("sha256").update(`incident\n${mentraUserId}\n${incidentKey}`).digest("hex").slice(0, 32)}`);
+  let id = "";
+  for (let i = 0; i < 26; i++, value >>= 5n) id = CROCKFORD_BASE32[Number(value & 31n)] + id;
+  return `rep_${id}`;
+}
+
 /** Server-owned incident for a published run without a device-filed report. The unique
  * reportId deduplicates concurrent creation and retries without changing the TestRun. */
 export async function ensureTestRunReport(testRunId: string, payloadSha256: string,
   details?: {actualBehavior: string; expectedBehavior: string; context: Record<string, unknown>}) {
   const reportId = stableReportId("rep", `test-run\n${testRunId}\n${payloadSha256}`);
   const mentraUserId = "automation:test-run";
+  const logCollection = initialReportLogCollection(new Date());
+  // A fallback has no device-filed report or trusted customer identity. Keep
+  // these gaps visible without querying server logs for the automation owner.
+  for (const [source, receipt] of Object.entries(logCollection)) {
+    receipt.state = 'unavailable';
+    receipt.reason = source === 'cloud' || source === 'miniapp_server'
+      ? 'No trusted Mentra user identity is available for server log correlation'
+      : 'No device-filed report is available to request device log collection';
+  }
   const document = { reportId, mentraUserId, kind: "automatic", status: "collecting", artifacts: [],
+    logCollection,
     trigger: { type: "automatic", source: REPORT_TESTING_SOURCE, reason: details ? "routine-run-failed" : "worker-diagnostics" },
     report: details ? {actualBehavior: details.actualBehavior, expectedBehavior: details.expectedBehavior} :
       { actualBehavior: "Automation worker diagnostics for a completed test run." },
@@ -137,6 +178,15 @@ export async function ensureTestRunReport(testRunId: string, payloadSha256: stri
     || context?.testRunId !== testRunId || context.payloadSha256 !== payloadSha256)
     throw new ReportArtifactError(409, "automation incident binding conflicts");
   return { reportId, mentraUserId, ...(details ? {context: context!, report: row.report as {actualBehavior: string; expectedBehavior: string}} : {}) };
+}
+
+/** Read an existing server-owned incident by its indexed identity; never creates a report. */
+export async function findTestRunReport(testRunId: string, payloadSha256: string): Promise<string | null> {
+  const reportId = stableReportId('rep', `test-run\n${testRunId}\n${payloadSha256}`);
+  const row = await ReportModel.findOne({reportId, mentraUserId: 'automation:test-run', kind: 'automatic',
+    'context.testRunId': testRunId, 'context.payloadSha256': payloadSha256}).select({reportId: 1, _id: 0})
+    .setOptions({timeoutMS: 3000}).lean();
+  return row?.reportId ?? null;
 }
 
 /**
@@ -179,14 +229,31 @@ async function lookupUserEmail(mentraUserId: string): Promise<string | null> {
 }
 
 export async function submitReport(input: SubmitReportInput): Promise<SubmitReportResult> {
-  const reportId = `rep_${ulid()}`;
+  // Keep the service boundary safe for untyped/internal JavaScript callers too;
+  // the HTTP schema independently rejects this combination with a 400.
+  if (input.kind === "feedback" && "incidentKey" in input)
+    throw new TypeError("feedback reports do not accept incidentKey");
+  const rawCorrelation = 'automationCorrelation' in input ? input.automationCorrelation : undefined;
+  const correlation = rawCorrelation === undefined ? null : reportAutomationCorrelation(rawCorrelation);
+  if (rawCorrelation !== undefined && (!correlation || input.kind !== 'automatic'
+    || input.trigger.source !== REPORT_TESTING_SOURCE || input.trigger.reason !== 'incident_report_requested'))
+    throw new ReportArtifactError(409, 'Invalid automated incident correlation');
+  const {incidentKey} = input;
+  // Every Mongo read and write of a keyed submission runs under a bound: an
+  // unresponsive primary must surface temporarily_unavailable, not hang.
+  if (incidentKey !== undefined) {
+    const existing = await withinDeadline(Date.now() + committedReadWait.timeoutMs,
+      timeoutMs => findIncidentKeyReport(input.mentraUserId, incidentKey, timeoutMs));
+    if (existing) return existing;
+  }
+  const reportId = incidentKey !== undefined ? incidentReportId(input.mentraUserId, incidentKey) : `rep_${ulid()}`;
   const status: ReportStatus = input.kind === "feedback" ? "ready" : "collecting";
   const feedback = "feedback" in input
     ? typeof input.feedback === "string"
       ? { message: input.feedback }
       : input.feedback
     : null;
-  await ReportModel.create({
+  const document = {
     reportId,
     mentraUserId: input.mentraUserId,
     kind: input.kind,
@@ -194,9 +261,32 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
     report: "report" in input ? input.report : null,
     feedback,
     context: input.context,
+    ...(correlation ? {automationCorrelation: correlation} : {}),
+    ...(incidentKey !== undefined ? {incidentKey} : {}),
     artifacts: [],
+    ...(input.kind !== 'feedback' ? {logCollection: initialReportLogCollection(new Date())} : {}),
     status,
-  });
+  };
+  // The creation (and the wait on a concurrent winner) gets its own full bound, so a
+  // slow pre-check cannot turn a write that would have committed into a spurious 503.
+  const deadline = Date.now() + committedReadWait.timeoutMs;
+  try {
+    // The recovery reader requires majority visibility. A correlated creation
+    // must not be acknowledged before its binding is committed at that level.
+    // A keyed creation is held to the same bar, since its key may be answered
+    // to a retry as an existing report.
+    if (incidentKey !== undefined)
+      await withinDeadline(deadline, timeoutMS => ReportModel.create([document], {writeConcern: attachmentWriteConcern, timeoutMS}));
+    else if (correlation) await ReportModel.create([document], {writeConcern: attachmentWriteConcern});
+    else await ReportModel.create(document);
+  } catch (error) {
+    // A concurrent submission with the same incident key created this reportId first.
+    // Its write may still be pending or roll back, so answer only once it is committed.
+    if (incidentKey === undefined || (error as {code?: number}).code !== 11000) throw error;
+    const existing = await awaitCommitted(deadline, timeoutMs => findIncidentKeyReport(input.mentraUserId, incidentKey, timeoutMs));
+    if (!existing) throw new ReportArtifactError(503, "incident report is not committed yet");
+    return existing;
+  }
 
   // Feedback reports are complete as submitted, so they notify here;
   // bug/automatic reports notify from markReportReady once artifact
@@ -220,6 +310,80 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
   return { reportId, status };
 }
 
+async function findIncidentKeyReport(mentraUserId: string, incidentKey: string, timeoutMs: number): Promise<SubmitReportResult | null> {
+  // serverSelectionTimeoutMS bounds only connection setup, not an in-flight
+  // query, so carry the remaining deadline onto the operation itself.
+  // The derived reportId reads through the unique reportId index.
+  const row = await ReportModel.findOne({reportId: incidentReportId(mentraUserId, incidentKey), mentraUserId, incidentKey},
+    {_id: 0, reportId: 1, status: 1})
+    .read('primary').readConcern('majority').setOptions({timeoutMS: timeoutMs})
+    .lean<{reportId: string; status: ReportStatus}>();
+  return row ? {reportId: row.reportId, status: row.status, deduplicated: true} : null;
+}
+
+/** Bound for waiting on a concurrent winner's majority commit; matches its write timeout. */
+export const committedReadWait = {timeoutMs: attachmentWriteConcern.wtimeout, pollMs: 100};
+
+/** An exhausted operation deadline surfaces as maxTimeMS (code 50), the driver's client-side
+ * operation timeout, or an unmet write concern (code 64). On a keyed path all of them mean
+ * the outcome is unknown but retry-safe, so callers observe temporarily_unavailable. */
+function isMongoTimeout(error: unknown): boolean {
+  const {code, name} = error as {code?: number; name?: string};
+  return code === 50 || code === 64 || name === "MongoOperationTimeoutError" || name === "MongoWriteConcernError";
+}
+
+/** Run one Mongo operation inside the time left before `deadline` (epoch ms). The remaining
+ * time is passed to the operation as its server-side `timeoutMS`, and also enforced here so
+ * a read that never answers (or ignores its limit) still ends in a 503 at the deadline
+ * instead of preventing the deadline check. */
+async function withinDeadline<T>(deadline: number, run: (timeoutMs: number) => PromiseLike<T>): Promise<T> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new ReportArtifactError(503, "incident persistence exceeded its deadline");
+  // Attach the catch to the work itself (same as reportUserEmail's lookup): the
+  // timer and the operation share this deadline, so a slow op usually loses the
+  // race and rejects afterwards — the exact Mongo stall this helper survives.
+  // Without an explicit handler that late rejection goes unhandled.
+  const work = Promise.resolve(run(remaining));
+  work.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ReportArtifactError(503, "incident persistence exceeded its deadline")), remaining);
+  });
+  try {
+    return await Promise.race([work, expired]);
+  } catch (error) {
+    if (isMongoTimeout(error)) throw new ReportArtifactError(503, "incident persistence exceeded its deadline");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Poll a majority read until a concurrent winner's row is visible, or `deadline` passes (null). */
+async function awaitCommitted<T>(deadline: number, read: (timeoutMs: number) => PromiseLike<T | null>): Promise<T | null> {
+  for (;;) {
+    const row = await withinDeadline(deadline, read);
+    const remaining = deadline - Date.now();
+    if (row || remaining <= 0) return row;
+    await new Promise(resolve => setTimeout(resolve, Math.min(committedReadWait.pollMs, remaining)));
+  }
+}
+
+/** Exact durable device-report link only. No collection-success inference and no
+ * choosing a winner when duplicate requests/accounts used the same binding. */
+export async function findDeviceIncidentReport(correlation: ReportAutomationCorrelation): Promise<string | null> {
+  const valid = reportAutomationCorrelation(correlation);
+  if (!valid) return null;
+  const rows = await ReportModel.find({'automationCorrelation.testRunId': valid.testRunId,
+    'automationCorrelation.alertId': valid.alertId}).select({reportId: 1, kind: 1, trigger: 1, _id: 0})
+    .limit(2).read('primary').readConcern('majority').setOptions({timeoutMS: 3000}).lean();
+  const row = rows.length === 1 ? rows[0] : undefined;
+  const trigger = row?.trigger as {source?: unknown; reason?: unknown} | undefined;
+  return row?.kind === 'automatic' && trigger?.source === REPORT_TESTING_SOURCE
+    && trigger.reason === 'incident_report_requested' && /^rep_[A-Za-z0-9]{1,80}$/.test(row.reportId)
+    ? row.reportId : null;
+}
+
 export async function addLogArtifact(input: {
   mentraUserId: string;
   reportId: string;
@@ -236,89 +400,137 @@ export async function addLogArtifact(input: {
         source: input.source,
         filename: null,
         contentType: "application/json",
+        logEntryCount: input.entries.length,
         bytes: Buffer.from(JSON.stringify({ entries: input.entries }), "utf8"),
       },
     ],
   });
 }
 
-/** Attach all already-acknowledged native diagnostic bytes by reference, never
+/** Read only collection receipts for the authenticated report owner. */
+export async function getReportLogCollection(input: {mentraUserId: string; reportId: string}): Promise<{
+  reportId: string;
+  logCollection: Partial<Record<ReportLogSource, ReportLogCollection>>;
+} | null> {
+  const row = await ReportModel.findOne(
+    {reportId: input.reportId, mentraUserId: input.mentraUserId},
+    {_id: 0, reportId: 1, logCollection: 1},
+  ).lean<{reportId: string; logCollection?: Partial<Record<ReportLogSource, ReportLogCollection>> | null}>();
+  if (!row) return null;
+  const logCollection: Partial<Record<ReportLogSource, ReportLogCollection>> = {};
+  for (const source of REPORT_LOG_SOURCES) {
+    const receipt = row.logCollection?.[source];
+    if (!receipt) continue;
+    logCollection[source] = {
+      state: receipt.state, requestedAt: receipt.requestedAt, deadlineAt: receipt.deadlineAt,
+      ...(typeof receipt.reason === 'string' ? {reason: receipt.reason} : {}),
+      ...(typeof receipt.receivedAt === 'string' ? {receivedAt: receipt.receivedAt} : {}),
+      ...(typeof receipt.artifactId === 'string' ? {artifactId: receipt.artifactId} : {}),
+      ...(typeof receipt.entryCount === 'number' ? {entryCount: receipt.entryCount} : {}),
+    };
+  }
+  return {reportId: row.reportId, logCollection: visibleReportLogCollection(logCollection)};
+}
+
+/** Only actual storage acceptance marks a source received. A late device failure never erases it. */
+export async function updateReportLogCollection(input: {
+  mentraUserId: string; reportId: string; source: ReportLogSource;
+  state: 'requested' | 'unavailable' | 'failed'; reason?: string;
+}): Promise<boolean> {
+  const owner = {reportId: input.reportId, mentraUserId: input.mentraUserId};
+  if (!await ReportModel.exists(owner)) return false;
+  const source = `logCollection.${input.source}`;
+  const result = await ReportModel.updateOne({...owner, [`${source}.state`]: {$nin: ['received', 'failed', 'unavailable']}}, {
+    $set: {[`${source}.state`]: input.state, ...(input.reason ? {[`${source}.reason`]: input.reason} : {})},
+  });
+  if (result.modifiedCount) logger.info({...owner, source: input.source, state: input.state, reason: input.reason}, 'Report log collection outcome');
+  return true;
+}
+
+/** Attach all already-acknowledged native diagnostic and screenshot bytes by reference, never
  * copying recordings or reading unbounded device output into the report. */
 export async function referenceTestRunDiagnostics(owner: {reportId: string; mentraUserId: string}, run: RecordedFrameworkRun) {
-  const declared = run.assets.filter(asset => asset.kind === "diagnostic" || asset.kind === "report");
-  // A timed-out write may already have committed. Verify and reuse those rows
-  // on retry instead of issuing the entire frozen export's upserts again.
-  const batchSize = 100;
-  for (let offset = 0; offset < declared.length; offset += batchSize) {
-    const batch = declared.slice(offset, offset + batchSize);
-    const stored = await TestAssetModel.find({runId: run.result.runId, assetId: {$in: batch.map(asset => asset.id)}})
-      .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
-    const byId = new Map(stored.map(asset => [asset.assetId, asset]));
-    const references = batch.map(asset => {
-      const blob = byId.get(asset.id);
-      if (!blob || blob.sha256 !== asset.sha256 || blob.sizeBytes !== asset.size)
-        throw new ReportArtifactError(503, "Routine diagnostic custody differs from its frozen manifest");
-      return {artifactId: stableReportId("art", `${owner.reportId}\nnative-diagnostic\n${asset.id}`), ...owner,
-        storageKey: blob.storageKey, sourceTestRunId: run.result.runId, sourceTestAssetId: asset.id, fileName: asset.path.split('/').at(-1),
-        contentType: asset.mimeType, sizeBytes: asset.size, sha256: asset.sha256};
-    });
-    const readRows = () => ReportAssetModel.find({artifactId: {$in: references.map(reference => reference.artifactId)}})
-      .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
-    let rows = await readRows();
-    const matches = (row: typeof rows[number], reference: typeof references[number]) =>
-      row.reportId === reference.reportId && row.mentraUserId === reference.mentraUserId && row.storageKey === reference.storageKey
-      && row.sha256 === reference.sha256 && row.sizeBytes === reference.sizeBytes && row.sourceTestRunId === reference.sourceTestRunId
-      && row.sourceTestAssetId === reference.sourceTestAssetId && row.fileName === reference.fileName && row.contentType === reference.contentType;
-    const existing = new Map(rows.map(row => [row.artifactId, row]));
-    const missing = references.filter(reference => {
-      const row = existing.get(reference.artifactId);
-      if (row && !matches(row, reference)) throw new ReportArtifactError(409, "Routine diagnostic reference already binds different content");
-      return !row;
-    });
-    if (missing.length) {
-      await ReportAssetModel.bulkWrite(missing.map(reference => ({updateOne: {filter: {artifactId: reference.artifactId},
-        update: {$setOnInsert: reference}, upsert: true}})), {writeConcern: attachmentWriteConcern, ordered: false, timeoutMS: 10_000});
-      rows = await readRows();
-    }
-    const byArtifactId = new Map(rows.map(row => [row.artifactId, row]));
-    const metadata = references.map(reference => {
-      const row = byArtifactId.get(reference.artifactId);
-      if (!row) throw new ReportArtifactError(503, "Routine diagnostic reference is unavailable");
-      if (!matches(row, reference)) throw new ReportArtifactError(409, "Routine diagnostic reference already binds different content");
-      return {artifactId: row.artifactId, type: "state_snapshot", source: "framework-diagnostic", filename: row.fileName,
-        contentType: row.contentType, sizeBytes: row.sizeBytes, createdAt: row.createdAt};
-    });
-    const result = await ReportModel.updateOne(owner, {$addToSet: {artifacts: {$each: metadata}}},
-      {writeConcern: attachmentWriteConcern, timeoutMS: 10_000});
-    if (result.matchedCount !== 1) throw new ReportArtifactError(503, "Routine incident is unavailable");
+  const existing = await ReportModel.findOne(owner).read('primary').readConcern('majority').lean();
+  if (!existing) throw new ReportArtifactError(503, 'Routine incident is unavailable');
+  if (existing.nativeDiagnostics) {
+    const reference = existing.nativeDiagnostics as {runId?: unknown; payloadSha256?: unknown};
+    if (reference.runId !== run.result.runId || reference.payloadSha256 !== requestInputDigest(run))
+      throw new ReportArtifactError(409, 'Routine incident already binds another result');
+    return (await readNativeReportAssets(existing)).artifacts.length;
   }
+  const row = await TestRunModel.findOne({resultSchemaVersion: 1, runId: run.result.runId, uploadsComplete: true})
+    .read('primary').readConcern('majority').lean();
+  if (!row) throw new ReportArtifactError(503, 'Routine result authority is unavailable');
+  const envelope = await readStoredRun(row);
+  if (envelope.payloadSha256 !== requestInputDigest(run)) throw new ReportArtifactError(409, 'Routine incident result differs');
+  const declared = run.assets.filter(asset => asset.kind === 'diagnostic' || asset.kind === 'report' || asset.kind === 'screenshot');
+  const snapshot = reportNativeSnapshotSchema.parse({version: 1, reportId: owner.reportId, mentraUserId: owner.mentraUserId, runId: run.result.runId,
+    payloadSha256: envelope.payloadSha256, artifacts: declared.map(asset => ({
+      artifactId: stableReportId('art', `${owner.reportId}\nnative-diagnostic\n${asset.id}`), assetId: asset.id,
+      createdAt: new Date(existing.createdAt).toISOString(), type: asset.kind === 'screenshot' ? 'screenshot' : 'state_snapshot',
+      source: asset.kind === 'screenshot' ? 'framework-screenshot' : 'framework-diagnostic'}))});
+  const detail = await new TestingDetailStorage().write('report-native', owner.reportId, snapshot);
+  const reference = {runId: snapshot.runId, payloadSha256: snapshot.payloadSha256, count: snapshot.artifacts.length, detail};
+  await ReportModel.updateOne({...owner, nativeDiagnostics: {$exists: false}}, {$set: {nativeDiagnostics: reference}},
+    {writeConcern: attachmentWriteConcern, timeoutMS: 10_000});
+  const settled = await ReportModel.findOne(owner).read('primary').readConcern('majority').lean();
+  if (!settled || requestInputDigest(settled.nativeDiagnostics) !== requestInputDigest(reference))
+    throw new ReportArtifactError(409, 'Routine incident source publication conflicts');
   return declared.length;
 }
 
-/** Worker retry path through the same report/asset models and blob provider. Reserve the
- * digest before writing: a concurrent different body cannot overwrite the winning blob.
+/** Bind acknowledged run evidence to the existing device report's authenticated owner.
+ * A host-provided report ID alone never authorizes an attachment. */
+export async function referenceDeviceIncidentDiagnostics(reportId: string, correlation: ReportAutomationCorrelation,
+  run: RecordedFrameworkRun) {
+  const valid = reportAutomationCorrelation(correlation);
+  if (!valid || valid.testRunId !== run.result.runId || !/^rep_[A-Za-z0-9]{1,80}$/.test(reportId))
+    throw new ReportArtifactError(409, "Device incident does not belong to this frozen run");
+  const row = await ReportModel.findOne({reportId, 'automationCorrelation.testRunId': valid.testRunId,
+    'automationCorrelation.alertId': valid.alertId}).select({reportId: 1, mentraUserId: 1, kind: 1, trigger: 1, _id: 0})
+    .read('primary').readConcern('majority').setOptions({timeoutMS: 3000}).lean();
+  const trigger = row?.trigger as {source?: unknown; reason?: unknown} | undefined;
+  if (!row || !row.mentraUserId || row.kind !== 'automatic' || trigger?.source !== REPORT_TESTING_SOURCE
+    || trigger.reason !== 'incident_report_requested')
+    throw new ReportArtifactError(409, "Device incident does not belong to this frozen run");
+  return referenceTestRunDiagnostics({reportId: row.reportId, mentraUserId: row.mentraUserId}, run);
+}
+
+/** Keyed retry path through the same report/asset models and blob provider. Reserve the
+ * digest and source before writing: a concurrent different body or source cannot
+ * overwrite the winning blob or publish a second artifact under the same key.
  * Interrupted uploads keep their reservation so an identical retry can finish it. */
 async function addRetryableLogArtifact(input: {
   mentraUserId: string; reportId: string; source: string; entries: ReportLogEntry[];
 }, key: string, storage: StorageService): Promise<AddReportArtifactsResult | null> {
   const { reportId, mentraUserId } = input;
-  if (!await ReportModel.exists({ reportId, mentraUserId })) return null;
+  // Every Mongo read and write of the reservation phase shares one bound.
+  const deadline = Date.now() + committedReadWait.timeoutMs;
+  if (!await withinDeadline(deadline, timeoutMS => ReportModel.exists({ reportId, mentraUserId })
+    .setOptions({ timeoutMS }))) return null;
   const bytes = Buffer.from(JSON.stringify({ entries: input.entries }), "utf8");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const artifactId = stableReportId("art", `${reportId}\n${key}`);
   const storageKey = `reports/${reportId}/${artifactId}`, contentType = "application/json";
   try {
-    await ReportAssetModel.create([{ artifactId, reportId, mentraUserId, storageKey, fileName: null,
-      contentType, sizeBytes: bytes.byteLength, sha256 }], { writeConcern: attachmentWriteConcern });
+    await withinDeadline(deadline, timeoutMS => ReportAssetModel.create([{ artifactId, reportId, mentraUserId, storageKey,
+      fileName: null, contentType, sizeBytes: bytes.byteLength, sha256, source: input.source }],
+    { writeConcern: attachmentWriteConcern, timeoutMS }));
   } catch (error) { if ((error as { code?: number }).code !== 11000) throw error; }
-  const asset = await ReportAssetModel.findOne({ artifactId }).lean();
-  if (!asset || asset.reportId !== reportId || asset.mentraUserId !== mentraUserId || asset.storageKey !== storageKey
-    || asset.sha256 !== sha256 || asset.sizeBytes !== bytes.byteLength || asset.contentType !== contentType)
+  // Bind only against a committed reservation: a concurrent winner's may still roll back.
+  // Carry the remaining deadline onto the lookup so a stalled primary cannot hang the upload.
+  const asset = await awaitCommitted(deadline, timeoutMs => ReportAssetModel.findOne({ artifactId })
+    .read("primary").readConcern("majority").setOptions({timeoutMS: timeoutMs}).lean());
+  if (!asset) throw new ReportArtifactError(503, "attachment reservation is not committed yet");
+  // Reservations made before sources were bound carry none.
+  if (asset.reportId !== reportId || asset.mentraUserId !== mentraUserId || asset.storageKey !== storageKey
+    || asset.sha256 !== sha256 || asset.sizeBytes !== bytes.byteLength || asset.contentType !== contentType
+    || (asset.source != null && asset.source !== input.source))
     throw new ReportArtifactError(409, "attachment key already binds different content");
   // Published metadata proves an earlier verified write. A retry only reads it;
   // an unavailable/corrupt completed object must not trigger a destructive rewrite.
-  const completed = await ReportModel.exists({ reportId, mentraUserId, "artifacts.artifactId": artifactId })
-    .read("primary").readConcern("majority");
+  const completed = await withinDeadline(deadline, timeoutMS => ReportModel.exists({ reportId, mentraUserId, "artifacts.artifactId": artifactId })
+    .read("primary").readConcern("majority").setOptions({ timeoutMS }));
   if (!completed) {
     const object = await storage.putObject({ key: storageKey, body: bytes, contentType });
     if (object.key !== storageKey || object.sha256 !== sha256 || object.sizeBytes !== bytes.byteLength || object.contentType !== contentType)
@@ -330,9 +542,21 @@ async function addRetryableLogArtifact(input: {
   const metadata = { artifactId, type: "logs", source: input.source, filename: null, contentType,
     sizeBytes: bytes.byteLength, createdAt: asset.createdAt };
   // Same reservation timestamp means concurrent/repeated metadata writes are identical.
-  const result = await ReportModel.updateOne({ reportId, mentraUserId }, { $addToSet: { artifacts: metadata } },
-    { writeConcern: attachmentWriteConcern });
+  // Blob I/O above is unbounded here, so the publication writes get their own full bound.
+  const publishDeadline = Date.now() + committedReadWait.timeoutMs;
+  const result = await withinDeadline(publishDeadline, timeoutMS => ReportModel.updateOne({ reportId, mentraUserId },
+    { $addToSet: { artifacts: metadata } }, { writeConcern: attachmentWriteConcern, timeoutMS }));
   if (result.matchedCount !== 1) return null;
+  if (isReportLogSource(input.source)) {
+    const receipt = `logCollection.${input.source}`;
+    // The first accepted artifact for a source owns its receipt; identical retries leave it unchanged.
+    const marked = await withinDeadline(publishDeadline, timeoutMS => ReportModel.updateOne({ reportId, mentraUserId, [`${receipt}.state`]: { $ne: "received" } }, {
+      $set: { [`${receipt}.state`]: "received", [`${receipt}.receivedAt`]: new Date().toISOString(),
+        [`${receipt}.artifactId`]: artifactId, [`${receipt}.entryCount`]: input.entries.length },
+      $unset: { [`${receipt}.reason`]: "", [`${receipt}.leaseUntil`]: "" },
+    }, { writeConcern: attachmentWriteConcern, timeoutMS }));
+    if (marked.modifiedCount) logger.info({ reportId, mentraUserId, source: input.source, artifactId, sizeBytes: bytes.byteLength }, "Report log artifact received");
+  }
   return { stored: 1, receipt: { artifactId, sha256, sizeBytes: bytes.byteLength } };
 }
 
@@ -400,6 +624,7 @@ interface ReportArtifactPayload {
   filename: string | null;
   contentType: string;
   bytes: Uint8Array;
+  logEntryCount?: number;
 }
 
 interface StoredReportAsset {
@@ -434,6 +659,7 @@ async function addArtifacts(input: {
     contentType: string;
     sizeBytes: number;
     createdAt: Date;
+    logEntryCount?: number;
   }> = [];
   try {
     for (const payload of input.payloads) {
@@ -465,14 +691,23 @@ async function addArtifacts(input: {
         contentType: payload.contentType,
         sizeBytes: object.sizeBytes,
         createdAt: now,
+        ...(payload.logEntryCount !== undefined ? {logEntryCount: payload.logEntryCount} : {}),
       });
     }
 
     const result = await ReportModel.updateOne(
       { reportId, mentraUserId },
       {
-        $push: { artifacts: { $each: artifacts } },
-        $set: { updatedAt: now },
+        $push: { artifacts: { $each: artifacts.map(({logEntryCount: _count, ...artifact}) => artifact) } },
+        $set: { updatedAt: now, ...Object.fromEntries(artifacts.filter(artifact => artifact.type === 'logs' && isReportLogSource(artifact.source)).flatMap(artifact => [
+          [`logCollection.${artifact.source}.state`, 'received'],
+          [`logCollection.${artifact.source}.receivedAt`, now.toISOString()],
+          [`logCollection.${artifact.source}.artifactId`, artifact.artifactId],
+          [`logCollection.${artifact.source}.entryCount`, artifact.logEntryCount],
+        ])) },
+        $unset: Object.fromEntries(artifacts.filter(artifact => artifact.type === 'logs' && isReportLogSource(artifact.source)).flatMap(artifact => [
+          [`logCollection.${artifact.source}.reason`, ''], [`logCollection.${artifact.source}.leaseUntil`, ''],
+        ])),
       },
     );
     if (result.matchedCount !== 1) {
@@ -480,6 +715,9 @@ async function addArtifacts(input: {
       // write; treat it as not-found and leave nothing orphaned.
       await discardReportAssets(reportId, stored);
       return null;
+    }
+    for (const artifact of artifacts.filter(artifact => artifact.type === 'logs')) {
+      logger.info({reportId, mentraUserId, source: artifact.source, artifactId: artifact.artifactId, sizeBytes: artifact.sizeBytes}, 'Report log artifact received');
     }
     return { stored: artifacts.length };
   } catch (error) {
@@ -497,6 +735,17 @@ async function addArtifacts(input: {
           "failed to sweep report artifact metadata during rollback",
         );
       });
+      for (const source of [...new Set(artifacts.filter(artifact => artifact.type === 'logs' && isReportLogSource(artifact.source))
+        .map(artifact => artifact.source))]) {
+        const receipt = `logCollection.${source}`;
+        // A later accepted upload may already own this source. Roll back only this call's receipt.
+        await ReportModel.updateOne({reportId, mentraUserId, [`${receipt}.artifactId`]: {
+          $in: artifacts.filter(artifact => artifact.source === source).map(artifact => artifact.artifactId),
+        }}, {
+          $set: {[`${receipt}.state`]: 'failed', [`${receipt}.reason`]: 'Artifact storage acceptance was rolled back'},
+          $unset: Object.fromEntries(['receivedAt', 'artifactId', 'entryCount', 'leaseUntil'].map(field => [`${receipt}.${field}`, ''])),
+        }).catch(cleanupError => logger.error({cleanupError, reportId, source}, 'failed to roll back report log receipt'));
+      }
       await discardReportAssets(reportId, stored);
     }
     throw error;
@@ -524,14 +773,16 @@ export interface AdminReportSummary {
   trigger: ReportTrigger | null;
   report: (ReportDetails & Record<string, unknown>) | null;
   feedback: Record<string, unknown> | null;
-  artifacts: AdminReportArtifact[];
+  artifactCount: number;
   createdAt: string | null;
   updatedAt: string | null;
 }
 
-export interface AdminReportDetail extends AdminReportSummary {
+export interface AdminReportDetail extends Omit<AdminReportSummary, "artifactCount"> {
+  artifacts: AdminReportArtifact[];
   context: Record<string, unknown>;
   slackDelivery?: ReportSlackDelivery;
+  logCollection?: Partial<Record<ReportLogSource, ReportLogCollection>>;
 }
 
 export interface AdminReportAsset {
@@ -576,13 +827,17 @@ export async function listReports(filter: ListReportsFilter = {}): Promise<Admin
   if (filter.status) query.status = filter.status;
   if (filter.before) query.createdAt = { $lt: filter.before };
   const limit = Math.min(Math.max(Math.trunc(filter.limit ?? 50), 1), 200);
-  // Context is the one potentially chunky field and the list view never shows
-  // it; everything else on a report is metadata-sized.
-  const rows = await ReportModel.find(query, { context: 0 })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .lean();
-  return rows.map(serializeReportSummary);
+  // Count in Mongo: the list needs no artifact metadata, context, or collection
+  // receipts. Apply membership and the page bound before projecting each row.
+  const rows = await ReportModel.aggregate<Parameters<typeof serializeReportSummary>[0] & {artifactCount: number}>([
+    {$match: query},
+    {$sort: {createdAt: -1}},
+    {$limit: limit},
+    {$project: {_id: 0, reportId: 1, kind: 1, status: 1, mentraUserId: 1,
+      trigger: 1, report: 1, feedback: 1, createdAt: 1, updatedAt: 1,
+      artifactCount: {$add: [{$size: {$ifNull: ["$artifacts", []]}}, {$ifNull: ["$nativeDiagnostics.count", 0]}]}}},
+  ]);
+  return rows.map(row => ({...serializeReportSummary(row), artifactCount: row.artifactCount}));
 }
 
 /** Resolve current admin accounts, including reporters of historical incidents.
@@ -608,14 +863,25 @@ export async function getReport(
 ): Promise<{ report: AdminReportDetail; assets: AdminReportAsset[] } | null> {
   const row = await ReportModel.findOne({ reportId }).lean();
   if (!row) return null;
-  const assets = await ReportAssetModel.find({ reportId }).sort({ createdAt: 1 }).lean();
+  const [assets, native] = await Promise.all([ReportAssetModel.find({ reportId, sourceTestRunId: {$exists: false} }).sort({ createdAt: 1 }).lean(),
+    readNativeReportAssets(row)]);
   return {
     report: {
       ...serializeReportSummary(row),
+      artifacts: [...(row.artifacts ?? []).map(artifact => ({
+        artifactId: artifact.artifactId,
+        type: artifact.type as AdminReportArtifact["type"],
+        source: artifact.source,
+        filename: artifact.filename ?? null,
+        contentType: artifact.contentType ?? null,
+        sizeBytes: artifact.sizeBytes ?? null,
+        createdAt: toIso(artifact.createdAt),
+      })), ...native.artifacts].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
       context: (row.context ?? {}) as Record<string, unknown>,
       ...(row.slackDelivery ? {slackDelivery: row.slackDelivery as ReportSlackDelivery} : {}),
+      ...(row.logCollection ? {logCollection: visibleReportLogCollection(row.logCollection)} : {}),
     },
-    assets: assets.map((asset) => ({
+    assets: [...assets.map((asset) => ({
       artifactId: asset.artifactId,
       storageKey: asset.storageKey,
       fileName: asset.fileName ?? null,
@@ -623,23 +889,27 @@ export async function getReport(
       sizeBytes: asset.sizeBytes,
       sha256: asset.sha256,
       createdAt: toIso(asset.createdAt),
-    })),
+    })), ...native.assets].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
   };
 }
 
 /**
- * Payload bytes for one artifact, or null when no such asset row exists.
- * Throws when the row exists but the blob cannot be read (deleted or storage
- * outage) — the API layer decides how to present that.
+ * Frozen metadata and a lazy storage stream, or null when no asset row exists.
+ * Verify the current object's size before serving its original storage key.
  */
-export async function readReportArtifactPayload(
+export async function readReportArtifact(
   reportId: string,
   artifactId: string,
-): Promise<{ bytes: Uint8Array; contentType: string; fileName: string | null; sha256: string } | null> {
-  const asset = await ReportAssetModel.findOne({ reportId, artifactId }).lean();
+): Promise<{ sizeBytes: number; contentType: string; fileName: string | null; sha256: string;
+  stream: (range?: ByteRange) => Promise<ReadableStream<Uint8Array> | Blob> } | null> {
+  const owned = await ReportAssetModel.findOne({reportId, artifactId, sourceTestRunId: {$exists: false}}).lean();
+  const report = owned ? null : await ReportModel.findOne({reportId}).lean();
+  const asset = owned ?? (report ? (await readNativeReportAssets(report)).assets.find(value => value.artifactId === artifactId) : null);
   if (!asset) return null;
-  const bytes = await getStorage().getObject(asset.storageKey);
-  return { bytes, contentType: asset.contentType, fileName: asset.fileName ?? null, sha256: asset.sha256 };
+  const storage = getStorage();
+  if ((await storage.statObject(asset.storageKey)).sizeBytes !== asset.sizeBytes) throw new Error("stored report artifact size changed");
+  return { sizeBytes: asset.sizeBytes, contentType: asset.contentType, fileName: asset.fileName ?? null, sha256: asset.sha256,
+    stream: (range) => storage.streamObject(asset.storageKey, range) };
 }
 
 function serializeReportSummary(row: {
@@ -650,18 +920,9 @@ function serializeReportSummary(row: {
   trigger?: unknown;
   report?: unknown;
   feedback?: unknown;
-  artifacts?: Array<{
-    artifactId: string;
-    type: string;
-    source: string;
-    filename?: string | null;
-    contentType?: string | null;
-    sizeBytes?: number | null;
-    createdAt?: Date | null;
-  }> | null;
   createdAt?: Date | null;
   updatedAt?: Date | null;
-}): AdminReportSummary {
+}): Omit<AdminReportSummary, "artifactCount"> {
   return {
     reportId: row.reportId,
     kind: row.kind as ReportKind,
@@ -670,15 +931,6 @@ function serializeReportSummary(row: {
     trigger: (row.trigger ?? null) as AdminReportSummary["trigger"],
     report: (row.report ?? null) as AdminReportSummary["report"],
     feedback: (row.feedback ?? null) as AdminReportSummary["feedback"],
-    artifacts: (row.artifacts ?? []).map((artifact) => ({
-      artifactId: artifact.artifactId,
-      type: artifact.type as AdminReportArtifact["type"],
-      source: artifact.source,
-      filename: artifact.filename ?? null,
-      contentType: artifact.contentType ?? null,
-      sizeBytes: artifact.sizeBytes ?? null,
-      createdAt: toIso(artifact.createdAt),
-    })),
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };

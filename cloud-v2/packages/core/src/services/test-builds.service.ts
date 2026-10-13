@@ -86,6 +86,7 @@ function publication(run: GithubRun, jobs: Job[]) {
 export interface TestBuildGateway {
   inventory(query: TestBuildQuery): Promise<TestBuild[]>;
   resolve(source: TestBuildSource, platform: TestBuildPlatform): Promise<TestBuild>;
+  isPrSuperseded?(prNumber: number, headSha: string): Promise<boolean>;
 }
 
 export class GithubTestBuildGateway implements TestBuildGateway {
@@ -128,6 +129,11 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     }
     throw new TestDispatchError(502, "Build job history exceeds its limit");
   }
+  async isPrSuperseded(number: number, headSha: string): Promise<boolean> {
+    const pr = prSchema.parse(await this.api(`${REPOSITORY}/pulls/${number}`));
+    requireThat(pr.number === number && pr.head.repo.full_name === REPOSITORY, "PR identity differs from the admitted build");
+    return pr.head.sha !== headSha;
+  }
   private async pr(number: number) {
     const pr = prSchema.parse(await this.api(`${REPOSITORY}/pulls/${number}`));
     requireThat(pr.number === number && pr.state === "open" && (PR_BASES as readonly string[]).includes(pr.base.ref)
@@ -141,16 +147,33 @@ export class GithubTestBuildGateway implements TestBuildGateway {
       .parse(await this.api(`${REPOSITORY}/git/ref/heads/${base}`));
     return ref.object.sha;
   }
-  async inventory(query: TestBuildQuery): Promise<TestBuild[]> {
+  async inventory(query: TestBuildQuery, allowOriginalBase = false, producerRunId?: number): Promise<TestBuild[]> {
     const pr = query.channel === "pr" ? await this.pr(query.pr!) : undefined;
     const platform = query.platform;
     const workflow = pr ? prWorkflow(platform) : RELEASE_WORKFLOW;
-    const filter = pr ? `event=pull_request&head_sha=${pr.head.sha}` : `branch=${query.channel}`;
-    const data = z.object({ workflow_runs: z.array(runSchema) }).parse(
-      await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?${filter}&per_page=10`));
-    const base = pr ? await this.baseSha(pr) : undefined;
-    return Promise.all(data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr)).map(run =>
-      this.describe(run, query.channel, platform, pr, base)));
+    const runs: GithubRun[] = [];
+    if (pr) {
+      if (producerRunId) {
+        const retained = runSchema.parse(await this.api(`${REPOSITORY}/actions/runs/${positive.parse(producerRunId)}`));
+        if (this.matches(retained, query.channel, platform, pr)) runs.push(retained);
+      }
+      // Discovery is a bounded recent inventory, not proof that no publication exists.
+      // Exact producer receipts bypass list age; every selected publication is still verified below.
+      for (const filter of [`event=pull_request&head_sha=${pr.head.sha}`, 'event=workflow_dispatch&branch=dev']) {
+        for (let page = 1; page <= 5; page++) {
+          const data = z.object({workflow_runs: z.array(runSchema).max(100)}).parse(
+            await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?${filter}&per_page=100&page=${page}`));
+          runs.push(...data.workflow_runs.filter(run => this.matches(run, query.channel, platform, pr) && !runs.some(value => value.id === run.id)));
+          if (data.workflow_runs.length < 100) break;
+        }
+      }
+    } else {
+      const data = z.object({workflow_runs: z.array(runSchema)}).parse(
+        await this.api(`${REPOSITORY}/actions/workflows/${workflow}/runs?branch=${query.channel}&per_page=10`));
+      runs.push(...data.workflow_runs.filter(run => this.matches(run, query.channel, platform)));
+    }
+    const base = pr && !allowOriginalBase ? await this.baseSha(pr) : undefined;
+    return Promise.all(runs.map(run => this.describe(run, query.channel, platform, pr, base)));
   }
   /** Latest immutable dev publication at the occurrence boundary. Incomplete history never selects an older build. */
   async latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null> {
@@ -192,7 +215,10 @@ export class GithubTestBuildGateway implements TestBuildGateway {
   private matches(run: GithubRun, channel: TestBuildSource["channel"], platform: TestBuildPlatform, pr?: PullRequest) {
     return run.repository.full_name === REPOSITORY && run.head_repository.full_name === REPOSITORY
       && run.path === `.github/workflows/${pr ? prWorkflow(platform) : RELEASE_WORKFLOW}`
-      && (pr ? run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref
+      && (pr ? (run.event === "pull_request" && run.head_sha === pr.head.sha && run.head_branch === pr.head.ref ||
+        run.event === 'workflow_dispatch' && run.head_branch === 'dev' &&
+          (run.display_title === `Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref}` ||
+          run.display_title.startsWith(`Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref} `) && /^[a-f0-9]{64}$/.test(run.display_title.slice(`Routine PR #${pr.number} ${pr.head.sha} ${pr.base.ref} `.length))))
         : ["push", "workflow_dispatch"].includes(run.event) && run.head_branch === channel);
   }
   async resolve(source: TestBuildSource, platform: TestBuildPlatform): Promise<TestBuild> {
@@ -210,8 +236,10 @@ export class GithubTestBuildGateway implements TestBuildGateway {
     const source: TestBuildSource = pr ? { channel: "pr", prNumber: pr.number, buildRunId: run.id, publicationAttempt: run.run_attempt }
       : { channel: channel as "dev" | "staging", buildRunId: run.id, publicationAttempt: run.run_attempt };
     const build: TestBuild = { source, platform, title: pr ? `PR #${pr.number} — ${pr.title}` : run.display_title,
-      headSha: run.head_sha, buildUrl: runUrl(REPOSITORY, run.id), createdAt: run.created_at,
-      availability: "unavailable" };
+      headSha: pr?.head.sha ?? run.head_sha, buildUrl: runUrl(REPOSITORY, run.id), createdAt: run.created_at,
+      availability: "unavailable",
+      ...(run.status !== 'completed' ? {producerStatus: 'pending' as const} :
+        run.conclusion && run.conclusion !== 'success' ? {producerStatus: 'failed' as const} : {}) };
     try {
       const artifacts = pr ? await (platform === "android" ? this.androidPrArtifacts(run, pr, baseSha) : this.prArtifacts(run, pr, baseSha))
         : await this.releaseArtifacts(run, channel, platform);

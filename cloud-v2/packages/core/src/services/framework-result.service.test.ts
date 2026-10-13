@@ -6,6 +6,25 @@ import {createFrameworkRunSummaryProjection} from "./framework-run-summary.servi
 import {requestInputDigest} from "./test-request.service";
 import {TestAssetModel, TestRunModel} from "../models/test-run.model";
 import type {FrameworkRun} from "../types/framework-run.types";
+import {lifecycleRuns} from '../testing/framework-lifecycle.fixture';
+
+test('ingest and detail retain actual frozen Harness diagnostic actions with independent cleanup readiness', async () => {
+  for (const fixture of lifecycleRuns) {
+    let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
+    const service = new FrameworkResultService({async insert(payload, payloadSha256) {stored = {payload, payloadSha256, uploadsComplete: true}},
+      async getByRequest() {return stored}, async getByRun() {return stored}, async getAsset() {return null}},
+      async () => ({hostId: fixture.run.hostId, input: {routineId: fixture.run.routineId, definitionRevision: fixture.run.definitionRevision,
+        routineSource: fixture.run.routineSource, platform: fixture.run.platform, laneId: fixture.run.laneId, build: fixture.run.build}}),
+      async () => {}, async () => ({definition: fixture.definition}) as unknown as RoutineEnrollment);
+    const receipt = await service.ingest(fixture.run, fixture.run.hostId);
+    expect(receipt.payloadSha256).toBe(requestInputDigest(fixture.run));
+    const detail = await service.detailForHost(fixture.run.requestId, fixture.run.hostId);
+    expect(detail.run as unknown).toEqual(fixture.producedRun);
+    expect(detail.outcome).toBe(fixture.scenario === 'diagnostic-failure' ? 'failed' : 'teardown-failed');
+    expect(detail.run.result.teardown.ready).toBe(true);
+    expect(detail.evidenceStatus).toBe(fixture.scenario === 'routine-teardown' ? 'complete' : 'failed');
+  }
+});
 
 test('candidate result metadata remains outside immutable result and host reader requires original accepted host', async () => {
   const {frameworkRunSchema} = await import('../types/framework-run.types');
@@ -105,7 +124,7 @@ test("lost result acknowledgement returns same receipt and refuses rewritten ter
     async () => {projectionAttempts++;},
     source,
     undefined,
-    {async list() {return [];}, async complete() {throw new FrameworkResultConflict('not acknowledged');}},
+    {async complete(value) {if (!value.uploadsComplete) throw new FrameworkResultConflict('not acknowledged');}},
     {async complete() {return undefined;}},
   )
   const first = await service.ingest(run, "mini"), duplicate = await service.ingest(run, "mini");
@@ -226,6 +245,57 @@ test("a completed test can publish a teardown failure without becoming a catalog
   await expect(service.ingest({...run, result: {...run.result, failures: [{...failure, phase: "test"}]}}, "mini")).rejects.toThrow("Invalid frozen");
 })
 
+test("interrupted cleanup ingestion retries the same failed result while hardware custody remains unresolved", async () => {
+  const {frameworkRunSchema, frameworkRunOutcome} = await import("../types/framework-run.types");
+  const original = {phase: "test" as const, actionId: "required", message: "The app reported Check Failed"};
+  const cleanup = {phase: "teardown" as const, actionId: "cleanup:glasses", message: "Cleanup deadline exceeded; inspect retained writer"};
+  const frozen = frameworkRunSchema.parse({schemaVersion: 1, routineSource: testRoutineSource(), frameworkBinding: testFrameworkBinding(),
+    hostId: "mini", requestId: "interrupted-cleanup", routineId: "notes", definitionRevision: "a".repeat(40),
+    platform: "ios-on-mac", laneId: "mac", build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-02T19:00:00Z", finishedAt: "2026-10-02T19:01:00Z", assets: [],
+    result: {runId: "interrupted-cleanup", finishedAt: "2026-10-02T19:01:00Z", setup: {status: "passed"}, test: "failed",
+      steps: [{id: "required", status: "failed", durationMs: 10}], failures: [original, cleanup], evidence: [],
+      teardown: {ready: false, actions: [{id: cleanup.actionId, instruction: "Settle the glasses software", expected: "The glasses are ready",
+        scope: "shared", status: "failed", durationMs: 10}], outcomes: [], errors: [cleanup],
+        unavailableResources: [{resource: "glasses", cause: "Cleanup has not returned", nextAction: "Inspect retained custody"}]},
+      timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 10, testMs: 10, teardownMs: 10}}});
+  let stored: {payload: FrameworkRun; payloadSha256: string; uploadsComplete: boolean} | null = null;
+  let writes = 0, projections = 0;
+  const service = new FrameworkResultService({
+    async insert(payload, payloadSha256) {
+      if (stored) throw Object.assign(new Error("duplicate"), {code: 11000});
+      writes++; stored = {payload, payloadSha256, uploadsComplete: true};
+    }, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset() {return null;},
+  }, async () => ({hostId: frozen.hostId, input: {routineId: frozen.routineId, definitionRevision: frozen.definitionRevision,
+    routineSource: frozen.routineSource, platform: frozen.platform, laneId: frozen.laneId, build: frozen.build}}),
+    async run => {projections++; expect(run.result.teardown.ready).toBe(false);},
+    async () => ({definition: {steps: [{id: "required"}]}}) as unknown as RoutineEnrollment,
+    undefined, {async complete() {}}, {async complete() {return undefined;}});
+  const digest = requestInputDigest(frozen);
+  const first = await service.ingest(frozen, frozen.hostId);
+  expect(first).toMatchObject({created: true, payloadSha256: digest});
+  expect(await service.ingest(frozen, frozen.hostId)).toEqual({...first, created: false});
+  expect(writes).toBe(1);
+  expect(projections).toBe(2);
+  expect(stored!.payload).toEqual(frozen);
+  expect(frameworkRunOutcome(stored!.payload)).toBe("failed");
+  expect(stored!.payload.result.failures).toEqual([original, cleanup]);
+  expect(stored!.payload.result.teardown.outcomes).toEqual([]);
+  expect(requestInputDigest(frozen)).toBe(digest);
+  try {
+    await service.ingest({...frozen, result: {...frozen.result, failures: [original, {...cleanup, message: "private-cleanup-error"}],
+      teardown: {...frozen.result.teardown, errors: [{...cleanup, message: "private-cleanup-error"}], unavailableResources: []}}}, frozen.hostId);
+    throw new Error("Expected schema refusal");
+  } catch (error) {
+    expect((error as Error).message).toContain("custom at root: Failed shared cleanup must retain its classified diagnostics or unresolved resource custody");
+    expect((error as Error).message).not.toContain("private-cleanup-error");
+  }
+  await expect(service.ingest({...frozen, result: {...frozen.result,
+    failures: [original, {...cleanup, message: "Rewritten cleanup error"}],
+    teardown: {...frozen.result.teardown, errors: [{...cleanup, message: "Rewritten cleanup error"}]}}}, frozen.hostId))
+    .rejects.toThrow("different terminal result");
+});
+
 test("native result list scopes the archive digest and excludes retained old payloads", async () => {
   let filter: Record<string, unknown> | null = null;
   const find = spyOn(TestRunModel, "find").mockImplementation(((query: Record<string, unknown>) => {
@@ -237,12 +307,12 @@ test("native result list scopes the archive digest and excludes retained old pay
     const service = new FrameworkResultService();
     expect(await service.list({routineId: "walkthrough", platform: "ios-on-mac", archiveSha256: "a".repeat(64), prNumber: "12", channel: "pr"})).toEqual({runs: [], nextCursor: null});
     expect(filter as Record<string, unknown> | null).toEqual({
-      "payload.schemaVersion": 1,
+      resultSchemaVersion: 1,
       "routineId": "walkthrough",
       "platform": "ios-on-mac",
-      "payload.build.archive.sha256": "a".repeat(64),
-      "payload.build.prNumber": 12,
-      "payload.build.channel": "pr",
+      "build.archive.sha256": "a".repeat(64),
+      "build.prNumber": 12,
+      "build.channel": "pr",
     })
   } finally {find.mockRestore();}
 })
@@ -272,11 +342,11 @@ test("exact-request summary verifies the existing projection and frozen build wi
   })
   const projection = createFrameworkRunSummaryProjection(run, requestInputDigest(run));
   let row: any = {runId: run.requestId, requestId: run.requestId, payloadSha256: projection.payloadSha256,
-    summaryProjection: projection, uploadsComplete: false, payload: {build: run.build}};
+    summaryProjection: projection, uploadsComplete: false, build: run.build};
   let queries = 0;
   const find = spyOn(TestRunModel, "findOne").mockImplementation(((filter: unknown) => {
     queries++;
-    expect(filter).toEqual({"payload.schemaVersion": 1, "requestId": run.requestId})
+    expect(filter).toEqual({resultSchemaVersion: 1, "requestId": run.requestId})
     return {
       select(fields: unknown) {
         expect(fields).toEqual({
@@ -285,7 +355,7 @@ test("exact-request summary verifies the existing projection and frozen build wi
           "payloadSha256": 1,
           "summaryProjection": 1,
           "uploadsComplete": 1,
-          "payload.build": 1,
+          "build": 1,
         })
         return this;
       },
@@ -325,8 +395,8 @@ test("exact-request summary verifies the existing projection and frozen build wi
       () => {row.payloadSha256 = "e".repeat(64);},
       () => {row.requestId = "foreign";},
       () => {row.runId = "foreign";},
-      () => {row.payload.build.headSha = "e".repeat(40);},
-      () => {row.payload = undefined;},
+      () => {row.build.headSha = "e".repeat(40);},
+      () => {row.build = undefined;},
     ];
     for (const corrupt of corruptions) {
       row = structuredClone(valid); corrupt(); const before = queries;
@@ -399,9 +469,9 @@ test("native run summaries retain build identity and distinct execution and evid
     expect(second.runs.map(row => row.runId)).toEqual(["run-100"]);
     expect(second.nextCursor).toBeNull();
     expect(filters[1]).toEqual({
-      "payload.schemaVersion": 1,
-      "payload.build.headSha": build.headSha,
-      "payload.build.channel": "dev",
+      resultSchemaVersion: 1,
+      "build.headSha": build.headSha,
+      "build.channel": "dev",
       "$or": [{startedAt: {$lt: new Date(run.startedAt)}}, {startedAt: new Date(run.startedAt), runId: {$lt: "run-101"}}],
     })
   } finally {find.mockRestore();}
@@ -610,74 +680,33 @@ test("old saved lifecycle omissions remain readable without invented action repo
   expect(writes).toBe(0);
 })
 
-test("asset reads project one immutable declaration and preserve missing and unauthorized outcomes", async () => {
-  const {TestAssetService} = await import("./test-asset.service");
-  const declaration = {id: "report:final", kind: "report" as const, path: "setup-evidence/final.json",
-    sha256: "c".repeat(64), size: 100, mimeType: "application/json" as const};
-  const calls: Array<{pipeline: any[]; options: any}> = [];
-  const aggregate = spyOn(TestRunModel.collection, "aggregate").mockImplementation(((pipeline: any[], options: any) => {
-    calls.push({pipeline, options});
-    const filter = pipeline[0].$match;
-    return {async toArray() {return (filter.requestId ?? filter.runId) === "missing-run" ? []
-      : [{payload: {result: {runId: "frozen-run"}, assets:
-        pipeline[2].$project["payload.assets"].$filter.cond.$eq[1].$literal === declaration.id ? [declaration] : []}}];}};
-  }) as any);
-  let acknowledged = false;
-  const custody = spyOn(TestAssetModel, "findOne").mockImplementation(() => ({read() {return this;}, readConcern() {return this;},
-    async lean() {return acknowledged ? {runId: "frozen-run", assetId: declaration.id} : null;}}) as any);
-  const upload = spyOn(TestAssetService.prototype, "uploadDeclaredAsset").mockImplementation(async (runId, asset) => {
-    expect(runId).toBe("frozen-run");
-    expect(asset).toEqual({assetId: declaration.id, kind: "metadata", contentType: declaration.mimeType,
-      filename: "final.json", sizeBytes: declaration.size, sha256: declaration.sha256});
-    return {assetId: declaration.id, uploaded: true, created: true};
-  });
-  const media = spyOn(TestAssetService.prototype, "mediaDeclaredAsset").mockImplementation(async (asset, _stored, request) => {
-    expect(asset).toEqual({assetId: declaration.id, kind: "metadata", contentType: declaration.mimeType,
-      filename: "final.json", sizeBytes: declaration.size, sha256: declaration.sha256});
-    expect(request.method).toBe("HEAD");
-    return new Response(null, {status: 206, headers: {"content-range": "bytes 0-1/100", "content-length": "2"}});
-  });
-  let owner = "mini";
-  const service = new FrameworkResultService(undefined, async () => ({
-    hostId: owner,
-    input: {routineSource: testRoutineSource()} as any,
-  }))
-  const headers = new Headers({"content-type": declaration.mimeType});
-  const mediaRequest = new Request("http://localhost/asset", {method: "HEAD"});
+test('asset declarations and accepted mappings preserve authorization and missing outcomes', async () => {
+  const {TestAssetService} = await import('./test-asset.service');
+  const declaration = {id: 'report:final', kind: 'report' as const, path: 'setup-evidence/final.json',
+    sha256: 'c'.repeat(64), size: 100, mimeType: 'application/json' as const};
+  let owner = 'mini', acknowledged = false;
+  const repository: FrameworkResultRepository = {async insert() {}, async getByRequest() {return null;}, async getByRun() {return null;},
+    async getAsset(identity, id) {return ('requestId' in identity ? identity.requestId : identity.runId) === 'missing' ? null
+      : {runId: 'frozen-run', asset: id === declaration.id ? declaration : null, accepted: acknowledged ?
+          {runId: 'frozen-run', assetId: declaration.id, storageKey: 'original', sha256: declaration.sha256, sizeBytes: declaration.size} : null};}};
+  const find = spyOn(TestRunModel, 'findOne').mockReturnValue({select() {return this;}, read() {return this;}, readConcern() {return this;},
+    lean: async () => null} as never);
+  const receipt = spyOn(TestAssetModel, 'findOne').mockReturnValue({read() {return this;}, readConcern() {return this;},
+    lean: async () => acknowledged ? {runId: 'frozen-run', assetId: declaration.id, storageKey: 'original'} : null} as never);
+  const upload = spyOn(TestAssetService.prototype, 'uploadDeclaredAsset').mockResolvedValue({assetId: declaration.id, uploaded: true, created: true});
+  const media = spyOn(TestAssetService.prototype, 'mediaDeclaredAsset').mockResolvedValue(new Response(null, {status: 206}));
+  const service = new FrameworkResultService(repository, async () => ({hostId: owner, input: {} as never}));
   try {
-    expect(await service.upload("request", declaration.id, "mini", null, headers)).toMatchObject({uploaded: true, sha256: declaration.sha256, size: declaration.size});
-    owner = "other";
-    await expect(service.upload("request", declaration.id, "mini", null, headers)).rejects.toThrow("not owned");
-    owner = "mini";
-    await expect(service.upload("missing-run", declaration.id, "mini", null, headers)).rejects.toThrow("not owned");
-    await expect(service.upload("request", "undeclared", "mini", null, headers)).rejects.toThrow("not declared");
-    expect(upload).toHaveBeenCalledTimes(1);
-    await expect(service.media("request", declaration.id, mediaRequest)).rejects.toThrow("not acknowledged");
-    await expect(service.mediaByRun("frozen-run", "undeclared", mediaRequest)).rejects.toThrow("not declared");
-    await expect(service.mediaByRun("missing-run", declaration.id, mediaRequest)).rejects.toThrow("not declared");
-    expect(custody).toHaveBeenCalledTimes(1);
-    expect(custody.mock.calls[0]).toEqual([{runId: "frozen-run", assetId: declaration.id}]);
-    for (const [index, call] of calls.entries()) {
-      expect(call.pipeline[0].$match).toMatchObject({"payload.schemaVersion": 1});
-      expect(call.pipeline[1]).toEqual({$limit: 1});
-      expect(call.pipeline[2].$project).toEqual({
-        "payload.result.runId": 1,
-        "payload.assets": {$filter: {input: "$payload.assets", as: "asset",
-          cond: {$eq: ["$$asset.id", {$literal: [3, 5].includes(index) ? "undeclared" : declaration.id}]}}},
-        "_id": 0,
-      })
-      expect(call.options.readPreference.mode).toBe("primary");
-      expect(call.options.readConcern).toEqual({level: "majority"});
-    }
-    expect(calls[0].pipeline[0].$match).toEqual({"payload.schemaVersion": 1, "requestId": "request"})
-    expect(calls[5].pipeline[0].$match).toEqual({"payload.schemaVersion": 1, "runId": "frozen-run"})
+    await service.upload('request', declaration.id, 'mini', null, new Headers());
+    owner = 'other'; await expect(service.upload('request', declaration.id, 'mini', null, new Headers())).rejects.toThrow('not owned');
+    owner = 'mini'; await expect(service.upload('missing', declaration.id, 'mini', null, new Headers())).rejects.toThrow('not owned');
+    await expect(service.upload('request', 'undeclared', 'mini', null, new Headers())).rejects.toThrow('not declared');
+    await expect(service.media('request', declaration.id, new Request('http://localhost'))).rejects.toThrow('not acknowledged');
     acknowledged = true;
-    const response = await service.mediaByRun("frozen-run", declaration.id, mediaRequest);
-    expect(response.status).toBe(206);
-    expect(response.headers.get("content-length")).toBe("2");
-    expect(media).toHaveBeenCalledTimes(1);
-  } finally {aggregate.mockRestore(); custody.mockRestore(); upload.mockRestore(); media.mockRestore();}
-})
+    expect((await service.media('request', declaration.id, new Request('http://localhost'))).status).toBe(206);
+    expect(upload).toHaveBeenCalledTimes(1); expect(media).toHaveBeenCalledTimes(1);
+  } finally {find.mockRestore(); receipt.mockRestore(); upload.mockRestore(); media.mockRestore();}
+});
 
 test("4096 streamed assets acknowledge once at complete with immutable metadata and concurrent retry custody", async () => {
   const {createHash} = await import("node:crypto");
@@ -728,7 +757,7 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
     rows.set(row.assetId, row); return row;
   }}, () => storage);
   const service = new FrameworkResultService(
-    {async insert() {}, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset(_identity, assetId) {return {runId: stored.payload.result.runId, asset: stored.payload.assets.find(asset => asset.id === assetId) ?? null};}},
+    {async insert() {}, async getByRequest() {return stored;}, async getByRun() {return stored;}, async getAsset(_identity, assetId) {return {runId: stored.payload.result.runId, asset: stored.payload.assets.find(asset => asset.id === assetId) ?? null, accepted: rows.get(assetId) ?? null};}},
     async () => ({
       hostId: 'mini',
       input: {
@@ -744,13 +773,19 @@ test("4096 streamed assets acknowledge once at complete with immutable metadata 
     async () => ({definition: {steps: [{id: "required"}]}}) as unknown as RoutineEnrollment,
     assets,
     {
-      async list() {
+      async complete(value) {
+        expect(value.payloadSha256).toBe(stored.payloadSha256);
+        if (stored.uploadsComplete) return;
         inventoryReads++; const all = [...rows.values()];
         if (corrupt === "duplicate") all[1] = {...all[0]!};
         if (corrupt === "digest") all[0] = {...all[0]!, sha256: "d".repeat(64)};
         if (corrupt === "size") all[0] = {...all[0]!, sizeBytes: bytes.length + 1};
-        return all;
-      }, async complete(value) {expect(value.payloadSha256).toBe(stored.payloadSha256); completionWrites++; stored.uploadsComplete = true;},
+        const indexed = new Map(all.map(asset => [asset.assetId, asset]));
+        if (all.length !== run.assets.length || indexed.size !== all.length || !run.assets.every(asset =>
+          indexed.get(asset.id)?.sha256 === asset.sha256 && indexed.get(asset.id)?.sizeBytes === asset.size))
+          throw new FrameworkResultConflict('not acknowledged');
+        completionWrites++; stored.uploadsComplete = true;
+      },
     },
     {async complete() {return undefined;}},
   )
@@ -849,7 +884,7 @@ test('failed recording publication preserves immutable step offsets and settled 
     async () =>
       ({definition: {steps: frozen.result.steps.map(step => ({id: step.id}))}}) as unknown as RoutineEnrollment,
     undefined,
-    {async list() {return [];}, async complete() {}},
+    {async complete() {}},
     {async complete() {return undefined;}},
   )
   const originalDigest = requestInputDigest(frozen);
@@ -870,3 +905,27 @@ test('failed recording publication preserves immutable step offsets and settled 
     recordingLocation: {...step.recordingLocation, startOffsetMs: step.recordingLocation!.startOffsetMs + 1}}))}}, frozen.hostId))
     .rejects.toThrow('different terminal result');
 })
+
+
+test('completed media resolves its descriptor and accepted mapping from one envelope', async () => {
+  const {TestingDetailStorage} = await import('./testing-detail-storage.service');
+  const {writeRunEnvelope} = await import('./framework-run-detail.service');
+  const {TestAssetService} = await import('./test-asset.service');
+  const run = structuredClone(lifecycleRuns[0]!.run);
+  const asset = {id: 'video', kind: 'recording' as const, path: 'recording.mp4', mimeType: 'video/mp4' as const,
+    size: 20, sha256: 'a'.repeat(64)};
+  run.assets = [asset]; const payloadSha256 = requestInputDigest(run);
+  const detail = await writeRunEnvelope(run, payloadSha256, [{runId: run.result.runId, assetId: asset.id,
+    storageKey: 'original/recording', sizeBytes: asset.size, sha256: asset.sha256}], true);
+  const row = spyOn(TestRunModel, 'findOne').mockReturnValue({read() {return this;}, readConcern() {return this;},
+    lean: async () => ({runId: run.result.runId, payloadSha256, detail, uploadsComplete: true})} as never);
+  const read = spyOn(TestingDetailStorage.prototype, 'read');
+  const stream = spyOn(TestAssetService.prototype, 'mediaDeclaredAsset').mockResolvedValue(new Response(null, {status: 206}));
+  const custody = spyOn(TestAssetModel, 'findOne');
+  try {
+    expect((await new FrameworkResultService().mediaByRun(run.result.runId, asset.id,
+      new Request('https://example.test/video', {method: 'HEAD', headers: {range: 'bytes=0-4'}}))).status).toBe(206);
+    expect(read).toHaveBeenCalledTimes(1); expect(custody).not.toHaveBeenCalled();
+    expect(stream.mock.calls[0]?.[1]).toMatchObject({storageKey: 'original/recording', sha256: asset.sha256});
+  } finally {row.mockRestore(); read.mockRestore(); stream.mockRestore(); custody.mockRestore();}
+});

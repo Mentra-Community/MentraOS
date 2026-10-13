@@ -1,10 +1,11 @@
+import {readRoutineDefinition} from './routine-definition-detail.service';
 import {z} from 'zod'
 import {RoutineDefinitionModel} from '../models/routine-definition.model'
 import {RoutineWorkModel} from '../models/routine-work.model'
 import {TestRequestModel} from '../models/test-request.model'
 import {TestRunModel} from '../models/test-run.model'
 import {testWriteConcern} from '../models/test-write-concern'
-import type {RoutineEnrollment} from '../types/routine-definition.types'
+import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types'
 import {candidateVerificationSchema} from '../types/candidate-verification.types'
 import {authoringJobViewSchema} from '../types/routine-work.types'
 import {requestInputDigest} from './test-request.service'
@@ -74,10 +75,10 @@ const repository: RoutineMergeRepository = {
           view.data.details.requestId === request.requestId && review?.sourceRevision === binding.sourceRevision &&
           review.verdict === 'APPROVED' && review.prUrl === view.data.details.prUrl && definition &&
           definition.definitionRevision === input.definitionRevision &&
-          requestInputDigest(definition.definition) === definition.definitionSha256 &&
+          (await readRoutineDefinition(definition)).definitionSha256 === definition.definitionSha256 &&
           (definition.candidateBindings as unknown[] | undefined)?.some(value => requestInputDigest(value) === requestInputDigest(binding)))
         found.push({requestId: request.requestId, ...binding, prUrl: review.prUrl,
-          definition: definition.definition as RoutineEnrollment['definition']})
+          definition: routineEnrollmentSchema.parse(await readRoutineDefinition(definition)).definition})
     }
     return found
   },

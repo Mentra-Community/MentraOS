@@ -8,6 +8,8 @@
  * driven by mutating the real island glasses store and emitting on island's
  * GlobalEventEmitter (what OtaService does with the BLE events).
  */
+import {Platform} from "react-native"
+
 import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
 import {otaInstallCoordinator} from "../../modules/engine/src/services/OtaInstallCoordinator"
@@ -38,7 +40,7 @@ import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "../../modules/engine/src/utils/GlobalEventEmitter"
 
 import {startOtaDeviceSession, stopOtaDeviceSession} from "../../modules/engine/src/services/OtaDeviceSession"
-import {bluetoothSdkMock, emitBluetoothSdkEvent} from "../test-utils/mockBluetoothSdk"
+import {bluetoothSdkMock, emitBluetoothSdkEvent, mentraLocalNetworkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("../../modules/engine/src/services/HotspotOtaTransport", () => ({
   hotspotOtaTransport: {
@@ -46,6 +48,12 @@ jest.mock("../../modules/engine/src/services/HotspotOtaTransport", () => ({
     teardown: jest.fn(),
   },
 }))
+
+jest.mock("../../modules/engine/src/services/OtaFailureReportService", () => ({
+  submitOtaFailureReport: jest.fn().mockResolvedValue(undefined),
+}))
+const mockFailureReport = jest.requireMock("../../modules/engine/src/services/OtaFailureReportService")
+  .submitOtaFailureReport as jest.Mock
 
 const mockedHotspotTransport = jest.requireMock("../../modules/engine/src/services/HotspotOtaTransport")
   .hotspotOtaTransport as {prepare: jest.Mock; teardown: jest.Mock}
@@ -141,6 +149,7 @@ async function flushNativeStartPromise(): Promise<void> {
 
 beforeEach(() => {
   jest.useFakeTimers()
+  mockFailureReport.mockClear()
   otaInstallCoordinator.detach()
   useGlassesStore.getState().reset()
   bluetoothSdkMock.startOtaUpdate.mockReset().mockResolvedValue(undefined)
@@ -162,6 +171,58 @@ afterEach(() => {
 })
 
 describe("OtaInstallCoordinator hotspot transport selection", () => {
+  it("does not infer an adopted install's transport from the default send policy or current Wi-Fi", () => {
+    let restored!: typeof otaInstallCoordinator
+    let restoredStore!: typeof useGlassesStore
+    jest.isolateModules(() => {
+      restored = require("../../modules/engine/src/services/OtaInstallCoordinator").otaInstallCoordinator
+      restoredStore = require("../../modules/engine/src/stores/glasses").useGlassesStore
+    })
+    restoredStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "39",
+      wifi: {state: "connected", ssid: "test"},
+    })
+    restoredStore.getState().setOtaStatus(inProgressStatus())
+    restored.attach()
+    expect(restored.snapshot()).toMatchObject({displayState: "updating", transport: null})
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    restored.detach()
+  })
+
+  it.each(["wifi", "hotspot"] as const)(
+    "retains the selected %s transport across a same-process remount",
+    (transport) => {
+      useGlassesStore.getState().setGlassesInfo({
+        connection: {state: "connected", fullyBooted: true},
+        buildNumber: "39",
+        hotspotOtaVersion: 1,
+        wifi: transport === "wifi" ? {state: "connected", ssid: "test"} : {state: "disconnected"},
+      })
+      otaInstallCoordinator.prepare(checkResult())
+      useGlassesStore.getState().setOtaStatus(inProgressStatus())
+      otaInstallCoordinator.attach()
+      otaInstallCoordinator.detach()
+      useGlassesStore.getState().setGlassesInfo({
+        wifi: transport === "wifi" ? {state: "disconnected"} : {state: "connected", ssid: "test"},
+      })
+      otaInstallCoordinator.attach()
+      expect(otaInstallCoordinator.snapshot()).toMatchObject({displayState: "updating", transport})
+      expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    },
+  )
+
+  it("clears transport evidence when the install finishes", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      wifi: {state: "connected", ssid: "test"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    expect(otaInstallCoordinator.snapshot().transport).toBe("wifi")
+    await otaInstallCoordinator.finish()
+    expect(otaInstallCoordinator.snapshot().transport).toBeNull()
+  })
+
   it("preserves the current file context and clears percentages between files and phases", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
@@ -304,6 +365,7 @@ describe("OtaInstallCoordinator initial-mount arbitration", () => {
     }
 
     const snap = otaInstallCoordinator.snapshot()
+    expect(mockFailureReport).toHaveBeenCalledWith(expect.objectContaining({reason: "session_timeout"}))
     expect(snap.errorMsg).toBe(OtaProgressMessages.globalTimeout)
     expect(snap.displayState).toBe("failed")
     // The acknowledged native request never re-sent.
@@ -353,6 +415,7 @@ describe("OtaInstallCoordinator ota_start request ownership", () => {
     await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS)
 
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(MAX_RETRIES)
+    expect(mockFailureReport).toHaveBeenCalledWith(expect.objectContaining({reason: "start_failed"}))
     expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.sendOtaStartFailed)
     expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
   })
@@ -850,6 +913,152 @@ describe("OtaInstallCoordinator MTK completion", () => {
 })
 
 describe("OtaInstallCoordinator finish()", () => {
+  describe("Android completion ownership", () => {
+    let platform: typeof Platform.OS
+    beforeEach(() => {
+      platform = Platform.OS
+      Platform.OS = "android"
+      const absent = {present: false, capabilities: null}
+      mentraLocalNetworkMock.getNetworkDiagnostics.mockReset().mockReturnValue({
+        sampledAtMs: Date.now(),
+        activeNetwork: absent,
+        processBound: absent,
+        glassesLocal: absent,
+        processBoundMatchesActive: false,
+        processBoundMatchesGlassesLocal: false,
+        activeNetworkMatchesGlassesLocal: false,
+      })
+      useGlassesStore.getState().setGlassesInfo({
+        connection: {state: "connected", fullyBooted: true},
+        hotspotOtaVersion: 1,
+        wifi: {state: "disconnected"},
+      })
+      otaInstallCoordinator.prepare(checkResult())
+    })
+    afterEach(() => {
+      Platform.OS = platform
+      mentraLocalNetworkMock.getNetworkDiagnostics.mockReturnValue(null)
+      stopOtaDeviceSession()
+    })
+
+    it("discards offline immediately after local teardown, without querying Internet", async () => {
+      let release!: () => void
+      mockHotspotTeardown.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)))
+      useGlassesStore.getState().setOtaStatus(inProgressStatus())
+      const done = jest.fn()
+      const discarded = otaInstallCoordinator.discard().then(done)
+      await jest.advanceTimersByTimeAsync(0)
+      expect(done).not.toHaveBeenCalled()
+      release()
+      await discarded
+      expect(done).toHaveBeenCalledTimes(1)
+      expect(useGlassesStore.getState().otaStatus).toBeNull()
+      expect(mentraLocalNetworkMock.getNetworkDiagnostics).not.toHaveBeenCalled()
+      expect(jest.getTimerCount()).toBe(0)
+    })
+
+    it("shares one teardown and one deadline across concurrent finish calls", async () => {
+      const first = otaInstallCoordinator.finish()
+      await jest.advanceTimersByTimeAsync(10_000)
+      const second = otaInstallCoordinator.finish()
+      expect(second).toBe(first)
+      expect(mockHotspotTeardown).toHaveBeenCalledTimes(1)
+      expect(jest.getTimerCount()).toBe(1)
+      const done = jest.fn()
+      void second.then(done)
+      await jest.advanceTimersByTimeAsync(19_999)
+      expect(done).not.toHaveBeenCalled()
+      await jest.advanceTimersByTimeAsync(1)
+      await first
+      expect(done).toHaveBeenCalledTimes(1)
+      expect(jest.getTimerCount()).toBe(0)
+    })
+
+    it("cancels an existing Internet wait when the install is discarded", async () => {
+      const finishing = otaInstallCoordinator.finish()
+      await jest.advanceTimersByTimeAsync(1_000)
+      await otaInstallCoordinator.discard()
+      mentraLocalNetworkMock.getNetworkDiagnostics.mockClear()
+      await jest.advanceTimersByTimeAsync(250)
+      await finishing
+      expect(mentraLocalNetworkMock.getNetworkDiagnostics).not.toHaveBeenCalled()
+      expect(jest.getTimerCount()).toBe(0)
+    })
+
+    it("never reads native network state when the paired device changes during teardown", async () => {
+      const pair = (address: string) => ({id: address, address, model: "Mentra Live", name: address})
+      stopOtaDeviceSession()
+      ;(bluetoothSdkMock.getDefaultDevice as jest.Mock).mockResolvedValue(pair("finish-A"))
+      await startOtaDeviceSession()
+      // Hydration may reset state from a previous device session.
+      useGlassesStore.getState().setGlassesInfo({
+        connection: {state: "connected", fullyBooted: true},
+        hotspotOtaVersion: 1,
+        wifi: {state: "disconnected"},
+      })
+      otaInstallCoordinator.prepare(checkResult())
+      let release!: () => void
+      mockHotspotTeardown.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)))
+      const finishing = otaInstallCoordinator.finish()
+      emitBluetoothSdkEvent("default_device_changed", {device: pair("finish-B")})
+      release()
+      await finishing
+      expect(mentraLocalNetworkMock.getNetworkDiagnostics).not.toHaveBeenCalled()
+      expect(jest.getTimerCount()).toBe(0)
+    })
+  })
+
+  it("keeps the real final-check boundary closed after hotspot teardown until Android has Internet", async () => {
+    const platform = Platform.OS
+    Platform.OS = "android"
+    const absent = {present: false, capabilities: null}
+    const network = {
+      sampledAtMs: Date.now(),
+      activeNetwork: absent,
+      processBound: absent,
+      glassesLocal: absent,
+      processBoundMatchesActive: false,
+      processBoundMatchesGlassesLocal: false,
+      activeNetworkMatchesGlassesLocal: false,
+    }
+    mentraLocalNetworkMock.getNetworkDiagnostics.mockReturnValue(network)
+    try {
+      useGlassesStore.getState().setGlassesInfo({
+        connection: {state: "connected", fullyBooted: true},
+        hotspotOtaVersion: 1,
+        wifi: {state: "disconnected"},
+      })
+      otaInstallCoordinator.prepare(checkResult())
+      const finalCheck = jest.fn()
+      const completion = otaInstallCoordinator.finish().then(finalCheck)
+      await jest.advanceTimersByTimeAsync(10_000)
+      expect(mockHotspotTeardown).toHaveBeenCalledTimes(1)
+      expect(finalCheck).not.toHaveBeenCalled()
+      mentraLocalNetworkMock.getNetworkDiagnostics.mockReturnValue({
+        ...network,
+        activeNetwork: {
+          present: true,
+          capabilities: {
+            wifi: true,
+            cellular: false,
+            ethernet: false,
+            vpn: false,
+            internet: true,
+            validated: true,
+            captivePortal: false,
+          },
+        },
+      })
+      await jest.advanceTimersByTimeAsync(250)
+      await completion
+      expect(finalCheck).toHaveBeenCalledTimes(1)
+      expect(mockHotspotTeardown).toHaveBeenCalledTimes(1)
+    } finally {
+      Platform.OS = platform
+      mentraLocalNetworkMock.getNetworkDiagnostics.mockReturnValue(null)
+    }
+  })
+
   it("does not resolve until hotspot transport teardown finishes", async () => {
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
@@ -1962,4 +2171,109 @@ describe("OtaInstallCoordinator paired-device ownership", () => {
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
     expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
   })
+})
+
+it("BES download completion waits for install and fails as a stall rather than a restart", async () => {
+  setGlassesConnected()
+  otaInstallCoordinator.attach()
+  await flushNativeStartPromise()
+  useGlassesStore.getState().setOtaStatus(
+    inProgressStatus({
+      stepType: "bes",
+      phase: "download",
+      status: "complete",
+      stepPercent: 100,
+      overallPercent: 100,
+    }),
+  )
+  expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+  await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS)
+  expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
+})
+
+describe("automatic OTA failure incidents", () => {
+  it("captures a BES stall with Wi-Fi transport and the owning step", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    useGlassesStore.getState().setOtaStatus(
+      inProgressStatus({
+        sessionId: "bes-stall",
+        totalSteps: 2,
+        currentStep: 2,
+        stepType: "bes",
+        overallPercent: 20,
+        bytesDownloaded: 0,
+      }),
+    )
+    await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS)
+    expect(mockFailureReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "progress_stalled",
+        transport: "wifi",
+        connected: true,
+        otaStatus: expect.objectContaining({sessionId: "bes-stall", currentStep: 2, bytesDownloaded: 0}),
+      }),
+    )
+  })
+
+  it("reports authoritative device failure even without a local error message", () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({status: "failed", error: "download_timeout"}))
+    expect(mockFailureReport).toHaveBeenCalledWith(expect.objectContaining({reason: "device_failed"}))
+  })
+
+  it("captures hotspot preflight phase before teardown clears it", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    mockHotspotPrepare.mockImplementationOnce(async (_check, progress) => {
+      progress({phase: "joining_hotspot"})
+      throw new Error("join failed")
+    })
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(mockFailureReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "hotspot_preflight_failed",
+        transport: "hotspot",
+        hotspotPhase: "joining_hotspot",
+      }),
+    )
+  })
+})
+
+it("reports a restart timeout with no BES reconnect edge", async () => {
+  setGlassesConnected()
+  otaInstallCoordinator.attach()
+  await flushNativeStartPromise()
+  useGlassesStore.getState().setOtaStatus(
+    inProgressStatus({
+      stepType: "bes",
+      phase: "install",
+      status: "complete",
+      stepPercent: 100,
+      overallPercent: 100,
+    }),
+  )
+  await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS)
+  expect(mockFailureReport).toHaveBeenCalledWith(
+    expect.objectContaining({
+      reason: "restart_timeout",
+      besRestartExpected: true,
+      besRestartDisconnectObserved: false,
+    }),
+  )
+})
+
+it("reports the zero-download watchdog before any device progress arrives", async () => {
+  setGlassesConnected()
+  otaInstallCoordinator.attach()
+  await flushNativeStartPromise()
+  await jest.advanceTimersByTimeAsync(DOWNLOAD_STUCK_TIMEOUT_MS)
+  expect(mockFailureReport).toHaveBeenCalledWith(expect.objectContaining({reason: "download_stuck"}))
 })

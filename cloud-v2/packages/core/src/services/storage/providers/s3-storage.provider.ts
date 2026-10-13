@@ -23,7 +23,10 @@ export class S3StorageProvider implements StorageProvider {
 
   async putObject(input: PutObjectInput): Promise<StoredObject> {
     const file = this.client.file(input.key);
-    await file.write(input.body, { type: input.contentType });
+    if (input.signal) {
+      const response = await this.request(input.key, 'PUT', input.signal, input.body, input.contentType);
+      if (!response.ok) throw new Error(`storage object write returned ${response.status}`);
+    } else await file.write(input.body, { type: input.contentType });
     return {
       key: input.key,
       contentType: input.contentType,
@@ -32,7 +35,21 @@ export class S3StorageProvider implements StorageProvider {
     };
   }
 
-  async getObject(key: string): Promise<Uint8Array> {
+  private async request(key: string, method: 'GET' | 'PUT', signal: AbortSignal, body?: Uint8Array, contentType?: string) {
+    const requestBody = body === undefined ? undefined : new Uint8Array(body).buffer;
+    try {
+      return await fetch(this.client.file(key).presign({method, expiresIn: 60, ...(contentType ? {type: contentType} : {})}), {
+        method, body: requestBody, signal, redirect: 'error', headers: {'Accept-Encoding': 'identity', ...(contentType ? {'Content-Type': contentType} : {})},
+      });
+    } catch {throw new Error('storage object request failed');}
+  }
+
+  async getObject(key: string, signal?: AbortSignal): Promise<Uint8Array> {
+    if (signal) {
+      const response = await this.request(key, 'GET', signal);
+      if (!response.ok) throw new Error(`storage object read returned ${response.status}`);
+      return new Uint8Array(await response.arrayBuffer());
+    }
     const file = this.client.file(key);
     if (!(await file.exists())) {
       throw new Error(`storage object not found: ${key}`);
@@ -48,7 +65,7 @@ export class S3StorageProvider implements StorageProvider {
     await this.client.file(input.key).write(Bun.file(input.path), { type: input.contentType });
   }
 
-  async statObject(key: string): Promise<{ sizeBytes: number }> {
+  async statObject(key: string, signal?: AbortSignal): Promise<{ sizeBytes: number }> {
     // R2 can compress text HEAD responses and omit Content-Length. Bun's
     // native S3 stat advertises compression and reports that missing size as 0.
     // Request the object's original representation without downloading it.
@@ -58,7 +75,7 @@ export class S3StorageProvider implements StorageProvider {
         method: "HEAD",
         headers: { "Accept-Encoding": "identity" },
         redirect: "error",
-        signal: AbortSignal.timeout(10_000),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
       });
     } catch {
       // Fetch errors can include the signed URL. Keep credentials out of logs.

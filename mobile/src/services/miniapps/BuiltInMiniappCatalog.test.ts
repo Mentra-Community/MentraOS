@@ -97,21 +97,21 @@ describe("BuiltInMiniappCatalog", () => {
     expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
   })
 
-  it.each([
-    [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key],
-    [notifyPackageName, SETTINGS.show_notify_ios.key],
-  ])("removes saved %s menu entries when its iOS opt-in is turned off", async (packageName, key) => {
-    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
-    const notes = {name: "Notes", packageName: "com.mentra.notes", running: false}
-    try {
-      await engine.settings.set(key, true)
-      await engine.settings.set(SETTINGS.menu_apps.key, [{name: "Experimental", packageName, running: true}, notes])
-      await engine.settings.set(key, false)
-      await waitFor(() => expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([notes]))
-    } finally {
-      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
-    }
-  })
+  it.each([[notifyPackageName, SETTINGS.show_notify_ios.key]])(
+    "removes saved %s menu entries when its iOS opt-in is turned off",
+    async (packageName, key) => {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+      const notes = {name: "Notes", packageName: "com.mentra.notes", running: false}
+      try {
+        await engine.settings.set(key, true)
+        await engine.settings.set(SETTINGS.menu_apps.key, [{name: "Experimental", packageName, running: true}, notes])
+        await engine.settings.set(key, false)
+        await waitFor(() => expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([notes]))
+      } finally {
+        Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+      }
+    },
+  )
 
   it.each(["android", "ios"])("keeps permitted saved menu entries on %s", async (os) => {
     Object.defineProperty(Platform, "OS", {configurable: true, value: os})
@@ -120,7 +120,6 @@ describe("BuiltInMiniappCatalog", () => {
       {name: "Notify", packageName: notifyPackageName, running: false},
     ]
     try {
-      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, os === "ios")
       await engine.settings.set(SETTINGS.show_notify_ios.key, os === "ios")
       await engine.settings.set(SETTINGS.menu_apps.key, menu)
       await (builtInMiniappCatalog as unknown as {syncGlassesMenuApps: () => Promise<void>}).syncGlassesMenuApps()

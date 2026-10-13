@@ -3,6 +3,9 @@
   "references": [
     { "path": "./packages/shared" },
     { "path": "./packages/auth" },
+    { "path": "./packages/workspace-contract" },
+    { "path": "./packages/workspace-ui" },
+    { "path": "./packages/miniapp-tools" },
     { "path": "./packages/cli" },
     { "path": "./packages/core" },
     { "path": "./packages/runtime" },

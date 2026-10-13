@@ -688,6 +688,38 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
+  test("does not check a converged APK before its new wire session becomes ready", async () => {
+    autoChainActive = true
+    const renderer = await renderProbe()
+
+    // Native reports the replacement build while retaining the BLE connection,
+    // with readiness pending until the returning glasses_ready resets the wire.
+    otaSnapshot = {...otaSnapshot, buildNumber: "302010070", connected: true, ready: false}
+    installSnapshot = {...installSnapshot, displayState: "complete", connected: true}
+    await act(async () => {
+      otaListeners.forEach((listener) => listener())
+      installListeners.forEach((listener) => listener())
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    })
+
+    expect(finish).toHaveBeenCalledTimes(1)
+    expect(fakeOta.checkForUpdates).not.toHaveBeenCalled()
+    expect(latestController.state.connected).toBe(true)
+    expect(latestController.state.screen).toBe("finishing")
+
+    otaSnapshot = {...otaSnapshot, ready: true}
+    await act(async () => {
+      otaListeners.forEach((listener) => listener())
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+
+    expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(finish).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
   test("keeps continuation checking visible until hotspot teardown finishes", async () => {
     autoChainActive = true
     let resolveFinish!: () => void

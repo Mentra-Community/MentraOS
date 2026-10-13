@@ -117,6 +117,65 @@ test('authoring accepts declared audio recognition and refuses playback or recog
   }
 })
 
+test('create/edit intake accepts fixture operations and rejects unsupported, duplicate or wrong-kind requirements', () => {
+  const supported = ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers']
+  for (const kind of ['create', 'edit']) {
+    for (const platform of ['mac', 'android']) {
+      const resources = ['app', 'recorder', ...(platform === 'android' ? ['phone'] : [])].map(kind => ({kind, capabilities: []}))
+      const request = {...input, kind, requirements: {...input.requirements, platform, resources}}
+      const withResource = resource => ({...request, requirements: {...request.requirements,
+        resources: resources.some(value => value.kind === resource.kind)
+          ? resources.map(value => value.kind === resource.kind ? resource : value)
+          : [...resources, resource]}})
+      for (const capabilities of [[], ...supported.map(capability => [capability]), supported]) {
+        const fixture = {kind: 'fixture-data', capabilities}
+        assert.deepEqual(parseRoutineWorkBrief(body(withResource(fixture)), kind).requirements.resources.at(-1), fixture)
+      }
+      for (const capabilities of [['miniapp-appearance'], ['media-decoder'], ['stream-receivers', 'stream-receivers']])
+        assert.throws(() => parseRoutineWorkBrief(body(withResource({kind: 'fixture-data', capabilities})), kind), /resource requirements/)
+      for (const capability of supported) {
+        for (const resourceKind of ['app', 'phone', 'glasses', 'recorder', 'audio', 'browser', 'network', 'workspace'])
+          assert.throws(() => parseRoutineWorkBrief(body(withResource({kind: resourceKind, capabilities: [capability]})), kind), /resource requirements/)
+      }
+    }
+  }
+})
+
+test('create/edit intake accepts glasses Wi-Fi on both platforms and rejects wrong-kind or duplicate authority', () => {
+  for (const kind of ['create', 'edit']) for (const platform of ['mac', 'android']) {
+    const resources = ['app', 'recorder', ...(platform === 'android' ? ['phone'] : [])]
+      .map(kind => ({kind, capabilities: []}))
+    const request = {...input, kind, requirements: {...input.requirements, platform, glasses: ['mentra-live'],
+      resources: [...resources, {kind: 'glasses', capabilities: ['connection', 'software', 'wifi']}]}}
+    assert.deepEqual(parseRoutineWorkBrief(body(request), kind), request)
+    for (const capabilities of [['wifi', 'wifi'], ['wifi', 'arbitrary-shell']])
+      assert.throws(() => parseRoutineWorkBrief(body({...request, requirements: {...request.requirements,
+        resources: [...resources, {kind: 'glasses', capabilities}]}}), kind), /resource requirements/)
+    assert.throws(() => parseRoutineWorkBrief(body({...request, requirements: {...request.requirements,
+      resources: request.requirements.resources.map(resource => resource.kind === 'app'
+        ? {...resource, capabilities: ['wifi']} : resource)}}), kind), /resource requirements/)
+  }
+})
+
+test('all authoring intake resource operations stay in sync with the Core contract', async () => {
+  const capabilities = async path => {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8')
+    const registry = /const (?:resourceCapabilities|resourceCapabilityMap) = \{([\s\S]*?)\n\}/.exec(source)
+    assert.ok(registry, `Missing resource capability registry in ${path}`)
+    const rows = [...registry[1].matchAll(/(?:'([^']+)'|([\w-]+)):\s*\[([^\]]*)\]/g)]
+    assert.equal(rows.length, 9, 'Every resource kind must use a literal capability array')
+    return Object.fromEntries(rows.map(row => {
+      assert.equal(row[3].replace(/'[^']*'/g, '').replace(/[\s,]/g, ''), '', 'Capabilities must remain literal strings')
+      return [row[1] ?? row[2], [...row[3].matchAll(/'([^']*)'/g)].map(match => match[1])]
+    }))
+  }
+  const [intake, core] = await Promise.all([
+    capabilities('./routine-work.mjs'),
+    capabilities('../../cloud-v2/packages/core/src/types/routine-definition.types.ts'),
+  ])
+  assert.deepEqual(intake, core)
+})
+
 test('only one collaborator request brief and one work label can be selected', async () => {
   const comment = {id: 44, body: body(input), author_association: 'MEMBER', user: {type: 'User', login: 'colleague'}}
   assert.deepEqual((await selectedRoutineWork({github: github([comment]), context, number: 12})).brief, input)

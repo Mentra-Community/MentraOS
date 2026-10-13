@@ -1,19 +1,24 @@
-import {expect, test} from "bun:test";
+import {afterEach, beforeEach, expect, spyOn, test} from "bun:test";
 import {renderToStaticMarkup} from "react-dom/server";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
-import {FrameworkHealth, LaneHealthHost, LaneHealthSection, laneOverviewQuery} from "./lane-health"
+import {LaneHealthHost, LaneHealthSection, laneOverviewQuery} from "./lane-health"
+import {FrameworkHealth} from "./framework-health";
 import {SystemHealthPage} from "./system-health";
-import type {LaneRestorationHost} from "../../../../packages/core/src/types/lane-restoration.types";
+import type {LaneRepairStatus, LaneRestorationHost} from "../../../../packages/core/src/types/lane-restoration.types";
 
 const now = Date.parse("2026-10-06T03:00:00Z"), at = new Date(now).toISOString();
 const host: LaneRestorationHost = {hostId: "mini-controller", observedAt: at, receivedAt: at, restoration: null,
   lanes: [{id: "mini-mac", platform: "ios-on-mac", state: "idle", dispatchMode: "automatic"},
     {id: "mini-android", platform: "android", state: "reserved", dispatchMode: "paused"}]};
 
+let clock: ReturnType<typeof spyOn<typeof Date, 'now'>>;
+beforeEach(() => {clock = spyOn(Date, 'now').mockReturnValue(now);});
+afterEach(() => {clock.mockRestore();});
+
 test("main System Health shows controller lanes independently of host monitoring", () => {
   const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
   client.setQueryData(["test-host-health"], {hosts: []});
-  const current = new Date().toISOString();
+  const current = new Date(now).toISOString();
   client.setQueryData(["lane-overview"], {hosts: [{...host, observedAt: current, receivedAt: current}], freshForMs: 120_000});
   const html = renderToStaticMarkup(
     <QueryClientProvider client={client}>
@@ -26,7 +31,8 @@ test("main System Health shows controller lanes independently of host monitoring
   expect(html).toContain("Idle");
   expect(html).toContain("Reserved");
   expect(html).toContain("Paused");
-  expect(html).toContain("No independent host monitor");
+  expect(html).not.toContain("No independent host monitor");
+  expect(client.getQueryCache().find({queryKey: ["test-host-health"]})?.getObserversCount()).toBe(0);
   expect(html).toContain("Controller reporting");
   expect(html).toContain("hostId=mini-controller&amp;laneId=mini-mac");
   client.clear();
@@ -97,7 +103,7 @@ test("stale observation, stale receipt and refresh failures never show current l
     if (!Object.keys(fields).length) client.getQueryCache().find({queryKey: ["lane-overview"]})!.setState({status: "error", error: new Error("Refresh failed")});
     const html = renderToStaticMarkup(
       <QueryClientProvider client={client}>
-        <LaneHealthSection now={now} />
+        <LaneHealthSection />
       </QueryClientProvider>,
     )
     expect(html).toContain("Current lane status is unknown");
@@ -141,7 +147,7 @@ test('all five dynamically reported lanes show readable labels, exact IDs and cu
         : {id: `reservation:${index}`, kind: 'authoring' as const}},
     }))}))
   client.setQueryData(['lane-overview'], {hosts, freshForMs: 120_000})
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHealthSection now={now} /></QueryClientProvider>)
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHealthSection /></QueryClientProvider>)
   expect((html.match(/Lane: /g) ?? []).length).toBe(5)
   for (const row of hosts) for (const lane of row.lanes) {
     expect(html).toContain(lane.id)
@@ -167,3 +173,31 @@ test('stale owner context is explicitly historical and cannot link to a current 
   expect(html).not.toContain('/?testRun=')
   expect(html).toContain('No glasses')
 })
+
+const repair: LaneRepairStatus = {executionId: 'fixer:actual', interruptionId: 'repair:mac:79', laneId: 'mini-mac',
+  state: 'working', current: true, startedAt: at, finishedAt: null};
+const repairHost = {...host, lanes: [{...host.lanes[0], state: 'out-of-service',
+  activity: {generation: 80, owner: {id: repair.executionId, kind: 'fixer' as const}}, repair}]};
+
+test('halted repair custody is explicit and never implies that an agent is running', () => {
+  const html = renderToStaticMarkup(<LaneHealthHost host={{...repairHost, lanes: [{...repairHost.lanes[0],
+    repair: {...repair, state: 'halted', current: false, finishedAt: at}}]}} fresh />);
+  for (const text of ['Out of service', 'Repair custody', 'Repair halted', 'Generation 80', repair.executionId])
+    expect(html).toContain(text);
+  expect(html).not.toContain('Repair running');
+  expect(html).not.toContain('State repair');
+});
+
+test('repair running requires the exact active invocation and a fresh controller observation', () => {
+  expect(renderToStaticMarkup(<LaneHealthHost host={repairHost} fresh />)).toContain('Repair running');
+  for (const changed of [undefined, {...repair, startedAt: null}, {...repair, finishedAt: at}, {...repair, current: false},
+    {...repair, executionId: 'fixer:foreign'}, {...repair, laneId: 'another-lane'}]) {
+    const html = renderToStaticMarkup(<LaneHealthHost host={{...repairHost, lanes: [{...repairHost.lanes[0], repair: changed}]}} fresh />);
+    expect(html).toContain('Repair execution unknown');
+    expect(html).not.toContain('Repair running');
+  }
+  const stale = renderToStaticMarkup(<LaneHealthHost host={repairHost} fresh={false} />);
+  expect(stale).toContain('Last reported owner');
+  expect(stale).toContain('Repair execution unknown');
+  expect(stale).not.toContain('Repair running');
+});

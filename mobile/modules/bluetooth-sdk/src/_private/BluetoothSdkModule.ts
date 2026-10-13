@@ -2,7 +2,7 @@ import {createScanSession} from "./scanSession"
 import {NativeModule, requireNativeModule} from "expo"
 import {Platform} from "react-native"
 
-import {installNativeLogConsole} from "./nativeLogConsole"
+import {installNativeLogConsole, installSdkUpdateNotice} from "./nativeLogConsole"
 
 import {
   BluetoothSettingsUpdate,
@@ -350,6 +350,7 @@ export type BluetoothSdkInternalModule = BluetoothSdkNativeModule
 // NativeModule<BluetoothSdkModuleEvents> already extends EventEmitter<BluetoothSdkModuleEvents>
 const NativeBluetoothSdkModule = requireNativeModule<BluetoothSdkNativeModule>("BluetoothSdk")
 installNativeLogConsole(NativeBluetoothSdkModule, Platform.OS)
+installSdkUpdateNotice(NativeBluetoothSdkModule)
 
 const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   saveAsDefault: true,

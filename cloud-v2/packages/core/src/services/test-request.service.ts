@@ -7,6 +7,7 @@ import {z} from "zod";
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {RoutineDefinitionModel} from '../models/routine-definition.model';
 import {routineDispatchIntentSchema, preparationStatusSchema, preparationRejectionSchema, type RoutineDispatchIntent} from '../types/routine-dispatch.types';
+import {hostRequestDeliveryFilter, hostCancellationDeliveryFilter} from './test-request-activity';
 
 export type RequestState = "queued" | "accepted" | "running" | "terminal";
 export interface HostAcceptance {
@@ -37,6 +38,7 @@ export interface StoredTestRequest {
   cancellationAcknowledged?: boolean;
   runId?: string;
   terminalStatus?: string;
+  publicationFailure?: import('../types/routine-job.types').RoutinePublicationFailure;
   createdAt?: Date;
   catalogEligible?: boolean;
   dispatchIntent?: RoutineDispatchIntent;
@@ -75,7 +77,7 @@ export interface TestRequestRepository {
 export class TestRequestConflict extends Error {}
 
 /** Sort object keys before hashing: transport formatting cannot change identity. */
-export function requestInputDigest(input: unknown): string {
+export function requestInputJson(input: unknown): string {
   const canonical = (value: unknown): unknown => {
     if (value === null || typeof value === "boolean" || typeof value === "string") return value;
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -84,7 +86,10 @@ export function requestInputDigest(input: unknown): string {
       return Object.fromEntries(Object.keys(value as object).sort().map(key => [key, canonical((value as Record<string, unknown>)[key])]));
     throw new TestRequestConflict("Request input must be finite JSON");
   };
-  return createHash("sha256").update(JSON.stringify(canonical(input))).digest("hex");
+  return JSON.stringify(canonical(input));
+}
+export function requestInputDigest(input: unknown): string {
+  return createHash("sha256").update(requestInputJson(input)).digest("hex");
 }
 
 const mongoRepository: TestRequestRepository = {
@@ -169,14 +174,14 @@ const mongoRepository: TestRequestRepository = {
     {new: true, writeConcern: testWriteConcern}).lean() as StoredTestRequest | null;
   },
   async queued(hostId, after, limit) {
-    const filter = {hostId, state: "queued", ...(after ? {$or: [
+    const filter = {...hostRequestDeliveryFilter(hostId), ...(after ? {$or: [
       {createdAt: {$gt: after.createdAt}},
       {createdAt: after.createdAt, requestId: {$gt: after.requestId}},
     ]} : {})};
     return await TestRequestModel.find(filter).sort({createdAt: 1, requestId: 1}).limit(limit).lean() as StoredTestRequest[];
   },
   async cancellations(hostId, after, limit) {
-    return await TestRequestModel.find({hostId, hostCancellation: {$exists: true}, cancellationAcknowledged: {$ne: true},
+    return await TestRequestModel.find({hostId, ...hostCancellationDeliveryFilter(),
       ...(after ? {$or: [{"hostCancellation.requestedAt": {$gt: after.requestedAt}},
         {"hostCancellation.requestedAt": after.requestedAt, requestId: {$gt: after.requestId}}]} : {})})
       .sort({"hostCancellation.requestedAt": 1, requestId: 1}).limit(limit).read("primary").readConcern("majority").lean() as StoredTestRequest[];

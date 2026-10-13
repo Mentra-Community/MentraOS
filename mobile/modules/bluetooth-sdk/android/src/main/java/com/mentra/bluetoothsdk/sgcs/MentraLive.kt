@@ -34,6 +34,7 @@ import android.os.SystemClock
 import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import androidx.core.app.ActivityCompat
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
+import com.mentra.bluetoothsdk.BluetoothSdkException
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
@@ -3371,10 +3372,12 @@ class MentraLive : SGCManager() {
         sendJson(json, wakeup, true)
     }
 
-    private fun sendJson(json: JSONObject?, wakeup: Boolean, bridgeLogging: Boolean): Boolean {
+    private fun sendJson(
+            json: JSONObject?, wakeup: Boolean, bridgeLogging: Boolean,
+            sessionGeneration: Long = bleSessionGeneration.get(),
+    ): Boolean {
         if (json != null) {
             try {
-                val sessionGeneration = bleSessionGeneration.get()
                 if (buildNumberInt < 5) {
                     val jsonStr = json.toString()
                     // Bridge.log("LIVE: 📤 Sending JSON with esoteric message ID: " + jsonStr);
@@ -6075,6 +6078,17 @@ class MentraLive : SGCManager() {
     }
 
     override fun sendIncidentId(incidentId: String, apiBaseUrl: String?) {
+        if (!isConnected || bluetoothGatt == null || txCharacteristic == null) {
+            throw BluetoothSdkException(
+                "glasses_not_connected", "Cannot request incident logs because the glasses BLE link is not ready.",
+            )
+        }
+        // The JS token sync may happen after glasses_ready. Use only its current native store value.
+        val coreToken = DeviceStore.get("bluetooth", "core_token") as? String
+        if (coreToken.isNullOrBlank()) {
+            throw BluetoothSdkException("core_token_unavailable", "Cannot request incident logs without the current Core access token.")
+        }
+        val sessionGeneration = bleSessionGeneration.get()
         try {
             var base = if (apiBaseUrl != null) apiBaseUrl.trim() else ""
             if (base.isEmpty()) {
@@ -6087,13 +6101,25 @@ class MentraLive : SGCManager() {
             bleIncidentLogRelays[lKey] =
                     BleIncidentLogRelay(lKey, incidentId, base, BleIncidentLogKind.LOGCAT)
 
+            val auth = JSONObject()
+            auth.put("type", "auth_token")
+            auth.put("coreToken", coreToken)
+            auth.put("timestamp", System.currentTimeMillis())
             val json = JSONObject()
             json.put("type", "upload_incident_logs")
             json.put("incidentId", incidentId)
             json.put("apiBaseUrl", base)
-            sendJson(json, true)
+            // Wake ASG with its current token before the upload command enters the same FIFO.
+            if (!sendJson(auth, true, true, sessionGeneration) ||
+                    sessionGeneration != bleSessionGeneration.get() ||
+                    !isConnected || bluetoothGatt == null || txCharacteristic == null ||
+                    !sendJson(json, true, true, sessionGeneration) || sessionGeneration != bleSessionGeneration.get()) {
+                bleIncidentLogRelays.remove(bKey)
+                bleIncidentLogRelays.remove(lKey)
+                throw BluetoothSdkException("incident_dispatch_failed", "Could not queue the glasses incident-log request.")
+            }
             Bridge.log(
-                    "LIVE: Sent incidentId to glasses for log upload: " +
+                    "LIVE: Queued incidentId to glasses for log upload: " +
                             incidentId +
                             " (BLE relay keys " +
                             bKey +
@@ -6102,7 +6128,7 @@ class MentraLive : SGCManager() {
                             ")"
             )
         } catch (e: JSONException) {
-            Log.e(TAG, "Error creating upload_incident_logs command", e)
+            throw BluetoothSdkException("incident_dispatch_failed", "Could not create the glasses incident-log request.", e)
         }
     }
 
@@ -9804,12 +9830,12 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Wi-Fi credentials are sent unchanged but never logged; the BLE trace records the command
-     * with the password redacted.
+     * Credentials are sent unchanged but never logged; the BLE trace redacts their fields.
      */
     private fun loggableOutgoingPayload(payload: String, commandType: String): String =
             try {
-                if (JSONObject(payload).has("password")) "<$commandType with credentials omitted>"
+                val json = JSONObject(payload)
+                if (json.has("password") || json.has("coreToken")) "<$commandType with credentials omitted>"
                 else payload
             } catch (_: JSONException) {
                 payload

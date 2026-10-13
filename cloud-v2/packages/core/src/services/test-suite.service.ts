@@ -1,20 +1,26 @@
+import {verifiedFrameworkRunSummaryProjection} from './framework-run-summary.service';
 import {frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunIdSchema, recordedFrameworkRunSchema} from "../types/framework-run.types";
 import type {PipelineStage} from "mongoose";
+import {createLogger} from "@mentra/cloud-shared";
 import {z} from "zod";
 import {TestSuiteModel} from "../models/test-suite.model";
 import {TestRunModel} from "../models/test-run.model";
 import {TestRequestModel} from "../models/test-request.model";
 import {summarizeSuite, testSuiteSchema, testSuiteCompletionSchema, type TestSuite, type SuiteRun, type SuiteRejection} from "../types/test-suite.types";
 import {TestRunError} from "./test-result-error";
-import {hostRejectionSchema, requestInputDigest, type StoredRequest} from "./test-request.service";
+import {hostRejectionSchema, requestInputDigest, type HostAcceptance, type StoredRequest} from "./test-request.service";
 import {frameworkBuildSchema, frameworkIdentitySchema, recordedFrameworkRequestInputSchema} from "../types/framework-request.types";
 import {routineDispatchIntentSchema} from "../types/routine-dispatch.types";
-import {routineJobBindingSchema} from "../types/routine-job.types";
+import {routineJobBindingSchema, routinePublicationFailureSchema} from "../types/routine-job.types";
 import {NightlyRoutineService, nightlyPreparedInput, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
+import {nightlyUnassignedReason} from "./nightly-deadline-reason";
 import {frameworkResultSummaryFields, readFrameworkResultSummary} from "./framework-result.service";
 import {nativeRunFilter} from "./framework-run-summary.service";
+import {LaneRestorationService} from "./lane-restoration.service";
+import {restorationHostIsFresh, type LaneOverviewList} from "../types/lane-restoration.types";
 
 const writeConcern = {w: "majority" as const, j: true, wtimeout: 10_000};
+const logger = createLogger("core").child({component: "test-suite"});
 
 type RecordedInput = z.infer<typeof recordedFrameworkRequestInputSchema>;
 type InputNightlyMember = Omit<NightlyPlan["members"][number], "routineRevision" | "dispatchIntent"> & {
@@ -74,14 +80,18 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
       }
     }
     const build = input?.build ?? expected.build;
-    return {...member, routineRevision: "routineRevision" in expected ? expected.routineRevision : expected.definitionRevision,
+    const unavailableReason = nightlyUnassignedReason({reason: receipt.unavailableReason, startedAt: result.startedAt,
+      observedAt: result.finishedAt, unassigned: "selection" in expected && !!expected.selection
+        && !receipt.binding && !receipt.hostId && !receipt.runId && ["incomplete", "not-run"].includes(receipt.status)});
+    return {...member, requestId: expected.requestId, routineRevision: "routineRevision" in expected ? expected.routineRevision : expected.definitionRevision,
       hostId: receipt.hostId ?? expected.hostId,
       ...(input?.laneId ? {laneId: input.laneId} : "dispatchIntent" in receipt && receipt.dispatchIntent ? {laneId: receipt.dispatchIntent.laneId}
         : "dispatchIntent" in expected && expected.dispatchIntent ? {laneId: expected.dispatchIntent.laneId} : {}),
       ...("dispatchIntent" in receipt && receipt.dispatchIntent ? {dispatchIntent: receipt.dispatchIntent} : {}),
       ...(input?.routineSource ? {routineSource: input.routineSource} : {}), ...(build ? {build} : {}), status: receipt.status === "incomplete" ? "not-run" : receipt.status,
       publicationComplete: receipt.publicationComplete,
-      ...(receipt.unavailableReason ? {unavailableReason: receipt.unavailableReason} : {}),
+      ...(receipt.evidenceStatus ? {evidenceStatus: receipt.evidenceStatus} : {}),
+      ...(unavailableReason ? {unavailableReason} : {}),
       ...(receipt.runId ? {runId: receipt.runId, startedAt: receipt.runStartedAt, finishedAt: receipt.runFinishedAt} : {})};
   });
   const passed = members.filter(member => member.status === "pass" && member.publicationComplete).length;
@@ -91,13 +101,14 @@ export function nightlySuiteProjection(suite: TestSuite, plan: RecordedNightlyPl
       && (member.status !== "pass" || !member.publicationComplete)).map(member => member.routineId))]};
 }
 type BoundRequest = {requestId: string; hostId?: string | null; input?: unknown; inputSha256?: string | null;
-  dispatchIntent?: unknown; dispatchIntentSha256?: string | null; state?: string; terminalStatus?: string | null; hostRejection?: unknown};
+  dispatchIntent?: unknown; dispatchIntentSha256?: string | null; state?: string; terminalStatus?: string | null; hostRejection?: unknown;
+  hostReceipt?: HostAcceptance; publicationFailure?: unknown};
 
 async function boundSuiteRequests(requestIds: string[]): Promise<BoundRequest[]> {
   if (!requestIds.length) return [];
   const requests = await TestRequestModel.find({requestId: {$in: requestIds}})
     .select({requestId: 1, hostId: 1, inputSha256: 1, input: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
-      state: 1, terminalStatus: 1, hostRejection: 1}).limit(101).read("primary").readConcern("majority").lean();
+      state: 1, terminalStatus: 1, hostRejection: 1, hostReceipt: 1, publicationFailure: 1}).limit(101).read("primary").readConcern("majority").lean();
   if (requests.length > 100) throw new TestRunError(503, "suite request history exceeds the query bound; no verdict available");
   return requests as BoundRequest[];
 }
@@ -129,8 +140,20 @@ function withRequestLanes(suite: ReturnType<typeof summarizeSuite>, requests: Bo
 }
 
 function suiteRejections(requests: BoundRequest[]): SuiteRejection[] {
-  return requests.filter(request => request.hostRejection !== undefined).map(request => {
-    const rejection = hostRejectionSchema.safeParse(request.hostRejection), input = recordedFrameworkRequestInputSchema.safeParse(request.input);
+  return requests.filter(request => request.hostRejection !== undefined || request.publicationFailure !== undefined).map(request => {
+    const input = recordedFrameworkRequestInputSchema.safeParse(request.input);
+    if (request.publicationFailure !== undefined) {
+      const failure = routinePublicationFailureSchema.safeParse(request.publicationFailure);
+      if (!failure.success || !input.success || request.state !== "terminal"
+        || failure.data.entityId !== request.requestId || request.hostReceipt?.requestId !== request.requestId
+        || request.hostReceipt.hostId !== request.hostId || request.hostReceipt.inputSha256 !== request.inputSha256
+        || requestInputDigest(input.data) !== request.inputSha256)
+        throw new TestRunError(503, "suite member publication failure identity is invalid; no verdict available");
+      return {requestId: request.requestId, routineId: input.data.routineId, platform: input.data.platform,
+        definitionRevision: input.data.definitionRevision, channel: input.data.build.channel, headSha: input.data.build.headSha,
+        rejectedAt: failure.data.rejectedAt, reason: `Publication failed: ${failure.data.message}`};
+    }
+    const rejection = hostRejectionSchema.safeParse(request.hostRejection);
     if (!rejection.success || !input.success || request.state !== "terminal" || request.terminalStatus !== "not-run"
       || rejection.data.requestId !== request.requestId || rejection.data.hostId !== request.hostId
       || rejection.data.inputSha256 !== request.inputSha256 || requestInputDigest(input.data) !== request.inputSha256)
@@ -144,12 +167,27 @@ function suiteRejections(requests: BoundRequest[]): SuiteRejection[] {
 type SuiteSummary = ReturnType<typeof summarizeSuite>;
 export type SuiteSummaryRead = SuiteSummary | Error;
 
+/** Active execution comes from fresh controller custody, never from admission alone. */
+function withLiveLaneActivity(suite: SuiteSummary, overview: LaneOverviewList, now: number): SuiteSummary {
+  if (suite.finishedAt) return suite;
+  return {...suite, members: suite.members.map(member => {
+    if (member.status !== "waiting" || !member.requestId || !member.hostId || !member.laneId) return member;
+    const host = overview.hosts.find(host => host.hostId === member.hostId);
+    if (!host || !restorationHostIsFresh(host, now, overview.freshForMs)) return member;
+    const lane = host.lanes.find(lane => lane.id === member.laneId && lane.platform === member.platform);
+    return lane?.state === "running" && lane.activity?.owner.kind === "run"
+      && lane.activity.owner.requestId === member.requestId && lane.activity.owner.id === member.requestId
+      ? {...member, status: "running"} : member;
+  })};
+}
+
 const compactNightlyMember = {
   memberId: "$$member.memberId", requestId: "$$member.requestId", routineId: "$$member.routineId",
   platform: "$$member.platform", definitionRevision: "$$member.definitionRevision", routineRevision: "$$member.routineRevision",
   hostId: "$$member.hostId", binding: "$$member.binding", portable: {$ne: [{$ifNull: ["$$member.selection", null]}, null]}, laneId: {$ifNull: ["$$member.dispatchIntent.laneId", "$$member.input.laneId"]},
   unavailableReason: "$$member.unavailableReason", rejectedAt: "$$member.rejectedAt",
   preparedLaneId: "$$member.input.laneId", status: "$$member.status", publicationComplete: "$$member.publicationComplete",
+  evidenceStatus: "$$member.evidenceStatus",
   runId: "$$member.runId", runStartedAt: "$$member.runStartedAt", runFinishedAt: "$$member.runFinishedAt",
   build: {$let: {vars: {build: {$ifNull: ["$$member.build", "$$member.input.build"]}},
     in: {$cond: [{$eq: [{$ifNull: ["$$build", null]}, null]}, "$$REMOVE",
@@ -166,7 +204,7 @@ export const suiteHistoryProjection: PipelineStage.Project = {$project: {suiteId
 interface CompactNightlyMember {
   memberId: string; requestId: string; routineId: string; platform: string; definitionRevision: string; routineRevision?: string;
   hostId?: string; laneId?: string; portable?: boolean; binding?: NightlyPlan["members"][number]["binding"]; preparedLaneId?: string; build?: {repository?: string; channel?: string; headSha?: string; prNumber?: number};
-  status?: string; publicationComplete?: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string; unavailableReason?: string; rejectedAt?: string;
+  status?: string; publicationComplete?: boolean; evidenceStatus?: 'complete' | 'failed'; runId?: string; runStartedAt?: string; runFinishedAt?: string; unavailableReason?: string; rejectedAt?: string;
 }
 interface CompactNightlyReceipt {suiteId: string; occurrenceId: string; startedAt: string; trigger: string;
   finishedAt?: string; expectedCount?: number; members: CompactNightlyMember[]}
@@ -203,6 +241,8 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
       || !expected.portable && expected.laneId !== receipt.laneId || receipt.preparedLaneId && receipt.preparedLaneId !== (expected.portable ? receipt.binding?.laneId : expected.laneId)
       || !["pass", "failed", "setup-failed", "teardown-failed", "cancelled", "incomplete", "not-run", ...(!result.finishedAt ? ["waiting"] : [])].includes(receipt.status ?? "")
       || typeof receipt.publicationComplete !== "boolean"
+      || receipt.evidenceStatus !== undefined && !['complete', 'failed'].includes(receipt.evidenceStatus)
+      || receipt.publicationComplete && receipt.evidenceStatus === 'failed'
       || ["pass", "failed", "setup-failed", "teardown-failed", "cancelled"].includes(receipt.status ?? "") && !receipt.runId
       || receipt.runId && (!expected.build || !(expected.portable ? receipt.binding?.hostId : expected.hostId) || !(expected.portable ? receipt.binding?.laneId : expected.laneId))
       || expected.portable && receipt.binding && (!routineJobBindingSchema.safeParse(receipt.binding).success || receipt.binding.jobId !== expected.requestId || receipt.binding.requestId !== expected.requestId
@@ -211,8 +251,11 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
       || receipt.runId && (receipt.runId !== receipt.requestId || !receipt.runStartedAt || !receipt.runFinishedAt
         || !Number.isFinite(Date.parse(receipt.runStartedAt)) || !Number.isFinite(Date.parse(receipt.runFinishedAt))
         || Date.parse(receipt.runFinishedAt) < Date.parse(receipt.runStartedAt))) invalid();
-    return {...member, status: receipt!.status === "incomplete" ? "not-run" : receipt!.status!,
-      publicationComplete: receipt!.publicationComplete, ...(receipt!.unavailableReason ? {unavailableReason: receipt!.unavailableReason} : {}),
+    const unavailableReason = nightlyUnassignedReason({reason: receipt!.unavailableReason, startedAt: result.startedAt,
+      observedAt: result.finishedAt, unassigned: !!expected!.portable && !receipt!.binding && !receipt!.hostId
+        && !receipt!.runId && ["incomplete", "not-run"].includes(receipt!.status!)});
+    return {...member, requestId: expected!.requestId, status: receipt!.status === "incomplete" ? "not-run" : receipt!.status!,
+      publicationComplete: receipt!.publicationComplete, ...(receipt!.evidenceStatus ? {evidenceStatus: receipt!.evidenceStatus} : {}), ...(unavailableReason ? {unavailableReason} : {}),
       ...(receipt!.rejectedAt ? {rejectedAt: receipt!.rejectedAt} : {}), ...((receipt!.hostId ?? expected!.hostId) ? {hostId: receipt!.hostId ?? expected!.hostId} : {}),
       ...((receipt!.laneId ?? expected!.laneId) ? {laneId: receipt!.laneId ?? expected!.laneId} : {}),
       ...(receipt!.runId ? {runId: receipt!.runId, startedAt: receipt!.runStartedAt, finishedAt: receipt!.runFinishedAt} : {})};
@@ -224,7 +267,25 @@ function nightlyHistorySummary(suite: TestSuite, plan: CompactNightlyReceipt, re
       && (member.status !== "pass" || !member.publicationComplete)).map(member => member.routineId))]};
 }
 
+const SUITE_SUMMARY_BATCH_SIZE = 5;
+const SUITE_SUMMARY_CONCURRENCY = 10;
+
 export class TestSuiteService {
+  constructor(private readonly lanes: Pick<LaneRestorationService, "overview"> = new LaneRestorationService()) {}
+
+  private async liveActivity(summaries: Map<string, SuiteSummaryRead>, deadline: number) {
+    const hasActiveCandidate = [...summaries.values()].some(suite => !(suite instanceof Error) && !suite.finishedAt
+      && suite.members.some(member => member.status === "waiting" && member.requestId && member.hostId && member.laneId));
+    if (!hasActiveCandidate || deadline <= Date.now()) return summaries;
+    try {
+      const overview = await this.lanes.overview(deadline), now = Date.now();
+      for (const [id, suite] of summaries) if (!(suite instanceof Error)) summaries.set(id, withLiveLaneActivity(suite, overview, now));
+    } catch (error) {
+      logger.warn({err: error}, "Optional suite lane activity unavailable");
+    }
+    return summaries;
+  }
+
   /** One page reads existing frozen receipts and batches live inputs and verified summaries. */
   async summaries(suiteIds: string[], deadline: number): Promise<Map<string, SuiteSummaryRead>> {
     if (suiteIds.length > 100 || suiteIds.some(id => !frameworkRunIdSchema.safeParse(id).success))
@@ -235,11 +296,25 @@ export class TestSuiteService {
       if (timeoutMS <= 0) throw new TestRunError(503, "Test history query timed out. Try again.");
       return {timeoutMS};
     };
-    const rows = await TestSuiteModel.aggregate<{suiteId: string; payload?: TestSuite; nightlyPlan?: NightlyPlan | CompactNightlyReceipt;
-      nightlyResult?: CompactNightlyReceipt; completedResult?: SuiteSummary; finishedAt?: string}>([
-      {$match: {suiteId: {$in: suiteIds}}}, {$limit: suiteIds.length + 1}, suiteHistoryProjection,
-    ]).read("primary").readConcern("majority").option(remaining()).exec();
-    if (rows.length > suiteIds.length) throw new TestRunError(503, "Suite identity is ambiguous");
+    type SummaryRow = {suiteId: string; payload?: TestSuite; nightlyPlan?: NightlyPlan | CompactNightlyReceipt;
+      nightlyResult?: CompactNightlyReceipt; completedResult?: SuiteSummary; finishedAt?: string};
+    const rows: SummaryRow[] = [];
+    // Large nightly receipts make one page-sized response exceed the history deadline.
+    // Bound both response size and concurrency while retaining the same projection and deadline.
+    const batches = Array.from({length: Math.ceil(suiteIds.length / SUITE_SUMMARY_BATCH_SIZE)}, (_, index) =>
+      suiteIds.slice(index * SUITE_SUMMARY_BATCH_SIZE, (index + 1) * SUITE_SUMMARY_BATCH_SIZE));
+    let nextBatch = 0;
+    await Promise.all(Array.from({length: Math.min(SUITE_SUMMARY_CONCURRENCY, batches.length)}, async () => {
+      while (nextBatch < batches.length) {
+        const ids = batches[nextBatch++]!;
+        const batch = await TestSuiteModel.aggregate<SummaryRow>([
+          {$match: {suiteId: {$in: ids}}}, {$limit: ids.length + 1}, suiteHistoryProjection,
+        ]).read("primary").readConcern("majority").option(remaining()).exec();
+        rows.push(...batch);
+      }
+    }));
+    if (rows.length > suiteIds.length || new Set(rows.map(row => row.suiteId)).size !== rows.length)
+      throw new TestRunError(503, "Suite identity is ambiguous");
     const membersToRead = (row: typeof rows[number]) => {
       const members = row.nightlyPlan ? (row.nightlyPlan as NightlyPlan).members : row.payload?.members;
       return Array.isArray(members) ? members.filter(member => !row.nightlyPlan || "selection" in member && member.selection
@@ -257,8 +332,8 @@ export class TestSuiteService {
     const [requests, results] = await Promise.all([
       requestIds.length ? TestRequestModel.find({requestId: {$in: requestIds}})
         .select({requestId: 1, hostId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1,
-          state: 1, terminalStatus: 1, hostRejection: 1, preparation: 1, preparationCancellation: 1, preparationRejection: 1,
-          fleetSelection: 1, fleetSelectionSha256: 1, fleetBinding: 1, fleetCancellation: 1})
+          state: 1, terminalStatus: 1, hostRejection: 1, hostReceipt: 1, publicationFailure: 1, preparation: 1, preparationCancellation: 1, preparationRejection: 1,
+          fleetSelection: 1, fleetSelectionSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1})
         .limit(requestIds.length + 1).read("primary").readConcern("majority").setOptions(remaining()).lean() : [],
       liveRequestIds.length ? TestRunModel.find({...nativeRunFilter, requestId: {$in: liveRequestIds}})
         .select(frameworkResultSummaryFields).limit(liveRequestIds.length + 1).read("primary").readConcern("majority")
@@ -309,7 +384,7 @@ export class TestSuiteService {
         summaries.set(row.suiteId, withRequestLanes(summarizeSuite(suite, runs, row.finishedAt ?? undefined, suiteRejections(bound)), bound));
       } catch (error) {summaries.set(row.suiteId, error instanceof Error ? error : new TestRunError(503, "Suite summary is unavailable"));}
     }
-    return summaries;
+    return this.liveActivity(summaries, deadline);
   }
   /** Read-only presentation uses the same bounded summaries as test history. */
   async summary(suiteId: string, deadline = Date.now() + 10_000): Promise<SuiteSummary> {
@@ -406,18 +481,16 @@ export class TestSuiteService {
       return nightlySuiteProjection(suite, plan, result);
     }
     const rows = await TestRunModel.find({requestId: {$in: suite.members.flatMap(member => member.requestId ? [member.requestId] : [])}})
-      .select({payload: 1, outcome: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
+      .select({runId: 1, requestId: 1, payloadSha256: 1, summaryProjection: 1, uploadsComplete: 1}).limit(201).read("primary").readConcern("majority").lean();
     if (rows.length > 200) throw new TestRunError(503, "suite result history exceeds the query bound; no verdict available");
-    const runs: SuiteRun[] = rows.map(row => {
-      const framework = recordedFrameworkRunSchema.safeParse(row.payload);
-      if (!framework.success) throw new TestRunError(503, "Suite member is not a valid framework result");
-      const run = framework.data;
-      return {runId: run.result.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform, definitionRevision: run.definitionRevision,
-        hostId: run.hostId, laneId: run.laneId,
+    const runs: SuiteRun[] = await Promise.all(rows.map(async row => {
+      const projection = verifiedFrameworkRunSummaryProjection(row), run = projection.summary;
+      return {runId: run.runId, requestId: run.requestId, routineId: run.routineId, platform: run.platform,
+        definitionRevision: projection.definitionRevision, hostId: run.hostId, laneId: run.laneId,
         channel: run.build.channel, provenance: {headSha: run.build.headSha},
-        startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: frameworkRunOutcome(run),
-        publicationComplete: row.uploadsComplete === true && frameworkEvidenceComplete(run)};
-    });
+        startedAt: run.startedAt, finishedAt: run.finishedAt, outcome: run.outcome,
+        publicationComplete: row.uploadsComplete === true && run.evidenceStatus === 'complete', evidenceStatus: run.evidenceStatus};
+    }));
     const requests = await boundSuiteRequests(suite.members.flatMap(member => member.requestId ? [member.requestId] : []));
     const rejections = suiteRejections(requests);
     return withRequestLanes(summarizeSuite(suite, runs, row.finishedAt ?? undefined, rejections), requests);

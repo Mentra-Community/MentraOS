@@ -22,7 +22,7 @@ test("history is a semantic table with named links, exact lane pairs and accepte
   expect(html).toContain('href="/?testSuite=private-suite-id"');
   expect(html).toContain("Dev nightly suite");
   expect(html).toContain("4 reruns");
-  expect(html).toContain('title="4 accepted rerun jobs"');
+  expect(html).toContain('title="4 routine reruns"');
   expect(html).toContain("hostId=private-host-id&amp;laneId=android-primary");
   expect(html).toContain("3m 00s");
   expect(html).toContain("3.3.0-dev.698");
@@ -31,6 +31,15 @@ test("history is a semantic table with named links, exact lane pairs and accepte
   expect(text).not.toContain("private-host-id");
   expect(html).not.toContain('class="font-semibold underline"');
   expect(html).not.toContain('type="checkbox"');
+});
+
+test("standalone rerun counts link to the original run detail and stay out of the status column", () => {
+  const html = renderToStaticMarkup(<TestHistoryTable entries={[{...run, rerunCount: 2}]} routines={[]}/>);
+  expect(html).toContain('title="2 routine reruns"');
+  expect(html).toContain('href="/?testRun=private-run-id" title="2 routine reruns"');
+  expect(html).toContain("2 reruns");
+  expect(html).not.toContain("testRerun=");
+  expect(renderToStaticMarkup(<TestHistoryTable entries={[{...run, rerunCount: 0}]} routines={[]}/>)).not.toContain("routine reruns");
 });
 
 test("history distinguishes failure and pass from neutral cancelled, with textual status", () => {
@@ -110,7 +119,7 @@ test("unavailable records retain suite and run distinctions without guessed fail
 });
 
 test("suite without reruns omits the badge and an included rerun links to its authoritative batch", () => {
-  expect(renderToStaticMarkup(<TestHistoryTable entries={[{...suite, rerunCount: 0}]} routines={[]}/>)).not.toContain("accepted rerun jobs");
+  expect(renderToStaticMarkup(<TestHistoryTable entries={[{...suite, rerunCount: 0}]} routines={[]}/>)).not.toContain("routine reruns");
   const run: Extract<TestHistoryEntry, {kind: "run"}> = {kind: "run", runId: "private-run-id", requestId: "request", routineId: "notes-phone",
     hostId: "mini", laneId: "mac", platform: "ios-on-mac", startedAt: suite.startedAt, finishedAt: suite.finishedAt!,
     outcome: "failed", uploadsComplete: true, evidenceStatus: "complete", build: {...suite.build, repository: "Mentra-Community/MentraOS", channel: "dev"},
@@ -155,4 +164,14 @@ test("a suite without a recorded repository does not invent a commit destination
   expect(html).toContain("PR number unavailable");
   expect(html).toContain(suite.build.headSha.slice(0, 10));
   expect(html).not.toContain("github.com/Mentra-Community/MentraOS/commit/");
+});
+
+
+test('suite badges and counts use the same original evidence and coverage projection', () => {
+  const html = renderToStaticMarkup(<TestHistoryTable routines={[]} entries={[{...suite, outcome: 'failed',
+    rerunCount: 0, failedCount: 0, comparison: {original: {failed: 1, total: 3, skipped: 0, pending: 1, incomplete: 1}}}]}/>);
+  expect(html).toContain('>Failed</span>');
+  expect(html).not.toContain('>Incomplete</span>');
+  expect(html).toContain('1/3 failed, 1 pending, 1 incomplete');
+  expect(html).not.toContain('to latest');
 });

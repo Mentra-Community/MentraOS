@@ -1,10 +1,9 @@
 # Cloud V2 websites on Cloudflare Pages
 
-Cloud V2 has three browser surfaces:
+MentraOS deploys two Cloud V2 browser surfaces:
 
 | Surface | Local package | Pages project pattern | Hostname pattern |
 | --- | --- | --- | --- |
-| Developer console | `websites/console` | `mentra-console2-<env>` | `console2.<env>.mentraglass.com` |
 | Admin console | `websites/admin` | `mentra-admin-<env>` | `admin.<env>.mentraglass.com` |
 | Enterprise portal | `websites/portal` | `mentra-enterprise-portal-<env>` | `portal.<env>.mentraglass.com` |
 
@@ -12,9 +11,11 @@ Production hostnames omit the environment label:
 
 | Surface | Production hostname |
 | --- | --- |
-| Developer console | `console2.mentraglass.com` |
 | Admin console | `admin.mentraglass.com` |
 | Enterprise portal | `portal.mentraglass.com` |
+
+The Developer Console and the Store website are deployed by the Mentra Miniapp
+Store service, not by MentraOS.
 
 Use one Pages project per surface per environment. That keeps each website's
 `CORE_URL` plain and prevents dev, staging, and production domains from
@@ -24,9 +25,9 @@ depending on branch-preview behavior.
 
 | Branch | Workflow target | Pages projects |
 | --- | --- | --- |
-| `dev` | dev | `mentra-console2-dev`, `mentra-admin-dev`, `mentra-enterprise-portal-dev` |
-| `staging` | staging | `mentra-console2-staging`, `mentra-admin-staging`, `mentra-enterprise-portal-staging` |
-| `main` | prod | `mentra-console2-prod`, `mentra-admin-prod`, `mentra-enterprise-portal-prod` |
+| `dev` | dev | `mentra-admin-dev`, `mentra-enterprise-portal-dev` |
+| `staging` | staging | `mentra-admin-staging`, `mentra-enterprise-portal-staging` |
+| `main` | prod | `mentra-admin-prod`, `mentra-enterprise-portal-prod` |
 
 The workflow can also be run manually from a PR branch with an explicit
 environment and site selection. The environment comes from the website URL and
@@ -36,7 +37,7 @@ Each website is a static React bundle plus a Pages Function at `/api/*`. The
 function proxies API requests to `CORE_URL` so browser auth stays same-origin:
 
 ```text
-browser -> https://console2.dev.mentraglass.com/api/... -> CORE_URL/api/...
+browser -> https://admin.dev.mentraglass.com/api/... -> CORE_URL/api/...
 ```
 
 Required Pages environment variable:
@@ -48,11 +49,17 @@ Required Pages environment variable:
 `bun run deploy:pages` refreshes `CORE_URL` for the selected Pages project
 before uploading the static bundle.
 
+The workspace portal's sidebar links to its environment's Developer Console.
+`bun run deploy:pages` builds the portal with `DEVELOPER_CONSOLE_URL` from the
+`developerConsoleUrls` map in `scripts/deploy-pages.ts`: `console.mentraglass.com`,
+`console.staging.mentraglass.com` and `console.dev.mentraglass.com`. A portal
+built without `DEVELOPER_CONSOLE_URL`, such as a Private Cloud's, shows no link.
+
 Deploy manually:
 
 ```bash
 bun run deploy:pages dev
-bun run deploy:pages staging console
+bun run deploy:pages staging admin
 ```
 
 Attach custom domains through the Pages Domains API or Cloudflare dashboard.

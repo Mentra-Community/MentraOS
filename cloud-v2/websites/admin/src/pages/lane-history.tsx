@@ -1,3 +1,5 @@
+import {useClock} from '../lib/use-clock';
+import {FrameworkHealth} from "./framework-health";
 import {TestHistoryTable} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {useInfiniteQuery, useQuery} from "@tanstack/react-query";
@@ -6,11 +8,12 @@ import {laneDisplayLabel, type LaneSelection} from "../lib/lane-links";
 import {restorationHostIsFresh, type LaneRestorationList} from "../../../../packages/core/src/types/lane-restoration.types";
 import type {FrameworkRunPage} from "../../../../packages/core/src/types/test-history.types";
 import {api} from "../lib/api";
-import {FrameworkHealth, LaneHealthHost, laneOverviewQuery} from "./lane-health";
+import {LaneHealthHost, laneOverviewQuery} from "./lane-health";
 import {RestorationHost} from "./lane-restoration";
 const loading = (label: string) => <LoadingIndicator label={label} inline />;
 
-export function LaneHistoryPage({selection, now}: {selection: LaneSelection; now: number}) {
+export function LaneHistoryPage({selection}: {selection: LaneSelection}) {
+  const now = useClock();
   const {hostId, laneId} = selection;
   const controllers = useQuery(laneOverviewQuery);
   const details = useQuery({queryKey: ['lane-restoration', hostId],
@@ -30,7 +33,7 @@ export function LaneHistoryPage({selection, now}: {selection: LaneSelection; now
         Refresh lane</TestingButton></div>
     <section className={TESTING_PANEL}><h3 className="font-semibold">Current lane status</h3>
       {controllers.isError && <p role="alert" className="mt-3 text-sm text-red-700">Controller reports could not refresh. Current lane status is unknown.</p>}
-      {host && lane ? <LaneHealthHost host={{...host, lanes: [lane]}} fresh={fresh} linkHistory={false} /> : <p className="mt-3 text-sm text-[#747780]">{controllers.isPending ? loading('Loading lane report') : "No controller report is available for this lane. Current status is unknown."}</p>}
+      {host && lane ? <LaneHealthHost host={{...host, lanes: [lane]}} fresh={fresh} linkHistory={false} controls /> : <p className="mt-3 text-sm text-[#747780]">{controllers.isPending ? loading('Loading lane report') : "No controller report is available for this lane. Current status is unknown."}</p>}
       {controllers.data?.truncated && <p className="mt-3 text-sm text-amber-800">Controller reports are truncated; this lane may be omitted.</p>}
     </section>
     {detailedHost && <section className={TESTING_PANEL}><h3 className="font-semibold">Framework installation history</h3><FrameworkHealth host={detailedHost} fresh={!details.isError && restorationHostIsFresh(detailedHost, now, details.data!.freshForMs)} /></section>}

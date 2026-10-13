@@ -27,7 +27,7 @@ beforeEach(() => {
 })
 afterEach(() => logSpy.mockRestore())
 describe("iOS miniapp local setting hydration", () => {
-  test.each(["show_mentra_call_ios", "show_notify_ios"])(
+  test.each(["show_notify_ios"])(
     "%s defaults off in development and survives restarts",
     async (key) => {
       let state = restartSettings().useSettingsStore
@@ -63,4 +63,13 @@ test("authoring build defaults Super Mode on only with the explicit flag, preser
     if (previous === undefined) delete process.env.EXPO_PUBLIC_SUPER_MODE
     else process.env.EXPO_PUBLIC_SUPER_MODE = previous
   }
+})
+
+
+test("retires the old Call preference even when stored on the device", async () => {
+  saved.set("show_mentra_call_ios", false)
+  const settings = restartSettings()
+  await settings.useSettingsStore.getState().loadAllSettings()
+  expect(settings.SETTINGS.show_mentra_call_ios).toBeUndefined()
+  expect(settings.useSettingsStore.getState().getSetting("show_mentra_call_ios")).toBeUndefined()
 })

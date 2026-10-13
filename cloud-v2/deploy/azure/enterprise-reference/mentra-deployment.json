@@ -4,13 +4,13 @@
   "displayName": "Acme Industries",
   "branding": {
     "logoUrls": {
-      "light": "https://mentra.acmeworkspace.com/branding/logo-light.png",
-      "dark": "https://mentra.acmeworkspace.com/branding/logo-dark.png"
+      "light": "https://demo.acmeworkspace.com/branding/logo-light.png",
+      "dark": "https://demo.acmeworkspace.com/branding/logo-dark.png"
     }
   },
   "services": {
     "coreUrl": "https://ca-mentra-ent-ref-core.gentlehill-4ed63a4c.westus2.azurecontainerapps.io",
-    "runtimeUrl": "https://mentra.acmeworkspace.com"
+    "runtimeUrl": "https://demo.acmeworkspace.com"
   },
   "auth": {
     "mode": "microsoft-entra",
@@ -42,8 +42,8 @@
     "wallpaperUrls": []
   },
   "links": {
-    "privacyPolicyUrl": "https://mentra.acmeworkspace.com/legal/privacy",
-    "termsOfServiceUrl": "https://mentra.acmeworkspace.com/legal/terms",
+    "privacyPolicyUrl": "https://demo.acmeworkspace.com/legal/privacy",
+    "termsOfServiceUrl": "https://demo.acmeworkspace.com/legal/terms",
     "documentationUrl": null,
     "supportUrl": null
   },
@@ -54,9 +54,9 @@
     "managed": [
       {
         "packageName": "com.mentra.call",
-        "version": "2.1.53",
-        "bundleUrl": "https://mentra.acmeworkspace.com/miniapps/com.mentra.call-2.1.53.zip",
-        "sha256": "b82a91ddbc814bbf3e257b1108250b41c905d2cf1a474a8a63f21385218b5a50"
+        "version": "2.1.61",
+        "bundleUrl": "https://demo.acmeworkspace.com/miniapps/com.mentra.call-2.1.61.zip",
+        "sha256": "850ce5a582a9600db8892e907b3950d7005f1277023ddba22fbfdfe321781fbf"
       }
     ],
     "configuration": {}

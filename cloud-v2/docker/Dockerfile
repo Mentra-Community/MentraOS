@@ -19,8 +19,12 @@ WORKDIR /app/cloud-v2
 # Copy lockfile + workspace manifests first to maximize layer reuse on
 # dependency-only changes (Docker layer cache).
 COPY cloud-v2/bun.lock cloud-v2/package.json ./
+COPY cloud-v2/patches/ ./patches/
 COPY cloud-v2/packages/shared/package.json ./packages/shared/
 COPY cloud-v2/packages/auth/package.json ./packages/auth/
+COPY cloud-v2/packages/workspace-contract/package.json ./packages/workspace-contract/
+COPY cloud-v2/packages/workspace-ui/package.json ./packages/workspace-ui/
+COPY cloud-v2/packages/miniapp-tools/package.json ./packages/miniapp-tools/
 COPY cloud-v2/packages/cli/package.json ./packages/cli/
 COPY cloud-v2/packages/core/package.json ./packages/core/
 COPY cloud-v2/packages/protocol/package.json ./packages/protocol/
@@ -30,8 +34,8 @@ COPY cloud-v2/packages/cloud-client/package.json ./packages/cloud-client/
 COPY cloud-v2/packages/console-mcp/package.json ./packages/console-mcp/
 COPY cloud-v2/test/test-oem/package.json ./test/test-oem/
 COPY cloud-v2/test/test-client/package.json ./test/test-client/
+COPY cloud-v2/websites/account/package.json ./websites/account/
 COPY cloud-v2/websites/admin/package.json ./websites/admin/
-COPY cloud-v2/websites/console/package.json ./websites/console/
 COPY cloud-v2/websites/portal/package.json ./websites/portal/
 COPY sdk/miniapp-cli/ ../sdk/miniapp-cli/
 
@@ -44,6 +48,10 @@ COPY cloud-v2/ ./
 
 # Typecheck as a build-time gate so we don't deploy broken type code.
 RUN bun run typecheck
+
+# The admin portal's static build. A Mentra Private Cloud serves it from Core
+# itself (CLOUD_CORE_ADMIN_STATIC_DIR=/app/admin-dist); hosted Core does not use it.
+RUN bun run build:admin && mkdir -p /app/admin-dist && cp -R websites/admin/dist/. /app/admin-dist/
 
 # All three service ports (HTTP/WS) + audio UDP. Porter's port mapping picks
 # the right one per-service from porter.yaml.

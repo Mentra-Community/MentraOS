@@ -42,12 +42,20 @@ repository.
 | `PORT` | Public | HTTP port; defaults to `3000`. |
 | `MONGO_URL` | Secret | Persistent Mongo-compatible database URI. |
 | `REFRESH_TOKEN_PEPPER` | Secret | Stable high-entropy refresh-token hashing key. |
-| `MENTRA_JWT_PRIVATE_KEY` | Secret | Ed25519 PKCS#8 body for access and Runtime tokens. |
+| `MENTRA_JWT_PRIVATE_KEY` | Secret | Ed25519 PKCS#8 body for access and Runtime tokens, and the sign-in server's tokens. |
 | `MENTRA_JWT_PUBLIC_KEY` | Public verification material | Matching Ed25519 SPKI body. |
 | `MENTRA_MINIAPP_JWT_PRIVATE_KEY` | Secret | Separate Ed25519 PKCS#8 body for miniapp tokens. |
 | `MENTRA_MINIAPP_JWT_PUBLIC_KEY` | Public verification material | Matching Ed25519 SPKI body. |
 | `CLOUD_CORE_ISSUER` | Public | Deployment-unique HTTPS Core origin. |
 | `CLOUD_CORE_OIDC_PROVIDERS` | Public | Explicitly trusted workforce OIDC providers as JSON. |
+| `CLOUD_CORE_ADMIN_EMAILS` | Public | Organization Admins: comma-separated emails, verified by the provider (see below). |
+| `CLOUD_CORE_ADMIN_PORTAL_URL` | Public | The admin portal's HTTPS origin; Core's own origin when Core serves the portal. |
+| `CLOUD_CORE_ADMIN_STATIC_DIR` | Public | The built admin portal in the image, `/app/admin-dist`. Core serves it on its own host. |
+| `CLOUD_CORE_OIDC_ISSUER` | Public | Core's sign-in server: Core's own HTTPS origin. |
+| `CLOUD_CORE_OIDC_COOKIE_KEYS` | Secret | Comma-separated keys (each at least 32 characters) that sign the sign-in server's cookies. |
+| `CLOUD_CORE_OIDC_CLIENTS` | Public | The sign-in server's clients as JSON: the admin portal, with its callback on Core's origin. |
+| `CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET` | Secret | The admin portal's client secret at Core's sign-in server (at least 32 characters). |
+| `ENTRA_BROWSER_CLIENT_SECRET` (the name in `browser.clientSecretEnv`) | Secret | Core's sign-in server's client secret at the provider. |
 
 Signing keys and the refresh pepper must survive upgrades. An Entra provider is
 configured explicitly:
@@ -66,7 +74,15 @@ configured explicitly:
     "directoryTenantClaim": "tid",
     "expectedDirectoryTenantId": "<tenant-id>",
     "requiredScopes": ["mentra.session"],
-    "allowedClientIds": ["<mobile-client-id>"]
+    "allowedClientIds": ["<mobile-client-id>"],
+    "verifiedEmailDomains": ["acme.example"],
+    "browser": {
+      "clientId": "<core-api-client-id>",
+      "clientSecretEnv": "ENTRA_BROWSER_CLIENT_SECRET",
+      "scopes": ["openid", "email", "profile"],
+      "emailClaim": "email",
+      "displayName": "Acme"
+    }
   }
 ]
 ```
@@ -74,6 +90,42 @@ configured explicitly:
 Core issues an opaque Mentra user id. It retains provider metadata only for host
 integrations such as proving an ACS token belongs to the same Entra employee.
 Miniapp tokens never contain the federated identity.
+
+### Admin portal sign-in
+
+Core serves the admin portal and its own sign-in server at its origin. The
+admin portal is a client of the sign-in server, which signs people in with the
+provider's `browser` settings: the Core API app registration as a confidential
+client (`client_secret_post`, `openid email profile`, a `nonce`). Register
+`https://<core host>/interaction/callback/workforce` (the provider's `id`) as a
+web redirect URI of that app, and request the `email` optional claim in its ID
+token. A person signing in to the admin portal is the same Core user as on
+their phone (`oid`).
+
+```json
+[
+  {
+    "clientId": "admin-portal",
+    "kind": "admin_portal",
+    "secretEnv": "CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET",
+    "redirectUris": ["https://<core host>/api/admin/auth/callback"]
+  }
+]
+```
+
+An email the provider asserts is verified only in a domain on
+`verifiedEmailDomains` (exact match; list each subdomain), and never when the
+token says `email_verified: false`. An Organization Admin is a person whose
+verified email is on `CLOUD_CORE_ADMIN_EMAILS`. Tools use operator keys
+(`mak_...`); an allowlisted `api-key@<keyId>.local` admin key made before
+operator keys becomes one at Core's startup and keeps its token (see
+[`docs/workspaces.md`](../docs/workspaces.md)).
+Core refuses at startup a Mentra domain, a non-canonical or duplicate domain,
+`browser` settings without `openid` or without their secret, and more than one
+provider with `browser` settings. Without `browser` settings Core still serves
+the portal, and its sign-in answers "Sign-in is not configured".
+
+See [`docs/signin.md`](../docs/signin.md) for sessions, cookies and revocation.
 
 ## Runtime modules
 
@@ -133,8 +185,8 @@ restore, credentials, or meeting creation. Existing consumer token pass-through
 and Call backend routes remain supported; consumer joins still require the
 miniapp-supplied credential. Older clients need no backend change.
 A Mentra App native build containing Teams-user agent support is required for
-employee identity. Install the matching managed miniapp ZIP and re-select the
-workspace to refresh the cached manifest. The new Call bundle requires host
+employee identity. Install the matching managed miniapp ZIP; phones pick it up
+when the Mentra App opens. The new Call bundle requires host
 meeting-policy discovery even when the host version is otherwise compatible.
 Hosts without that API show an update message and cannot enable public-backend
 access. Existing installed Call bundles and legacy token joins are unchanged.
@@ -212,7 +264,7 @@ Important schema-v1 fields are:
 | `services.coreUrl`, `services.runtimeUrl` | Required by the first template. Null never falls back to Mentra services. |
 | `auth` | Exact Entra tenant, Mentra App public-client id, `mentra.session` scope, optional Teams scopes. |
 | `branding.logoUrls` | Optional light/dark PNGs. |
-| `systemMiniapps.approvedPackageNamesOverride` | Allowlist for SYSTEM miniapps embedded in the Mentra App. |
+| `systemMiniapps.approvedPackageNamesOverride` | Allowlist for SYSTEM miniapps embedded in the Mentra App. Listing `com.mentra.miniappdev` allows miniapp development. |
 | `miniapps.managed` | Userland bundle package, version, URL, and SHA-256 descriptors. |
 | `miniapps.configuration` | Optional non-secret package-scoped string values. |
 | `features` | Explicit mobile/Runtime capability policy. |
@@ -303,6 +355,14 @@ services:
       MENTRA_MINIAPP_JWT_PUBLIC_KEY: ${MENTRA_MINIAPP_JWT_PUBLIC_KEY:?required}
       CLOUD_CORE_ISSUER: https://core.workspace.example
       CLOUD_CORE_OIDC_PROVIDERS: ${CLOUD_CORE_OIDC_PROVIDERS:?required}
+      CLOUD_CORE_ADMIN_EMAILS: ${CLOUD_CORE_ADMIN_EMAILS:-}
+      CLOUD_CORE_ADMIN_PORTAL_URL: https://core.workspace.example
+      CLOUD_CORE_ADMIN_STATIC_DIR: /app/admin-dist
+      CLOUD_CORE_OIDC_ISSUER: https://core.workspace.example
+      CLOUD_CORE_OIDC_COOKIE_KEYS: ${CLOUD_CORE_OIDC_COOKIE_KEYS:?required}
+      CLOUD_CORE_OIDC_CLIENTS: ${CLOUD_CORE_OIDC_CLIENTS:?required}
+      CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET: ${CLOUD_CORE_OIDC_ADMIN_PORTAL_CLIENT_SECRET:?required}
+      ENTRA_BROWSER_CLIENT_SECRET: ${ENTRA_BROWSER_CLIENT_SECRET:?required}
     secrets: [mongo_password]
     depends_on: [mongo]
 
@@ -336,6 +396,8 @@ secrets:
 curl --fail https://core.workspace.example/healthz | jq
 curl --fail https://core.workspace.example/ready | jq
 curl --fail https://core.workspace.example/.well-known/jwks.json | jq
+curl --fail https://core.workspace.example/.well-known/openid-configuration | jq .issuer
+curl --fail -o /dev/null -w '%{http_code} %{redirect_url}\n' https://core.workspace.example/api/admin/auth/login
 curl --fail https://workspace.example/healthz | jq
 curl --fail https://workspace.example/ready | jq
 curl --fail https://workspace.example/api/client/min-version | jq

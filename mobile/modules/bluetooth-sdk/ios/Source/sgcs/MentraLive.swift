@@ -923,7 +923,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.isConnecting = false
 
             self.connectedPeripheral = nil
-            self.fullyBooted = false
+            self.clearPhysicalReadiness()
             self.connected = false
             self.glassesSessionId = nil // Fresh BLE session starts with no sid known
             self.streamControlVersion = 0
@@ -1349,7 +1349,7 @@ class MentraLive: NSObject, SGCManager {
             // Queued writes are session-bound: transmitting them into the NEXT session
             // (e.g. a stale handshake whose reply activates v2 before the new session
             // negotiated) is the bug class this clear removes.
-            Task { await commandQueue.removeAll() }
+            commandQueue.removeAll()
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
             DeviceStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
@@ -1617,6 +1617,16 @@ class MentraLive: NSObject, SGCManager {
         set { DeviceStore.shared.apply("glasses", "connected", newValue) }
     }
 
+    private func clearPhysicalReadiness() {
+        let readinessWasPending = connected && !fullyBooted
+        fullyBooted = false
+        if readinessWasPending {
+            // Logical ASG readiness already emitted false without disconnecting.
+            // The real disconnect must still perform the cleanup apply deduplicates.
+            DeviceManager.shared.handleDeviceDisconnected()
+        }
+    }
+
     // Queue Management
     private let commandQueue = CommandQueue()
     private let bluetoothQueue = DispatchQueue(label: "MentraLiveBluetooth", qos: .userInitiated)
@@ -1744,8 +1754,8 @@ class MentraLive: NSObject, SGCManager {
         // Publish disconnect immediately for Phone A UI. didDisconnectPeripheral may lag
         // or race with cancelPeripheralConnection; do not wait on it for stand-down.
         isConnecting = false
+        clearPhysicalReadiness()
         connected = false
-        fullyBooted = false
         glassesSessionId = nil
         streamControlVersion = 0
         readinessCompletedThisBleSession = false
@@ -2123,8 +2133,7 @@ class MentraLive: NSObject, SGCManager {
         /// Wire-session generation at enqueue time; the drain loop drops entries from a
         /// previous session so a stale write (worst case: an old handshake whose reply
         /// would activate v2 pre-negotiation) can never cross a session boundary. This is
-        /// the deterministic guard - the async removeAll() on disconnect is best-effort
-        /// cleanup that may land after a reconnect has already resumed the drain loop.
+        /// the deterministic guard if a consumer already dequeued a previous-session write.
         let generation: Int
     }
 
@@ -2166,7 +2175,7 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: Cleared pending ACK mId \(pendingMessage.id) because \(reason)")
     }
 
-    actor CommandQueue {
+    @MainActor final class CommandQueue {
         private var commands: [PendingMessage] = []
 
         func enqueue(_ command: PendingMessage) -> Int {
@@ -2282,15 +2291,11 @@ class MentraLive: NSObject, SGCManager {
             )
 
             // Push to front of queue for immediate retry
-            Task {
-                let queueSize = await self.commandQueue.pushToFront(retryMessage)
-                await MainActor.run {
-                    self.logBleWriteTrace("retry_queued", retryMessage.trace, extra: [
-                        "retryDelayMs": 0,
-                        "queueSizeAfterAdd": queueSize,
-                    ])
-                }
-            }
+            let queueSize = commandQueue.pushToFront(retryMessage)
+            logBleWriteTrace("retry_queued", retryMessage.trace, extra: [
+                "retryDelayMs": 0,
+                "queueSizeAfterAdd": queueSize,
+            ])
 
             Bridge.log(
                 "🔄 Retrying message mId: \(pendingMessage.id) (attempt \(retryMessage.retries)/3)"
@@ -2528,8 +2533,8 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: Maximum reconnection attempts reached (\(MAX_RECONNECT_ATTEMPTS))")
             reconnectAttempts = 0
             updateConnectionState(ConnTypes.DISCONNECTED)
+            clearPhysicalReadiness()
             connected = false
-            fullyBooted = false
             glassesSessionId = nil
             streamControlVersion = 0
             readinessCompletedThisBleSession = false
@@ -3143,6 +3148,11 @@ class MentraLive: NSObject, SGCManager {
             if type.hasPrefix("version_info") {
                 Bridge.log("LIVE: Received \(type)")
 
+                // A new process can report its build before glasses_ready resets the
+                // wire epoch. Publish its pending readiness before those version fields
+                // can complete OTA and trigger the next request.
+                handleGlassesSessionId(json)
+
                 // Extract all fields from JSON (except "type")
                 var fields: [String: Any] = [:]
                 fields["version_info_type"] = type
@@ -3215,7 +3225,6 @@ class MentraLive: NSObject, SGCManager {
                 // running them per chunk is safe.
                 parsePeerWireCaps(json)
                 maybeSendWireHandshake()
-                handleGlassesSessionId(json)
 
                 Bridge.sendVersionInfo(fields, responseChunk: type)
             } else {
@@ -3714,7 +3723,19 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
-    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) {
+    var incidentLogTransportReady: Bool {
+        connectedPeripheral?.state == .connected && txCharacteristic != nil
+    }
+
+    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) throws {
+        guard incidentLogTransportReady else {
+            throw BluetoothSdkError(code: "glasses_not_connected", message: "Cannot request incident logs because the glasses BLE link is not ready.")
+        }
+        // Token sync may happen after glasses_ready; never rely on the last pairing's token.
+        let coreToken = DeviceStore.shared.get("bluetooth", "core_token") as? String ?? ""
+        guard !coreToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw BluetoothSdkError(code: "core_token_unavailable", message: "Cannot request incident logs without the current Core access token.")
+        }
         var base = (apiBaseUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if base.isEmpty {
             base = "https://api.mentra.glass"
@@ -3731,10 +3752,20 @@ class MentraLive: NSObject, SGCManager {
             fileBaseKey: lKey, incidentId: incidentId, apiBaseUrl: base, kind: .logcat
         )
 
-        Bridge.log(
-            "LIVE: Sending incidentId to glasses for log upload: \(incidentId) (BLE relay \(bKey), \(lKey))"
-        )
-        sendJson(["type": "upload_incident_logs", "incidentId": incidentId, "apiBaseUrl": base], wakeUp: true)
+        let auth: [String: Any] = [
+            "type": "auth_token", "coreToken": coreToken,
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+        ]
+        // MainActor queue insertion preserves auth-before-upload order, including all fragments.
+        guard sendJson(auth, wakeUp: true, requireAck: true, bridgeLogging: true),
+              sendJson(["type": "upload_incident_logs", "incidentId": incidentId, "apiBaseUrl": base],
+                       wakeUp: true, requireAck: true, bridgeLogging: true)
+        else {
+            bleIncidentLogRelays.removeValue(forKey: bKey)
+            bleIncidentLogRelays.removeValue(forKey: lKey)
+            throw BluetoothSdkError(code: "incident_dispatch_failed", message: "Could not queue the glasses incident-log request.")
+        }
+        Bridge.log("LIVE: Queued incidentId to glasses for log upload: \(incidentId) (BLE relay \(bKey), \(lKey))")
     }
 
     private static func incidentBleFileBase(incidentId: String, prefix: Character) -> String {
@@ -4671,20 +4702,13 @@ class MentraLive: NSObject, SGCManager {
 
     func queueSend(_ data: Data, id: String, trace: BleWriteTrace?) {
         let significantQueueSize = SIGNIFICANT_BLE_TRACE_QUEUE_SIZE
-        // Capture the epoch at enqueue-request time: the Task body may run after a
-        // session reset, and a pre-reset payload stamped with the new generation would
-        // defeat the stale-write guard in the drain loop.
+        // Insert synchronously on MainActor so fragments and dependent commands retain call order.
         let generation = wireSessionGeneration
-        Task {
-            let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace, generation: generation))
-            guard trace != nil, queueSize >= significantQueueSize else {
-                return
-            }
-            await MainActor.run {
-                self.logBleChunkTrace("queued", trace, extra: [
-                    "queueSizeAfterAdd": queueSize,
-                ])
-            }
+        let queueSize = commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace, generation: generation))
+        if trace != nil, queueSize >= significantQueueSize {
+            logBleChunkTrace("queued", trace, extra: [
+                "queueSizeAfterAdd": queueSize,
+            ])
         }
     }
 
@@ -5201,9 +5225,8 @@ class MentraLive: NSObject, SGCManager {
                             bridgeLogging: bridgeLogging
                         )
                     }
-                    // Wi-Fi credentials are sent unchanged but never logged; the BLE trace
-                    // above records this command with the password redacted.
-                    let loggedPayload = json["password"] == nil
+                    // Credentials reach the wire unchanged; diagnostic logs omit their values.
+                    let loggedPayload = json["password"] == nil && json["coreToken"] == nil
                         ? jsonString : "<\(commandInfo.commandType) with credentials omitted>"
                     transportLog("LIVE: Sending data to glasses: \(loggedPayload)", bridgeLogging: bridgeLogging)
                     let packedData =
@@ -5728,7 +5751,7 @@ class MentraLive: NSObject, SGCManager {
         stopReadinessCheckLoop()
 
         readinessCheckCounter = 0
-        fullyBooted = false
+        clearPhysicalReadiness()
         connected = false
         glassesSessionId = nil
         streamControlVersion = 0
@@ -6000,7 +6023,7 @@ class MentraLive: NSObject, SGCManager {
         // Stop all timers
         stopAllTimers()
         resetWireNegotiationState()
-        Task { await commandQueue.removeAll() } // stale writes die with the session
+        commandQueue.removeAll() // stale writes die with the session
         closeL2capFileChannel()
 
         // Disconnect BLE
@@ -6009,8 +6032,8 @@ class MentraLive: NSObject, SGCManager {
             centralManager?.cancelPeripheralConnection(peripheral)
         }
 
+        clearPhysicalReadiness()
         DeviceStore.shared.apply("glasses", "connected", false)
-        DeviceStore.shared.apply("glasses", "fullyBooted", false)
         DeviceStore.shared.apply("glasses", "wifiConnected", false)
         DeviceStore.shared.apply("glasses", "wifiSsid", "")
         DeviceStore.shared.apply("glasses", "wifiLocalIp", "")
@@ -6147,8 +6170,8 @@ extension MentraLive {
     /// pre-sid build) or differing from the recorded one = restart; same sid = no action.
     /// A restart is a LOGICAL session reset: send phone_ready immediately (bypassing the
     /// sr_hrt heartbeat's stale-readiness suppression); the returning glasses_ready runs
-    /// the full existing remote-wire-reset flow. fullyBooted is deliberately untouched -
-    /// the physical link never dropped, so the connection UI must not flap.
+    /// the full existing remote-wire-reset flow. Keep the physical connection intact,
+    /// but mark readiness pending until that new wire epoch has been established.
     private func handleGlassesSessionId(_ json: [String: Any]) {
         guard let sid = json["sid"] as? String, !sid.isEmpty else { return }
         let previous = glassesSessionId
@@ -6163,6 +6186,9 @@ extension MentraLive {
             "LIVE: 🔁 Glasses session changed (\(previous ?? "<pre-sid build>") -> \(sid)) - " +
                 "asg restarted under a live link, re-running readiness"
         )
+        // Emit the existing connected-but-not-ready status without invoking the
+        // physical-disconnect side effects of DeviceStore.apply(fullyBooted: false).
+        DeviceStore.shared.set("glasses", "fullyBooted", false)
         sendPhoneReady(reason: "glasses session changed")
         Bridge.sendTypedMessage(
             "glasses_session_changed",

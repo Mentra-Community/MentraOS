@@ -8,8 +8,11 @@ import {requestInputDigest} from "./test-request.service";
 import {NightlyRoutineService, type NightlyPlan, type NightlyResult} from "./nightly-routine.service";
 import {testSuiteSchema} from "../types/test-suite.types";
 import {createRecordedFrameworkRunSummaryProjection} from "./framework-run-summary.service";
+import {LaneRestorationService} from "./lane-restoration.service";
+import {TestHistoryService, type StoredHistoryRow} from "./test-history.service";
 const mocks: {mockRestore(): void}[] = [];
 beforeEach(() => {
+  mocks.push(spyOn(LaneRestorationService.prototype, "overview").mockResolvedValue({generatedAt: new Date().toISOString(), freshForMs: 120_000, hosts: [], truncated: false}));
   mocks.push(spyOn(TestRequestModel, "find").mockReturnValue({select() {return this;}, limit() {return this;},
     read() {return this;}, readConcern() {return this;}, lean: async () => []} as any));
 });
@@ -48,7 +51,8 @@ test("terminal list summaries preserve original verdicts and refuse contradictor
   }
   // Selection failure legitimately has no admitted request or prepared lane.
   const unadmitted = structuredClone(suite); delete unadmitted.members[1]!.requestId;
-  expect(terminalNightlySummary(unadmitted, plan, result)).toMatchObject({passed: 1, members: [{status: "pass"}, {status: "not-run"}]});
+  expect(terminalNightlySummary(unadmitted, plan, result)).toMatchObject({passed: 1,
+    members: [{requestId: "one", status: "pass"}, {requestId: "two", status: "not-run"}]});
 });
 test('historical suite member results remain readable without routine or framework provenance', async () => {
   const startedAt = '2026-10-01T11:00:00Z', finishedAt = '2026-10-01T11:01:00Z';
@@ -63,7 +67,7 @@ test('historical suite member results remain readable without routine or framewo
   mocks.push(spyOn(TestSuiteModel, 'findOne').mockReturnValue({read() {return this;}, readConcern() {return this;},
     async lean() {return {payload};}} as any));
   mocks.push(spyOn(TestRunModel, 'find').mockReturnValue({select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;},
-    async lean() {return [{payload: run, uploadsComplete: true}];}} as any));
+    async lean() {return [{runId: run.result.runId, requestId: run.requestId, payloadSha256: requestInputDigest(run), summaryProjection: createRecordedFrameworkRunSummaryProjection(run, requestInputDigest(run)), uploadsComplete: true}];}} as any));
   const result = await new TestSuiteService().detail(payload.suiteId);
   expect(result.members[0]).toMatchObject({runId: run.requestId, status: 'pass', publicationComplete: true, hostId: 'mini', laneId: 'mac'});
   expect(JSON.stringify(run)).toBe(before);
@@ -193,7 +197,7 @@ test("persisted suite completion lists passing members with incomplete publicati
     assets: [],
     result: {runId: "request", finishedAt: "2026-10-01T11:01:00Z", setup: {status: "passed"}, test: "passed", steps: [{id: "one", status: "passed", durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []}, failures: [], evidence: [], timing: {startedAt: payload.startedAt, setupMs: 1, testMs: 1, teardownMs: 1}},
   }
-  const runs = {select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => [{payload: run, uploadsComplete: false}]};
+  const runs = {select() {return this;}, limit() {return this;}, read() {return this;}, readConcern() {return this;}, lean: async () => [{runId: run.result.runId, requestId: run.requestId, payloadSha256: requestInputDigest(run), summaryProjection: createRecordedFrameworkRunSummaryProjection(run, requestInputDigest(run)), uploadsComplete: false}]};
   mocks.push(spyOn(TestRunModel, "find").mockReturnValue(runs as any));
   mocks.push(spyOn(TestSuiteModel, "updateOne").mockImplementation((async (_filter: any, update: any) => {
   Object.assign(row, update.$set);return {modifiedCount: 1};
@@ -234,6 +238,66 @@ test("suite rejection projects the exact request reason without fabricating a ru
   row.hostRejection.inputSha256 = "c".repeat(64);
   await expect(new TestSuiteService().detail(payload.suiteId)).rejects.toThrow("rejection identity");
 })
+
+test("ordinary suite readers retain publication failure, preserve a later result and freeze the precise disposition", async () => {
+  const startedAt = "2026-10-03T11:00:00Z", finishedAt = "2026-10-03T11:01:00Z";
+  const input = {routineId: "ordinary-product", platform: "android", definitionRevision: "a".repeat(40),
+    laneId: "phone", routineSource: testRoutineSource(), resources: [],
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)}};
+  const requestId = "publication-request", inputSha256 = requestInputDigest(input);
+  const payload = testSuiteSchema.parse({suiteId: "ordinary-publication", channel: "dev", trigger: "manual", startedAt,
+    build: {headSha: input.build.headSha}, members: [{memberId: "one", requestId, routineId: input.routineId,
+      platform: input.platform, definitionRevision: input.definitionRevision}, {memberId: "two", routineId: "other", platform: "android"}]});
+  const request = {requestId, hostId: "mini", input, inputSha256, state: "terminal", terminalStatus: "incomplete",
+    hostReceipt: {requestId, hostId: "mini", inputSha256, acceptedAt: startedAt},
+    publicationFailure: {entityId: requestId, payloadSha256: "d".repeat(64), manifestSha256: "e".repeat(64),
+      operation: "result-create", status: 409, code: "result_conflict", message: "Invalid frozen fixture action", rejectedAt: finishedAt}};
+  const stored: any = {suiteId: payload.suiteId, payload};
+  const query = {read() {return this;}, readConcern() {return this;}, async lean() {return stored;}};
+  mocks.push(spyOn(TestSuiteModel, "findOne").mockReturnValue(query as any));
+  mocks.push(spyOn(TestSuiteModel, "aggregate").mockReturnValue({read() {return this;}, readConcern() {return this;},
+    option() {return this;}, async exec() {return [stored];}} as any));
+  mocks.push(spyOn(TestRequestModel, "find").mockImplementation((() => {
+    let fields: Record<string, number> = {};
+    return {select(value: Record<string, number>) {fields = value; expect(fields).toMatchObject({hostReceipt: 1, publicationFailure: 1}); return this;},
+      limit() {return this;}, read() {return this;}, readConcern() {return this;}, setOptions() {return this;},
+      async lean() {return [Object.fromEntries(Object.entries(request).filter(([key]) => fields[key]))];}};
+  }) as any));
+  let results: unknown[] = [];
+  const runReads = spyOn(TestRunModel, "find").mockReturnValue({select() {return this;}, limit() {return this;}, read() {return this;},
+    readConcern() {return this;}, setOptions() {return this;}, async lean() {return results;}} as any); mocks.push(runReads);
+  mocks.push(spyOn(TestSuiteModel, "updateOne").mockImplementation((async (_filter: unknown, update: any) => {
+    Object.assign(stored, update.$set); return {modifiedCount: 1};
+  }) as any));
+  const service = new TestSuiteService(), expected = {status: "not-run", publicationComplete: false,
+    unavailableReason: "Publication failed: Invalid frozen fixture action", rejectedAt: finishedAt, hostId: "mini", laneId: "phone"};
+  expect((await service.detail(payload.suiteId)).members[0]).toMatchObject(expected);
+  expect((await service.summaries([payload.suiteId], Date.now() + 5000)).get(payload.suiteId))
+    .toMatchObject({passed: 0, members: [expected, {status: "waiting"}]});
+  request.hostReceipt.inputSha256 = "f".repeat(64);
+  await expect(service.detail(payload.suiteId)).rejects.toThrow("publication failure identity");
+  request.hostReceipt.inputSha256 = inputSha256;
+  const {resources: _resources, ...runIdentity} = input;
+  const run = {schemaVersion: 1, ...runIdentity, requestId, hostId: request.hostId, frameworkBinding: testFrameworkBinding(),
+    startedAt, finishedAt, assets: [], result: {runId: requestId, finishedAt, setup: {status: "passed"}, test: "passed",
+      steps: [{id: "check", status: "passed", durationMs: 1}], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [], evidence: [], timing: {startedAt, setupMs: 0, testMs: 1, teardownMs: 0}}};
+  const payloadSha256 = requestInputDigest(run);
+  request.terminalStatus = "pass"; // A later authentic result retains the original failure receipt.
+  results = [{runId: requestId, requestId, build: run.build, payloadSha256, uploadsComplete: true,
+    summaryProjection: createRecordedFrameworkRunSummaryProjection(run, payloadSha256)}];
+  expect((await service.detail(payload.suiteId)).members[0]).toMatchObject({status: "pass", publicationComplete: true, runId: requestId});
+  expect((await service.summaries([payload.suiteId], Date.now() + 5000)).get(payload.suiteId))
+    .toMatchObject({passed: 1, members: [{status: "pass", publicationComplete: true, runId: requestId}, {status: "waiting"}]});
+  results = []; request.terminalStatus = "incomplete";
+  const terminal = await service.complete(payload.suiteId, {finishedAt});
+  expect(terminal).toMatchObject({outcome: "failed", passed: 0, members: [expected, {status: "not-run"}]});
+  expect(terminal.members[0]!.runId).toBeUndefined();
+  request.publicationFailure.message = "changed later";
+  const beforeReads = runReads.mock.calls.length;
+  expect(await service.detail(payload.suiteId)).toEqual(terminal);
+  expect(runReads.mock.calls).toHaveLength(beforeReads);
+});
 
 test("a live nightly keeps waiting members out of failed routines and its terminal receipt retains missing outcomes", async () => {
   const payload = testSuiteSchema.parse({suiteId: "live-nightly", channel: "dev", trigger: "nightly", startedAt: "2026-10-03T11:00:00Z",
@@ -395,6 +459,7 @@ test('history summaries read portable members through the real nightly snapshot 
  const compactBuild={repository:build.repository,channel:build.channel,headSha:build.headSha};
  // Emulate the actual Mongo history projection, rather than supplying the unprojected plan.
  let terminal=false;
+ let extraRows: unknown[]=[];
  const projected=()=>({suiteId:suite.suiteId,payload:suite,nightlyPlan:{suiteId:suite.suiteId,occurrenceId:'portable-occurrence',
   startedAt:suite.startedAt,trigger:'nightly',members:members.map(member=>({...member,portable:true,build:compactBuild,
    ...(terminal?{selection:undefined}:{selection:member.selection})}))},
@@ -405,12 +470,14 @@ test('history summaries read portable members through the real nightly snapshot 
     ...(index===1?{hostId:binding.hostId,laneId:binding.laneId,binding}:{})}))}}:{})});
  mocks.push(spyOn(TestSuiteModel,'aggregate').mockImplementation(((pipeline:unknown[])=>{
   expect(pipeline[2]).toEqual(suiteHistoryProjection);
-  return {read(){return this},readConcern(){return this},option(){return this},async exec(){return [projected()]}};
+  return {read(){return this},readConcern(){return this},option(){return this},async exec(){return [projected(),...extraRows]}};
  }) as any));
  const queried:string[][]=[];
  mocks.push(spyOn(TestRequestModel,'find').mockImplementation(((filter:{requestId:{$in:string[]}})=>{
-  queried.push(filter.requestId.$in);return {select(){return this},limit(){return this},read(){return this},readConcern(){return this},
-   setOptions(){return this},async lean(){return requests}};
+  queried.push(filter.requestId.$in);let fields: Record<string, number> = {};
+  return {select(value: Record<string, number>){fields=value;expect(fields).toMatchObject({publicationFailure:1,hostReceipt:1});return this},
+   limit(){return this},read(){return this},readConcern(){return this},setOptions(){return this},
+   async lean(){return requests.map(request=>Object.fromEntries(Object.entries(request).filter(([key])=>fields[key])))}};
  }) as any));
  let publishedRows:unknown[]=[];
  const runReads=spyOn(TestRunModel,'find').mockReturnValue({select(){return this},limit(){return this},read(){return this},
@@ -426,6 +493,50 @@ test('history summaries read portable members through the real nightly snapshot 
  expect(executable).not.toBeInstanceOf(Error);
  expect(executable).toMatchObject({outcome:'running',passed:0,members:[{status:'waiting'},
   {status:'waiting',hostId:binding.hostId,laneId:binding.laneId}]});
+ const timestamp=new Date().toISOString(),owner={id:'two',kind:'run' as const,requestId:'two'};
+ const overview={generatedAt:timestamp,freshForMs:120_000,truncated:false,hosts:[{hostId:binding.hostId,observedAt:timestamp,receivedAt:timestamp,
+  lanes:[{id:binding.laneId,platform:'android' as const,state:'running',dispatchMode:'automatic',activity:{generation:3,owner}}]}]};
+ const laneRead=spyOn(LaneRestorationService.prototype,'overview').mockResolvedValue(overview);laneRead.mockClear();mocks.push(laneRead);
+ const deadline=Date.now()+5000;
+ const running=(await service.summaries([suite.suiteId],deadline)).get(suite.suiteId);
+ expect(running).toMatchObject({outcome:'running',passed:0,failedRoutines:[],members:[{status:'waiting'},{status:'running',hostId:binding.hostId,laneId:binding.laneId}]});
+ expect(laneRead).toHaveBeenCalledTimes(1);
+ expect(laneRead).toHaveBeenLastCalledWith(deadline);
+ // Optional controller failure cannot hide either an open suite or a frozen completion on the same history page.
+ const completed={...suite,suiteId:'completed-neighbor',finishedAt:'2026-10-08T00:02:00Z',outcome:'failed' as const,passed:0,
+  failedRoutines:suite.members.map(member=>member.routineId),members:suite.members.map(member=>({...member,
+   requestId:undefined,status:'not-run' as const,publicationComplete:false}))};
+ extraRows=[{suiteId:completed.suiteId,completedResult:completed}];
+ laneRead.mockRejectedValue(new Error('Unrelated controller observation is malformed'));
+ const historyRows:StoredHistoryRow[]=[suite,completed].map(value=>({historyKind:'suite',historyId:value.suiteId,
+  historyStartedAt:new Date(value.startedAt),rerunCount:0}));
+ const history=await new TestHistoryService(service,async()=>[[],historyRows],{async latestAttempts(){return new Map()}}).list();
+ expect(history.entries).toHaveLength(2);
+ expect(history.entries.find(entry=>entry.kind==='suite'&&entry.suiteId===suite.suiteId)).toMatchObject({kind:'suite',outcome:'running',passed:0});
+ expect(history.entries.find(entry=>entry.kind==='suite'&&entry.suiteId===completed.suiteId)).toMatchObject({kind:'suite',outcome:'failed',passed:0});
+ expect((await service.summaries([suite.suiteId,completed.suiteId],Date.now()+5000)).get(suite.suiteId))
+  .toMatchObject({members:[{status:'waiting'},{status:'waiting'}]});
+ extraRows=[];laneRead.mockResolvedValue(overview);
+ for(const mutate of [
+  (o:typeof overview)=>{o.hosts[0]!.observedAt='2026-10-01T00:00:00Z';},
+  (o:typeof overview)=>{o.hosts[0]!.receivedAt='2026-10-01T00:00:00Z';},
+  (o:typeof overview)=>{o.hosts[0]!.lanes[0]!.activity.owner={...owner,id:'neighbor',requestId:'neighbor'};},
+  (o:typeof overview)=>{o.hosts[0]!.lanes[0]!.state='in-repair';},
+  (o:typeof overview)=>{o.hosts[0]!.lanes[0]!.id='other-lane';},
+  (o:typeof overview)=>{o.hosts[0]!.hostId='other-host';},
+ ]){
+  const changed=structuredClone(overview);mutate(changed);laneRead.mockResolvedValue(changed);
+  expect((await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId)).toMatchObject({members:[{status:'waiting'},{status:'waiting'}]});
+ }
+ laneRead.mockResolvedValue(overview);
+ Object.assign(requests[1]!,{state:'terminal',terminalStatus:'incomplete',
+  hostReceipt:{requestId:'two',hostId:binding.hostId,inputSha256:requestInputDigest(input),acceptedAt:binding.boundAt},
+  publicationFailure:{entityId:'two',payloadSha256:'d'.repeat(64),manifestSha256:'e'.repeat(64),operation:'result-create',
+   status:409,code:'result_conflict',message:'Invalid frozen fixture action',rejectedAt:binding.boundAt}});
+ const rejected=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
+ expect(rejected).toMatchObject({outcome:'running',passed:0,members:[{status:'waiting'},
+  {status:'not-run',publicationComplete:false,unavailableReason:'Publication failed: Invalid frozen fixture action',
+   hostId:binding.hostId,laneId:binding.laneId}]});
  const finishedAt='2026-10-08T00:02:00Z';
  const run={schemaVersion:1,requestId:'two',hostId:binding.hostId,routineId:intent.routineId,
   definitionRevision:intent.routineRevision,routineSource:intent.routineSource,frameworkBinding:testFrameworkBinding(),
@@ -434,7 +545,7 @@ test('history summaries read portable members through the real nightly snapshot 
    teardown:{ready:true,outcomes:[],errors:[],unavailableResources:[]},failures:[],evidence:[],
    timing:{startedAt:binding.boundAt,setupMs:0,testMs:1,teardownMs:0}}};
  const payloadSha256=requestInputDigest(run);
- publishedRows=[{runId:'two',requestId:'two',payloadSha256,uploadsComplete:true,payload:{build},
+ publishedRows=[{runId:'two',requestId:'two',payloadSha256,uploadsComplete:true,build,
   summaryProjection:createRecordedFrameworkRunSummaryProjection(run,payloadSha256)}];
  Object.assign(requests[0]!,{state:'terminal',fleetCancellation:{requestedAt:finishedAt,reason:'Occurrence cancelled before assignment.'}});
  const published=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
@@ -442,8 +553,72 @@ test('history summaries read portable members through the real nightly snapshot 
  expect(published).toMatchObject({outcome:'running',passed:1,members:[{status:'not-run',publicationComplete:false},
   {status:'pass',publicationComplete:true,runId:'two',hostId:binding.hostId,laneId:binding.laneId}]});
  expect(queried.at(-1)).toEqual(['one','two']);
- terminal=true;const readsBefore=queried.length,runReadsBefore=runReads.mock.calls.length;
+ terminal=true;const readsBefore=queried.length,runReadsBefore=runReads.mock.calls.length,laneReadsBefore=laneRead.mock.calls.length;
  const final=(await service.summaries([suite.suiteId],Date.now()+5000)).get(suite.suiteId);
  expect(final).toMatchObject({outcome:'failed',passed:0,members:[{status:'not-run'},{status:'not-run',hostId:binding.hostId,laneId:binding.laneId}]});
  expect(queried).toHaveLength(readsBefore);expect(runReads.mock.calls).toHaveLength(runReadsBefore);
+ expect(laneRead.mock.calls).toHaveLength(laneReadsBefore);
+});
+
+test("large summary pages bound receipt batches and concurrency under one deadline", async () => {
+  const ids = Array.from({length: 52}, (_, index) => `suite-${index}`);
+  const deadline = Date.now() + 10_000;
+  let active = 0, peak = 0;
+  const selected: string[] = [];
+  mocks.push(spyOn(TestSuiteModel, "aggregate").mockImplementation(((pipeline: any[]) => {
+    const batch = pipeline[0].$match.suiteId.$in as string[];
+    expect(batch.length).toBeLessThanOrEqual(5);
+    expect(pipeline[1]).toEqual({$limit: batch.length + 1});
+    expect(pipeline[2]).toEqual(suiteHistoryProjection);
+    selected.push(...batch);
+    return {read() {return this;}, readConcern() {return this;}, option(options: {timeoutMS: number}) {
+      expect(options.timeoutMS).toBeGreaterThan(0);
+      // The service computes the remaining time before invoking this mock; the wall clock can advance between them.
+      expect(options.timeoutMS).toBeLessThanOrEqual(10_000);
+      return this;
+    }, async exec() {
+      active++; peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      return batch.map(suiteId => ({suiteId, completedResult: {suiteId, finishedAt: "2026-10-09T01:00:00Z", members: []}}));
+    }};
+  }) as any));
+  const result = await new TestSuiteService().summaries(ids, deadline);
+  expect(selected).toEqual(ids);
+  expect(result.size).toBe(ids.length);
+  expect(peak).toBe(10);
+});
+
+test('compact nightly summaries preserve terminal evidence verdicts through the actual history reader', async () => {
+  const suite = testSuiteSchema.parse({suiteId: 'compact-evidence', channel: 'dev', trigger: 'nightly',
+    startedAt: '2026-10-12T10:00:00Z', build: {headSha: 'a'.repeat(40)}, members: [
+      {memberId: 'first', requestId: 'first', routineId: 'camera', platform: 'android'},
+      {memberId: 'second', requestId: 'second', routineId: 'settings', platform: 'android'}]});
+  const members = suite.members.map(member => ({...member, requestId: member.requestId!,
+    definitionRevision: 'b'.repeat(40), routineRevision: 'b'.repeat(40), hostId: 'mini', laneId: 'android',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: suite.build.headSha}}));
+  const plan = {suiteId: suite.suiteId, occurrenceId: 'compact-evidence-occurrence', startedAt: suite.startedAt, trigger: suite.trigger, members};
+  const result = {...plan, expectedCount: 2, finishedAt: '2026-10-12T11:00:00Z', members: members.map((member, index) => ({...member,
+    status: 'pass', publicationComplete: index !== 0, evidenceStatus: index === 0 ? 'failed' as const : 'complete' as const,
+    runId: member.requestId, preparedLaneId: member.laneId, runStartedAt: suite.startedAt, runFinishedAt: '2026-10-12T10:02:00Z'}))};
+  const projection = suiteHistoryProjection.$project.nightlyResult as any;
+  expect(projection.$cond[1].members.$map.in.evidenceStatus).toBe('$$member.evidenceStatus');
+  mocks.push(spyOn(TestSuiteModel, 'aggregate').mockImplementation(((pipeline: unknown[]) => {
+    expect(pipeline[2]).toEqual(suiteHistoryProjection);
+    return {read() {return this;}, readConcern() {return this;}, option() {return this;}, async exec() {
+      return [{suiteId: suite.suiteId, payload: suite, nightlyPlan: plan, nightlyResult: result}];
+    }};
+  }) as any));
+  const service = new TestSuiteService();
+  const summary = (await service.summaries([suite.suiteId], Date.now() + 5000)).get(suite.suiteId);
+  expect(summary).toMatchObject({outcome: 'failed', passed: 1, members: [{evidenceStatus: 'failed', publicationComplete: false}, {evidenceStatus: 'complete', publicationComplete: true}]});
+  const history = await new TestHistoryService(service, async () => [[], [{historyKind: 'suite', historyId: suite.suiteId,
+    historyStartedAt: new Date(suite.startedAt), rerunCount: 0}]], {async latestAttempts() {return new Map()}}).list();
+  expect(history.entries[0]).toMatchObject({outcome: 'failed', failedCount: 1, comparison: {original: {failed: 1, total: 2, pending: 0}}});
+  for (const evidenceStatus of ['unknown', null]) {
+    const corrupted = structuredClone(result) as any; corrupted.members[0].evidenceStatus = evidenceStatus;
+    expect(() => terminalNightlySummary(suite, plan, corrupted)).toThrow('frozen membership');
+  }
+  const contradictory = structuredClone(result); contradictory.members[0]!.publicationComplete = true;
+  expect(() => terminalNightlySummary(suite, plan, contradictory)).toThrow('frozen membership');
 });

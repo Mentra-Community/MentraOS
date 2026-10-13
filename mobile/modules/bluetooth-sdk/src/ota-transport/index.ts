@@ -1,8 +1,15 @@
 // This public adapter is the package-owned boundary over its native implementation.
 // eslint-disable-next-line no-restricted-imports
-import MentraLocalNetwork from "../_private/MentraLocalNetworkModule"
+import MentraLocalNetwork, {type NetworkDiagnostics} from "../_private/MentraLocalNetworkModule"
 // eslint-disable-next-line no-restricted-imports
 import MentraOtaServer from "../ota-server"
+
+// eslint-disable-next-line no-restricted-imports
+export type {
+  NetworkCapabilitiesDiagnostic,
+  NetworkDiagnostics,
+  NetworkObservation,
+} from "../_private/MentraLocalNetworkModule"
 
 export type OtaTransportSubscription = {remove(): void}
 
@@ -55,6 +62,8 @@ export type OtaServerResult = {
  */
 export const otaLocalNetwork = Object.freeze({
   isAvailable: (): boolean => MentraLocalNetwork != null,
+  /** Synchronous local observation; no network I/O, route changes or network identities. */
+  getNetworkDiagnostics: (): NetworkDiagnostics | null => MentraLocalNetwork?.getNetworkDiagnostics() ?? null,
   connect: async (ssid: string, password: string): Promise<OtaLocalNetworkConnection> => {
     if (!MentraLocalNetwork) throw new Error("Scoped local networking is not available in this native build")
     return MentraLocalNetwork.connect(ssid, password)

@@ -21,12 +21,12 @@ const identifiers = (value) => Array.isArray(value) && value.length <= 30 && val
 const resourceCapabilities = {
   app: ['relaunch'],
   phone: ['bluetooth-observe', 'bluetooth-toggle', 'trace', 'dialogs'],
-  glasses: ['glasses-ble', 'connection', 'software'],
+  glasses: ['glasses-ble', 'connection', 'software', 'wifi'],
   recorder: [],
   audio: ['speech', 'witness', 'synthesis', 'recognition'],
   browser: ['external-window'],
   network: ['independent-uplink'],
-  'fixture-data': [],
+  'fixture-data': ['google-authentication', 'clipboard', 'scoped-report-read', 'reviewed-miniapp-appearance', 'media-decode', 'stream-receivers'],
   workspace: [],
 }
 export const workDigest = requestInputDigest

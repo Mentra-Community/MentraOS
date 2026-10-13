@@ -93,11 +93,21 @@ public class AcsMeetingModule: Module {
         }
 
         AsyncFunction("leaveScopedNetwork") { (promise: Promise) in
-            self.hotspot.leave { promise.resolve(nil) }
+            self.hotspot.leave { result in
+                switch result {
+                case .success: promise.resolve(nil)
+                case let .failure(error): promise.reject(error)
+                }
+            }
         }
 
         AsyncFunction("cancelScopedNetworkJoin") { (promise: Promise) in
-            self.hotspot.leave { promise.resolve(nil) }
+            self.hotspot.leave { result in
+                switch result {
+                case .success: promise.resolve(nil)
+                case let .failure(error): promise.reject(error)
+                }
+            }
         }
 
         AsyncFunction("awaitDefaultNetworkAfterHotspot") { (promise: Promise) in
@@ -241,7 +251,7 @@ public class AcsMeetingModule: Module {
             self.session?.leave()
             self.session = nil
             self.hotspot.onLost = nil
-            self.hotspot.leave {}
+            self.hotspot.leave { _ in }
         }
     }
 }

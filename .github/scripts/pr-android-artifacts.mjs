@@ -56,7 +56,7 @@ export function androidAppIdentity({config, badging, pr, headSha, buildSha, back
 /** Commit an immutable receipt only after its exact signed APK is published. */
 export async function publishAndroidArtifacts(apk, env = process.env, {exec = execFileSync} = {}) {
   const pr = Number(env.PR_NUMBER), headSha = env.PR_HEAD_SHA, runId = Number(env.GITHUB_RUN_ID),
-    runAttempt = Number(env.GITHUB_RUN_ATTEMPT), buildSha = env.GITHUB_SHA
+    runAttempt = Number(env.GITHUB_RUN_ATTEMPT), buildSha = env.MENTRA_PR_BUILD_SHA || env.GITHUB_SHA
   const name = androidReceiptName(pr, headSha, runId, runAttempt)
   requireThat(env.GITHUB_REPOSITORY === "Mentra-Community/MentraOS" && SHA.test(buildSha ?? ""),
     "Invalid Android publication source")
@@ -70,7 +70,7 @@ export async function publishAndroidArtifacts(apk, env = process.env, {exec = ex
   requireThat(versions.length > 0, "Android build tools are unavailable")
   const badging = exec(path.join(env.ANDROID_HOME, "build-tools", versions[0], "aapt"), ["dump", "badging", apk], {encoding: "utf8"})
   const app = androidAppIdentity({config, badging, pr, headSha, buildSha, backend: env.EXPO_PUBLIC_BUILD_ENV,
-    baseRef: env.GITHUB_BASE_REF})
+    baseRef: env.MENTRA_PR_BASE_REF || env.GITHUB_BASE_REF})
   requireThat(app.mobileFingerprint === env.MENTRA_PR_MOBILE_FINGERPRINT, "APK compilation fingerprint differs from the selected build")
   const bytes = await readFile(apk)
   const receipt = {schemaVersion: 1, pr, headSha, baseSha, buildSha, runId, runAttempt, app,

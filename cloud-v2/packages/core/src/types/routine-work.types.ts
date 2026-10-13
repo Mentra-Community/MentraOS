@@ -291,3 +291,14 @@ export const routineWorkStatusSchema = z
   })
 export type RoutineWorkStatus = z.infer<typeof routineWorkStatusSchema>
 export type RoutineWorkProgress = z.infer<typeof routineWorkProgressSchema>
+
+/** A recording-only verification has its own identity; the original terminal status stays immutable. */
+export const routineWorkVerificationIdentitySchema = z.object({
+  decisionId: frameworkIdentitySchema, inputSha256: workHashSchema,
+  acceptedAt: z.string().datetime({offset:true}), deadline: z.string().datetime({offset:true}),
+  failureEventId: frameworkIdentitySchema, failureSha256: workHashSchema,
+  previousFailure: z.object({code:z.literal('recording-response'),reason:publicText}).strict(),
+}).strict().refine(value => Date.parse(value.deadline)>Date.parse(value.acceptedAt) &&
+  Date.parse(value.deadline)-Date.parse(value.acceptedAt)<=30*60*1000,'Verification retry requires its bounded original window')
+export const routineWorkVerificationSchema = z.object({identity:routineWorkVerificationIdentitySchema,event:routineWorkStatusSchema}).strict()
+export type RoutineWorkVerification = z.infer<typeof routineWorkVerificationSchema>

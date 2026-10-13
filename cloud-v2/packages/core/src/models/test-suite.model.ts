@@ -15,6 +15,7 @@ const schema = new Schema({
   completedResult: {type: Schema.Types.Mixed},
 }, {collection: "test_suites", timestamps: true});
 schema.index({"payload.members.requestId": 1});
+schema.index({"nightlyPlan.members.requestId": 1});
 schema.index({createdAt: -1});
 export const TEST_SUITE_HISTORY_INDEX = "test_suites_history";
 schema.index({startedAt: -1, suiteId: -1}, {name: TEST_SUITE_HISTORY_INDEX});

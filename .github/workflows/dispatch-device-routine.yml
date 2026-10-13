@@ -33,7 +33,9 @@ jobs:
           retries: 0
           script: |
             const {planDeviceDispatches} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
-            const plans = await planDeviceDispatches({github, context, token: process.env.TEST_RUN_INGEST_TOKEN});
+            // PR coverage is admitted once by the durable check service. Keep this
+            // producer callback as reconciliation, without creating parallel originals.
+            const plans = await planDeviceDispatches({github, context, token: process.env.TEST_RUN_INGEST_TOKEN, checksOnly: true});
             core.setOutput('matrix', JSON.stringify({include: plans}));
             core.setOutput('has-work', String(plans.length > 0));
   dispatch:

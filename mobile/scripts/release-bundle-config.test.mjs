@@ -63,6 +63,20 @@ test("xcodeBuildSettings exposes the same public values to every build phase", (
   ])
 })
 
+test("Xcode config regeneration receives the PR compilation revision instead of the workflow ref", () => {
+  const compilationSha = "b".repeat(40), fingerprint = "f".repeat(64)
+  const env = {MENTRA_PR_BUILD_SHA: compilationSha, MENTRA_PR_MOBILE_FINGERPRINT: fingerprint, GITHUB_SHA: "a".repeat(40)}
+  assert.deepEqual(xcodeBuildSettings(env, "/usr/bin/node"), [
+    `MENTRA_PR_MOBILE_FINGERPRINT=${fingerprint}`,
+    `MENTRA_PR_BUILD_SHA=${compilationSha}`,
+    "NODE_BINARY=/usr/bin/node",
+  ])
+  const output = execFileSync("sh", ["-c",
+    `${xcodeEnvironmentExports(env, "/usr/bin/node").join("\n")}\nprintf '%s' "$MENTRA_PR_BUILD_SHA"`,
+  ], {encoding: "utf8"})
+  assert.equal(output, compilationSha)
+})
+
 test("release bundle gate does not require BUILD_TIME so Metro cache reuse cannot fail CI", () => {
   assert.equal(RELEASE_BUNDLE_ENV_KEYS.includes("EXPO_PUBLIC_BUILD_TIME"), false)
   assert.equal(RELEASE_BUNDLE_ENV_KEYS.includes("EXPO_PUBLIC_BUILD_COMMIT"), true)

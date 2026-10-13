@@ -12,6 +12,8 @@ const schema = new Schema(
     snapshot: {type: Schema.Types.Mixed, required: true},
     frameworkHistory: {type: [Schema.Types.Mixed], default: []},
     frameworkStopReceipts: {type: [Schema.Types.Mixed], default: []},
+    laneControls: {type: [Schema.Types.Mixed], default: []},
+    laneControlVersion: {type: Number, default: 0},
     deploymentObservation: {type: Schema.Types.Mixed},
     deploymentGeneration: {type: Number, default: 0},
     deploymentSequence: {type: Number, default: 0},

@@ -13,7 +13,6 @@ import {
   ActivityIndicator,
   Animated,
   BackHandler,
-  Dimensions,
   FlatList,
   ImageStyle,
   Platform,
@@ -22,6 +21,7 @@ import {
   TouchableOpacity,
   View,
   ViewStyle,
+  useWindowDimensions,
 } from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
@@ -85,7 +85,7 @@ export function GalleryScreen() {
   const insets = useSaferAreaInsets()
 
   // Column calculation - 3 per row like Google Photos / Apple Photos
-  const screenWidth = Dimensions.get("window").width
+  const {width: screenWidth} = useWindowDimensions()
   const HORIZONTAL_PADDING = spacing.s3 * 2 // Padding on left and right edges (12px * 2 = 24px)
   const numColumns = screenWidth < 320 ? 2 : 3 // 2 columns for very small screens, otherwise 3
   const itemWidth = (screenWidth - HORIZONTAL_PADDING - ITEM_SPACING * (numColumns - 1)) / numColumns

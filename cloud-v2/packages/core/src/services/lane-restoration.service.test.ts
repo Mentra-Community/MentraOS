@@ -140,22 +140,67 @@ test('current lane overview excludes retained repairs, inventory and full instal
   expect(laneOverviewFields.frameworkHistory).toEqual({$slice: -1});
 });
 
+test('overview joins repair custody to the exact attempt without exposing its report or requiring the pre-halt generation', async () => {
+  const halted = {...attempt, current: false, state: 'halted' as const, generation: 79,
+    finishedAt: '2026-10-05T01:02:00Z', sessionId: 'private-session', requiredAction: 'Private diagnostic detail',
+    report: {reportId: 'report:one', reportedAt: at, decision: 'halt' as const, summary: 'Private repair report', question: null}};
+  const reported = {...snapshot, lanes: [{...snapshot.lanes[0], state: 'out-of-service',
+    activity: {generation: 80, owner: {id: attempt.executionId, kind: 'fixer' as const}}}],
+    restoration: {schemaVersion: 1, attempts: [halted], truncated: false}};
+  const service = new LaneRestorationService({async overview() {return [{snapshot: reported, receivedAt: new Date(at)}]},
+    async list() {return [{snapshot: reported, receivedAt: new Date(at)}]}});
+  const expected = {executionId: halted.executionId, interruptionId: halted.interruptionId, laneId: 'mac',
+    state: 'halted' as const, current: false, startedAt: at, finishedAt: halted.finishedAt};
+  const overview = await service.overview();
+  expect(overview.hosts[0].lanes[0]).toMatchObject({activity: {generation: 80}, repair: expected});
+  expect(overview.hosts[0].lanes[0].repair).toEqual(expected);
+  expect((await service.list()).hosts[0].lanes[0].repair).toEqual(expected);
+  for (const value of ['Private repair report', 'Private diagnostic detail', 'private-session', 'report:one'])
+    expect(JSON.stringify(overview)).not.toContain(value);
+  expect(Object.keys(laneOverviewFields)).toContain('snapshot.restoration.attempts.startedAt');
+  expect(Object.keys(laneOverviewFields)).not.toContain('snapshot.restoration.attempts.report');
+});
+
+test('overview never substitutes another execution or lane for the current repair owner', async () => {
+  const lane = {...snapshot.lanes[0], activity: {generation: 1, owner: {id: attempt.executionId, kind: 'fixer' as const}}};
+  for (const attempts of [[{...attempt, executionId: 'fixer:foreign'}], [{...attempt, laneId: 'foreign'}], [attempt, attempt], []]) {
+    const result = await new LaneRestorationService({async overview() {return [{snapshot: {...snapshot, lanes: [lane],
+      restoration: {schemaVersion: 1, attempts}}, receivedAt: new Date(at)}]}, async list() {return []}}).overview();
+    expect(result.hosts[0].lanes[0]).not.toHaveProperty('repair');
+  }
+  const working = await new LaneRestorationService({async overview() {return [{snapshot: {...snapshot, lanes: [lane],
+    restoration: {schemaVersion: 1, attempts: [attempt]}}, receivedAt: new Date(at)}]}, async list() {return []}}).overview();
+  expect(working.hosts[0].lanes[0].repair).toMatchObject({state: 'working', current: true, startedAt: at, finishedAt: null});
+});
+
 test('overview repository fetches only current fields and host detail selects exactly one controller', async () => {
   const original = TestHostStateModel.find;
-  const reads: Array<{filter: unknown; projection?: unknown; limit?: number}> = [];
+  const reads: Array<{filter: unknown; projection?: unknown; limit?: number; options?: unknown}> = [];
   TestHostStateModel.find = ((filter: unknown) => {
     const read: typeof reads[number] = {filter}; reads.push(read);
     const query = {select(projection: unknown) {read.projection = projection; return query}, sort() {return query},
       limit(limit: number) {read.limit = limit; return query}, maxTimeMS() {return query}, read() {return query},
+      setOptions(options: unknown) {read.options = options; return query},
       readConcern() {return query}, async lean() {return []}};
     return query;
   }) as unknown as typeof TestHostStateModel.find;
   try {
     const repo = new MongoLaneRestorationRepository();
-    await repo.overview(33); await repo.list(1, 'selected-host');
-    expect(reads[0]).toEqual({filter: {}, projection: laneOverviewFields, limit: 33});
+    await repo.overview(33, 321); await repo.list(1, 'selected-host');
+    expect(reads[0]).toEqual({filter: {}, projection: laneOverviewFields, limit: 33, options: {timeoutMS: 321, maxTimeMS: 321}});
     expect(reads[1]).toMatchObject({filter: {hostId: 'selected-host'}, limit: 1});
   } finally {TestHostStateModel.find = original}
+});
+
+test('overview uses only the remaining caller budget and does not query after expiry', async () => {
+  const budgets: (number | undefined)[] = [];
+  const service = new LaneRestorationService({async overview(_limit, timeoutMS) {budgets.push(timeoutMS); return []},
+    async list() {return []}}, () => 1_000);
+  await service.overview(1_321);
+  await service.overview(11_000);
+  expect(budgets).toEqual([321, 5_000]);
+  await expect(service.overview(1_000)).rejects.toThrow('timed out');
+  expect(budgets).toHaveLength(2);
 });
 
 test('host-filtered history preserves full receipts; malformed current custody never becomes idle', async () => {

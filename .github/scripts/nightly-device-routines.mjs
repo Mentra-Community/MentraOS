@@ -1,3 +1,5 @@
+import {slackCall} from "./release-slack-message.mjs"
+
 const ENDPOINT = "https://core.dev.us-west-2.mentraglass.com/api/internal/nightly-routines"
 export const NIGHTLY_WORKFLOW = ".github/workflows/nightly-device-routines.yml"
 export const NIGHTLY_CRONS = Object.freeze(["0 11 * * *", "0 12 * * *"])
@@ -76,34 +78,40 @@ export function nightlySummary(result) {
   const passed = result.status === "pass" && result.passed === result.expectedCount && result.members.every(member =>
     member.status === "pass" && member.publicationComplete === true)
   requireThat(result.status !== "pass" || passed, "Nightly aggregate contradicts its member evidence")
-  return {passed, skipped: result.status === "skipped", url: result.resultUrl,
-    text: `Dev nightly: ${result.status}; ${result.passed}/${result.expectedCount} passed`,
+  // Match the nightly suite projection and Test history row: incomplete receipts
+  // project to not-run, and only execution/setup/teardown failures count as failed.
+  const skippedCount = result.members.filter(member => ["not-run", "incomplete"].includes(member.status)).length
+  const failedCount = result.members.filter(member => ["failed", "setup-failed", "teardown-failed"].includes(member.status)).length
+  const status = failedCount > 0 ? "failed" : result.status === "failed" ? "incomplete" : result.status
+  const label = {pass: "Passed", failed: "Failed", incomplete: "Incomplete", cancelled: "Cancelled", skipped: "Skipped"}[status]
+  return {passed, skipped: result.status === "skipped", displayStatus: status, url: result.resultUrl,
+    text: `Dev nightly: ${label}`,
+    counts: `${failedCount}/${result.expectedCount - skippedCount} failed${skippedCount ? `, ${skippedCount} skipped` : ""}`,
     rows: result.members.map(member => [member.routineId, member.platform, member.status, member.unavailableReason ?? ""])}
 }
 
-/** One attempted send per original scheduler run. Reruns reconcile Core without replaying an uncertain webhook POST. */
-export async function publishNightlyWebhook({result, webhook, attempt, fetchImpl = fetch}) {
+/** One attempted send per original scheduler run. Reruns reconcile Core without replaying an uncertain Slack POST. */
+export async function publishNightlyMessage({result, token, channel, attempt, fetchImpl = fetch}) {
   const summary = nightlySummary(result)
-  requireThat(attempt === 1 && /^https:\/\/hooks\.slack\.com\/services\//.test(webhook ?? ""), "Nightly Slack replay requires reconciliation")
+  requireThat(attempt === 1 && token && /^C[A-Z0-9]+$/.test(channel ?? ""), "Nightly Slack replay requires reconciliation and a configured channel")
   const escape = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-  const ran = result.members.filter(member => member.runId).length
   const failures = result.members.filter(member => member.status !== "pass" || member.publicationComplete !== true)
   const build = result.members.find(member => member.build)?.build
   const buildText = build ? `Build: ${build.releaseIdentity ? `${escape(build.releaseIdentity)} · ` : ""}${escape(build.headSha.slice(0, 10))}` +
     (positive(build.source?.buildRunId) ? ` · <https://github.com/Mentra-Community/MentraOS/actions/runs/${build.source.buildRunId}|Build job> (publication ${build.source.publicationAttempt})` : "")
     : "Build: unavailable in the nightly receipt"
-  const heading = `${summary.passed ? "🟢" : summary.skipped ? "⚪" : "🔴"} ${summary.text}`
+  const heading = `${summary.passed ? "🟢" : summary.displayStatus === "failed" ? "🔴" : "⚪"} ${summary.text}`
   const resultsLink = summary.url ? `<${summary.url}|View nightly results>` : "Result link unavailable"
-  const text = [heading, resultsLink, buildText, `${ran}/${result.expectedCount} Ran, ${result.expectedCount - ran} skipped`,
+  const text = [heading, resultsLink, buildText, summary.counts,
     ...(failures.length ? ["", ...failures.map(member => {
       const url = member.runId ? `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(member.runId)}` : summary.url
       const status = member.status === "pass" ? "execution passed; evidence incomplete" : member.status
       return `- ${escape(member.routineId)} (${escape(member.platform)}) · ${escape(status)} - ${url ? `<${url}|View result>` : "Result link unavailable"}`
     })] : [])].join("\n")
-  let response
-  try {response = await fetchImpl(webhook, {method: "POST", redirect: "error", signal: AbortSignal.timeout(30_000),
-    headers: {"Content-Type": "application/json"}, body: JSON.stringify({text, unfurl_links: false, unfurl_media: false})})}
-  catch {throw new Error("Nightly Slack acknowledgement is unavailable; inspect the send before retrying")}
-  requireThat(response.ok, `Nightly Slack rejected the notification (${response.status})`)
-  return {occurrenceId: result.occurrenceId, status: "acknowledged", passed: summary.passed}
+  const posted = await slackCall("chat.postMessage", token,
+    {channel, text, unfurl_links: false, unfurl_media: false}, fetchImpl)
+  requireThat(posted.channel === channel && /^\d+\.\d+$/.test(posted.ts ?? "") && /^B[A-Z0-9]+$/.test(posted.message?.bot_id ?? ""),
+    "Nightly Slack acknowledgement differs from the requested channel")
+  return {occurrenceId: result.occurrenceId, status: "acknowledged", passed: summary.passed,
+    channel: posted.channel, ts: posted.ts, botId: posted.message.bot_id}
 }

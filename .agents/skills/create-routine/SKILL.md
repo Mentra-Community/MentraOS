@@ -25,7 +25,9 @@ proven product actions and fixtures; replace old executor/ownership wrappers.
 | `framework/authoring/`, `orchestration/` | Held sessions, jobs, lane ownership, repair and publication |
 
 Declare platforms, entry (`home` or `sign-in`), account, requirements, fixtures,
-stable ordered step IDs, `glasses.models` and required capability IDs in `requires`.
+stable ordered step IDs, `glasses.models` and literal `resourceRequirements`.
+Use `defineRoutine(declaration).actions(({step, lifecycleStep}) => ...)`; the
+declared resource capabilities determine the callback APIs, without context casts.
 Keep device identities, secrets and tool paths in private lane configuration.
 Confirm the installed lane offers those capabilities. Add a reusable provider once
 for missing shared functionality; do not hide host setup in product steps.
@@ -35,6 +37,22 @@ When a capability is missing, assign its shared provider work separately and use
 the other lane or already installed routines while it is built.
 No routine-name branches in workers, dispatch or catalog, and no hardcoded videos:
 source enrollment discovers definitions; published passing runs supply examples.
+
+Glasses station Wi-Fi starts and finishes with no saved networks. For API33,
+declare `{kind: 'glasses', capabilities: ['wifi']}` and use the resulting
+`context.glasses.wifi` API: `connect()` in routine setup and `disconnect()` in
+teardown, including after failed setup or steps. For scanning, use `enable()`
+without joining a network, then `disconnect()`. Private credentials and native
+settlement belong to the glasses provider. Phone Internet, glasses SoftAP and a
+Mac's local-network route are separate resources with their own cleanup.
+
+For OTA, assert the actual current app transport marker after each owned Update
+Now, and re-establish connected or disconnected station Wi-Fi between update
+legs. Preserve literal saved step calls in `routine.ts` when delegating common
+logic, so held edits and additional steps remain supported. Changes to imported
+helpers or lifecycle hooks require normal finish and a fresh session. Read the
+selected Harness revision's porting guide and API contract; do not transplant
+provider code into a routine or bypass the built-in authoring system.
 
 ## Hold one session and verify the saved actions
 
@@ -84,7 +102,11 @@ save each action and assertion, then execute that saved action through the same
 driver/helper replay will use. Traverse the **whole English flow** this way: a manual
 click does not prove a different script written afterward. Prefer the simplest
 supported interaction that works; verify outcomes rather than successful clicks.
-Complete every saved product step and normal teardown before ordinary replay.
+When authoring new or changed actions, complete every saved product step and
+normal teardown before ordinary replay. An already implemented, reviewed
+correction can begin with ordinary full recorded replay on the selected sources;
+do not add a duplicate held traversal or no-op authoring job. Use authoring only
+when an observed action needs editing or a candidate requires its admission path.
 A partially successful held traversal or expired recording is not that boundary.
 On a settled step failure, inspect the actual error, edit that existing action and
 retry with a concrete `retryReason` from its current safe prerequisite state. Keep

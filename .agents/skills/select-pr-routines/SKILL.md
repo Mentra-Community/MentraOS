@@ -10,6 +10,7 @@ Match coverage to the PR's behavior, then make the appropriate request:
 | Coverage needed | Request |
 | --- | --- |
 | Existing steps already test the behavior | Add `routine:<id>` for ordinary replay of the PR build |
+| The PR fixes a recorded failed test | Copy its rerun label from the Admin run or suite page and apply it to this PR |
 | An existing flow needs changed expectations or additional steps | Request `routine-work:edit` with an authoring brief |
 | No suitable flow exists | Request `routine-work:create` with an authoring brief |
 
@@ -69,6 +70,35 @@ A request is not a passing test result. Docs-only changes need no device coverag
    before/after an existing step and its expected outcome. A matching recorded
    example can corroborate behavior, but it may use an older source revision.
 
+## Verify a fix against its original failure
+
+On the Admin run or suite page, use **Copy rerun label** next to the affected
+routine. Apply that exact label to the fixing MentraOS PR. Its format is
+`rerun:<routine>:s:<suite-reference>` or `rerun:<routine>:r:<run-reference>`.
+An explicit trailing `~` marks a server-verified unique prefix so the label fits
+GitHub's 50-character limit. Do not shorten or invent a reference yourself.
+A run reference may identify a standalone original, a suite member, or a previous
+linked attempt; the system preserves the original parent and member lineage.
+
+The existing **Routine tests** check tracks this linked verification on the
+current PR head. It inherits the original exact routine definition and uses the
+PR's exact app artifacts. Follow its ongoing progress and use its native re-run
+or cancellation controls. An active predecessor waits for cleanup; an ambiguous
+or invalid label reports a refusal instead of guessing another test.
+
+Keep the original failed run, screenshots and incident report in the PR evidence.
+State whether the change fixes app code, routine code or framework code, and
+link the resulting verification attempt. A labelled rerun attaches the fixing PR as
+an intended fix on the existing failure follow-up; it does not infer a diagnosis.
+Inspect the follow-up's recorded owner, cause and intended PRs before duplicating
+work. `Failed → Passed` describes original and latest outcomes; recorded stage
+and PR merge state are separate. Exact app artifact or routine bundle identity
+can establish component inclusion; a mobile PR artifact does not establish
+Cloud V2 deployment. Record unavailable backend or hardware observations.
+A passing latest attempt does not erase
+the original failure. There is no fixed number of passing attempts required by
+this employee workflow; follow any separately assigned verification policy.
+
 ## Request existing coverage
 
 Build each label as `routine:<id>` from the selected routine's declared ID. A
@@ -76,8 +106,9 @@ real routine on Harness `main` is requestable without a published collection or
 existing Core enrollment. Required Harness PR checks validate source before merge;
 they do not prove the routine passes on devices.
 
-An ordinary new request resolves current Harness `main` once at submission and
-freezes that exact SHA with the selected PR app build. Labels contain the routine
+The App-owned `Routine tests` PR check resolves current Harness `main` once for
+the whole selected coverage before waiting for builds, then freezes that exact SHA
+with each selected PR platform artifact. Labels contain the routine
 ID, not a source revision. If that SHA differs from the source inspected above,
 read the requested source before claiming it covers the PR. An explicitly selected
 authorized routine SHA overrides the default through the request workflow's
@@ -199,16 +230,16 @@ hardware or implement another authoring workflow.
 
 ## Keep request status honest
 
-- PR dispatch is off unless `DEVICE_ROUTINE_PR_DISPATCH_ENABLED` is explicitly
-  enabled. Adding labels does not enable that gate. When enabled, the existing
-  request workflow submits routine IDs with exact PR build sources through
-  `POST /api/internal/routine-dispatches`; Core resolves current Harness `main` or
-  the optional exact override once, freezes app/routine inputs, and routes source
-  preparation to explicitly configured host/lane bindings. Check its request
-  status and linked result. A preparing, queued, rejected,
-  unavailable or unrecorded request is not a pass. After artifact publication,
-  use the normal request workflow/Admin path for an authorized retry; do not
-  toggle labels or repeatedly dispatch to overcome an explicit denial.
+- PR routine labels are consumed by the App-owned `Routine tests` check through
+  signed GitHub webhook intake. The check is queued on the current head before
+  waiting for builds and submits ordinary Core jobs once. Existing build callbacks
+  reconcile that gate; they do not admit another original. Manual exact-build
+  requests remain available through `request-e2e-routine.yml` on trusted `dev`.
+  App configuration and required-check activation must be qualified separately.
+  Re-run inherits exact app/definition selection and requests unsuccessful latest
+  members, or all members after a complete pass. Cancel requests ordinary cleanup;
+  a GitHub cancellation acknowledgement does not release controller custody.
+  A preparing, queued, rejected, unavailable or unrecorded request is not a pass.
 - Existing enabled coverage may run after labeling. For firmware/meeting tests,
   confirm the request fits the existing authorized fixture and finite attempt
   budget. If that authorization is unknown, defer adding the label and report

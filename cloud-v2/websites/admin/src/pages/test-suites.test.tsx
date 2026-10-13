@@ -17,7 +17,7 @@ test("suite link survives as a validated distinct URL", () => {
 test("suite shows missing routines and links to published recordings", () => {
   const client = new QueryClient(); client.setQueryData(["test-suite-summary", suite.suiteId], suite);
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={suite.suiteId}/></QueryClientProvider>);
-  expect(html).toContain("1/2 passed"); expect(html).toContain("Did not run");
+  expect(html).toContain("0/1 failed, 1 skipped"); expect(html).toContain("Did not run");
   expect(html).toContain("/?testRun=run-one"); expect(html).toContain("Incomplete: ota");
 });
 test("recent suite link opens aggregate", () => {
@@ -60,6 +60,21 @@ function renderSuite(value: TestSuiteResult) {
   client.setQueryData(["test-suite-summary", value.suiteId], value);
   return renderToStaticMarkup(<QueryClientProvider client={client}><TestSuitePage suiteId={value.suiteId}/></QueryClientProvider>);
 }
+
+test("live suite members show active execution and their actual linked lane", () => {
+  const html = renderSuite({...suite, finishedAt: undefined, outcome: "running", members: [
+    {...suite.members[0]!, status: "running", publicationComplete: false, runId: undefined, hostId: "testing-air-1", laneId: "testing-air-1-mac"},
+    {...suite.members[1]!, status: "waiting", hostId: undefined, laneId: undefined},
+  ]});
+  expect(html).toContain('href="/?systemHealth=1&amp;hostId=testing-air-1&amp;laneId=testing-air-1-mac"');
+  expect(html).toContain('title="testing-air-1 / testing-air-1-mac"');
+  expect(html).toContain('>testing air 1 mac</a>');
+  expect(html).toContain('animate-spin');
+  expect(html).toContain('>In progress</span>');
+  expect(html).toContain('>Waiting</span>');
+  expect(html).not.toContain('>Mac</td>');
+  expect(html).not.toContain('>Android</td>');
+});
 
 test("suite totals and routine rows use hours for long durations", () => {
   const html = renderSuite({...suite, finishedAt: "2026-10-01T13:02:03Z", members: [
@@ -113,7 +128,7 @@ test("missing results make the completed suite incomplete without red in detail 
 test("actual failures stay red and incomplete routines have their own neutral summary", () => {
   const html = renderSuite({...suite, failedRoutines: ["ota", "call"], members: [...suite.members,
     {...suite.members[0]!, memberId: "call", routineId: "call", status: "failed"}]});
-  expect(html).toContain("bg-red-100 text-red-800");
+  expect(html).toContain("text-[#cf222e]");
   expect(html).toContain('text-red-700">Failed: call');
   expect(html).toContain('text-[#68746d]">Incomplete: ota');
 });
@@ -139,18 +154,18 @@ test.each([false, undefined])("a passed run with unpublished evidence stays neut
     members: [suite.members[0]!, {...suite.members[1]!, status: "pass", publicationComplete, runId: "uploading-run"}]};
   const before = JSON.stringify(value);
   const html = renderSuite(value);
-  expect(html).toContain("1/2 passed with complete evidence");
+  expect(html).toContain("0/2 failed, 1 pending");
   expect(html).toContain("1 passed · evidence pending");
   expect(html).toContain("text-[#656d76]");
-  expect(html).toContain(">Evidence pending</span>");
+  expect(html).toContain(">Publishing</span>");
   expect(html.match(/>Passed<\/span>/g)).toHaveLength(1);
   expect(html).toContain('href="/?testRun=uploading-run"');
   const client = new QueryClient(); client.setQueryData(["test-suites"], {suites: [value]});
   const recent = renderToStaticMarkup(<QueryClientProvider client={client}><RecentTestSuites/></QueryClientProvider>);
-  expect(recent).toContain("1/2 passed with complete evidence · 1 passed with pending evidence");
+  expect(recent).toContain("0/2 failed, 1 pending");
   expect(JSON.stringify(value)).toBe(before);
   const published = renderSuite({...value, passed: 2, members: value.members.map(member => ({...member, publicationComplete: true}))});
-  expect(published).toContain("2/2 passed with complete evidence");
+  expect(published).toContain("0/2 failed");
   expect(published).not.toContain("Passed · evidence pending");
 });
 
@@ -198,4 +213,16 @@ test("suite presentation requests the compact summary rather than full dispatch 
   const query = client.getQueryCache().find({queryKey: ["test-suite-summary", "pending-suite"]});
   expect(query?.options.queryFn?.toString()).toContain("/summary");
   expect(client.getQueryCache().find({queryKey: ["test-suite", "pending-suite"]})).toBeUndefined();
+});
+
+test('nightly summary evidence failure displays a red failure instead of publishing', () => {
+  const projected: TestSuiteResult = {...suite, members: [
+    {...suite.members[0]!, publicationComplete: false, evidenceStatus: 'failed'},
+    {...suite.members[1]!, status: 'cancelled', publicationComplete: false, evidenceStatus: 'complete'},
+  ]};
+  const html = renderSuite(projected);
+  expect(html).toContain('Evidence failed');
+  expect(html).toContain('1/2 failed');
+  expect(html).not.toContain('Publishing');
+  expect(html).not.toContain('pending');
 });

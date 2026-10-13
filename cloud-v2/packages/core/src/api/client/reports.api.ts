@@ -14,10 +14,15 @@ import type { AppContext, AppEnv } from "../../types/hono.types";
 import {
   addAttachmentArtifacts,
   addLogArtifact,
+  getReportLogCollection,
   markReportReady,
+  ReportArtifactError,
   submitReport,
+  updateReportLogCollection,
   type ReportAttachmentInput,
 } from "../../services/report.service";
+import {REPORT_LOG_SOURCES} from '../../services/report-log-collection';
+import {reportAutomationCorrelation, type ReportAutomationCorrelation} from '@mentra/cloud-protocol/report-automation';
 
 const reportsApp = new Hono<AppEnv>();
 
@@ -61,21 +66,29 @@ const reportDetailsSchema = z.object({
   systemPriority: z.enum(["low", "medium", "high", "critical"]).optional(),
   contactEmail: z.string().email().optional(),
 }).passthrough();
+// Client-chosen idempotency keys: an incident identity on submit, an artifact identity on upload.
+const idempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
 const submitReportSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("bug"),
+    incidentKey: idempotencyKeySchema.optional(),
     trigger: reportTriggerSchema,
     report: reportDetailsSchema,
     context: recordSchema,
   }),
   z.object({
     kind: z.literal("automatic"),
+    incidentKey: idempotencyKeySchema.optional(),
+    automationCorrelation: z.custom<ReportAutomationCorrelation>(value => reportAutomationCorrelation(value) !== null).optional(),
     trigger: automaticReportTriggerSchema,
     report: reportDetailsSchema,
     context: recordSchema,
   }),
   z.object({
     kind: z.literal("feedback"),
+    // Feedback is complete as submitted and notifies at creation, so a retry cannot be told apart
+    // from a first submission whose notification never went out: it is not idempotent by key.
+    incidentKey: z.never().optional(),
     feedback: z.union([z.string(), recordSchema]),
     context: recordSchema,
   }),
@@ -84,6 +97,7 @@ const logsArtifactSchema = z.object({
   type: z.literal("logs"),
   source: nonEmptyStringSchema,
   entries: z.array(logEntrySchema),
+  retryKey: idempotencyKeySchema.optional(),
 });
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -119,9 +133,23 @@ reportsApp.use(
   }),
 );
 
+reportsApp.get('/:reportId/log-collection', userAuth, async c => {
+  const user = requireUser(c);
+  const snapshot = await getReportLogCollection({mentraUserId: user.mentraUserId, reportId: readReportId(c, 'reportId')});
+  return snapshot ? c.json(snapshot) : c.json({error: 'report not found'}, 404);
+});
 reportsApp.post("/", userAuth, postSubmitReport);
 reportsApp.post("/:reportId/artifacts", userAuth, postReportArtifacts);
 reportsApp.post("/:reportId/complete", userAuth, postReportComplete);
+reportsApp.post('/:reportId/log-collection/:source', userAuth, async c => {
+  const user = requireUser(c), reportId = readReportId(c, 'reportId');
+  const source = z.enum(REPORT_LOG_SOURCES).safeParse(c.req.param('source'));
+  const update = z.object({state: z.enum(['requested', 'unavailable', 'failed']), reason: z.string().trim().min(1).max(500).optional()}).strict().safeParse(await readJsonObject(c));
+  if (!source.success || !['phone', 'glasses', 'glasses_firmware'].includes(source.data) || !update.success)
+    throw new InvalidRequest('invalid device log collection outcome');
+  const found = await updateReportLogCollection({mentraUserId: user.mentraUserId, reportId, source: source.data, ...update.data});
+  return found ? c.json({ok: true}) : c.json({error: 'report not found'}, 404);
+});
 
 async function postSubmitReport(c: AppContext) {
   const user = requireUser(c);
@@ -131,10 +159,22 @@ async function postSubmitReport(c: AppContext) {
     throw new InvalidRequest("invalid report body");
   }
 
-  const result = await submitReport({
-    mentraUserId: user.mentraUserId,
-    ...parsed.data,
-  });
+  const correlation = body.automationCorrelation;
+  if (correlation !== undefined && (!reportAutomationCorrelation(correlation) || parsed.data.kind !== 'automatic'
+    || parsed.data.trigger.source !== 'mentra_automated_testing'
+    || parsed.data.trigger.reason !== 'incident_report_requested')) throw new InvalidRequest('invalid automated incident correlation');
+
+  let result: Awaited<ReturnType<typeof submitReport>>;
+  try {
+    result = await submitReport({
+      mentraUserId: user.mentraUserId,
+      ...parsed.data,
+      ...(correlation !== undefined ? {automationCorrelation: reportAutomationCorrelation(correlation)!} : {}),
+    });
+  } catch (error) {
+    if (error instanceof ReportArtifactError) return reportArtifactErrorResponse(c, error);
+    throw error;
+  }
   return c.json(result, 200);
 }
 
@@ -162,14 +202,28 @@ async function postReportArtifacts(c: AppContext) {
   if (!parsed.success) {
     throw new InvalidRequest("invalid report artifact body");
   }
-  const result = await addLogArtifact({
-    mentraUserId: user.mentraUserId,
-    reportId,
-    source: parsed.data.source,
-    entries: parsed.data.entries,
-  });
+  if (parsed.data.source === 'cloud' || parsed.data.source === 'miniapp_server') {
+    throw new InvalidRequest('server log sources cannot be uploaded by a device');
+  }
+  const { retryKey } = parsed.data;
+  let result: Awaited<ReturnType<typeof addLogArtifact>>;
+  try {
+    result = await addLogArtifact({
+      mentraUserId: user.mentraUserId,
+      reportId,
+      source: parsed.data.source,
+      entries: parsed.data.entries,
+    }, retryKey !== undefined ? { key: retryKey } : undefined);
+  } catch (error) {
+    if (error instanceof ReportArtifactError) return reportArtifactErrorResponse(c, error);
+    throw error;
+  }
   if (!result) return c.json({ error: "report not found" }, 404);
   return c.json(result, 200);
+}
+
+function reportArtifactErrorResponse(c: AppContext, error: ReportArtifactError) {
+  return c.json({ error: error.status === 409 ? "conflict" : "temporarily_unavailable", error_description: error.message }, error.status);
 }
 
 async function postReportComplete(c: AppContext) {

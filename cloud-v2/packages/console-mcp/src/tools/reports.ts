@@ -33,7 +33,8 @@ export function registerReportTools(server: McpServer, config: ConsoleMcpConfig)
     {
       description:
         "List recent Cloud V2 bug reports / feedback / automatic reports (admin API), newest first. " +
-        "Returns compact rows; set full: true for raw report documents.",
+        "Returns compact rows with artifact counts; set full: true for complete list summaries. " +
+        "Use report_get for context and artifact metadata.",
       inputSchema: {
         kind: z.enum(["bug", "feedback", "automatic"]).optional().describe("Stored report kind, including internal/testing reports"),
         category: z.enum(["bug", "feedback", "internal", "testing", "automatic"]).optional().describe("Exclusive dashboard category; combined with kind when both are supplied"),
@@ -44,7 +45,7 @@ export function registerReportTools(server: McpServer, config: ConsoleMcpConfig)
           .optional()
           .describe("ISO timestamp — only reports created before this (for paging back)"),
         userId: z.string().optional().describe("Client-side filter on mentraUserId after fetch"),
-        full: z.boolean().optional().describe("Return raw report documents instead of compact rows"),
+        full: z.boolean().optional().describe("Return complete list summaries instead of compact rows; artifact metadata is available through report_get"),
       },
     },
     async ({ kind, category, status, limit = 25, before, userId, full }) => {
@@ -235,7 +236,7 @@ export function compactReportRow(r: ReportSummary): Record<string, unknown> {
     createdAt: r.createdAt,
     summary: deriveSummary(r),
     trigger: compactTrigger(r.trigger),
-    artifacts: r.artifacts.map(describeArtifact),
+    artifactCount: r.artifactCount,
   };
 }
 

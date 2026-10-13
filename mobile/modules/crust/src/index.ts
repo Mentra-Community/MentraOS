@@ -3,3 +3,4 @@
 export {default} from "./CrustModule"
 export {default as CrustView} from "./CrustView"
 export * from "./Crust.types"
+export {nativeHttpRequest} from "./nativeHttpRequest"

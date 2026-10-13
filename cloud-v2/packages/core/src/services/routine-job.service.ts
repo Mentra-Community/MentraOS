@@ -1,12 +1,14 @@
+import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {TestRequestModel} from '../models/test-request.model';
+import {TestRunModel} from '../models/test-run.model';
 import {testWriteConcern} from '../models/test-write-concern';
 import {frameworkIdentitySchema} from '../types/framework-request.types';
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
 import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
-import {completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
-  routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
-  type RoutineJobBinding, type RoutineJobPreparation, type StoredRoutineJob} from '../types/routine-job.types';
+import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
+  routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionReportSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
+  type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
 import {requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
 import {GithubTestBuildGateway, type TestBuildGateway} from './test-builds.service';
 import {selectedBuildInput} from '../types/test-build.types';
@@ -16,29 +18,59 @@ import {TestHostStateService, type ReceivedTestHostState} from './test-host-stat
 import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
+type ObservationPhase = (value: 'request' | 'delivery' | 'cancellation' | 'result' | 'projection') => void;
 
 /** These are fields on the existing test_requests record, never a separate scheduling queue. */
 export interface RoutineJobRepository {
   get(jobId: string): Promise<StoredRoutineJob | null>;
+  completionRequest?(jobId: string): Promise<StoredRoutineJob | null>;
   insert(row: StoredRoutineJob): Promise<void>;
   prepare(jobId: string, selectionSha256: string, prepared: RoutineJobPreparation, inputSha256: string, now: Date): Promise<StoredRoutineJob | null>;
+  exhaustPreparation?(jobId: string, completedRunIds: string[], now: Date): Promise<StoredRoutineJob | null>;
+  preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
+  supersessionCandidates?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
+  supersessionChecked?(jobId: string, now: Date): Promise<void>;
   dispatch?(jobId: string, previous: StoredRoutineJob['fleetDispatch'], value: NonNullable<StoredRoutineJob['fleetDispatch']>): Promise<StoredRoutineJob | null>;
   actions?(jobId: string, inputSha256: string, value: {actionsRunId: string; recordedAt: string}): Promise<StoredRoutineJob | null>;
   complete?(jobId: string, hostId: string, inputSha256: string, value: RoutineJobCompletion): Promise<StoredRoutineJob | null>;
+  publicationFailed?(jobId: string, hostId: string, completion: RoutineJobCompletion, failure: RoutinePublicationFailure): Promise<StoredRoutineJob | null>;
+  hasResult?(jobId: string): Promise<boolean>;
   cancellationProgress?(jobId:string,value:RoutineActionsCancellation,completedRunIds?:string[]):Promise<void>;
   cancel(jobId: string, inputSha256: string, value: NonNullable<StoredRoutineJob['fleetCancellation']>): Promise<StoredRoutineJob | null>;
 }
 export const routineJobRepository: RoutineJobRepository = {
   async get(requestId) {return await TestRequestModel.findOne({requestId, fleetSelection: {$exists: true}})
     .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
+  async completionRequest(requestId) {return await TestRequestModel.findOne({requestId})
+    .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob | null;},
   async insert(row) {await TestRequestModel.create([row], {writeConcern: testWriteConcern});},
   async prepare(requestId, fleetSelectionSha256, fleetPreparation, fleetInputSha256, now) {
     return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetSelectionSha256, state: 'awaiting-source',
       fleetPreparation: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
-      {$set: {fleetPreparation, fleetInputSha256, state: 'awaiting-runner', updatedAt: now}},
+      {$set: {fleetPreparation, fleetInputSha256, state: 'awaiting-runner', updatedAt: now}, $unset: {fleetPreparationStatus: ''}},
       {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
+  },
+  async preparationStatus(requestId, value, now) {
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetSelectionSha256: value.inputSha256,
+      state: 'awaiting-source', fleetPreparation: {$exists: false}, fleetBinding: {$exists: false},
+      fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now},
+      'fleetActions.actionsRunId': value.actionsRunId,
+      $expr: {$eq: [{$max: {$map: {input: '$fleetActions', as: 'action', in: {$toDecimal: '$$action.actionsRunId'}}}}, {$toDecimal: {$literal: value.actionsRunId}}]}},
+      {$set: {fleetPreparationStatus: value, updatedAt: now,
+        ...(!value.retryable ? {state: 'terminal', terminalStatus: value.code === 'not-applicable' ? 'not-applicable' : 'not-run',
+          fleetCancellation:{requestedAt:now.toISOString(),reason:value.reason}} : {})}},
+      {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
+  },
+  async exhaustPreparation(requestId, completedRunIds, now) {
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, state:'awaiting-source',
+      fleetPreparation:{$exists:false}, fleetBinding:{$exists:false}, fleetCancellation:{$exists:false},
+      fleetDeadline:{$gt:now}, 'fleetDispatch.attempts':20,
+      $expr:{$setIsSubset:[{$ifNull:['$fleetActions.actionsRunId',[]]},{$literal:completedRunIds}]}},
+      {$set:{state:'terminal',terminalStatus:'not-run',updatedAt:now,fleetCancellation:{requestedAt:now.toISOString(),
+        reason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'}}},
+      {returnDocument:'after',writeConcern:testWriteConcern}) as unknown as StoredRoutineJob | null;
   },
   async bind(requestId, fleetInputSha256, fleetBinding, dispatchIntent, now) {
     return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetInputSha256, state: 'awaiting-runner',
@@ -52,9 +84,19 @@ export const routineJobRepository: RoutineJobRepository = {
         {fleetCancellation:{$exists:false},$or: [{fleetDeadline: {$lte: now}, $or: [{state: {$ne: 'terminal'}}, {fleetBinding: {$exists: true}, dispatchCompletion: {$exists: false}, hostRejection: {$exists: false},
           preparationCancellation: {$exists: false}, preparationRejection: {$exists: false}}]},
         {state: {$ne: 'terminal'}, fleetBinding: {$exists: false},
-          $or: [{fleetDispatch: {$exists: false}}, {'fleetDispatch.attempts': {$lt: 20}, 'fleetDispatch.lastAttemptAt': {$lte: new Date(now.getTime() - 30_000).toISOString()},
+          $or: [{fleetDispatch: {$exists: false}}, {'fleetDispatch.attempts': {$lte: 20}, 'fleetDispatch.lastAttemptAt': {$lte: new Date(now.getTime() - 30_000).toISOString()},
             $or:[{'fleetDispatch.checkedAt':{$exists:false}},{'fleetDispatch.checkedAt':{$lte:new Date(now.getTime()-30_000).toISOString()}}]}]}]}]})
       .sort({createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob[];
+  },
+  async supersessionCandidates(limit, now) {
+    return await TestRequestModel.find({state: {$ne: 'terminal'}, fleetCancellation: {$exists: false},
+      'fleetSelection.source.channel': 'pr', $or: [{fleetSupersessionCheckedAt: {$exists: false}},
+        {fleetSupersessionCheckedAt: {$lte: new Date(now.getTime() - 30_000)}}]})
+      .sort({fleetSupersessionCheckedAt: 1, createdAt: 1, requestId: 1}).limit(limit)
+      .read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob[];
+  },
+  async supersessionChecked(requestId, now) {
+    await TestRequestModel.updateOne({requestId}, {$set: {fleetSupersessionCheckedAt: now}}, {writeConcern: testWriteConcern});
   },
   async dispatch(requestId, previous, fleetDispatch) {
     return await TestRequestModel.findOneAndUpdate({requestId, fleetDispatch: previous ?? {$exists: false},
@@ -67,10 +109,22 @@ export const routineJobRepository: RoutineJobRepository = {
       {new: true, writeConcern: testWriteConcern}).lean() as unknown as StoredRoutineJob | null;
   },
   async complete(requestId, hostId, inputSha256, dispatchCompletion) {
-    return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, inputSha256, fleetBinding: {$exists: true},
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, inputSha256, $or: [{fleetBinding: {$exists: true}}, {hostReceipt: {$exists: true}}],
       dispatchCompletion: {$exists: false}}, [{$set: {dispatchCompletion: {$literal: dispatchCompletion}, updatedAt: new Date(),
         state: {$cond: [{$and: [{$ne: [{$type: '$fleetCancellation'}, 'missing']}, {$ne: ['$state', 'terminal']}]}, 'terminal', '$state']},
         terminalStatus: {$cond: [{$and: [{$ne: [{$type: '$fleetCancellation'}, 'missing']}, {$ne: ['$state', 'terminal']}]}, 'cancelled', '$terminalStatus']}}}],
+      {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
+  },
+  async hasResult(requestId) {
+    return !!await TestRunModel.exists({requestId, resultSchemaVersion: 1}).read('primary').readConcern('majority');
+  },
+  async publicationFailed(requestId, hostId, completion, publicationFailure) {
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, hostId, inputSha256: completion.inputSha256,
+      'hostReceipt.requestId': requestId, 'hostReceipt.hostId': hostId, 'hostReceipt.inputSha256': completion.inputSha256,
+      runId: {$exists: false}, publicationFailure: {$exists: false},
+      'dispatchCompletion.inputSha256': completion.inputSha256, 'dispatchCompletion.disposition': completion.disposition,
+      'dispatchCompletion.completedAt': completion.completedAt},
+      {$set: {publicationFailure, state: 'terminal', terminalStatus: 'incomplete', updatedAt: new Date()}},
       {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
   },
   async cancellationProgress(requestId,fleetActionsCancellation,completedRunIds=[]) {
@@ -140,9 +194,20 @@ export function routineJobRouting(requirements: PortableRequirements, hosts: Rec
 export const routineJobInputDigest = (row: Pick<StoredRoutineJob, 'fleetSelection' | 'fleetPreparation' | 'fleetDeadline' | 'fleetTarget'>) =>
   requestInputDigest({selection: row.fleetSelection, prepared: row.fleetPreparation, deadline: row.fleetDeadline.toISOString(), target: row.fleetTarget ?? null});
 
+/** Match Actions' automatic occurrence identity; manual requests and reruns retain their exact build. */
+export function isAutomaticPrRoutineJob(row: StoredRoutineJob): boolean {
+  const {source, routineId, platform} = row.fleetSelection;
+  if (source.channel !== 'pr') return false;
+  const exact = {channel: source.channel, buildRunId: source.buildRunId,
+    publicationAttempt: source.publicationAttempt, prNumber: source.prNumber};
+  const digest = createHash('sha256').update(JSON.stringify([
+    `source-${source.channel}-${source.buildRunId}-${source.publicationAttempt}`, routineId, platform, exact, null])).digest('hex');
+  return row.requestId === `routine-${digest}`;
+}
+
 export class RoutineJobService {
   constructor(private readonly rows: RoutineJobRepository = routineJobRepository,
-    private readonly builds: Pick<TestBuildGateway, 'resolve'> = new GithubTestBuildGateway(),
+    private readonly builds: Pick<TestBuildGateway, 'resolve' | 'isPrSuperseded'> = new GithubTestBuildGateway(),
     private readonly sources: Pick<GithubRoutineSourceGateway, 'resolve' | 'inventory' | 'blob'> = new GithubRoutineSourceGateway(),
     private readonly definitions: Pick<RoutineDefinitionService, 'getExact'> = new RoutineDefinitionService(),
     private readonly hosts: Pick<TestHostStateService, 'get'> & Partial<Pick<TestHostStateService, 'list'>> = new TestHostStateService(),
@@ -177,6 +242,7 @@ export class RoutineJobService {
     if (deadline.getTime() <= this.now() || deadline.getTime() > this.now() + 3 * 3600_000)
       throw new TestRunError(400, 'Routine job deadline must be within three hours');
     const frozen = await this.freezeSelection(selected);
+    await this.assertKnownPlatform(frozen);
     const {target} = selected;
     const candidate = await this.definitions.getExact(frozen.routineId, frozen.platform, frozen.routineRevision, true);
     if (!candidate && await this.definitions.getExact(frozen.routineId, frozen.platform, frozen.routineRevision, false))
@@ -205,6 +271,7 @@ export class RoutineJobService {
     const frozen = portableRoutineSelectionSchema.parse(selection), date = z.string().datetime({offset: true}).parse(deadline);
     if (Date.parse(date) > this.now() + 3 * 3600_000) throw new TestRunError(400, 'Routine job deadline must be within three hours');
     const validatedTarget = target ? routineJobTargetSchema.parse(target) : undefined;
+    if (!await this.rows.get(frozen.requestId)) await this.assertKnownPlatform(frozen);
     const row: StoredRoutineJob = {requestId: frozen.requestId, state: 'awaiting-source', fleetSelection: frozen,
       fleetSelectionSha256: requestInputDigest(frozen), fleetDeadline: new Date(date), ...(validatedTarget ? {fleetTarget: validatedTarget} : {})};
     try {await this.rows.insert(row);}
@@ -246,13 +313,28 @@ export class RoutineJobService {
     }
     return runs;
   }
+  private async supersession(row: StoredRoutineJob): Promise<StoredRoutineJob> {
+    if (row.state === 'terminal' || row.fleetCancellation || this.now() >= row.fleetDeadline.getTime() || !isAutomaticPrRoutineJob(row) || !this.builds.isPrSuperseded) return row;
+    const source = row.fleetSelection.source;
+    if (source.channel === 'pr' && await this.builds.isPrSuperseded(source.prNumber, row.fleetSelection.build.headSha)) {
+      await this.cancel(row.requestId, {reason: `Superseded by a newer commit on PR #${source.prNumber}`});
+      return this.job(row.requestId);
+    }
+    return row;
+  }
   private async deliver(row: StoredRoutineJob): Promise<StoredRoutineJob> {
+    row = await this.supersession(row);
     if (!this.actionsTransport || row.fleetBinding || row.fleetCancellation || row.state === 'terminal' || this.now() >= row.fleetDeadline.getTime()) return row;
     const previous = row.fleetDispatch;
     if(previous && this.now()-Date.parse(previous.checkedAt ?? previous.lastAttemptAt)<30_000)return row;
     let runs;
     try {runs=await this.discover(row);} catch(error) {
       if(previous)await this.rows.dispatch?.(row.requestId,previous,{...previous,checkedAt:new Date(this.now()).toISOString(),error:error instanceof TestRunError?error.message:'Actions run discovery is unavailable'});
+      return this.job(row.requestId);
+    }
+    if (!row.fleetPreparation && (previous?.attempts ?? 0) >= 20 && runs.every(run => run.status === 'completed') &&
+      this.now() - Date.parse(previous!.lastAttemptAt) >= 120_000) {
+      await this.rows.exhaustPreparation?.(row.requestId, runs.map(run => run.actionsRunId), new Date(this.now()));
       return this.job(row.requestId);
     }
     if (!routineActionsRetry(previous,runs,this.now())) {
@@ -272,17 +354,41 @@ export class RoutineJobService {
     }
   }
   async reconcilePending() {
+    const candidates = await this.rows.supersessionCandidates?.(20, new Date(this.now())) ?? [];
+    await Promise.allSettled(candidates.map(async candidate => {
+      await this.rows.supersessionChecked?.(candidate.requestId, new Date(this.now()));
+      await this.supersession(await this.job(candidate.requestId));
+    }));
     const pending = await this.rows.pending?.(20, new Date(this.now())) ?? [];
     await Promise.allSettled(pending.map(row => row.fleetCancellation ? this.cancel(row.requestId,{reason:row.fleetCancellation.reason}) : this.observation(row.requestId)));
   }
   async preparation(jobId: string) {
-    const row = await this.job(jobId);
+    const row = await this.supersession(await this.job(jobId));
     const routing: Partial<ReturnType<typeof routineJobRouting>> = row.fleetPreparation ? await this.routing(row) : {};
     return {jobId, kind: 'run' as const, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256, deadline: row.fleetDeadline.toISOString(),
       state: row.state, ...routing, selection: row.fleetSelection, ...(row.fleetTarget ? {target: row.fleetTarget} : {}), ...(row.fleetPreparation ? {prepared: row.fleetPreparation} : {})};
   }
   private async routing(row: StoredRoutineJob) {
     return routineJobRouting(row.fleetPreparation!.requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetTarget);
+  }
+  async preparationStatus(jobId: string, value: unknown) {
+    const input = routinePreparationStatusSchema.parse(value), row = await this.job(jobId);
+    if (input.inputSha256 !== row.fleetSelectionSha256 || !row.fleetActions?.some(run => run.actionsRunId === input.actionsRunId))
+      throw new TestRequestConflict('Preparation status differs from its recorded exact workflow');
+    if (row.fleetPreparation || row.fleetBinding || row.fleetCancellation || row.state === 'terminal') return row;
+    if (row.fleetActions.some(run => BigInt(run.actionsRunId) > BigInt(input.actionsRunId))) return row;
+    if (!this.rows.preparationStatus) throw new TestRunError(503, 'Preparation status storage is unavailable');
+    const reason = input.code === 'not-applicable' ? `Routine ${row.fleetSelection.routineId} does not support ${row.fleetSelection.platform}.`
+      : input.retryable ? `Routine source preparation failed during ${input.phase}; retrying the same request.`
+      : `Routine source preparation failed during ${input.phase}; source validation requires correction.`;
+    return await this.rows.preparationStatus(jobId, {...input, reason, observedAt: new Date(this.now()).toISOString()}, new Date(this.now())) ?? this.job(jobId);
+  }
+  private async assertKnownPlatform(selection: PortableRoutineSelection) {
+    // An exact enrolled declaration is source evidence; absence alone cannot reject new source.
+    const alternate = selection.platform === 'android' ? 'ios-on-mac' : 'android';
+    const known = await this.definitions.getExact(selection.routineId, alternate, selection.routineRevision, true);
+    if (known && !known.definition.platforms.includes(selection.platform))
+      throw new TestRunError(422, `Routine ${selection.routineId} does not support ${selection.platform} at the selected source revision.`);
   }
   async inventory(jobId: string) {const row = await this.job(jobId); return this.sources.inventory(row.fleetSelection.routineRevision);}
   async blob(jobId: string, sha: string) {
@@ -315,7 +421,7 @@ export class RoutineJobService {
     return winner;
   }
   async bind(jobId: string, hostId: string, value: unknown) {
-    const input = routineJobBindInputSchema.parse(value), row = await this.job(jobId);
+    const input = routineJobBindInputSchema.parse(value), row = await this.supersession(await this.job(jobId));
     if (row.fleetInputSha256 !== input.inputSha256 || !row.fleetPreparation)
       throw new TestRequestConflict('Binding changed its prepared exact inputs');
     if (row.fleetBinding) return this.bindingProjection(row, hostId, input);
@@ -337,12 +443,14 @@ export class RoutineJobService {
     return this.bindingProjection(winner, hostId, input);
   }
   private async bindingProjection(row: StoredRoutineJob, hostId: string, input: z.infer<typeof routineJobBindInputSchema>) {
+    const observation = await this.observation(row.requestId);
+    row = await this.job(row.requestId);
     const binding = row.fleetBinding!;
     return {binding, execute: !row.fleetCancellation && !row.dispatchCompletion && this.now() < row.fleetDeadline.getTime() && row.state !== 'terminal' &&
       binding.hostId === hostId && binding.laneId === input.laneId && binding.actionsJobId === input.actionsJobId && binding.actionsRunId === input.actionsRunId,
-      observation: await this.observation(row.requestId)};
+      observation};
   }
-  async cancel(jobId: string, value: unknown) {
+  async cancel(jobId: string, value: unknown, phase?: ObservationPhase) {
     const input = z.object({reason: z.string().min(1).max(2000)}).strict().parse(value), row = await this.job(jobId);
     const cancellation = row.fleetCancellation ?? {requestedAt: new Date(this.now()).toISOString(), reason: input.reason};
     const saved = row.fleetCancellation ? row : await this.rows.cancel(jobId, row.fleetSelectionSha256, cancellation) ?? await this.job(jobId);
@@ -354,11 +462,11 @@ export class RoutineJobService {
         if(!retained.fleetActions?.some(value=>value.actionsRunId===run.actionsRunId))throw new TestRunError(503,'Actions delivery history exceeds its bound');
       }}});
     await this.rows.cancellationProgress?.(jobId,progress,completedRunIds);
-    return this.observation(jobId);
+    return this.observation(jobId, phase);
   }
   async actions(jobId: string, value: unknown) {
     const input = routineJobActionsSchema.parse(value); let row = await this.job(jobId);
-    if (input.inputSha256 !== row.fleetInputSha256) throw new TestRequestConflict('Actions delivery changed its exact prepared input');
+    if (input.inputSha256 !== (row.fleetInputSha256 ?? row.fleetSelectionSha256)) throw new TestRequestConflict('Actions delivery changed its exact prepared input');
     if (!row.fleetActions?.some(value => value.actionsRunId === input.actionsRunId)) {
       if (!this.rows.actions) throw new TestRunError(503, 'Actions delivery storage is unavailable');
       const saved = await this.rows.actions(jobId, input.inputSha256, {actionsRunId: input.actionsRunId, recordedAt: new Date(this.now()).toISOString()}) ?? await this.job(jobId);
@@ -373,36 +481,66 @@ export class RoutineJobService {
     return this.observation(jobId);
   }
   async complete(jobId: string, hostId: string, value: unknown) {
-    const input = routineJobCompletionSchema.parse(value), row = await this.job(jobId);
+    const {publicationFailure, ...input} = routineJobCompletionReportSchema.parse(value);
+    const lookup = async () => {
+      if (!publicationFailure || !this.rows.completionRequest) return this.job(jobId);
+      if (!frameworkIdentitySchema.safeParse(jobId).success) throw new TestRunError(400, 'Invalid job identity');
+      const request = await this.rows.completionRequest(jobId);
+      if (!request) throw new TestRunError(404, 'Routine request was not found');
+      return request;
+    };
+    const row = await lookup();
     const executable = row as StoredRoutineJob & {inputSha256?: string};
-    if (!row.fleetBinding || row.hostId !== hostId || executable.inputSha256 !== input.inputSha256)
+    const accepted = publicationFailure ? row.hostReceipt?.requestId === jobId &&
+      row.hostReceipt.hostId === hostId && row.hostReceipt.inputSha256 === input.inputSha256 : !!row.fleetBinding;
+    if (!accepted || row.hostId !== hostId || executable.inputSha256 !== input.inputSha256)
       throw new TestRequestConflict('Dispatch completion differs from its accepted host and exact executable input');
+    if (publicationFailure && publicationFailure.entityId !== jobId)
+      throw new TestRequestConflict('Publication failure differs from its accepted request');
+    let saved = row;
     if (row.dispatchCompletion) {
       if (requestInputDigest(row.dispatchCompletion) !== requestInputDigest(input))
         throw new TestRequestConflict('Dispatch completion changed its original custody disposition');
-      return row.dispatchCompletion;
+    } else {
+      if (!this.rows.complete) throw new TestRunError(503, 'Dispatch completion storage is unavailable');
+      saved = await this.rows.complete(jobId, hostId, input.inputSha256, input) ?? await lookup();
     }
-    if (!this.rows.complete) throw new TestRunError(503, 'Dispatch completion storage is unavailable');
-    const saved = await this.rows.complete(jobId, hostId, input.inputSha256, input) ?? await this.job(jobId);
     if (requestInputDigest(saved.dispatchCompletion) !== requestInputDigest(input))
       throw new TestRequestConflict('Dispatch completion changed its original custody disposition');
-    return saved.dispatchCompletion;
+    if (!publicationFailure) return saved.dispatchCompletion;
+    if (saved.publicationFailure && requestInputDigest(saved.publicationFailure) !== requestInputDigest(publicationFailure))
+      throw new TestRequestConflict('Publication failure changed its original frozen receipt');
+    // An inserted authenticated result may precede its request projection. Never
+    // replace that result with an unpublished outcome; a later result projection
+    // also wins the atomic runId guard below.
+    if (!this.rows.hasResult) throw new TestRunError(503, 'Publication result lookup is unavailable');
+    if (saved.runId || await this.rows.hasResult(jobId)) return {...saved.dispatchCompletion!, resultFound: true as const};
+    if (!saved.publicationFailure) {
+      if (!this.rows.publicationFailed) throw new TestRunError(503, 'Publication failure storage is unavailable');
+      saved = await this.rows.publicationFailed(jobId, hostId, input, publicationFailure) ?? await lookup();
+    }
+    if (saved.runId || await this.rows.hasResult(jobId)) return {...saved.dispatchCompletion!, resultFound: true as const};
+    if (!saved.publicationFailure || requestInputDigest(saved.publicationFailure) !== requestInputDigest(publicationFailure))
+      throw new TestRequestConflict('Publication failure changed its original frozen receipt');
+    return {...saved.dispatchCompletion!, publicationFailure: saved.publicationFailure};
   }
-  async observation(jobId: string) {
-    let row = await this.deliver(await this.job(jobId));
+  async observation(jobId: string, phase: ObservationPhase = () => {}) {
+    phase('request'); const saved = await this.job(jobId);
+    phase('delivery'); let row = await this.deliver(saved);
     if (!row.fleetCancellation && this.now() >= row.fleetDeadline.getTime() && (row.state !== 'terminal' ||
       !!row.fleetBinding && !row.dispatchCompletion && !row.hostRejection && !row.preparationCancellation && !row.preparationRejection)) {
-      await this.cancel(jobId, {reason: 'Routine job reached its three-hour deadline'});
-      row = await this.job(jobId);
+      phase('cancellation'); await this.cancel(jobId, {reason: 'Routine job reached its three-hour deadline'}, phase);
+      phase('request'); row = await this.job(jobId);
     }
-    let result: unknown;
+    phase('result'); let result: unknown;
     if (row.fleetBinding) try {result = await this.results.detail(jobId);}
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
-    const reason = row.fleetCancellation?.reason ?? row.fleetDispatch?.error ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ??
+    phase('projection'); const reason = (!row.runId && row.publicationFailure ? `Publication failed: ${row.publicationFailure.message}` : undefined) ?? row.fleetCancellation?.reason ?? row.fleetPreparationStatus?.reason ?? row.fleetDispatch?.error ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ??
       row.hostRejection?.reason ?? row.preparationRejection?.reason ?? row.preparation?.reason;
     return {jobId, kind: 'run' as const, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256,
       deadline: row.fleetDeadline.toISOString(), state: row.fleetCancellation && !row.fleetBinding ? 'terminal' : row.state,
-      ...(row.fleetBinding ? {binding: row.fleetBinding} : {}), actionsRuns: row.fleetActions ?? [], ...(row.fleetActionsCancellation ? {actionsCancellation:row.fleetActionsCancellation} : {}), ...(reason ? {waitingReason: reason} : {}),
+      ...(row.fleetBinding ? {binding: row.fleetBinding, ...(row.inputSha256 ? {boundInputSha256: row.inputSha256} : {})} : {}),
+      actionsRuns: row.fleetActions ?? [], ...(row.fleetActionsCancellation ? {actionsCancellation:row.fleetActionsCancellation} : {}), ...(reason ? {waitingReason: reason} : {}),
       terminal: !row.fleetBinding ? row.state === 'terminal' || !!row.fleetCancellation
         : !!row.hostRejection || !!row.preparationCancellation || !!row.preparationRejection || !!row.dispatchCompletion && row.state === 'terminal',
       ...(row.dispatchCompletion ? {cleanupDisposition: row.dispatchCompletion.disposition, dispatchCompletion: row.dispatchCompletion} : {}),

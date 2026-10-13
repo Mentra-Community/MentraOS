@@ -29,6 +29,24 @@ function jobBlock(source, name) {
   return next === -1 ? rest : rest.slice(0, next + 1)
 }
 
+test("every internal release-asset fetch has authenticated R2 credentials in its step scope", () => {
+  const directory = new URL("../workflows/", import.meta.url)
+  let fetchSteps = 0
+  for (const name of readdirSync(directory).filter((name) => name.endsWith(".yml"))) {
+    const source = workflow(name)
+    for (const step of source.split(/^      - /m).slice(1)) {
+      if (!/release-assets\.mjs(?:"|')?\s+fetch/.test(step)) continue
+      fetchSteps++
+      const configuration = step.split(/\n        run:/)[0]
+      for (const key of ["ARTIFACTS_R2_ACCESS_KEY_ID", "ARTIFACTS_R2_SECRET_ACCESS_KEY"]) {
+        assert.ok(configuration.includes(`${key}: \${{ secrets.${key} }}`), `${name}: ${step.split("\n")[0]} needs ${key}`)
+      }
+      assert.match(source, /ARTIFACTS_R2_ACCOUNT_ID: \$\{\{ vars\.ARTIFACTS_R2_ACCOUNT_ID \}\}/, name)
+    }
+  }
+  assert.ok(fetchSteps >= 15, "Expected the mobile reuse, marker and production-record fetch callers")
+})
+
 test("example finalization authenticates historical asset URL lookup", () => {
   const finalize = jobBlock(workflow("coordinated-example-release.yml"), "finalize-example")
   const step = finalize
@@ -397,6 +415,7 @@ test("Private Deployment remains release-matched without gating the dev release"
 
   assert.match(privateDeploymentJob, /^    needs: \[plan, runtime-image\]$/m)
   assert.match(privateDeploymentJob, /needs\.plan\.outputs\.cloud_environment == 'dev'/)
+  assert.match(privateDeploymentJob, /vars\.ENTERPRISE_DEMO_FROZEN != 'true'/)
   assert.match(privateDeploymentJob, /source_commit: \$\{\{ needs\.plan\.outputs\.source_commit \}\}/)
   assert.match(privateDeploymentJob, /release_plan_artifact: \$\{\{ needs\.plan\.outputs\.plan_artifact \}\}/)
   assert.match(
@@ -413,11 +432,19 @@ test("Private Deployment remains release-matched without gating the dev release"
   assert.doesNotMatch(privateDeployment, /az acr build/)
   assert.match(privateDeployment, /ghcr\.io\/mentra-community\/mentra-cloud/)
   assert.match(privateDeployment, /coreApiClientId:\{value:\$coreApiClientId\}/)
-  assert.match(privateDeployment, /MENTRA_JWT_PRIVATE_KEY/)
+  // Signing keys stay in the stack's Key Vault; the workflow passes only its name.
+  assert.match(privateDeployment, /keyVaultName:\{value:\$keyVaultName\}/)
+  assert.doesNotMatch(privateDeployment, /MENTRA_JWT_PRIVATE_KEY|REFRESH_TOKEN_PEPPER|TEAMS_GRAPH_CLIENT_SECRET|manageAcrPullRoleAssignment/)
   assert.match(privateDeployment, /source_digest.*image_digest|image_digest.*source_digest/s)
-  assert.match(privateDeployment, /--arg workspaceHostname "mentra\.acmeworkspace\.com"/)
-  assert.match(privateDeployment, /workspaceCertificateName:\{value:"ca-mentra-enterprise-reference-acme-workspace"\}/)
-  assert.match(privateDeployment, /additionalWorkspaceDomains:\{value:\[\{hostname:"enterprisedev\.mentraglass\.com",certificateName:"ca-mentra-enterprise-reference-workspace"\}\]\}/)
+  assert.match(privateDeployment, /WORKSPACE_HOSTNAME: demo\.acmeworkspace\.com/)
+  assert.match(privateDeployment, /--arg workspaceHostname "\$WORKSPACE_HOSTNAME"/)
+  assert.match(privateDeployment, /workspaceCertificateName:\{value:"ca-mentra-enterprise-reference-acme-demo"\}/)
+  // Earlier addresses stay bound for phones that enrolled with them.
+  assert.match(privateDeployment, /additionalWorkspaceDomains:\{value:\[\{hostname:"mentra\.acmeworkspace\.com",certificateName:"ca-mentra-enterprise-reference-acme-workspace"\},\{hostname:"enterprisedev\.mentraglass\.com",certificateName:"ca-mentra-enterprise-reference-workspace"\}\]\}/)
+  // Azure issues a managed certificate only for a hostname already on an app.
+  const attachHostname = privateDeployment.indexOf("az containerapp hostname add")
+  assert.ok(attachHostname >= 0)
+  assert.ok(attachHostname < privateDeployment.indexOf("az deployment group create"))
   assert.match(privateDeployment, /displayName:\{value:\$reference\[0\]\.displayName\}/)
   assert.match(privateDeployment, /az acr manifest show-metadata/)
   assert.match(privateDeployment, /latestReadyRevisionName/)

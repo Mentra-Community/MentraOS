@@ -51,6 +51,16 @@
       "groups": ["miniapp-store-prod-doppler"]
     },
     {
+      "name": "miniapp-store-development",
+      "cluster": 5692,
+      "groups": ["miniapp-store-dev-doppler"]
+    },
+    {
+      "name": "miniapp-store-staging",
+      "cluster": 5692,
+      "groups": ["miniapp-store-staging-doppler"]
+    },
+    {
       "name": "mentra-ai-miniapp",
       "cluster": 5783,
       "groups": ["mentra-ai-miniapp-dev"]
@@ -199,7 +209,6 @@
         "CLOUD_CORE_STORAGE_S3_ENDPOINT",
         "CLOUD_CORE_STORAGE_S3_REGION",
         "CLOUD_CORE_STORAGE_S3_SECRET_ACCESS_KEY",
-        "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
         "CLOUD_REPORTS_SLACK_BOT_TOKEN",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC",
@@ -275,11 +284,8 @@
         "TEST_RUN_GITHUB_APP_ID",
         "TEST_RUN_GITHUB_APP_PRIVATE_KEY",
         "TEST_RUN_GITHUB_INSTALLATION_ID",
-        "TEST_RUN_INGEST_TOKEN",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "TEST_RUN_GITHUB_WEBHOOK_SECRET",
+        "TEST_RUN_INGEST_TOKEN"
       ]
     },
     {
@@ -303,7 +309,6 @@
         "CLOUD_CORE_ADMIN_EMAILS",
         "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
         "CLOUD_CORE_ENVIRONMENT",
-        "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
         "CLOUD_REPORTS_SLACK_BOT_TOKEN",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC",
@@ -323,7 +328,6 @@
         "CLOUD_STORAGE_S3_REGION",
         "CLOUD_STORAGE_S3_SECRET_ACCESS_KEY",
         "CONSOLE2_URL",
-        "COOKIE_SECURE",
         "DOPPLER_CONFIG",
         "DOPPLER_ENVIRONMENT",
         "DOPPLER_PROJECT",
@@ -364,11 +368,7 @@
         "SUPABASE_JWT_SECRET",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_URL",
-        "SUPPORT_DEVICE_ID_HMAC_KEY",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "SUPPORT_DEVICE_ID_HMAC_KEY"
       ]
     },
     {
@@ -398,7 +398,6 @@
         "CLOUD_CORE_STORAGE_S3_ENDPOINT",
         "CLOUD_CORE_STORAGE_S3_REGION",
         "CLOUD_CORE_STORAGE_S3_SECRET_ACCESS_KEY",
-        "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
         "CLOUD_REPORTS_SLACK_BOT_TOKEN",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID",
         "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC",
@@ -418,7 +417,6 @@
         "CLOUD_STORAGE_S3_REGION",
         "CLOUD_STORAGE_S3_SECRET_ACCESS_KEY",
         "CONSOLE2_URL",
-        "COOKIE_SECURE",
         "DOPPLER_CONFIG",
         "DOPPLER_ENVIRONMENT",
         "DOPPLER_PROJECT",
@@ -462,11 +460,7 @@
         "SUPABASE_JWT_SECRET",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_URL",
-        "SUPPORT_DEVICE_ID_HMAC_KEY",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "SUPPORT_DEVICE_ID_HMAC_KEY"
       ]
     },
     {
@@ -496,7 +490,6 @@
         "CLOUD_CORE_STORAGE_S3_ENDPOINT",
         "CLOUD_CORE_STORAGE_S3_REGION",
         "CLOUD_CORE_STORAGE_S3_SECRET_ACCESS_KEY",
-        "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
         "CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL",
         "CLOUD_REPORTS_SLACK_WEBHOOK_URL",
         "CLOUD_REPORT_AGENT_API_TOKEN",
@@ -554,11 +547,7 @@
         "SUPABASE_JWT_SECRET",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_URL",
-        "SUPPORT_DEVICE_ID_HMAC_KEY",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "SUPPORT_DEVICE_ID_HMAC_KEY"
       ]
     },
     {
@@ -588,7 +577,6 @@
         "CLOUD_CORE_STORAGE_S3_ENDPOINT",
         "CLOUD_CORE_STORAGE_S3_REGION",
         "CLOUD_CORE_STORAGE_S3_SECRET_ACCESS_KEY",
-        "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
         "CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL",
         "CLOUD_REPORTS_SLACK_WEBHOOK_URL",
         "CLOUD_REPORT_AGENT_API_TOKEN",
@@ -645,11 +633,7 @@
         "SUPABASE_JWT_SECRET",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_URL",
-        "SUPPORT_DEVICE_ID_HMAC_KEY",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "SUPPORT_DEVICE_ID_HMAC_KEY"
       ]
     },
     {
@@ -666,32 +650,105 @@
         "CLOUD_STORAGE_S3_ENDPOINT",
         "CLOUD_STORAGE_S3_REGION",
         "CLOUD_STORAGE_S3_SECRET_ACCESS_KEY",
-        "CONSOLE2_URL",
         "DOPPLER_CONFIG",
         "DOPPLER_ENVIRONMENT",
         "DOPPLER_PROJECT",
         "EMAIL_SENDER",
         "LOG_LEVEL",
         "LOG_STDOUT_JSON",
-        "MENTRA_CORE_IDENTITY_SECRET",
         "MENTRA_CORE_INTERNAL_URL",
-        "MENTRA_SERVICE_AUTH_SECRET",
+        "MENTRA_CORE_WORKSPACE_SERVICE_SECRET",
         "MENTRA_STORE_ADMIN_EMAILS",
         "MENTRA_STORE_ADMIN_EMAIL_DOMAINS",
+        "MENTRA_STORE_CLI_CLIENT_ID",
+        "MENTRA_STORE_CONSOLE_RELAY_KEY",
+        "MENTRA_STORE_CONSOLE_URL",
         "MENTRA_STORE_CORE_JWKS_URLS",
-        "MENTRA_STORE_CORE_SERVICE_SECRETS",
         "MENTRA_STORE_ENVIRONMENT",
-        "MENTRA_STORE_LEGACY_TOKEN_ENVIRONMENTS",
+        "MENTRA_STORE_OIDC_CLIENT_ID",
+        "MENTRA_STORE_OIDC_CLIENT_SECRET",
+        "MENTRA_STORE_OIDC_ISSUER",
         "MENTRA_STORE_PUBLIC_URL",
+        "MENTRA_STORE_SESSION_KEY",
+        "MENTRA_STORE_WORKSPACE_CORE_JWKS_URL",
         "MONGO_URL",
         "NODE_ENV",
         "PORT",
         "REGION",
-        "RESEND_API_KEY",
-        "WORKOS_API_KEY",
-        "WORKOS_CLIENT_ID",
-        "WORKOS_COOKIE_PASSWORD",
-        "WORKOS_REDIRECT_URI"
+        "RESEND_API_KEY"
+      ]
+    },
+    {
+      "name": "miniapp-store-dev-doppler",
+      "cluster": 5692,
+      "project": "cloud-v2",
+      "config": "store_dev",
+      "keys": [
+        "CLOUD_STORAGE_PROVIDER",
+        "CLOUD_STORAGE_S3_ACCESS_KEY_ID",
+        "CLOUD_STORAGE_S3_BUCKET",
+        "CLOUD_STORAGE_S3_ENDPOINT",
+        "CLOUD_STORAGE_S3_REGION",
+        "CLOUD_STORAGE_S3_SECRET_ACCESS_KEY",
+        "DOPPLER_CONFIG",
+        "DOPPLER_ENVIRONMENT",
+        "DOPPLER_PROJECT",
+        "LOG_LEVEL",
+        "LOG_STDOUT_JSON",
+        "MENTRA_CORE_INTERNAL_URL",
+        "MENTRA_CORE_WORKSPACE_SERVICE_SECRET",
+        "MENTRA_STORE_ADMIN_EMAILS",
+        "MENTRA_STORE_CLI_CLIENT_ID",
+        "MENTRA_STORE_CONSOLE_RELAY_KEY",
+        "MENTRA_STORE_CONSOLE_URL",
+        "MENTRA_STORE_CORE_JWKS_URLS",
+        "MENTRA_STORE_ENVIRONMENT",
+        "MENTRA_STORE_OIDC_CLIENT_ID",
+        "MENTRA_STORE_OIDC_CLIENT_SECRET",
+        "MENTRA_STORE_OIDC_ISSUER",
+        "MENTRA_STORE_PUBLIC_URL",
+        "MENTRA_STORE_SESSION_KEY",
+        "MENTRA_STORE_WORKSPACE_CORE_JWKS_URL",
+        "MONGO_URL",
+        "NODE_ENV"
+      ]
+    },
+    {
+      "name": "miniapp-store-staging-doppler",
+      "cluster": 5692,
+      "project": "cloud-v2",
+      "config": "store_staging",
+      "keys": [
+        "CLOUD_STORAGE_PROVIDER",
+        "CLOUD_STORAGE_S3_ACCESS_KEY_ID",
+        "CLOUD_STORAGE_S3_BUCKET",
+        "CLOUD_STORAGE_S3_ENDPOINT",
+        "CLOUD_STORAGE_S3_REGION",
+        "CLOUD_STORAGE_S3_SECRET_ACCESS_KEY",
+        "DOPPLER_CONFIG",
+        "DOPPLER_ENVIRONMENT",
+        "DOPPLER_PROJECT",
+        "EMAIL_SENDER",
+        "LOG_LEVEL",
+        "LOG_STDOUT_JSON",
+        "MENTRA_CORE_INTERNAL_URL",
+        "MENTRA_CORE_WORKSPACE_SERVICE_SECRET",
+        "MENTRA_STORE_ADMIN_EMAIL_DOMAINS",
+        "MENTRA_STORE_CLI_CLIENT_ID",
+        "MENTRA_STORE_CONSOLE_RELAY_KEY",
+        "MENTRA_STORE_CONSOLE_URL",
+        "MENTRA_STORE_CORE_JWKS_URLS",
+        "MENTRA_STORE_ENVIRONMENT",
+        "MENTRA_STORE_OIDC_CLIENT_ID",
+        "MENTRA_STORE_OIDC_CLIENT_SECRET",
+        "MENTRA_STORE_OIDC_ISSUER",
+        "MENTRA_STORE_PUBLIC_URL",
+        "MENTRA_STORE_SESSION_KEY",
+        "MENTRA_STORE_WORKSPACE_CORE_JWKS_URL",
+        "MONGO_URL",
+        "NODE_ENV",
+        "PORT",
+        "RESEND_API_KEY"
       ]
     },
     {
@@ -785,6 +842,9 @@
       "keys": [
         "ACS_CONNECTION_STRING",
         "BETTERSTACK_SOURCE_TOKEN",
+        "CALL_POST_TRIAL_CALLS_PER_WEEK",
+        "CALL_TRIAL_CALLS_PER_WEEK",
+        "CALL_TRIAL_WEEKS",
         "CLIENT_ID",
         "CLIENT_SECRET",
         "DOPPLER_CONFIG",
@@ -803,6 +863,10 @@
         "RECALL_REGION",
         "RECALL_WORKSPACE_VERIFICATION_SECRET",
         "SERVER_URL",
+        "STRIPE_BILLING_PORTAL_URL",
+        "STRIPE_PAYMENT_LINK_ID",
+        "STRIPE_PAYMENT_LINK_URL",
+        "STRIPE_WEBHOOK_SECRET",
         "TENANT_ID",
         "USER_ID"
       ]
@@ -815,6 +879,9 @@
       "keys": [
         "ACS_CONNECTION_STRING",
         "BETTERSTACK_SOURCE_TOKEN",
+        "CALL_POST_TRIAL_CALLS_PER_WEEK",
+        "CALL_TRIAL_CALLS_PER_WEEK",
+        "CALL_TRIAL_WEEKS",
         "CALL_QUOTA_UNLIMITED",
         "CLIENT_ID",
         "CLIENT_SECRET",
@@ -834,6 +901,10 @@
         "RECALL_REGION",
         "RECALL_WORKSPACE_VERIFICATION_SECRET",
         "SERVER_URL",
+        "STRIPE_BILLING_PORTAL_URL",
+        "STRIPE_PAYMENT_LINK_ID",
+        "STRIPE_PAYMENT_LINK_URL",
+        "STRIPE_WEBHOOK_SECRET",
         "TENANT_ID",
         "USER_ID"
       ]

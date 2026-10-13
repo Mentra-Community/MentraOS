@@ -8,7 +8,8 @@ const schema = new Schema({
   definitionRevision: {type: String, required: true, immutable: true},
   definitionSha256: {type: String, required: true, immutable: true},
   routineSource: {type: Schema.Types.Mixed, required: true, immutable: true},
-  definition: {type: Schema.Types.Mixed, required: true, immutable: true},
+  detail: {type: Schema.Types.Mixed, required: true, immutable: true},
+  card: {type: Schema.Types.Mixed, required: true, immutable: true},
   ordinaryEnrolledAt: {type: Date},
   candidateBindings: {type: [Schema.Types.Mixed], default: undefined},
 }, {collection: "routine_definitions", timestamps: true});

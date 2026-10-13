@@ -1,7 +1,7 @@
 import {Platform} from "react-native"
 import {SETTINGS, engine} from "@mentra/engine"
 import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
-import {appRegistry} from "@mentra/engine-host-internal"
+import {appRegistry, type MiniappReleaseIdentity} from "@mentra/engine-host-internal"
 import {shouldHideMiniapp, shouldSkipMiniappInstall} from "./miniappVisibility"
 import {deploymentStore} from "@/services/deployment/store"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
@@ -18,7 +18,7 @@ describe("live iOS miniapp visibility policy", () => {
   beforeEach(async () => {
     delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     jest.replaceProperty(Platform, "OS", "ios")
-    await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+    await engine.settings.set("show_mentra_call_ios", false)
     await engine.settings.set(SETTINGS.show_notify_ios.key, false)
   })
   afterEach(() => {
@@ -38,6 +38,7 @@ describe("live iOS miniapp visibility policy", () => {
       manifest: {
         ...consumer.manifest,
         features: {...consumer.manifest.features, nativeMeetings: true},
+        systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
         miniapps: {
           configuration: {},
           managed: [
@@ -58,7 +59,7 @@ describe("live iOS miniapp visibility policy", () => {
       deploymentOrigin: workspace.workspaceOrigin,
       bundleSha256: "a".repeat(64),
     }
-    const release = jest.fn((): typeof identity | null => null)
+    const release = jest.fn((_packageName: string, _version: string): MiniappReleaseIdentity | null => null)
     appRegistry.getReleaseIdentity = release
     appRegistry.getInstalledVersions = jest.fn(() => ["2.1.29"])
     expect(shouldSkipMiniappInstall(mentraCallPackageName)).toBe(false)
@@ -68,11 +69,22 @@ describe("live iOS miniapp visibility policy", () => {
     expect(shouldHideMiniapp(mentraCallPackageName, "2.1.18")).toBe(true)
     expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(true)
     expect(shouldHideMiniapp(mentraCallPackageName, "dev-1790681811411")).toBe(true)
+    // Super Mode does not admit a developer build the workspace has not allowed.
     await engine.settings.set(SETTINGS.super_mode.key, true)
+    expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(true)
+    await engine.settings.set(SETTINGS.super_mode.key, false)
+    // A release-QR install of Call is a developer build too.
+    release.mockImplementation((_packageName, version) =>
+      version === "2.2.0" ? {source: "direct_download"} : identity,
+    )
+    expect(shouldHideMiniapp(mentraCallPackageName, "2.2.0")).toBe(true)
+    workspace.manifest.systemMiniapps.approvedPackageNamesOverride = ["com.mentra.settings", "com.mentra.miniappdev"]
     expect(shouldHideMiniapp(mentraCallPackageName, undefined, {dev: true})).toBe(false)
     expect(shouldHideMiniapp(mentraCallPackageName, "dev-1790681811411")).toBe(false)
+    expect(shouldHideMiniapp(mentraCallPackageName, "2.2.0")).toBe(false)
     expect(shouldHideMiniapp(mentraCallPackageName, "2.1.18")).toBe(true)
-    await engine.settings.set(SETTINGS.super_mode.key, false)
+    release.mockReturnValue(identity)
+    workspace.manifest.systemMiniapps.approvedPackageNamesOverride = ["com.mentra.settings"]
     for (const mismatch of [
       {deploymentId: "another-workspace"},
       {deploymentOrigin: "https://another.example"},
@@ -86,45 +98,42 @@ describe("live iOS miniapp visibility policy", () => {
     expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
     appRegistry.getInstalledVersions = jest.fn(() => ["2.1.29"])
     expect(shouldHideMiniapp(notifyPackageName)).toBe(true)
-    expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
+    expect(engine.settings.descriptor("show_mentra_call_ios")).toBeUndefined()
     workspace.manifest.features.nativeMeetings = false
     expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
     workspace.manifest.features.nativeMeetings = true
     workspace.manifest.miniapps.managed = []
-    await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+    await engine.settings.set("show_mentra_call_ios", true)
     expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
-    await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+    await engine.settings.set("show_mentra_call_ios", false)
     active.mockReturnValue(consumer)
-    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
+    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(false)
   })
 
-  it.each([
-    [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key, notifyPackageName],
-    [notifyPackageName, SETTINGS.show_notify_ios.key, mentraCallPackageName],
-  ])("reads the current local setting for %s without enabling the other miniapp", async (pkg, key, other) => {
-    expect(shouldHideMiniapp(pkg)).toBe(true)
-    await engine.settings.set(key, true)
-    expect(shouldHideMiniapp(pkg)).toBe(false)
-    expect(shouldHideMiniapp(other)).toBe(true)
-    await engine.settings.set(key, false)
-    expect(shouldHideMiniapp(pkg)).toBe(true)
-  })
-
-  it.each([SETTINGS.show_mentra_call_ios.key, SETTINGS.show_notify_ios.key])(
-    "keeps %s local, persistent, and off by default",
-    (key) => {
-      const descriptor = engine.settings.descriptor(key)
-      expect(descriptor).toMatchObject({saveOnServer: false, persist: true})
-      expect(descriptor.defaultValue()).toBe(false)
+  it.each([[notifyPackageName, SETTINGS.show_notify_ios.key, mentraCallPackageName]])(
+    "reads the current local setting for %s without enabling the other miniapp",
+    async (pkg, key, other) => {
+      expect(shouldHideMiniapp(pkg)).toBe(true)
+      await engine.settings.set(key, true)
+      expect(shouldHideMiniapp(pkg)).toBe(false)
+      expect(shouldHideMiniapp(other)).toBe(false)
+      await engine.settings.set(key, false)
+      expect(shouldHideMiniapp(pkg)).toBe(true)
     },
   )
-  it("applies the build override only to Call without changing either saved setting", async () => {
+
+  it.each([SETTINGS.show_notify_ios.key])("keeps %s local, persistent, and off by default", (key) => {
+    const descriptor = engine.settings.descriptor(key)
+    expect(descriptor).toMatchObject({saveOnServer: false, persist: true})
+    expect(descriptor.defaultValue()).toBe(false)
+  })
+  it("ignores the obsolete Call override and retains Notify defaults", async () => {
     process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = "true"
     expect(shouldHideMiniapp(mentraCallPackageName)).toBe(false)
     expect(shouldHideMiniapp(notifyPackageName)).toBe(true)
-    expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
+    expect(engine.settings.descriptor("show_mentra_call_ios")).toBeUndefined()
     expect(engine.settings.get(SETTINGS.show_notify_ios.key)).toBe(false)
     delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
-    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
+    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(false)
   })
 })

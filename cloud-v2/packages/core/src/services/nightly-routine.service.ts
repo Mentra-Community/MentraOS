@@ -14,8 +14,9 @@ import {GithubTestBuildGateway, TestDispatchError} from "./test-builds.service";
 import {TestRequestService, requestInputDigest, isExecutableRequest, type StoredRequest} from "./test-request.service";
 import {FrameworkResultService} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
-import {portableRoutineSelectionSchema, routineJobBindingSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
+import {portableRoutineSelectionSchema, routineJobBindingSchema, routinePublicationFailureSchema, type PortableRoutineSelection, type RoutineJobBinding, type StoredRoutineJob} from "../types/routine-job.types";
 import {RoutineJobService} from "./routine-job.service";
+import {NIGHTLY_COMPLETION_BOUNDARY_REASON, nightlyUnassignedReason} from "./nightly-deadline-reason";
 
 export const nightlyOccurrenceSchema = z.object({occurrenceId: frameworkIdentitySchema,
   startedAt: z.string().datetime({offset: true}), trigger: z.enum(["nightly", "manual"])}).strict();
@@ -42,7 +43,7 @@ export interface NightlyPlanRepository {
   requestCancellation(suiteId: string, cancellation: NightlyCancellation): Promise<NightlyCancellation>;
 }
 export interface NightlyResult {occurrenceId: string; suiteId: string; startedAt: string; trigger: Occurrence["trigger"];
-  members: (NightlyMember & {input?: RequestInput; inputSha256?: string; status: string; publicationComplete: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string})[];
+  members: (NightlyMember & {input?: RequestInput; inputSha256?: string; status: string; publicationComplete: boolean; evidenceStatus?: 'complete' | 'failed'; runId?: string; runStartedAt?: string; runFinishedAt?: string})[];
   expectedCount: number; passed: number; status: string; resultUrl?: string; finishedAt?: string; cancellation?: NightlyCancellation}
 export const nightlyPlanRepository: NightlyPlanRepository = {
   async get(suiteId) {
@@ -99,6 +100,8 @@ export function nightlyPreparedInput(member: NightlyMember, value: unknown, dige
 
 /** One immutable occurrence selects the catalog once; host controllers own execution and resource allocation. */
 export class NightlyRoutineService {
+  private completionCursor?: {startedAt: Date; suiteId: string};
+
   constructor(private readonly catalog: Pick<RoutineCatalogService, "list"> = new RoutineCatalogService(),
     private readonly builds: {latestDev(platform: TestBuildPlatform, before: string): Promise<TestBuild | null>;
       resolve(source: TestBuild["source"], platform: TestBuildPlatform): Promise<TestBuild>} = new GithubTestBuildGateway(),
@@ -140,7 +143,7 @@ export class NightlyRoutineService {
         // Fence a lost admission acknowledgement after occurrence cancellation/deadline.
         const cancellation = await this.repository.cancellation(suiteId);
         if (cancellation || await this.repository.completed(suiteId) || this.now() >= Date.parse(deadline))
-          await this.jobs.cancel(member.requestId, {reason: cancellation?.reason ?? "Nightly occurrence reached its completion boundary."});
+          await this.jobs.cancel(member.requestId, {reason: cancellation?.reason ?? NIGHTLY_COMPLETION_BOUNDARY_REASON});
         return {memberId: member.memberId, admitted: true};
       } catch {
         return {memberId: member.memberId, admitted: false, reason: "Request admission unavailable; retry this occurrence."};
@@ -232,7 +235,7 @@ export class NightlyRoutineService {
     const deadline = new Date(Date.parse(plan.startedAt) + 3 * 3600_000).toISOString();
     const cancellations = await Promise.allSettled(eligible.map(async member => {
       await this.jobs.cancelFrozen(member.selection!, deadline,
-        {reason: cancellation?.reason ?? "Nightly occurrence reached its completion boundary."});
+        {reason: cancellation?.reason ?? NIGHTLY_COMPLETION_BOUNDARY_REASON});
     }));
     cancellations.forEach((result, index) => {
       if (result.status === "rejected") logger.error({err: result.reason, requestId: eligible[index]!.requestId}, "Nightly deadline cancellation failed");
@@ -274,8 +277,13 @@ export class NightlyRoutineService {
         if (request.requestId !== member.requestId || !portableRoutineSelectionSchema.safeParse(job.fleetSelection).success || requestInputDigest(job.fleetSelection) !== job.fleetSelectionSha256
           || requestInputDigest(job.fleetSelection) !== requestInputDigest(member.selection))
           return {...member, status: "incomplete", publicationComplete: false, unavailableReason: "Request identity differs from the frozen selection."};
-        if (!job.fleetBinding) return {...member, status: job.fleetCancellation ? "incomplete" : "waiting", publicationComplete: false,
-          unavailableReason: job.fleetCancellation?.reason ?? (job.state === "awaiting-source" ? "Awaiting exact routine source preparation." : "Awaiting compatible runner.")};
+        if (!job.fleetBinding) {
+          const recordedWaitingReason = job.preparation?.reason ?? job.fleetDispatch?.error;
+          return {...member, status: job.fleetCancellation ? "incomplete" : "waiting", publicationComplete: false,
+            unavailableReason: nightlyUnassignedReason({reason: job.fleetCancellation?.reason ?? recordedWaitingReason
+              ?? (job.state === "awaiting-source" ? "Awaiting exact routine source preparation." : "Awaiting compatible runner."),
+              startedAt: plan.startedAt, observedAt: job.fleetCancellation?.requestedAt, unassigned: true, recordedWaitingReason})};
+        }
         const binding = routineJobBindingSchema.safeParse(job.fleetBinding), intent = routineDispatchIntentSchema.safeParse(request.dispatchIntent);
         if (!binding.success || !intent.success || binding.data.jobId !== member.requestId || binding.data.requestId !== member.requestId || request.hostId !== binding.data.hostId || intent.data.laneId !== binding.data.laneId
           || request.dispatchIntentSha256 !== requestInputDigest(intent.data) || job.fleetPreparation && requestInputDigest(intent.data.routineSource) !== requestInputDigest(job.fleetPreparation.routineSource))
@@ -303,10 +311,19 @@ export class NightlyRoutineService {
           || !run.routineSource || requestInputDigest(run.routineSource) !== requestInputDigest(input.routineSource))
           return {...prepared, status: "incomplete", publicationComplete: false, unavailableReason: "Result identity differs from the frozen request."};
         if (result.uploadsComplete) settledUploads.add(member.requestId);
-        return {...prepared, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete",
+        return {...prepared, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete", evidenceStatus: result.evidenceStatus,
           runId: run.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
         if (!(error instanceof TestRunError) || error.status !== 404) return {...this.unavailableEvidence(boundMember, error, "Result"), input, inputSha256: request.inputSha256};
+        if (request.publicationFailure) {
+          const failure = routinePublicationFailureSchema.safeParse(request.publicationFailure);
+          if (!failure.success || failure.data.entityId !== member.requestId || request.hostReceipt?.requestId !== member.requestId
+            || request.hostReceipt.hostId !== request.hostId || request.hostReceipt.inputSha256 !== request.inputSha256)
+            return {...prepared, status: "incomplete", publicationComplete: false,
+              unavailableReason: "Publication failure identity differs from the frozen request."};
+          return {...prepared, status: "incomplete", publicationComplete: false,
+            unavailableReason: `Publication failed: ${failure.data.message}`};
+        }
         if (request.hostRejection) {
           if (request.hostRejection.inputSha256 !== request.inputSha256 || request.hostRejection.hostId !== request.hostId)
             return {...prepared, status: "incomplete", publicationComplete: false, unavailableReason: "Host rejection identity differs from the frozen request."};
@@ -327,6 +344,29 @@ export class NightlyRoutineService {
         : members.some(member => member.status === "incomplete") ? "incomplete" : members.every(member => member.status === "cancelled") ? "cancelled" : "failed",
       ...(plan.suite ? {resultUrl: `https://admin.dev.mentraglass.com/?testSuite=${encodeURIComponent(plan.suiteId)}`}
         : singleResultId ? {resultUrl: `https://admin.dev.mentraglass.com/?testRun=${encodeURIComponent(singleResultId)}`} : {})};
+  }
+
+  /** Cancelled or expired occurrences finish even if their initiating CI process stopped. */
+  async reconcilePending() {
+    const filter = {nightlyPlan: {$exists: true}, nightlyResult: {$exists: false},
+      // Input-based historical occurrences are finalized once from their original receipts.
+      "nightlyPlan.members.input": {$exists: false},
+      $or: [{nightlyCancellation: {$exists: true}}, {startedAt: {$lte: new Date(this.now() - 3 * 3600_000)}}]};
+    const readBatch = () => TestSuiteModel.find(this.completionCursor ? {...filter, $and: [{$or: [
+      {startedAt: {$gt: this.completionCursor.startedAt}},
+      {startedAt: this.completionCursor.startedAt, suiteId: {$gt: this.completionCursor.suiteId}},
+    ]}]} : filter)
+      .select({"nightlyPlan.occurrenceId": 1, suiteId: 1, startedAt: 1}).sort({startedAt: 1, suiteId: 1}).limit(20)
+      .read("primary").readConcern("majority").setOptions({timeoutMS: 10_000}).lean();
+    let rows = await readBatch();
+    if (!rows.length && this.completionCursor) {this.completionCursor = undefined; rows = await readBatch();}
+    // Advance even when an occurrence fails; it is retried after the bounded scan wraps.
+    const last = rows.at(-1);
+    if (last) this.completionCursor = {startedAt: last.startedAt!, suiteId: last.suiteId};
+    await Promise.allSettled(rows.map(async row => {
+      try {await this.complete(row.nightlyPlan.occurrenceId);}
+      catch (error) {logger.error({err: error, suiteId: row.suiteId}, "Nightly completion will retry");}
+    }));
   }
 
   async complete(occurrenceId: string) {

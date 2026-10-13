@@ -1,3 +1,4 @@
+import {useLocalSearchParams} from "expo-router"
 import {useState} from "react"
 import {View, TextInput, ActivityIndicator, ScrollView, TouchableOpacity} from "react-native"
 
@@ -10,7 +11,8 @@ import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
 
 export default function ForgotPasswordScreen() {
-  const [email, setEmail] = useState("")
+  const {email: initialEmail} = useLocalSearchParams<{email?: string}>()
+  const [email, setEmail] = useState(initialEmail ?? "")
   const [isLoading, setIsLoading] = useState(false)
 
   const {push, goBack} = useNavigationStore.getState()

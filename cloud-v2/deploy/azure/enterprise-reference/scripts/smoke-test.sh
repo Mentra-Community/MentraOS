@@ -24,7 +24,7 @@ wait_for_health() {
     fi
     sleep 10
   done
-  printf '%s did not become healthy. Check Container Apps revisions and Cosmos DB diagnostics, then run verify again.\n' "$label" >&2
+  printf '%s did not become healthy. Check Container Apps revisions and Cosmos DB diagnostics, then run setup again.\n' "$label" >&2
   return 1
 }
 

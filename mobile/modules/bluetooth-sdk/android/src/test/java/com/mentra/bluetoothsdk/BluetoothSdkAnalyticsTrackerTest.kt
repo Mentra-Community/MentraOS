@@ -12,7 +12,61 @@ class BluetoothSdkAnalyticsTrackerTest {
         model: String = "Mentra Live",
         serial: String = "",
         fullyBooted: Boolean = connected,
-    ) = AnalyticsGlassesSnapshot(connected = connected, fullyBooted = fullyBooted, model = model, serialNumber = serial)
+        battery: Int = -1,
+        charging: Boolean = false,
+    ) = AnalyticsGlassesSnapshot(
+        connected = connected,
+        fullyBooted = fullyBooted,
+        model = model,
+        serialNumber = serial,
+        batteryLevel = battery,
+        charging = charging,
+    )
+
+    @Test
+    fun `a counted connection reports its length, reason and battery when it ends`() {
+        tracker.initialize(snapshot(connected = false), reportingDay = 100)
+        tracker.observe(snapshot(connected = true), reportingDay = 100, nowMs = 1_000)
+        tracker.observe(snapshot(connected = true, battery = 80), reportingDay = 100, nowMs = 2_000)
+        tracker.observe(snapshot(connected = true, battery = 71, charging = true), reportingDay = 100, nowMs = 3_000)
+
+        val ended =
+            tracker.observe(snapshot(connected = false), reportingDay = 100, nowMs = 61_000) {
+                BluetoothSdkAnalyticsTracker.DISCONNECT_USER
+            }
+        val disconnected = ended.single()
+        assertThat(disconnected.name).isEqualTo("bluetooth_sdk_glasses_disconnected")
+        assertThat(disconnected.properties)
+            .containsEntry("session_duration_ms", 60_000L)
+            .containsEntry("disconnect_reason", "user_disconnect")
+            .containsEntry("battery_level_at_connect", 80)
+            .containsEntry("battery_level_at_disconnect", 71)
+            .containsEntry("charging", true)
+            .containsEntry("glasses_model", "Mentra Live")
+
+        // Further disconnected updates do not report the connection again.
+        assertThat(tracker.observe(snapshot(connected = false), reportingDay = 100, nowMs = 62_000)).isEmpty()
+    }
+
+    @Test
+    fun `a connection already up when the SDK started is not reported as ending`() {
+        tracker.initialize(snapshot(connected = true, serial = "MLAB0001"), reportingDay = 100)
+        assertThat(tracker.observe(snapshot(connected = false), reportingDay = 100, nowMs = 5_000)).isEmpty()
+    }
+
+    @Test
+    fun `battery from a previous connection does not leak into the next one`() {
+        tracker.initialize(snapshot(connected = false), reportingDay = 100)
+        tracker.observe(snapshot(connected = true, battery = 90), reportingDay = 100, nowMs = 0)
+        tracker.observe(snapshot(connected = false), reportingDay = 100, nowMs = 1_000)
+        tracker.observe(snapshot(connected = true), reportingDay = 100, nowMs = 2_000)
+        val second = tracker.observe(snapshot(connected = false), reportingDay = 100, nowMs = 3_000).single()
+        assertThat(second.properties)
+            .doesNotContainKey("battery_level_at_connect")
+            .doesNotContainKey("battery_level_at_disconnect")
+            .doesNotContainKey("charging")
+            .containsEntry("disconnect_reason", "unknown")
+    }
 
     @Test
     fun `connect then serial emits connected and identified once, reconnects do not repeat identification within a connection`() {
@@ -55,8 +109,9 @@ class BluetoothSdkAnalyticsTrackerTest {
         tracker.initialize(snapshot(connected = false), reportingDay = 100)
         tracker.observe(snapshot(connected = true, model = ""), reportingDay = 100)
         val ended = tracker.observe(snapshot(connected = false, model = ""), reportingDay = 100)
-        assertThat(ended.single().name).isEqualTo("bluetooth_sdk_glasses_connected")
-        assertThat(ended.single().properties).containsEntry("glasses_model_unresolved", true).doesNotContainKey("glasses_model")
+        assertThat(ended.map { it.name })
+            .containsExactly("bluetooth_sdk_glasses_connected", "bluetooth_sdk_glasses_disconnected")
+        assertThat(ended.first().properties).containsEntry("glasses_model_unresolved", true).doesNotContainKey("glasses_model")
     }
 
     @Test

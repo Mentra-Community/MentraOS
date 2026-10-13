@@ -125,3 +125,29 @@ test("keeps the direct Wi-Fi download label", () => {
   state = {...state, screen: "updating", transport: "wifi", phase: "download", step: "apk", progress: 50}
   expect(render(flow()).getByText("Downloading…")).toBeDefined()
 })
+
+test.each(["starting", "preparing_hotspot", "updating", "restarting", "verifying", "complete", "failed"] as const)(
+  "exposes the selected transport during %s without deriving it from current Wi-Fi state",
+  (screenName) => {
+    state = {...state, screen: screenName, transport: "hotspot", wifiConnected: true}
+    const screen = render(flow())
+    expect(screen.getByTestId("ota.transport.hotspot").props.accessibilityLabel).toBe("Using glasses hotspot")
+    expect(screen.queryByTestId("ota.transport.wifi")).toBeNull()
+
+    state = {...state, transport: "wifi", wifiConnected: false}
+    screen.rerender(flow())
+    expect(screen.getByTestId("ota.transport.wifi").props.accessibilityLabel).toBe("Using Wi-Fi")
+    expect(screen.queryByTestId("ota.transport.hotspot")).toBeNull()
+  },
+)
+
+test("does not present a predicted or unknown transport as an active installation", () => {
+  state = {...state, screen: "update_available", transport: "wifi"}
+  const screen = render(flow())
+  expect(screen.queryByTestId("ota.transport.wifi")).toBeNull()
+
+  state = {...state, screen: "updating", transport: null}
+  screen.rerender(flow())
+  expect(screen.queryByText("Using Wi-Fi")).toBeNull()
+  expect(screen.queryByText("Using glasses hotspot")).toBeNull()
+})

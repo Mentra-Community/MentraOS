@@ -42,8 +42,15 @@ final class BluetoothSdkAnalytics {
     // Delivery is process-wide (see BluetoothSdkAnalyticsTransport); this instance only tracks its connection.
     private let transportQueue = BluetoothSdkAnalyticsTransport.queue
     private let configuration: BluetoothSdkAnalyticsConfiguration
+    // Tracker state is touched from the MainActor facade and store listeners;
+    // stateQueue serializes every read and write of it.
     private var tracker = BluetoothSdkAnalyticsTracker(simulatedModel: DeviceTypes.SIMULATED)
+    private var usage = BluetoothSdkUsageTracker()
     private var startedCaptured = false
+    private var lastGlasses: AnalyticsGlassesSnapshot?
+    /// Set by an SDK disconnect/forget/cancel call and consumed by the next
+    /// connected -> disconnected transition, so that transition can say why.
+    private var pendingDisconnectReason: String?
     // Touched only on transportQueue, which serializes access.
     private var resolvedHostProperties: [String: Any]?
     private var retryQueue: BluetoothSdkAnalyticsQueue? {
@@ -60,9 +67,16 @@ final class BluetoothSdkAnalytics {
         self.configuration = configuration.resolvedForApp()
     }
 
+    /// False when the host disabled analytics; callers skip building usage facts entirely.
+    var isEnabled: Bool {
+        configuration.isReady
+    }
+
     func initializeGlassesStatus(_ status: GlassesStatus) {
         stateQueue.sync {
-            tracker.initialize(status.analyticsSnapshot, reportingDay: BluetoothSdkAnalyticsTracker.reportingDay())
+            let snapshot = status.analyticsSnapshot
+            lastGlasses = snapshot
+            tracker.initialize(snapshot, reportingDay: BluetoothSdkAnalyticsTracker.reportingDay())
         }
     }
 
@@ -76,14 +90,68 @@ final class BluetoothSdkAnalytics {
         }
     }
 
-    func observeGlassesStatus(_ status: GlassesStatus) {
+    func observeGlassesStatus(_ status: GlassesStatus, phoneBluetoothOff: () -> Bool) {
         stateQueue.sync {
-            let events = tracker.observe(status.analyticsSnapshot, reportingDay: BluetoothSdkAnalyticsTracker.reportingDay())
+            let snapshot = status.analyticsSnapshot
+            lastGlasses = snapshot
+            let now = Date()
+            let events = tracker.observe(
+                snapshot,
+                reportingDay: BluetoothSdkAnalyticsTracker.reportingDay(date: now),
+                nowMs: Self.epochMillis(now)
+            ) {
+                pendingDisconnectReason
+                    ?? (phoneBluetoothOff()
+                        ? BluetoothSdkAnalyticsTracker.disconnectBluetoothOff
+                        : BluetoothSdkAnalyticsTracker.disconnectLinkLost)
+            }
+            if !snapshot.connected || events.contains(where: { $0.name == "bluetooth_sdk_glasses_connected" }) {
+                pendingDisconnectReason = nil
+            }
             guard configuration.isReady else { return }
             for event in events {
                 capture(event: event.name, properties: event.properties, configuration: configuration)
             }
         }
+    }
+
+    func noteDisconnectRequested(_ reason: String) {
+        stateQueue.sync {
+            if lastGlasses?.connected == true { pendingDisconnectReason = reason }
+        }
+    }
+
+    func recordUsage(_ build: (inout BluetoothSdkUsageTracker) -> AnalyticsEvent?) {
+        stateQueue.sync {
+            guard configuration.isReady, let event = build(&usage) else { return }
+            capture(
+                event: event.name,
+                properties: glassesContext().merging(event.properties) { _, new in new },
+                configuration: configuration
+            )
+        }
+    }
+
+    /// Usage-tracker state changes that emit nothing themselves (e.g. a stop request).
+    func updateUsage(_ update: (inout BluetoothSdkUsageTracker) -> Void) {
+        stateQueue.sync {
+            guard configuration.isReady else { return }
+            update(&usage)
+        }
+    }
+
+    static func epochMillis(_ date: Date = Date()) -> Int64 {
+        Int64((date.timeIntervalSince1970 * 1000).rounded(.down))
+    }
+
+    /// Only ever called on `stateQueue`.
+    private func glassesContext() -> [String: Any] {
+        guard let glasses = lastGlasses, glasses.connected else { return [:] }
+        var context: [String: Any] = [:]
+        if !glasses.model.isBlank { context["glasses_model"] = glasses.model }
+        if let serial = glasses.serialNumber.validManufacturingSerial { context["glasses_device_id"] = serial }
+        if !glasses.buildNumber.isBlank { context["glasses_build_number"] = glasses.buildNumber }
+        return context
     }
 
     private func capture(
@@ -105,7 +173,7 @@ final class BluetoothSdkAnalytics {
                 "api_key": Self.defaultPostHogApiKey,
                 "uuid": uuid,
                 "event": event,
-                "distinct_id": self.distinctId(),
+                "distinct_id": BluetoothSdkInstallId.get(),
                 "timestamp": self.isoFormatter.string(from: capturedAt),
                 "properties": self.baseProperties(configuration: activeConfiguration)
                     .merging(host) { _, new in new }
@@ -173,7 +241,11 @@ final class BluetoothSdkAnalytics {
             "app_bundle_identifier": Bundle.main.bundleIdentifier ?? "",
             "os_platform": platform,
             "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
+            "phone_manufacturer": "Apple",
+            "locale": Locale.current.identifier.replacingOccurrences(of: "_", with: "-"),
+            "timezone": TimeZone.current.identifier,
         ]
+        if let phoneModel = Self.phoneModel { properties["phone_model"] = phoneModel }
         // Always present so version cohorts never collapse into a null bucket. The
         // placeholder shows up only for unstamped source builds (plain SwiftPM checkout).
         properties["sdk_version"] = BluetoothSdkDefaults.sdkVersion ?? "unknown"
@@ -188,15 +260,15 @@ final class BluetoothSdkAnalytics {
         return resolved
     }
 
-    private func distinctId() -> String {
-        let key = "mentra_bluetooth_sdk_analytics_distinct_id"
-        if let existing = UserDefaults.standard.string(forKey: key), !existing.isEmpty {
-            return existing
+    /// The hardware identifier (e.g. `iPhone15,2`), not the user-assigned device name.
+    private static let phoneModel: String? = {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let machine = withUnsafeBytes(of: &systemInfo.machine) { buffer in
+            String(decoding: buffer.prefix { $0 != 0 }, as: UTF8.self)
         }
-        let generated = "mentra-bt-sdk-\(UUID().uuidString)"
-        UserDefaults.standard.set(generated, forKey: key)
-        return generated
-    }
+        return machine.isEmpty ? nil : machine
+    }()
 
     private func captureURL() -> URL? {
         let normalized = Self.defaultPostHogHost.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -242,7 +314,9 @@ private extension GlassesStatus {
             mtkFirmwareVersion: mtkFirmwareVersion,
             androidVersion: androidVersion,
             appVersion: appVersion,
-            buildNumber: buildNumber
+            buildNumber: buildNumber,
+            batteryLevel: batteryLevel,
+            charging: charging
         )
     }
 }

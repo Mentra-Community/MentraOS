@@ -13,7 +13,7 @@ The MentraOS cloud rewrite for the local JS miniapp SDK.
 ```
 cloud-v2/
 ├── packages/
-│   ├── core/      Mentra Services (OEM auth, portal backend, REST, miniapp store)
+│   ├── core/      Mentra Services (OEM auth, portal backend, REST)
 │   ├── audio/     Audio Stack (UDP ingress, workers, transcription/translation)
 │   ├── proxy/     Forwarder / reverse proxy (OEM-deployable)
 │   └── shared/    Types, config, observability primitives
@@ -63,6 +63,9 @@ Iteration: save a file, Bun restarts the affected package in well under a second
 
 - [Mentra Private Deployment contract](./deploy/private-deployment.md) —
   portable OCI image, configuration, manifest, health, and verification contract
+- [Mentra sign-in for Core's portals](./docs/signin.md) — the admin and workspace portals' sign-in
+- [Workspaces and keys](./docs/workspaces.md) — workspaces, roles, invitations, workspace and operator keys
+- [Store integration](./docs/store-integration.md) — the signed service API the Mentra Miniapp Store calls
 - [`docs/issues/`](./docs/issues/) — spec + design per work item
   - [001-oem-auth](./docs/issues/001-oem-auth/) — runtime OEM auth (JWT exchange)
   - [002-oem-portal](./docs/issues/002-oem-portal/) — OEM admin portal (planning)

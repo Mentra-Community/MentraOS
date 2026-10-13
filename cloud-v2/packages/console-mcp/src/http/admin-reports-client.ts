@@ -5,11 +5,11 @@
  *   GET /api/admin/reports                                — newest-first list
  *   GET /api/admin/reports/:reportId                      — report + asset rows
  *   GET /api/admin/reports/:reportId/artifacts/:artifactId — raw payload bytes
- *   GET /api/admin/me                                     — auth/allowlist check
+ *   GET /api/admin/me                                     — who the token is and what it may do
  *
- * All routes sit behind the core adminAuth gate; requests authenticate with
- * "Authorization: Bearer <MENTRA_ADMIN_TOKEN>" (org msk_ API key allowlisted
- * via CLOUD_CORE_ADMIN_EMAILS, or a WorkOS admin access token).
+ * The report routes need the `organization.incidents.read` capability; requests
+ * authenticate with "Authorization: Bearer <MENTRA_ADMIN_TOKEN>" (an operator
+ * key with that scope).
  */
 
 import type { ConsoleMcpConfig } from "../config";
@@ -37,12 +37,13 @@ export interface ReportSummary {
   trigger: Record<string, unknown> | null;
   report: Record<string, unknown> | null;
   feedback: unknown;
-  artifacts: ReportArtifactMeta[];
+  artifactCount: number;
   createdAt: string | null;
   updatedAt: string | null;
 }
 
-export interface ReportDetail extends ReportSummary {
+export interface ReportDetail extends Omit<ReportSummary, "artifactCount"> {
+  artifacts: ReportArtifactMeta[];
   context: Record<string, unknown>;
 }
 
@@ -101,7 +102,12 @@ export function createAdminReportsClient(config: ConsoleMcpConfig) {
 
   return {
     me: () =>
-      getJson<{ authenticated: boolean; admin: boolean; user: Record<string, unknown> | null }>(
+      getJson<{
+        authenticated: boolean;
+        user: Record<string, unknown> | null;
+        credential: Record<string, unknown> | null;
+        organization: { capabilities: string[] };
+      }>(
         "/api/admin/me",
         "admin identity",
       ),

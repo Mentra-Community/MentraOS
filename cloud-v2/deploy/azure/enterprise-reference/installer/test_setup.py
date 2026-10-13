@@ -27,12 +27,21 @@ class InstallerTests(unittest.TestCase):
         self.addCleanup(openssl.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        # Tests never reach Azure: an az call that a test forgot to replace fails here.
+        guard = Path(self.temp.name) / 'no-azure'
+        guard.mkdir()
+        (guard / 'az').write_text('#!/bin/sh\necho "Tests never call Azure: az $*" >&2\nexit 97\n')
+        (guard / 'az').chmod(0o755)
+        no_azure = patch.dict(os.environ, {'PATH': f"{guard}:{os.environ['PATH']}"})
+        no_azure.start()
+        self.addCleanup(no_azure.stop)
         self.directory = Path(self.temp.name) / 'state'
         self.directory.mkdir(mode=0o700)
         self.args = argparse.Namespace(json=True, config=None, dns_ready=False, grant_admin_consent=False)
         self.config = dict(subscriptionId=SUB, tenantId=TENANT, resourceGroup='rg-test',
                            runtimeName='ca-test', workspaceHostname='', coreApiClientId=SUB,
                            mobileClientId=TENANT, deploymentId='test', resourceTags={'mentraInstallerOwner': 'owner'},
+                           keyVaultName='kvtest1234', coreIdentityName='id-test-core', runtimeIdentityName='id-test-runtime',
                            **RELEASE)
         self.state = dict(schemaVersion=1, deploymentId='test', releaseHash='release-hash',
                           binding={k: self.config.get(k) for k in setup.BINDING_KEYS}, owner='owner',
@@ -55,9 +64,8 @@ class InstallerTests(unittest.TestCase):
         old = dict(RELEASE, releaseTag='3.3.0-dev.1')
         target = target or dict(old, releaseTag='3.3.0-dev.2', sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'c' * 64)
         self.config.update(sourceImage=old['sourceImage'], releaseTag=old['releaseTag'])
-        self.state.update(phase='infrastructure_verified', secretsCreated=True)
+        self.state.update(phase='infrastructure_verified')
         self.save()
-        setup.write_json(self.directory / 'secrets.json', {'signing': 'original-private-key'})
         self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
         self.save()
         self.args.previous_package = str(self.directory / 'previous-package')
@@ -74,17 +82,15 @@ class InstallerTests(unittest.TestCase):
              patch.object(setup, 'preflight') as preflight, patch.object(setup, 'emit'):
             yield preflight
 
-    def test_upgrade_preserves_original_keys_bindings_and_exact_backup(self):
+    def test_upgrade_preserves_bindings_and_exact_backup(self):
         with self.upgrade_context():
             before = (self.directory / 'deployment.config.json').read_bytes()
-            key = (self.directory / 'secrets.json').read_bytes()
-            setup.upgrade(self.args, self.directory)
+            setup.select_upgrade(self.args, self.directory)
             state = setup.read_json(self.directory / 'state.json')
             config = setup.read_json(self.directory / 'deployment.config.json')
             self.assertEqual(state['releaseHash'], 'target-release')
             self.assertEqual(config['releaseTag'], '3.3.0-dev.2')
             self.assertEqual(state['binding'], self.state['binding'])
-            self.assertEqual((self.directory / 'secrets.json').read_bytes(), key)
             self.assertEqual((self.directory / 'upgrades/target-release/deployment.config.json').read_bytes(), before)
             self.assertFalse((self.directory / 'upgrade.pending.json').exists())
 
@@ -92,7 +98,7 @@ class InstallerTests(unittest.TestCase):
         with self.upgrade_context():
             with patch.object(setup, 'checkpoint', side_effect=OSError('interrupted')):
                 with self.assertRaises(OSError):
-                    setup.upgrade(self.args, self.directory)
+                    setup.select_upgrade(self.args, self.directory)
             self.assertTrue((self.directory / 'upgrade.pending.json').exists())
             config, state, release = setup.load(self.directory)
             self.assertEqual(state['releaseHash'], 'target-release')
@@ -104,7 +110,7 @@ class InstallerTests(unittest.TestCase):
             before = (self.directory / 'state.json').read_bytes()
             preflight.side_effect = setup.SetupError('image inaccessible')
             with self.assertRaisesRegex(setup.SetupError, 'inaccessible'):
-                setup.upgrade(self.args, self.directory)
+                setup.select_upgrade(self.args, self.directory)
             self.assertEqual((self.directory / 'state.json').read_bytes(), before)
             self.assertFalse((self.directory / 'upgrades').exists())
 
@@ -113,7 +119,7 @@ class InstallerTests(unittest.TestCase):
                        dict(RELEASE, releaseTag='3.3.0-dev.1', sourceImage='ghcr.io/mentra-community/mentra-cloud@sha256:' + 'c' * 64)):
             with self.upgrade_context(target):
                 with self.assertRaisesRegex(setup.SetupError, 'downgrade|cannot change'):
-                    setup.upgrade(self.args, self.directory)
+                    setup.select_upgrade(self.args, self.directory)
                 self.assertFalse((self.directory / 'upgrade.pending.json').exists())
 
     def test_upgrade_rejects_noncanonical_semantic_release_identities(self):
@@ -127,18 +133,18 @@ class InstallerTests(unittest.TestCase):
         with self.upgrade_context():
             self.args.backup_confirmed = False
             with self.assertRaisesRegex(setup.SetupError, 'backup-confirmed'):
-                setup.upgrade(self.args, self.directory)
+                setup.select_upgrade(self.args, self.directory)
             self.args.backup_confirmed = True
             self.state['phase'] = 'deploying'
             self.save()
             with self.assertRaisesRegex(setup.SetupError, 'Verify the current'):
-                setup.upgrade(self.args, self.directory)
+                setup.select_upgrade(self.args, self.directory)
 
     def test_pending_upgrade_cannot_adopt_foreign_resource_binding(self):
         with self.upgrade_context():
             with patch.object(setup, 'checkpoint', side_effect=OSError('interrupted')):
                 with self.assertRaises(OSError):
-                    setup.upgrade(self.args, self.directory)
+                    setup.select_upgrade(self.args, self.directory)
             pending = setup.read_json(self.directory / 'upgrade.pending.json')
             pending['updatedConfig']['subscriptionId'] = 'foreign'
             setup.write_json(self.directory / 'upgrade.pending.json', pending)
@@ -148,12 +154,12 @@ class InstallerTests(unittest.TestCase):
 
     def test_verify_cannot_certify_selected_but_undeployed_upgrade(self):
         with self.upgrade_context():
-            setup.upgrade(self.args, self.directory)
+            setup.select_upgrade(self.args, self.directory)
             state = setup.read_json(self.directory / 'state.json')
             with patch.object(setup, 'run') as run:
                 for phase in ('upgrade_ready', 'deploying'):
                     state['phase'] = phase
-                    with self.assertRaisesRegex(setup.SetupError, 'Run resume'):
+                    with self.assertRaisesRegex(setup.SetupError, 'Run setup again'):
                         setup.verify(self.args, self.directory, self.config, state)
                 run.assert_not_called()
 
@@ -171,18 +177,49 @@ class InstallerTests(unittest.TestCase):
 
     def test_generated_global_names_differ_for_same_deployment_name(self):
         args = argparse.Namespace(config=str(self.directory / 'answers.json'), json=True)
-        setup.write_json(args.config, dict(subscriptionId=SUB, tenantId=TENANT,
-                         deploymentId='acme-mentra', displayName='ACME', location='westus2', workspaceHostname=''))
+        setup.write_json(args.config, dict(subscriptionId=SUB, tenantId=TENANT, deploymentId='acme-mentra', displayName='ACME',
+                         location='westus2', workspaceHostname='', verifiedEmailDomains=['acme.example']))
         names = []
         for name in ('one', 'two'):
             directory = self.directory / name
             with patch.object(setup, 'check_release', return_value=RELEASE), \
-                 patch.object(setup, 'digest', return_value='release-hash'), patch.object(setup, 'emit'):
+                 patch.object(setup, 'digest', return_value='release-hash'), patch.object(setup, 'emit'), \
+                 patch.object(setup, 'subscription_visible', return_value=True), \
+                 patch.object(setup, 'existing_deployment', return_value=None):
                 setup.init(args, directory)
             value = setup.read_json(directory / 'deployment.config.json')
-            names.append((value['registryName'], value['communicationName']))
-        self.assertNotEqual(names[0][0], names[1][0])
-        self.assertNotEqual(names[0][1], names[1][1])
+            names.append((value['registryName'], value['communicationName'], value['keyVaultName']))
+            self.assertRegex(value['keyVaultName'], r'^kv[a-z0-9]{3,22}$')
+        for index in range(3):
+            self.assertNotEqual(names[0][index], names[1][index])
+
+    def test_email_domains_are_refused_by_name_until_canonical(self):
+        cases = (('Acme.com', 'lowercase: acme.com'), ('acme.com.', 'ends with a dot'),
+                 ('acme', 'not an email domain'), ('acme..com', 'not an email domain'),
+                 ('-acme.com', 'not an email domain'), ('acme_corp.com', 'not an email domain'),
+                 ('@acme.com', 'not an email domain'), ('https://acme.com', 'not an email domain'),
+                 ('a' * 64 + '.com', 'not an email domain'), ('.'.join(['a' * 60] * 5) + '.com', 'not an email domain'),
+                 ('acme.com,acme.com', 'listed twice'), ('mentra.glass', 'Mentra domain'),
+                 ('mentraglass.com', 'Mentra domain'), ('eu.mentra.glass', 'Mentra domain'),
+                 ('acme.com, corp.mentraglass.com', 'Mentra domain'))
+        for value, reason in cases:
+            bad = value.split(',')[-1].strip()
+            with self.subTest(value=value), self.assertRaises(setup.SetupError) as error:
+                setup.email_domains(value)
+            # The message names the value it refuses.
+            self.assertIn(reason, str(error.exception))
+            self.assertIn(f'"{bad}"', str(error.exception))
+        for value in ('', [], ' , '):
+            with self.subTest(value=value), self.assertRaisesRegex(setup.SetupError, 'at least one'):
+                setup.email_domains(value)
+        for value in ([42], {'acme.com': True}, 'acme.com'.encode()):
+            with self.subTest(value=value), self.assertRaisesRegex(setup.SetupError, 'list of domain names'):
+                setup.email_domains(value)
+
+    def test_valid_email_domains_keep_their_order(self):
+        self.assertEqual(setup.email_domains('acme.com, us.acme.com acme.co.uk'), ['acme.com', 'us.acme.com', 'acme.co.uk'])
+        self.assertEqual(setup.email_domains([' acme.com ', 'xn--bcher-kva.example', 'notmentra.glass', 'a-1.b2.io']),
+                         ['acme.com', 'xn--bcher-kva.example', 'notmentra.glass', 'a-1.b2.io'])
 
     def test_interrupted_identity_update_recovers_without_new_registrations(self):
         self.config['displayName'] = 'Example'
@@ -213,13 +250,7 @@ class InstallerTests(unittest.TestCase):
     def test_release_cannot_change_during_resume(self):
         self.state['releaseHash'] = 'other-release'
         self.save()
-        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'release differs'):
-            setup.load(self.directory)
-
-    def test_missing_original_keys_cannot_be_regenerated(self):
-        self.state['secretsCreated'] = True
-        self.save()
-        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'Original secrets file is missing'):
+        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'not the one the deployment runs'):
             setup.load(self.directory)
 
     def test_shared_setup_directory_stops_before_writing_state_or_secrets(self):
@@ -229,20 +260,6 @@ class InstallerTests(unittest.TestCase):
                 self.fail('Shared directory was accepted')
         self.assertFalse((self.directory / '.setup-lock').exists())
         self.directory.chmod(0o700)
-
-    def test_shared_or_symlinked_secrets_are_rejected(self):
-        secrets = self.directory / 'secrets.json'
-        secrets.write_text('{}')
-        secrets.chmod(0o644)
-        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'accessible only'):
-            setup.load(self.directory)
-        secrets.unlink()
-        target = self.directory / 'target'
-        target.write_text('{}')
-        target.chmod(0o600)
-        secrets.symlink_to(target)
-        with self.load_context(), self.assertRaisesRegex(setup.SetupError, 'regular file'):
-            setup.load(self.directory)
 
     def test_config_is_frozen_after_first_azure_write(self):
         self.state['configHash'] = 'old-hash'
@@ -298,27 +315,28 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(setup.SetupError, 'does not match'):
                 setup.preflight(self.config)
 
-    def test_interrupted_deploy_preserves_secrets_and_can_resume(self):
+    def test_install_never_generates_or_stores_secrets_locally(self):
         calls = []
         def run(argv, **kwargs):
             calls.append(argv)
-            if 'generate-private-secrets.sh' in argv[1]:
-                setup.write_json(self.directory / 'secrets.json', {'private': 'same-key'})
             return ''
         with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
-             patch.object(setup, 'run', side_effect=run), \
-             patch.object(setup, 'deploy', side_effect=setup.SetupError('interrupted')), \
-             patch.object(setup, 'emit'):
+             patch.object(setup, 'run', side_effect=run), patch.object(setup, 'ensure_portal_secret'), \
+             patch.object(setup, 'deploy', side_effect=setup.SetupError('interrupted')):
             with self.assertRaisesRegex(setup.SetupError, 'interrupted'):
                 setup.install(self.args, self.directory, self.config, self.state)
-        self.assertTrue(setup.read_json(self.directory / 'state.json')['secretsCreated'])
         with patch.object(setup, 'preflight', return_value={'resourceGroup': 'owned'}), \
              patch.object(setup, 'run', side_effect=run), patch.object(setup, 'deploy'), \
-             patch.object(setup, 'verify'), patch.object(setup, 'emit'):
-            setup.install(self.args, self.directory, self.config, self.state)
-        self.assertEqual(sum('generate-private-secrets.sh' in argv[1] for argv in calls), 1)
-        self.assertEqual(setup.read_json(self.directory / 'secrets.json')['private'], 'same-key')
-
+             patch.object(setup, 'ensure_portal_secret') as portal_secret, \
+             patch.object(setup, 'verify', return_value={'status': 'infrastructure_verified'}):
+            self.assertEqual(setup.install(self.args, self.directory, self.config, self.state)['status'], 'infrastructure_verified')
+        # The admin portal's client secret is in Key Vault before Core is deployed to read it.
+        portal_secret.assert_called_once_with(self.directory, self.config, self.state)
+        validate = [argv for argv in calls if '--validate-only' in argv]
+        self.assertEqual(len(validate), 2)
+        self.assertEqual(validate[0][-1], str(self.directory / 'deployment.config.json'))
+        self.assertFalse(any('secrets' in part for argv in calls for part in argv))
+        self.assertEqual(sorted(p.name for p in self.directory.iterdir() if 'secret' in p.name), [])
     def test_dns_handoff_cannot_be_verified_as_final_customer_domain(self):
         self.config['workspaceHostname'] = 'mentra.example.com'
         self.state['outputs'] = {'workspaceOrigin': 'https://azure.example.com'}
@@ -344,7 +362,6 @@ class InstallerTests(unittest.TestCase):
              patch.object(setup, 'check_source_image', side_effect=setup.SetupError('package read access')):
             with self.assertRaisesRegex(setup.SetupError, 'package read access'):
                 setup.install(self.args, self.directory, self.config, self.state)
-        self.assertFalse((self.directory / 'secrets.json').exists())
 
     def test_registry_auth_errors_withhold_credentials_and_server_body(self):
         import urllib.error
@@ -466,25 +483,184 @@ class InstallerTests(unittest.TestCase):
                 setup.configure_mirror(self.args, self.directory, self.config, self.state)
         self.assertEqual(original, {p.name: p.read_bytes() for p in self.directory.glob('*.json')})
 
-    def test_admin_bootstrap_retries_saved_credential_and_preserves_existing_allowlist(self):
-        self.config['coreName'] = 'ca-test-core'
-        self.state['binding']['coreName'] = 'ca-test-core'
+    def admin_context(self, deployed, ready_after_update=True, refused=False):
+        """Fake Core: `containerapp show` reports `deployed` until an update rolls out a new allowlist.
+
+        `refused` is what Core answers when setup probes a saved key (True: 401)."""
+        probe = patch.object(setup, 'admin_key_refused', return_value=refused)
+        self.probe = probe.start()
+        self.addCleanup(probe.stop)
+        self.config.update(coreName='ca-test-core', keyVaultName='kvtest1234')
+        self.state['binding'].update(coreName='ca-test-core', keyVaultName='kvtest1234')
         self.save()
         self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
         self.state['outputs'] = {'coreOrigin': 'https://core.example'}
-        setup.write_json(self.directory/'admin-key.json',dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR',value='msk_local_test.secret'))
+        core = {'env': deployed, 'revision': 'core--1', 'ready': 'core--1'}
         calls = []
-        def azure(config,*args):
+
+        def azure(config, *args):
             calls.append(args)
-            if args[:2]==('containerapp','show'):
-                return {'properties':{'template':{'containers':[{'env':[{'name':'CLOUD_CORE_ADMIN_EMAILS','value':'existing@example.com'}]}]}}}
+            if args[:2] == ('containerapp', 'update'):
+                core['env'] = args[args.index('--set-env-vars') + 1].split('=', 1)[1]
+                core['revision'] = 'core--2'
+                if ready_after_update:
+                    core['ready'] = 'core--2'
+            if args[:2] == ('containerapp', 'show'):
+                return {'properties': {'latestRevisionName': core['revision'], 'latestReadyRevisionName': core['ready'],
+                                       'template': {'containers': [{'env': [
+                                           {'name': 'CLOUD_CORE_ADMIN_EMAILS', 'value': core['env']}]}]}}}
             return {}
-        with patch.object(setup,'azure',side_effect=azure), patch.object(setup,'execute_admin_script',return_value=argparse.Namespace(stdout='MENTRA_ADMIN_END')) as cleanup, patch.object(setup,'emit'):
-            setup.bootstrap_admin(self.args,self.directory,self.config,self.state)
-        self.assertIn(b'fs.unlinkSync', cleanup.call_args.args[3])
-        self.assertIn('existing@example.com',self.config['coreAdminEmails'])
-        self.assertIn('api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local',self.config['coreAdminEmails'])
-        self.assertEqual(setup.digest(self.directory/'deployment.config.json'),self.state['configHash'])
+        return calls, azure
+
+    def allowlisted(self, allowlist):
+        self.config['coreAdminEmails'] = allowlist
+        self.save()
+        self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
+
+    def minted(self, key_id='01M3ZG55PT8Z7J3HFVFZ49QWPR'):
+        credential = dict(id=key_id, value='mak_local_' + key_id + '.' + 'a' * 43, adminEmail=setup.OPERATOR_EMAIL)
+        return argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(credential) + 'MENTRA_ADMIN_END')
+
+    @staticmethod
+    def vaulted(key_id, value):
+        return {'value': value, 'tags': {'keyId': key_id}}
+
+    def test_admin_bootstrap_allowlists_the_operator_before_minting_its_key(self):
+        legacy = 'api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local'
+        calls, azure = self.admin_context('existing@example.com,' + legacy)
+        revisions = []
+
+        def execute(config, current, owner, script):
+            revisions.append(current['properties']['latestReadyRevisionName'])
+            self.assertIn(b'createOperatorKey', script)
+            return self.minted()
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script', side_effect=execute), \
+             patch.object(setup, 'check_admin_access') as access:
+            result = setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        # Every address stays, an earlier installer's api-key@<keyId>.local included.
+        allowlist = legacy + ',existing@example.com,' + setup.OPERATOR_EMAIL
+        self.assertEqual(self.config['coreAdminEmails'], allowlist)
+        self.assertEqual([c for c in calls if c[:2] == ('containerapp', 'update')][0][-1], 'CLOUD_CORE_ADMIN_EMAILS=' + allowlist)
+        # The key is minted only in the revision that allowlists its creator.
+        self.assertEqual(revisions, ['core--2'])
+        value = 'mak_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43
+        vault_set.assert_called_once_with(self.config, 'mentra-admin-key', value, keyId='01M3ZG55PT8Z7J3HFVFZ49QWPR')
+        access.assert_called_once_with('https://core.example', value)
+        self.assertEqual(result['status'], 'admin_key_ready')
+        self.assertNotIn(value, json.dumps(result))
+        self.assertNotIn(value, ''.join(p.read_text() for p in self.directory.glob('*.json')))
+        self.assertFalse((self.directory / 'admin-key.json').exists())
+        self.assertEqual(setup.digest(self.directory / 'deployment.config.json'), self.state['configHash'])
+
+    def test_admin_bootstrap_waits_for_the_allowlist_rollout(self):
+        calls, azure = self.admin_context('existing@example.com', ready_after_update=False)
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script') as execute, \
+             patch.object(setup, 'CORE_REVISION_TIMEOUT_SECONDS', 0):
+            with self.assertRaises(setup.SetupError):
+                setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        execute.assert_not_called()
+        vault_set.assert_not_called()
+
+    def test_admin_bootstrap_reuses_the_key_vault_key_without_minting(self):
+        allowlist = 'existing@example.com,' + setup.OPERATOR_EMAIL
+        calls, azure = self.admin_context(allowlist)
+        self.allowlisted(allowlist)
+        value = 'mak_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43
+        with patch.object(setup, 'azure', side_effect=azure), \
+             patch.object(setup, 'vault_get', return_value=self.vaulted('01M3ZG55PT8Z7J3HFVFZ49QWPR', value)), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script') as execute, \
+             patch.object(setup, 'check_admin_access') as access:
+            result = setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        execute.assert_not_called()
+        vault_set.assert_not_called()
+        access.assert_called_once_with('https://core.example', value)
+        self.assertFalse([c for c in calls if c[:2] == ('containerapp', 'update')])
+        self.assertIn('az keyvault secret show --vault-name kvtest1234 --name mentra-admin-key', result['read'])
+        self.assertNotIn(value, json.dumps(result))
+
+    def test_admin_bootstrap_keeps_an_earlier_msk_key_while_its_address_is_allowlisted(self):
+        legacy = 'api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local'
+        allowlist = legacy + ',' + setup.OPERATOR_EMAIL
+        calls, azure = self.admin_context(allowlist)
+        self.allowlisted(allowlist)
+        value = 'msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43
+        with patch.object(setup, 'azure', side_effect=azure), \
+             patch.object(setup, 'vault_get', return_value=self.vaulted('01M3ZG55PT8Z7J3HFVFZ49QWPR', value)), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script') as execute, \
+             patch.object(setup, 'check_admin_access'):
+            result = setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        execute.assert_not_called()
+        vault_set.assert_not_called()
+        self.assertFalse([c for c in calls if c[:2] == ('containerapp', 'update')])
+        self.assertIn(legacy, result['next'])
+
+    def test_admin_bootstrap_takes_back_the_journaled_msk_key_core_still_accepts(self):
+        legacy = 'api-key@01M3ZG55PT8Z7J3HFVFZ49QWPR.local'
+        calls, azure = self.admin_context(legacy + ',' + setup.OPERATOR_EMAIL)
+        credential = dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR', value='msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43,
+                          adminEmail=legacy)
+        returned = argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(credential) + 'MENTRA_ADMIN_END')
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=None), \
+             patch.object(setup, 'vault_set') as vault_set, patch.object(setup, 'execute_admin_script', return_value=returned), \
+             patch.object(setup, 'check_admin_access'):
+            setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        vault_set.assert_called_once_with(self.config, 'mentra-admin-key', credential['value'], keyId=credential['id'])
+
+    def test_admin_bootstrap_replaces_a_saved_key_core_refuses(self):
+        allowlist = 'existing@example.com,' + setup.OPERATOR_EMAIL
+        calls, azure = self.admin_context(allowlist, refused=True)
+        self.allowlisted(allowlist)
+        saved = self.vaulted('01M3ZG55PT8Z7J3HFVFZ49QWPR', 'mak_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43)
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=saved), \
+             patch.object(setup, 'vault_set') as vault_set, \
+             patch.object(setup, 'execute_admin_script', return_value=self.minted('01M49R16X16A5RK24C3ZB7J283')) as execute, \
+             patch.object(setup, 'check_admin_access') as access:
+            setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        self.probe.assert_called_once_with('https://core.example', saved['value'])
+        execute.assert_called_once()
+        value = 'mak_local_01M49R16X16A5RK24C3ZB7J283.' + 'a' * 43
+        vault_set.assert_called_once_with(self.config, 'mentra-admin-key', value, keyId='01M49R16X16A5RK24C3ZB7J283')
+        access.assert_called_once_with('https://core.example', value)
+
+    def test_admin_key_refused_only_on_401(self):
+        def raising(code):
+            def urlopen(request, timeout):
+                raise setup.urllib.error.HTTPError(request.full_url, code, 'status', {}, None)
+            return urlopen
+        with patch.object(setup.urllib.request, 'urlopen', side_effect=raising(401)):
+            self.assertTrue(setup.admin_key_refused('https://core.example', 'mak_local_x'))
+        for code in (403, 500, 503):
+            with patch.object(setup.urllib.request, 'urlopen', side_effect=raising(code)):
+                self.assertFalse(setup.admin_key_refused('https://core.example', 'mak_local_x'))
+        with patch.object(setup.urllib.request, 'urlopen', side_effect=OSError('offline')):
+            self.assertFalse(setup.admin_key_refused('https://core.example', 'mak_local_x'))
+
+    def test_admin_bootstrap_replaces_a_saved_key_whose_creator_is_not_allowlisted(self):
+        calls, azure = self.admin_context(setup.OPERATOR_EMAIL)
+        saved = self.vaulted('01M3ZG55PT8Z7J3HFVFZ49QWPR', 'msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43)
+        with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=saved), \
+             patch.object(setup, 'vault_set') as vault_set, \
+             patch.object(setup, 'execute_admin_script', return_value=self.minted('01M49R16X16A5RK24C3ZB7J283')), \
+             patch.object(setup, 'check_admin_access'):
+            setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+        vault_set.assert_called_once_with(self.config, 'mentra-admin-key', 'mak_local_01M49R16X16A5RK24C3ZB7J283.' + 'a' * 43,
+                                          keyId='01M49R16X16A5RK24C3ZB7J283')
+
+    def test_admin_bootstrap_rejects_a_credential_core_would_not_accept(self):
+        for value in ('msk_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.' + 'a' * 43,  # its address is not allowlisted
+                      'mak_local_01M49R16X16A5RK24C3ZB7J283.' + 'a' * 43,  # another key's id
+                      'mak_local_01M3ZG55PT8Z7J3HFVFZ49QWPR.secret'):
+            calls, azure = self.admin_context(setup.OPERATOR_EMAIL)
+            returned = argparse.Namespace(stdout='MENTRA_ADMIN_BEGIN' + json.dumps(
+                dict(id='01M3ZG55PT8Z7J3HFVFZ49QWPR', value=value)) + 'MENTRA_ADMIN_END')
+            with patch.object(setup, 'azure', side_effect=azure), patch.object(setup, 'vault_get', return_value=None), \
+                 patch.object(setup, 'vault_set') as vault_set, \
+                 patch.object(setup, 'execute_admin_script', return_value=returned):
+                with self.assertRaises(setup.SetupError):
+                    setup.bootstrap_admin(self.args, self.directory, self.config, self.state)
+            vault_set.assert_not_called()
 
     def test_admin_allowlist_update_recovers_interrupted_checkpoint(self):
         self.state['configHash'] = setup.digest(self.directory / 'deployment.config.json')
@@ -545,9 +721,8 @@ class InstallerTests(unittest.TestCase):
             def __exit__(self, *args): pass
             def read(self): return json.dumps({'value': []}).encode()
         with patch.object(setup, 'run', return_value=json.dumps({'accessToken': 'fixture'})) as run, \
-             patch.object(setup.urllib.request, 'urlopen', return_value=Response()), patch.object(setup, 'emit') as emit:
-            setup.check_teams(self.args, self.directory, self.config, self.state)
-        result = emit.call_args.args[1]
+             patch.object(setup.urllib.request, 'urlopen', return_value=Response()):
+            result = setup.check_teams(self.args, self.directory, self.config, self.state)
         self.assertEqual(result['teamsSubscription'], 'missing')
         self.assertIn('Business Basic without Teams is insufficient', result['next'])
         self.assertNotIn('--subscription', run.call_args.args[0])
@@ -564,10 +739,8 @@ class InstallerTests(unittest.TestCase):
         product = {'capabilityStatus': 'Enabled', 'servicePlans': [{'servicePlanName': 'TEAMS1'}]}
         license = {'servicePlans': [{'servicePlanName': 'TEAMS1', 'provisioningStatus': 'Success'}]}
         with patch.object(setup, 'run', return_value=json.dumps({'accessToken': 'fixture'})), \
-             patch.object(setup.urllib.request, 'urlopen', side_effect=[Response([product]), Response([license]), Response([])]), \
-             patch.object(setup, 'emit') as emit:
-            setup.check_teams(self.args, self.directory, self.config, self.state)
-        identities = emit.call_args.args[1]['identities']
+             patch.object(setup.urllib.request, 'urlopen', side_effect=[Response([product]), Response([license]), Response([])]):
+            identities = setup.check_teams(self.args, self.directory, self.config, self.state)['identities']
         self.assertEqual(identities[0]['teamsLicense'], 'enabled')
         self.assertEqual(identities[1]['teamsLicense'], 'missing_or_provisioning')
         self.assertIn('Unlicensed employees may join as guests', identities[1]['next'])
@@ -579,6 +752,17 @@ class InstallerTests(unittest.TestCase):
                 setup.inspect_teams(self.args, self.config)
         run.assert_not_called()
 
+    def test_deployment_script_errors_are_shown_without_registry_passwords(self):
+        from subprocess import CompletedProcess
+        failure = CompletedProcess(['bash'], 1, '', 'WARNING: noise\nERROR: (QuotaExceeded) region quota for mirror-secret-value')
+        with patch.dict(os.environ, {'SOURCE_REGISTRY_PASSWORD': 'mirror-secret-value'}), \
+             patch.object(setup.subprocess, 'run', return_value=failure):
+            with self.assertRaisesRegex(setup.SetupError, 'QuotaExceeded') as error:
+                setup.run(['bash', '/pkg/scripts/deploy.sh', 'config.json'], explain=True)
+        self.assertIn('deploy.sh failed', str(error.exception))
+        self.assertNotIn('mirror-secret-value', str(error.exception))
+        self.assertNotIn('WARNING', str(error.exception))
+
     def test_provider_errors_do_not_print_secret_output(self):
         from subprocess import CompletedProcess
         with patch.object(setup.subprocess, 'run', return_value=CompletedProcess(['az'], 1, '', 'secret-token')):
@@ -589,10 +773,8 @@ class InstallerTests(unittest.TestCase):
     def test_verification_guides_azure_operator_without_license_read_permission(self):
         self.state['outputs'] = {'workspaceOrigin': 'https://azure.example.com'}
         with patch.object(setup, 'run'), \
-             patch.object(setup, 'inspect_teams', side_effect=setup.SetupError('Ask an Entra administrator to run check-teams')), \
-             patch.object(setup, 'emit') as emit:
-            setup.verify(self.args, self.directory, self.config, self.state)
-        result = emit.call_args.args[1]
+             patch.object(setup, 'inspect_teams', side_effect=setup.SetupError('Ask an Entra administrator to run check-teams')):
+            result = setup.verify(self.args, self.directory, self.config, self.state)
         self.assertEqual(result['status'], 'infrastructure_verified')
         self.assertEqual(result['teamsSetup']['teamsSubscription'], 'unknown')
         self.assertIn('Entra administrator', result['teamsSetup']['next'])
@@ -613,9 +795,8 @@ class InstallerTests(unittest.TestCase):
         for failure in (http.client.IncompleteRead(b'private-partial-body'), ConnectionResetError('private-provider-body')):
             with self.subTest(failure=type(failure).__name__), \
                  patch.object(setup, 'run', return_value=json.dumps({'accessToken': 'fixture'})), \
-                 patch.object(setup.urllib.request, 'urlopen', side_effect=failure), patch.object(setup, 'emit') as emit:
-                setup.verify(self.args, self.directory, self.config, self.state)
-            result = emit.call_args.args[1]
+                 patch.object(setup.urllib.request, 'urlopen', side_effect=failure):
+                result = setup.verify(self.args, self.directory, self.config, self.state)
             self.assertEqual(result['status'], 'infrastructure_verified')
             self.assertEqual(result['teamsSetup']['teamsSubscription'], 'unknown')
             self.assertNotIn('private', json.dumps(result))

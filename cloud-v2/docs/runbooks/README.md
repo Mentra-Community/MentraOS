@@ -23,6 +23,7 @@ configuration choices, conventions, and what's set up where.
 | [`porter/deploys.md`](./porter/deploys.md) | Porter's app/services model, env-group flow, what `porter apply` actually does. |
 | [`doppler/porter-integration.md`](./doppler/porter-integration.md) | Doppler ↔ Porter sync, multi-env model, token rotation. |
 | [`cloudflare/dns-for-nlb.md`](./cloudflare/dns-for-nlb.md) | DNS, DNS-only mode for UDP, how to wire a hostname to an NLB. |
+| [`mentra-account.md`](./mentra-account.md) | The Mentra account (Supabase) behind Core's sign-in server: Site URL, redirect allowlist, API keys, signing keys, and the sign-in sites. |
 | `betterstack.md` | Log aggregation, querying, alerts. *(TODO — port from v1)* |
 
 ## Doing a thing

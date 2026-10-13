@@ -1,0 +1,480 @@
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+
+import {reports, submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
+import {cloudClientService} from "../../../modules/engine/src/services/CloudClientService"
+import {projectPairingIdentity} from "../../../modules/engine/src/services/PairingIdentity"
+import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
+import {collectDiagnosticContext} from "../../../modules/engine/src/utils/diagnosticContext"
+import {logBuffer} from "../../../modules/engine/src/utils/devLogging"
+
+jest.mock("../../../modules/engine/src/services/CloudClientService", () => ({
+  cloudClientService: {
+    core: {
+      reports: {
+        submit: jest.fn(async () => ({reportId: "rep_delivery", status: "collecting"})),
+        addLogs: jest.fn(async () => ({stored: 1})),
+        updateLogCollection: jest.fn(async () => {}),
+        addScreenshots: jest.fn(async () => ({stored: 1})),
+        complete: jest.fn(async () => ({status: "ready"})),
+      },
+    },
+    hasCore: () => true,
+    getCoreUrl: () => "https://core.example",
+    syncCoreTokenToBluetooth: jest.fn(async () => "unused-token"),
+  },
+}))
+
+jest.mock("../../../modules/engine/src/utils/diagnosticContext", () => ({
+  collectDiagnosticContext: jest.fn(async () => ({})),
+}))
+
+jest.mock("../../../modules/engine/src/services/PairingIdentity", () => ({projectPairingIdentity: jest.fn()}))
+
+jest.mock("../../../modules/engine/src/utils/timers", () => ({
+  BgTimer: {
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay),
+    clearTimeout: (timer: ReturnType<typeof setTimeout>) => clearTimeout(timer),
+  },
+}))
+
+const input = {
+  kind: "automatic" as const,
+  trigger: {type: "automatic" as const, source: "system", reason: "test"},
+  report: {actualBehavior: "Test report", systemPriority: "medium" as const},
+}
+const addLogs = jest.mocked(cloudClientService.core.reports.addLogs)
+const update = jest.mocked(cloudClientService.core.reports.updateLogCollection)
+const sync = jest.mocked(cloudClientService.syncCoreTokenToBluetooth)
+const screenshots = jest.mocked(cloudClientService.core.reports.addScreenshots)
+const send = jest.mocked(BluetoothSdk.sendIncidentId)
+const nativeStatus = jest.mocked(BluetoothSdk.getGlassesStatus)
+
+function connected() {
+  useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+}
+
+describe("report source collection and phone delivery diagnostics", () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    logBuffer.clear()
+    useGlassesStore.getState().reset()
+    addLogs.mockResolvedValue({stored: 1})
+    update.mockResolvedValue(undefined)
+    sync.mockResolvedValue("unused-token")
+    send.mockResolvedValue(undefined)
+    jest
+      .mocked(projectPairingIdentity)
+      .mockReturnValue({kind: "paired", model: "Mentra Live", name: "Mentra_Live_test"})
+    nativeStatus.mockResolvedValue({
+      deviceModel: "Mentra Live",
+      connection: {state: "connected", fullyBooted: true},
+    } as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
+  })
+
+  afterEach(() => jest.useRealTimers())
+
+  it("keeps the original phone snapshot and captures native logs during dispatch separately", async () => {
+    connected()
+    logBuffer.append({level: "info", source: "console", message: "Before report"})
+    send.mockImplementationOnce(async () => {
+      logBuffer.append({level: "info", source: "native:ios", message: "Incident ID queued"})
+    })
+
+    await expect(submitAutomaticReport(input)).resolves.toMatchObject({status: "submitted"})
+
+    expect(send).toHaveBeenCalledWith("rep_delivery", "https://core.example")
+    expect(update.mock.calls).toEqual([
+      ["rep_delivery", "glasses", {state: "requested", reason: "local_sdk_dispatch_completed"}],
+      ["rep_delivery", "glasses_firmware", {state: "requested", reason: "local_sdk_dispatch_completed"}],
+    ])
+    expect(addLogs.mock.calls[0]).toEqual([
+      "rep_delivery",
+      "phone",
+      [expect.objectContaining({message: "Before report"})],
+    ])
+    expect(addLogs.mock.calls[1]).toEqual([
+      "rep_delivery",
+      "phone_delivery",
+      [
+        expect.objectContaining({message: "Incident ID queued"}),
+        expect.objectContaining({
+          message: "Report rep_delivery: glasses log notification requested (local_sdk_dispatch_completed)",
+        }),
+      ],
+    ])
+  })
+
+  it("marks disconnected glasses sources unavailable without invoking the SDK", async () => {
+    await submitAutomaticReport(input)
+
+    expect(sync).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(update.mock.calls.map(([, source, outcome]) => [source, outcome])).toEqual([
+      ["glasses", {state: "unavailable", reason: "glasses_disconnected"}],
+      ["glasses_firmware", {state: "unavailable", reason: "glasses_disconnected"}],
+    ])
+  })
+
+  it.each([
+    {kind: "none"} as const,
+    {kind: "pending", model: "Mentra Live"} as const,
+    {kind: "paired", model: "Simulated Glasses", name: "Simulated Glasses"} as const,
+    {kind: "paired", model: "Even Realities G1", name: "G1"} as const,
+  ])("does not request physical device logs for non-Live pairing: %j", async (identity) => {
+    connected()
+    useGlassesStore.getState().setGlassesInfo({deviceModel: "Simulated Glasses"})
+    jest.mocked(projectPairingIdentity).mockReturnValue(identity)
+
+    await expect(submitAutomaticReport(input)).resolves.toMatchObject({status: "submitted"})
+
+    expect(sync).not.toHaveBeenCalled()
+    expect(nativeStatus).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(update.mock.calls.map(([, source, outcome]) => [source, outcome])).toEqual([
+      ["glasses", {state: "unavailable", reason: "no_paired_mentra_live"}],
+      ["glasses_firmware", {state: "unavailable", reason: "no_paired_mentra_live"}],
+    ])
+    expect(addLogs.mock.calls[0][1]).toBe("phone")
+  })
+
+  it("does not dispatch if paired glasses switch to Phone Mode during token sync", async () => {
+    connected()
+    sync.mockImplementationOnce(async () => {
+      jest
+        .mocked(projectPairingIdentity)
+        .mockReturnValue({kind: "paired", model: "Simulated Glasses", name: "Simulated Glasses"})
+      return "unused-token"
+    })
+    await submitAutomaticReport(input)
+    expect(nativeStatus).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith("rep_delivery", "glasses", {
+      state: "unavailable",
+      reason: "no_paired_mentra_live",
+    })
+  })
+
+  it("does not dispatch when the native connected device is simulated despite stale pairing identity", async () => {
+    connected()
+    nativeStatus.mockResolvedValueOnce({
+      deviceModel: "Simulated Glasses",
+      connection: {state: "connected", fullyBooted: true},
+    } as Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>)
+    await submitAutomaticReport(input)
+    expect(send).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith("rep_delivery", "glasses_firmware", {
+      state: "unavailable",
+      reason: "no_connected_mentra_live",
+    })
+  })
+
+  it.each(["Mentra Live", "K900", "K900Plus", "K900PlusV2"])(
+    "uses canonical paired Live identity when native status reports hardware model %s",
+    async (deviceModel) => {
+      connected()
+      nativeStatus.mockResolvedValueOnce({deviceModel, connection: {state: "connected", fullyBooted: true}} as Awaited<
+        ReturnType<typeof BluetoothSdk.getGlassesStatus>
+      >)
+      await submitAutomaticReport(input)
+      expect(send).toHaveBeenCalledWith("rep_delivery", "https://core.example")
+      expect(update).toHaveBeenCalledWith("rep_delivery", "glasses_firmware", {
+        state: "requested",
+        reason: "local_sdk_dispatch_completed",
+      })
+    },
+  )
+
+  it("checks the actual connection again after token synchronization", async () => {
+    connected()
+    sync.mockImplementationOnce(async () => {
+      useGlassesStore.getState().reset()
+      return "unused-token"
+    })
+
+    await submitAutomaticReport(input)
+
+    expect(send).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith("rep_delivery", "glasses", {
+      state: "unavailable",
+      reason: "glasses_disconnected",
+    })
+  })
+
+  it.each(["core_token_sync", "connection_read", "incident_dispatch"])(
+    "records sanitized %s failure without leaking native errors",
+    async (stage) => {
+      connected()
+      const privateError = new Error("Authorization: Bearer PRIVATE_SENTINEL")
+      if (stage === "core_token_sync") sync.mockRejectedValueOnce(privateError)
+      else if (stage === "connection_read") nativeStatus.mockRejectedValueOnce(privateError)
+      else send.mockRejectedValueOnce(privateError)
+
+      await submitAutomaticReport(input)
+
+      expect(update).toHaveBeenCalledWith("rep_delivery", "glasses_firmware", {
+        state: "failed",
+        reason: `${stage}_failed`,
+      })
+      expect(JSON.stringify([update.mock.calls, addLogs.mock.calls])).not.toContain("PRIVATE_SENTINEL")
+    },
+  )
+
+  it("does not send when the cached engine says connected but the native link is disconnected", async () => {
+    connected()
+    nativeStatus.mockResolvedValueOnce({connection: {state: "disconnected"}} as Awaited<
+      ReturnType<typeof BluetoothSdk.getGlassesStatus>
+    >)
+
+    await submitAutomaticReport(input)
+
+    expect(sync).toHaveBeenCalledTimes(1)
+    expect(nativeStatus).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith("rep_delivery", "glasses_firmware", {
+      state: "unavailable",
+      reason: "glasses_disconnected",
+    })
+  })
+
+  it("never dispatches after an expired authoritative connection read finishes", async () => {
+    jest.useFakeTimers()
+    connected()
+    let finishRead!: (status: Awaited<ReturnType<typeof BluetoothSdk.getGlassesStatus>>) => void
+    nativeStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRead = resolve
+        }),
+    )
+
+    const pending = submitAutomaticReport(input)
+    await jest.advanceTimersByTimeAsync(10_000)
+    await pending
+    finishRead({connection: {state: "connected", fullyBooted: true}} as Awaited<
+      ReturnType<typeof BluetoothSdk.getGlassesStatus>
+    >)
+    await Promise.resolve()
+
+    expect(send).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith("rep_delivery", "glasses", {
+      state: "failed",
+      reason: "incident_dispatch_timeout",
+    })
+    expect(jest.getTimerCount()).toBe(0)
+  })
+
+  it("bounds local notification and never sends after an expired token synchronization", async () => {
+    jest.useFakeTimers()
+    connected()
+    let finishSync!: (token: string) => void
+    sync.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishSync = resolve
+        }),
+    )
+
+    const pending = submitAutomaticReport(input)
+    await jest.advanceTimersByTimeAsync(10_000)
+    await expect(pending).resolves.toMatchObject({status: "submitted"})
+    expect(update).toHaveBeenCalledWith("rep_delivery", "glasses", {
+      state: "failed",
+      reason: "incident_dispatch_timeout",
+    })
+    finishSync("unused-token")
+    await Promise.resolve()
+    expect(send).not.toHaveBeenCalled()
+    expect(jest.getTimerCount()).toBe(0)
+  })
+
+  it("retains timeout diagnostics when an already invoked SDK call rejects later", async () => {
+    jest.useFakeTimers()
+    connected()
+    let rejectSend!: (error: Error) => void
+    send.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectSend = reject
+        }),
+    )
+
+    const pending = submitAutomaticReport(input)
+    await jest.advanceTimersByTimeAsync(10_000)
+    await pending
+    rejectSend(new Error("PRIVATE_SENTINEL"))
+    await Promise.resolve()
+
+    expect(update).toHaveBeenCalledTimes(2)
+    expect(update.mock.calls.every(([, , outcome]) => outcome.state === "failed")).toBe(true)
+    expect(JSON.stringify(addLogs.mock.calls)).not.toContain("PRIVATE_SENTINEL")
+    expect(jest.getTimerCount()).toBe(0)
+  })
+
+  it("records a failed initial phone upload and still preserves dispatch diagnostics", async () => {
+    addLogs.mockRejectedValueOnce(new Error("PRIVATE_SENTINEL"))
+
+    await submitAutomaticReport(input)
+
+    expect(update).toHaveBeenCalledWith("rep_delivery", "phone", {
+      state: "failed",
+      reason: "phone_log_upload_failed",
+    })
+    expect(addLogs).toHaveBeenLastCalledWith("rep_delivery", "phone_delivery", expect.any(Array))
+  })
+
+  it("keeps failed status storage in the bounded diagnostic delta", async () => {
+    update.mockRejectedValueOnce(new Error("PRIVATE_SENTINEL"))
+
+    await submitAutomaticReport(input)
+
+    const delivery = addLogs.mock.calls[1][2]
+    expect(delivery).toContainEqual(
+      expect.objectContaining({
+        message: "Report rep_delivery: glasses collection status could not be stored",
+      }),
+    )
+    expect(JSON.stringify(delivery)).not.toContain("PRIVATE_SENTINEL")
+  })
+
+  it("reports truncation while retaining the report-correlated outcome in a large dispatch burst", async () => {
+    connected()
+    send.mockImplementationOnce(async () => {
+      for (let index = 0; index < 600; index++) {
+        logBuffer.append({level: "info", source: "native:android", message: `Dispatch log ${index}`})
+      }
+    })
+
+    await submitAutomaticReport(input)
+
+    const entries = addLogs.mock.calls[1][2]
+    expect(entries).toHaveLength(500)
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        message: "Report rep_delivery: glasses log notification requested (local_sdk_dispatch_completed)",
+      }),
+    )
+    expect(entries.at(-1)?.message).toBe("Report rep_delivery: phone delivery logs omitted 102 earlier entries")
+  })
+
+  it("stores an empty original phone snapshot instead of leaving its source ambiguously requested", async () => {
+    await submitAutomaticReport(input)
+
+    expect(addLogs).toHaveBeenNthCalledWith(1, "rep_delivery", "phone", [])
+    expect(update.mock.calls.some(([, source]) => source === "phone")).toBe(false)
+  })
+
+  it("keeps feature feedback outside device log collection", async () => {
+    connected()
+
+    await reports.submit({kind: "feedback", feedback: "Add a setting"})
+
+    expect(addLogs).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it("dispatches immediately while a phone upload consumes most of the incident budget", async () => {
+    jest.useFakeTimers()
+    connected()
+    let finishPhone!: (value: {stored: number}) => void
+    addLogs.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishPhone = resolve
+        }),
+    )
+    const controller = new AbortController()
+    const created = jest.fn()
+    const pending = submitAutomaticReport(
+      {...input, screenshots: [{uri: "file:///failure.png"}]},
+      {
+        signal: controller.signal,
+        onCreated: created,
+      },
+    )
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+    await jest.advanceTimersByTimeAsync(110_000)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(screenshots).toHaveBeenCalledTimes(1)
+    expect(update.mock.calls.map(([, source]) => source)).toEqual(["glasses", "glasses_firmware"])
+    expect(created).toHaveBeenCalledWith("rep_delivery")
+    expect(settled).toBe(false)
+    finishPhone({stored: 1})
+    await pending
+    expect(jest.getTimerCount()).toBe(0)
+    jest.useRealTimers()
+  })
+
+  it.each(["token sync", "native status"])("never dispatches after shared cancellation during %s", async (stage) => {
+    connected()
+    const controller = new AbortController()
+    Object.defineProperty(controller.signal, "throwIfAborted", {value: undefined})
+    let finish!: () => void
+    if (stage === "token sync")
+      sync.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = () => resolve("unused-token")
+          }),
+      )
+    else
+      nativeStatus.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = () =>
+              resolve({deviceModel: "Mentra Live", connection: {state: "connected", fullyBooted: true}} as Awaited<
+                ReturnType<typeof BluetoothSdk.getGlassesStatus>
+              >)
+          }),
+      )
+    const pending = submitAutomaticReport(input, {signal: controller.signal, onCreated: jest.fn()})
+    const rejected = expect(pending).rejects.toThrow()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    controller.abort()
+    await rejected
+    const writes = update.mock.calls.length
+    finish()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(send).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledTimes(writes)
+  })
+
+  it("does not create a report after an expired diagnostic context read", async () => {
+    const controller = new AbortController()
+    let finish!: (value: {}) => void
+    jest.mocked(collectDiagnosticContext).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const pending = submitAutomaticReport(input, {signal: controller.signal, onCreated: jest.fn()})
+    const rejected = expect(pending).rejects.toThrow("Incident report aborted")
+    controller.abort()
+    finish({})
+    await rejected
+    expect(cloudClientService.core.reports.submit).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it("a strict phone upload failure still completes the independent screenshot and glasses dispatch", async () => {
+    connected()
+    addLogs.mockRejectedValueOnce(new Error("phone upload failed"))
+    await expect(
+      submitAutomaticReport(
+        {...input, screenshots: [{uri: "file:///failure.png"}]},
+        {
+          signal: new AbortController().signal,
+          onCreated: jest.fn(),
+        },
+      ),
+    ).resolves.toMatchObject({status: "failed"})
+    expect(screenshots).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(cloudClientService.core.reports.complete).toHaveBeenCalledTimes(1)
+  })
+})

@@ -1,0 +1,674 @@
+{
+  "producer": {
+    "repository": "Mentra-Community/Mentra-Automated-Testing",
+    "baseCommit": "d2377c4655b3786f45bc2f94cbdee2beacedf00c",
+    "snapshotSha256": "5288a166929cdc35d8dd980f764b3bb66a57f086edd9de4e57ddbdf11b334a4d",
+    "sourceSha256": {
+      "framework/run.ts": "61139dcdd518862c7c2cf1cd991fc3752ebf1440ddd41cd8dd6d4da17138ea49",
+      "framework/cleanup.ts": "aa19b0f02fa4d9e24cddeaf1a9637b031ba11c0c51519c07ec49041b8727edd8",
+      "framework/deadline.ts": "66cbbd32aacb73557b5f2486faca0631fbae90f6cf5e8185257daa3a467c265e",
+      "framework/resources.ts": "3d48d49ea26f1e4844fe2d283ec1500a9913d9db26b90c76e31c3ed38e6481a6"
+    }
+  },
+  "runs": [
+    {
+      "scenario": "routine-teardown",
+      "definition": {
+        "steps": [
+          {
+            "id": "assert-product",
+            "instruction": "Verify product state",
+            "expected": "Expected state observed"
+          }
+        ],
+        "setup": [],
+        "teardown": [
+          {
+            "id": "remove-fixture",
+            "instruction": "Remove routine fixture",
+            "expected": "Fixture absent"
+          }
+        ],
+        "fixtures": []
+      },
+      "run": {
+        "schemaVersion": 1,
+        "requestId": "lifecycle-routine-teardown",
+        "hostId": "fixture-host",
+        "routineId": "lifecycle-contract-fixture",
+        "definitionRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "platform": "android",
+        "laneId": "fixture-android",
+        "routineSource": {
+          "repository": "Mentra-Community/Mentra-Automated-Testing",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bundle": {
+            "url": "https://source.example/fixture.tar.gz",
+            "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "size": 123
+          },
+          "minimumRoutineApiVersion": 1
+        },
+        "frameworkBinding": {
+          "version": 40,
+          "revision": "ffffffffffffffffffffffffffffffffffffffff",
+          "installationId": "software-framework-fixture",
+          "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "runtimeSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "routineApiVersion": 1,
+          "publicApiSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "build": {
+          "repository": "Mentra-Community/MentraOS",
+          "channel": "dev",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "startedAt": "2026-10-11T05:11:22.893Z",
+        "finishedAt": "2026-10-11T05:11:22.902Z",
+        "assets": [],
+        "result": {
+          "runId": "lifecycle-routine-teardown",
+          "finishedAt": "2026-10-11T05:11:22.902Z",
+          "test": "passed",
+          "setup": {
+            "status": "passed",
+            "actions": [
+              {
+                "id": "validate-inputs",
+                "instruction": "Verify the selected build, test tools and test device configuration.",
+                "expected": "The selected build, test tools and device configuration are valid.",
+                "scope": "shared",
+                "stage": "validation",
+                "status": "passed",
+                "durationMs": 0.25254199999999827,
+                "startedAt": "2026-10-11T05:11:22.895Z",
+                "finishedAt": "2026-10-11T05:11:22.896Z"
+              },
+              {
+                "id": "install-app",
+                "instruction": "Prepare the test’s app resource.",
+                "expected": "The test resource is prepared and ready to use.",
+                "scope": "shared",
+                "stage": "before-entry",
+                "status": "passed",
+                "durationMs": 0.3599579999999989,
+                "startedAt": "2026-10-11T05:11:22.896Z",
+                "finishedAt": "2026-10-11T05:11:22.896Z"
+              },
+              {
+                "id": "establish-entry",
+                "instruction": "Open the Mentra App at the starting screen required by this test.",
+                "expected": "The Mentra App is on the starting screen required by this test.",
+                "scope": "shared",
+                "stage": "entry",
+                "status": "passed",
+                "durationMs": 0.010792000000002133,
+                "startedAt": "2026-10-11T05:11:22.896Z",
+                "finishedAt": "2026-10-11T05:11:22.896Z"
+              },
+              {
+                "id": "start-recording",
+                "instruction": "Start screen recording for this test.",
+                "expected": "Screen recording is running before the test actions start.",
+                "scope": "shared",
+                "stage": "recording",
+                "status": "passed",
+                "durationMs": 0.04395799999999639,
+                "startedAt": "2026-10-11T05:11:22.896Z",
+                "finishedAt": "2026-10-11T05:11:22.897Z"
+              }
+            ]
+          },
+          "steps": [
+            {
+              "id": "assert-product",
+              "status": "passed",
+              "durationMs": 0.5399590000000032,
+              "startedAt": "2026-10-11T05:11:22.897Z",
+              "finishedAt": "2026-10-11T05:11:22.898Z"
+            }
+          ],
+          "teardown": {
+            "ready": true,
+            "outcomes": [
+              {
+                "state": "cleaned",
+                "resourceId": "recorder",
+                "evidence": []
+              },
+              {
+                "state": "cleaned",
+                "resourceId": "app",
+                "evidence": []
+              }
+            ],
+            "errors": [
+              {
+                "phase": "teardown",
+                "actionId": "remove-fixture",
+                "message": "Routine fixture removal failed"
+              }
+            ],
+            "unavailableResources": [],
+            "actions": [
+              {
+                "id": "cleanup:recorder",
+                "instruction": "Clean up the test’s recorder resource.",
+                "expected": "The test resource is cleaned up and ready to release.",
+                "scope": "shared",
+                "stage": "recording",
+                "status": "passed",
+                "durationMs": 0.5330420000000018,
+                "startedAt": "2026-10-11T05:11:22.899Z",
+                "finishedAt": "2026-10-11T05:11:22.900Z"
+              },
+              {
+                "id": "remove-fixture",
+                "instruction": "Remove routine fixture",
+                "expected": "Fixture absent",
+                "scope": "routine",
+                "stage": "teardown-actions",
+                "status": "failed",
+                "durationMs": 0.161875000000002,
+                "startedAt": "2026-10-11T05:11:22.901Z",
+                "finishedAt": "2026-10-11T05:11:22.901Z"
+              },
+              {
+                "id": "cleanup:app",
+                "instruction": "Clean up the test’s app resource.",
+                "expected": "The test resource is cleaned up and ready to release.",
+                "scope": "shared",
+                "stage": "resource-cleanup",
+                "status": "passed",
+                "durationMs": 0.056958999999999094,
+                "startedAt": "2026-10-11T05:11:22.902Z",
+                "finishedAt": "2026-10-11T05:11:22.902Z"
+              }
+            ]
+          },
+          "failures": [
+            {
+              "phase": "teardown",
+              "actionId": "remove-fixture",
+              "message": "Routine fixture removal failed"
+            }
+          ],
+          "diagnostics": [
+            {
+              "id": "remove-fixture:failure-screenshot",
+              "instruction": "Save failure screenshot",
+              "expected": "The original screen and accessibility evidence are saved or their absence is recorded.",
+              "scope": "shared",
+              "status": "passed",
+              "startedAt": "2026-10-11T05:11:22.901Z",
+              "durationMs": 0.04708300000000065,
+              "finishedAt": "2026-10-11T05:11:22.901Z"
+            },
+            {
+              "id": "remove-fixture:incident-report",
+              "instruction": "Submit incident report",
+              "expected": "The original failure has a correlated incident with its required log collection outcome.",
+              "scope": "shared",
+              "status": "passed",
+              "startedAt": "2026-10-11T05:11:22.902Z",
+              "durationMs": 0.015374999999998806,
+              "finishedAt": "2026-10-11T05:11:22.902Z"
+            }
+          ],
+          "evidence": [],
+          "timing": {
+            "startedAt": "2026-10-11T05:11:22.893Z",
+            "setupMs": 0.6672499999999957,
+            "testMs": 0.5399590000000032,
+            "teardownMs": 0.7518760000000029,
+            "diagnosticsMs": 0.06245799999999946
+          }
+        }
+      }
+    },
+    {
+      "scenario": "diagnostic-failure",
+      "definition": {
+        "steps": [
+          {
+            "id": "assert-product",
+            "instruction": "Verify product state",
+            "expected": "Expected state observed"
+          }
+        ],
+        "setup": [],
+        "teardown": [],
+        "fixtures": []
+      },
+      "run": {
+        "schemaVersion": 1,
+        "requestId": "lifecycle-diagnostic-failure",
+        "hostId": "fixture-host",
+        "routineId": "lifecycle-contract-fixture",
+        "definitionRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "platform": "android",
+        "laneId": "fixture-android",
+        "routineSource": {
+          "repository": "Mentra-Community/Mentra-Automated-Testing",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bundle": {
+            "url": "https://source.example/fixture.tar.gz",
+            "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "size": 123
+          },
+          "minimumRoutineApiVersion": 1
+        },
+        "frameworkBinding": {
+          "version": 40,
+          "revision": "ffffffffffffffffffffffffffffffffffffffff",
+          "installationId": "software-framework-fixture",
+          "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "runtimeSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "routineApiVersion": 1,
+          "publicApiSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "build": {
+          "repository": "Mentra-Community/MentraOS",
+          "channel": "dev",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "startedAt": "2026-10-11T05:11:22.902Z",
+        "finishedAt": "2026-10-11T05:11:22.904Z",
+        "assets": [],
+        "result": {
+          "runId": "lifecycle-diagnostic-failure",
+          "finishedAt": "2026-10-11T05:11:22.904Z",
+          "test": "failed",
+          "setup": {
+            "status": "passed",
+            "actions": [
+              {
+                "id": "validate-inputs",
+                "instruction": "Verify the selected build, test tools and test device configuration.",
+                "expected": "The selected build, test tools and device configuration are valid.",
+                "scope": "shared",
+                "stage": "validation",
+                "status": "passed",
+                "durationMs": 0.00333299999999781,
+                "startedAt": "2026-10-11T05:11:22.902Z",
+                "finishedAt": "2026-10-11T05:11:22.902Z"
+              },
+              {
+                "id": "install-app",
+                "instruction": "Prepare the test’s app resource.",
+                "expected": "The test resource is prepared and ready to use.",
+                "scope": "shared",
+                "stage": "before-entry",
+                "status": "passed",
+                "durationMs": 0.026541999999999177,
+                "startedAt": "2026-10-11T05:11:22.903Z",
+                "finishedAt": "2026-10-11T05:11:22.903Z"
+              },
+              {
+                "id": "establish-entry",
+                "instruction": "Open the Mentra App at the starting screen required by this test.",
+                "expected": "The Mentra App is on the starting screen required by this test.",
+                "scope": "shared",
+                "stage": "entry",
+                "status": "passed",
+                "durationMs": 0.00274999999999892,
+                "startedAt": "2026-10-11T05:11:22.903Z",
+                "finishedAt": "2026-10-11T05:11:22.903Z"
+              },
+              {
+                "id": "start-recording",
+                "instruction": "Start screen recording for this test.",
+                "expected": "Screen recording is running before the test actions start.",
+                "scope": "shared",
+                "stage": "recording",
+                "status": "passed",
+                "durationMs": 0.13770900000000097,
+                "startedAt": "2026-10-11T05:11:22.903Z",
+                "finishedAt": "2026-10-11T05:11:22.903Z"
+              }
+            ]
+          },
+          "steps": [
+            {
+              "id": "assert-product",
+              "status": "failed",
+              "durationMs": 0.08845900000000029,
+              "startedAt": "2026-10-11T05:11:22.903Z",
+              "finishedAt": "2026-10-11T05:11:22.903Z"
+            }
+          ],
+          "teardown": {
+            "ready": true,
+            "outcomes": [
+              {
+                "state": "cleaned",
+                "resourceId": "recorder",
+                "evidence": []
+              },
+              {
+                "state": "cleaned",
+                "resourceId": "app",
+                "evidence": []
+              }
+            ],
+            "errors": [],
+            "unavailableResources": [],
+            "actions": [
+              {
+                "id": "cleanup:recorder",
+                "instruction": "Clean up the test’s recorder resource.",
+                "expected": "The test resource is cleaned up and ready to release.",
+                "scope": "shared",
+                "stage": "recording",
+                "status": "passed",
+                "durationMs": 0.04475000000000051,
+                "startedAt": "2026-10-11T05:11:22.903Z",
+                "finishedAt": "2026-10-11T05:11:22.904Z"
+              },
+              {
+                "id": "cleanup:app",
+                "instruction": "Clean up the test’s app resource.",
+                "expected": "The test resource is cleaned up and ready to release.",
+                "scope": "shared",
+                "stage": "resource-cleanup",
+                "status": "passed",
+                "durationMs": 0.026250000000004547,
+                "startedAt": "2026-10-11T05:11:22.904Z",
+                "finishedAt": "2026-10-11T05:11:22.904Z"
+              }
+            ]
+          },
+          "failures": [
+            {
+              "phase": "test",
+              "actionId": "assert-product",
+              "message": "Original product failure"
+            },
+            {
+              "phase": "evidence",
+              "actionId": "assert-product:incident-report",
+              "message": "Incident log collection incomplete"
+            }
+          ],
+          "diagnostics": [
+            {
+              "id": "assert-product:failure-screenshot",
+              "instruction": "Save failure screenshot",
+              "expected": "The original screen and accessibility evidence are saved or their absence is recorded.",
+              "scope": "shared",
+              "status": "passed",
+              "startedAt": "2026-10-11T05:11:22.903Z",
+              "durationMs": 0.004708000000000823,
+              "finishedAt": "2026-10-11T05:11:22.903Z"
+            },
+            {
+              "id": "assert-product:incident-report",
+              "instruction": "Submit incident report",
+              "expected": "The original failure has a correlated incident with its required log collection outcome.",
+              "scope": "shared",
+              "status": "failed",
+              "startedAt": "2026-10-11T05:11:22.903Z",
+              "durationMs": 0.039083999999995456,
+              "finishedAt": "2026-10-11T05:11:22.903Z"
+            }
+          ],
+          "evidence": [],
+          "timing": {
+            "startedAt": "2026-10-11T05:11:22.902Z",
+            "setupMs": 0.17033399999999688,
+            "testMs": 0.08845900000000029,
+            "teardownMs": 0.07100000000000506,
+            "diagnosticsMs": 0.04379199999999628
+          }
+        }
+      }
+    },
+    {
+      "scenario": "cleaned-provider-error",
+      "definition": {
+        "steps": [
+          {
+            "id": "assert-product",
+            "instruction": "Verify product state",
+            "expected": "Expected state observed"
+          }
+        ],
+        "setup": [],
+        "teardown": [],
+        "fixtures": []
+      },
+      "run": {
+        "schemaVersion": 1,
+        "requestId": "lifecycle-cleaned-provider-error",
+        "hostId": "fixture-host",
+        "routineId": "lifecycle-contract-fixture",
+        "definitionRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "platform": "android",
+        "laneId": "fixture-android",
+        "routineSource": {
+          "repository": "Mentra-Community/Mentra-Automated-Testing",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bundle": {
+            "url": "https://source.example/fixture.tar.gz",
+            "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "size": 123
+          },
+          "minimumRoutineApiVersion": 1
+        },
+        "frameworkBinding": {
+          "version": 40,
+          "revision": "ffffffffffffffffffffffffffffffffffffffff",
+          "installationId": "software-framework-fixture",
+          "configurationSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "runtimeSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "routineApiVersion": 1,
+          "publicApiSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "build": {
+          "repository": "Mentra-Community/MentraOS",
+          "channel": "dev",
+          "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "startedAt": "2026-10-11T05:11:22.904Z",
+        "finishedAt": "2026-10-11T05:11:22.905Z",
+        "assets": [],
+        "result": {
+          "runId": "lifecycle-cleaned-provider-error",
+          "finishedAt": "2026-10-11T05:11:22.905Z",
+          "test": "passed",
+          "setup": {
+            "status": "passed",
+            "actions": [
+              {
+                "id": "validate-inputs",
+                "instruction": "Verify the selected build, test tools and test device configuration.",
+                "expected": "The selected build, test tools and device configuration are valid.",
+                "scope": "shared",
+                "stage": "validation",
+                "status": "passed",
+                "durationMs": 0.0024999999999977263,
+                "startedAt": "2026-10-11T05:11:22.904Z",
+                "finishedAt": "2026-10-11T05:11:22.904Z"
+              },
+              {
+                "id": "install-app",
+                "instruction": "Prepare the test’s app resource.",
+                "expected": "The test resource is prepared and ready to use.",
+                "scope": "shared",
+                "stage": "before-entry",
+                "status": "passed",
+                "durationMs": 0.019124999999995396,
+                "startedAt": "2026-10-11T05:11:22.904Z",
+                "finishedAt": "2026-10-11T05:11:22.904Z"
+              },
+              {
+                "id": "establish-entry",
+                "instruction": "Open the Mentra App at the starting screen required by this test.",
+                "expected": "The Mentra App is on the starting screen required by this test.",
+                "scope": "shared",
+                "stage": "entry",
+                "status": "passed",
+                "durationMs": 0.0015000000000000568,
+                "startedAt": "2026-10-11T05:11:22.904Z",
+                "finishedAt": "2026-10-11T05:11:22.904Z"
+              },
+              {
+                "id": "start-recording",
+                "instruction": "Start screen recording for this test.",
+                "expected": "Screen recording is running before the test actions start.",
+                "scope": "shared",
+                "stage": "recording",
+                "status": "passed",
+                "durationMs": 0.013832999999998208,
+                "startedAt": "2026-10-11T05:11:22.904Z",
+                "finishedAt": "2026-10-11T05:11:22.904Z"
+              }
+            ]
+          },
+          "steps": [
+            {
+              "id": "assert-product",
+              "status": "passed",
+              "durationMs": 0.00766699999999787,
+              "startedAt": "2026-10-11T05:11:22.904Z",
+              "finishedAt": "2026-10-11T05:11:22.904Z"
+            }
+          ],
+          "teardown": {
+            "ready": true,
+            "outcomes": [
+              {
+                "state": "cleaned",
+                "resourceId": "recorder",
+                "evidence": [],
+                "errors": [
+                  {
+                    "phase": "evidence",
+                    "actionId": "finalize-recording",
+                    "message": "Public recording validation failed",
+                    "diagnostics": {
+                      "mediaValidation": {
+                        "observedPixels": 420
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "state": "cleaned",
+                "resourceId": "app",
+                "evidence": [],
+                "errors": [
+                  {
+                    "phase": "teardown",
+                    "actionId": "app:receipt",
+                    "message": "Cleanup journal unavailable"
+                  }
+                ]
+              }
+            ],
+            "errors": [
+              {
+                "phase": "evidence",
+                "actionId": "finalize-recording",
+                "message": "Public recording validation failed",
+                "diagnostics": {
+                  "mediaValidation": {
+                    "observedPixels": 420
+                  }
+                }
+              },
+              {
+                "phase": "teardown",
+                "actionId": "app:receipt",
+                "message": "Cleanup journal unavailable"
+              }
+            ],
+            "unavailableResources": [],
+            "actions": [
+              {
+                "id": "cleanup:recorder",
+                "instruction": "Clean up the test’s recorder resource.",
+                "expected": "The test resource is cleaned up and ready to release.",
+                "scope": "shared",
+                "stage": "recording",
+                "status": "failed",
+                "durationMs": 0.022750000000002046,
+                "startedAt": "2026-10-11T05:11:22.904Z",
+                "finishedAt": "2026-10-11T05:11:22.904Z"
+              },
+              {
+                "id": "cleanup:app",
+                "instruction": "Clean up the test’s app resource.",
+                "expected": "The test resource is cleaned up and ready to release.",
+                "scope": "shared",
+                "stage": "resource-cleanup",
+                "status": "failed",
+                "durationMs": 0.023958000000000368,
+                "startedAt": "2026-10-11T05:11:22.904Z",
+                "finishedAt": "2026-10-11T05:11:22.904Z"
+              }
+            ]
+          },
+          "failures": [
+            {
+              "phase": "evidence",
+              "actionId": "finalize-recording",
+              "message": "Public recording validation failed",
+              "diagnostics": {
+                "mediaValidation": {
+                  "observedPixels": 420
+                }
+              }
+            },
+            {
+              "phase": "teardown",
+              "actionId": "app:receipt",
+              "message": "Cleanup journal unavailable"
+            }
+          ],
+          "diagnostics": [
+            {
+              "id": "finalize-recording:failure-screenshot",
+              "instruction": "Save failure screenshot",
+              "expected": "The original screen and accessibility evidence are saved or their absence is recorded.",
+              "scope": "shared",
+              "status": "passed",
+              "startedAt": "2026-10-11T05:11:22.904Z",
+              "durationMs": 0.0018750000000054001,
+              "finishedAt": "2026-10-11T05:11:22.904Z"
+            },
+            {
+              "id": "finalize-recording:incident-report",
+              "instruction": "Submit incident report",
+              "expected": "The original failure has a correlated incident with its required log collection outcome.",
+              "scope": "shared",
+              "status": "passed",
+              "startedAt": "2026-10-11T05:11:22.904Z",
+              "durationMs": 0.001290999999994824,
+              "finishedAt": "2026-10-11T05:11:22.904Z"
+            },
+            {
+              "id": "app:receipt:failure-screenshot",
+              "instruction": "Save failure screenshot",
+              "expected": "The original screen and accessibility evidence are saved or their absence is recorded.",
+              "scope": "shared",
+              "status": "passed",
+              "startedAt": "2026-10-11T05:11:22.905Z",
+              "durationMs": 0.0014589999999969905,
+              "finishedAt": "2026-10-11T05:11:22.905Z"
+            }
+          ],
+          "evidence": [],
+          "timing": {
+            "startedAt": "2026-10-11T05:11:22.904Z",
+            "setupMs": 0.03695799999999139,
+            "testMs": 0.00766699999999787,
+            "teardownMs": 0.046708000000002414,
+            "diagnosticsMs": 0.004624999999997215
+          }
+        }
+      }
+    }
+  ]
+}

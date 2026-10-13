@@ -1,3 +1,8 @@
+import {createRoutineCaseApi} from './routine-cases.api'
+import {LaneControlsService} from '../../services/lane-controls.service'
+import {TestPendingQueueService} from "../../services/test-pending-queue.service";
+import {z} from "zod";
+import {frameworkBodyLimit, frameworkJson} from "../internal/framework-json";
 import {Hono} from "hono";
 import type {AppEnv} from "../../types/hono.types";
 import {FrameworkResultService} from "../../services/framework-result.service";
@@ -11,44 +16,86 @@ import {frameworkIdentitySchema, recordedFrameworkRequestInputSchema, type Frame
 import {createTestRerunRoutes} from "../internal/test-reruns.api";
 import {routineDispatchIntentSchema} from '../../types/routine-dispatch.types';
 import {portableRoutineSelectionSchema, type StoredRoutineJob} from '../../types/routine-job.types';
+import {PrRoutineCheckService} from '../../services/pr-routine-check.service';
 import {LaneRestorationService} from "../../services/lane-restoration.service";
+import {PrRerunReferenceService} from '../../services/pr-rerun-reference.service';
+import {TestRequestProgressService} from '../../services/test-request-progress.service';
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
 export function createTestRunAdminApi(health = new TestHostHealthService(), history = new TestHistoryService(),
-  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService()) {
+  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService(), rerunLabels = new PrRerunReferenceService(), progress = new TestRequestProgressService()) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
+    if (error instanceof z.ZodError) return c.json({error: "invalid_lane_control", message: "Invalid lane control request"}, 400);
     if (error instanceof TestRunError || error instanceof TestHostHealthError)
       return c.json({error: "test_run_error", message: error.message}, error.status);
     c.var.logger?.error({errorName: error.name}, "test result query failed");
     return c.json({error: "test_results_unavailable"}, 503);
   });
   const suites = new TestSuiteService();
+  app.route("/follow-ups", createRoutineCaseApi());
   app.route("/reruns", createTestRerunRoutes(undefined, "admin"));
+  app.get('/rerun-label', async c => {
+    const input = z.object({routineId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/),
+      kind: z.enum(['s', 'r']), targetId: frameworkIdentitySchema}).strict().safeParse(c.req.query());
+    if (!input.success) throw new TestRunError(400, 'Invalid rerun label selection');
+    return c.json(await rerunLabels.copy(input.data.routineId, input.data.kind, input.data.targetId));
+  });
   app.get("/suite-index/labels", async c => c.json(await suites.labels((c.req.query("requestIds") ?? "").split(",").filter(Boolean))));
   app.get("/suite-index/list", async c => c.json(await suites.list()));
   app.get("/history/list", async c => c.json(await history.list(c.req.query())));
   app.get("/suites/:suiteId/summary", async c => c.json(await suites.summary(c.req.param("suiteId"))));
   app.get("/suites/:suiteId", async c => c.json(await suites.detail(c.req.param("suiteId"))));
   app.get("/", async c => c.json(await results.list(c.req.query())));
+  app.get("/pending-queue", async c => c.json(await new TestPendingQueueService().list(c.req.query("cursor"))));
   app.get("/activity", async c => c.json({requests: await TestRequestModel.find({state: {$ne: "terminal"}})
-    .sort({createdAt: 1, requestId: 1}).limit(100).select({requestId: 1, hostId: 1, state: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1, preparation: 1, preparationRejection: 1, preparationCancellation: 1, hostReceipt: 1, hostRejection: 1, hostCancellation: 1, cancellationAcknowledged: 1, createdAt: 1, fleetSelection: 1, fleetSelectionSha256: 1, fleetInputSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1, fleetActions: 1})
+    .sort({createdAt: 1, requestId: 1}).limit(100).select({requestId: 1, hostId: 1, state: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1, preparation: 1, preparationRejection: 1, preparationCancellation: 1, hostReceipt: 1, hostRejection: 1, hostCancellation: 1, cancellationAcknowledged: 1, createdAt: 1, fleetSelection: 1, fleetSelectionSha256: 1, fleetInputSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1, fleetActions: 1, fleetPreparationStatus: 1})
     .read("primary").readConcern("majority").lean().then(rows => rows.map(row => displayRequest(row as StoredRequest)))}));
   app.get("/health", async c => c.json(await health.list()));
   app.get("/health/:hostId", async c => c.json(await health.history(c.req.param("hostId"), c.req.query("days"))));
+  app.get('/lanes/:hostId/controls', async c => {
+    if (!c.var.developer?.developerId) return c.json({error: 'testing_operator_required'}, 403)
+    return c.json(await controls.list(c.req.param('hostId'), c.var.developer.developerId))
+  })
+  app.post('/lanes/controls', frameworkBodyLimit(4096), async c => {
+    if (!c.var.developer?.developerId) return c.json({error: 'testing_operator_required'}, 403)
+    return c.json(await controls.submit(await frameworkJson(c), c.var.developer.developerId), 202)
+  })
   app.get("/lanes/overview", async c => c.json(await restoration.overview()));
   app.get("/restoration/list", async c => c.json(await restoration.list(c.req.query('hostId'))));
+  app.get('/pr-checks/:gateId', async c => {
+    const id = c.req.param('gateId');
+    if (!/^pr-check-[a-f0-9]{64}$/.test(id)) throw new TestRunError(400, 'Invalid PR check identity');
+    return c.json(await checks.adminDetail(id));
+  });
+  app.post('/pr-checks/:gateId/cancel', frameworkBodyLimit(4096), async c => {
+    const id = c.req.param('gateId'), input = z.object({operationId: z.string().uuid(), coverageGeneration: z.number().int().positive().safe(),
+      attemptGeneration: z.number().int().positive().safe()}).strict().safeParse(await frameworkJson(c));
+    if (!/^pr-check-[a-f0-9]{64}$/.test(id) || !input.success) throw new TestRunError(400, 'Invalid PR cancellation operation');
+    if (!c.var.developer?.developerId) return c.json({error: 'testing_operator_required'}, 403);
+    return c.json(await checks.cancelFromAdmin(id, input.data, `admin:${c.var.developer.developerId}`), 202);
+  });
   app.get("/:runId", async c => {
     const id = c.req.param("runId");
     if (!frameworkIdentitySchema.safeParse(id).success) throw new TestRunError(400, "Invalid run or request identity");
-    try {return c.json({kind: "run", ...await results.detailByRun(id)});}
+    try {return c.json({kind: "run", ...await results.detailByRun(id, true)});}
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
-    try {return c.json({kind: "run", ...await results.detail(id)});}
+    try {return c.json({kind: "run", ...await results.detail(id, true)});}
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
     const row = await requests.get(id);
     if (!row) throw new TestRunError(404, "Routine run or request was not found");
-    return c.json({kind: "request", request: displayRequest(row)});
+    const request = displayRequest(row);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const live = await Promise.race([progress.get(row), new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Live observation read timed out')), 3000);
+      })]);
+      return c.json({kind: "request", request: {...request, ...(live ? {live} : {})}});
+    } catch {
+      // Live observations are optional display data, never a reason to hide accepted custody.
+      return c.json({kind: "request", request: {...request, liveUnavailable: true}});
+    } finally {clearTimeout(timeout);}
   });
   app.on(["GET", "HEAD"], "/:runId/assets/:assetId", c => results.mediaByRun(c.req.param("runId"), c.req.param("assetId"), c.req.raw));
   return app;
@@ -64,7 +111,7 @@ function displayRequest(row: StoredRequest): FrameworkRequestDisplay {
         definitionRevision: selected.routineRevision, ...(selected.routineSource ? {routineSource: selected.routineSource} : {}),
         minimumFrameworkVersion: selected.minimumFrameworkVersion, build: selected.build, state: fleet.state,
         terminalStatus: fleet.terminalStatus, createdAt: fleet.createdAt?.toISOString(),
-        reason: fleet.fleetCancellation?.reason ?? fleet.fleetDispatch?.error ?? (fleet.state === 'awaiting-source' ?
+        reason: fleet.fleetCancellation?.reason ?? fleet.fleetPreparationStatus?.reason ?? fleet.fleetDispatch?.error ?? (fleet.state === 'awaiting-source' ?
           'Preparing the exact routine source.' : 'Awaiting a compatible testing runner.'),
         ...(fleet.fleetCancellation ? {cancellationRequested: true, cancellationAcknowledged: true} : {}),
         actionsRuns: fleet.fleetActions ?? []};
@@ -98,8 +145,8 @@ function displayRequest(row: StoredRequest): FrameworkRequestDisplay {
       ...(input.minimumFrameworkVersion !== undefined ? {minimumFrameworkVersion: input.minimumFrameworkVersion} : {}),
       laneId: input.laneId, build: input.build, state: row.state, terminalStatus: row.terminalStatus,
       createdAt: row.createdAt?.toISOString(), acceptedAt: row.hostReceipt?.acceptedAt,
-      reason: rejection ? `${rejection.code}: ${rejection.reason}` : cancellation?.reason,
-      reasonAt: rejection?.rejectedAt ?? cancellation?.requestedAt,
+      reason: !row.runId && row.publicationFailure ? `Publication failed: ${row.publicationFailure.message}` : rejection ? `${rejection.code}: ${rejection.reason}` : cancellation?.reason,
+      reasonAt: !row.runId && row.publicationFailure ? row.publicationFailure.rejectedAt : rejection?.rejectedAt ?? cancellation?.requestedAt,
       ...(cancellation ? {cancellationRequested: true, cancellationAcknowledged: row.cancellationAcknowledged === true} : {})};
     if (fleet.fleetBinding) {request.assignment = fleet.fleetBinding;request.actionsRuns = fleet.fleetActions ?? [];}
     return request;

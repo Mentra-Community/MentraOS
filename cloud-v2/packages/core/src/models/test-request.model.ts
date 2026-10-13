@@ -18,14 +18,17 @@ const schema = new Schema({
   hostId: {type: String, required: function(this: {fleetSelection?: unknown}) {return !this.fleetSelection;}, immutable: true},
   fleetSelection: {type: Schema.Types.Mixed, immutable: true},
   fleetSelectionSha256: {type: String, immutable: true},
+  fleetPreparationStatus: {type: Schema.Types.Mixed},
   fleetPreparation: {type: Schema.Types.Mixed, immutable: true},
   fleetInputSha256: {type: String, immutable: true},
   fleetDeadline: {type: Date, immutable: true},
   fleetTarget: {type: Schema.Types.Mixed, immutable: true},
   fleetBinding: {type: Schema.Types.Mixed, immutable: true},
   fleetCancellation: {type: Schema.Types.Mixed},
+  fleetSupersessionCheckedAt: {type: Date},
   fleetDispatch: {type: Schema.Types.Mixed},
   dispatchCompletion: {type: Schema.Types.Mixed, immutable: true},
+  publicationFailure: {type: Schema.Types.Mixed, immutable: true},
   fleetActionsCancellation: {type: Schema.Types.Mixed},
   fleetActions: {type: [Schema.Types.Mixed], default: undefined},
   state: {type: String, required: true, enum: ["awaiting-source", "awaiting-runner", "preparing", "queued", "accepted", "running", "terminal"]},
@@ -38,6 +41,7 @@ const schema = new Schema({
   catalogEligible: {type: Boolean},
 }, {collection: "test_requests", timestamps: true});
 schema.index({state: 1, createdAt: 1, requestId: 1});
+schema.index({"fleetSelection.source.channel": 1, fleetSupersessionCheckedAt: 1, createdAt: 1, requestId: 1});
 schema.index({hostId: 1, state: 1});
 schema.index({hostId: 1, state: 1, preparationCheckedAt: 1, createdAt: 1, requestId: 1});
 schema.index({hostId: 1, "hostCancellation.requestedAt": 1, requestId: 1},

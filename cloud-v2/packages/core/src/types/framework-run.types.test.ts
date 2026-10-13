@@ -1,6 +1,7 @@
 import {testRoutineSource, testFrameworkBinding} from "../testing/framework-fixtures"
 import {expect, test} from "bun:test";
 import {FRAMEWORK_RUN_ASSET_LIMIT, frameworkAssetIdSchema, frameworkEvidenceComplete, frameworkRunOutcome, frameworkRunSchema} from "./framework-run.types";
+import {lifecycleRuns} from '../testing/framework-lifecycle.fixture';
 
 function run() {
   return {
@@ -23,6 +24,81 @@ function run() {
       timing: {startedAt: "2026-10-02T19:00:00Z", setupMs: 1000, testMs: 1000, teardownMs: 1000}},
   }
 }
+
+test('frozen Harness results preserve diagnostic actions and failed verdict independently of physical readiness', () => {
+  for (const fixture of lifecycleRuns) {
+    const parsed = frameworkRunSchema.parse(fixture.run);
+    expect(parsed as unknown).toEqual(fixture.producedRun);
+    expect(parsed.result.teardown.ready).toBe(true);
+    expect(parsed.result.diagnostics?.every(action => action.scope === 'shared')).toBe(true);
+    expect(parsed.result.timing.diagnosticsMs).toBeCloseTo(parsed.result.diagnostics!.reduce((total, action) => total + action.durationMs, 0), 5);
+    expect(frameworkRunOutcome(parsed)).toBe(fixture.scenario === 'diagnostic-failure' ? 'failed' : 'teardown-failed');
+    expect(frameworkEvidenceComplete(parsed)).toBe(fixture.scenario === 'routine-teardown');
+  }
+});
+
+test('diagnostic contract rejects missing timing, malformed actions, unreported failures and unbounded metadata', () => {
+  const base = lifecycleRuns.find(fixture => fixture.scenario === 'diagnostic-failure')!.run;
+  const [action] = base.result.diagnostics!;
+  for (const result of [
+    {...base.result, diagnostics: undefined},
+    {...base.result, timing: {...base.result.timing, diagnosticsMs: undefined}},
+    {...base.result, timing: {...base.result.timing, diagnosticsMs: -1}},
+    {...base.result, timing: {...base.result.timing, diagnosticsMs: base.result.timing.diagnosticsMs! + 1}},
+    {...base.result, diagnostics: [...base.result.diagnostics!, action]},
+    {...base.result, diagnostics: [{...action, durationMs: -1}]},
+    {...base.result, diagnostics: [{...action, scope: 'routine'}]},
+    {...base.result, diagnostics: [{...action, fixtureProvider: 'arbitrary'}]},
+    {...base.result, diagnostics: [{...action, stage: 'resource-cleanup'}]},
+    {...base.result, diagnostics: [{...action, status: 'failed'}], timing: {...base.result.timing, diagnosticsMs: action.durationMs}},
+    {...base.result, failures: base.result.failures.filter(error => error.phase !== 'evidence')},
+    {...base.result, failures: [{...base.result.failures[0]!, diagnostics: {raw: 'x'.repeat(65536)}}]},
+  ]) expect(frameworkRunSchema.safeParse({...base, result}).success).toBe(false);
+});
+
+test('ready cleanup rejects failed/live outcomes and retains secondary errors for every outcome state', () => {
+  const good = run(), primary = {phase: 'teardown' as const, actionId: 'app', message: 'Uninstall failed'},
+    secondary = {phase: 'evidence' as const, actionId: 'app:screenshot', message: 'Screenshot unavailable', diagnostics: {attempt: 1}};
+  for (const outcome of [
+    {state: 'failed' as const, resourceId: 'app', failure: primary, errors: [secondary]},
+    {state: 'still-active' as const, resourceId: 'app', writer: {pid: 1}, evidence: [], errors: [secondary]},
+  ]) {
+    const failures = outcome.state === 'failed' ? [primary, secondary] : [secondary];
+    const result = {...good.result, failures, teardown: {...good.result.teardown, ready: false, outcomes: [outcome], errors: failures,
+      unavailableResources: [{resource: 'app', cause: 'Owned state unresolved', nextAction: 'Read back original operation'}]}};
+    expect(frameworkRunSchema.parse({...good, result}).result.teardown.outcomes[0]).toEqual(outcome);
+    expect(frameworkRunSchema.safeParse({...good, result: {...result, teardown: {...result.teardown, ready: true}}}).success).toBe(false);
+    expect(frameworkRunSchema.safeParse({...good, result: {...result, failures: []}}).success).toBe(false);
+  }
+});
+
+test('cleanup failures retain identical diagnostic JSON in every flattened copy and outcome state', () => {
+  const good = run();
+  const details = {measurements: [{mask: 'screen', pixels: 7}], context: {attempt: 1, settled: true}};
+  for (const diagnostics of [details, null, false, [1, 'two'], undefined]) {
+    const error = {phase: 'teardown' as const, actionId: 'app', message: 'Cleanup observation failed',
+      ...(diagnostics !== undefined ? {diagnostics} : {})};
+    for (const state of ['cleaned', 'still-active', 'failed'] as const) {
+      const outcome = state === 'failed' ? {state, resourceId: 'app', failure: error, errors: [error]}
+        : state === 'still-active' ? {state, resourceId: 'app', writer: {pid: 1}, evidence: [], errors: [error]}
+          : {state, resourceId: 'app', evidence: [], errors: [error]};
+      const result = {...good.result, failures: [error], teardown: {ready: state === 'cleaned', outcomes: [outcome],
+        errors: [error], unavailableResources: state === 'cleaned' ? [] : [{resource: 'app', cause: 'Unresolved', nextAction: 'Inspect owned writer'}]}};
+      expect(frameworkRunSchema.safeParse({...good, result}).success).toBe(true);
+      for (const changedDiagnostics of [undefined, null, {measurements: [{mask: 'screen', pixels: 8}]}]) {
+        if (JSON.stringify(changedDiagnostics) === JSON.stringify(diagnostics)) continue;
+        const {diagnostics: _removed, ...without} = error as typeof error & {diagnostics?: unknown};
+        const changed = {...without, ...(changedDiagnostics !== undefined ? {diagnostics: changedDiagnostics} : {})};
+        expect(frameworkRunSchema.safeParse({...good, result: {...result, failures: [changed]}}).success).toBe(false);
+        expect(frameworkRunSchema.safeParse({...good, result: {...result, teardown: {...result.teardown, errors: [changed]}}}).success).toBe(false);
+      }
+      if (diagnostics === details) {
+        const reordered = {...error, diagnostics: {context: {settled: true, attempt: 1}, measurements: [{pixels: 7, mask: 'screen'}]}};
+        expect(frameworkRunSchema.safeParse({...good, result: {...result, failures: [reordered]}}).success).toBe(true);
+      }
+    }
+  }
+});
 
 test("large manifests preserve all evidence and retain a bounded cardinality", () => {
   const good = run();
@@ -75,10 +151,12 @@ test("empty steps and recorded failures cannot qualify a passing test", () => {
   expect(frameworkEvidenceComplete(evidenceFailure)).toBe(false);
 });
 
-test("ready teardown cannot conceal an explicit teardown failure", () => {
+test("physical readiness preserves explicit teardown failure and cannot turn its outcome into pass", () => {
   const good = run();
-  expect(frameworkRunSchema.safeParse({...good, result: {...good.result,
-    failures: [{phase: "teardown", actionId: "uninstall", message: "failed"}]}}).success).toBe(false);
+  const failed = frameworkRunSchema.parse({...good, result: {...good.result,
+    failures: [{phase: "teardown", actionId: "uninstall", message: "failed"}]}});
+  expect(failed.result.teardown.ready).toBe(true);
+  expect(frameworkRunOutcome(failed)).toBe('teardown-failed');
  });
 
 test("cleaned recorder diagnostics preserve evidence failure independently of hardware readiness", () => {
@@ -99,7 +177,8 @@ test("cleaned recorder diagnostics preserve evidence failure independently of ha
   const teardownError = {...error, phase: "teardown"};
   const failed = {...good, result: {...good.result, failures: [teardownError],
     teardown: {...good.result.teardown, outcomes: [{...cleaned, errors: [teardownError]}], errors: [teardownError]}}};
-  expect(frameworkRunSchema.safeParse(failed).success).toBe(false);
+  expect(frameworkRunSchema.parse(failed).result.teardown.ready).toBe(true);
+  expect(frameworkRunOutcome(frameworkRunSchema.parse(failed))).toBe('teardown-failed');
   expect(frameworkRunOutcome(frameworkRunSchema.parse({...failed, result: {...failed.result,
     teardown: {...failed.result.teardown, ready: false}}}))).toBe("teardown-failed");
   expect(frameworkRunSchema.safeParse({...good, result: {...good.result,
@@ -216,6 +295,37 @@ test("failed shared teardown actions require their own outcome diagnostics and c
   expect(frameworkRunOutcome(frameworkRunSchema.parse(active))).toBe("teardown-failed");
 });
 
+test("interrupted shared cleanup publishes its original failure without inventing a resource outcome", () => {
+  const old = run();
+  const action = {id: "cleanup:glasses", instruction: "Settle the requested glasses software",
+    expected: "The glasses are ready to release", scope: "shared" as const, status: "failed" as const,
+    startedAt: old.startedAt, durationMs: 1000};
+  const original = {phase: "test" as const, actionId: "settings", message: "The app reported Check Failed"};
+  const error = {phase: "teardown" as const, actionId: action.id, message: "Cleanup exceeded its deadline; inspect writer settlement"};
+  const report = {...old, result: {...old.result, test: "failed", steps: [{id: "settings", status: "failed", durationMs: 1000}],
+    failures: [original, error], teardown: {ready: false, actions: [action], outcomes: [], errors: [error],
+      unavailableResources: [{resource: "glasses", cause: "Cleanup has not returned", nextAction: "Inspect and settle retained custody"}]}}};
+  const parsed = frameworkRunSchema.parse(report);
+  expect(frameworkRunOutcome(parsed)).toBe("failed");
+  expect(parsed.result.failures).toEqual([original, error]);
+  expect(parsed.result.teardown.ready).toBe(false);
+  expect(parsed.result.teardown.outcomes).toEqual([]);
+  expect(frameworkEvidenceComplete(parsed)).toBe(true);
+  for (const invalid of [
+    {...report, result: {...report.result, failures: [original]}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown, errors: []}}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown, ready: true}}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown, unavailableResources: []}}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown,
+      unavailableResources: [{resource: "other", cause: "Unrelated cleanup", nextAction: "Inspect"}]}}},
+    {...report, result: {...report.result, failures: [original, {...error, actionId: "other"}],
+      teardown: {...report.result.teardown, errors: [{...error, actionId: "other"}]}}},
+    {...report, result: {...report.result, failures: [original, {...error, message: "Different failure"}]}},
+    {...report, result: {...report.result, teardown: {...report.result.teardown,
+      outcomes: [{state: "cleaned", resourceId: "glasses", evidence: [], errors: []}]}}},
+  ]) expect(frameworkRunSchema.safeParse(invalid).success).toBe(false);
+});
+
 test("ready shared cleanup failures are allowed only for flattened evidence diagnostics on the matching cleaned resource", () => {
   const old = run();
   const action = {id: "cleanup:recorder", instruction: "Stop and finalize the original recording", expected: "The recorder is settled",
@@ -318,4 +428,14 @@ test('rejected public recording retains original step offsets only with matching
   expect(rejected.success).toBe(false);
   if (!rejected.success) expect(rejected.error.issues.map(issue => issue.path)).toEqual(
     steps.map((_, index) => ['result', 'steps', index, 'recordingLocation']));
+});
+
+test('step source pins are bounded and tied to the recorded routine and installed framework commits', () => {
+  const good = run(), source = {id: 'settings', repository: 'Mentra-Community/Mentra-Automated-Testing', revision: good.definitionRevision,
+    path: 'routines/no-glasses/routine.ts', line: 28};
+  const pinned = {...good, result: {...good.result, stepSources: {setup: [], test: [source], teardown: []}}};
+  expect(frameworkRunSchema.safeParse(pinned).success).toBe(true);
+  for (const changes of [{revision: 'c'.repeat(40)}, {path: 'routines/../secrets.ts'}, {line: 0}, {id: 'foreign'},
+    {repository: 'someone/else'}, {path: 'framework/run.ts'}])
+    expect(frameworkRunSchema.safeParse({...pinned, result: {...pinned.result, stepSources: {setup: [], test: [{...source, ...changes}], teardown: []}}}).success).toBe(false);
 });

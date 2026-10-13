@@ -4,6 +4,10 @@ import {renderToStaticMarkup} from "react-dom/server"
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query"
 import {
   FrameworkRunPage,
+  initialFrameworkStep,
+  stepRecordingPlayback,
+  selectedFailureScreen,
+  runFailureSummary,
   FrameworkRunsPage,
   RoutineCatalogCard,
   RoutineCatalogList,
@@ -13,7 +17,7 @@ import {
   matchesCatalogSearch,
   matchesHistorySearch,
   routineCatalogOverviewQuery,
-  historyOrigin,
+  requestLiveStatus,
   matchesStepSearch,
   recordingOffset,
   testHistoryListPath,
@@ -23,6 +27,97 @@ import type {TestHistoryEntry} from "../../../../packages/core/src/types/test-hi
 import {readTestRunLink} from "../lib/test-run-links"
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types"
 import {frameworkRunSchema, recordedFrameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types"
+import {lifecycleRuns} from '../../../../packages/core/src/testing/framework-lifecycle.fixture';
+
+test('active run page shows current phase, completed count and named steps before final publication', () => {
+  const now = new Date().toISOString(), requestId = 'active-miniapps';
+  const client = new QueryClient();
+  client.setQueryData(['framework-run', requestId], {kind: 'request', request: {
+    requestId, hostId: 'testing-pro-1', routineId: 'miniapps', platform: 'android', laneId: 'phone', state: 'accepted',
+    definitionRevision: 'a'.repeat(40), build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    live: {title: 'Open and close miniapps', receivedAt: now, observationAgeMs: 0, progress: {phase: 'test', currentStep: {id: 'close', index: 1},
+      completedSteps: 1, totalSteps: 3, startedAt: now, observedAt: now},
+      steps: [{id: 'open', instruction: 'Open miniapp'}, {id: 'close', instruction: 'Close miniapp'}, {id: 'home', instruction: 'Verify Home'}]},
+  }});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={requestId}/></QueryClientProvider>);
+  expect(html).toContain('Open and close miniapps: In progress');
+  expect(html).toContain('Running test');
+  expect(html).toContain('1/3 steps completed');
+  expect(html).toContain('Completed'); expect(html).toContain('Pending');
+  expect(html).toContain('aria-current="step"');
+  expect(html).toContain('Close miniapp');
+  expect(html).toContain('Final result and evidence are pending.');
+  expect(html).not.toContain('No routine result has been published.');
+  expect(html).not.toContain('Passed'); expect(html).not.toContain('<video');
+  const cached = client.getQueryData<{kind: 'request'; request: {live: {observationAgeMs: number}}}>(['framework-run', requestId])!;
+  cached.request.live.observationAgeMs = 61_000;
+  client.setQueryData(['framework-run', requestId], cached);
+  const stale = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={requestId}/></QueryClientProvider>);
+  expect(stale).toContain('Progress unavailable');
+  expect(stale).toContain('Last observed');
+  expect(stale).not.toContain('animate-spin');
+  expect(stale).not.toContain('>Running<');
+  expect(stale).not.toContain('miniapps: In progress');
+})
+
+test('stale live observations freeze elapsed time and stop claiming a currently running step', () => {
+  const request = {live: {receivedAt: '2026-10-03T00:02:00Z', observationAgeMs: 0, progress: {phase: 'routine-teardown', startedAt: '2026-10-03T00:00:00Z',
+    observedAt: '2026-10-03T00:02:00Z'}}} as Parameters<typeof requestLiveStatus>[0];
+  const received = Date.parse('2026-10-03T00:02:00Z');
+  expect(requestLiveStatus(request, received + 60_000, received)).toEqual({stale: false, phase: 'Routine cleanup', elapsed: '3m 00s'});
+  expect(requestLiveStatus(request, received + 61_000, received)).toEqual({stale: true, phase: 'Routine cleanup', elapsed: '2m 00s'});
+  expect(requestLiveStatus({} as Parameters<typeof requestLiveStatus>[0])).toBeNull();
+})
+
+test('controller and browser clock offsets cannot mark fresh heartbeats stale or extend stopped activity', () => {
+  for (const controllerOffset of [-120_000, 120_000]) for (const browserOffset of [-120_000, 120_000]) {
+    const server = Date.parse('2026-10-03T01:00:00Z'), browser = server + browserOffset;
+    const request = {live: {receivedAt: new Date(server).toISOString(), observationAgeMs: 2000,
+      progress: {phase: 'test', startedAt: new Date(server + controllerOffset - 30_000).toISOString(),
+        observedAt: new Date(server + controllerOffset).toISOString()}}} as Parameters<typeof requestLiveStatus>[0];
+    expect(requestLiveStatus(request, browser, browser)).toEqual({stale: false, phase: 'Running test', elapsed: '32s'});
+    expect(requestLiveStatus(request, browser + 90_000, browser)).toEqual({stale: true, phase: 'Running test', elapsed: '30s'});
+  }
+})
+
+test('run page separates actual Harness diagnostic actions/time from teardown failures and resource readiness', () => {
+  const fixture = lifecycleRuns.find(fixture => fixture.scenario === 'cleaned-provider-error')!;
+  const run = frameworkRunSchema.parse(fixture.run), client = new QueryClient();
+  client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome: 'teardown-failed', uploadsComplete: true, evidenceStatus: 'failed'});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+  const teardownStart = html.indexOf('aria-label="Teardown details"'), diagnosticStart = html.indexOf('aria-label="Diagnostics details"');
+  const teardown = html.slice(teardownStart, diagnosticStart), diagnostic = html.slice(diagnosticStart, html.indexOf('id="run-phase-evidence"'));
+  expect(teardown).toContain('Resources ready');
+  expect(teardown).toContain('Cleanup journal unavailable');
+  expect(teardown).toContain('>Failed</span>');
+  expect(diagnostic).toContain('Save failure screenshot');
+  expect(diagnostic).toContain('Submit incident report');
+  expect(diagnostic).toContain('Started ');
+  expect(diagnostic).toContain('Finished ');
+  expect(diagnostic).not.toContain('<video');
+  expect(teardown).not.toContain('Save failure screenshot');
+  expect(html).toContain(' · Diagnostics ');
+  expect(teardownStart).toBeLessThan(diagnosticStart);
+});
+
+test('diagnostic summary preserves failed precedence and cancelled actions in mixed results', () => {
+  const original = lifecycleRuns.find(fixture => fixture.scenario === 'diagnostic-failure')!.run;
+  for (const statuses of [['cancelled'], ['passed', 'cancelled'], ['failed', 'cancelled']] as const) {
+    const diagnostics = statuses.map((status, index) => ({...original.result.diagnostics![index % original.result.diagnostics!.length]!,
+      id: `diagnostic:${index}`, status}));
+    const failures = diagnostics.filter(action => action.status !== 'passed').map(action => ({
+      phase: 'evidence' as const, actionId: action.id, message: `Diagnostic ${action.status}`}));
+    const run = frameworkRunSchema.parse({...original, result: {...original.result, diagnostics,
+      failures: [...original.result.failures.filter(failure => failure.phase !== 'evidence'), ...failures],
+      timing: {...original.result.timing, diagnosticsMs: diagnostics.reduce((sum, action) => sum + action.durationMs, 0)}}});
+    const client = new QueryClient();
+    client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome: 'failed', uploadsComplete: true, evidenceStatus: 'failed'});
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+    const header = html.slice(html.indexOf('aria-label="Diagnostics details"'), html.indexOf('Diagnostics: Diagnostic actions'));
+    expect(header).toContain(statuses.some(status => status === 'failed') ? '>Failed</span>' : '>Cancelled</span>');
+    expect(header).not.toContain('>Passed</span>');
+  }
+});
 
 const routine = routineEnrollmentSchema.parse({
   routineId: "notes-phone",
@@ -64,6 +159,8 @@ test('historical recorded runs render unknown provenance without fabricating ide
   expect(html).toContain('Framework provenance unknown')
   expect(html).toContain('Routine bundle provenance unknown')
   expect(html).not.toContain('Routine API 1')
+  expect(html).not.toContain('Loading follow-up')
+  expect(html).not.toContain('Failure follow-up')
   expect(run).not.toHaveProperty('routineSource')
   expect(run).not.toHaveProperty('frameworkBinding')
 })
@@ -312,6 +409,7 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
       {id: "recording", kind: "recording", path: "video.mp4", sha256: "a".repeat(64), size: 100, mimeType: "video/mp4"},
     ],
     result: {
+      stepSources: {setup: [], teardown: [], test: [{id: "step-0", repository: "Mentra-Community/Mentra-Automated-Testing", revision: "c".repeat(40), path: "routines/notes-phone/routine.ts", line: 65}]},
       runId: "request",
       finishedAt: "2026-10-03T19:02:00Z",
       setup: {status: "passed"},
@@ -344,16 +442,18 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
     )
   }
   const html = render(true)
+  expect(html).toContain(`https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/${"c".repeat(40)}/routines/notes-phone/routine.ts#L65`)
+  expect(html).toContain('aria-label="View this step on GitHub"')
   expect(html).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]")
-  expect(html.indexOf('aria-label="Run recording"')).toBeLessThan(html.indexOf('aria-label="Execution steps"'))
+  expect(html.indexOf('aria-label="Run evidence viewer"')).toBeLessThan(html.indexOf('aria-label="Execution steps"'))
   expect(html).toContain("order-2 lg:order-1 lg:flex lg:min-h-0 lg:flex-col")
-  expect(html).toContain("lg:h-[calc(var(--recording-height)+5rem)]")
+  expect(html).toContain("lg:h-[calc(var(--recording-height)+8rem)]")
   expect(html).toContain('role="region" aria-label="Execution details" tabindex="0"')
   expect(html).toContain("lg:overflow-y-auto")
   expect(html).not.toContain("lg:sticky")
   expect(html).toContain("h-[var(--recording-height)]")
   expect(html).toContain("object-contain")
-  expect(html.indexOf('aria-label="Setup details"')).toBeLessThan(html.indexOf('aria-label="Run recording"'))
+  expect(html.indexOf('aria-label="Setup details"')).toBeLessThan(html.indexOf('aria-label="Run evidence viewer"'))
   expect(html.indexOf('aria-label="Teardown details"')).toBeGreaterThan(html.indexOf('aria-label="Execution steps"'))
   expect(html.indexOf('aria-label="Teardown details"')).toBeLessThan(
     html.indexOf('<h3 class="font-semibold">Evidence</h3>'),
@@ -395,6 +495,109 @@ test("run keeps steps and recording in one equal-height desktop row with evidenc
     expect(legacy).toContain(status === "cancelled" ? "Cancelled" : "Failed")
   }
 })
+
+test("failed runs select the failure; explicit step links preserve their requested start", () => {
+  const run = recordedFrameworkRunSchema.parse({
+    schemaVersion: 1, requestId: "failed-run", hostId: "mini", routineId: "notes-phone",
+    definitionRevision: "c".repeat(40), platform: "android", laneId: "phone",
+    build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40)},
+    startedAt: "2026-10-03T19:00:00Z", finishedAt: "2026-10-03T19:01:00Z",
+    recordingAssetId: "recording", assets: [
+      {id: "recording", kind: "recording", path: "video.mp4", sha256: "a".repeat(64), size: 100, mimeType: "video/mp4"},
+    ],
+    result: {runId: "failed-run", finishedAt: "2026-10-03T19:01:00Z", setup: {status: "passed"}, test: "failed",
+      steps: [
+        {id: "open", status: "passed", durationMs: 5000, recordingLocation: {assetId: "recording", startOffsetMs: 0, endOffsetMs: 5000}},
+        {id: "connect", status: "failed", durationMs: 10000, recordingLocation: {assetId: "recording", startOffsetMs: 5000, endOffsetMs: 15000}},
+        {id: "verify", status: "not-run", durationMs: 0, causedBy: "connect"},
+      ], teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: "test", actionId: "connect", message: "Bluetooth sheet remained open"}], evidence: ["recording"],
+      timing: {startedAt: "2026-10-03T19:00:00Z", setupMs: 0, testMs: 15000, teardownMs: 0}},
+  });
+  const client = new QueryClient();
+  client.setQueryData(["framework-run", run.requestId], {run, definition: null, outcome: "failed", uploadsComplete: true, evidenceStatus: "complete"});
+  const render = (stepId?: string) => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId} stepId={stepId}/></QueryClientProvider>);
+  const incidentPending = {run, definition: null, outcome: "failed", uploadsComplete: true,
+    evidenceStatus: "complete" as const, incidentReportId: null, incidentReportPending: true};
+  const observedAt = Date.parse('2026-10-03T19:01:00Z');
+  expect(frameworkRunRefetchInterval(incidentPending, observedAt, observedAt + 599999)).toBe(5000);
+  expect(frameworkRunRefetchInterval(incidentPending, observedAt, observedAt + 600000)).toBe(false);
+  expect(frameworkRunRefetchInterval({...incidentPending, incidentReportPending: false, incidentReportId: 'rep_CREATED'}, observedAt, observedAt)).toBe(false);
+  client.setQueryData(["framework-run", run.requestId], incidentPending);
+  expect(render()).toContain('Refresh incident');
+  client.setQueryData(["framework-run", run.requestId], {...incidentPending, incidentReportPending: false, incidentReportId: 'rep_CREATED'});
+  expect(render()).toContain('href="/?report=rep_CREATED"');
+  expect(render()).not.toContain('Refresh incident');
+  expect(render()).toContain('data-step-id="connect" data-selected="true"');
+  expect(render()).not.toContain('data-step-id="open" data-selected="true"');
+  expect(render("open")).toContain('data-step-id="open" data-selected="true"');
+  expect(render("verify")).toContain('data-step-id="verify" data-selected="true"');
+  expect(initialFrameworkStep(run)?.id).toBe("connect");
+  expect(initialFrameworkStep(run, "open")?.id).toBe("open");
+  expect(initialFrameworkStep(run, "missing")?.id).toBe("connect");
+  const failed = run.result.steps[1]!;
+  expect(stepRecordingPlayback(run, failed, true)).toEqual({assetId: "recording", offset: 15, pause: true});
+  expect(stepRecordingPlayback(run, failed)).toEqual({assetId: "recording", offset: 5, pause: false});
+  const screen = {id: 'failure-image', kind: 'screenshot' as const, path: 'screenshots/opaque.png',
+    sha256: 'd'.repeat(64), size: 10, mimeType: 'image/png' as const};
+  const withScreen = {...run, assets: [...run.assets, screen]};
+  const failureScreens = [{phase: 'test' as const, actionId: 'connect', assetId: screen.id}];
+  client.setQueryData(['framework-run', run.requestId], {run: withScreen, definition: null, outcome: 'failed',
+    uploadsComplete: true, evidenceStatus: 'complete', failureScreens});
+  const opening = render();
+  expect(opening).toContain('alt="Failure screenshot: connect"');
+  expect(opening).toContain('/assets/failure-image');
+  expect(opening).toContain('Watch recording');
+  expect(opening).toContain('Watch this step');
+  expect(opening).not.toContain('<video');
+  expect(render('open')).toContain('<video');
+  expect(render('open')).not.toContain('<img');
+  expect(selectedFailureScreen(withScreen, failureScreens, 'connect', 'test')).toEqual(screen);
+  expect(selectedFailureScreen(withScreen, failureScreens, 'connect', 'setup')).toBeUndefined();
+  expect(selectedFailureScreen(withScreen, [{...failureScreens[0]!, assetId: 'foreign'}], 'connect', 'test')).toBeUndefined();
+  expect(selectedFailureScreen(withScreen, failureScreens, 'open', 'test')).toBeUndefined();
+  const desktop = {...screen, id: 'desktop-image', path: 'screenshots/full-desktop.png'};
+  const macRun = {...withScreen, platform: 'ios-on-mac' as const, assets: [...withScreen.assets, desktop]};
+  const macScreens = [{...failureScreens[0]!, desktopAssetId: desktop.id}];
+  client.setQueryData(['framework-run', run.requestId], {run: macRun, definition: null, outcome: 'failed',
+    uploadsComplete: true, evidenceStatus: 'complete', failureScreens: macScreens});
+  const macOpening = render();
+  expect(macOpening).toContain('data-step-id="connect" data-selected="true"');
+  expect(macOpening).toContain('alt="App: connect"');
+  expect(macOpening).toContain('alt="Desktop: connect"');
+  expect(macOpening.match(/<img /g)).toHaveLength(2);
+  expect(macOpening).toContain('/assets/failure-image');
+  expect(macOpening).toContain('/assets/desktop-image');
+  expect(macOpening).toContain('Open app screenshot');
+  expect(macOpening).toContain('Open desktop screenshot');
+  expect(macOpening).not.toContain('Desktop screenshot</button>');
+  expect(macOpening).not.toContain('<video');
+  expect(render('open')).toContain('<video');
+  expect(render('open')).not.toContain('<img');
+  client.setQueryData(['framework-run', run.requestId], {run: macRun, definition: null, outcome: 'failed',
+    uploadsComplete: true, evidenceStatus: 'complete', failureScreens: [{...macScreens[0]!, desktopAssetId: 'foreign'}]});
+  expect(render().match(/<img /g)).toHaveLength(1);
+  expect(render()).not.toContain('alt="Desktop:');
+  client.setQueryData(['framework-run', run.requestId], {run: withScreen, definition: null, outcome: 'failed',
+    uploadsComplete: false, evidenceStatus: 'complete', failureScreens});
+  expect(render()).not.toContain('<img');
+  client.setQueryData(['framework-run', run.requestId], {run: withScreen, definition: null, outcome: 'failed',
+    uploadsComplete: true, evidenceStatus: 'complete', failureScreens: []});
+  expect(render()).toContain('<video');
+  expect(render()).not.toContain('<img');
+  expect(stepRecordingPlayback(run, {...failed, recordingLocation: {assetId: "recording", startOffsetMs: 5000}}, true)?.offset).toBe(5);
+  expect(stepRecordingPlayback(run, run.result.steps[2]!, true)).toBeNull();
+  const missingRecording = {...run, recordingAssetId: undefined, assets: []};
+  expect(stepRecordingPlayback(missingRecording, failed, true)).toBeNull();
+  client.setQueryData(["framework-run", run.requestId], {run: missingRecording, definition: null, outcome: "failed", uploadsComplete: true, evidenceStatus: "failed"});
+  expect(render()).toContain('data-step-id="connect" data-selected="true"');
+  expect(render()).not.toContain("<video");
+  expect(render()).toContain("Recording location unavailable");
+  expect(initialFrameworkStep({...run, result: {...run.result, steps: []}})).toBeUndefined();
+  expect(initialFrameworkStep(undefined)).toBeUndefined();
+  const passed = {...run, result: {...run.result, steps: run.result.steps.slice(0, 1)}};
+  expect(initialFrameworkStep(passed)?.id).toBe("open");
+});
 
 test("routine lifecycle rows report real actions without video and keep failures in their phase", () => {
   const run = frameworkRunSchema.parse({
@@ -505,7 +708,7 @@ test("routine lifecycle rows report real actions without video and keep failures
       <FrameworkRunPage runId="lifecycle-run" />
     </QueryClientProvider>,
   )
-  const setup = html.slice(html.indexOf('aria-label="Setup details"'), html.indexOf('aria-label="Run recording"'))
+  const setup = html.slice(html.indexOf('aria-label="Setup details"'), html.indexOf('aria-label="Run evidence viewer"'))
   const teardown = html.slice(
     html.indexOf('aria-label="Teardown details"'),
     html.indexOf('<h3 class="font-semibold">Evidence</h3>'),
@@ -530,12 +733,45 @@ test("routine lifecycle rows report real actions without video and keep failures
   expect(teardown).not.toContain("0s")
   expect(teardown).toContain("lost-ownership")
   expect(teardown).toContain("Fixture removal failed")
+  expect(html).toContain("Teardown: Fixture removal failed");
+  expect(html).toContain("Go to failure");
+  expect(teardown).toContain('id="run-failure-teardown-0"');
   for (const phase of [setup, teardown]) {
     expect(phase).not.toContain("<video")
     expect(phase).not.toContain("Watch this step")
   }
   expect(teardown).not.toContain("Log upload unavailable")
   expect(html.slice(html.indexOf('<h3 class="font-semibold">Evidence</h3>'))).toContain("Log upload unavailable")
+  const appImage = {id: 'lifecycle-app', kind: 'screenshot' as const, path: 'setup-evidence/screenshots/app.png',
+    mimeType: 'image/png' as const, size: 10, sha256: 'd'.repeat(64)};
+  const desktopImage = {...appImage, id: 'lifecycle-desktop', path: 'setup-evidence/screenshots/desktop.png'};
+  const renderLifecycle = () => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId="lifecycle-run" /></QueryClientProvider>);
+  for (const phase of ['setup', 'teardown'] as const) {
+    const failed = {...run.result.failures.find(failure => failure.phase === 'teardown')!, phase};
+    const candidate = {...run, assets: [...run.assets, appImage, desktopImage], result: {...run.result, failures: [failed]}};
+    const failureScreens = [{phase, actionId: failed.actionId, assetId: appImage.id, desktopAssetId: desktopImage.id}];
+    const display = {run: candidate, definition: null, outcome: `${phase}-failed`, uploadsComplete: true,
+      evidenceStatus: 'complete', failureScreens};
+    client.setQueryData(['framework-run', 'lifecycle-run'], display);
+    const both = renderLifecycle();
+    expect(both).toContain(`alt="App: ${failed.actionId}"`);
+    expect(both).toContain(`alt="Desktop: ${failed.actionId}"`);
+    expect(both.match(/<img /g)).toHaveLength(2);
+    expect(both).toContain('/assets/lifecycle-app');
+    expect(both).toContain('/assets/lifecycle-desktop');
+    expect(both).toContain('Watch recording');
+    expect(both).not.toContain('<video');
+    expect(selectedFailureScreen(candidate, failureScreens, failed.actionId, phase, 'desktop')).toEqual(desktopImage);
+    expect(selectedFailureScreen(candidate, failureScreens, failed.actionId, phase === 'setup' ? 'teardown' : 'setup', 'desktop')).toBeUndefined();
+    client.setQueryData(['framework-run', 'lifecycle-run'], {...display, failureScreens: [{phase, actionId: failed.actionId, desktopAssetId: desktopImage.id}]});
+    const desktopOnly = renderLifecycle();
+    expect(desktopOnly).toContain(`alt="Desktop: ${failed.actionId}"`);
+    expect(desktopOnly).toContain('/assets/lifecycle-desktop');
+    expect(desktopOnly).not.toContain('alt="App:');
+    expect(desktopOnly).not.toContain('<video');
+    client.setQueryData(['framework-run', 'lifecycle-run'], {...display, uploadsComplete: false});
+    expect(renderLifecycle()).not.toContain('<img');
+  }
   // Expand stages up to the last failure, independently for setup and teardown.
   for (const phase of ["setup", "teardown"] as const) for (const failed of [[], [3], [0, 4]]) {
     const candidate = structuredClone(run);
@@ -632,12 +868,12 @@ const historyRun: Extract<TestHistoryEntry, {kind: "run"}> = {
   uploadsComplete: true,
   build: {repository: "Mentra-Community/MentraOS", channel: "dev", headSha: "b".repeat(40), release: "dev.577"},
 }
-test("history always includes reruns and keeps source tabs available", () => {
-  expect(testHistoryListPath(false)).toBe("/api/admin/test-runs/history/list?limit=25&includeReruns=false");
-  expect(testHistoryListPath(true, "cursor/+next")).toBe("/api/admin/test-runs/history/list?limit=25&includeReruns=true&cursor=cursor%2F%2Bnext");
+test("history requests original runs and keeps source tabs available", () => {
+  expect(testHistoryListPath("pr")).toBe("/api/admin/test-runs/history/list?origin=pr&limit=25");
+  expect(testHistoryListPath("nightly", "cursor/+next")).toBe("/api/admin/test-runs/history/list?origin=nightly&limit=25&cursor=cursor%2F%2Bnext");
   const client = new QueryClient();
-  client.setQueryData(["test-history", true], {pages: [{entries: [historyRun], nextCursor: null}], pageParams: [undefined]});
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage historySource="branch"/></QueryClientProvider>);
+  client.setQueryData(["test-history", "other"], {pages: [{entries: [historyRun], nextCursor: null}], pageParams: [undefined]});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage historySource="other"/></QueryClientProvider>);
   expect(html).toContain('role="tablist" aria-label="Dispatch source"');
   expect(html).not.toContain("Show reruns");
   client.clear();
@@ -726,15 +962,15 @@ test("shared filters preserve selected options through refresh and expose cleari
 
 test("combined history renders chronological suites and standalone runs across loaded pages", () => {
   const client = new QueryClient()
-  client.setQueryData(["test-history", true], {
+  client.setQueryData(["test-history", "other"], {
     pages: [
       {
         entries: [
           {
             kind: "suite",
-            suiteId: "nightly-two",
+            suiteId: "manual-two",
             channel: "dev",
-            trigger: "nightly",
+            trigger: "manual",
             startedAt: "2026-10-03T20:00:00Z",
             outcome: "running",
             expectedCount: 2,
@@ -753,12 +989,12 @@ test("combined history renders chronological suites and standalone runs across l
   })
   const html = renderToStaticMarkup(
     <QueryClientProvider client={client}>
-      <FrameworkRunsPage historySource="branch" />
+      <FrameworkRunsPage historySource="other" />
     </QueryClientProvider>,
   )
-  expect(html).toContain('href="/?testSuite=nightly-two"')
+  expect(html).toContain('href="/?testSuite=manual-two"')
   expect(html).toContain('href="/?testRun=standalone-run"')
-  expect(html.indexOf("nightly-two")).toBeLessThan(html.indexOf("standalone-run"))
+  expect(html.indexOf("manual-two")).toBeLessThan(html.indexOf("standalone-run"))
   expect(html).toContain("0/2 failed")
   expect(html).toContain("dev.577")
   expect(html).toContain("More history")
@@ -770,7 +1006,7 @@ test("combined history renders chronological suites and standalone runs across l
 test("history reserves failure totals for suites and omits single-run step totals", () => {
   const client = new QueryClient()
   const counted = {...historyRun, stepCounts: {passed: 2, total: 5, skipped: 1}}
-  client.setQueryData(["test-history", true], {
+  client.setQueryData(["test-history", "other"], {
     pages: [
       {
         entries: [
@@ -779,7 +1015,7 @@ test("history reserves failure totals for suites and omits single-run step total
             kind: "suite",
             suiteId: "skipped-suite",
             channel: "dev",
-            trigger: "nightly",
+            trigger: "manual",
             startedAt: historyRun.startedAt,
             outcome: "failed",
             expectedCount: 3,
@@ -799,7 +1035,7 @@ test("history reserves failure totals for suites and omits single-run step total
   const render = (scope?: Record<string, string>) =>
     renderToStaticMarkup(
       <QueryClientProvider client={client}>
-        <FrameworkRunsPage scope={scope} historySource="branch" />
+        <FrameworkRunsPage scope={scope} historySource="other" />
       </QueryClientProvider>,
     )
   expect(render()).not.toContain("2/5 passed")
@@ -817,15 +1053,15 @@ test("history distinguishes empty data and cached refresh failures while keeping
   const render = (scope?: Record<string, string>) =>
     renderToStaticMarkup(
       <QueryClientProvider client={client}>
-        <FrameworkRunsPage scope={scope} historySource="branch" />
+        <FrameworkRunsPage scope={scope} historySource="other" />
       </QueryClientProvider>,
     )
-  client.setQueryData(["test-history", true], {pages: [{entries: [], nextCursor: null}], pageParams: [undefined]})
+  client.setQueryData(["test-history", "other"], {pages: [{entries: [], nextCursor: null}], pageParams: [undefined]})
   expect(render()).toContain("No test suites or routine runs yet")
-  client.setQueryData(["test-history", true], {pages: [{entries: [historyRun], nextCursor: null}], pageParams: [undefined]})
+  client.setQueryData(["test-history", "other"], {pages: [{entries: [historyRun], nextCursor: null}], pageParams: [undefined]})
   client
     .getQueryCache()
-    .find({queryKey: ["test-history", true]})!
+    .find({queryKey: ["test-history", "other"]})!
     .setState({error: new Error("refresh refused"), status: "error"})
   expect(render()).toContain("History could not refresh: refresh refused")
   expect(render()).toContain("standalone-run")
@@ -836,7 +1072,7 @@ test("history distinguishes empty data and cached refresh failures while keeping
   })
   const scoped = render(scope)
   expect(scoped).toContain("Filtered routine runs")
-  expect(scoped).not.toContain("nightly-two")
+  expect(scoped).not.toContain("manual-two")
   expect(scoped).toContain("dev.577")
   client.setQueryData(["framework-runs", new URLSearchParams(scope).toString()], {
     pages: [{runs: [historyRun], nextCursor: "older"}],
@@ -860,11 +1096,11 @@ test("initial history failure offers retry instead of claiming empty history", (
   const client = new QueryClient()
   client
     .getQueryCache()
-    .build(client, {queryKey: ["test-history", true]})
+    .build(client, {queryKey: ["test-history", "other"]})
     .setState({error: new Error("Request timed out. Please try again."), status: "error", fetchStatus: "idle"})
   const html = renderToStaticMarkup(
     <QueryClientProvider client={client}>
-      <FrameworkRunsPage historySource="branch" />
+      <FrameworkRunsPage historySource="other" />
     </QueryClientProvider>,
   )
   expect(html).toContain("Could not load test history: Request timed out. Please try again.")
@@ -877,7 +1113,7 @@ test("initial history failure offers retry instead of claiming empty history", (
 
 test("history visibility control stays available while the selected query is loading", () => {
   const client = new QueryClient();
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage historySource="branch"/></QueryClientProvider>);
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage historySource="other"/></QueryClientProvider>);
   expect(html).toContain("Loading test history");
   expect(html).toContain('role="tablist" aria-label="Dispatch source"');
   expect(html).not.toContain("Show reruns");
@@ -887,7 +1123,7 @@ test("history visibility control stays available while the selected query is loa
 
 test("unavailable history details retain their links without hiding neighboring results", () => {
   const client = new QueryClient()
-  client.setQueryData(["test-history", true], {
+  client.setQueryData(["test-history", "other"], {
     pages: [
       {
         entries: [
@@ -910,7 +1146,7 @@ test("unavailable history details retain their links without hiding neighboring 
             kind: "suite",
             suiteId: "older-suite",
             channel: "dev",
-            trigger: "nightly",
+            trigger: "manual",
             startedAt: "2026-10-03T16:00:00Z",
             outcome: "passed",
             expectedCount: 2,
@@ -928,7 +1164,7 @@ test("unavailable history details retain their links without hiding neighboring 
   })
   const html = renderToStaticMarkup(
     <QueryClientProvider client={client}>
-      <FrameworkRunsPage historySource="branch" />
+      <FrameworkRunsPage historySource="other" />
     </QueryClientProvider>,
   )
   expect(html).toContain('href="/?testRun=unreadable-run"')
@@ -973,23 +1209,26 @@ test("run header qualifies a pass only after evidence is complete", () => {
   }
 })
 
- test("dispatch tabs separate build channels while keeping reruns and manual suites out of CI", () => {
-  expect(historyOrigin({...historyRun, build: {...historyRun.build, channel: "pr", prNumber: 698}})).toBe("pr");
-  expect(historyOrigin(historyRun)).toBe("branch");
-  expect(historyOrigin({...historyRun, build: {...historyRun.build, channel: "staging"}})).toBe("branch");
-  expect(historyOrigin({...historyRun, rerun: {rerunId: "rerun"}})).toBe("manual");
-  expect(historyOrigin({...historyRun, build: {...historyRun.build, channel: "local"}})).toBe("manual");
+test("dispatch tabs request independent original-only API pages", () => {
   const client = new QueryClient();
-  const pr = {...historyRun, runId: "pr-ci", build: {...historyRun.build, channel: "pr", prNumber: 698}};
-  const manual = {...pr, runId: "manual-rerun", rerun: {rerunId: "r"}};
-  client.setQueryData(["test-history", true], {pages: [{entries: [pr, historyRun, manual], nextCursor: "older"}], pageParams: [undefined]});
-  const render = (historySource: "pr" | "branch" | "manual") => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage historySource={historySource}/></QueryClientProvider>);
-  expect(render("pr")).toContain("testRun=pr-ci");
-  expect(render("pr")).not.toContain("testRun=manual-rerun");
-  expect(render("branch")).toContain("testRun=standalone-run");
-  expect(render("manual")).toContain("testRun=manual-rerun");
-  expect(render("manual")).toContain("More history");
-  expect(render("manual")).not.toContain("Show reruns");
+  const pr = {...historyRun, runId: 'pr-ci', build: {...historyRun.build, channel: 'pr', prNumber: 698}};
+
+  const nightly = {kind: 'suite', suiteId: 'nightly-suite', channel: 'dev', trigger: 'nightly', build: historyRun.build,
+    startedAt: historyRun.startedAt, outcome: 'passed', expectedCount: 2, passed: 2, rerunCount: 1, failedCount: 0, lanes: []};
+  for (const [origin, entries] of [['pr', [pr]], ['nightly', [nightly]], ['other', [{...historyRun, rerunCount: 2}]]] as const) {
+    client.setQueryData(['test-history', origin], {pages: [{entries, nextCursor: 'older'}], pageParams: [undefined]});
+  }
+  const render = (historySource: 'pr' | 'nightly' | 'other') => renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunsPage historySource={historySource}/></QueryClientProvider>);
+  expect(render('pr')).toContain('testRun=pr-ci');
+  expect(render('pr')).not.toContain('testRun=standalone-rerun');
+  expect(render('nightly')).toContain('testSuite=nightly-suite');
+  expect(render('nightly')).not.toContain('testRun=standalone-rerun');
+  expect(render('other')).not.toContain('testRun=standalone-rerun');
+  expect(render('other')).toContain('2 reruns');
+  expect(render('other')).toContain('testRun=standalone-run');
+  expect(render('other')).toContain('More history');
+  expect(render('other')).not.toContain('Show reruns');
+  for (const origin of ['pr', 'nightly', 'other'] as const) expect(testHistoryListPath(origin)).toContain(`origin=${origin}`);
   client.clear();
 });
 
@@ -1004,4 +1243,46 @@ test("history search matches PR identities and SHA prefixes while retaining memb
   const suite = {kind: "suite", suiteId: "s", channel: "pr", trigger: "pr", build: run.build, startedAt: run.startedAt, outcome: "running", expectedCount: 2, passed: 0, failedCount: 0, rerunCount: 0, lanes: []} as const;
   expect(matchesHistorySearch(suite as any, [], {...EMPTY_ROUTINE_FILTERS, search: "#698"})).toBe(true);
   expect(matchesHistorySearch(suite as any, [], {...EMPTY_ROUTINE_FILTERS, search: "#698", platform: "android"})).toBe(false);
+});
+
+
+test("failure summary follows the execution verdict and stays brief", () => {
+  const run = {result: {failures: [
+    {phase: "evidence", actionId: "upload", message: "Upload failed"},
+    {phase: "test", actionId: "connect", message: "Meeting did not connect.\nDetailed diagnostic"},
+    {phase: "setup", actionId: "prepare", message: "Software preparation timed out"},
+  ], teardown: {unavailableResources: [{cause: "Camera is still active"}]}}} as any;
+  expect(runFailureSummary(run, "failed", "failed")).toEqual({phase: "test", actionId: "connect", reason: "Test: Meeting did not connect.", target: "run-failure-test-0"});
+  expect(runFailureSummary(run, "setup-failed", "failed")?.reason).toBe("Setup: Software preparation timed out");
+  expect(runFailureSummary(run, "teardown-failed", "failed")).toMatchObject({reason: "Teardown: Camera is still active", target: "run-phase-teardown"});
+  expect(runFailureSummary(run, "pass", "failed")?.reason).toBe("Evidence: Upload failed");
+  expect(runFailureSummary(run, "pass", "complete")).toBeNull();
+  run.result.failures = [];
+  expect(runFailureSummary(run, "failed", "complete")?.reason).toBe("Test: Test failed. No detailed reason was recorded.");
+  run.result.failures = [{phase: "test", actionId: "connect", message: "x".repeat(300)}];
+  expect(runFailureSummary(run, "failed", "complete")?.reason.length).toBe(164);
+});
+
+test('failed run links to its reported incident without changing failure selection', () => {
+  const run = recordedFrameworkRunSchema.parse({schemaVersion: 1, requestId: 'incident-run', hostId: 'mini', routineId: 'notes-phone',
+    definitionRevision: 'c'.repeat(40), platform: 'android', laneId: 'android',
+    build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    startedAt: '2026-10-09T19:00:00Z', finishedAt: '2026-10-09T19:01:00Z', assets: [],
+    result: {runId: 'incident-run', finishedAt: '2026-10-09T19:01:00Z', setup: {status: 'failed', actionId: 'pair'}, test: 'not-run',
+      steps: [{id: 'observe', status: 'not-run', durationMs: 0, causedBy: 'pair'}],
+      teardown: {ready: true, outcomes: [], errors: [], unavailableResources: []},
+      failures: [{phase: 'setup', actionId: 'pair', message: 'Glasses not found'}], evidence: [],
+      timing: {startedAt: '2026-10-09T19:00:00Z', setupMs: 1, testMs: 0, teardownMs: 0}}});
+  const client = new QueryClient();
+  const render = (incidentReportId?: string | null, outcome = 'setup-failed') => {
+    client.setQueryData(['framework-run', run.requestId], {run, definition: null, outcome, uploadsComplete: true,
+      evidenceStatus: 'complete', incidentReportId});
+    return renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={run.requestId}/></QueryClientProvider>);
+  };
+  expect(render('rep_EXACT')).toContain('href="/?report=rep_EXACT"');
+  expect(render('rep_EXACT')).toContain('>Incident report</a>');
+  expect(render('rep_EXACT')).toContain('Go to failure');
+  expect(render(null)).not.toContain('>Incident report</a>');
+  expect(render()).not.toContain('>Incident report</a>');
+  expect(render('rep_EXACT', 'pass')).not.toContain('>Incident report</a>');
 });

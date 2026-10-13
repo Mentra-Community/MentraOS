@@ -13,24 +13,50 @@ key held by the Container Apps environment, uses encrypted SMB, and has
 seven-day share-delete retention. It uses the storage service's authenticated
 public endpoint, matching this reference deployment's non-VNet topology.
 
-Report access uses Core's existing admin authorization. Create an org API key
-in this deployment and add its synthetic email, `api-key@<keyId>.local`, to
-`coreAdminEmails` in the deployment config (a comma-separated string). The
-template supplies it as `CLOUD_CORE_ADMIN_EMAILS`. Only the key's hash lives in
-the database; keep the full `msk_...` token in the customer's secret manager.
-An API key alone does not grant admin access: its email must be allowlisted.
-Admin keys permit the existing admin routes, including report listing and triage.
+Report access uses Core's organization capabilities. An Organization Admin is a
+verified identity email listed in `coreAdminEmails` (supplied to Core as
+`CLOUD_CORE_ADMIN_EMAILS`). An operator key (`mak_...`) created by an
+Organization Admin reaches the admin routes its scopes allow, including report
+listing and triage, while its creator's email stays on that list.
 
-The existing Developer Console org API-key creation flow can issue this key.
-For a fresh private deployment without a console, an operator with database
-access can bootstrap the org with `DeveloperOrgService.createPrimaryOrg` and
-issue its key with `DeveloperApiKeyService.create`. Use the operator's identity
-as the creator for auditability. The key's environment must match Core's
-`CLOUD_CORE_ENVIRONMENT` (or its console-derived environment; this reference
-defaults to `local`). Use these existing services rather than inserting a raw
-bearer secret into Core configuration. Keep the allowlist in deployment config
-so subsequent deployments preserve access. Revoke keys through
-`DeveloperApiKeyService.revoke` and remove their emails from the allowlist.
+Setup creates the administrator key itself. After Core is deployed, setup's
+**Administrator key** step adds the installer identity,
+`operator@private-cloud.local`, to `coreAdminEmails` (so later rollouts keep
+it), waits for the Core revision that carries it, and runs
+`installer/admin-key.ts` inside that revision (`az containerapp exec`). The
+script mints the key through Core's credential service, with the incident,
+support-profile and testing scopes. Core stores only the key's hash and keeps an
+encrypted copy in its database (encrypted with the deployment's signing key), so
+a retried run returns the same key. Setup stores the `mak_local_...` value in Key
+Vault as `mentra-admin-key`, tagged with its `keyId`, and checks that the key can
+list reports. No app can read the Key Vault secret. Keep
+`operator@private-cloud.local` in `coreAdminEmails`: removing it disables the
+key. The `.local` address cannot be a verified Entra domain, so no employee
+sign-in can claim it.
+
+A deployment whose administrator key is an `msk_local_...` key from an earlier
+installer keeps that key. Core turns it into an operator key at startup, with
+the same token and scopes, created by its address `api-key@<keyId>.local`: it
+works while that address stays in `coreAdminEmails`, and setup keeps both the
+address and the key. Only when the saved key no longer works does setup mint a
+`mak_local_...` key and store it in Key Vault in its place. A deployment made
+with `scripts/deploy.sh` mints its key the same way: add
+`operator@private-cloud.local` to `coreAdminEmails`, deploy, and run
+`installer/admin-key.ts` with the deployment's owner ID inside the Core
+container.
+
+Setup's summary prints the read command and a report request:
+
+```bash
+az keyvault secret show --vault-name <key-vault> --name mentra-admin-key \
+  --subscription <subscription-id> --query value --output tsv
+curl -H "Authorization: Bearer $(az keyvault secret show --vault-name <key-vault> --name mentra-admin-key --subscription <subscription-id> --query value --output tsv)" \
+  https://<enterprise-core-host>/api/admin/reports
+```
+
+Rotate the administrator key with Mentra support. Do not store a new
+`mentra-admin-key` value by hand: setup identifies the key by its `keyId` tag and
+Core's journal, so a hand-made value breaks later setup runs.
 
 Enterprise Dev CI uses the `ENTERPRISE_DEV_CORE_ADMIN_EMAILS` repository variable
 and `ENTERPRISE_DEV_ADMIN_TOKEN` secret. The secret is used only to verify the
@@ -44,7 +70,8 @@ The Mentra App feedback confirmation displays the report ID and offers
 
 ```bash
 export MENTRA_CORE_URL=https://<enterprise-core-host>
-export MENTRA_ADMIN_TOKEN=<admin-org-api-key-from-secret-manager>
+export MENTRA_ADMIN_TOKEN="$(az keyvault secret show --vault-name <key-vault> --name mentra-admin-key \
+  --subscription <subscription-id> --query value --output tsv)"
 ./scripts/fetch-incident-logs.sh rep_01...
 ```
 
@@ -137,9 +164,12 @@ delivery path changes transport, not the deployment manifest or image identity.
 
 Record and approve these values before deployment:
 
-- Azure subscription, resource group, region, and ACS data location;
-- workspace hostname and DNS ownership;
+- Azure subscription, resource group, region, and ACS data location (guided
+  setup derives the data location from the region);
+- workspace hostname (a subdomain) and DNS ownership;
 - Entra tenant, Core API client id, and Mobile application client id;
+- the email domains your Entra directory issues and the Organization Admins
+  who sign in to the admin portal;
 - the Android/iOS Mentra App distribution channels and matching redirect URIs;
 - employee/group assignment, administrator consent, MFA, and Conditional Access;
 - persistent Mongo, refresh pepper, access/Runtime signing key, miniapp signing
@@ -157,15 +187,43 @@ allowlist, version policy, and telemetry. The reference logo and same-origin
 legal files are image assets; replace them in a customer-derived image or place
 equivalent routes behind the customer workspace ingress.
 
-For a new deployment, generate the five persistent secret values once:
+Signing keys, the refresh pepper, the admin portal client secret, the
+administrator key and the optional Graph client secret live in the deployment's
+purge-protected Key Vault. Setup creates the keys there once; nothing secret is
+stored in the setup folder. Deleted
+secrets stay recoverable for 90 days and cannot be purged.
 
-```bash
-cloud-v2/deploy/azure/enterprise-reference/scripts/generate-private-secrets.sh \
-  /secure/path/mentra-private-secrets.json
-```
+- Replacing a signing key or the refresh pepper is a deliberate rotation that
+  signs every employee out; setup never does it for a running Core.
+- The administrator key is rotated with Mentra support (see
+  [reports](#reports-and-durable-attachments)); never store a new
+  `mentra-admin-key` value by hand.
+- The admin portal client secret, `entra-browser-client-secret`, is a client
+  secret of the Core API app, used when `adminPortalSignIn` is on. Setup creates
+  it when Key Vault has none and then turns that setting on. It
+  expires after 2 years, and the setup summary prints the date. Before then,
+  add a new one to the Core app and store it as a new version, without printing
+  it:
 
-Import the file into approved secret management. The helper refuses to
-overwrite an existing file and never writes the values to stdout.
+  ```bash
+  az ad app credential reset --id <core-api-client-id> --append --display-name "Mentra admin portal" \
+    --years 2 --query password --output tsv | tr -d '\r\n' |
+    az keyvault secret set --vault-name <key-vault> --name entra-browser-client-secret \
+      --file /dev/stdin --encoding utf-8 --output none
+  ```
+
+  Container Apps picks up the new version within about 30 minutes. Then
+  restart Core's revision (`az containerapp revision restart --name <core-app>
+  --resource-group <rg> --revision <latest revision>`), check that admin portal
+  sign-in works, and delete the old client secret from the Core app in Entra
+  (**Certificates & secrets**). Never delete the Key Vault secret itself: purge
+  protection keeps its name reserved for 90 days.
+- The Graph client secret that setup creates expires after 2 years; setup
+  prints the date. Add a new client secret to the meetings app in Entra and run
+  `setup.sh configure-teams`, which asks for it (hidden), or pipe it in with
+  `setup.sh configure-teams --teams-secret-stdin`. Setup checks the secret with
+  a Microsoft sign-in before storing it as a new version of
+  `teams-graph-client-secret-<client ID>`.
 
 ## Customer-managed userland miniapps
 
@@ -196,11 +254,12 @@ It then removes the prior version owned by that deployment. Removing the entry
 from the manifest removes that deployment-owned install. Unrelated local and
 SYSTEM installs are never adopted or deleted.
 
-In v1, the Mentra App resolves the remote manifest when the workspace is
-selected and then uses that validated snapshot on later boots. To apply a
-changed managed list, the employee uses the workspace-change flow and selects
-the same workspace again. Automatic background manifest refresh is a later
-delivery feature; Runtime minimum-version policy remains live and independent.
+The Mentra App resolves the remote manifest when the workspace is selected and
+re-reads it each time the app opens and every 15 minutes while it runs, so a
+changed managed list installs then.
+An open miniapp asks the employee before it updates, and a removed one goes when
+it closes.
+Runtime minimum-version policy remains live and independent.
 
 The reference Mentra Cloud image does not contain customer miniapp ZIPs. Put them in
 `cloud-v2/deploy/azure/enterprise-reference/miniapps/` when producing the
@@ -216,38 +275,66 @@ files.
 
 ## Packaged installer upgrade
 
-Keep the original installer archive, an extracted copy of its package directory
-for `--previous-package`, and the protected setup directory. First
-run `verify` from the original package. Back up the Core database, report
-attachment share, deployment state and original signing/refresh secrets using
-your approved recovery process. Confirm the target release's provenance and
-matching Mentra App compatibility floor before executing it.
+Run the install command again. It downloads the channel's newer release next
+to the current one and starts that package's guided setup. The deployment keeps
+running the current release until the operator confirms. Setup:
 
-Rerunning the install command downloads the channel's newer release next to the
-current one and prints these commands with the exact versions. It leaves an
-existing deployment on its current package until you run them:
+1. finds the package the deployment runs under `~/mentra-install/packages`
+   (or `--previous-package PATH`), and refuses a package older than it and a
+   deployment that has not finished setup;
+2. shows Azure's `what-if` preview of the change;
+3. prints how data is protected: signing keys stay in Key Vault; Azure backs up
+   Cosmos DB every 4 hours (restored through an Azure support request), so export
+   the database with your own tools for a restore point you control; and
+   the report share is snapshotted with
+   `az storage share-rm snapshot --resource-group <rg> --name core-attachments --storage-account <account>`;
+4. asks **Have you backed up the database and report files, and are you ready
+   to upgrade?** (`--backup-confirmed` for automation);
+5. selects the new release pins, rolls out, verifies, and points
+   `~/mentra-install/mentra-private-cloud` at the new package.
 
-```bash
-cd ~/mentra-install
-./packages/NEW_VERSION/mentra-private-cloud/setup.sh upgrade --directory ./mentra-state \
-  --previous-package ./packages/CURRENT_VERSION/mentra-private-cloud --backup-confirmed
-ln -sfn packages/NEW_VERSION/mentra-private-cloud mentra-private-cloud
-./mentra-private-cloud/setup.sh resume --directory ./mentra-state
-./mentra-private-cloud/setup.sh verify --directory ./mentra-state
-```
+The same flow runs with `./packages/NEW_VERSION/mentra-private-cloud/setup.sh upgrade`.
+If it is interrupted, rerunning the install command picks the package the saved
+state requires and continues.
 
 Upgrade preserves the tenant/subscription, resource names, hostname, Entra
 registrations, administrator allowlist and secrets. It snapshots the exact
 original config/state and journals the release-pin change before publishing.
-An interruption resumes from the target package. A changed image under the
+An interruption continues from the target package. A changed image under the
 same release identity and a semantic release downgrade are refused. Updating
-only installer code under the same image release is permitted. Creating an
-upgrade plan does not roll out containers; `resume` does that explicitly.
+only installer code under the same image release is permitted. Selecting the
+new release and rolling it out happen in the same run. Deployments made by
+pre-release installers that kept their keys outside Key Vault cannot be
+upgraded; install a new deployment instead.
 
 Keep both image digests and packages. Test employee sign-in, Call creation and
 joining, and report/attachment retrieval after rollout. Do not manually edit
 saved release hashes to bypass these checks. A database migration can make an
 image rollback unsafe; recover using the qualified database/files sequence.
+
+## Packaged installer setup folder, start over and uninstall
+
+`~/mentra-install/mentra-state` holds the deployment's non-secret configuration
+and progress. It is not disposable: keep Cloud Shell's storage mounted. If it is
+lost, run the install command again with the same subscription and deployment
+name; setup finds the deployment from its resource group tags and the last
+`mentra-private` deployment's settings and continues it (see
+[customer-setup.md](./customer-setup.md#guided-setup)).
+
+To start over or uninstall, delete:
+
+1. the resource group (`rg-<deployment>` by default);
+2. the Entra app registrations `<Company> Mentra Core (<deployment name>)`, `<Company> Mentra Mobile (<deployment name>)`
+   and, if setup created it, `<Company> Mentra Meetings (<deployment name>)`; and
+3. `~/mentra-install/mentra-state`.
+
+Deleting the resource group soft-deletes its Key Vault, which purge protection
+keeps for 90 days. A new installation gets a new installer owner ID, and with it
+new registry, ACS and Key Vault names, so the deleted vault does not block it.
+When `deploy.sh` deploys into a resource group whose vault was deleted together
+with it (same vault name, same group), it recovers that vault and its signing
+keys. A vault name held by a deleted vault in another resource group is refused:
+start over with a different deployment name.
 
 ## Standalone deployment upgrade
 
