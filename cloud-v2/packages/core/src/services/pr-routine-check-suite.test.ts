@@ -21,7 +21,7 @@ const query = (read: () => unknown) => ({select() {return this}, limit() {return
 
 function fixture() {
   let labelActor = "operator", labelEvent = 1, mayWrite = true
-  let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, available = true, lostRerunCommit = false, lostPreviewCheckpoint = false, failedAdmission: string | undefined
+  let now = Date.parse('2026-10-12T00:00:00Z'), lease = 0, available = true, buildRunId = 44, lostRerunCommit = false, lostPreviewCheckpoint = false, failedAdmission: string | undefined
   const gates = new Map<string, PrRoutineCheckRow>(), suites = new Map<string, any>(), requests = new Map<string, any>(), runs = new Map<string, any>(), reruns = new Map<string, RerunRecord>(), claims = new Set<string>()
   const submitted: string[] = [], cancelled: string[] = [], followUpCalls: Array<{requestId:string;actor:string;pr:unknown}> = []
   let failFollowUp=false
@@ -65,10 +65,10 @@ function fixture() {
   const createService = () => new PrRoutineCheckService(rows, {async context() {return {...structuredClone(context),labelActors:Object.fromEntries(context.labels.filter(label=>label.startsWith('rerun:')).map(label=>[label,labelActor])),labelEvents:Object.fromEntries(context.labels.filter(label=>label.startsWith('rerun:')).map(label=>[label,labelEvent]))}}, async permission() {return mayWrite}, async ownedCheck() {return true}, async findCheck() {return 99}, async deliver() {return 99}, async producer() {return undefined}, async requestBuild() {}}, jobs as any,
     {async catalog(revision) {return {routineRevision: revision!, routines: ['one','two'].map(routineId => ({routineId, platforms: ['android']}))}}},
     {async getExact(id: string) {const definition = {id, title: id, steps: [{id: 'observe', instruction: 'Observe'}], platforms: ['android']}; return {definition, definitionSha256: requestInputDigest(definition)} as any}},
-    {async inventory() {return available ? [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId: 44, publicationAttempt: 1}}] as any : []}}, requestReader as any, results as any, suite, rerun, {async get() {return null}}, () => now, {async resolve() {return 'a'.repeat(40)}}, references,{async attach(requestId,pr,actor){followUpCalls.push({requestId,pr,actor});if(failFollowUp)throw Error('case archive unavailable');return{caseId:'mfc_'+'1'.repeat(64)}}})
+    {async inventory() {return available ? [{headSha: context.headSha, availability: 'available', source: {channel: 'pr', prNumber: 12, buildRunId, publicationAttempt: 1}}] as any : []}}, requestReader as any, results as any, suite, rerun, {async get() {return null}}, () => now, {async resolve() {return 'a'.repeat(40)}}, references,{async attach(requestId,pr,actor){followUpCalls.push({requestId,pr,actor});if(failFollowUp)throw Error('case archive unavailable');return{caseId:'mfc_'+'1'.repeat(64)}}})
   let service = createService()
   const gateId = prRoutineGateId(context.headSha)
-  return {followUpCalls,failFollowUp(value:boolean){failFollowUp=value},authority(actor: string, event: number, write: boolean) {labelActor=actor;labelEvent=event;mayWrite=write}, get service() {return service}, restart() {service=createService()}, references, loseRerunCommit() {lostRerunCommit=true}, losePreviewCheckpoint() {lostPreviewCheckpoint=true}, failedAdmission(value?: string) {failedAdmission=value}, reruns, suite, rerun, requests, submitted, cancelled, suites, context, gate: () => gates.get(gateId)!.payload, advance(ms: number) {now += ms}, available(value: boolean) {available = value},
+  return {followUpCalls,failFollowUp(value:boolean){failFollowUp=value},authority(actor: string, event: number, write: boolean) {labelActor=actor;labelEvent=event;mayWrite=write}, get service() {return service}, restart() {service=createService()}, references, loseRerunCommit() {lostRerunCommit=true}, losePreviewCheckpoint() {lostPreviewCheckpoint=true}, failedAdmission(value?: string) {failedAdmission=value}, reruns, suite, rerun, requests, submitted, cancelled, suites, context, gate: () => gates.get(gateId)!.payload, advance(ms: number) {now += ms}, available(value: boolean) {available = value}, buildRun(value: number) {buildRunId = value},
     async start() {await service.intake(12,'event','c'.repeat(64)); for (let i=0;i<6;i++) {now+=30000; await service.tick()}},
     async drain(count=3) {for (let i=0;i<count;i++) {now+=30000; await service.tick()}},
     control(deliveryId: string) {const gate = gates.get(gateId)!.payload; return {deliveryId, digest: 'c'.repeat(64), gateId, checkId: 99, externalId: gate.checkExternalId, headSha: context.headSha, kind: 'rerun' as const, actor: 'operator'}},
@@ -263,6 +263,25 @@ test('tagged suite rerun becomes the existing check and preserves original sourc
  const next=f.gate().attempt.members[0]!.requestId!;expect(next).not.toBe(accepted);expect(f.gate().attempt.members[0]!.selection!.build).toEqual(member.selection!.build);
 })
 
+test('native tagged rerun freezes a rebuilt exact-head artifact while preserving the failed attempt and delivery identity', async () => {
+ const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain();
+ const originalSuite=f.gate().attempt.suiteId!;
+ f.context.labels=[(await f.references.copy('one','s',originalSuite)).label];
+ await f.service.intake(12,'rebuilt-tagged','d'.repeat(64),structuredClone(f.context));await f.service.reconcile(f.gate().gateId);await f.drain(6);
+ const failed=structuredClone(f.gate().attempt.members[0]!);expect(failed.selection!.source.buildRunId).toBe(44);
+ f.publishFailed(failed.requestId!);await f.drain();expect(f.gate().attempt.conclusion).toBe('failure');
+ f.buildRun(45);const control=f.control('rebuilt-tagged-retry');await f.service.control(control);await f.drain(5);
+ const retry=structuredClone(f.gate().attempt.members[0]!);
+ expect(retry.requestId).not.toBe(failed.requestId);expect(retry.selection!.source.buildRunId).toBe(45);
+ expect(f.requests.get(retry.requestId!).fleetSelection.build.source.buildRunId).toBe(45);
+ expect(f.gate().retired.at(-1)!.members[0]!.selection).toEqual(failed.selection);
+ expect(f.gate().retired.at(-1)!.conclusion).toBe('failure');
+ f.buildRun(46);f.restart();await f.service.control(control);await f.drain(3);
+ expect(f.gate().attempt.generation).toBe(2);expect(f.gate().attempt.members[0]!.selection).toEqual(retry.selection);
+ expect(new Set(f.submitted.filter(id=>id===retry.requestId)).size).toBe(1);
+ expect((await f.suite.detail(originalSuite)).members.map(member=>member.status)).toEqual(['failed','failed']);
+})
+
 test('individual successor label stays in its original suite and outside reruns cannot qualify or be cancelled', async () => {
  const f=fixture();await f.start();for(const member of f.gate().attempt.members)f.publishFailed(member.requestId!);await f.drain();
  const originalSuite=f.gate().attempt.suiteId!;const first=await f.rerun.preview({rerunId:'outside-initial',parent:{suiteId:originalSuite},selection:{memberIds:['one.android']},reason:'Manual verification'},'employee');
@@ -285,10 +304,13 @@ test('native rerun of mixed tagged results preserves the passing request and adm
  const passed=f.gate().attempt.members.find(member=>member.routineId==='one')!.requestId!, failed=f.gate().attempt.members.find(member=>member.routineId==='two')!.requestId!;
  f.publishPass(passed); f.publishFailed(failed); await f.drain();
  const originalDeadline=f.requests.get(passed).fleetDeadline.toISOString(), before=f.submitted.filter(id=>id===passed).length;
+ f.buildRun(45);
  await f.service.control(f.control('mixed-tagged-retry')); await f.drain(5);
  expect(f.gate().attempt.members.find(member=>member.routineId==='one')!.requestId).toBe(passed);
  expect(f.submitted.filter(id=>id===passed)).toHaveLength(before);
  expect(f.requests.get(passed).fleetDeadline.toISOString()).toBe(originalDeadline);
+ expect(f.gate().attempt.members.find(member=>member.routineId==='one')!.selection!.source.buildRunId).toBe(44);
+ expect(f.gate().attempt.members.find(member=>member.routineId==='two')!.selection!.source.buildRunId).toBe(45);
  const retry=f.gate().attempt.members.find(member=>member.routineId==='two')!.requestId!;
  expect(retry).not.toBe(failed); f.publishPass(retry); await f.drain(); expect(f.gate().attempt.conclusion).toBe('success');
 });
