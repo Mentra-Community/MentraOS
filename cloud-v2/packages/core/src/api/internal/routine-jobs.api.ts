@@ -39,7 +39,20 @@ export function createRoutineJobsApi(service = new RoutineJobService(), authors 
     return new Response(bytes, {headers: {'Content-Type': 'application/octet-stream', 'Content-Length': String(bytes.byteLength),
       'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'}});
   });
-  app.get('/:jobId/observation', async c => c.json(await fallback(() => service.observation(c.req.param('jobId')), () => authors.observation(c.req.param('jobId')))));
+  app.get('/:jobId/observation', async c => {
+    const startedAt = Date.now(); let phase = 'request';
+    const diagnostic = () => ({phase, elapsedMs: Math.max(0, Date.now() - startedAt)});
+    const timer = setTimeout(() => c.var.logger?.warn(diagnostic(), 'routine job observation is slow'), 10_000);
+    try {
+      const response = c.json(await fallback(() => service.observation(c.req.param('jobId'), value => {phase = value;}),
+        () => {phase = 'author'; return authors.observation(c.req.param('jobId'));}));
+      if (Date.now() - startedAt >= 10_000) c.var.logger?.warn({...diagnostic(), status: response.status}, 'slow routine job observation completed');
+      return response;
+    } catch (error) {
+      if (Date.now() - startedAt >= 10_000) c.var.logger?.warn({...diagnostic(), errorName: error instanceof Error ? error.name : 'unknown'}, 'slow routine job observation failed');
+      throw error;
+    } finally {clearTimeout(timer);}
+  });
   app.post('/:jobId/actions', frameworkBodyLimit(4096), async c => {
     const input = await frameworkJson(c), jobId = c.req.param('jobId');
     return c.json(await fallback(() => service.actions(jobId, input), () => authors.actions(jobId, input)));

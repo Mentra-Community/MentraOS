@@ -18,6 +18,7 @@ import {TestHostStateService, type ReceivedTestHostState} from './test-host-stat
 import {FrameworkResultService} from './framework-result.service';
 import {GithubRoutineJobActions, routineActionsRetry, cancelRoutineActions, type RoutineActionsCancellation, type RoutineJobActions} from './routine-job-actions.service';
 import {TestRunError} from './test-result-error';
+type ObservationPhase = (value: 'request' | 'delivery' | 'cancellation' | 'result' | 'projection') => void;
 
 /** These are fields on the existing test_requests record, never a separate scheduling queue. */
 export interface RoutineJobRepository {
@@ -449,7 +450,7 @@ export class RoutineJobService {
       binding.hostId === hostId && binding.laneId === input.laneId && binding.actionsJobId === input.actionsJobId && binding.actionsRunId === input.actionsRunId,
       observation};
   }
-  async cancel(jobId: string, value: unknown) {
+  async cancel(jobId: string, value: unknown, phase?: ObservationPhase) {
     const input = z.object({reason: z.string().min(1).max(2000)}).strict().parse(value), row = await this.job(jobId);
     const cancellation = row.fleetCancellation ?? {requestedAt: new Date(this.now()).toISOString(), reason: input.reason};
     const saved = row.fleetCancellation ? row : await this.rows.cancel(jobId, row.fleetSelectionSha256, cancellation) ?? await this.job(jobId);
@@ -461,7 +462,7 @@ export class RoutineJobService {
         if(!retained.fleetActions?.some(value=>value.actionsRunId===run.actionsRunId))throw new TestRunError(503,'Actions delivery history exceeds its bound');
       }}});
     await this.rows.cancellationProgress?.(jobId,progress,completedRunIds);
-    return this.observation(jobId);
+    return this.observation(jobId, phase);
   }
   async actions(jobId: string, value: unknown) {
     const input = routineJobActionsSchema.parse(value); let row = await this.job(jobId);
@@ -523,17 +524,18 @@ export class RoutineJobService {
       throw new TestRequestConflict('Publication failure changed its original frozen receipt');
     return {...saved.dispatchCompletion!, publicationFailure: saved.publicationFailure};
   }
-  async observation(jobId: string) {
-    let row = await this.deliver(await this.job(jobId));
+  async observation(jobId: string, phase: ObservationPhase = () => {}) {
+    phase('request'); const saved = await this.job(jobId);
+    phase('delivery'); let row = await this.deliver(saved);
     if (!row.fleetCancellation && this.now() >= row.fleetDeadline.getTime() && (row.state !== 'terminal' ||
       !!row.fleetBinding && !row.dispatchCompletion && !row.hostRejection && !row.preparationCancellation && !row.preparationRejection)) {
-      await this.cancel(jobId, {reason: 'Routine job reached its three-hour deadline'});
-      row = await this.job(jobId);
+      phase('cancellation'); await this.cancel(jobId, {reason: 'Routine job reached its three-hour deadline'}, phase);
+      phase('request'); row = await this.job(jobId);
     }
-    let result: unknown;
+    phase('result'); let result: unknown;
     if (row.fleetBinding) try {result = await this.results.detail(jobId);}
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
-    const reason = (!row.runId && row.publicationFailure ? `Publication failed: ${row.publicationFailure.message}` : undefined) ?? row.fleetCancellation?.reason ?? row.fleetPreparationStatus?.reason ?? row.fleetDispatch?.error ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ??
+    phase('projection'); const reason = (!row.runId && row.publicationFailure ? `Publication failed: ${row.publicationFailure.message}` : undefined) ?? row.fleetCancellation?.reason ?? row.fleetPreparationStatus?.reason ?? row.fleetDispatch?.error ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ??
       row.hostRejection?.reason ?? row.preparationRejection?.reason ?? row.preparation?.reason;
     return {jobId, kind: 'run' as const, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256,
       deadline: row.fleetDeadline.toISOString(), state: row.fleetCancellation && !row.fleetBinding ? 'terminal' : row.state,

@@ -58,6 +58,24 @@ test('bound observation never substitutes prepared input before executable prepa
   expect(bound.observation).not.toHaveProperty('boundInputSha256');
 });
 
+test('observation phase diagnostics follow existing reads without changing original custody or outcome',async()=>{
+  const f=fixture(),prepared=await f.prepare(), phases:string[]=[];
+  await f.service.bind(selection.requestId,'mini',{inputSha256:prepared.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'});
+  const before=structuredClone(f.row),result=await f.service.observation(selection.requestId,value=>phases.push(value));
+  expect(phases).toEqual(['request','delivery','result','projection']);expect(f.row).toEqual(before);
+  expect(result).toMatchObject({state:'preparing',terminal:false});expect(result).not.toHaveProperty('result');
+});
+
+test('deadline cancellation propagates phase through its nested observation and subsequent outer reload',async()=>{
+  const f=fixture(),prepared=await f.prepare(),phases:string[]=[];
+  await f.service.bind(selection.requestId,'mini',{inputSha256:prepared.inputSha256,laneId:f.lane.id,descriptorRevision:f.lane.descriptorRevision!,actionsRunId:'10',actionsJobId:'20'});
+  f.advance(3*3600000+1);
+  const result=await f.service.observation(selection.requestId,value=>phases.push(value));
+  expect(phases).toEqual(['request','delivery','cancellation','request','delivery','result','projection','request','result','projection']);
+  expect(result).toMatchObject({state:'terminal',terminal:false});expect(f.row?.fleetCancellation?.reason).toContain('three-hour deadline');
+  expect(result).not.toHaveProperty('dispatchCompletion');
+});
+
 for (const state of ['queued', 'accepted'] as const) {
   test(`${state} observation exposes the retained executable digest without changing prepared identity or custody`, async () => {
     const f = fixture(), prepared = await f.prepare(), executableDigest = 'c'.repeat(64);
