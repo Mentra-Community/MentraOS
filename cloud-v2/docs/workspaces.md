@@ -87,8 +87,9 @@ at `/enterprise` until it returns as workspace settings.
   wait for their person's first sign-in with a matching verified email. Until
   then the member list shows them as pending (`pending: true`, `mentraUserId`
   null), and the portals mark them "Pending first sign-in". They hold their role
-  meanwhile: a pending Owner counts toward the last Owner, Admins change or
-  remove them like any other member, and the keys they created validate.
+  meanwhile: a pending Owner counts toward the last Owner while a verified email
+  can still claim it (its legacy identity exists), Admins change or remove them
+  like any other member, and the keys they created validate.
 - Deleting a workspace ends its memberships and revokes its keys and
   invitations at once, without asking any other service. Miniapps it publishes
   in the Mentra Miniapp Store stay published until a Store operator assigns

@@ -49,6 +49,7 @@ import {
   type WorkspaceMembershipEndedReason,
   type WorkspaceMembershipRow,
 } from "../../models/workspace-membership.model"
+import {LegacyBrowserIdentityModel} from "../../models/legacy-browser-identity.model"
 import {WorkspaceModel, type WorkspaceRow} from "../../models/workspace.model"
 import {isDeletedAccountId} from "../user.service"
 import {clampPageSize, recordWorkspaceEvent, type WorkspaceAuditEventInput} from "./audit.service"
@@ -134,24 +135,45 @@ export async function listMembers(workspaceId: string): Promise<MembershipRow[]>
     .lean<MembershipRow[]>()
 }
 
+/** Whether a legacy identity can still claim memberships waiting under `workosUserId`. */
+async function isClaimable(workosUserId: string | null | undefined, session?: ClientSession): Promise<boolean> {
+  if (!isId(workosUserId)) return false
+  return (await LegacyBrowserIdentityModel.exists({workosUserId}).session(session ?? null)) !== null
+}
+
 /**
  * The workspace's active owners who can still act: a deleted account's owner membership never
  * counts (its deletion ends it, and Core finishes an interrupted deletion itself), so the last-owner
  * guard cannot rest on an owner nobody can sign in as. An imported owner membership still waiting
- * for its person counts: that person takes it up at their first sign-in.
+ * for its person counts while a legacy identity can claim it (that person takes it up at their first
+ * sign-in); without one (never exported, or removed because WorkOS stopped verifying the address)
+ * nobody ever will, so it does not count.
  */
 export async function countActiveOwners(workspaceId: string, session?: ClientSession): Promise<number> {
   const owners = await WorkspaceMembershipModel.find({workspaceId, role: "owner", status: "active"})
-    .select({_id: 0, mentraUserId: 1})
+    .select({_id: 0, mentraUserId: 1, pendingWorkosUserId: 1})
     .session(session ?? null)
-    .lean<Array<{mentraUserId?: string | null}>>()
+    .lean<Array<{mentraUserId?: string | null; pendingWorkosUserId?: string | null}>>()
   const userIds = owners.flatMap(owner => (isId(owner.mentraUserId) ? [owner.mentraUserId] : []))
-  if (userIds.length === 0) return owners.length
-  const deleted = await UserModel.countDocuments({
-    mentraUserId: {$in: userIds},
-    supportTelemetryDeletedAt: {$ne: null},
-  }).session(session ?? null)
-  return owners.length - deleted
+  const waitingFor = owners.flatMap(owner =>
+    !isId(owner.mentraUserId) && isId(owner.pendingWorkosUserId) ? [owner.pendingWorkosUserId] : [],
+  )
+  const deleted = userIds.length
+    ? await UserModel.countDocuments({mentraUserId: {$in: userIds}, supportTelemetryDeletedAt: {$ne: null}}).session(
+        session ?? null,
+      )
+    : 0
+  const claimable = waitingFor.length
+    ? new Set(
+        (
+          await LegacyBrowserIdentityModel.find({workosUserId: {$in: waitingFor}})
+            .select({_id: 0, workosUserId: 1})
+            .session(session ?? null)
+            .lean<Array<{workosUserId: string}>>()
+        ).map(identity => identity.workosUserId),
+      )
+    : new Set<string>()
+  return userIds.length - deleted + waitingFor.filter(workosUserId => claimable.has(workosUserId)).length
 }
 
 // --- Lifecycle -------------------------------------------------------------
@@ -578,11 +600,13 @@ export async function requireMembershipManager(
 
 /**
  * Refuse removing or demoting `owner` when it is the workspace's last live owner. A deleted account's
- * owner membership is no live owner: removing or demoting it is always allowed (and it never counts
- * toward the others, `countActiveOwners`).
+ * owner membership, and an imported one nobody can claim, are no live owners: removing or demoting
+ * them is always allowed (and they never count toward the others, `countActiveOwners`).
  */
 async function assertNotLastOwner(session: ClientSession, workspaceId: string, owner: MembershipRow): Promise<void> {
   if (await isDeletedAccountId(owner.mentraUserId, session)) return
+  // An imported owner nobody can claim is no owner either (`countActiveOwners`).
+  if (!isId(owner.mentraUserId) && !(await isClaimable(owner.pendingWorkosUserId, session))) return
   if ((await countActiveOwners(workspaceId, session)) <= 1) {
     fail("last_owner", "a workspace must keep at least one owner")
   }

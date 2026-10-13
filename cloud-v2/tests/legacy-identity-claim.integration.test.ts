@@ -565,6 +565,16 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
     expect((await EnterpriseOrgModel.findOne({enterpriseOrgId: "eo_added_later"}).lean())?.ownerUserId).toBe(owner)
   })
 
+  test("an imported owner still waiting counts toward the last owner only while someone can claim it", async () => {
+    await seedWorkspace("ws_owners")
+    await seedPending("ws_owners", "user_01PO", "owner")
+    // No legacy identity (never exported, or removed because WorkOS stopped verifying it): nobody can
+    // ever take it up, so it does not keep the workspace owned.
+    expect(await countActiveOwners("ws_owners")).toBe(0)
+    await seedIdentity("user_01PO", "po@studio.example")
+    expect(await countActiveOwners("ws_owners")).toBe(1)
+  })
+
   test("the phone token exchange claims nothing, and its token claims nothing at Core's API", async () => {
     await seedWorkspace("ws_phone")
     const pending = await seedPending("ws_phone", "user_01PHN", "developer")

@@ -21,6 +21,7 @@ import type {Model} from "mongoose"
 
 import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
 import {UserModel} from "../packages/core/src/models/user.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
@@ -420,9 +421,13 @@ describe("memberships imported from the Store, pending their person's first sign
       [null, "user_owner", "owner"],
       [null, "user_dev", "developer"],
     ])
-    // Someone holds that ownership and claims it at their first sign-in.
+    // Nobody can take that ownership up yet (no legacy identity to claim it): the signed-in owner is
+    // the only one who counts, and may not leave.
+    expect(await countActiveOwners(ws)).toBe(1)
+    await expectError(() => leaveWorkspace(user("mu_owner"), ws), "last_owner", 409)
+    // Once a verified email can claim it, someone holds it: the signed-in owner may leave.
+    await LegacyBrowserIdentityModel.create({workosUserId: "user_owner", email: "owner@studio.example"})
     expect(await countActiveOwners(ws)).toBe(2)
-    // So the signed-in owner may leave: the pending owner remains.
     await leaveWorkspace(user("mu_owner"), ws)
     expect(await countActiveOwners(ws)).toBe(1)
 
@@ -430,6 +435,15 @@ describe("memberships imported from the Store, pending their person's first sign
     const revision = await revisionOf(ws)
     await expectError(() => removeMember(orgAdmin, ws, pendingOwner, revision), "last_owner", 409)
     await expectError(() => changeRole(orgAdmin, ws, pendingOwner, "admin", revision), "last_owner", 409)
+    expect(await countActiveOwners(ws)).toBe(1)
+  })
+
+  test("a pending owner nobody can claim is no owner: removing it is allowed while a signed-in owner remains", async () => {
+    const ws = await newWorkspace()
+    const unclaimable = await addPending(ws, "user_gone", "owner")
+    expect(await countActiveOwners(ws)).toBe(1)
+    await removeMember(orgAdmin, ws, unclaimable, await revisionOf(ws))
+    expect(await WorkspaceMembershipModel.findOne({membershipId: unclaimable}).lean()).toMatchObject({status: "ended"})
     expect(await countActiveOwners(ws)).toBe(1)
   })
 
