@@ -158,7 +158,7 @@ export class PrRoutineCheckService {
         const previous = gate.retired.at(-1)!
         const all = previous.conclusion === 'success'
         for (const member of gate.attempt.members.filter(member => member.linkedTarget && (all || member.status !== 'pass' || !member.publicationComplete))) {
-          delete member.linkedPreview; delete member.selection; delete member.requestId; delete member.requestDeadline
+          delete member.linkedPreview; delete member.linkedSource; delete member.selection; delete member.requestId; delete member.requestDeadline
           member.status = 'waiting for app build'; member.publicationComplete = false; member.settled = false
         }
         gate.attempt.rerun = {id: `pr-rerun-${digest({gateId: gate.gateId, coverage: gate.coverageGeneration, generation: gate.attempt.generation})}`,
