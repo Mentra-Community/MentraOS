@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {createLogger} from '@mentra/cloud-shared/logger';
 import {testWriteConcern} from "../models/test-write-concern";
 import {RoutineDefinitionModel} from "../models/routine-definition.model";
 import {RoutineCollectionModel} from '../models/routine-collection.model';
@@ -9,7 +10,9 @@ import {requestInputDigest} from "./test-request.service";
 import {CandidateVerificationService, type CandidateAuthorization} from './candidate-verification.service';
 import {GithubRoutineMergeGateway, RoutineMergeEligibilityService} from './routine-merge-eligibility.service';
 
-import {readRoutineDefinition, writeRoutineDefinition, routineCollectionDetailSchema, readRoutineCollection, writeRoutineCollection} from './routine-definition-detail.service';
+import {readRoutineDefinition, writeRoutineDefinition, routineCollectionDetailSchema, readRoutineCollection, writeRoutineCollection, ROUTINE_COLLECTION_BATCH_SIZE} from './routine-definition-detail.service';
+
+const logger = createLogger('core').child({service: 'routine-definition.service'});
 
 export class RoutineDefinitionConflict extends Error {}
 export interface RoutineDefinitionRepository {
@@ -149,7 +152,14 @@ export class RoutineDefinitionService {
     collection.definitions.sort((left, right) =>
       `${left.routineId}:${left.platform}`.localeCompare(`${right.routineId}:${right.platform}`));
     const manifestSha256 = requestInputDigest(collection);
+    let stageStartedAt = performance.now();
+    const stageComplete = (stage: 'r2' | 'mongodb' | 'promotion') => {
+      logger.info({commit: collection.commit, version: collection.version, definitions: collection.definitions.length,
+        stage, durationMs: Math.round(performance.now() - stageStartedAt)}, 'Routine collection publication stage completed');
+      stageStartedAt = performance.now();
+    };
     const {detail, definitions: snapshots} = await writeRoutineCollection(collection);
+    stageComplete('r2');
     const byIdentity = new Map(snapshots.map(row => [`${row.routineId}:${row.platform}`, row]));
     try {await RoutineDefinitionModel.db.transaction(async session => {
       const publication = await RoutineCollectionModel.findOne({$or: [{commit: collection.commit}, {version: collection.version}]}).session(session).lean();
@@ -177,7 +187,13 @@ export class RoutineDefinitionService {
       if (!published || published.version !== collection.version || published.manifestSha256 !== manifestSha256)
         throw new RoutineDefinitionConflict('Published immutable collection manifest conflicts');
     }
-    for (const row of collection.definitions) await this.promotion?.enroll(row);
+    stageComplete('mongodb');
+    for (let offset = 0; offset < collection.definitions.length; offset += ROUTINE_COLLECTION_BATCH_SIZE) {
+      const batch = await Promise.allSettled(collection.definitions.slice(offset, offset + ROUTINE_COLLECTION_BATCH_SIZE)
+        .map(row => this.promotion?.enroll(row)));
+      for (const result of batch) if (result.status === 'rejected') throw result.reason;
+    }
+    stageComplete('promotion');
     return {commit: collection.commit, version: collection.version, definitions: collection.definitions.length};
   }
   current() {return this.repository.current();}
