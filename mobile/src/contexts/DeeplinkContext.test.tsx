@@ -381,3 +381,17 @@ it("claims a pending replay before concurrent authentication completes", async (
   expect(mockLoadAuthoringMiniapp).toHaveBeenCalledTimes(1)
   expect(mockPendingRoute).toBeNull()
 })
+
+// Opening the existing controls must not enable Super Mode or change a device setting.
+it("opens Super Settings for an authenticated user", async () => {
+  mockGetSession.mockResolvedValue({is_error: () => false, value: {token: "signed-in"}})
+  render(
+    <DeeplinkProvider>
+      <Probe />
+    </DeeplinkProvider>,
+  )
+  await act(async () => {
+    await processUrl("com.mentra://miniapps/settings/super")
+  })
+  expect(mockPush).toHaveBeenCalledWith("/miniapps/settings/super")
+})

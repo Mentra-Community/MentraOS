@@ -35,6 +35,8 @@ function statusLine(status: WearStateEvent | null): {worn: string; timer: string
 export function UnwornPowerOffSetting() {
   const {theme} = useAppTheme()
   const [enabled, setEnabled] = useSetting<boolean>(SETTINGS.auto_power_off_enabled.key)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [status, setStatus] = useState<WearStateEvent | null>(null)
   const line = statusLine(status)
 
@@ -56,15 +58,37 @@ export function UnwornPowerOffSetting() {
   return (
     <View className="gap-2">
       <ToggleSetting
+        testID={`glasses.autoPowerOff.${enabled ? "on" : "off"}`}
         label={translate("deviceSettings:autoPowerOff")}
         subtitle={translate("deviceSettings:autoPowerOffSubtitle")}
         value={!!enabled}
-        onValueChange={(value) => {
-          void setEnabled(value)
+        disabled={saving}
+        onValueChange={async (value) => {
+          setSaving(true)
+          setSaveError(null)
+          setStatus(null)
+          try {
+            const result = await setEnabled(value)
+            if (result.is_error()) throw result.error
+            await BluetoothSdk.queryWearState()
+          } catch (error) {
+            setSaveError(error instanceof Error ? error.message : "Could not save or verify automatic power-off")
+          } finally {
+            setSaving(false)
+          }
         }}
       />
       <Text text={line.worn} className="text-text text-sm" />
-      <Text text={line.timer} style={{color: theme.colors.textDim}} className="text-sm" />
+      <Text
+        testID={
+          !saving && !saveError && status?.enabled === false
+            ? "glasses.autoPowerOff.confirmedOff"
+            : "glasses.autoPowerOff.status"
+        }
+        text={saveError ?? line.timer}
+        style={{color: theme.colors.textDim}}
+        className="text-sm"
+      />
       <Text
         text="The timer does not update quickly. It refreshes about every 10 seconds."
         style={{color: theme.colors.textDim}}
