@@ -6,7 +6,9 @@ import {fakeCreateMMKV, resetFakeMmkv} from "./fakeMmkv"
 
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
 
-const {glassesBinding, glassesManufacturer, isPlaceholderSerial} = await import("../glassesIdentity")
+const {glassesBinding, glassesManufacturer, glassesPeripheral, isPlaceholderSerial, isSimulatedGlasses} = await import(
+  "../glassesIdentity"
+)
 
 const PHONE = "01PHONE000000000000000000"
 
@@ -33,14 +35,21 @@ describe("glassesBinding with a serial number", () => {
   test.each([
     ["Mentra Live", "Mentra"],
     ["Mentra Display", "Mentra"],
+    ["Mentra Mach1", "Mentra"],
+    ["Mentra Anything Else", "Mentra"],
     ["Even Realities G1", "Even Realities"],
     ["Even Realities G2", "Even Realities"],
     ["Vuzix Z100", "Vuzix"],
-    ["Mentra Mach1", "Vuzix"],
-    ["Brilliant Frame", "Brilliant Labs"],
   ])("%s is made by %s", (model, manufacturer) => {
     expect(glassesManufacturer(model)).toBe(manufacturer)
   })
+
+  test.each(["Brilliant Frame", "NIMO", "AR99", "Mentralux", "Acme Mentra One", "Even Realities G3", ""])(
+    "%j has no maker the map vouches for",
+    (model) => {
+      expect(glassesManufacturer(model)).toBe("unknown")
+    },
+  )
 
   test("a model the map does not know has manufacturer unknown, and is matched without case", () => {
     expect(glassesManufacturer("Acme Specs 9")).toBe("unknown")
@@ -139,6 +148,37 @@ describe("glassesBinding without a usable serial", () => {
       PHONE,
     )
     expect(JSON.stringify(binding)).not.toMatch(/aa:bb:cc/i)
+  })
+})
+
+describe("simulated glasses", () => {
+  test.each(["Simulated Glasses", " simulated glasses ", "SIMULATED GLASSES"])(
+    "%j is never a Fleet device, with or without a serial",
+    (deviceModel) => {
+      expect(isSimulatedGlasses(deviceModel)).toBe(true)
+      expect(glassesBinding({deviceModel, serialNumber: "SIM-1"}, PHONE)).toBeNull()
+      expect(glassesBinding({deviceModel, serialNumber: ""}, PHONE)).toBeNull()
+    },
+  )
+
+  test("a real model is not simulated, and a bad value is not either", () => {
+    expect(isSimulatedGlasses("Mentra Live")).toBe(false)
+    expect(isSimulatedGlasses("")).toBe(false)
+    expect(isSimulatedGlasses(undefined as never)).toBe(false)
+  })
+})
+
+describe("glassesPeripheral", () => {
+  test("is the Bluetooth address, then the left arm's, then the name, without case or padding", () => {
+    const base = {deviceModel: "M", serialNumber: ""}
+    expect(glassesPeripheral({...base, bluetoothMacAddress: " AA:BB ", leftMacAddress: "L"})).toBe("aa:bb")
+    expect(glassesPeripheral({...base, leftMacAddress: "L-1", bluetoothName: "N"})).toBe("l-1")
+    expect(glassesPeripheral({...base, bluetoothName: "Nimo-7"})).toBe("nimo-7")
+  })
+
+  test("is null when the glasses show nothing", () => {
+    expect(glassesPeripheral({deviceModel: "M", serialNumber: ""})).toBeNull()
+    expect(glassesPeripheral({deviceModel: "M", serialNumber: "", bluetoothMacAddress: "  "})).toBeNull()
   })
 })
 

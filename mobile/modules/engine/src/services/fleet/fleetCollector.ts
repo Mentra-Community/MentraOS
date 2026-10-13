@@ -12,7 +12,13 @@
  * `elapsedMs` is cumulative monotonic time, and each checkpoint packs every open session, so a session that is
  * cut off simply ends at its last checkpoint. Checkpoints come every 60 s while glasses are connected, a miniapp
  * is executing or the Mentra App is in the foreground, every 15 minutes when only the engine is active, and at
- * once when a session ends.
+ * once when a session ends. A session also ends when it reaches the longest time one record may carry (7 days),
+ * and a new one carries on from there.
+ *
+ * Time counts only while the collector was watching. The monotonic clock runs while the device is awake, so a
+ * wall-clock jump (the device slept, or the clock was changed) ends the sessions at the monotonic time that was
+ * observed and records the jump as a gap; a checkpoint that is overdue by the monotonic clock means the process was
+ * suspended while the device was awake, and the sessions end at their last checkpoint instead.
  *
  * Nothing here may break or slow the paths it watches: every entry point catches its own failures, and nothing
  * thrown by the queue, the clock or a store reaches a caller.
@@ -35,7 +41,7 @@ import {miniappRunningRegistry} from "../MiniappRunningRegistry"
 import {fleetEvents, type FleetLaunchEvent, type FleetPhotoEvent} from "./fleetEvents"
 import {newId, phoneDeviceId} from "./fleetIds"
 import type {FleetQueue} from "./fleetQueue"
-import {glassesBinding} from "./glassesIdentity"
+import {glassesBinding, glassesPeripheral, isSimulatedGlasses} from "./glassesIdentity"
 
 export interface FleetCollector {
   /** Opens the engine session, the foreground session if the app is active, the glasses and running miniapps, and takes a snapshot. */
@@ -70,10 +76,15 @@ const IDLE_CHECKPOINT_MS = 15 * 60_000
 const SNAPSHOT_INTERVAL_MS = 15 * 60_000
 /** State changes this close together are one snapshot. */
 const SNAPSHOT_DEBOUNCE_MS = 2_000
-/** Wall clock and monotonic clock may differ by this much between checkpoints before neither is believed. */
+/**
+ * How far the wall clock may part from the monotonic clock between checkpoints, and how late a checkpoint may be,
+ * before the collector stops believing the span between two checkpoints.
+ */
 const CLOCK_DRIFT_LIMIT_MS = 2 * 60_000
 const BATTERY_SNAPSHOT_STEP = 5
 const MAX_TEXT = 128
+/** A session cannot outlast several caps between two checkpoints; this only bounds a loop. */
+const MAX_CAP_TURNS = 8
 const FLEET_ID = /^[A-Za-z0-9._:-]+$/
 
 /** What the phone measures without glasses. With glasses connected it measures all of them. */
@@ -101,6 +112,12 @@ function iso(wall: number): string {
 
 function isForeground(): boolean {
   return AppState.currentState === "active"
+}
+
+/** Glasses are connected, and they are not the simulated ones, which are no part of any fleet. */
+function realGlassesConnected(): boolean {
+  const s = useGlassesStore.getState()
+  return s.connection.state === "connected" && !isSimulatedGlasses(s.deviceModel)
 }
 
 function mapConnection(state: string): ConnectionState {
@@ -203,6 +220,8 @@ function firmwareOf(s: GlassesState): Firmware {
  */
 interface KnownGlasses {
   model: string
+  /** What told this pair from another of its model (see `glassesPeripheral`), or null if it showed nothing. */
+  peripheral: string | null
   binding: FleetDeviceBinding
   firmware: Firmware
 }
@@ -375,6 +394,9 @@ class CollectorRun {
     const s = useGlassesStore.getState()
     const state = mapConnection(s.connection.state)
     if (state !== this.connection.state) this.connection = {state, observedAt: wall}
+    // What was remembered describes glasses that are gone. Once something is connecting or connected, a store that
+    // names no model has not identified them yet, so nothing is attributed to the pair that was last here.
+    if (state !== "disconnected" && !text(s.deviceModel)) this.known = null
     // A battery value in the store is only believed while the glasses are connected; afterwards the last reading
     // keeps the time it was seen.
     if (
@@ -391,10 +413,24 @@ class CollectorRun {
     if (!model) return
     const binding = glassesBinding(s, this.phoneId)
     if (!binding) return
-    const previous = this.known?.model === model ? this.known : null
-    // A serial seen once is not given up for a provisional stand-in.
-    const kept = previous?.binding.kind === "serial" && binding.kind === "provisional" ? previous.binding : binding
-    this.known = {model, binding: kept, firmware: {...previous?.firmware, ...firmwareOf(s)}}
+    const peripheral = glassesPeripheral(s)
+    // What was learned about the pair before this carries over only if it is the same pair: the same address or
+    // name, or the same serial. A second pair of the same model starts from nothing.
+    const before = this.known
+    const samePair =
+      before !== null &&
+      before.model === model &&
+      ((peripheral !== null && peripheral === before.peripheral) ||
+        (binding.kind === "serial" && before.binding.kind === "serial" && before.binding.serial === binding.serial))
+    // A serial seen once for this pair is not given up for a provisional stand-in.
+    const kept =
+      samePair && before.binding.kind === "serial" && binding.kind === "provisional" ? before.binding : binding
+    this.known = {
+      model,
+      peripheral: peripheral ?? (samePair ? before.peripheral : null),
+      binding: kept,
+      firmware: samePair ? {...before.firmware, ...firmwareOf(s)} : firmwareOf(s),
+    }
   }
 
   private currentBinding(): FleetDeviceBinding | null {
@@ -408,9 +444,7 @@ class CollectorRun {
     const wanted = new Map<string, SessionSpec>()
     wanted.set("engine_active", {activity: "engine_active"})
     if (isForeground()) wanted.set("app_foreground", {activity: "app_foreground"})
-    if (useGlassesStore.getState().connection.state === "connected") {
-      wanted.set("glasses_connection", {activity: "glasses_connection"})
-    }
+    if (realGlassesConnected()) wanted.set("glasses_connection", {activity: "glasses_connection"})
     for (const name of miniappRunningRegistry.getAll()) {
       const packageName = text(name)
       if (packageName) wanted.set(`miniapp_execution:${packageName}`, {activity: "miniapp_execution", packageName})
@@ -483,13 +517,27 @@ class CollectorRun {
 
   // --- checkpoints ---------------------------------------------------------------------------------------------
 
-  /** Reports every open session, those in `ending` as ended and removed. Writes at once and sets the next checkpoint. */
+  /**
+   * Reports every open session, those in `ending` as ended and removed. Writes at once and sets the next checkpoint.
+   * A session that has run for the longest time one record may carry ends there, and a new one carries on.
+   */
   private writeCheckpoint(ending: ReadonlySet<string>): void {
     const wall = this.env.now()
     const mono = this.env.monotonic()
     const entries: UsageSession[] = []
-    for (const session of this.sessions.values()) {
-      const entry = this.entryFor(session, mono, ending.has(session.key))
+    for (const open of [...this.sessions.values()]) {
+      let session = open
+      for (
+        let turn = 0;
+        turn < MAX_CAP_TURNS && mono - session.startedMono >= FLEET_LIMITS.maxSessionElapsedMs;
+        turn += 1
+      ) {
+        const capped = this.entryFor(session, mono, wall, true)
+        if (capped) entries.push(capped)
+        session = this.successorOf(session)
+        this.sessions.set(session.key, session)
+      }
+      const entry = this.entryFor(session, mono, wall, ending.has(session.key))
       if (entry) entries.push(entry)
     }
     for (const key of ending) this.sessions.delete(key)
@@ -501,18 +549,36 @@ class CollectorRun {
     this.arm(this.cadence())
   }
 
-  private entryFor(session: Session, mono: number, ended: boolean): UsageSession | null {
+  /** The session that carries on from one that reached the cap: the same activity, from the cap on. */
+  private successorOf(session: Session): Session {
+    const cap = FLEET_LIMITS.maxSessionElapsedMs
+    return {
+      ...session,
+      id: newId(),
+      startedWall: session.startedWall + cap,
+      startedMono: session.startedMono + cap,
+      reportedElapsedMs: null,
+    }
+  }
+
+  /**
+   * The session as a checkpoint entry, `ended` or not, or null if it cannot be reported yet (glasses not identified).
+   * Its time is what the monotonic clock measured, never less than it already reported, never more than the wall
+   * clock had given it by `wallLimit`, and never more than a session may report.
+   */
+  private entryFor(session: Session, mono: number, wallLimit: number, ended: boolean): UsageSession | null {
     let binding: FleetDeviceBinding | undefined
     if (session.activity === "glasses_connection") {
       // Fixed at the first report, so a serial that arrives later never splits a connection into two devices.
       binding = session.binding ??= this.currentBinding() ?? undefined
       if (!binding) return null
     }
-    const measured = Math.floor(mono - session.startedMono)
     const floor = session.reportedElapsedMs ?? 0
-    const elapsedMs = Number.isFinite(measured)
-      ? Math.min(Math.max(measured, floor), FLEET_LIMITS.maxSessionElapsedMs)
-      : floor
+    let elapsedMs = Math.floor(mono - session.startedMono)
+    if (!Number.isFinite(elapsedMs)) elapsedMs = floor
+    const wallSinceStart = Math.floor(wallLimit - session.startedWall)
+    if (Number.isFinite(wallSinceStart)) elapsedMs = Math.min(elapsedMs, Math.max(wallSinceStart, 0))
+    elapsedMs = Math.min(Math.max(elapsedMs, floor), FLEET_LIMITS.maxSessionElapsedMs)
     session.reportedElapsedMs = elapsedMs
     return this.describe(session, elapsedMs, ended, binding)
   }
@@ -540,29 +606,35 @@ class CollectorRun {
   // --- clock changes and suspension ----------------------------------------------------------------------------
 
   /**
-   * Whether the clocks or the timers say the collector was not watching for a while. If so, the sessions are closed
-   * where they were last confirmed, the unobserved span is recorded as a gap, and the activities still going on
-   * start again as new sessions. Returns true if it did.
+   * Whether the span since the last checkpoint can be believed, and what to do if it cannot. Returns true if it
+   * handled a break (the sessions have then been closed and started again).
+   *
+   * The monotonic clock stops while the device sleeps, so it measures awake time, and a timer that was due and did
+   * not fire means the process was not running. Two things can be wrong with the span:
+   * - The checkpoint is overdue by the monotonic clock: the device was awake and nothing here was running. None of
+   *   it was observed, so the sessions end at their last checkpoint.
+   * - The wall clock parted from the monotonic clock: the device slept, or somebody changed the clock. The
+   *   monotonic time was observed and counts, so the sessions end at it; only the jump itself is a gap.
+   * The first wins: a reporter that was not running observed nothing, whatever the wall clock did.
    */
   private checkClock(): boolean {
     const wall = this.env.now()
     const mono = this.env.monotonic()
+    if (this.checkpointTimer !== null && mono - this.checkpointDueMono > CLOCK_DRIFT_LIMIT_MS) {
+      this.closeAtLastCheckpoint(wall, mono)
+      return true
+    }
     const monoDelta = mono - this.anchorMono
     const drift = wall - this.anchorWall - monoDelta
-    let reason: GapReason | null = null
-    let to = Math.max(wall, this.anchorWall)
     if (Math.abs(drift) > CLOCK_DRIFT_LIMIT_MS) {
-      // The monotonic clock stops while the process sleeps, so a wall clock that ran ahead of it with the app in
-      // the background is suspension; any other disagreement is the clock being changed.
-      reason = drift > 0 && this.leftForeground ? "reporter_stopped" : "clock_untrusted"
-      // A clock set back: the span is what the monotonic clock measured since the last confirmation.
-      if (drift < 0) to = this.anchorWall + Math.max(monoDelta, 0)
-    } else if (this.checkpointTimer !== null && mono - this.checkpointDueMono > CLOCK_DRIFT_LIMIT_MS) {
-      // Both clocks agree, but a checkpoint that was due is minutes late: the process was suspended while awake.
-      reason = "reporter_stopped"
+      this.closeAtObservedTime(wall, mono, monoDelta, drift)
+      return true
     }
-    if (!reason) return false
+    return false
+  }
 
+  /** The reporter was silent: only what it had reported before counts, and everything since is a gap. */
+  private closeAtLastCheckpoint(wall: number, mono: number): void {
     const from = this.anchorWall
     const closed: UsageSession[] = []
     for (const session of this.sessions.values()) {
@@ -573,20 +645,43 @@ class CollectorRun {
     }
     this.sessions.clear()
     this.emitCheckpoints(closed, from)
-    const gapReason = reason
-    this.emit(wall, (base) => ({
+    this.emitGap("reporter_stopped", from, Math.max(wall, from), wall)
+    this.startAgain(wall, mono)
+  }
+
+  /** The wall clock jumped: the awake time counts, ending where the monotonic clock says it did, and the jump is the gap. */
+  private closeAtObservedTime(wall: number, mono: number, monoDelta: number, drift: number): void {
+    // Where the observation ended on the timeline the last checkpoint was written on.
+    const observedUntil = this.anchorWall + Math.max(monoDelta, 0)
+    const closed: UsageSession[] = []
+    for (const session of this.sessions.values()) {
+      const entry = this.entryFor(session, mono, observedUntil, true)
+      if (entry) closed.push(entry)
+    }
+    this.sessions.clear()
+    this.emitCheckpoints(closed, observedUntil)
+    // Sleep shows as the wall clock running ahead while the app was away; anything else is the clock being changed.
+    const reason: GapReason = drift > 0 && this.leftForeground ? "reporter_stopped" : "clock_untrusted"
+    this.emitGap(reason, Math.min(observedUntil, wall), Math.max(observedUntil, wall), wall)
+    this.startAgain(wall, mono)
+  }
+
+  private emitGap(reason: GapReason, from: number, to: number, observedAt: number): void {
+    this.emit(observedAt, (base) => ({
       ...base,
       kind: "coverage_gap",
-      payload: {reason: gapReason, from: iso(from), to: iso(to)},
+      payload: {reason, from: iso(from), to: iso(to)},
     }))
+  }
 
+  /** After a break: the clocks are re-anchored, and the activities still going on start again as new sessions. */
+  private startAgain(wall: number, mono: number): void {
     this.anchorWall = wall
     this.anchorMono = mono
     this.leftForeground = !isForeground()
     this.openMissing()
     this.arm(this.cadence())
     this.scheduleSnapshot()
-    return true
   }
 
   // --- snapshots -----------------------------------------------------------------------------------------------
@@ -726,9 +821,7 @@ class CollectorRun {
   // --- records -------------------------------------------------------------------------------------------------
 
   private capabilities(): Capability[] {
-    return useGlassesStore.getState().connection.state === "connected"
-      ? [...FLEET_CAPABILITIES]
-      : [...PHONE_CAPABILITIES]
+    return realGlassesConnected() ? [...FLEET_CAPABILITIES] : [...PHONE_CAPABILITIES]
   }
 
   private base(observedAt: number): RecordBase {

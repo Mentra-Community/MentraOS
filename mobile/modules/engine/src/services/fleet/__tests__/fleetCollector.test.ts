@@ -55,6 +55,11 @@ function advance(ms: number): void {
   clock.mono = target
 }
 
+/** The device sleeps: the wall clock runs on and the monotonic clock, and every timer, stands still. */
+function sleep(ms: number): void {
+  clock.wall += ms
+}
+
 mock.module("react-native-mmkv", () => ({createMMKV: fakeCreateMMKV}))
 mock.module("expo-constants", () => ({
   default: {nativeAppVersion: "3.4.5", nativeBuildVersion: "345", expoConfig: {version: "3.4.5"}},
@@ -494,7 +499,20 @@ describe("clock changes and suspension", () => {
     return {firstCheckpointAt: clock.wall - 30_000}
   }
 
-  test("a 10-minute wall-clock jump closes the sessions at their last checkpoint and enqueues one clock_untrusted gap", () => {
+  /** The most each session reached, by session ID, over every checkpoint. */
+  function reached(activity: string): Map<string, number> {
+    const byId = new Map<string, number>()
+    for (const c of checkpoints()) {
+      for (const s of c.payload.sessions) {
+        if (s.activity === activity)
+          byId.set(s.activitySessionId, Math.max(byId.get(s.activitySessionId) ?? 0, s.elapsedMs))
+      }
+    }
+    return byId
+  }
+  const total = (byId: Map<string, number>) => [...byId.values()].reduce((sum, ms) => sum + ms, 0)
+
+  test("a 10-minute wall-clock jump ends the sessions at the time that was observed and enqueues one clock_untrusted gap", () => {
     setAppState("active", false)
     const {firstCheckpointAt} = connectedAndCheckpointed()
     const before = checkpoints()
@@ -507,22 +525,19 @@ describe("clock changes and suspension", () => {
     const list = checkpoints()
     expect(list).toHaveLength(2)
     const closing = list[1]
-    // Closed where they were last confirmed: not at 90 s, and not 10 minutes later.
-    expect(closing.observedAt).toBe(iso(firstCheckpointAt))
+    // The 60 s since the last checkpoint were observed and count; the 10 minutes the clock jumped do not.
+    const observedUntil = iso(firstCheckpointAt + 60_000)
+    expect(closing.observedAt).toBe(observedUntil)
     expect(closing.payload.sessions.map((s) => [s.activity, s.packageName, s.elapsedMs, s.ended])).toEqual([
-      ["engine_active", undefined, 60_000, true],
-      ["app_foreground", undefined, 60_000, true],
-      ["glasses_connection", undefined, 60_000, true],
-      ["miniapp_execution", "com.a", 60_000, true],
+      ["engine_active", undefined, 120_000, true],
+      ["app_foreground", undefined, 120_000, true],
+      ["glasses_connection", undefined, 120_000, true],
+      ["miniapp_execution", "com.a", 120_000, true],
     ])
     expect(closing.payload.sessions.map((s) => s.activitySessionId)).toEqual(firstIds)
 
     expect(gaps()).toHaveLength(1)
-    expect(gaps()[0].payload).toMatchObject({
-      reason: "clock_untrusted",
-      from: iso(firstCheckpointAt),
-      to: iso(clock.wall),
-    })
+    expect(gaps()[0].payload).toEqual({reason: "clock_untrusted", from: observedUntil, to: iso(clock.wall)})
   })
 
   test("the sessions that are still active start again with new IDs, counting from the clock change", () => {
@@ -542,59 +557,125 @@ describe("clock changes and suspension", () => {
     for (const session of latest.payload.sessions) {
       expect(session.ended).toBe(false)
       expect(session.elapsedMs).toBe(60_000)
+      // Started again on the new wall clock, so its startedAt is on the timeline MFM will bucket it on.
       expect(session.startedAt).toBe(iso(reopenedAt))
       expect(firstIds).not.toContain(session.activitySessionId)
     }
     expect(gaps()).toHaveLength(1)
-    expect(gaps()[0].payload.from).toBe(iso(firstCheckpointAt))
+    expect(gaps()[0].payload.from).toBe(iso(firstCheckpointAt + 60_000))
   })
 
-  test("a session that has not been checkpointed yet is not closed, but is started again", () => {
+  test("a session that has not been checkpointed yet is counted for the time it was observed", () => {
     start()
     advance(60_000 * 15) // checkpoint of the engine session
     miniappRunningRegistry.add("com.late")
+    advance(10_000)
     clock.wall += 10 * 60_000
     collector.flushCheckpoint()
     const closing = checkpoints()[1]
-    expect(closing.payload.sessions.map((s) => s.activity)).toEqual(["engine_active"])
+    expect(closing.payload.sessions.map((s) => [s.activity, s.elapsedMs, s.ended])).toEqual([
+      ["engine_active", 15 * 60_000 + 10_000, true],
+      ["miniapp_execution", 10_000, true],
+    ])
     collector.flushCheckpoint()
     const reopened = checkpoints().at(-1) as Kind<"usage_checkpoint">
     expect(entry(reopened, "miniapp_execution", "com.late")).toMatchObject({elapsedMs: 0, ended: false})
   })
 
-  test("a clock set back is clock_untrusted, and the gap never ends before it starts", () => {
-    connectedAndCheckpointed()
-    clock.wall -= 3 * 60_000 * 60 // three hours back
+  test("a clock set back keeps the time observed, is clock_untrusted, and the gap runs from the new now to the old", () => {
+    const {firstCheckpointAt} = connectedAndCheckpointed()
+    clock.wall -= 3 * 60 * 60_000 // three hours back
     advance(30_000)
     expect(gaps()).toHaveLength(1)
     expect(gaps()[0].payload.reason).toBe("clock_untrusted")
-    // The span is what the monotonic clock measured since the last confirmation (60 s), not the wall clock's.
-    expect(Date.parse(gaps()[0].payload.to) - Date.parse(gaps()[0].payload.from)).toBe(60_000)
-    for (const c of checkpoints()) for (const s of c.payload.sessions) expect(s.elapsedMs).toBeGreaterThanOrEqual(0)
+    const observedUntil = firstCheckpointAt + 60_000
+    expect(gaps()[0].payload.to).toBe(iso(observedUntil))
+    expect(Date.parse(gaps()[0].payload.to) - Date.parse(gaps()[0].payload.from)).toBe(3 * 60 * 60_000)
+    const closing = checkpoints()[1]
+    expect(closing.observedAt).toBe(iso(observedUntil))
+    expect(entry(closing, "glasses_connection")).toMatchObject({elapsedMs: 120_000, ended: true})
+    for (const c of checkpoints()) {
+      for (const s of c.payload.sessions) {
+        expect(s.elapsedMs).toBeGreaterThanOrEqual(0)
+        // Never more time than the wall clock gave the session when it was reported.
+        expect(Date.parse(s.startedAt) + s.elapsedMs).toBeLessThanOrEqual(Date.parse(c.observedAt))
+      }
+    }
   })
 
-  test("time the phone spent suspended with the app in the background is a reporter_stopped gap", () => {
+  test("a device that slept in the background keeps the time it was awake and reports the sleep as reporter_stopped", () => {
     const {firstCheckpointAt} = connectedAndCheckpointed()
     setAppState("background")
-    clock.wall += 10 * 60_000 // the process slept: the monotonic clock stood still while the wall clock ran
+    sleep(10 * 60_000) // the monotonic clock stood still while the wall clock ran
     advance(30_000)
     expect(gaps()).toHaveLength(1)
-    expect(gaps()[0].payload).toMatchObject({
+    expect(gaps()[0].payload).toEqual({
       reason: "reporter_stopped",
-      from: iso(firstCheckpointAt),
+      from: iso(firstCheckpointAt + 60_000),
       to: iso(clock.wall),
     })
+    expect(entry(checkpoints()[1], "glasses_connection")).toMatchObject({elapsedMs: 120_000, ended: true})
   })
 
-  test("a reporter that fell silent for minutes with both clocks agreeing is a reporter_stopped gap", () => {
-    connectedAndCheckpointed()
-    // Both clocks ran on, but no timer fired and nothing observed anything: the process was suspended.
+  test("a device asleep three quarters of the time still has the time it was awake counted", () => {
+    // The probe: glasses connected, the Mentra App in the background, and the device awake for 1 minute in every 4.
+    start()
+    connectLive()
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      advance(60_000)
+      sleep(180_000)
+    }
+    collector.stop("engine_stopped")
+
+    const awake = 10 * 60_000
+    expect(total(reached("glasses_connection"))).toBe(awake)
+    expect(total(reached("engine_active"))).toBe(awake)
+    // Each sleep is a gap the wall clock saw and the monotonic clock did not; none is mistaken for lost awake time.
+    const gapReasons = new Set(gaps().map((gap) => gap.payload.reason))
+    expect([...gapReasons]).toEqual(["reporter_stopped"])
+    expect(gaps().length).toBeGreaterThanOrEqual(9)
+    for (const c of checkpoints()) {
+      for (const s of c.payload.sessions) {
+        expect(Date.parse(s.startedAt) + s.elapsedMs).toBeLessThanOrEqual(Date.parse(c.observedAt))
+      }
+    }
+  })
+
+  test("a reporter that fell silent for minutes with both clocks agreeing is closed at its last checkpoint", () => {
+    const {firstCheckpointAt} = connectedAndCheckpointed()
+    // Both clocks ran on, but no timer fired and nothing observed anything: the process was suspended while awake.
     clock.wall += 10 * 60_000
     clock.mono += 10 * 60_000
     setAppState("active")
     expect(gaps()).toHaveLength(1)
-    expect(gaps()[0].payload.reason).toBe("reporter_stopped")
+    expect(gaps()[0].payload).toEqual({
+      reason: "reporter_stopped",
+      from: iso(firstCheckpointAt),
+      to: iso(clock.wall),
+    })
+    // The 10 silent minutes were not observed: nothing past the last checkpoint is counted.
+    expect(checkpoints()[1].observedAt).toBe(iso(firstCheckpointAt))
     expect(checkpoints()[1].payload.sessions.every((s) => s.elapsedMs === 60_000 && s.ended)).toBe(true)
+  })
+
+  test("a silent reporter is judged by what it did not observe, even if the device slept as well", () => {
+    const {firstCheckpointAt} = connectedAndCheckpointed()
+    clock.mono += 10 * 60_000 // awake and suspended for 10 minutes ...
+    clock.wall += 70 * 60_000 // ... and asleep for an hour on top of that
+    setAppState("active")
+    expect(gaps()).toHaveLength(1)
+    expect(gaps()[0].payload).toEqual({reason: "reporter_stopped", from: iso(firstCheckpointAt), to: iso(clock.wall)})
+    expect(checkpoints()[1].payload.sessions.every((s) => s.elapsedMs === 60_000 && s.ended)).toBe(true)
+  })
+
+  test("a checkpoint that is a little late is not a silent reporter", () => {
+    connectedAndCheckpointed()
+    // The 15-second-late kind of lateness a busy JS thread produces: both clocks agree and the span counts.
+    clock.wall += 100_000
+    clock.mono += 100_000
+    collector.flushCheckpoint()
+    expect(gaps()).toHaveLength(0)
+    expect(entry(checkpoints()[1], "glasses_connection")).toMatchObject({elapsedMs: 190_000, ended: false})
   })
 
   test("a drift under two minutes is tolerated, and usage still counts monotonic time", () => {
@@ -611,6 +692,26 @@ describe("clock changes and suspension", () => {
     expect(entry(checkpoints()[1], "glasses_connection")?.elapsedMs).toBe(120_000)
   })
 
+  test("a session never reports more time than the wall clock has given it", () => {
+    start()
+    connectLive()
+    advance(60_000) // checkpoint at 60 s
+    advance(30_000)
+    clock.wall -= 100_000 // a step back the drift limit tolerates: the session is 90 s old by the monotonic clock
+    collector.flushCheckpoint()
+    const [first, second] = checkpoints()
+    expect(gaps()).toHaveLength(0)
+    const before = entry(first, "glasses_connection")?.elapsedMs as number
+    const after = entry(second, "glasses_connection")?.elapsedMs as number
+    // The wall clock says the session is not even 0 s old, so no more time is claimed; what was reported stands.
+    expect(before).toBe(60_000)
+    expect(after).toBe(60_000)
+    advance(200_000) // the wall clock catches up with what was reported
+    expect(entry(checkpoints().at(-1) as Kind<"usage_checkpoint">, "glasses_connection")?.elapsedMs).toBeGreaterThan(
+      60_000,
+    )
+  })
+
   test("a state change after a clock change is judged against the old checkpoint first", () => {
     connectedAndCheckpointed()
     clock.wall += 10 * 60_000
@@ -625,13 +726,31 @@ describe("clock changes and suspension", () => {
     expect(entry(afterwards, "glasses_connection")).toBeDefined()
   })
 
-  test("usage never exceeds the monotonic time it was observed for", () => {
+  test("usage is the monotonic time observed, never the wall clock's", () => {
     connectedAndCheckpointed()
     clock.wall += 6 * 60 * 60_000
     advance(30_000)
     advance(60_000)
-    const maxElapsed = Math.max(...checkpoints().flatMap((c) => c.payload.sessions.map((s) => s.elapsedMs)))
-    expect(maxElapsed).toBeLessThanOrEqual(90_000)
+    // Glasses connected for 180 s of monotonic time in all: 120 s before the jump and 60 s after it.
+    expect(total(reached("glasses_connection"))).toBe(180_000)
+    expect(Math.max(...checkpoints().flatMap((c) => c.payload.sessions.map((s) => s.elapsedMs)))).toBeLessThanOrEqual(
+      120_000,
+    )
+  })
+
+  test("stopping after a long sleep counts the awake time and leaves nothing open", () => {
+    connectedAndCheckpointed()
+    sleep(10 * 60_000)
+    collector.stop("engine_stopped")
+    expect(entry(checkpoints().at(-1) as Kind<"usage_checkpoint">, "glasses_connection")).toMatchObject({
+      elapsedMs: 90_000,
+      ended: true,
+    })
+    expect(
+      checkpoints()
+        .flatMap((c) => c.payload.sessions)
+        .filter((s) => s.ended && s.elapsedMs === 0),
+    ).toHaveLength(0)
   })
 })
 
@@ -1092,6 +1211,257 @@ describe("photos", () => {
     disconnectLive()
     fleetEvents.photo({operationId: "req-5", stage: "failed", failedStage: "requested"})
     expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "serial", serial: "SN-LIVE-1"})
+  })
+})
+
+// --- one pair after another, simulated glasses, the seven-day cap ---------------------------------------------------
+
+describe("a second pair of the same model", () => {
+  /** Another Mentra Live: no usable serial, its own address and name, and only some of the versions A had. */
+  const LIVE_B = {
+    serialNumber: "0000000000",
+    bluetoothMacAddress: "66:55:44:33:22:11",
+    bluetoothName: "MENTRA_LIVE_BLE_9999",
+    appVersion: "live-9",
+    buildNumber: "900",
+    mtkFirmwareVersion: "",
+    besFirmwareVersion: "",
+    androidVersion: "13",
+    firmwareVersion: "",
+  }
+
+  function bindingOf(record: Kind<"usage_checkpoint">) {
+    return entry(record, "glasses_connection")?.deviceBinding
+  }
+
+  test("is not bound to the first pair's serial in its usage", () => {
+    start()
+    connectLive()
+    advance(60_000)
+    disconnectLive()
+    advance(5_000)
+    const bConnectedAt = clock.wall
+    connectLive(LIVE_B)
+    advance(60_000)
+
+    const list = checkpoints()
+    const first = list.find((c) => entry(c, "glasses_connection"))
+    const latest = list.at(-1) as Kind<"usage_checkpoint">
+    expect(bindingOf(first as Kind<"usage_checkpoint">)).toMatchObject({kind: "serial", serial: "SN-LIVE-1"})
+    expect(bindingOf(latest)).toMatchObject({kind: "provisional", product: "Mentra Live"})
+    expect(entry(latest, "glasses_connection")?.activitySessionId).not.toBe(
+      entry(first as Kind<"usage_checkpoint">, "glasses_connection")?.activitySessionId,
+    )
+    // Nothing recorded since B connected names A's serial.
+    const afterwards = JSON.stringify(all().filter((record) => Date.parse(record.observedAt) >= bConnectedAt))
+    expect(afterwards).not.toContain("SN-LIVE-1")
+  })
+
+  test("is not bound to the first pair's serial in its photos", () => {
+    start()
+    connectLive()
+    disconnectLive()
+    connectLive(LIVE_B)
+    fleetEvents.photo({operationId: "req-b", stage: "requested"})
+    const [photo] = ofKind("photo_operation")
+    expect(photo.deviceBinding).toMatchObject({kind: "provisional", product: "Mentra Live"})
+    expect(JSON.stringify(photo)).not.toContain("SN-LIVE-1")
+  })
+
+  test("a pair swapped in place, with no disconnect in between, is not the first pair either", () => {
+    start()
+    connectLive()
+    connectLive(LIVE_B)
+    fleetEvents.photo({operationId: "req-b", stage: "requested"})
+    expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "provisional"})
+    advance(60_000)
+    expect(bindingOf(checkpoints().at(-1) as Kind<"usage_checkpoint">)).toMatchObject({kind: "provisional"})
+    // Nor does it get the first pair's versions: B reports none for the MTK and BES.
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses?.firmware).toEqual({apk: "live-9 (900)", os: "13"})
+  })
+
+  test("does not inherit the first pair's versions", () => {
+    start()
+    connectLive()
+    advance(10_000)
+    disconnectLive()
+    advance(5_000)
+    connectLive(LIVE_B)
+    advance(5_000)
+    const latest = snapshots().at(-1) as Kind<"snapshot">
+    expect(latest.deviceBinding).toMatchObject({kind: "provisional"})
+    expect(latest.payload.glasses?.firmware).toEqual({apk: "live-9 (900)", os: "13"})
+  })
+
+  test("while it is still connecting, nothing about it is attributed to the pair that was there before", () => {
+    start()
+    connectLive()
+    advance(10_000)
+    disconnectLive()
+    advance(5_000)
+    glassesStore.setState({connection: {state: "connecting"}}) // the next pair, not yet identified
+    advance(5_000)
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
+    expect((snapshots().at(-1) as Kind<"snapshot">).deviceBinding).toBeUndefined()
+    fleetEvents.photo({operationId: "req-x", stage: "requested"})
+    expect(ofKind("photo_operation")).toHaveLength(0)
+    // Connected but not yet identified: still nothing claimed about whose it is.
+    glassesStore.setState({connection: {state: "connected", fullyBooted: false}})
+    advance(5_000)
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
+  })
+
+  test("a connection that drops to connecting with the glasses' identity wiped is not the pair that was there", () => {
+    start()
+    connectLive()
+    advance(10_000)
+    glassesStore.setState({connection: {state: "connecting"}, ...{deviceModel: "", serialNumber: ""}})
+    advance(5_000)
+    expect((snapshots().at(-1) as Kind<"snapshot">).payload.glasses).toBeUndefined()
+    fleetEvents.photo({operationId: "req-y", stage: "requested"})
+    expect(ofKind("photo_operation")).toHaveLength(0)
+  })
+
+  test("the same pair coming back is the same device", () => {
+    start()
+    connectLive(LIVE_B)
+    advance(60_000)
+    const first = bindingOf(checkpoints().at(-1) as Kind<"usage_checkpoint">)
+    disconnectLive()
+    advance(5_000)
+    connectLive(LIVE_B)
+    advance(60_000)
+    expect(bindingOf(checkpoints().at(-1) as Kind<"usage_checkpoint">)).toEqual(first as never)
+  })
+
+  test("a serial that arrives for the same pair is kept through a later blank one", () => {
+    start()
+    connectLive({serialNumber: ""})
+    glassesStore.setState({serialNumber: "SN-ARRIVED"})
+    glassesStore.setState({serialNumber: ""}) // the same pair, the serial gone blank mid-connection
+    fleetEvents.photo({operationId: "req-s", stage: "requested"})
+    expect(ofKind("photo_operation")[0].deviceBinding).toMatchObject({kind: "serial", serial: "SN-ARRIVED"})
+  })
+})
+
+describe("simulated glasses", () => {
+  const SIMULATED = {
+    connection: {state: "connected", fullyBooted: true},
+    deviceModel: "Simulated Glasses",
+    serialNumber: "SIM-0001",
+    batteryLevel: 50,
+  }
+
+  test("are not a Fleet device: no glasses in the snapshot, no glasses session, no photo binding", () => {
+    glassesStore.setState(SIMULATED)
+    start()
+    collector.flushCheckpoint()
+    advance(2_000)
+    glassesStore.setState({batteryLevel: 20})
+    advance(5_000)
+    fleetEvents.photo({operationId: "req-sim", stage: "requested"})
+    for (const snapshot of snapshots()) {
+      expect(snapshot.payload.glasses).toBeUndefined()
+      expect(snapshot.deviceBinding).toBeUndefined()
+    }
+    expect(snapshots()).toHaveLength(1)
+    expect(checkpoints().flatMap((c) => c.payload.sessions.map((s) => s.activity))).toEqual(["engine_active"])
+    // Nothing is going on that needs the 60 s cadence: the simulated glasses are not a session of any kind.
+    advance(2 * 60_000)
+    expect(checkpoints()).toHaveLength(1)
+    expect(ofKind("photo_operation")).toHaveLength(0)
+    expect(JSON.stringify(all())).not.toContain("SIM-0001")
+  })
+
+  test("do not make the phone claim it measures glasses", () => {
+    glassesStore.setState(SIMULATED)
+    start()
+    collector.flushCheckpoint()
+    for (const record of all()) {
+      expect(record.capabilities).not.toContain("glasses_battery")
+      expect(record.capabilities).not.toContain("glasses_versions")
+    }
+  })
+
+  test("switching to real glasses afterwards is an ordinary connection", () => {
+    glassesStore.setState(SIMULATED)
+    start()
+    disconnectLive()
+    connectLive()
+    advance(60_000)
+    expect(entry(checkpoints().at(-1) as Kind<"usage_checkpoint">, "glasses_connection")?.deviceBinding).toMatchObject({
+      kind: "serial",
+      serial: "SN-LIVE-1",
+    })
+  })
+})
+
+describe("the seven-day cap on a session", () => {
+  const WEEK = 7 * 24 * 60 * 60_000
+
+  test("an engine session that reaches seven days ends there and a new session carries on", () => {
+    start()
+    const startedAt = clock.wall
+    advance(WEEK + 30 * 60_000)
+
+    const engine = checkpoints().flatMap((c) => c.payload.sessions.filter((s) => s.activity === "engine_active"))
+    const ended = engine.filter((s) => s.ended)
+    expect(ended).toHaveLength(1)
+    expect(ended[0].elapsedMs).toBe(WEEK)
+    const successor = engine.at(-1) as Checkpoint
+    expect(successor.ended).toBe(false)
+    expect(successor.activitySessionId).not.toBe(ended[0].activitySessionId)
+    expect(successor.startedAt).toBe(iso(startedAt + WEEK))
+    expect(successor.elapsedMs).toBe(30 * 60_000)
+    // No session ever reports more than the cap, and the one before the cap grew steadily to it.
+    expect(Math.max(...engine.map((s) => s.elapsedMs))).toBe(WEEK)
+  })
+
+  test("the time between the cap and the checkpoint that noticed it goes to the new session", () => {
+    start()
+    advance(WEEK - 60_000)
+    // A checkpoint 90 s later than it should have been: both clocks agree, so the whole span was observed.
+    clock.wall += 90_000
+    clock.mono += 90_000
+    collector.flushCheckpoint()
+    const latest = checkpoints().at(-1) as Kind<"usage_checkpoint">
+    const engine = latest.payload.sessions.filter((s) => s.activity === "engine_active")
+    expect(engine.map((s) => [s.elapsedMs, s.ended])).toEqual([
+      [WEEK, true],
+      [30_000, false],
+    ])
+    expect(engine[1].startedAt).toBe(iso(Date.parse(engine[0].startedAt) + WEEK))
+  })
+
+  test("glasses and miniapp sessions carry their binding and package into the next session", () => {
+    start()
+    connectLive({serialNumber: ""}) // fixed as a provisional binding at the first report ...
+    miniappRunningRegistry.add("com.a")
+    // Flushes spaced as far apart as the reporter tolerates (both clocks agree), up to the one that crosses the cap.
+    const step = 179_000
+    const crossing = Math.ceil(WEEK / step)
+    for (let flush = 1; flush <= crossing; flush += 1) {
+      clock.wall += step
+      clock.mono += step
+      collector.flushCheckpoint()
+      if (flush === 1) glassesStore.setState({serialNumber: "SN-LATE"}) // ... so a later serial does not change it
+    }
+    expect(gaps()).toHaveLength(0)
+    const latest = (checkpoints().at(-1) as Kind<"usage_checkpoint">).payload.sessions
+    const ended = latest.filter((s) => s.ended && s.activity !== "engine_active")
+    expect(ended.map((s) => s.activity).sort()).toEqual(["glasses_connection", "miniapp_execution"])
+    for (const closed of ended) expect(closed.elapsedMs).toBe(WEEK)
+    const next = latest.filter((s) => !s.ended && s.activity !== "engine_active")
+    expect(next.map((s) => s.activity).sort()).toEqual(["glasses_connection", "miniapp_execution"])
+    expect(next.find((s) => s.activity === "miniapp_execution")?.packageName).toBe("com.a")
+    const endedBinding = ended.find((s) => s.activity === "glasses_connection")?.deviceBinding
+    expect(endedBinding?.kind).toBe("provisional")
+    expect(next.find((s) => s.activity === "glasses_connection")?.deviceBinding).toEqual(endedBinding as never)
+    for (const session of next) {
+      expect(session.activitySessionId).not.toBe(ended.find((s) => s.activity === session.activity)?.activitySessionId)
+      // What the last step carried past the cap.
+      expect(session.elapsedMs).toBe(crossing * step - WEEK)
+    }
   })
 })
 
