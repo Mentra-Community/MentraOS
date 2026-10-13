@@ -3,8 +3,8 @@
 Each Core runs its own sign-in server, an OpenID Connect provider built on
 panva's [`oidc-provider`](https://github.com/panva/node-oidc-provider). It is the
 one place Mentra's websites and the `mentra` CLI sign in: the admin portal, the
-workspace portal and the CLI today, and the Developer Console as it adopts it.
-Every token a website or the CLI holds is issued by Core.
+workspace portal, the Developer Console and the CLI. Every token a website or the
+CLI holds is issued by Core.
 
 Behind the sign-in server, one identity provider checks who the person is:
 
@@ -180,6 +180,29 @@ it asks the service it targets:
 issuer, and the `cli` client's ID. It answers 404
 `{error: "not_configured"}` when the sign-in server is off or no `cli` client is
 registered. Both answers are `no-store`.
+
+### The Developer Console
+
+The Developer Console is a confidential client of the Core whose Store runs it;
+the Store backend is its server side. Register it with the Console's callback:
+
+```json
+{"clientId": "mentra-console", "kind": "console",
+ "secretEnv": "CLOUD_CORE_OIDC_CONSOLE_CLIENT_SECRET",
+ "redirectUris": ["https://console.mentraglass.com/api/console/auth/callback"]}
+```
+
+The Store holds the same client ID and secret, the issuer and the Console's
+origin. It runs the code flow with S256 PKCE, `state` and `nonce`, redeems the
+code with `client_secret_post`, and keeps the person's access and refresh tokens
+encrypted on its side, behind the Console's own `__Host-` session cookie. On
+every Console request the Store hands the access token to Core's service API
+(`POST /api/internal/workspaces/principal`), so a revocation here ends the
+Console session on its next request. The Store refreshes the token before it
+expires, one refresh at a time per session, since a reused refresh token ends
+the grant. Signing out of the Console revokes its refresh token at
+`/oidc/token/revocation`; the end-session endpoint is offered for the sign-in
+site itself. See [Store integration](store-integration.md).
 
 ## The portals
 

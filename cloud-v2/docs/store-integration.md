@@ -66,6 +66,39 @@ Store holds one value from that list. Keep both in the secret manager.
 Authorization decisions use current state. Display data (workspace names) may
 be cached for up to five minutes; a cached answer never authorizes a write.
 
+## Signing people in to the Store
+
+The Developer Console and the `mentra` CLI sign in through the Core the Store
+belongs to ([`signin.md`](signin.md)):
+
+- **The Console** is that Core's `console` client. The Store's
+  `MENTRA_STORE_OIDC_ISSUER` is the Core's `CLOUD_CORE_OIDC_ISSUER`;
+  `MENTRA_STORE_OIDC_CLIENT_ID` and `MENTRA_STORE_OIDC_CLIENT_SECRET` are the
+  client's ID and secret; `MENTRA_STORE_CONSOLE_URL` is the Console's origin,
+  whose `/api/console/auth/callback` is the client's redirect URI. The Store
+  keeps the person's tokens on its side, passes the access token to
+  `POST /principal` on every request, and ends the Console session when Core
+  answers `401 invalid_token`.
+- **The CLI** is the Core's `cli` client. The Store answers
+  `GET /api/console/auth/cli-config` with `{issuer, clientId}` from
+  `MENTRA_STORE_OIDC_ISSUER` and `MENTRA_STORE_CLI_CLIENT_ID`; the CLI then signs
+  in on a loopback port and sends its Core access token to the Store as a bearer.
+  CI sends a workspace key (`msk_`) instead.
+
+Either way the Store passes what it was given to `/authorize` and `/principal`;
+it never validates a person's token itself.
+
+### Private miniapps
+
+A private miniapp reaches the members of the workspace that owns it, the members
+of the workspaces its publisher shares it with (present and future members), and
+the people invited to it by email; access never installs it. The Store checks membership with `POST /memberships/check` for the Core
+user named by the phone's Store miniapp token, whatever sign-in source that person
+uses (a Mentra account, an OEM's users, a Private Cloud provider's), but only when
+the token comes from this Core: a Store that also serves phones signed in to other
+Cores (for its public catalog) never asks this Core about their user ids. Every
+download is authorized when it is requested.
+
 ## Moving developer organizations from the Store
 
 The Store's developer organizations become Core workspaces with the same IDs, so
