@@ -44,8 +44,13 @@
  *
  * Correlation. Core sends Fleet its request id (`x-request-id`, the id `requestContext` gave this
  * request) and answers with Fleet's `x-request-id` when Fleet returns one, Core's otherwise. Each
- * forwarded request is logged once with `{reqId, upstreamRequestId, status, ms}`; never a body, a
- * header, a query or a secret.
+ * request that reaches Fleet is logged once with `{reqId, upstreamRequestId, status, ms}`: at debug
+ * for a success, at info for an answer Fleet gave that is not one (a 403, a 429, a 404...), and at
+ * warn for what Core could not relay as Fleet said it (a failure, a timeout, an upstream 401).
+ * Never a body, a header, a query or a secret.
+ *
+ * A 503 Core gives for an upstream 5xx repeats Fleet's `Retry-After` when it is a whole number of
+ * seconds.
  *
  * What Fleet receives. Core copies the method, the query, the body and the `content-type` and
  * `accept` headers. Every other inbound header is dropped, so nothing the caller sent under
@@ -89,6 +94,7 @@ import {
 } from "@mentra/workspace-contract/server"
 import {Hono, type Handler, type MiddlewareHandler} from "hono"
 import {bodyLimit} from "hono/body-limit"
+import type {StatusCode} from "hono/utils/http-status"
 import {ulid} from "ulid"
 import {fleetConfig, fleetLimits} from "../../services/fleet/fleet-config"
 import {phoneEmail} from "../../services/fleet/phone-email"
@@ -123,7 +129,19 @@ const MOUNT_PREFIX: Record<Audience, string> = {
 /** What a person's Fleet request covers: the organization. Core decides; nothing in a request can change it. */
 const ORGANIZATION_SCOPE = {kind: "organization"} as const
 
-const unavailable = (c: AppContext) => c.json({error: "fleet_unavailable"}, 503)
+/**
+ * Core's own 503. `retryAfter` is Fleet's `Retry-After` when it answered with a failure and sent a valid one,
+ * so a phone backs off for as long as Fleet asked rather than for its own guess.
+ */
+function unavailable(c: AppContext, retryAfter: string | null = null) {
+  if (retryAfter) c.header("retry-after", retryAfter)
+  return c.json({error: "fleet_unavailable"}, 503)
+}
+
+/** A `Retry-After` Core will repeat to a phone: a whole number of seconds, which is all phones read. */
+function validRetryAfter(value: string | null): string | null {
+  return value !== null && /^\d{1,9}$/.test(value) ? value : null
+}
 
 /** The part of a request URL after the host, as sent: `new URL` would collapse `..` segments. */
 function rawPathAndQuery(url: string): {path: string; query: string} {
@@ -177,7 +195,7 @@ export function upstreamTarget(baseUrl: URL, audience: Audience, suffix: string,
  * The body of `upstream` as bytes, or null once it passes `limit`: a declared length over it is refused
  * before anything is read, and a stream with no (or a wrong) length is cancelled as soon as it is over.
  */
-async function readCapped(upstream: Response, limit: number): Promise<Uint8Array | null> {
+async function readCapped(upstream: Response, limit: number): Promise<Uint8Array<ArrayBuffer> | null> {
   const declared = Number(upstream.headers.get("content-length"))
   if (Number.isFinite(declared) && declared > limit) {
     await upstream.body?.cancel()
@@ -322,13 +340,18 @@ function forward(audience: Audience): Handler<AppEnv> {
       reason?: string
     }) => {
       const fields = {audience, ...outcome, ms: Math.round(performance.now() - started)}
-      // An answer Fleet gave is routine; one Core could not relay, or Fleet refusing Core's signature, is not.
-      const routine = outcome.status === outcome.upstreamStatus
-      log[routine ? "debug" : "warn"](fields, "Fleet request forwarded")
+      // A success is routine (debug). An answer Fleet gave that is not one (a 403 for a signature it
+      // refused, a 429, a 404) is relayed as it is and logged at info, so it shows at the production log
+      // level. What Core could not relay as Fleet said it (a failure, a redirect, an oversized body, a 401
+      // turned into a 403, no answer at all) is a warning.
+      const relayedAsIs = outcome.status === outcome.upstreamStatus
+      const success = outcome.status >= 200 && outcome.status < 300
+      const level = !relayedAsIs ? "warn" : success || outcome.status === 304 ? "debug" : "info"
+      log[level](fields, "Fleet request forwarded")
     }
 
     let status: number
-    let payload: Uint8Array | null = null
+    let payload: Uint8Array<ArrayBuffer> | null = null
     let upstreamHeaders: Headers
     try {
       // One signal covers the wait for the answer and the read of its body.
@@ -347,7 +370,8 @@ function forward(audience: Audience): Handler<AppEnv> {
         // Not an answer Core relays: a failure, or a redirect it never follows.
         await upstream.body?.cancel()
         logged({status: 503, upstreamStatus: status, upstreamRequestId})
-        return unavailable(c)
+        // Fleet's own backoff (it sends one on an outage and while it shuts down) belongs to a failure, not to a redirect.
+        return unavailable(c, status >= 500 ? validRetryAfter(upstreamHeaders.get("retry-after")) : null)
       }
       if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
         // No body to relay. A HEAD answer's `content-length` describes the body a GET would get, so it
@@ -371,17 +395,22 @@ function forward(audience: Audience): Handler<AppEnv> {
       return unavailable(c)
     }
 
-    const responseHeaders = new Headers()
+    // Never return a raw `Response` from here (nor from any route that reuses this handler, such as the
+    // Fleet UI asset route): Hono replaces the context's headers with a raw Response's, and the context
+    // holds the caller's rotated portal-session cookie (`principalAuth` sets it before the handler runs).
+    // Lose it and the Organization Admin is signed out a minute after Core rotated their session. Build
+    // the answer through the context, so what was set on it is kept and only these headers are added.
     for (const name of PASSED_RESPONSE_HEADERS) {
       const value = upstreamHeaders.get(name)
-      if (value) responseHeaders.set(name, value)
+      if (value) c.header(name, value)
     }
     const upstreamRequestId = upstreamHeaders.get(REQUEST_ID_HEADER)
-    responseHeaders.set(REQUEST_ID_HEADER, upstreamRequestId || requestId)
+    // Replaces the id `requestContext` set: the caller gets Fleet's when Fleet returned one.
+    c.header(REQUEST_ID_HEADER, upstreamRequestId || requestId)
     // A 401 from Core means "sign in again" to every client; Fleet's never does, so it is relayed as a 403.
     const relayed = status === 401 ? 403 : status
     logged({status: relayed, upstreamStatus: status, upstreamRequestId})
-    return new Response(payload, {status: relayed, headers: responseHeaders})
+    return c.newResponse(payload, relayed as StatusCode)
   }
 }
 

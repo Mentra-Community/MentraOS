@@ -41,8 +41,9 @@ import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-me
 import {WorkspaceModel} from "../packages/core/src/models/workspace.model"
 import {resetPhoneEmailCache} from "../packages/core/src/services/fleet/phone-email"
 import {createSession} from "../packages/core/src/services/session.service"
-import {createPortalSession} from "../packages/core/src/services/signin/browser-session.service"
+import {createPortalSession, SESSION_ROTATE_AFTER_MS} from "../packages/core/src/services/signin/browser-session.service"
 import {resetIdpTokenCaches} from "../packages/core/src/services/signin/idp-tokens"
+import {sha256Hex} from "../packages/core/src/services/signin/random"
 import {findOrCreateUser} from "../packages/core/src/services/user.service"
 import {ORGANIZATION_CAPABILITIES} from "../packages/workspace-contract/src/index"
 import {FORWARDED_PRINCIPAL_HEADERS, SERVICE_HEADERS, verifyForwardedPrincipal} from "../packages/workspace-contract/src/server"
@@ -55,6 +56,7 @@ import {
   ADMIN_ORIGIN,
   applyEnv,
   coreAccessToken,
+  cookieValue,
   HOSTED_ENV,
   SUPABASE_ISSUER,
   SUPABASE_JWKS,
@@ -127,6 +129,8 @@ interface Echo {
 let received: Received[] = []
 /** Changes a request after Core sent it and before the fake Fleet verifies it. */
 let tamper: ((request: Received) => Received) | null = null
+/** Answers in place of the fake Fleet's own, once it has recorded the request. */
+let answer: (() => Response) | null = null
 
 const fleet = Bun.serve({
   hostname: "127.0.0.1",
@@ -140,6 +144,7 @@ const fleet = Bun.serve({
       headers: request.headers,
     }
     received.push(got)
+    if (answer) return answer()
     const checked = tamper ? tamper(got) : got
     const principal = verifyForwardedPrincipal(
       {method: checked.method, pathWithQuery: checked.pathWithQuery, body: checked.body, headers: checked.headers},
@@ -188,6 +193,28 @@ async function person(key: string, options: {email?: string; emailVerified?: boo
     authTime: new Date(),
   })
   return {sub, email, mentraUserId, bearer, cookie: `${ADMIN_COOKIE}=${cookieValue}`}
+}
+
+/**
+ * An admin portal session for `who` that was last rotated more than a day ago, so the first request it makes
+ * is the one `principalAuth` rotates. Returns the session's cookie value.
+ */
+async function staleSession(who: Person): Promise<string> {
+  const rotatedAt = new Date(Date.now() - SESSION_ROTATE_AFTER_MS - 60_000)
+  const {cookieValue: value} = await createPortalSession(
+    "admin",
+    {
+      mentraUserId: who.mentraUserId,
+      tenantId: "mentra",
+      sourceId: "mentra",
+      subject: who.sub,
+      email: who.email,
+      emailVerified: true,
+      authTime: new Date(),
+    },
+    rotatedAt,
+  )
+  return value
 }
 
 interface Phone {
@@ -330,6 +357,7 @@ beforeEach(async () => {
   resetPhoneEmailCache()
   received = []
   tamper = null
+  answer = null
   idp = await installFakeIdp({
     issuer: SUPABASE_ISSUER,
     jwksUrl: SUPABASE_JWKS,
@@ -554,6 +582,67 @@ describe("an Organization Admin", () => {
     expect((reply.json as Echo).principal).toMatchObject({kind: "user", scope: {kind: "organization"}})
     // Fleet is handed the query and body as they were, to ignore.
     expect((reply.json as Echo).pathWithQuery).toBe("/v1/admin/overview?scope=workspace&workspaceId=ws_x")
+  })
+
+  test("a session due for rotation gets its new cookie on the forwarded answer, and the request still forwards", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const old = await staleSession(admin)
+    const oldCookie = `${ADMIN_COOKIE}=${old}`
+
+    const reply = await send("GET", "/api/admin/fleet/overview?range=7d", {headers: {cookie: oldCookie}})
+
+    // Forwarded, as the person who holds the session.
+    expect(reply.status).toBe(200)
+    expect(received).toHaveLength(1)
+    expect((reply.json as Echo).principal).toMatchObject({kind: "user", mentraUserId: admin.mentraUserId, scope: {kind: "organization"}})
+    // And the rotated cookie reached the browser: without it the old value dies after the grace period.
+    const rotated = cookieValue(reply as unknown as Response, ADMIN_COOKIE) ?? null
+    expect(rotated).toBeTruthy()
+    expect(rotated).not.toBe(old)
+    const row = await BrowserSessionModel.findOne({tokenHash: sha256Hex(rotated!)}).lean()
+    expect(row?.previousTokenHash).toBe(sha256Hex(old))
+    expect(reply.headers.getSetCookie().filter(line => line.startsWith(`${ADMIN_COOKIE}=`))).toHaveLength(1)
+
+    // The new cookie is the session from now on: it forwards, and it is not rotated again.
+    const next = await send("GET", "/api/admin/fleet/overview", {headers: {cookie: `${ADMIN_COOKIE}=${rotated}`}})
+    expect(next.status).toBe(200)
+    expect(next.headers.getSetCookie()).toEqual([])
+  })
+
+  test("so does it on every other answer Fleet can give: a refusal, a rate limit, a failure, an empty answer", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+    const answers: Record<string, [() => Response, number]> = {
+      "Fleet's 403": [() => Response.json({error: "fake_fleet_unverified"}, {status: 403}), 403],
+      "Fleet's 401 (relayed as 403)": [() => Response.json({error: "no"}, {status: 401}), 403],
+      "a 429": [() => Response.json({error: "slow"}, {status: 429, headers: {"retry-after": "30"}}), 429],
+      "a 404": [() => Response.json({error: "nope"}, {status: 404}), 404],
+      "a 503 with Retry-After": [() => Response.json({error: "down"}, {status: 503, headers: {"retry-after": "30"}}), 503],
+      "a 304": [() => new Response(null, {status: 304}), 304],
+      "a 204": [() => new Response(null, {status: 204}), 204],
+    }
+
+    for (const [name, [reply, status]] of Object.entries(answers)) {
+      answer = reply
+      const old = await staleSession(admin)
+
+      const response = await send("PUT", "/api/admin/fleet/settings", {
+        headers: {cookie: `${ADMIN_COOKIE}=${old}`, origin: ADMIN_ORIGIN, "content-type": "application/json"},
+        body: "{}",
+      })
+
+      expect([name, response.status]).toEqual([name, status])
+      const rotated = cookieValue(response as unknown as Response, ADMIN_COOKIE)
+      expect([name, !!rotated, rotated !== old]).toEqual([name, true, true])
+    }
+  })
+
+  test("a session that is not due for rotation sets no cookie", async () => {
+    const admin = await person("org-admin", {email: ADMIN_EMAIL})
+
+    const reply = await fromPerson(admin, "GET", "/overview")
+
+    expect(reply.status).toBe(200)
+    expect(reply.headers.getSetCookie()).toEqual([])
   })
 
   test("a write from another origin with the cookie is refused by Core before Fleet", async () => {

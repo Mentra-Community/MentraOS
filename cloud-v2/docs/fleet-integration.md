@@ -123,7 +123,9 @@ signs.
   body. Core does not read one (a `HEAD` answer's `content-length` is not held
   against the response limit) and adds no `content-type` Fleet did not send.
 - Per-record results must ride in a `2xx` or `4xx` body: a `5xx` is turned into
-  `503 fleet_unavailable` and its body is dropped.
+  `503 fleet_unavailable` and its body is dropped. Fleet's `Retry-After` on that
+  `5xx`, when it is a whole number of seconds, is repeated on Core's `503`, so
+  send one when Fleet is down or shutting down.
 
 ### Correlation
 
@@ -132,9 +134,14 @@ Core sends Fleet its own request id as `x-request-id`: the caller's
 Use it as Fleet's request id. Core answers with Fleet's `x-request-id` when Fleet
 returns one, and its own otherwise.
 
-Core logs each forwarded request once, with its request id, Fleet's request id,
-the status Core answered, Fleet's status and the time taken. It never logs a
-body, a header, a query, an email or a secret.
+Core logs every request that reaches Fleet once, with its request id, Fleet's
+request id, the status Core answered, Fleet's status and the time taken. A
+success is logged at debug, an answer Fleet gives that is not a success (a `403`,
+a `429`, a `404`) at info, and what Core could not relay as Fleet said it (a
+network error, a timeout, a `5xx`, a redirect, an oversized body, a `401`) at
+warn. So a secret that does not match Fleet's, which Fleet refuses with `403`,
+shows in the log at the production level. Core never logs a body, a header, a
+query, an email or a secret.
 
 ## What Fleet receives
 

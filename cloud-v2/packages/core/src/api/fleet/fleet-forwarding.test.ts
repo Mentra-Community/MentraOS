@@ -161,6 +161,9 @@ root.use("*", async (c, next) => {
   if (principal) c.set("principal", principal)
   const reqId = c.get("reqId")
   c.set("logger", recordingLogger(reqId ? {reqId} : {}))
+  // What `principalAuth` does when it rotates a portal session: a cookie set on the context, ahead of the handler.
+  const rotated = c.req.header("x-test-set-cookie")
+  if (rotated) c.header("set-cookie", rotated, {append: true})
   await next()
 })
 root.route("/api/client/fleet", clientFleetApi)
@@ -782,6 +785,45 @@ describe("limits and failures", () => {
     }
   })
 
+  test("a valid Retry-After on an upstream 5xx reaches the caller on Core's own 503, and an invalid one does not", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+
+    for (const [retryAfter, passed] of [
+      ["30", "30"],
+      ["0", "0"],
+      ["120", "120"],
+      [undefined, null],
+      ["soon", null],
+      ["-5", null],
+      ["1.5", null],
+      ["30 seconds", null],
+      ["Wed, 21 Oct 2026 07:28:00 GMT", null],
+      ["99999999999999999999", null],
+    ] as const) {
+      for (const status of [500, 503]) {
+        respond = () =>
+          Response.json({secret: "internal details"}, {status, headers: retryAfter ? {"retry-after": retryAfter} : {}})
+
+        for (const response of [await phone("/devices"), await admin(organizationAdmin, "/devices")]) {
+          expect([retryAfter, status, response.status]).toEqual([retryAfter, status, 503])
+          expect([retryAfter, status, response.headers.get("retry-after")]).toEqual([retryAfter, status, passed])
+          expect(await response.json()).toEqual({error: "fleet_unavailable"})
+        }
+      }
+    }
+  })
+
+  test("a failure that is not an upstream answer carries no Retry-After", async () => {
+    configure({CLOUD_CORE_FLEET_TIMEOUT_MS: "100"})
+    respond = () => new Promise<Response>(() => {})
+
+    const response = await phone("/devices")
+
+    expect(response.status).toBe(503)
+    expect(response.headers.get("retry-after")).toBeNull()
+  })
+
   test("an upstream that cannot be reached is a 503", async () => {
     const gone = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: () => new Response("")})
     const url = `http://127.0.0.1:${gone.port}`
@@ -810,13 +852,15 @@ describe("limits and failures", () => {
     configure()
     for (const status of [301, 302, 303, 307, 308]) {
       calls = []
-      respond = () => new Response(null, {status, headers: {location: "/v1/client/elsewhere"}})
+      respond = () => new Response(null, {status, headers: {"location": "/v1/client/elsewhere", "retry-after": "30"}})
 
       const response = await phone("/devices")
 
       expect([status, response.status]).toEqual([status, 503])
       expect(await response.json()).toEqual({error: "fleet_unavailable"})
       expect(response.headers.get("location")).toBeNull()
+      // A redirect Core does not follow is not Fleet asking for time.
+      expect(response.headers.get("retry-after")).toBeNull()
       expect(calls.map(call => call.pathWithQuery)).toEqual(["/v1/client/devices"])
     }
   })
@@ -1018,7 +1062,7 @@ describe("what Core logs", () => {
     expect(JSON.stringify(logs)).not.toContain("internal-secret")
   })
 
-  test("an upstream 401 is a warning, since Fleet refusing Core's signature is an operator's problem", async () => {
+  test("an upstream 401 is a warning: Fleet's 401 is never an answer, so something is misconfigured", async () => {
     configure()
     respond = () => Response.json({error: "bad_signature"}, {status: 401})
 
@@ -1026,6 +1070,157 @@ describe("what Core logs", () => {
 
     expect(response.status).toBe(403)
     expect(logs.find(entry => entry.level === "warn")?.fields).toMatchObject({upstreamStatus: 401, status: 403})
+  })
+
+  test("an answer Fleet gives that is not a success is logged at info, so a secret mismatch (Fleet's 403) shows in production", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+
+    for (const status of [400, 403, 404, 409, 413, 422, 429]) {
+      logs = []
+      respond = () => Response.json({error: "fleet_says_no"}, {status, headers: {"x-request-id": `fleet-${status}`}})
+
+      const fromPhone = await phone("/devices")
+      const fromAdmin = await admin(organizationAdmin, "/devices")
+
+      expect([status, fromPhone.status, fromAdmin.status]).toEqual([status, status, status])
+      const lines = logs.filter(line => line.message.includes("Fleet"))
+      expect(lines.map(line => line.level)).toEqual(["info", "info"])
+      expect(lines.map(line => line.fields)).toEqual([
+        {audience: "client", upstreamRequestId: `fleet-${status}`, upstreamStatus: status, status, ms: expect.any(Number)},
+        {audience: "admin", upstreamRequestId: `fleet-${status}`, upstreamStatus: status, status, ms: expect.any(Number)},
+      ])
+    }
+  })
+
+  test("a request that did not reach Fleet's answer is a warning", async () => {
+    configure({CLOUD_CORE_FLEET_TIMEOUT_MS: "100"})
+    respond = () => new Promise<Response>(() => {})
+
+    await phone("/devices")
+
+    const line = logs.find(entry => entry.level === "warn")
+    expect(line?.fields).toMatchObject({status: 503, upstreamStatus: null, upstreamRequestId: null})
+    expect(line?.fields.reason).toBeString()
+  })
+
+  test("a success is only debug, so routine reports do not fill the log", async () => {
+    configure()
+
+    for (const [status, init] of [
+      [200, {}],
+      [201, {}],
+      [204, {}],
+      [304, {}],
+    ] as const) {
+      logs = []
+      respond = () => new Response(status === 204 || status === 304 ? null : "{}", {status, ...init})
+
+      expect((await phone("/devices")).status).toBe(status)
+
+      const lines = logs.filter(line => line.message.includes("Fleet"))
+      expect([status, lines.map(line => line.level)]).toEqual([status, ["debug"]])
+    }
+  })
+})
+
+describe("a cookie the request already set", () => {
+  // `principalAuth` rotates a portal session older than a day and sets the new cookie on the context before
+  // the handler runs. A handler that returns a raw `Response` replaces the context's headers and loses it,
+  // which signs the Organization Admin out a minute later. Every answer must be built through the context.
+  const ROTATED = "__Host-mentra_admin_session=rotated-value; Path=/; HttpOnly; Secure; SameSite=Lax"
+
+  test("survives every answer the forwarder gives, relayed or its own", async () => {
+    configure({CLOUD_CORE_FLEET_MAX_RESPONSE_BYTES: "16", CLOUD_CORE_FLEET_MAX_BODY_BYTES: "16"})
+    const organizationAdmin = as("organization-admin", person(true))
+    const answers: Record<string, [() => Response | Promise<Response>, Init?]> = {
+      "200": [() => Response.json({ok: true})],
+      "201 with every passed header": [
+        () =>
+          new Response("{}", {
+            status: 201,
+            headers: {"content-type": "application/json", "cache-control": "no-store", "retry-after": "5", "x-request-id": "f-1"},
+          }),
+      ],
+      "204": [() => new Response(null, {status: 204})],
+      "304": [() => new Response(null, {status: 304})],
+      "HEAD": [() => new Response(null, {status: 200}), {method: "HEAD"}],
+      "404": [() => Response.json({error: "nope"}, {status: 404})],
+      "429": [() => Response.json({error: "slow"}, {status: 429, headers: {"retry-after": "30"}})],
+      "an upstream 401, relayed as 403": [() => Response.json({error: "x"}, {status: 401})],
+      "an upstream 500, answered 503": [() => Response.json({error: "x"}, {status: 500, headers: {"retry-after": "30"}})],
+      "an upstream redirect, answered 503": [() => new Response(null, {status: 302, headers: {location: "/x"}})],
+      "a response over the cap, answered 503": [() => new Response("x".repeat(17))],
+      "a request that never gets an answer": [() => new Promise<Response>(() => {})],
+    }
+
+    for (const [name, [reply, init]] of Object.entries(answers)) {
+      respond = reply
+      if (name === "a request that never gets an answer") process.env.CLOUD_CORE_FLEET_TIMEOUT_MS = "100"
+      else process.env.CLOUD_CORE_FLEET_TIMEOUT_MS = "10000"
+
+      for (const response of [
+        await admin(organizationAdmin, "/overview", {...init, headers: {"x-test-set-cookie": ROTATED}}),
+        await phone("/overview", {...init, headers: {"x-test-set-cookie": ROTATED}}),
+      ]) {
+        expect([name, response.headers.getSetCookie()]).toEqual([name, [ROTATED]])
+      }
+    }
+  })
+
+  test("survives Core's own answers before anything is forwarded", async () => {
+    const organizationAdmin = as("organization-admin", person(true))
+    const headers = {"x-test-set-cookie": ROTATED}
+    const cookies = async (response: Promise<Response> | Response) => (await response).headers.getSetCookie()
+
+    // Not installed, misconfigured.
+    expect(await cookies(admin(organizationAdmin, "/overview", {headers}))).toEqual([ROTATED])
+    process.env.CLOUD_CORE_FLEET_URL = upstreamUrl()
+    expect(await cookies(admin(organizationAdmin, "/overview", {headers}))).toEqual([ROTATED])
+    // Ready: a refused path, a refused body, a body over the limit.
+    configure({CLOUD_CORE_FLEET_MAX_BODY_BYTES: "4"})
+    const unsafe = rawUrlRequest("http://localhost/api/admin/fleet/a/../b", {...headers, "x-test-principal": organizationAdmin})
+    expect(await cookies(root.fetch(unsafe))).toEqual([ROTATED])
+    expect(await cookies(admin(organizationAdmin, "/overview", {method: "POST", body: new Uint8Array([0xff]), headers}))).toEqual([
+      ROTATED,
+    ])
+    expect(await cookies(admin(organizationAdmin, "/overview", {method: "POST", body: "too long for it", headers}))).toEqual([
+      ROTATED,
+    ])
+  })
+
+  test("is not mistaken for Fleet's: a Set-Cookie from Fleet never reaches the caller", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+    respond = () => new Response("{}", {headers: {"set-cookie": "fleet=1; Path=/"}})
+
+    const response = await admin(organizationAdmin, "/overview", {headers: {"x-test-set-cookie": ROTATED}})
+
+    expect(response.headers.getSetCookie()).toEqual([ROTATED])
+  })
+
+  test("leaves the answer's own headers alone, and Fleet's request id replaces the one set earlier", async () => {
+    configure()
+    const organizationAdmin = as("organization-admin", person(true))
+    respond = () =>
+      new Response('{"a":1}', {
+        status: 201,
+        headers: {"content-type": "application/json; charset=utf-8", "cache-control": "private, max-age=5", "x-request-id": "fleet-own-id"},
+      })
+    const withContext = new Hono<AppEnv>()
+    withContext.use("/api/*", requestContext)
+    withContext.route("/", root)
+
+    const response = await withContext.request("http://localhost/api/admin/fleet/overview", {
+      headers: {"x-test-principal": organizationAdmin, "x-test-set-cookie": ROTATED, "x-request-id": "caller-id"},
+    })
+
+    expect(response.status).toBe(201)
+    expect(await response.text()).toBe('{"a":1}')
+    expect(response.headers.get("content-type")).toBe("application/json; charset=utf-8")
+    expect(response.headers.get("cache-control")).toBe("private, max-age=5")
+    expect(response.headers.get("x-request-id")).toBe("fleet-own-id")
+    expect(response.headers.getSetCookie()).toEqual([ROTATED])
   })
 })
 
