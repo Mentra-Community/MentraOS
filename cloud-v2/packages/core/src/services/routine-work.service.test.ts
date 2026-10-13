@@ -565,7 +565,7 @@ test('recording verification has separate durable identity and preserves origina
  const identity={decisionId:'recording-retry',inputSha256:'d'.repeat(64),failureEventId:original.eventId,failureSha256:requestInputDigest(original),
   acceptedAt:'2026-10-05T11:01:00.000Z',deadline:'2026-10-05T11:31:00.000Z',previousFailure:{code:'recording-response',reason:details.reason}}
  const event=routineWorkStatusSchema.parse({...original,eventId:'recording-retry',sequence:5,state:'verifying',details:{...original.details,state:'verifying',sequence:5,
-  details:{...details,summary:'Verify original recording'},events:[...original.details.events,{eventId:'recording-retry',sequence:5,state:'verifying',at:identity.acceptedAt,details}]}})
+  details:{...details,summary:'Verify original recording'},events:[...original.details.events,{eventId:'recording-retry',sequence:5,state:'verifying',at:'2026-10-05T11:01:00.003Z',details}]}})
  await expect(f.service.status(event,row.hostId)).rejects.toThrow('Terminal')
  expect(await f.service.verifyRecording({identity,event},row.hostId)).toEqual(event)
  expect(await f.service.verifyRecording({identity,event},row.hostId)).toEqual(event)

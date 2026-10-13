@@ -516,7 +516,7 @@ export class RoutineWorkService {
       if(!original.details.details[key]||requestInputDigest(event.details.details[key])!==requestInputDigest(original.details.details[key]))
         throw new TestRequestConflict('Recording verification changed its original source, request or review')
     const decision=event.details.events.find(item=>item.eventId===identity.decisionId)
-    if(!row.verification&&(!decision||decision.state!=='verifying'||decision.sequence!==original.sequence+1||decision.at!==identity.acceptedAt))
+    if(!row.verification&&(!decision||decision.state!=='verifying'||decision.sequence!==original.sequence+1||Date.parse(decision.at)<Date.parse(identity.acceptedAt)||Date.parse(decision.at)>Date.parse(identity.deadline)))
       throw new TestRequestConflict('Recording verification lacks its original ordered retry decision')
     const previous=row.verification
     if(previous&&requestInputDigest(previous.identity)!==requestInputDigest(identity))
