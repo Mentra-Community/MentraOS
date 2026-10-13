@@ -556,6 +556,28 @@ test("failed runs select the failure; explicit step links preserve their request
   expect(selectedFailureScreen(withScreen, failureScreens, 'connect', 'setup')).toBeUndefined();
   expect(selectedFailureScreen(withScreen, [{...failureScreens[0]!, assetId: 'foreign'}], 'connect', 'test')).toBeUndefined();
   expect(selectedFailureScreen(withScreen, failureScreens, 'open', 'test')).toBeUndefined();
+  const desktop = {...screen, id: 'desktop-image', path: 'screenshots/full-desktop.png'};
+  const macRun = {...withScreen, platform: 'ios-on-mac' as const, assets: [...withScreen.assets, desktop]};
+  const macScreens = [{...failureScreens[0]!, desktopAssetId: desktop.id}];
+  client.setQueryData(['framework-run', run.requestId], {run: macRun, definition: null, outcome: 'failed',
+    uploadsComplete: true, evidenceStatus: 'complete', failureScreens: macScreens});
+  const macOpening = render();
+  expect(macOpening).toContain('data-step-id="connect" data-selected="true"');
+  expect(macOpening).toContain('alt="App: connect"');
+  expect(macOpening).toContain('alt="Desktop: connect"');
+  expect(macOpening.match(/<img /g)).toHaveLength(2);
+  expect(macOpening).toContain('/assets/failure-image');
+  expect(macOpening).toContain('/assets/desktop-image');
+  expect(macOpening).toContain('Open app screenshot');
+  expect(macOpening).toContain('Open desktop screenshot');
+  expect(macOpening).not.toContain('Desktop screenshot</button>');
+  expect(macOpening).not.toContain('<video');
+  expect(render('open')).toContain('<video');
+  expect(render('open')).not.toContain('<img');
+  client.setQueryData(['framework-run', run.requestId], {run: macRun, definition: null, outcome: 'failed',
+    uploadsComplete: true, evidenceStatus: 'complete', failureScreens: [{...macScreens[0]!, desktopAssetId: 'foreign'}]});
+  expect(render().match(/<img /g)).toHaveLength(1);
+  expect(render()).not.toContain('alt="Desktop:');
   client.setQueryData(['framework-run', run.requestId], {run: withScreen, definition: null, outcome: 'failed',
     uploadsComplete: false, evidenceStatus: 'complete', failureScreens});
   expect(render()).not.toContain('<img');
@@ -732,18 +754,20 @@ test("routine lifecycle rows report real actions without video and keep failures
       evidenceStatus: 'complete', failureScreens};
     client.setQueryData(['framework-run', 'lifecycle-run'], display);
     const both = renderLifecycle();
-    expect(both).toContain(`alt="Failure screenshot: ${failed.actionId}"`);
+    expect(both).toContain(`alt="App: ${failed.actionId}"`);
+    expect(both).toContain(`alt="Desktop: ${failed.actionId}"`);
+    expect(both.match(/<img /g)).toHaveLength(2);
     expect(both).toContain('/assets/lifecycle-app');
-    expect(both).toContain('Desktop screenshot</button>');
+    expect(both).toContain('/assets/lifecycle-desktop');
     expect(both).toContain('Watch recording');
     expect(both).not.toContain('<video');
     expect(selectedFailureScreen(candidate, failureScreens, failed.actionId, phase, 'desktop')).toEqual(desktopImage);
     expect(selectedFailureScreen(candidate, failureScreens, failed.actionId, phase === 'setup' ? 'teardown' : 'setup', 'desktop')).toBeUndefined();
     client.setQueryData(['framework-run', 'lifecycle-run'], {...display, failureScreens: [{phase, actionId: failed.actionId, desktopAssetId: desktopImage.id}]});
     const desktopOnly = renderLifecycle();
-    expect(desktopOnly).toContain(`alt="Desktop screenshot: ${failed.actionId}"`);
+    expect(desktopOnly).toContain(`alt="Desktop: ${failed.actionId}"`);
     expect(desktopOnly).toContain('/assets/lifecycle-desktop');
-    expect(desktopOnly).not.toContain('alt="Failure screenshot:');
+    expect(desktopOnly).not.toContain('alt="App:');
     expect(desktopOnly).not.toContain('<video');
     client.setQueryData(['framework-run', 'lifecycle-run'], {...display, uploadsComplete: false});
     expect(renderLifecycle()).not.toContain('<img');
