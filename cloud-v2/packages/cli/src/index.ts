@@ -285,8 +285,13 @@ workspace
       const created = await createWorkspace(creds, name);
       // Selected before the prefix is set, so a refused prefix still leaves the new workspace active.
       const next = {...creds, workspaceId: created.workspaceId};
-      if (isStoredLogin(next)) await selectWorkspace(targetOf(next), created.workspaceId, next);
       console.log(`Workspace created: ${created.name} (${created.workspaceId})`);
+      if (isStoredLogin(next) && !(await selectWorkspace(targetOf(next), created.workspaceId, next))) {
+        // Another account signed in on this computer meanwhile: nothing more is done for this one.
+        throw new Error(
+          `The sign-in changed while the workspace was being created, so it was not selected${options.packagePrefix ? " and its package prefix was not set" : ""}. Run \`mentra workspace use ${created.workspaceId}\` once signed in as its owner.`,
+        );
+      }
       if (!isStoredLogin(next)) console.log(`Set MENTRA_CLI_WORKSPACE_ID=${created.workspaceId} to use it with MENTRA_CLI_TOKEN.`);
       if (options.packagePrefix) {
         try {
