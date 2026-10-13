@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CredentialView } from "@mentra/workspace-contract";
 import {
   createRelease,
@@ -20,7 +20,7 @@ import {
 import type { CliCredentials } from "./credentials";
 import { loopbackLogin } from "./loopback-login";
 import { startFakeOidcIssuer, type FakeOidcIssuer } from "./testing/fake-oidc-issuer";
-import { expectLoopbackPortsFree } from "./testing/loopback";
+import { expectLoopbackPortsFree, freeLoopbackPorts } from "./testing/loopback";
 
 const credentials = {
   token: "token",
@@ -167,9 +167,13 @@ describe("ensureOidcClient", () => {
 
 describe("refresh and revocation", () => {
   let idp: FakeOidcIssuer;
+  let freePorts: number[] = [];
+  beforeEach(async () => {
+    freePorts = await freeLoopbackPorts();
+  });
   afterEach(async () => {
     idp?.stop();
-    await expectLoopbackPortsFree();
+    await expectLoopbackPortsFree(freePorts);
   });
 
   async function signedIn(): Promise<CliCredentials> {

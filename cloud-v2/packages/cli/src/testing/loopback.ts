@@ -2,6 +2,11 @@
  * @fileoverview Helpers for tests of the CLI's loopback sign-in: raw requests
  * to the loopback listener with any `Host`, and a check that no test leaves a
  * listener on the CLI's ports.
+ *
+ * Another process, or an outbound connection's ephemeral source port, may hold
+ * one of the CLI's ports on a shared machine (a CI runner): tests take the
+ * ports free when they start (`freeLoopbackPorts`) as the ones the CLI will use,
+ * and check only those afterwards.
  */
 
 import {connect, createServer, type Server} from "node:net"
@@ -36,10 +41,27 @@ export async function occupy(port: number): Promise<() => Promise<void>> {
   return () => new Promise<void>(resolve => server.close(() => resolve()))
 }
 
-/** Fail when any of the CLI's loopback ports is still held, for example by a listener a test leaked. */
-export async function expectLoopbackPortsFree(): Promise<void> {
-  const held: number[] = []
+/** The CLI's loopback ports that can be listened on right now, in the CLI's order of preference. */
+export async function freeLoopbackPorts(): Promise<number[]> {
+  const free: number[] = []
   for (const port of CLI_LOOPBACK_PORTS) {
+    try {
+      await (await occupy(port))()
+      free.push(port)
+    } catch {
+      // Held by someone else.
+    }
+  }
+  return free
+}
+
+/**
+ * Fail when any of `ports` (by default all of the CLI's; pass the ones free
+ * before the test) is still held, for example by a listener a test leaked.
+ */
+export async function expectLoopbackPortsFree(ports: readonly number[] = CLI_LOOPBACK_PORTS): Promise<void> {
+  const held: number[] = []
+  for (const port of ports) {
     try {
       const release = await occupy(port)
       await release()

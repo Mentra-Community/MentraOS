@@ -13,7 +13,7 @@ import {join} from "node:path"
 
 import {startFakeOidcIssuer, type FakeOidcIssuer} from "./testing/fake-oidc-issuer"
 import {startFakeCore, startFakeStore, type FakeService} from "./testing/fake-services"
-import {expectLoopbackPortsFree} from "./testing/loopback"
+import {expectLoopbackPortsFree, freeLoopbackPorts} from "./testing/loopback"
 
 const INDEX = new URL("./index.ts", import.meta.url).pathname
 
@@ -23,8 +23,11 @@ setDefaultTimeout(30_000)
 let dir = ""
 let idp: FakeOidcIssuer
 const services: FakeService[] = []
+/** The CLI's ports free when the test starts: the ones it will use, in order. */
+let freePorts: number[] = []
 
 beforeEach(async () => {
+  freePorts = await freeLoopbackPorts()
   dir = mkdtempSync(join(tmpdir(), "mentra-cli-login-"))
   idp = await startFakeOidcIssuer({publicClientId: "mentra-cli"})
   // The browser launchers record the URL and exit, as `open` does.
@@ -46,7 +49,7 @@ afterEach(async () => {
   for (const service of services.splice(0)) service.stop()
   idp.stop()
   rmSync(dir, {recursive: true, force: true})
-  await expectLoopbackPortsFree()
+  await expectLoopbackPortsFree(freePorts)
 })
 
 function store(options: Omit<Parameters<typeof startFakeStore>[0], "idp"> = {}): FakeService {
@@ -155,7 +158,7 @@ describe("mentra login", () => {
     const result = await login({MENTRA_STORE_URL: shop.url})
     expect(result.code).toBe(0)
     expect(existsSync(join(dir, "opened-url"))).toBe(false)
-    expect(result.stdout).toContain("ssh -L 53682:127.0.0.1:53682 <host>")
+    expect(result.stdout).toContain(`ssh -L ${freePorts[0]}:127.0.0.1:${freePorts[0]} <host>`)
     expect(result.stdout).toContain("Signed in as ada@store.example")
     expect(storedLogin().refreshToken).toBeTruthy()
   })

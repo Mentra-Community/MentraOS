@@ -16,7 +16,7 @@
  * Run: `CLOUD_V2_TEST_MONGO_URL=mongodb://127.0.0.1:27017 bun test tests/cli-login.integration.test.ts`
  */
 
-import {afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test} from "bun:test"
+import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test} from "bun:test"
 import type * as client from "openid-client"
 
 import {
@@ -28,7 +28,7 @@ import {
 } from "../packages/cli/src/api"
 import type {CliCredentials} from "../packages/cli/src/credentials"
 import {loopbackLogin, type LoopbackLoginResult} from "../packages/cli/src/loopback-login"
-import {expectLoopbackPortsFree, occupy} from "../packages/cli/src/testing/loopback"
+import {expectLoopbackPortsFree, freeLoopbackPorts, occupy} from "../packages/cli/src/testing/loopback"
 import {createApp} from "../packages/core/src/api/app"
 import {connectMongo, disconnectMongo, mongoReadinessCheck} from "../packages/core/src/connections/mongo.connection"
 import {SigninIdentityModel} from "../packages/core/src/models/signin-identity.model"
@@ -71,9 +71,15 @@ beforeAll(async () => {
   restoreFetch = routeOriginsToApp(app, [OIDC_ISSUER, CORE_ORIGIN])
 })
 
+/** The CLI's ports free when the test starts (a shared runner may hold one): the ones it will use, in order. */
+let freePorts: number[] = []
+beforeEach(async () => {
+  freePorts = await freeLoopbackPorts()
+})
+
 afterEach(async () => {
   for (const release of releases.splice(0)) await release()
-  await expectLoopbackPortsFree()
+  await expectLoopbackPortsFree(freePorts)
 })
 
 afterAll(async () => {
@@ -178,7 +184,7 @@ describe("the CLI against Core's sign-in server (L09)", () => {
     expect(config.serverMetadata().issuer).toBe(OIDC_ISSUER)
     expect(config.clientMetadata().client_id).toBe("mentra-cli")
     const request = new URL(authorizationUrl).searchParams
-    expect(request.get("redirect_uri")).toBe("http://127.0.0.1:53682/callback")
+    expect(request.get("redirect_uri")).toBe(`http://127.0.0.1:${freePorts[0]}/callback`)
     expect(request.get("code_challenge_method")).toBe("S256")
     expect(page).toEqual({status: 200, text: SIGNED_IN, askedToSignIn: true})
 
@@ -215,11 +221,11 @@ describe("the CLI against Core's sign-in server (L09)", () => {
     await expect(refreshLoginToken(login)).rejects.toBeInstanceOf(SessionExpiredError)
   })
 
-  test("with 53682 taken, the CLI signs in on 53683", async () => {
-    releases.push(await occupy(53682))
+  test("with its first port taken, the CLI signs in on the next registered one", async () => {
+    releases.push(await occupy(freePorts[0]!))
     const {mentraUserId} = await person()
     const {result, authorizationUrl, page} = await cliLogin(mentraUserId)
-    expect(new URL(authorizationUrl).searchParams.get("redirect_uri")).toBe("http://127.0.0.1:53683/callback")
+    expect(new URL(authorizationUrl).searchParams.get("redirect_uri")).toBe(`http://127.0.0.1:${freePorts[1]}/callback`)
     expect(page.status).toBe(200)
     expect(result.subject).toBe(mentraUserId)
   })

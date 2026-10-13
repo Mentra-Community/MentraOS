@@ -1,16 +1,19 @@
 import {afterEach, beforeEach, describe, expect, test} from "bun:test"
 
 import {ensureOidcClient} from "./api"
-import {CLI_LOOPBACK_PORTS, loopbackLogin, LoginError} from "./loopback-login"
+import {loopbackLogin, LoginError} from "./loopback-login"
 import {startFakeOidcIssuer, type FakeOidcIssuer} from "./testing/fake-oidc-issuer"
-import {expectLoopbackPortsFree, occupy, rawGet} from "./testing/loopback"
+import {expectLoopbackPortsFree, freeLoopbackPorts, occupy, rawGet} from "./testing/loopback"
 
 const SIGNED_IN = "Signed in to Mentra. You can close this tab."
 
 let idp: FakeOidcIssuer
 const releases: Array<() => Promise<void>> = []
+/** The CLI's ports free when the test starts: the ones it will use, in order. */
+let free: number[] = []
 
 beforeEach(async () => {
+  free = await freeLoopbackPorts()
   idp = await startFakeOidcIssuer({publicClientId: "mentra-cli"})
 })
 
@@ -18,7 +21,7 @@ afterEach(async () => {
   for (const release of releases.splice(0)) await release()
   idp.stop()
   // No test may leave a listener on the CLI's ports.
-  await expectLoopbackPortsFree()
+  await expectLoopbackPortsFree(free)
 })
 
 async function oidc() {
@@ -42,7 +45,7 @@ describe("loopbackLogin", () => {
       print: () => {},
     })
     const request = new URL(opened)
-    expect(request.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:53682/callback")
+    expect(request.searchParams.get("redirect_uri")).toBe(`http://127.0.0.1:${free[0]}/callback`)
     expect(request.searchParams.get("code_challenge_method")).toBe("S256")
     expect(request.searchParams.get("scope")).toBe("openid email profile offline_access")
     expect(request.searchParams.get("state")).toBeTruthy()
@@ -74,8 +77,8 @@ describe("loopbackLogin", () => {
     for (const name of ["state", "nonce", "code_challenge"]) expect(first!.get(name)).not.toBe(second!.get(name))
   })
 
-  test("with port 53682 taken, login uses 53683", async () => {
-    releases.push(await occupy(53682))
+  test("with its first port taken, login uses the next one", async () => {
+    releases.push(await occupy(free[0]!))
     let browser: Promise<unknown> | undefined
     let opened = ""
     await loopbackLogin(await oidc(), {
@@ -87,11 +90,11 @@ describe("loopbackLogin", () => {
       print: () => {},
     })
     await browser
-    expect(new URL(opened).searchParams.get("redirect_uri")).toBe("http://127.0.0.1:53683/callback")
+    expect(new URL(opened).searchParams.get("redirect_uri")).toBe(`http://127.0.0.1:${free[1]}/callback`)
   })
 
   test("with every loopback port taken, login fails naming the ports", async () => {
-    for (const port of CLI_LOOPBACK_PORTS) releases.push(await occupy(port))
+    for (const port of free) releases.push(await occupy(port))
     const error = await loopbackLogin(await oidc(), {openBrowser: async () => true, print: () => {}}).catch(caught => caught)
     expect(error).toBeInstanceOf(LoginError)
     expect((error as Error).message).toContain("53682, 53683 and 53684")
@@ -217,6 +220,6 @@ describe("loopbackLogin", () => {
     })
     await browser
     expect(lines).toContain(opened)
-    expect(lines.join("\n")).toContain("ssh -L 53682:127.0.0.1:53682")
+    expect(lines.join("\n")).toContain(`ssh -L ${free[0]}:127.0.0.1:${free[0]}`)
   })
 })

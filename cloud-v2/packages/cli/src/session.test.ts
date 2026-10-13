@@ -11,7 +11,7 @@ import {loadStoredLogin, saveCredentials, type CliCredentials} from "./credentia
 import {loopbackLogin} from "./loopback-login"
 import {loadFreshCredentials} from "./session"
 import {startFakeOidcIssuer, type FakeOidcIssuer} from "./testing/fake-oidc-issuer"
-import {expectLoopbackPortsFree} from "./testing/loopback"
+import {expectLoopbackPortsFree, freeLoopbackPorts} from "./testing/loopback"
 
 const target: CliTarget = {kind: "store", url: "https://store.example.test"}
 const savedHome = process.env.MENTRA_CLI_HOME
@@ -20,8 +20,10 @@ const secrets = new Map<string, string>()
 let spies: Array<{mockRestore(): void}> = []
 let home = ""
 let idp: FakeOidcIssuer
+let freePorts: number[] = []
 
 beforeEach(async () => {
+  freePorts = await freeLoopbackPorts()
   home = mkdtempSync(join(tmpdir(), "mentra-cli-session-"))
   process.env.MENTRA_CLI_HOME = home
   delete process.env.MENTRA_CLI_TOKEN
@@ -44,7 +46,7 @@ afterEach(async () => {
   else process.env.MENTRA_CLI_HOME = savedHome
   if (savedToken === undefined) delete process.env.MENTRA_CLI_TOKEN
   else process.env.MENTRA_CLI_TOKEN = savedToken
-  await expectLoopbackPortsFree()
+  await expectLoopbackPortsFree(freePorts)
 })
 
 /** Sign in through the fake issuer and store the login, expiring in `expiresInMs`. */
