@@ -1062,7 +1062,8 @@ function recordOrg(report: MigrationReport, plan: OrgPlan, result: Reconciliatio
 
   report.counts.orgs += 1
   report.counts.memberships += plan.memberships.filter(membership => !skippedMemberships.has(membership.membershipId)).length
-  report.counts.invitations += plan.invitations.length
+  const conflicted = new Set((result?.invitationConflicts ?? []).map(conflict => conflict.invitationId))
+  report.counts.invitations += plan.invitations.filter(invitation => !conflicted.has(invitation.invitationId)).length
   report.counts.credentials += plan.credentials.filter(credential => !skippedCredentials.has(credential.credentialId)).length
   report.counts.skippedKeys += findings.malformedKeys.length + findings.keysWithoutCreator.length + skippedCredentials.size
 

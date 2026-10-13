@@ -1149,7 +1149,7 @@ describe("re-running apply carries access removals made in the Store", () => {
   })
 
   test("a pending invitation made in Core keeps its email: the Store's for the same address is reported, not imported", async () => {
-    await run({apply: true})
+    const first = await run({apply: true})
     await WorkspaceInvitationModel.create({
       invitationId: "winv_made_in_core",
       workspaceId: ORG_ACME,
@@ -1172,6 +1172,8 @@ describe("re-running apply carries access removals made in the Store", () => {
     const report = await run({apply: true})
 
     expect(report.invitationConflicts).toEqual([{orgId: ORG_ACME, invitationId: fromStore, keptInvitationId: "winv_made_in_core"}])
+    // Not counted as imported.
+    expect(report.counts.invitations).toBe(first.counts.invitations)
     expect(report.revokedInvitations).toEqual([])
     expect(await WorkspaceInvitationModel.findOne({invitationId: fromStore}).lean()).toBeNull()
     expect(await WorkspaceInvitationModel.findOne({invitationId: "winv_made_in_core"}).lean()).toMatchObject({status: "pending"})
