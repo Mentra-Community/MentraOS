@@ -2,7 +2,15 @@ import assert from "node:assert/strict"
 import {readFileSync} from "node:fs"
 import test from "node:test"
 
-import {CookieJar, loadMiniapps, MINIAPPS, planSetup, staffEmail, STORES} from "./setup-store-publishing.mjs"
+import {
+  CookieJar,
+  isDevBranchPolicy,
+  loadMiniapps,
+  MINIAPPS,
+  planSetup,
+  staffEmail,
+  STORES,
+} from "./setup-store-publishing.mjs"
 
 const workflow = readFileSync(new URL("../workflows/miniapp-store-publish.yml", import.meta.url), "utf8")
 
@@ -107,4 +115,12 @@ test("keeps one sign-in's cookies per host and drops expired ones", () => {
   assert.equal(jar.header("https://elsewhere.example/"), null)
   jar.store("https://account.example/oidc/auth/1", ["_interaction=; Max-Age=0", "_session=s2; path=/"])
   assert.equal(jar.header("https://account.example/"), "_session=s2")
+})
+
+test("lets only the dev branch deploy to a Store's environment", () => {
+  assert.equal(isDevBranchPolicy({name: "dev", type: "branch"}), true)
+  assert.equal(isDevBranchPolicy({name: "dev"}), true)
+  assert.equal(isDevBranchPolicy({name: "dev", type: "tag"}), false)
+  assert.equal(isDevBranchPolicy({name: "main", type: "branch"}), false)
+  assert.equal(isDevBranchPolicy({name: "*", type: "branch"}), false)
 })

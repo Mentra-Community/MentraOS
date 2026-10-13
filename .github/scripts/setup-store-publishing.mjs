@@ -323,32 +323,50 @@ function gh(args, {input} = {}) {
   return result.stdout
 }
 
+/** The environment's secret names, or none when the environment does not exist yet. Any other failure stops the run. */
 function environmentSecretNames(environment) {
-  const result = spawnSync("gh", ["api", `repos/${REPOSITORY}/environments/${environment}`], {encoding: "utf8"})
-  if (result.status !== 0) return []
+  const probe = spawnSync("gh", ["api", `repos/${REPOSITORY}/environments/${environment}`], {encoding: "utf8"})
+  if (probe.status !== 0) {
+    if (/HTTP 404/.test(probe.stderr ?? "")) return []
+    throw new Error(`gh api environments/${environment} failed: ${(probe.stderr ?? "").trim()}`)
+  }
   return gh(["api", "--paginate", `repos/${REPOSITORY}/environments/${environment}/secrets`, "--jq", ".secrets[].name"])
     .split("\n")
     .filter(Boolean)
 }
 
-/** The Store's GitHub environment, which only `dev` may deploy to (the branch the workflow publishes from). */
+/** Whether a deployment policy is the one this environment allows: the `dev` branch. */
+export const isDevBranchPolicy = (policy) => policy.name === "dev" && (policy.type ?? "branch") === "branch"
+
+/**
+ * The Store's GitHub environment, which only `dev` (the branch the workflow publishes from) may deploy to.
+ * Any other deployment policy would let that ref read the Store's keys, so it is removed.
+ */
 function ensureEnvironment(environment) {
   gh(["api", "-X", "PUT", `repos/${REPOSITORY}/environments/${environment}`, "--input", "-"], {
     input: JSON.stringify({deployment_branch_policy: {protected_branches: false, custom_branch_policies: true}}),
   })
-  const policies = JSON.parse(gh(["api", `repos/${REPOSITORY}/environments/${environment}/deployment-branch-policies`]))
-  if (!policies.branch_policies?.some((policy) => policy.name === "dev" && (policy.type ?? "branch") === "branch")) {
-    gh([
-      "api",
-      "-X",
-      "POST",
-      `repos/${REPOSITORY}/environments/${environment}/deployment-branch-policies`,
-      "-f",
-      "name=dev",
-      "-f",
-      "type=branch",
-    ])
+  const route = `repos/${REPOSITORY}/environments/${environment}/deployment-branch-policies`
+  const policies = gh([
+    "api",
+    "--paginate",
+    route,
+    "--jq",
+    '.branch_policies[] | [.id, .name, (.type // "branch")] | @tsv',
+  ])
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [id, name, type] = line.split("\t")
+      return {id, name, type}
+    })
+  for (const policy of policies.filter((candidate) => !isDevBranchPolicy(candidate))) {
+    gh(["api", "-X", "DELETE", `${route}/${policy.id}`])
+    console.log(
+      `Removed the ${policy.type} deployment policy "${policy.name}" from ${environment}: only dev may deploy there.`,
+    )
   }
+  if (!policies.some(isDevBranchPolicy)) gh(["api", "-X", "POST", route, "-f", "name=dev", "-f", "type=branch"])
 }
 
 async function main(argv) {

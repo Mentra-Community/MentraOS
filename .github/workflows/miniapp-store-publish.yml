@@ -97,7 +97,7 @@ jobs:
   publish:
     name: Publish ${{ matrix.miniapp.name }} to the ${{ matrix.store.name }} Store
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
-    needs: validate
+    needs: [validate, setup-script]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     # Production's keys are the original repository secrets. Every other Store's keys are in the GitHub
     # environment named after it, under their own names, so a missing key never falls back to
