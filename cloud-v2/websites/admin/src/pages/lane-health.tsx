@@ -1,3 +1,4 @@
+import {useClock} from '../lib/use-clock';
 import {LaneControls} from './lane-controls'
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
 import {useQuery} from "@tanstack/react-query"
@@ -108,7 +109,8 @@ export const laneOverviewQuery = {
     queryFn: () => api<LaneOverviewList>('/api/admin/test-runs/lanes/overview'),
     refetchInterval: 30_000,
 }
-export function LaneHealthSection({now}: {now: number}) {
+export function LaneHealthSection() {
+  const now = useClock();
   const query = useQuery(laneOverviewQuery)
   return (
     <section aria-label="Device lanes" className={TESTING_PANEL}>

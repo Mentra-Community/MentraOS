@@ -1,3 +1,4 @@
+import {useClock} from '../lib/use-clock';
 import {FrameworkHealth} from "./framework-health";
 import {TestHistoryTable} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TestingButton} from "../components/testing-ui";
@@ -11,7 +12,8 @@ import {LaneHealthHost, laneOverviewQuery} from "./lane-health";
 import {RestorationHost} from "./lane-restoration";
 const loading = (label: string) => <LoadingIndicator label={label} inline />;
 
-export function LaneHistoryPage({selection, now}: {selection: LaneSelection; now: number}) {
+export function LaneHistoryPage({selection}: {selection: LaneSelection}) {
+  const now = useClock();
   const {hostId, laneId} = selection;
   const controllers = useQuery(laneOverviewQuery);
   const details = useQuery({queryKey: ['lane-restoration', hostId],

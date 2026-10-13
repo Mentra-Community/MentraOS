@@ -1,4 +1,4 @@
-import {expect, test} from "bun:test";
+import {afterEach, beforeEach, expect, spyOn, test} from "bun:test";
 import {renderToStaticMarkup} from "react-dom/server";
 import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
 import {LaneHealthHost, LaneHealthSection, laneOverviewQuery} from "./lane-health"
@@ -11,10 +11,14 @@ const host: LaneRestorationHost = {hostId: "mini-controller", observedAt: at, re
   lanes: [{id: "mini-mac", platform: "ios-on-mac", state: "idle", dispatchMode: "automatic"},
     {id: "mini-android", platform: "android", state: "reserved", dispatchMode: "paused"}]};
 
+let clock: ReturnType<typeof spyOn<typeof Date, 'now'>>;
+beforeEach(() => {clock = spyOn(Date, 'now').mockReturnValue(now);});
+afterEach(() => {clock.mockRestore();});
+
 test("main System Health shows controller lanes independently of host monitoring", () => {
   const client = new QueryClient({defaultOptions: {queries: {retry: false}}});
   client.setQueryData(["test-host-health"], {hosts: []});
-  const current = new Date().toISOString();
+  const current = new Date(now).toISOString();
   client.setQueryData(["lane-overview"], {hosts: [{...host, observedAt: current, receivedAt: current}], freshForMs: 120_000});
   const html = renderToStaticMarkup(
     <QueryClientProvider client={client}>
@@ -99,7 +103,7 @@ test("stale observation, stale receipt and refresh failures never show current l
     if (!Object.keys(fields).length) client.getQueryCache().find({queryKey: ["lane-overview"]})!.setState({status: "error", error: new Error("Refresh failed")});
     const html = renderToStaticMarkup(
       <QueryClientProvider client={client}>
-        <LaneHealthSection now={now} />
+        <LaneHealthSection />
       </QueryClientProvider>,
     )
     expect(html).toContain("Current lane status is unknown");
@@ -143,7 +147,7 @@ test('all five dynamically reported lanes show readable labels, exact IDs and cu
         : {id: `reservation:${index}`, kind: 'authoring' as const}},
     }))}))
   client.setQueryData(['lane-overview'], {hosts, freshForMs: 120_000})
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHealthSection now={now} /></QueryClientProvider>)
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LaneHealthSection /></QueryClientProvider>)
   expect((html.match(/Lane: /g) ?? []).length).toBe(5)
   for (const row of hosts) for (const lane of row.lanes) {
     expect(html).toContain(lane.id)
