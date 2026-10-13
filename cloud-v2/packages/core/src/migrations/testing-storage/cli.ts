@@ -48,6 +48,14 @@ const backupPath = (row: ScopeRow) => join(directory, 'source', `${row.collectio
 const receiptPath = (row: ScopeRow) => join(directory, 'receipts', `${row.collection}-${row.id}.json`);
 const appliedPath = (row: ScopeRow) => join(directory, 'applied', `${row.collection}-${row.id}.json`);
 const readBson = async (row: ScopeRow) => mongoose.mongo.BSON.deserialize(await readFile(backupPath(row)), {promoteValues: false});
+const batches = async (rows: ScopeRow[], phase: string, action: (row: ScopeRow) => Promise<void>) => {
+  for (let offset = 0; offset < rows.length; offset += 8) {
+    const results = await Promise.allSettled(rows.slice(offset, offset + 8).map(action));
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+    console.log(JSON.stringify({operation, phase, verified: Math.min(offset + 8, rows.length), total: rows.length}));
+  }
+};
 
 try {
   await client.connect(); const db = client.db();
@@ -194,10 +202,7 @@ try {
       // Definition receipts precede collection references; within each phase bounded independent exports run together.
       for (const collection of ['test_runs', 'routine_definitions', 'routine_collections', 'reports']) {
         const rows = scope.rows.filter(row => row.collection === collection);
-        for (let offset = 0; offset < rows.length; offset += 8) {
-          await Promise.all(rows.slice(offset, offset + 8).map(exportRow));
-          console.log(JSON.stringify({operation, collection, verified: Math.min(offset + 8, rows.length), total: rows.length}));
-        }
+        await batches(rows, collection, exportRow);
       }
     }
     else if (operation === 'verify') {
@@ -216,10 +221,7 @@ try {
           expandNativeReportSnapshot(snapshot, await originalRun(snapshot.runId));
         }
       };
-      for (let offset = 0; offset < scope.rows.length; offset += 8) {
-        await Promise.all(scope.rows.slice(offset, offset + 8).map(verifyRow));
-        console.log(JSON.stringify({operation, verified: Math.min(offset + 8, scope.rows.length), total: scope.rows.length}));
-      }
+      await batches(scope.rows, 'immutable-authority', verifyRow);
       await write(join(directory, 'verified.json'), {scopeSha256, records: scope.rows.length, verifiedAt: new Date().toISOString()});
     } else if (operation === 'apply') {
       if (!flags.includes('--frozen') || !flags.includes(`--approved-scope-sha256=${scopeSha256}`)) throw Error('Apply requires exact approved scope and confirmed write freeze');
@@ -233,7 +235,7 @@ try {
         ['test_runs', {'payload.schemaVersion': 1}], ['routine_definitions', {definition: {$exists: true}}],
         ['routine_collections', {detail: {$exists: false}}], ['reports', {reportId: {$in: await db.collection('report_assets').distinct('reportId', {sourceTestRunId: {$exists: true}})}, nativeDiagnostics: {$exists: false}}],
       ] as const) if (await db.collection(collection).countDocuments({...filter, _id: {$nin: ids(collection)}})) throw Error('Post-drain coverage delta requires verified export and approval');
-      for (const row of scope.rows) {
+      await batches(scope.rows, 'preflight', async row => {
         const doc = await db.collection(row.collection).findOne({_id: new mongoose.mongo.ObjectId(row.id)});
         const receipt = JSON.parse(await readFile(receiptPath(row), 'utf8'));
         if (!doc || receipt.scopeSha256 !== scopeSha256 || receipt.sourceSha256 !== row.bsonSha256)
@@ -250,8 +252,8 @@ try {
           if ((!committed && current.length !== approved.length) || current.some(doc => hashes.get(String(doc._id)) !== digestJsonBson(value(doc))))
             throw Error('Approved receipt rows changed before cutover');
         }
-      }
-      for (const row of [...scope.rows].sort((a,b) => ['test_runs', 'routine_definitions', 'routine_collections', 'reports'].indexOf(a.collection) - ['test_runs', 'routine_definitions', 'routine_collections', 'reports'].indexOf(b.collection))) {
+      });
+      const commitRow = async (row: ScopeRow) => {
         const doc = await db.collection(row.collection).findOne({_id: new mongoose.mongo.ObjectId(row.id)});
         if (!doc) throw Error('Approved original record is missing');
         const receipt = JSON.parse(await readFile(receiptPath(row), 'utf8'));
@@ -266,9 +268,11 @@ try {
         if (!committed) await db.collection(row.collection).updateOne({_id: doc._id}, {$set: receipt.update,
           ...(receipt.removed.length ? {$unset: Object.fromEntries(receipt.removed.map((field: string) => [field, '']))} : {})});
         await write(appliedPath(row), {scopeSha256, at: new Date().toISOString()});
-      }
+      };
+      for (const collection of ['test_runs', 'routine_definitions', 'routine_collections', 'reports'])
+        await batches(scope.rows.filter(row => row.collection === collection), `commit-${collection}`, commitRow);
       // Readers must see accepted pointers before redundant source receipt rows are removed.
-      for (const row of scope.rows.filter(row => row.receiptRows)) {
+      await batches(scope.rows.filter(row => row.receiptRows), 'accepted-receipt-cleanup', async row => {
         const receipts = row.receiptRows!;
         if (row.collection === 'test_runs') {
           const doc: any = await db.collection('test_runs').findOne({_id: new mongoose.mongo.ObjectId(row.id)});
@@ -285,11 +289,11 @@ try {
           // A delete interrupted after some rows committed may safely resume with only the exact approved remainder.
           await db.collection(receipts.collection).deleteMany({_id: {$in: current.map(doc => doc._id)}});
         }
-      }
+      });
     } else {
       if (await db.collection('test_runs').countDocuments({'payload.schemaVersion': 1}) || await db.collection('routine_definitions').countDocuments({definition: {$exists: true}}))
         throw Error('Old completed detail remains; admission must stay closed');
-      for (const row of scope.rows) {
+      await batches(scope.rows, 'converted-authority', async row => {
         const doc: any = value(await db.collection(row.collection).findOne({_id: new mongoose.mongo.ObjectId(row.id)}));
         if (!doc) throw Error('Converted record is missing');
         if (row.collection === 'test_runs') await readStoredRun(doc, details);
@@ -298,7 +302,7 @@ try {
         else await details.read(value(doc.nativeDiagnostics.detail), reportNativeSnapshotSchema);
         if (row.receiptRows && await db.collection(row.receiptRows.collection).countDocuments({_id: {$in: row.receiptRows.ids.map(id => new mongoose.mongo.ObjectId(id))}}))
           throw Error('Approved redundant receipt rows remain');
-      }
+      });
     }
     console.log(JSON.stringify({operation, scopeSha256, records: scope.rows.length, complete: true}));
   }
