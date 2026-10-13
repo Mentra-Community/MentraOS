@@ -137,9 +137,16 @@ describe("Android native manifest-window diagnostics", () => {
     const remove = jest.fn(() => {
       throw new Error("cleanup unavailable")
     })
+    const subscribe = DeviceEventEmitter.addListener.bind(DeviceEventEmitter)
     jest.spyOn(DeviceEventEmitter, "addListener").mockImplementation((_name, listener) => {
       callback = listener
-      return {remove}
+      const subscription = subscribe(_name, listener)
+      const removeActual = subscription.remove.bind(subscription)
+      subscription.remove = () => {
+        removeActual()
+        remove()
+      }
+      return subscription
     })
     log.mockImplementation((message) => {
       if (String(message).startsWith(marker)) throw new Error("log unavailable")
