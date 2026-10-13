@@ -24,3 +24,22 @@ export const routineProgressSchema = z.object({
     ctx.addIssue({code: 'custom', message: 'Routine observation counts or timestamps are inconsistent'})
 })
 export type RoutineProgress = z.infer<typeof routineProgressSchema>
+
+/** Both GitHub checks and Admin details observe the same accepted controller owner. */
+export function matchingRoutineProgress(host: {incarnation: string; sequence: number},
+  lane: {activity?: {owner: {kind: string; id: string}; generation: number}; progress?: RoutineProgress},
+  request: {requestId: string; inputSha256?: string}, stepIds: readonly string[]): RoutineProgress | undefined {
+  const progress = lane.progress
+  if (progress && lane.activity?.owner.kind === 'run' && lane.activity.owner.id === request.requestId &&
+      progress.requestId === request.requestId && progress.requestDigest === request.inputSha256 &&
+      progress.ownerGeneration === lane.activity.generation && progress.controllerIncarnation === host.incarnation &&
+      progress.sequence === host.sequence && (progress.totalSteps === stepIds.length || progress.phase === 'preparation' && progress.totalSteps === 0) &&
+      (!progress.currentStep || stepIds[progress.currentStep.index] === progress.currentStep.id)) return progress
+  return undefined
+}
+
+export interface RoutineLiveProgress {
+  progress: RoutineProgress
+  title: string
+  steps: Array<{id: string; instruction: string}>
+}

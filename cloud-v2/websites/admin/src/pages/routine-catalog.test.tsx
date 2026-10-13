@@ -17,6 +17,7 @@ import {
   matchesCatalogSearch,
   matchesHistorySearch,
   routineCatalogOverviewQuery,
+  requestLiveStatus,
   matchesStepSearch,
   recordingOffset,
   testHistoryListPath,
@@ -27,6 +28,44 @@ import {readTestRunLink} from "../lib/test-run-links"
 import {routineEnrollmentSchema} from "../../../../packages/core/src/types/routine-definition.types"
 import {frameworkRunSchema, recordedFrameworkRunSchema} from "../../../../packages/core/src/types/framework-run.types"
 import {lifecycleRuns} from '../../../../packages/core/src/testing/framework-lifecycle.fixture';
+
+test('active run page shows current phase, completed count and named steps before final publication', () => {
+  const now = new Date().toISOString(), requestId = 'active-miniapps';
+  const client = new QueryClient();
+  client.setQueryData(['framework-run', requestId], {kind: 'request', request: {
+    requestId, hostId: 'testing-pro-1', routineId: 'miniapps', platform: 'android', laneId: 'phone', state: 'accepted',
+    definitionRevision: 'a'.repeat(40), build: {repository: 'Mentra-Community/MentraOS', channel: 'dev', headSha: 'b'.repeat(40)},
+    live: {title: 'Open and close miniapps', progress: {phase: 'test', currentStep: {id: 'close', index: 1},
+      completedSteps: 1, totalSteps: 3, startedAt: now, observedAt: now},
+      steps: [{id: 'open', instruction: 'Open miniapp'}, {id: 'close', instruction: 'Close miniapp'}, {id: 'home', instruction: 'Verify Home'}]},
+  }});
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={requestId}/></QueryClientProvider>);
+  expect(html).toContain('Open and close miniapps: In progress');
+  expect(html).toContain('Running test');
+  expect(html).toContain('1/3 steps completed');
+  expect(html).toContain('Completed'); expect(html).toContain('Pending');
+  expect(html).toContain('aria-current="step"');
+  expect(html).toContain('Close miniapp');
+  expect(html).toContain('Final result and evidence are pending.');
+  expect(html).not.toContain('No routine result has been published.');
+  expect(html).not.toContain('Passed'); expect(html).not.toContain('<video');
+  const cached = client.getQueryData<{kind: 'request'; request: {live: {progress: {observedAt: string}}}}>(['framework-run', requestId])!;
+  cached.request.live.progress.observedAt = new Date(Date.now() - 61_000).toISOString();
+  client.setQueryData(['framework-run', requestId], cached);
+  const stale = renderToStaticMarkup(<QueryClientProvider client={client}><FrameworkRunPage runId={requestId}/></QueryClientProvider>);
+  expect(stale).toContain('Progress unavailable');
+  expect(stale).toContain('Last observed');
+  expect(stale).not.toContain('animate-spin');
+  expect(stale).not.toContain('>Running<');
+})
+
+test('stale live observations freeze elapsed time and stop claiming a currently running step', () => {
+  const request = {live: {progress: {phase: 'routine-teardown', startedAt: '2026-10-03T00:00:00Z',
+    observedAt: '2026-10-03T00:02:00Z'}}} as Parameters<typeof requestLiveStatus>[0];
+  expect(requestLiveStatus(request, Date.parse('2026-10-03T00:03:00Z'))).toEqual({stale: false, phase: 'Routine cleanup', elapsed: '3m 00s'});
+  expect(requestLiveStatus(request, Date.parse('2026-10-03T00:03:01Z'))).toEqual({stale: true, phase: 'Routine cleanup', elapsed: '2m 00s'});
+  expect(requestLiveStatus({} as Parameters<typeof requestLiveStatus>[0])).toBeNull();
+})
 
 test('run page separates actual Harness diagnostic actions/time from teardown failures and resource readiness', () => {
   const fixture = lifecycleRuns.find(fixture => fixture.scenario === 'cleaned-provider-error')!;

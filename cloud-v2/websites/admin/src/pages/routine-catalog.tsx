@@ -18,6 +18,21 @@ import {TestHistoryTable} from "../components/test-history-table";
 import {testRunLocation} from "../lib/test-run-links";
 import type {RoutineEnrollment, RoutineCardDefinition} from "../../../../packages/core/src/types/routine-definition.types";
 import type {FrameworkRequestDisplay} from "../../../../packages/core/src/types/framework-request.types";
+import {Check, Circle, Loader2} from 'lucide-react';
+import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from '../components/ui/table';
+import {useClock} from '../lib/use-clock';
+
+const PROGRESS_FRESH_FOR_MS = 60_000;
+const PROGRESS_PHASES = {preparation: 'Preparing software', 'framework-setup': 'Framework setup', 'routine-setup': 'Routine setup',
+  test: 'Running test', 'routine-teardown': 'Routine cleanup', 'framework-teardown': 'Framework cleanup', publication: 'Publishing evidence'};
+
+export function requestLiveStatus(request: FrameworkRequestDisplay, now = Date.now()) {
+  const live = request.live;
+  if (!live) return null;
+  const stale = now - Date.parse(live.progress.observedAt) > PROGRESS_FRESH_FOR_MS;
+  return {stale, phase: PROGRESS_PHASES[live.progress.phase],
+    elapsed: elapsedDuration(Math.max(0, (stale ? Date.parse(live.progress.observedAt) : now) - Date.parse(live.progress.startedAt)))};
+}
 
 type CatalogRow = RoutineEnrollment & {example: CatalogExample | null; latestAttempt?: CatalogHistoryRun | null; nightlyEnabled?: boolean};
 type Detail = CatalogRow & {history: CatalogHistoryRun[]; nextCursor: string | null};
@@ -184,9 +199,32 @@ export function frameworkRunRefetchInterval(data: RunDisplay | RequestDisplay | 
 
 function RequestCard({request, observing, refreshing, onRefresh}: {request: FrameworkRequestDisplay; observing: boolean; refreshing: boolean; onRefresh: () => void}) {
   const status = request.terminalStatus ?? request.state;
+  const now = useClock(), live = request.live, progress = live?.progress, activity = requestLiveStatus(request, now);
   return <section className={PANEL} aria-label="Routine request">
     <a className={TESTING_LINK} href="/?testRuns=1">All test runs</a>
-    <h2 className="mt-4 text-xl font-semibold">{request.routineId}: {status === "not-run" ? "Did not run" : status}</h2>
+    <div className="mt-4 flex flex-wrap items-center gap-3"><h2 className="text-xl font-semibold">{live?.title ?? request.routineId}: {status === "not-run" ? "Did not run" : live ? 'In progress' : status}</h2>
+      {live && <HistoryStatus outcome={activity?.stale ? 'progress unavailable' : 'running'} />}</div>
+    {progress && activity && <div className="mt-4 space-y-3" aria-label="Live routine progress">
+      <div role="status" className="flex flex-wrap items-center gap-2 text-sm">
+        {!activity.stale && <Loader2 aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />}
+        <span>{activity.phase}{activity.stale && ' · Last observed'}</span>
+        <span className="text-[#656d76]">{progress.completedSteps}/{progress.totalSteps} steps completed · {activity.elapsed}</span>
+        <time className="text-xs text-[#656d76]" dateTime={progress.observedAt}>Updated {new Date(progress.observedAt).toLocaleTimeString()}</time>
+      </div>
+      {!!live?.steps.length && <div className="max-h-80 overflow-y-auto rounded-md border border-[#d0d7de]"><Table>
+        <TableHeader><TableRow><TableHead className="w-24">Status</TableHead><TableHead>Test step</TableHead></TableRow></TableHeader>
+        <TableBody>{live.steps.map((step, index) => {
+          const completed = index < progress.completedSteps, current = progress.currentStep?.index === index;
+          const label = completed ? 'Completed' : current ? activity.stale ? 'Last observed' : 'Running' : 'Pending';
+          const Icon = completed ? Check : current && !activity.stale ? Loader2 : Circle;
+          return <TableRow key={step.id} className={current ? 'bg-[#f6f8fa]' : undefined} aria-current={current ? 'step' : undefined}>
+            <TableCell className="text-xs text-[#656d76]"><span className="inline-flex items-center gap-1.5"><Icon aria-hidden="true" className={`size-3.5 ${current && !activity.stale ? 'animate-spin motion-reduce:animate-none' : ''}`} />{label}</span></TableCell>
+            <TableCell><span className="mr-2 text-[#656d76]">{index + 1}.</span>{step.instruction}</TableCell>
+          </TableRow>;
+        })}</TableBody>
+      </Table></div>}
+    </div>}
+    {request.liveUnavailable && <p role="status" className="mt-3 text-sm text-[#656d76]">Live progress is temporarily unavailable. The request remains accepted and refreshes automatically.</p>}
     <p className="mt-2 text-sm">Request <code>{request.requestId}</code></p>
     <p className="mt-2"><BuildIdentity build={request.build} label="Requested build" /></p>
     <p className="mt-2">Computer: {request.hostId} · Lane: {request.laneId} · {request.platform}</p>
@@ -198,7 +236,7 @@ function RequestCard({request, observing, refreshing, onRefresh}: {request: Fram
     {request.acceptedAt && <p className="mt-2 text-sm">Host accepted {new Date(request.acceptedAt).toLocaleString()}</p>}
     {request.reason && <p className="mt-3">{request.reason}</p>}
     {request.cancellationRequested && <p className="mt-2 text-sm">Cancellation requested · {!request.inputSha256 ? "Cancelled before execution." : request.cancellationAcknowledged ? "Host acknowledged; cleanup may still be running." : "Awaiting host acknowledgement."}</p>}
-    <p className="mt-3 text-sm text-[#68746d]">No routine result has been published.{request.state !== "terminal" && " This request refreshes automatically."}
+    <p className="mt-3 text-sm text-[#68746d]">{live ? 'Final result and evidence are pending.' : 'No routine result has been published.'}{request.state !== "terminal" && " This request refreshes automatically."}
       {request.terminalStatus === "cancelled" && (observing ? " Checking for final host custody or a published result for ten minutes." : "Automatic observation has ended. Refresh to check for later host custody or results.")}</p>
     <TestingButton className="mt-3" disabled={refreshing} onClick={onRefresh}>Refresh request</TestingButton>
   </section>;

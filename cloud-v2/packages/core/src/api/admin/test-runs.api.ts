@@ -19,10 +19,11 @@ import {portableRoutineSelectionSchema, type StoredRoutineJob} from '../../types
 import {PrRoutineCheckService} from '../../services/pr-routine-check.service';
 import {LaneRestorationService} from "../../services/lane-restoration.service";
 import {PrRerunReferenceService} from '../../services/pr-rerun-reference.service';
+import {TestRequestProgressService} from '../../services/test-request-progress.service';
 
 /** Results and delivery projections only; the host controller owns lanes and repairs. */
 export function createTestRunAdminApi(health = new TestHostHealthService(), history = new TestHistoryService(),
-  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService(), rerunLabels = new PrRerunReferenceService()) {
+  results = new FrameworkResultService(), requests = new TestRequestService(), restoration = new LaneRestorationService(), checks = new PrRoutineCheckService(), controls = new LaneControlsService(), rerunLabels = new PrRerunReferenceService(), progress = new TestRequestProgressService()) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {c.header("Cache-Control", "no-store"); await next();});
   app.onError((error, c) => {
@@ -84,7 +85,17 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
     const row = await requests.get(id);
     if (!row) throw new TestRunError(404, "Routine run or request was not found");
-    return c.json({kind: "request", request: displayRequest(row)});
+    const request = displayRequest(row);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const live = await Promise.race([progress.get(row), new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Live observation read timed out')), 3000);
+      })]);
+      return c.json({kind: "request", request: {...request, ...(live ? {live} : {})}});
+    } catch {
+      // Live observations are optional display data, never a reason to hide accepted custody.
+      return c.json({kind: "request", request: {...request, liveUnavailable: true}});
+    } finally {clearTimeout(timeout);}
   });
   app.on(["GET", "HEAD"], "/:runId/assets/:assetId", c => results.mediaByRun(c.req.param("runId"), c.req.param("assetId"), c.req.raw));
   return app;

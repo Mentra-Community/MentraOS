@@ -3,6 +3,7 @@ import {z} from "zod";
 import {routineIdentitySchema, routinePlatformSchema, routineResourceKindSchema, routineResourceRequirementSchema} from "./routine-definition.types";
 import {firmwareManifestSchema, glassesSoftwareRefSchema} from "./glasses-software.types";
 import {candidateVerificationSchema} from './candidate-verification.types';
+import type {RoutineLiveProgress} from './routine-progress.types';
 
 export const frameworkIdentitySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/);
 export const frameworkBuildSchema = z.object({
@@ -70,4 +71,6 @@ export interface FrameworkRequestDisplay {
   assignment?: {jobId: string; hostId: string; laneId: string; actionsRunId: string; actionsJobId: string};
   actionsRuns?: Array<{actionsRunId: string; recordedAt: string}>;
   preparationDisposition?: 'not-run' | 'not-applicable';
+  live?: RoutineLiveProgress;
+  liveUnavailable?: boolean;
 }
