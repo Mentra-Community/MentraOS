@@ -128,6 +128,7 @@ export interface AddReportLogsOptions {
    * HTTP 409. A Cloud that predates the field ignores it and stores a new artifact.
    */
   retryKey?: string;
+  signal?: AbortSignal;
 }
 
 export interface ReportsDeps {
@@ -141,8 +142,8 @@ export class Reports {
     this.http = deps.http;
   }
 
-  submit(input: SubmitReportInput): Promise<SubmitReportResult> {
-    return this.http.post<SubmitReportResult>(REPORTS_PATH, input);
+  submit(input: SubmitReportInput, signal?: AbortSignal): Promise<SubmitReportResult> {
+    return this.http.post<SubmitReportResult>(REPORTS_PATH, input, {signal});
   }
 
   /** Read the current source receipts with the same user session used to submit. */
@@ -181,10 +182,12 @@ export class Reports {
     reportId: string,
     source: ReportLogSource,
     update: ReportLogCollectionUpdate,
+    signal?: AbortSignal,
   ): Promise<void> {
     return this.http.post<void>(
       `${REPORTS_PATH}/${encodeURIComponent(reportId)}/log-collection/${source}`,
       update,
+      {signal},
     );
   }
 
@@ -202,12 +205,14 @@ export class Reports {
         entries,
         ...(options.retryKey !== undefined ? { retryKey: options.retryKey } : {}),
       },
+      {signal: options.signal},
     );
   }
 
   addScreenshots(
     reportId: string,
     images: ReportAttachmentInput[],
+    signal?: AbortSignal,
   ): Promise<AddReportArtifactsResult> {
     const form = new FormData();
     form.append("type", "screenshot");
@@ -232,6 +237,7 @@ export class Reports {
     return this.http.postForm<AddReportArtifactsResult>(
       `${REPORTS_PATH}/${encodeURIComponent(reportId)}/artifacts`,
       form,
+      {signal},
     );
   }
 
@@ -273,10 +279,11 @@ export class Reports {
     );
   }
 
-  complete(reportId: string): Promise<{ status: ReportStatus }> {
+  complete(reportId: string, signal?: AbortSignal): Promise<{ status: ReportStatus }> {
     return this.http.post<{ status: ReportStatus }>(
       `${REPORTS_PATH}/${encodeURIComponent(reportId)}/complete`,
       {},
+      {signal},
     );
   }
 }

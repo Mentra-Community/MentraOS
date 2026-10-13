@@ -22,10 +22,18 @@ jest.mock("../../../modules/engine/src/stores/settings", () => ({
   useSettingsStore: {getState: () => ({loadAllSettings: mockLoadSettings})},
 }))
 jest.mock("../../../modules/engine/src/types", () => ({DeviceTypes: {LIVE: "Mentra Live"}}))
+jest.mock("../../../modules/engine/src/utils/timers", () => ({
+  BgTimer: {
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay),
+    clearTimeout: (timer: ReturnType<typeof setTimeout>) => clearTimeout(timer),
+  },
+}))
 const mockLoadSettings = jest.fn()
+afterEach(() => jest.useRealTimers())
 
 beforeEach(() => {
   jest.clearAllMocks()
+  jest.useRealTimers()
   mockLoadSettings.mockResolvedValue({is_error: () => false})
   jest.mocked(projectPairingIdentity).mockReturnValue({kind: "paired", model: "Mentra Live", name: "Mentra_Live_test"})
   jest
@@ -43,37 +51,66 @@ it("files a requested incident and awaits all paired Mentra Live device logs", a
   expect(result).toMatchObject({alert_id: "test-1", status: "filed", report_id: "rep_test"})
   expect(submitAutomaticReport).toHaveBeenCalledWith(
     expect.objectContaining({trigger: expect.objectContaining({reason: "incident_report_requested"})}),
+    expect.objectContaining({signal: expect.any(AbortSignal), onCreated: expect.any(Function)}),
   )
   expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {
     sources: ["phone", "glasses", "glasses_firmware"],
-    timeoutMs: 20_000,
+    timeoutMs: expect.any(Number),
+    signal: expect.any(AbortSignal),
   })
 })
 
 it("persists validated automation correlation in report creation before strict collection completes", async () => {
   const collection = {reportId: "rep_test", state: "failed" as const, logCollection: {}}
   jest.mocked(reports.waitForCollection).mockRejectedValueOnce(new ReportCollectionError(collection))
-  await expect(submitIncidentReport({source: "mentra_automated_testing", alert_id: "exact-alert",
-    test_run_id: "exact-run", failure_code: "original_failure"})).rejects.toMatchObject({
+  await expect(
+    submitIncidentReport({
+      source: "mentra_automated_testing",
+      alert_id: "exact-alert",
+      test_run_id: "exact-run",
+      failure_code: "original_failure",
+    }),
+  ).rejects.toMatchObject({
     result: {status: "failed", report_id: "rep_test", collection},
   })
-  expect(submitAutomaticReport).toHaveBeenCalledWith(expect.objectContaining({
-    automationCorrelation: {alertId: "exact-alert", testRunId: "exact-run"},
-  }))
+  expect(submitAutomaticReport).toHaveBeenCalledWith(
+    expect.objectContaining({
+      automationCorrelation: {alertId: "exact-alert", testRunId: "exact-run"},
+    }),
+    expect.objectContaining({signal: expect.any(AbortSignal), onCreated: expect.any(Function)}),
+  )
   expect(submitAutomaticReport).toHaveBeenCalledTimes(1)
 })
 
-it.each([undefined, " ", "r".repeat(161)])("rejects an invalid automation run ID before submission: %s", async test_run_id => {
-  await expect(submitIncidentReport({source: "mentra_automated_testing", alert_id: "exact-alert",
-    test_run_id, failure_code: "original_failure"})).rejects.toBeInstanceOf(IncidentReportError)
-  expect(submitAutomaticReport).not.toHaveBeenCalled()
-})
+it.each([undefined, " ", "r".repeat(161)])(
+  "rejects an invalid automation run ID before submission: %s",
+  async (test_run_id) => {
+    await expect(
+      submitIncidentReport({
+        source: "mentra_automated_testing",
+        alert_id: "exact-alert",
+        test_run_id,
+        failure_code: "original_failure",
+      }),
+    ).rejects.toBeInstanceOf(IncidentReportError)
+    expect(submitAutomaticReport).not.toHaveBeenCalled()
+  },
+)
 
-it.each([undefined, "bad/id", "a".repeat(161)])("requires the original valid automation alert ID: %s", async alert_id => {
-  await expect(submitIncidentReport({source: "mentra_automated_testing", alert_id,
-    test_run_id: "exact-run", failure_code: "original_failure"})).rejects.toBeInstanceOf(IncidentReportError)
-  expect(submitAutomaticReport).not.toHaveBeenCalled()
-})
+it.each([undefined, "bad/id", "a".repeat(161)])(
+  "requires the original valid automation alert ID: %s",
+  async (alert_id) => {
+    await expect(
+      submitIncidentReport({
+        source: "mentra_automated_testing",
+        alert_id,
+        test_run_id: "exact-run",
+        failure_code: "original_failure",
+      }),
+    ).rejects.toBeInstanceOf(IncidentReportError)
+    expect(submitAutomaticReport).not.toHaveBeenCalled()
+  },
+)
 
 it.each([
   {kind: "none"} as const,
@@ -83,7 +120,11 @@ it.each([
 ])("requires only phone logs when no Mentra Live is paired: %j", async (identity) => {
   jest.mocked(projectPairingIdentity).mockReturnValue(identity)
   await expect(submitIncidentReport({failure_code: "entry_failed"})).resolves.toMatchObject({status: "filed"})
-  expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {sources: ["phone"], timeoutMs: 20_000})
+  expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {
+    sources: ["phone"],
+    timeoutMs: expect.any(Number),
+    signal: expect.any(AbortSignal),
+  })
 })
 
 it("does not drop paired glasses requirements if pairing identity changes during submission", async () => {
@@ -94,7 +135,8 @@ it("does not drop paired glasses requirements if pairing identity changes during
   await submitIncidentReport({failure_code: "disconnected"})
   expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {
     sources: ["phone", "glasses", "glasses_firmware"],
-    timeoutMs: 20_000,
+    timeoutMs: expect.any(Number),
+    signal: expect.any(AbortSignal),
   })
 })
 
@@ -109,7 +151,8 @@ it("loads pairing settings before deciding which sources are required at cold st
   await submitIncidentReport({failure_code: "cold_start"})
   expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {
     sources: ["phone", "glasses", "glasses_firmware"],
-    timeoutMs: 20_000,
+    timeoutMs: expect.any(Number),
+    signal: expect.any(AbortSignal),
   })
   expect(useSettingsStore.getState().loadAllSettings).toHaveBeenCalledTimes(1)
 })
@@ -143,9 +186,7 @@ it("does not expose the final filed receipt while device log collection is pendi
   void pending.then(() => {
     settled = true
   })
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
+  await new Promise((resolve) => setTimeout(resolve, 0))
   expect(settled).toBe(false)
   expect(logged.mock.calls.some(([value]) => String(value).startsWith("INCIDENT_REPORT_RESULT"))).toBe(false)
   finish({reportId: "rep_test", state: "complete", logCollection: {}})
@@ -223,4 +264,133 @@ it.each([
     result: {status: result.status, failure_code: "original_failure"},
   })
   expect(reports.waitForCollection).not.toHaveBeenCalled()
+})
+
+it("includes settings preparation in the one deadline and never submits after a late load", async () => {
+  jest.useFakeTimers()
+  let finish!: (value: {is_error: () => boolean}) => void
+  mockLoadSettings.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  const pending = submitIncidentReport({failure_code: "slow_settings"})
+  const rejected = expect(pending).rejects.toMatchObject({result: {status: "failed"}})
+  await jest.advanceTimersByTimeAsync(120_000)
+  await rejected
+  finish({is_error: () => false})
+  await jest.advanceTimersByTimeAsync(0)
+  expect(submitAutomaticReport).not.toHaveBeenCalled()
+  expect(jest.getTimerCount()).toBe(0)
+})
+
+it("retains the created report and observed receipts when upload is still pending at the deadline", async () => {
+  jest.useFakeTimers()
+  let signal!: AbortSignal
+  const partial = {
+    reportId: "rep_created",
+    state: "timed-out" as const,
+    logCollection: {
+      glasses: {
+        state: "received" as const,
+        artifactId: "art_glasses",
+        requestedAt: "2026-10-13T00:00:00Z",
+        deadlineAt: "2026-10-13T00:02:00Z",
+      },
+    },
+  }
+  jest.mocked(reports.waitForCollection).mockImplementationOnce(
+    (_id, options) =>
+      new Promise((_resolve, reject) => {
+        options.signal!.addEventListener("abort", () => reject(new ReportCollectionError(partial)), {once: true})
+      }),
+  )
+  jest.mocked(submitAutomaticReport).mockImplementationOnce((_input, options) => {
+    options!.onCreated("rep_created")
+    signal = options!.signal
+    return new Promise(() => {})
+  })
+  const pending = submitIncidentReport({alert_id: "retain-created", failure_code: "original"})
+  const rejected = expect(pending).rejects.toMatchObject({
+    result: {
+      report_id: "rep_created",
+      incident_id: "rep_created",
+      status: "failed",
+      collection: partial,
+    },
+  })
+  await jest.advanceTimersByTimeAsync(120_000)
+  await rejected
+  expect(signal.aborted).toBe(true)
+  expect(reports.waitForCollection).toHaveBeenCalledTimes(1)
+  expect(jest.getTimerCount()).toBe(0)
+})
+
+it("starts receipt observation at creation without renewing its deadline after slow submission", async () => {
+  jest.useFakeTimers()
+  jest.mocked(submitAutomaticReport).mockImplementationOnce(
+    (_input, options) =>
+      new Promise((resolve) => {
+        options!.onCreated("rep_test")
+        setTimeout(() => resolve({status: "submitted", reportId: "rep_test", reportStatus: "ready"}), 100_000)
+      }),
+  )
+  const pending = submitIncidentReport({failure_code: "slow_upload"})
+  await jest.advanceTimersByTimeAsync(100_000)
+  await pending
+  expect(reports.waitForCollection).toHaveBeenCalledWith("rep_test", {
+    sources: ["phone", "glasses", "glasses_firmware"],
+    timeoutMs: 120_000,
+    signal: expect.any(AbortSignal),
+  })
+  expect(jest.getTimerCount()).toBe(0)
+})
+
+it("waits for other device sources after a local attachment failure and rejects with the report link", async () => {
+  jest.mocked(submitAutomaticReport).mockImplementationOnce(async (_input, options) => {
+    options!.onCreated("rep_test")
+    return {status: "failed", error: "Attachment did not finish"}
+  })
+  await expect(submitIncidentReport({failure_code: "original"})).rejects.toMatchObject({
+    result: {
+      status: "failed",
+      report_id: "rep_test",
+      collection: {state: "complete"},
+    },
+  })
+  expect(reports.waitForCollection).toHaveBeenCalledTimes(1)
+})
+
+it("runs on React Native signals without throwIfAborted", async () => {
+  jest.mocked(submitAutomaticReport).mockImplementationOnce(async (_input, options) => {
+    Object.defineProperty(options!.signal, "throwIfAborted", {value: undefined})
+    options!.onCreated("rep_test")
+    return {status: "submitted", reportId: "rep_test", reportStatus: "ready"}
+  })
+  await expect(submitIncidentReport({failure_code: "rn_signal"})).resolves.toMatchObject({status: "filed"})
+})
+
+it("rejects expiry during collection with partial receipts and no unhandled rejection", async () => {
+  jest.useFakeTimers()
+  const partial = {reportId: "rep_test", state: "timed-out" as const, logCollection: {}}
+  jest.mocked(reports.waitForCollection).mockImplementationOnce(
+    (_id, options) =>
+      new Promise((_resolve, reject) => {
+        options.signal!.addEventListener("abort", () => reject(new ReportCollectionError(partial)), {once: true})
+      }),
+  )
+  const unhandled = jest.fn()
+  process.on("unhandledRejection", unhandled)
+  try {
+    const pending = submitIncidentReport({failure_code: "collection_deadline"})
+    const rejected = expect(pending).rejects.toMatchObject({result: {report_id: "rep_test", collection: partial}})
+    await jest.advanceTimersByTimeAsync(120_000)
+    await rejected
+    expect(unhandled).not.toHaveBeenCalled()
+    expect(reports.waitForCollection).toHaveBeenCalledTimes(1)
+    expect(jest.getTimerCount()).toBe(0)
+  } finally {
+    process.removeListener("unhandledRejection", unhandled)
+  }
 })
