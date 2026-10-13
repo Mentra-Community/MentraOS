@@ -698,15 +698,41 @@ describe("removeDeletedUserFromWorkspaces", () => {
     expect((await listChanges({limit: 500})).events.at(-1)?.seq).toBe(counter?.seq)
   })
 
-  describe("on a database that cannot run transactions", () => {
-    const unsupported = () =>
-      spyOn(WorkspaceModel.db, "startSession").mockRejectedValue(
-        new Error("Transaction numbers are only allowed on a replica set member or mongos"),
-      )
+  /**
+   * The driver and the Mongoose class that carries queries, taken from the connection under test (`mongoose`
+   * itself is not a dependency of this folder).
+   */
+  const mongoose = WorkspaceModel.base
+  const driver = mongoose.mongo
 
-    test("a person with no workspace state still gets a tombstone, written without one", async () => {
+  /**
+   * Make the first command a session sends fail with `error`, as the server answers the first command of a
+   * transaction: the driver's real `withTransaction` aborts and rethrows it, and Core's wraps it. Returns how
+   * many commands were sent in a session.
+   */
+  function failFirstTransactionCommand(error: Error) {
+    const exec = mongoose.Query.prototype.exec
+    let sent = 0
+    const spy = spyOn(mongoose.Query.prototype, "exec").mockImplementation(function (this: any, ...args: any[]) {
+      if (!this.getOptions().session) return exec.apply(this, args)
+      sent += 1
+      return Promise.reject(error)
+    } as any)
+    return {sent: () => sent, restore: () => spy.mockRestore()}
+  }
+
+  /** A standalone mongod's answer to the first command of a transaction (code 20, `IllegalOperation`). */
+  const standaloneMongod = () =>
+    new driver.MongoServerError({
+      message: "Transaction numbers are only allowed on a replica set member or mongos",
+      code: 20,
+      codeName: "IllegalOperation",
+    })
+
+  describe("on a database that cannot run transactions", () => {
+    test("a standalone mongod: a person with no workspace state still gets a tombstone, written without one", async () => {
       const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-no-transactions"})
-      const startSession = unsupported()
+      const failing = failFirstTransactionCommand(standaloneMongod())
       try {
         expect(await removeDeletedUserFromWorkspaces(mentraUserId)).toEqual({
           endedMembershipIds: [],
@@ -715,9 +741,9 @@ describe("removeDeletedUserFromWorkspaces", () => {
         })
         // A second run finds the first one's tombstone and has no transaction to attempt.
         await removeDeletedUserFromWorkspaces(mentraUserId)
-        expect(startSession).toHaveBeenCalledTimes(1)
+        expect(failing.sent()).toBe(1)
       } finally {
-        startSession.mockRestore()
+        failing.restore()
       }
 
       const {events} = await listChanges({})
@@ -725,19 +751,79 @@ describe("removeDeletedUserFromWorkspaces", () => {
       expect(events[0]).toMatchObject({seq: 1, workspaceId: null, action: "user.deleted", target: {mentraUserId}})
     })
 
+    test("a topology without sessions is recognized before any command is sent", async () => {
+      const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: "sb-no-sessions"})
+      const startSession = spyOn(WorkspaceModel.db, "startSession").mockRejectedValue(
+        new driver.MongoCompatibilityError("Current topology does not support sessions"),
+      )
+      try {
+        await removeDeletedUserFromWorkspaces(mentraUserId)
+      } finally {
+        startSession.mockRestore()
+      }
+
+      expect((await listChanges({})).events.map(event => [event.seq, event.action])).toEqual([[1, "user.deleted"]])
+    })
+
     test("a person with workspace state is not ended half way: the deletion fails and nothing changes", async () => {
       const s = await scenario()
       const events = await WorkspaceAuditEventModel.countDocuments({})
-      const startSession = unsupported()
+      const failing = failFirstTransactionCommand(standaloneMongod())
       try {
-        await expect(removeDeletedUserFromWorkspaces(s.mentraUserId)).rejects.toThrow("Transaction numbers are only allowed")
+        const err = await removeDeletedUserFromWorkspaces(s.mentraUserId).then(
+          () => null,
+          (caught: unknown) => caught as Error,
+        )
+        expect(err?.message).toMatch(/replica set/i)
       } finally {
-        startSession.mockRestore()
+        failing.restore()
       }
 
       expect((await WorkspaceMembershipModel.findOne({membershipId: s.teamMembershipId}).lean())!.status).toBe("active")
       expect(await WorkspaceAuditEventModel.countDocuments({})).toBe(events)
       expect(await WorkspaceAuditEventModel.countDocuments({action: "user.deleted"})).toBe(0)
+    })
+  })
+
+  describe("on a replica set, a transaction that fails for any other reason", () => {
+    // What is left once `withTransaction` has used its retries (it retries labeled transient errors for two
+    // minutes): a time limit, a failover with no primary, a dropped connection.
+    const failures = () => [
+      ["a time limit", new driver.MongoServerError({message: "operation exceeded time limit", code: 50, codeName: "MaxTimeMSExpired"})],
+      ["no server to select", new driver.MongoServerSelectionError("Server selection timed out after 30000 ms", {} as any)],
+      ["a dropped connection", new driver.MongoNetworkError("connection 3 to 127.0.0.1:27017 closed")],
+      ["a look-alike without the standalone code", Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {code: 11000})],
+    ] as const
+
+    test("propagates, and writes no tombstone outside the transaction, so a poller cannot pass it", async () => {
+      for (const [reason, error] of failures()) {
+        const {mentraUserId} = await findOrCreateUser({tenantId: "mentra", tenantUserId: `sb-transient-${counter++}`})
+        const eventsBefore = await WorkspaceAuditEventModel.countDocuments({})
+        const counterBefore = (await WorkspaceAuditCounterModel.findOne({}).lean())?.seq ?? 0
+        const failing = failFirstTransactionCommand(error)
+        try {
+          const thrown = await removeDeletedUserFromWorkspaces(mentraUserId).then(
+            () => null,
+            (caught: unknown) => caught,
+          )
+          expect({reason, thrown}).toEqual({reason, thrown: error})
+          expect(failing.sent()).toBe(1)
+        } finally {
+          failing.restore()
+        }
+
+        // No event, and the counter did not move: nothing was written, in or out of a transaction.
+        expect({reason, events: await WorkspaceAuditEventModel.countDocuments({})}).toEqual({reason, events: eventsBefore})
+        expect({reason, seq: (await WorkspaceAuditCounterModel.findOne({}).lean())?.seq ?? 0}).toEqual({
+          reason,
+          seq: counterBefore,
+        })
+
+        // The sweep's retry then records it, in a transaction, with the next number.
+        await removeDeletedUserFromWorkspaces(mentraUserId)
+        const tombstones = await WorkspaceAuditEventModel.find({action: "user.deleted", "target.mentraUserId": mentraUserId}).lean()
+        expect({reason, seqs: tombstones.map(event => event.seq)}).toEqual({reason, seqs: [counterBefore + 1]})
+      }
     })
   })
 

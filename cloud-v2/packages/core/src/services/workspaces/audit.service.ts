@@ -18,16 +18,19 @@
  * poller that has read up to `seq` N can never later see an event with a lower
  * `seq` appear. A process-local ULID cannot promise that: two transactions can
  * mint ids in one order and commit in the other, or run in different Core
- * processes. The cost is that audited mutations serialize on the counter. They
- * are rare admin operations, and every caller records its event as its last
- * write, so the counter is held only briefly before commit.
+ * processes. The cost is that audited mutations serialize on the counter: it is
+ * held from the transaction's first event until it commits or aborts, and other
+ * recorders retry meanwhile. They are rare admin operations; a transaction that
+ * records several events (ending many memberships, an import) holds the counter
+ * for the rest of its run, so a caller should record its first event as late in
+ * its transaction as it can.
  *
  * The change feed services read (`listChanges`) is this trail's events that have
  * a `seq`: workspace-scoped events and user-level tombstones (`user.deleted`).
  * Organization-level events have no `seq`, and neither do events recorded before
  * the feed existed: a range read of `seq` never matches a document without one,
  * so they cannot appear in the feed or disturb its paging. Nothing is pruned, so
- * a service can replay from the beginning at any time. Each event's `requestId`
+ * a service can replay the whole feed at any time. Each event's `requestId`
  * is the id of the request that caused it (`currentRequestId`), unless the caller
  * supplies one. Records never carry a secret: credentials are identified by id
  * and name, never by token or hash.
@@ -69,8 +72,8 @@ export type WorkspaceAuditEventInput = Omit<
  * timestamp are assigned here, so a retried transaction callback records a fresh event rather than
  * reusing a rolled-back one.
  *
- * Call this as the last write of the transaction: it takes the feed's sequence counter, and every
- * other recorder waits (by retrying) until this transaction ends.
+ * This takes the feed's sequence counter and holds it until the transaction ends; every other
+ * recorder retries meanwhile. Record the first event as late in the transaction as you can.
  */
 export async function recordWorkspaceEvent(session: ClientSession, event: WorkspaceAuditEventInput): Promise<string> {
   return appendEvent(session, event, await nextSeq(session))
@@ -91,11 +94,14 @@ export async function recordOrganizationEvent(event: WorkspaceAuditEventInput): 
 
 /**
  * Record a change-feed event without a transaction, for the one writer that must still work on a
- * database that cannot run one (the `user.deleted` tombstone of a person who belongs to no
- * workspace). Its `seq` is unique and increasing, but, unlike {@link recordWorkspaceEvent}'s, not
- * guaranteed to follow commit order: a poller could pass a number whose event is not written yet.
- * Such a database has no other feed writer (workspace writes need transactions), so only two
- * tombstones written within milliseconds of each other can meet that.
+ * database that is known to be unable to run one (the `user.deleted` tombstone of a person who
+ * belongs to no workspace; see `isTransactionsUnsupportedError`). Never use it for a transient
+ * failure on a database that can run transactions: its `seq` is unique and increasing but, unlike
+ * {@link recordWorkspaceEvent}'s, not guaranteed to follow commit order. A transaction could take
+ * the next number and commit between this counter increment and this insert, and a poller would
+ * pass the number whose event is not written yet. A database that cannot run transactions has no
+ * other feed writer (workspace writes need them), so only two tombstones written within
+ * milliseconds of each other can meet that.
  */
 export async function recordFeedEventWithoutTransaction(event: WorkspaceAuditEventInput): Promise<string> {
   return appendEvent(null, event, await nextSeq(null))

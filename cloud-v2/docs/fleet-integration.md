@@ -278,10 +278,14 @@ that was offline can catch up:
   number back. A later read therefore never shows an event with a lower `seq` than
   one already seen. The feed leaves organization-level events (operator keys) out,
   so consecutive feed events can skip numbers. A skipped number is never a missed
-  workspace event. On a database that cannot run transactions, the one event Core
-  can still record, the `user.deleted` tombstone of a person in no workspace, is
-  written without one: its `seq` is still unique and increasing, and only two such
-  tombstones written within milliseconds of each other could be seen out of order.
+  workspace event. On a
+  database the driver reports cannot run transactions at all (a standalone
+  `mongod`), the one event Core can still record, the `user.deleted` tombstone of
+  a person in no workspace, is written without one: its `seq` is still unique and
+  increasing, and only two such tombstones written within milliseconds of each
+  other could be seen out of order. A transaction that fails on a database that
+  can run them (a failover, a timeout, contention) is never recorded that way: the
+  deletion fails and Core retries it within a minute.
 - **Retention.** Nothing is ever pruned. The feed begins with the first event
   Core recorded for it: events recorded before Core had a feed carry no `seq` and
   are not on it, so it cannot rebuild earlier history. A service that needs the

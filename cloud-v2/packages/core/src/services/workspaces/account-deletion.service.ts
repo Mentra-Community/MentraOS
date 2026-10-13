@@ -36,7 +36,7 @@
 import {createLogger} from "@mentra/cloud-shared"
 import {USER_DELETED_ACTION} from "@mentra/workspace-contract"
 import type {ClientSession} from "mongoose"
-import {withTransaction} from "../../connections/mongo.connection"
+import {isTransactionsUnsupportedError, withTransaction} from "../../connections/mongo.connection"
 import {AccessCredentialModel, type AccessCredentialRow} from "../../models/access-credential.model"
 import {WorkspaceAuditEventModel} from "../../models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../../models/workspace-invitation.model"
@@ -93,11 +93,14 @@ export async function removeDeletedUserFromWorkspaces(mentraUserId: string): Pro
         if (!(await tombstoneRecorded(mentraUserId, session))) await recordWorkspaceEvent(session, tombstone)
       })
     } catch (err) {
-      // A database that cannot run a transaction (Azure Cosmos DB for MongoDB RU, a standalone mongod)
-      // has no workspace state to end: workspace writes fail there. Deleting such an account must not
-      // start failing, and its tombstone is still owed to the services that hold data about the person.
-      if (workspaceState) throw err
-      logger.warn({err, mentraUserId}, "could not record the user.deleted tombstone in a transaction; recording it without one")
+      // Only a database positively known to be unable to run a transaction (a standalone mongod; see
+      // `isTransactionsUnsupportedError`) has no workspace state to end, because workspace writes fail
+      // there. Deleting such an account must not start failing, and its tombstone is still owed to the
+      // services that hold data about the person. Any other failure propagates: on a replica set the
+      // sweep retries in a minute, whereas a tombstone written outside the transaction while other
+      // recorders are active could be passed over by a poller and never seen.
+      if (workspaceState || !isTransactionsUnsupportedError(err)) throw err
+      logger.warn({err, mentraUserId}, "transactions are unsupported here; recording the user.deleted tombstone without one")
       if (!(await tombstoneRecorded(mentraUserId, null))) await recordFeedEventWithoutTransaction(tombstone)
     }
   }

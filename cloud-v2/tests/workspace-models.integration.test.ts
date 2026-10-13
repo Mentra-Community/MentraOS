@@ -16,7 +16,12 @@
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test} from "bun:test"
 import type {Model} from "mongoose"
 
-import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
+import {
+  connectMongo,
+  disconnectMongo,
+  isTransactionsUnsupportedError,
+  withTransaction,
+} from "../packages/core/src/connections/mongo.connection"
 import {runStartupMigrations} from "../packages/core/src/migrations/startup.migrations"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
 import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
@@ -210,6 +215,37 @@ describe("withTransaction (error mapping, no Mongo)", () => {
       } finally {
         spy.mockRestore()
       }
+    }
+  })
+
+  test("isTransactionsUnsupportedError tells a deployment that cannot run transactions from one that failed", () => {
+    const standalone = Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {
+      code: 20,
+    })
+    const wrapped = new Error("MongoDB transactions require a replica set", {cause: standalone})
+    const compat = Object.assign(new Error("Current topology does not support sessions"), {name: "MongoCompatibilityError"})
+
+    // The original failure, and `withTransaction`'s wrapper of it (the cause).
+    for (const unsupported of [standalone, wrapped, compat, new Error("outer", {cause: wrapped})]) {
+      expect(isTransactionsUnsupportedError(unsupported)).toBe(true)
+    }
+    // Everything else, transient or not, is a failure of this attempt.
+    const transient = Object.assign(new Error("write conflict"), {errorLabels: ["TransientTransactionError"], code: 112})
+    const unknownCommit = Object.assign(new Error("commit result unknown"), {errorLabels: ["UnknownTransactionCommitResult"]})
+    const timeout = Object.assign(new Error("operation exceeded time limit"), {code: 50})
+    const lookalike = Object.assign(new Error("Transaction numbers are only allowed on a replica set member or mongos"), {code: 11000})
+    for (const failed of [
+      transient,
+      unknownCommit,
+      timeout,
+      lookalike,
+      new Error("connection closed"),
+      new Error("outer", {cause: transient}),
+      "Transaction numbers are only allowed on a replica set member or mongos",
+      null,
+      undefined,
+    ]) {
+      expect(isTransactionsUnsupportedError(failed)).toBe(false)
     }
   })
 

@@ -57,7 +57,11 @@ export const mongoReadinessCheck: ReadinessCheck = {
 
 /**
  * True only for the two known "this deployment cannot run transactions"
- * failures, as opposed to a failure of the work inside the transaction:
+ * failures, as opposed to a failure of the work inside the transaction or of
+ * the deployment (a failover, a network error, a timeout, a write conflict that
+ * outlasted `withTransaction`'s retries). `withTransaction` wraps the first
+ * failure in a new Error that names the requirement and keeps the original as
+ * its `cause`, so the wrapper is recognized too:
  *
  * - a standalone `mongod` answers the first transactional write with
  *   `IllegalOperation` (code 20) and a message starting "Transaction numbers
@@ -70,8 +74,9 @@ export const mongoReadinessCheck: ReadinessCheck = {
  * told apart by where they were thrown. Matching the error name or code plus
  * the exact message prefix keeps unrelated errors from being reclassified.
  */
-function isTransactionsUnsupportedError(err: unknown): boolean {
+export function isTransactionsUnsupportedError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  if (err.cause !== undefined && isTransactionsUnsupportedError(err.cause)) return true;
   if ((err as { code?: unknown }).code === 20) {
     return /^Transaction numbers are only allowed on a replica set member or mongos/.test(err.message);
   }
