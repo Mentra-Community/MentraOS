@@ -1,3 +1,5 @@
+import {OriginalLatestStatus} from "../components/test-status-comparison";
+import {observedTestStatus} from "../../../../packages/core/src/types/test-status-comparison";
 import {LoadingIndicator} from "../components/loading-indicator";
 import {HistoryStatus} from "../components/test-history-table";
 import {TESTING_PANEL, TESTING_LINK, TESTING_FIELD, TestingButton} from "../components/testing-ui";
@@ -24,7 +26,7 @@ export function AttemptLine({attempt}: {attempt: RerunAttempt}) {
     {attempt.rerunId && <> · <a className={TESTING_LINK} href={`/?testRerun=${encodeURIComponent(attempt.rerunId)}`}>Rerun batch</a></>}
     {attempt.reason && <span className="block text-[#68746d]">{attempt.reason}</span>}</p>;
 }
-type AttemptHistoryData = {original:RerunAttempt;attempts:RerunAttempt[];nextBefore:number|null};
+export type AttemptHistoryData = {original:RerunAttempt;attempts:RerunAttempt[];nextBefore:number|null};
 export function AttemptHistoryView({page, before, error, loading, onOpen, onBefore, onRetry}: {
   page?: AttemptHistoryData; before: number|null; error?: Error|null; loading: boolean;
   onOpen:(open:boolean)=>void; onBefore:(before:number|null)=>void; onRetry:()=>void;
@@ -112,6 +114,16 @@ export function TestRerunPage({rerunId}:{rerunId:string}) {
     <p className="text-sm">This verdict covers only these attempts. The original result is unchanged.</p>
     {value.attempts.some(a=>a.status==="admission-pending")&&<p><TestingButton busy={reconciling} onClick={reconcile}>{value.state==="preview"?"Submit recorded preview":"Reconcile pending admissions"}</TestingButton></p>}{reconcileMessage&&<p role="status">{reconcileMessage}</p>}
     {value.attempts.map((a, index)=><div key={a.attemptId} className="mt-4 rounded-xl border border-[#e0e4de] p-4"><h3 className="font-semibold">Routine attempt {index + 1}</h3><AttemptLine attempt={a}/><details className="mt-2 text-xs text-[#747780]"><summary className="cursor-pointer">Member identity</summary><code>{a.memberId}</code></details><AttemptHistory suiteId={"suiteId" in value.parent?value.parent.suiteId:undefined} originalRequestId={"requestId" in value.parent?value.parent.requestId:undefined} memberId={a.memberId}/></div>)}</section>;
+}
+
+export function RunLatestStatus({requestId, original}: {requestId: string; original: string}) {
+ const lineage=useQuery({queryKey:["rerun-lineage",requestId],queryFn:()=>api<{original?:{suiteId:string;memberId:string}|null;lineage:{parent:RerunPlan["parent"];memberId:string}|null}>(`/api/admin/test-runs/reruns/request/${encodeURIComponent(requestId)}/lineage`)})
+ const value=lineage.data?.lineage, source=lineage.data?.original, parent=value?.parent??(source?{suiteId:source.suiteId}:{requestId}), memberId=value?.memberId??source?.memberId??requestId
+ const suiteId="suiteId" in parent?parent.suiteId:undefined, originalRequestId="requestId" in parent?parent.requestId:undefined
+ const history=useQuery({queryKey:["rerun-history",suiteId??originalRequestId,memberId,null],enabled:!!lineage.data,
+  queryFn:()=>api<AttemptHistoryData>(`/api/admin/test-runs/reruns/${suiteId?`suite/${encodeURIComponent(suiteId)}/members/${encodeURIComponent(memberId)}`:`request/${encodeURIComponent(originalRequestId!)}`}/history`),refetchInterval:15000})
+ return <><OriginalLatestStatus original={history.data?observedTestStatus(history.data.original):original} latest={history.data?.attempts[0]}/>
+  {(lineage.error||history.error)&&<span className="block text-xs text-[#656d76]">Latest unavailable</span>}</>
 }
 
 export function RunRerunLinks({requestId}:{requestId:string}) {

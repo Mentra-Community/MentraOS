@@ -10,6 +10,8 @@ import {useQuery} from "@tanstack/react-query";
 import {api} from "../lib/api";
 import {runDuration} from "../lib/run-duration";
 import {frameworkIdentitySchema} from "../../../../packages/core/src/types/framework-request.types";
+import {OriginalLatestStatus, SuiteCountComparison} from "../components/test-status-comparison";
+import {comparedSuiteCounts} from "../../../../packages/core/src/types/test-status-comparison";
 import {CopyRerunLabel} from '../components/copy-rerun-label';
 
 export interface TestSuiteResult {
@@ -45,6 +47,8 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
   if (result.error) return <div role="alert" className={panel}><p>Could not load the test suite: {result.error.message}</p><TestingButton onClick={() => result.refetch()}>Try again</TestingButton></div>;
   const suite = result.data!;
   const presentation = suitePresentation(suite);
+  const comparisons = comparedSuiteCounts(suite.members.map(member => ({...member, publicationComplete: member.publicationComplete === true})),
+    new Map(progress.data?.members.flatMap(member => member.latest ? [[member.memberId, member.latest] as const] : []) ?? []));
   const members = [...suite.members].sort((a, b) => {
     const aTime = a.startedAt ? Date.parse(a.startedAt) : NaN;
     const bTime = b.startedAt ? Date.parse(b.startedAt) : NaN;
@@ -75,15 +79,15 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
     <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
       <div><h2 className="text-xl font-bold">{suite.channel === "dev" ? "Dev" : suite.channel} {suite.trigger} test suite</h2>
         <p className="mt-1 text-sm text-[#68746d]">{suite.build.release ?? suite.build.headSha.slice(0, 10)} · {suite.build.headSha.slice(0, 10)}</p></div>
-      <span className={`rounded-full px-3 py-1 text-xs font-medium ${presentation.color}`}>
-        {presentation.label} · {suite.passed}/{suite.members.length} passed with complete evidence</span>
+      <div className="space-y-2 text-right"><HistoryStatus outcome={suite.outcome}/>
+        <div><SuiteCountComparison original={comparisons.original} latest={comparisons.hasReruns ? comparisons.latest : undefined}/></div></div>
     </div>
     <p className="mt-3 text-xs text-[#747780]">{pendingPassCount(suite) > 0 && `${pendingPassCount(suite)} passed · evidence pending`}</p>
     <p className="my-4 text-sm">Started {new Date(suite.startedAt).toLocaleString()}{suite.finishedAt ? ` · Finished ${new Date(suite.finishedAt).toLocaleString()} · ${runDuration(suite.startedAt, suite.finishedAt)}` : " · Refreshes every 15 seconds"}</p>
     {suite.build.producerUrl ? <a className={`${TESTING_LINK} text-sm`} href={suite.build.producerUrl} target="_blank" rel="noreferrer">Dispatched job / build in GitHub</a> : null}
     <div className="my-4"><TestingButton disabled={!rerunnableFailures.length} onClick={()=>setDispatchMembers(rerunnableFailures.map(member=>member.memberId))}>Rerun failures</TestingButton></div>
     {dispatchMembers && <RerunForm key={dispatchMembers.join(",")} suiteId={suiteId} memberIds={dispatchMembers} onClose={()=>setDispatchMembers(null)}/>}
-    {progress.data && <p className="my-3 text-sm">Repair progress: {members.filter(m=>isFailure(m.status)).length} originally failed · {members.filter(m=>isFailure(m.status)&&progress.data.members.some(p=>p.memberId===m.memberId&&p.latest?.status==="pass"&&p.latest.publicationComplete)).length} passed on rerun · {members.filter(m=>isFailure(m.status)&&progress.data.members.some(p=>p.memberId===m.memberId&&["queued","accepted","running","admission-pending"].includes(p.latest?.status??""))).length} pending · {members.filter(m=>isFailure(m.status)&&!progress.data.members.some(p=>p.memberId===m.memberId&&((p.latest?.status==="pass"&&p.latest.publicationComplete)||["queued","accepted","running","admission-pending"].includes(p.latest?.status??"")))).length} unresolved. Original verdict remains {suite.outcome}.</p>}
+
     {progress.error && <p role="alert">Rerun progress unavailable. <TestingButton onClick={()=>progress.refetch()}>Retry</TestingButton></p>}
     <details className="mt-3 text-sm"><summary className="cursor-pointer font-medium">Rerun batches{progress.data ? ` (${progress.data.children.length})` : ""}</summary><ChildReruns suiteId={suiteId}/></details>
     <div className="mt-4 overflow-x-auto rounded-xl border border-[#e0e4de]">
@@ -101,7 +105,7 @@ export function TestSuitePage({suiteId}: {suiteId: string}) {
           <td className="whitespace-nowrap tabular-nums">{runDuration(member.startedAt, member.finishedAt) ?? "—"}</td>
           <td><TestLaneBadges lanes={member.hostId && member.laneId ? [{hostId: member.hostId, laneId: member.laneId}] : []}/></td>
           <td className="whitespace-nowrap text-xs" title={suite.build.headSha}>{suite.build.release ?? suite.build.headSha.slice(0, 10)}</td>
-          <td><HistoryStatus outcome={member.status === "pass" && member.publicationComplete !== true ? "evidence pending" : member.status}/>
+          <td><OriginalLatestStatus original={member.status === "pass" && member.publicationComplete !== true ? "publishing" : member.status} latest={latestAttempt(member.memberId)}/>
             {member.status === "not-run" && <span className="sr-only">Did not run</span>}
             {member.unavailableReason && <details className="mt-2 min-w-40 max-w-xs text-xs text-[#747780]"><summary className="cursor-pointer">Failure reason</summary><p className="mt-2 break-words">{member.unavailableReason}</p></details>}
           </td>

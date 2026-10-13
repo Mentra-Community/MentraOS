@@ -11,6 +11,8 @@ import {TestSuiteModel} from "../models/test-suite.model";
 import {frameworkRunIdSchema} from "../types/framework-run.types";
 import type {TestHistoryEntry, TestHistoryPage, TestHistoryOrigin} from "../types/test-history.types";
 import {nativeRunFilter, readFrameworkRunSummary, type StoredSummaryRow} from "./framework-run-summary.service";
+import {TestRerunService, rerunRootKey} from "./test-rerun.service";
+import {comparedSuiteCounts} from "../types/test-status-comparison";
 import {TestRunError} from "./test-result-error";
 import {TestSuiteService, type SuiteSummaryRead} from "./test-suite.service";
 const logger = createLogger("core").child({component: "test-history"});
@@ -131,7 +133,7 @@ export class TestHistoryService {
         after = {startedAt: scan.last.historyStartedAt.toISOString(), kind: "run", id: scan.last.historyId};
       }
       return [runs, suites];
-    }) {}
+    }, private readonly reruns: Pick<TestRerunService, "latestAttempts"> = new TestRerunService()) {}
 
   async list(input: Record<string, string> = {}): Promise<TestHistoryPage> {
     const query = querySchema.safeParse(input);
@@ -201,6 +203,29 @@ export class TestHistoryService {
         .select({requestId: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1})
         .limit(ids.length + 1).read("primary").readConcern("majority").setOptions({timeoutMS, maxTimeMS: timeoutMS}).lean();
     }, suiteSummaries);
+    const originals = enriched.filter(entry => entry.kind !== 'unavailable' && (entry.rerunCount ?? 0) > 0);
+    const identities = originals.flatMap<Parameters<TestRerunService["latestAttempts"]>[0][number]>(entry => entry.kind === 'run' ? [{parent: {requestId: entry.requestId}, memberId: entry.requestId}]
+      : entry.kind === 'suite' ? (suiteSummaries.get(entry.suiteId) as Exclude<SuiteSummaryRead, Error> | undefined)?.members.map(member => ({parent: {suiteId: entry.suiteId}, memberId: member.memberId})) ?? [] : []);
+    try {
+      const latest = identities.length ? await this.reruns.latestAttempts(identities) : new Map();
+      for (const entry of originals) {
+        if (entry.kind === 'run') entry.latest = latest.get(rerunRootKey({requestId: entry.requestId}, entry.requestId));
+        else if (entry.kind === 'suite') {
+          const summary = suiteSummaries.get(entry.suiteId);
+          if (summary && !(summary instanceof Error)) {
+            const byMember = new Map(summary.members.flatMap(member => {
+              const attempt = latest.get(rerunRootKey({suiteId: entry.suiteId}, member.memberId));
+              return attempt ? [[member.memberId, attempt] as const] : [];
+            }));
+            const comparison = comparedSuiteCounts(summary.members.map(member => ({...member, publicationComplete: member.publicationComplete === true})), byMember);
+            if (comparison.hasReruns) entry.comparison = comparison;
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn({err: error}, 'Latest linked statuses unavailable; original outcomes remain readable');
+      for (const entry of originals) if (entry.kind !== 'unavailable') entry.latestUnavailable = true;
+    }
     return {entries: enriched, nextCursor};
   }
 }

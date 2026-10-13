@@ -1,5 +1,7 @@
 import {z} from 'zod';
 import {routinePreparedBuildSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
+import {TestRequestModel} from "../models/test-request.model";
+import {TestRunModel} from "../models/test-run.model";
 import {TestRerunModel} from "../models/test-rerun.model";
 import {testWriteConcern} from "../models/test-write-concern";
 import {testBuildSourceSchema} from "../types/test-build.types";
@@ -10,7 +12,7 @@ import {TestSuiteService} from "./test-suite.service";
 import {RoutineJobService} from "./routine-job.service";
 import {portableRoutineSelectionSchema, type StoredRoutineJob} from "../types/routine-job.types";
 import {TestRequestService, requestInputDigest, isExecutableRequest} from "./test-request.service";
-import {FrameworkResultService} from "./framework-result.service";
+import {FrameworkResultService, frameworkResultSummaryFields, readFrameworkResultSummary, nativeRunFilter} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
 
 export interface RerunRecord {rerunId: string; inputDigest: string; previewDigest: string; plan: RecordedRerunPlan;
@@ -20,6 +22,7 @@ export interface RerunRepository {
   insert(row: RerunRecord): Promise<void>;
   accept(id: string, digest: string, claimKeys: string[], acceptedAt: string): Promise<RerunRecord | null>;
   history(rootKey: string, before: number, limit: number): Promise<RerunRecord[]>;
+  latest(rootKeys: string[]): Promise<RerunRecord[]>;
   children(suiteId: string, before: string, limit: number): Promise<RerunRecord[]>;
   byRequest(requestId: string): Promise<RerunRecord | null>;
 }
@@ -36,6 +39,17 @@ export const testRerunRepository: RerunRepository = {
       {$set: {historyMember: {$arrayElemAt: [{$filter: {input: "$plan.members", as: "member", cond: {$eq: ["$$member.rootKey", rootKey]}}},0]}}},
       {$sort: {"historyMember.attemptNumber": -1}}, {$limit: limit}, {$unset: "historyMember"},
     ]).read("primary").readConcern("majority") as RerunRecord[];
+  },
+  async latest(rootKeys) {
+    if (!rootKeys.length) return [];
+    return await TestRerunModel.aggregate([
+      {$match: {state: "accepted", "plan.members.rootKey": {$in: rootKeys}}},
+      {$set: {latestRow: "$$ROOT"}}, {$unwind: "$plan.members"},
+      {$match: {"plan.members.rootKey": {$in: rootKeys}}},
+      {$sort: {"plan.members.attemptNumber": -1}},
+      {$group: {_id: "$plan.members.rootKey", row: {$first: "$latestRow"}}},
+      {$group: {_id: "$row.rerunId", row: {$first: "$row"}}}, {$replaceRoot: {newRoot: "$row"}},
+    ]).read("primary").readConcern("majority").option({maxTimeMS: 5000}) as RerunRecord[];
   },
   async children(suiteId, before, limit) {
     const cursor = before ? decodeChildCursor(before) : undefined;
@@ -59,6 +73,27 @@ const verified = (row: RerunRecord): RerunRecord => {
   return {...row, plan: plan.data};
 };
 
+export interface RerunAttemptBatch {
+  read(requestIds: string[]): Promise<{requests: Map<string, Awaited<ReturnType<TestRequestService['get']>>>;
+    results: Map<string, Awaited<ReturnType<FrameworkResultService['summary']>> | Error>}>
+}
+const rerunAttemptBatch: RerunAttemptBatch = {
+  async read(requestIds) {
+    if (!requestIds.length) return {requests: new Map(), results: new Map()};
+    const [requests, rows] = await Promise.all([
+      TestRequestModel.find({requestId: {$in: requestIds}}).read('primary').readConcern('majority').setOptions({maxTimeMS: 5000}).lean(),
+      TestRunModel.find({...nativeRunFilter, requestId: {$in: requestIds}}).select(frameworkResultSummaryFields)
+        .read('primary').readConcern('majority').setOptions({maxTimeMS: 5000}).lean(),
+    ]);
+    const results = new Map<string, Awaited<ReturnType<FrameworkResultService['summary']>> | Error>();
+    for (const row of rows) {
+      try {results.set(row.requestId, await readFrameworkResultSummary(row));}
+      catch (error) {results.set(row.requestId, error instanceof Error ? error : new Error('Rerun summary unavailable'));}
+    }
+    return {requests: new Map(requests.map(row => [row.requestId, row])), results};
+  },
+};
+
 /** Reruns freeze source preparation once and reuse ordinary queue/result ownership. */
 export class TestRerunService {
   constructor(private readonly store: RerunRepository = testRerunRepository,
@@ -66,11 +101,12 @@ export class TestRerunService {
     private readonly jobs: Pick<RoutineJobService, 'freezeSelection' | 'submitFrozen' | 'cancelFrozen'> = new RoutineJobService(),
     private readonly requests: Pick<TestRequestService, 'get' | 'prepare'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, "summary"> = new FrameworkResultService(),
-    private readonly now: () => number = Date.now) {}
+    private readonly now: () => number = Date.now,
+    private readonly batch: RerunAttemptBatch = rerunAttemptBatch) {}
 
   private async requestAttempt(requestId: string, identity: Pick<RerunAttempt, "parent" | "memberId" | "attemptNumber" | "attemptId">,
-    frozen?: RecordedRerunMember): Promise<RerunAttempt> {
-    const request = await this.requests.get(requestId);
+    frozen?: RecordedRerunMember, observed?: Awaited<ReturnType<RerunAttemptBatch['read']>>): Promise<RerunAttempt> {
+    const request = observed ? observed.requests.get(requestId) ?? null : await this.requests.get(requestId);
     const selection = frozen && 'selection' in frozen ? frozen.selection : undefined;
     let intent = frozen && 'dispatchIntent' in frozen ? frozen.dispatchIntent : undefined;
     const recordedInput = frozen && 'input' in frozen ? frozen.input : undefined;
@@ -115,8 +151,8 @@ export class TestRerunService {
         intent.routineSource && requestInputDigest(input.data.routineSource ?? null) !== requestInputDigest(intent.routineSource) ||
         requestInputDigest(input.data.build) !== requestInputDigest(intent.build)))
       throw new TestRunError(503, "Rerun request differs from its frozen input");
-    let result;
-    try {result = await this.results.summary(requestId);} catch (error) {
+    let result: Awaited<ReturnType<FrameworkResultService["summary"]>> | undefined;
+    try {const read = observed ? observed.results.get(requestId) : await this.results.summary(requestId); if (read instanceof Error) throw read; result = read;} catch (error) {
       if (!(error instanceof TestRunError && error.status === 404)) throw error;
     }
     if (result && (job.fleetSelection && (result.hostId !== request.hostId || result.laneId !== input.data.laneId) || result.routineId !== input.data.routineId || result.platform !== input.data.platform ||
@@ -156,9 +192,9 @@ export class TestRerunService {
     const row = verified(rows[0]!); const member = row.plan.members.find(m => m.rootKey === rootKey)!;
     return {row, member, attempt: await this.attempt(row, member)};
   }
-  private async attempt(row: RerunRecord, member: RecordedRerunMember): Promise<RerunAttempt> {
+  private async attempt(row: RerunRecord, member: RecordedRerunMember, observed?: Awaited<ReturnType<RerunAttemptBatch['read']>>): Promise<RerunAttempt> {
     return {...await this.requestAttempt(member.requestId, {attemptId: member.requestId, attemptNumber: member.attemptNumber,
-      parent: row.plan.parent, memberId: member.memberId}, member), rerunId: row.rerunId,
+      parent: row.plan.parent, memberId: member.memberId}, member, observed), rerunId: row.rerunId,
       predecessorAttemptId: member.predecessorAttemptId, createdAt: row.acceptedAt, reason: row.plan.reason};
   }
   async preview(input: unknown, actor: string): Promise<{rerunId:string;previewDigest:string;plan:RerunPlan;state:"preview"|"accepted"}> {
@@ -351,11 +387,31 @@ export class TestRerunService {
   }
   async progress(suiteId: string) {
     const parent = {suiteId}, members = await this.observedMembers(parent);
-    const latest = await Promise.all(members.map(async m => ({memberId: m.memberId, originalStatus: m.status,
-      latest: (await this.latest(rerunRootKey(parent, m.memberId)))?.attempt ?? null})));
+    const attempts = await this.latestAttempts(members.map(m => ({parent, memberId: m.memberId})));
+    const latest = members.map(m => ({memberId: m.memberId, originalStatus: m.status,
+      latest: attempts.get(rerunRootKey(parent, m.memberId)) ?? null}));
     const children = await this.store.children(suiteId, "", 21);
     return {members: latest, children: children.slice(0,20).map(verified).map(r => ({rerunId: r.rerunId, reason: r.plan.reason, createdAt: r.acceptedAt})),
       nextChildrenCursor: children.length > 20 ? encodeChildCursor(children[19]!) : null};
+  }
+  /** One accepted latest attempt per original member, never the most recent passing attempt. */
+  async latestAttempts(identities: {parent: RerunPlan['parent']; memberId: string}[]) {
+    if (identities.length > 10000) throw new TestRunError(400, 'Too many original members');
+    const roots = [...new Set(identities.map(value => rerunRootKey(value.parent, value.memberId)))], requestedRoots = new Set(roots);
+    const rows = (await this.store.latest(roots)).map(verified), selected = new Map<string, {row: RerunRecord; member: RecordedRerunMember}>();
+    for (const row of rows) for (const member of row.plan.members) if (requestedRoots.has(member.rootKey)) {
+      const previous = selected.get(member.rootKey);
+      if (!previous || member.attemptNumber > previous.member.attemptNumber) selected.set(member.rootKey, {row, member});
+      else if (member.attemptNumber === previous.member.attemptNumber && member.requestId !== previous.member.requestId)
+        throw new TestRunError(503, 'Latest rerun lineage is ambiguous');
+    }
+    const observed = await this.batch.read([...selected.values()].map(value => value.member.requestId));
+    return new Map(await Promise.all([...selected].map(async ([root, value]) => {
+      try {return [root, await this.attempt(value.row, value.member, observed)] as const;}
+      catch {return [root, {attemptId: value.member.requestId, requestId: value.member.requestId, attemptNumber: value.member.attemptNumber,
+        rerunId: value.row.rerunId, parent: value.row.plan.parent, memberId: value.member.memberId,
+        status: 'unavailable', publicationComplete: false} satisfies RerunAttempt] as const;}
+    })));
   }
   async children(suiteId: string, before = "") {
     if (!frameworkIdentitySchema.safeParse(suiteId).success || before && before.length > 1000)

@@ -130,7 +130,7 @@ test("suite history retains accepted job count and exact distinct host/lane pair
     ]} as any;
   const service = new TestHistoryService(summaryReader(async () => suite), async () => [[], [
     {historyKind: "suite", historyId: suite.suiteId, historyStartedAt: new Date(suite.startedAt), rerunCount: 5},
-  ]]);
+  ]], {async latestAttempts() {return new Map()}});
   expect((await service.list()).entries[0]).toMatchObject({kind: "suite", rerunCount: 5,
     lanes: [{hostId: "mini", laneId: "mac"}, {hostId: "other", laneId: "android"}],
     members: [{routineId: "notes", hostId: "mini", laneId: "mac"}, {routineId: "settings", hostId: "mini", laneId: "mac"},
@@ -777,3 +777,12 @@ test("optional PR metadata failure and timeout preserve readable entries", async
     expect(await enrichHistoryPrBuilds(entries, async () => {throw error;}, new Map([[suite.suiteId, suite]]))).toBe(entries);
   }
 });
+
+test('history batches latest linked status projections and preserves original suite failures',async()=>{
+ const suite={suiteId:'comparison-suite',channel:'dev',trigger:'nightly',startedAt:'2026-10-12T10:00:00Z',outcome:'failed',passed:1,build:{headSha:'a'.repeat(40)},members:[
+  {memberId:'first',routineId:'one',platform:'android',status:'failed',publicationComplete:true},
+  {memberId:'second',routineId:'two',platform:'android',status:'pass',publicationComplete:true}]}
+ let calls=0
+ const service=new TestHistoryService(summaryReader(async()=>suite),async()=>[[],[{historyKind:'suite',historyId:suite.suiteId,historyStartedAt:new Date(suite.startedAt),rerunCount:1}]],{async latestAttempts(ids){calls++;expect(ids).toEqual([{parent:{suiteId:suite.suiteId},memberId:'first'},{parent:{suiteId:suite.suiteId},memberId:'second'}]);const {rerunRootKey}=await import('./test-rerun.service');return new Map([[rerunRootKey({suiteId:suite.suiteId},'first'),{attemptId:'latest',attemptNumber:1,parent:{suiteId:suite.suiteId},memberId:'first',status:'pass',publicationComplete:true}]])}})
+ expect((await service.list()).entries[0]).toMatchObject({outcome:'failed',failedCount:1,comparison:{original:{failed:1,total:2},latest:{failed:0,total:2,pending:0}}});expect(calls).toBe(1)
+})

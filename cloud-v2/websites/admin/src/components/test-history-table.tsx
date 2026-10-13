@@ -4,6 +4,7 @@ import type {TestHistoryEntry} from "../../../../packages/core/src/types/test-hi
 import {laneHistoryHref} from "../lib/lane-links";
 import {elapsedDuration, runDuration} from "../lib/run-duration";
 import {testRunLocation} from "../lib/test-run-links";
+import {OriginalLatestStatus, SuiteCountComparison} from "./test-status-comparison";
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from "./ui/table";
 
 const LINK = "rounded-sm text-[#0969da] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0969da]";
@@ -105,8 +106,10 @@ function HistoryRow({entry, routines, now}: {entry: TestHistoryEntry; routines: 
     <TableCell><TestLaneBadges lanes={lanes}/></TableCell>
     <TableCell><HistoryBuild build={suite ? {...entry.build, channel: entry.channel} : entry.build}/></TableCell>
     <TableCell className="min-w-40">
-      <HistoryStatus outcome={outcome}/>
-      {suite ? <p className={MUTED}>{entry.failedCount}/{entry.expectedCount - (entry.skipped ?? 0)} failed{entry.skipped ? `, ${entry.skipped} skipped` : ""}</p>
+      {suite ? <HistoryStatus outcome={outcome}/> : <OriginalLatestStatus original={outcome} latest={entry.latest}/>}
+      {entry.latestUnavailable && <p className={MUTED}>Latest unavailable</p>}
+      {suite ? <p className={MUTED}>{entry.comparison ? <SuiteCountComparison original={entry.comparison.original} latest={entry.comparison.latest}/>
+        : `${entry.failedCount}/${entry.expectedCount - (entry.skipped ?? 0)} failed${entry.skipped ? `, ${entry.skipped} skipped` : ''}`}</p>
         : <>{entry.evidenceStatus === "failed" && outcome !== "evidence-failed" && <p className={`${MUTED} text-[#cf222e]`}>Evidence failed</p>}
           {entry.evidenceStatus !== "failed" && !entry.uploadsComplete && <p className={MUTED}>Evidence upload pending</p>}</>}
     </TableCell>
