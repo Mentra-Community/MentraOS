@@ -97,13 +97,17 @@ export async function saveCredentials(credentials: CliCredentials): Promise<"key
       await Bun.secrets.delete({service: SERVICE, name: credentialName(target)}).catch(() => false)
     }
   }
+  writeCredentialsFile(target, payload)
+  return "file"
+}
+
+function writeCredentialsFile(target: CliTarget, payload: string): void {
   const path = credentialsFile(target)
   mkdirSync(cliHome(), {recursive: true, mode: 0o700})
-  // Written whole and renamed into place, so a reader never sees a partial login.
+  // Written whole and renamed into place, so a reader never sees a partial record.
   const temporary = `${path}.${process.pid}.tmp`
   writeFileSync(temporary, `${payload}\n`, {mode: 0o600})
   renameSync(temporary, path)
-  return "file"
 }
 
 /** What a command acts with against `target`: `MENTRA_CLI_TOKEN` when set, else the stored login. */
@@ -136,12 +140,19 @@ export async function loadStoredLogin(target: CliTarget): Promise<CliCredentials
     // Read the file alone.
   }
   let fromFile: CliCredentials | null = null
+  let signedOutAt: number | null = null
   try {
     const path = credentialsFile(target)
-    if (existsSync(path)) fromFile = storedLogin(readFileSync(path, "utf8"), target)
+    if (existsSync(path)) {
+      const value = readFileSync(path, "utf8")
+      fromFile = storedLogin(value, target)
+      signedOutAt = signOutTime(value)
+    }
   } catch {
     // An unreadable file reads as signed out.
   }
+  // A sign-out the keychain could not record: an older keychain login stays signed out.
+  if (signedOutAt !== null && fromKeychain && Date.parse(fromKeychain.storedAt) <= signedOutAt) return null
   if (fromKeychain && fromFile) {
     // A keychain write removes the file, so a file beside a keychain login is the later write; a
     // keychain login dated later (written after the file by a CLI that could not remove it) wins.
@@ -152,6 +163,7 @@ export async function loadStoredLogin(target: CliTarget): Promise<CliCredentials
 
 /** Remove the login stored for `target`, from the keychain and the file. */
 export async function clearCredentials(target: CliTarget): Promise<void> {
+  let keychainCleared = true
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
       const name = credentialName(target)
@@ -159,9 +171,25 @@ export async function clearCredentials(target: CliTarget): Promise<void> {
       else await Bun.secrets.set({service: SERVICE, name, value: ""})
     }
   } catch {
-    // Remove the file even when the keychain is unavailable.
+    keychainCleared = false
   }
-  rmSync(credentialsFile(target), {force: true})
+  if (keychainCleared) {
+    rmSync(credentialsFile(target), {force: true})
+    return
+  }
+  // The keychain still holds a login: a dated sign-out in the file outranks it until the next sign-in.
+  writeCredentialsFile(target, JSON.stringify({signedOutAt: new Date().toISOString()}))
+}
+
+/** When a sign-out record (written when the keychain could not delete) was made, or null. */
+function signOutTime(value: string): number | null {
+  try {
+    const parsed = JSON.parse(value) as {signedOutAt?: unknown}
+    const time = typeof parsed?.signedOutAt === "string" ? Date.parse(parsed.signedOutAt) : NaN
+    return Number.isFinite(time) ? time : null
+  } catch {
+    return null
+  }
 }
 
 function nonEmpty(value: unknown): value is string {

@@ -185,7 +185,10 @@ describe("stored logins", () => {
     expect((await loadStoredLogin(target))?.refreshToken).toBe("rotated")
 
     await clearCredentials(target)
-    expect(existsSync(file)).toBe(false)
+    // No tokens stay on disk. The keychain could not be asked to delete, so the file now records the
+    // sign-out, in case the keychain holds an older login.
+    expect(readFileSync(file, "utf8")).not.toContain("refresh")
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({signedOutAt: expect.any(String)})
     expect(await loadCredentials(target)).toBeNull()
   })
 
@@ -224,6 +227,21 @@ describe("stored logins", () => {
     set.mockRestore()
     expect([...secrets.keys()]).toHaveLength(0)
     expect((await loadStoredLogin(target))?.refreshToken).toBe("newer")
+  })
+
+  test("signing out while the keychain cannot delete leaves a dated sign-out that outranks the old keychain login", async () => {
+    const target = store(DEFAULT_STORE_URL)
+    await saveCredentials(login(target, {refreshToken: "older"}))
+    const remove = spyOn(Bun.secrets, "delete").mockImplementation(async () => {
+      throw new Error("keychain locked")
+    })
+    await clearCredentials(target)
+    remove.mockRestore()
+    expect(secrets.size).toBe(1)
+    expect(await loadStoredLogin(target)).toBeNull()
+    // A later sign-in still wins.
+    await saveCredentials(login(target, {refreshToken: "next"}))
+    expect((await loadStoredLogin(target))?.refreshToken).toBe("next")
   })
 
   test("clearing removes the keychain record", async () => {
