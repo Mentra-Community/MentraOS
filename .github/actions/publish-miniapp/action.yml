@@ -14,7 +14,7 @@ inputs:
     description: Branch whose tip may publish; an older commit skips publication
     default: dev
   store-url:
-    description: Production Store API
+    description: The Store API to publish to (production by default)
     default: https://api.apps.mentraglass.com
 runs:
   using: composite
