@@ -26,7 +26,7 @@ export type RoutineCatalogCard = RoutineCardDefinition & {
   example: CatalogExample | null; latestAttempt: CatalogHistoryRun | null; nightlyEnabled: boolean;
 };
 export interface FrameworkRunPage {runs: FrameworkRunSummary[]; nextCursor: string | null}
-export type TestHistoryEntry = ({kind: "run"; followUp?: import("./routine-fix-provenance.types").CaseFollowUpSummary; latest?: import("./test-rerun.types").RerunAttempt; latestUnavailable?: boolean; rerunCount?: number; rerun?: {rerunId: string; parentSuiteId?: string}} & FrameworkRunSummary) | {
+export type TestHistoryEntry = ({kind: "run"; followUp?: import("./routine-fix-provenance.types").CaseFollowUpSummary; latest?: import("./test-rerun.types").RerunAttempt; latestUnavailable?: boolean; rerunCount?: number; rerun?: {rerunId: string; parentSuiteId?: string; rootKey?: string}} & FrameworkRunSummary) | {
   kind: "suite"; suiteId: string; channel: TestSuite["channel"]; trigger: TestSuite["trigger"];
   startedAt: string; finishedAt?: string; outcome: string; expectedCount: number; passed: number; skipped?: number; build: TestSuite["build"] & {repository?: string; prNumber?: number};
   /** Unique submitted routine attempts across accepted reruns, independent of pagination and batch count. */

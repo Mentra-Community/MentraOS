@@ -2,9 +2,8 @@ import {z} from 'zod'
 import {TestRequestModel} from '../models/test-request.model'
 import {FrameworkResultService} from './framework-result.service'
 import {TestRerunService} from './test-rerun.service'
-import {recordedFrameworkRequestInputSchema} from '../types/framework-request.types'
-import {portableRoutineSelectionSchema} from '../types/routine-job.types'
-import {routineDispatchIntentSchema} from '../types/routine-dispatch.types'
+import {readAcceptedRoutineRequest} from './routine-request-input'
+import type {StoredRequest} from './test-request.service'
 import {routineFixDelta,routineFixInclusions,type RoutineFixInput,type CaseFollowUpSummary} from '../types/routine-fix-provenance.types'
 import {requestInputDigest} from './test-request.service'
 import {TestRunError} from './test-result-error'
@@ -16,17 +15,15 @@ export class RoutineFixProvenanceService {
  private async input(requestId:string):Promise<RoutineFixInput> {
   const row=await TestRequestModel.findOne({requestId}).read('primary').readConcern('majority').setOptions({maxTimeMS:5000}).lean()
   if(!row)throw new TestRunError(404,'Verification input was not found')
-  const selected=row.fleetSelection!==undefined?portableRoutineSelectionSchema.parse(row.fleetSelection):row.input!==undefined?recordedFrameworkRequestInputSchema.parse(row.input):routineDispatchIntentSchema.parse(row.dispatchIntent)
-  const digest=row.fleetSelection!==undefined?row.fleetSelectionSha256:row.input!==undefined?row.inputSha256:row.dispatchIntentSha256
-  if(requestInputDigest(selected)!==digest)throw new TestRunError(503,'Verification input integrity unavailable')
+  const accepted=readAcceptedRoutineRequest(row as unknown as StoredRequest), selected=accepted.input
   let observed:Awaited<ReturnType<FrameworkResultService['summary']>>|null=null
   try{observed=await this.results.summary(requestId)}catch(error){if(!(error instanceof TestRunError&&error.status===404))throw error}
-  if(observed&&(observed.build.repository!==selected.build.repository||observed.build.headSha!==selected.build.headSha||observed.routineId!==selected.routineId||observed.platform!==selected.platform || observed.definitionRevision!==('definitionRevision'in selected?selected.definitionRevision:selected.routineRevision) || requestInputDigest(observed.routineSource ?? null)!==requestInputDigest(selected.routineSource ?? null)))
+  if(observed&&(!accepted.ready || observed.hostId!==row.hostId || observed.laneId!==accepted.input.laneId || observed.routineId!==selected.routineId || observed.platform!==selected.platform
+   || observed.definitionRevision!==('definitionRevision'in selected?selected.definitionRevision:selected.routineRevision) || requestInputDigest(observed.routineSource ?? null)!==requestInputDigest(selected.routineSource ?? null)
+   || requestInputDigest(observed.build)!==requestInputDigest(selected.build)))
    throw new TestRunError(503,'Observed verification differs from its accepted inputs')
   const archiveSchema=z.object({sha256:z.string().regex(/^[a-f0-9]{64}$/)})
   const selectedArchive=archiveSchema.safeParse(selected.build.archive), observedArchive=archiveSchema.safeParse(observed?.build.archive)
-  if(observed && (selectedArchive.success!==observedArchive.success || selectedArchive.success&&observedArchive.success&&selectedArchive.data.sha256!==observedArchive.data.sha256 || selected.build.manifestSha256!==observed.build.manifestSha256))
-   throw new TestRunError(503,'Observed verification artifact or glasses manifest differs from its accepted inputs')
   const binding=observed?.frameworkBinding,archive=observed?observedArchive:selectedArchive
   const producer=z.object({buildRunId:z.number().int().positive(),publicationAttempt:z.number().int().positive(),prNumber:z.number().int().positive().optional()}).safeParse(selected.build.source)
   return{requestId,observed:observed!==null,app:{repository:selected.build.repository,headSha:selected.build.headSha,...(archive.success?{artifactSha256:archive.data.sha256}:{}),...(producer.success?{producer:producer.data}:{})},

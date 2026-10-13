@@ -27,7 +27,7 @@ const querySchema = z.object({origin: z.enum(["pr", "nightly", "other"]).optiona
 export interface StoredHistoryRow {
   historyKind: "run" | "suite"; historyId: string; historyStartedAt: Date;
   requestId?: string; payloadSha256?: string; summaryProjection?: unknown; uploadsComplete?: boolean;
-  historySuppressed?: boolean; rerunCount?: number; rerun?: {rerunId: string; parentSuiteId?: string};
+  historySuppressed?: boolean; rerunCount?: number; rerun?: {rerunId: string; parentSuiteId?: string; rootKey?: string};
 }
 export interface HistorySourceQueries {runs: PipelineStage[]; suites: PipelineStage[]; after: HistoryCursor | null; limit: number; includeReruns: boolean; origin?: TestHistoryOrigin}
 const RAW_HISTORY_BATCH_SIZE = 256;
@@ -70,7 +70,9 @@ export function testHistoryQueries(after: HistoryCursor | null, limit: number, i
         ]}}}]},
       ]}}}, {$limit: 1}], as: "historySuites"}},
     {$lookup: {from: TestRerunModel.collection.name, localField: "payload.requestId", foreignField: "plan.members.requestId",
-      pipeline: [{$match: {state: "accepted"}}, {$limit: 1}, {$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId"}}],
+      let: {requestId: "$payload.requestId"}, pipeline: [{$match: {state: "accepted"}}, {$limit: 1},
+        {$set: {member: {$arrayElemAt: [{$filter: {input: "$plan.members", as: "member", cond: {$eq: ["$$member.requestId", "$$requestId"]}}}, 0]}}},
+        {$project: {_id: 0, rerunId: 1, parentSuiteId: "$plan.parent.suiteId", rootKey: "$member.rootKey"}}],
       as: "historyReruns"}},
     {$lookup: {from: TestSuiteModel.collection.name, localField: 'payload.requestId', foreignField: 'nightlyPlan.members.requestId',
       let: {requestId: "$payload.requestId", routineId: "$payload.routineId", platform: "$payload.platform"},
@@ -231,13 +233,13 @@ export class TestHistoryService {
     }
     const roots: Array<{entry: TestHistoryEntry; key: string}> = [];
     for (const entry of enriched) {
-      if (entry.kind === 'run') roots.push({entry, key: rerunRootKey({requestId: entry.requestId}, entry.requestId)});
+      if (entry.kind === 'run') {const key = entry.rerun ? entry.rerun.rootKey : rerunRootKey({requestId: entry.requestId}, entry.requestId); if (key) roots.push({entry, key});}
       else if (entry.kind === 'suite') {const suite = suiteSummaries.get(entry.suiteId);
         if (suite && !(suite instanceof Error)) for (const member of suite.members) roots.push({entry, key: rerunRootKey({suiteId: entry.suiteId}, member.memberId)});
       }
     }
     try {
-      const summaries = await readCaseFollowUpSummaries(roots.map(row => row.key));
+      const summaries = await readCaseFollowUpSummaries(roots.map(row => row.key), undefined, undefined, deadline);
       for (const {entry, key} of roots) {const followUp = summaries.get(key); if (!followUp) continue;
         if (entry.kind === 'run') entry.followUp = followUp;
         else if (entry.kind === 'suite') {entry.followUps ??= []; if (!entry.followUps.some(row => row.caseId === followUp.caseId)) entry.followUps.push(followUp);}
