@@ -185,8 +185,8 @@ restore, credentials, or meeting creation. Existing consumer token pass-through
 and Call backend routes remain supported; consumer joins still require the
 miniapp-supplied credential. Older clients need no backend change.
 A Mentra App native build containing Teams-user agent support is required for
-employee identity. Install the matching managed miniapp ZIP and re-select the
-workspace to refresh the cached manifest. The new Call bundle requires host
+employee identity. Install the matching managed miniapp ZIP; phones pick it up
+when the Mentra App opens. The new Call bundle requires host
 meeting-policy discovery even when the host version is otherwise compatible.
 Hosts without that API show an update message and cannot enable public-backend
 access. Existing installed Call bundles and legacy token joins are unchanged.
@@ -264,7 +264,7 @@ Important schema-v1 fields are:
 | `services.coreUrl`, `services.runtimeUrl` | Required by the first template. Null never falls back to Mentra services. |
 | `auth` | Exact Entra tenant, Mentra App public-client id, `mentra.session` scope, optional Teams scopes. |
 | `branding.logoUrls` | Optional light/dark PNGs. |
-| `systemMiniapps.approvedPackageNamesOverride` | Allowlist for SYSTEM miniapps embedded in the Mentra App. |
+| `systemMiniapps.approvedPackageNamesOverride` | Allowlist for SYSTEM miniapps embedded in the Mentra App. Listing `com.mentra.miniappdev` allows miniapp development. |
 | `miniapps.managed` | Userland bundle package, version, URL, and SHA-256 descriptors. |
 | `miniapps.configuration` | Optional non-secret package-scoped string values. |
 | `features` | Explicit mobile/Runtime capability policy. |

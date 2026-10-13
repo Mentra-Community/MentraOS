@@ -1,6 +1,7 @@
 import {engine} from "@mentra/engine"
 import mantle from "@/services/MantleManager"
 import {createDeploymentAuthProvider} from "@/services/deployment/auth"
+import {refreshWorkspaceManifest} from "@/services/deployment/refresh"
 import {deploymentStore} from "@/services/deployment/store"
 import mentraAuth from "@/utils/auth/authClient"
 import {recoverBackgroundRuntime} from "./backgroundRecovery"
@@ -16,8 +17,11 @@ jest.mock("@/services/MantleManager", () => ({
   default: {
     init: jest.fn(),
     waitForMiniapps: jest.fn(),
+    isInitialized: jest.fn(() => false),
+    applyDeploymentUpdate: jest.fn(),
   },
 }))
+jest.mock("@/services/deployment/refresh", () => ({refreshWorkspaceManifest: jest.fn()}))
 jest.mock("@/services/deployment/store", () => ({
   deploymentStore: {
     isResolved: jest.fn(),
@@ -36,6 +40,7 @@ beforeEach(() => {
   ;(mentraAuth.getSession as jest.Mock).mockResolvedValue({is_error: () => false, value: {token: "session"}})
   ;(mantle.init as jest.Mock).mockResolvedValue(undefined)
   ;(mantle.waitForMiniapps as jest.Mock).mockResolvedValue(undefined)
+  jest.mocked(refreshWorkspaceManifest).mockResolvedValue("not-workspace")
   ;(engine.pairing.readiness as jest.Mock).mockReturnValue({connected: false, nativeLinkBusy: false})
   ;(engine.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
   ;(engine.glasses.connectDefault as jest.Mock).mockResolvedValue(undefined)
@@ -108,12 +113,22 @@ test("workspace recovery requires a silently restored access token", async () =>
   expect(mentraAuth.getSession).not.toHaveBeenCalled()
 })
 
-test("a signed-in workspace restores through the same startup path", async () => {
+test("a signed-in workspace reads its current manifest, then restores through the same startup path", async () => {
   ;(deploymentStore.getActive as jest.Mock).mockReturnValue({kind: "workspace"})
   ;(createDeploymentAuthProvider as jest.Mock).mockReturnValue({
     getSession: jest.fn().mockResolvedValue({accessToken: "workspace-session"}),
   })
+  const events: string[] = []
+  jest.mocked(refreshWorkspaceManifest).mockImplementation(async () => {
+    events.push("manifest")
+    return "updated"
+  })
+  ;(mantle.init as jest.Mock).mockImplementation(async () => {
+    events.push("runtime")
+  })
   await recoverBackgroundRuntime()
+  // Engine reads the manifest when it starts, so a headless start refreshes first.
+  expect(events).toEqual(["manifest", "runtime"])
   expect(mantle.init).toHaveBeenCalledWith({background: true})
   expect(engine.glasses.connectDefault).toHaveBeenCalled()
   expect(mentraAuth.getSession).not.toHaveBeenCalled()

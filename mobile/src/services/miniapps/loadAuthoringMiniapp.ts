@@ -40,7 +40,7 @@ async function replaceMiniapp(link: string) {
   if (!["http:", "https:"].includes(source.protocol) || source.username || source.password) {
     throw new Error("Miniapp bundle must use an HTTP(S) URL without credentials")
   }
-  if (!isDevMiniappAllowed(packageName, true)) throw new Error("This deployment does not allow a dev replacement for that miniapp")
+  if (!isDevMiniappAllowed(packageName)) throw new Error("This deployment does not allow miniapp development")
   const previous = engine.miniapps.list().find((item) => item.packageName === packageName)
   const previousVersion = await appRegistry.getActiveVersion(packageName)
   const previousSnapshot = appRegistry.getSelectedDevSnapshot(packageName)

@@ -6,6 +6,7 @@ import {TestRunGithubApp} from '../../services/test-run-github-app'
 import {ROUTINE_CHECK_REPOSITORY, ROUTINE_RERUN_ACTION} from '../../types/pr-routine-check.types'
 import {frameworkBodyLimit} from './framework-json'
 import {testRunIngestAuth} from '../middleware/test-run-ingest-auth.middleware'
+import {isRoutineCheckLabel} from '../../types/pr-rerun-label.types'
 
 const delivery = z.string().regex(/^[A-Za-z0-9-]{1,120}$/)
 const webhook = z.object({repository: z.object({full_name: z.literal(ROUTINE_CHECK_REPOSITORY)}),
@@ -40,7 +41,7 @@ export function createPrRoutineCheckApi(service = new PrRoutineCheckService(), a
       const pr = payload.pull_request
       return c.json(await service.intake(pr.number, deliveryId.data, digest, {number: pr.number, headSha: pr.head.sha,
         headRef: pr.head.ref, baseRef: pr.base.ref, sameRepository: pr.head.repo?.full_name === ROUTINE_CHECK_REPOSITORY,
-        open: pr.state === 'open', labels: pr.labels.map(row => row.name).filter(name => name.startsWith('routine:')).sort(), peers: []}))
+        open: pr.state === 'open', labels: pr.labels.map(row => row.name).filter(isRoutineCheckLabel).sort(), peers: []}))
     }
     if (event === 'check_run' && (payload.action === 'rerequested' ||
         payload.action === 'requested_action' && payload.requested_action?.identifier === ROUTINE_RERUN_ACTION.identifier)) {

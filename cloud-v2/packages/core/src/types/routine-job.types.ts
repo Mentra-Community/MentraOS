@@ -42,6 +42,14 @@ export const routineJobCompletionSchema = z.object({inputSha256: jobHashSchema, 
   completedAt: z.string().datetime({offset: true})}).strict();
 export const routineJobCompletionReportSchema = routineJobCompletionSchema.extend({publicationFailure: routinePublicationFailureSchema.optional()}).strict();
 export const routineJobActionsSchema = z.object({inputSha256: jobHashSchema, actionsRunId: z.string().regex(/^[1-9][0-9]{0,19}$/)}).strict();
+export const routinePreparationStatusSchema = z.object({inputSha256: jobHashSchema,
+  actionsRunId: z.string().regex(/^[1-9][0-9]{0,19}$/),
+  phase: z.enum(['workflow registration', 'source cleanup', 'selected archive', 'Git inventory', 'Git blobs', 'routine description', 'routine bundle',
+    'bundle publication', 'prepared job commit', 'prepared job readback']),
+  code: z.enum(['source-unavailable', 'source-invalid', 'not-applicable']), retryable: z.boolean(),
+}).strict().refine(value => value.code === 'source-unavailable' ? value.retryable : !value.retryable,
+  'Only unavailable source can retry');
+export type RoutinePreparationStatus = z.infer<typeof routinePreparationStatusSchema> & {observedAt: string; reason: string};
 export type RoutinePublicationFailure = z.infer<typeof routinePublicationFailureSchema>;
 export type RoutineJobCompletion = z.infer<typeof routineJobCompletionSchema>;
 export type PortableRoutineSelection = z.infer<typeof portableRoutineSelectionSchema>;
@@ -54,6 +62,7 @@ export interface StoredRoutineJob {
   fleetSelection: PortableRoutineSelection;
   fleetSelectionSha256: string;
   fleetPreparation?: RoutineJobPreparation;
+  fleetPreparationStatus?: RoutinePreparationStatus;
   fleetInputSha256?: string;
   fleetDeadline: Date;
   fleetTarget?: z.infer<typeof routineJobTargetSchema>;

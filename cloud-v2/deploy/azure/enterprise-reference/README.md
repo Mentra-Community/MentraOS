@@ -42,7 +42,8 @@ for existing admin org API-key authorization and the attachment-storage lifecycl
 The Enterprise Demo manifest enables the built-in Give Feedback miniapp alongside
 Settings. Reports go to the selected Enterprise Core, including phone logs and
 screenshots for bug reports. The confirmation provides a copyable report ID.
-Re-select the workspace to refresh a previously cached manifest; Settings → Give
+The Mentra App picks up manifest changes within 15 minutes, or when it next
+opens; Settings → Give
 Feedback also opens the same form.
 
 ## Reference identities

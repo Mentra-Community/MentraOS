@@ -32,6 +32,7 @@ export function createRoutineJobsApi(service = new RoutineJobService(), authors 
     await service.prepared(c.req.param('jobId'), await frameworkJson(c));
     return c.json(await service.preparation(c.req.param('jobId')));
   });
+  app.post('/:jobId/preparation-status', frameworkBodyLimit(4096), async c => c.json(await service.preparationStatus(c.req.param('jobId'), await frameworkJson(c))));
   app.get('/:jobId/routine-source/inventory', async c => c.json(await service.inventory(c.req.param('jobId'))));
   app.get('/:jobId/routine-source/blobs/:sha', async c => {
     const bytes = await service.blob(c.req.param('jobId'), c.req.param('sha'));

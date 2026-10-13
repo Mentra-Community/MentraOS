@@ -991,6 +991,7 @@ jobs:
         run: node .github/scripts/coordinated-install-downloads.mjs restore release-intent/release-plan.json mobile-release/downloads
 
       - name: Export iPhone and Mac from the compiled store app
+        id: apple-downloads-export
         if: inputs.installable_downloads == true && steps.downloads-restore.outputs.restored != 'true'
         env:
           IOS_PR_PROFILE_BASE64: ${{ secrets.IOS_PR_PROFILE_BASE64 }}
@@ -999,6 +1000,15 @@ jobs:
           python3 mobile/ci/coordinated-downloads.py release-intent/release-plan.json \
             "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}" mobile-release/downloads
           node .github/scripts/coordinated-install-downloads.mjs prepare release-intent/release-plan.json mobile-release/downloads
+
+      - name: Preserve failed Apple export comparison
+        if: failure() && steps.apple-downloads-export.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-ios-export-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: mobile-release/downloads/export-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7
 
       # Keep retries in the workflow: the frozen source checkout may predate this policy.
       - name: Upload IPA handoff (attempt 1 of 3)

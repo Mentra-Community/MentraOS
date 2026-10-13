@@ -15,7 +15,6 @@ let backgroundAvailable = false
 let releaseSource = "bundled_asset"
 let releaseStorePackageName: string | undefined
 let selectedSnapshot: string | null = null
-let superMode = false
 let storedDevUrl: string | null = null
 let publisherFingerprint: string | null = null
 let snapshotVersions: string[] = []
@@ -74,7 +73,7 @@ mock.module("expo-file-system", () => ({
   },
 }))
 
-mock.module("../../stores/settings", () => ({SETTINGS: {super_mode: {key: "super_mode"}}, useSettingsStore: {getState: () => ({getSetting: () => superMode})}}))
+mock.module("../../stores/settings", () => ({SETTINGS: {super_mode: {key: "super_mode"}}, useSettingsStore: {getState: () => ({getSetting: () => false})}}))
 
 let miniappLauncher: typeof import("../MiniappLauncher").miniappLauncher
 
@@ -145,7 +144,6 @@ describe("MiniappLauncher", () => {
     releaseSource = "bundled_asset"
     releaseStorePackageName = undefined
     selectedSnapshot = null
-    superMode = false
     storedDevUrl = null
     publisherFingerprint = null
     snapshotVersions = []
@@ -328,7 +326,6 @@ describe("MiniappLauncher", () => {
   })
 
   test.each(["http://reachable.local:3000", "http://unreachable.local:3000"])("explicit packed snapshot wins over scanned URL %s", async url => {
-    superMode = true
     selectedSnapshot = "dev-1234-a"
     storedDevUrl = url
     await miniappLauncher.resolveBundle("com.x", {devUrl: url})
@@ -364,7 +361,6 @@ describe("MiniappLauncher", () => {
 
   test("runs the installed bundle instead of live dev code for a package with a publisher signature", async () => {
     publisherFingerprint = "sha256:publisher"
-    superMode = true
     storedDevUrl = "http://localhost:8081"
     const originalFetch = globalThis.fetch
     const fetched: string[] = []

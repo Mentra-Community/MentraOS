@@ -1,4 +1,4 @@
-import {beforeEach, describe, expect, mock, test} from "bun:test"
+import {beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 import {readFileSync} from "node:fs"
 import {result as Res} from "typesafe-ts"
 
@@ -10,6 +10,8 @@ import type {MiniappReleaseIdentity} from "../AppRegistry"
 const values = new Map<string, unknown>()
 const installationValues = new Map<string, string>()
 let candidateFingerprint: string | undefined
+let developmentAllowed = true
+let installedAllowed = (_identity: MiniappReleaseIdentity | null) => true
 mock.module("../../utils/storage/storage", () => ({
   storage: {
     load: (key: string) => (values.has(key) ? Res.ok(values.get(key)) : Res.error(new Error("Missing key"))),
@@ -31,9 +33,11 @@ mock.module("react-native-mmkv", () => ({
   }),
 }))
 mock.module("../../runtime/bootstrap", () => ({
+  assertMiniappDevelopmentAllowed: () => {},
   getConfigValues: () => ({}),
-  isDevMiniappAllowed: () => true,
-  isInstalledMiniappAllowed: () => true,
+  isDevMiniappAllowed: () => developmentAllowed,
+  isInstalledMiniappAllowed: (_pkg: string, _version: string, identity: MiniappReleaseIdentity | null) =>
+    installedAllowed(identity),
   isOfflineSystemMiniappAllowed: () => true,
   isMiniappAvailable: () => true,
 }))
@@ -159,6 +163,8 @@ beforeEach(() => {
   values.clear()
   installationValues.clear()
   candidateFingerprint = undefined
+  developmentAllowed = true
+  installedAllowed = () => true
   extractions = 0
 })
 
@@ -255,5 +261,37 @@ describe("dev snapshots are installs like any other", () => {
     install("dev-1000", {source: "dev_snapshot", publisherKeyFingerprint: "sha256:publisher"})
     expect(registry.getPublisherKeyFingerprint(packageName)).toBe("sha256:publisher")
     expect(() => assertDevBuildAllowed(packageName)).toThrow(SignedMiniappDevBuildError)
+  })
+})
+
+describe("the active version follows the deployment's policy", () => {
+  test("the newest allowed release wins once development is off", async () => {
+    const workspaceRelease: MiniappReleaseIdentity = {
+      source: "deployment_manifest",
+      bundleSha256: "abc",
+      deploymentId: "acme",
+      deploymentOrigin: "https://acme.example",
+    }
+    install("1.2.0", workspaceRelease)
+    install("1.3.0", {source: "direct_download"})
+    install("1.4.0", {source: "store", storePackageName: "com.mentra.store"})
+    // The workspace allows its managed release, and release-QR installs only while development is on.
+    installedAllowed = (identity) =>
+      identity?.source === "deployment_manifest" || (developmentAllowed && identity?.source === "direct_download")
+    const versions = spyOn(registry, "getInstalledVersions").mockReturnValue(["1.2.0", "1.3.0", "1.4.0"])
+    let notified = 0
+    const unsubscribe = registry.subscribe(() => notified++)
+    try {
+      values.set(`${packageName}_active_version`, "1.3.0")
+      expect(await registry.getActiveVersion(packageName)).toBe("1.3.0")
+      developmentAllowed = false
+      expect(await registry.getActiveVersion(packageName)).toBe("1.2.0")
+      // Selecting it refreshes cached app lists that still hold the release-QR version.
+      expect(values.get(`${packageName}_active_version`)).toBe("1.2.0")
+      expect(notified).toBeGreaterThan(0)
+    } finally {
+      unsubscribe()
+      versions.mockRestore()
+    }
   })
 })

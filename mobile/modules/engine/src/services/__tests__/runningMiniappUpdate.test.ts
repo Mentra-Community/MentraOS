@@ -83,26 +83,34 @@ const registry = {
   requiresLocalSttModel: () => false,
   subscribe: () => () => {},
   /** The shared installer's observable order: download, verify, unpack, (wait), activate. */
-  installFromUrl: async (_url: string, options: InstallBundleOptions) => {
-    calls.push("download")
-    options.onProgress?.("downloading")
-    if (downloadGate) await downloadGate
-    if (downloadFailure) return Res.error(new Error(downloadFailure))
-    calls.push("verify")
-    if (verifyFailure) return Res.error(new Error(verifyFailure))
-    try {
-      assertMiniappUpdateVersion(pkg, options.expectedVersion!, [active])
-      calls.push("unpack")
-      await options.whenStaged?.()
-      options.beforeActivate?.()
-      calls.push("activate")
-      if (activationFailure) throw new Error(activationFailure)
-      active = options.expectedVersion!
-      return Res.ok(undefined)
-    } catch (error) {
-      return Res.error(error as Error)
-    }
+  installFromUrl: (_url: string, options: InstallBundleOptions) => stagedInstall("download", options),
+  /** A workspace release its sync already downloaded and verified: read, then the same steps. */
+  installFromLocalZip: (zipPath: string, options: InstallBundleOptions) => {
+    localZips.push(zipPath)
+    return stagedInstall("read", options)
   },
+}
+const localZips: string[] = []
+
+async function stagedInstall(first: "download" | "read", options: InstallBundleOptions) {
+  calls.push(first)
+  options.onProgress?.("downloading")
+  if (downloadGate) await downloadGate
+  if (downloadFailure) return Res.error(new Error(downloadFailure))
+  calls.push("verify")
+  if (verifyFailure) return Res.error(new Error(verifyFailure))
+  try {
+    assertMiniappUpdateVersion(pkg, options.expectedVersion!, [active])
+    calls.push("unpack")
+    await options.whenStaged?.()
+    options.beforeActivate?.()
+    calls.push("activate")
+    if (activationFailure) throw new Error(activationFailure)
+    active = options.expectedVersion!
+    return Res.ok(undefined)
+  } catch (error) {
+    return Res.error(error as Error)
+  }
 }
 mock.module("../AppRegistry", () => ({
   default: registry,
@@ -203,6 +211,7 @@ afterAll(() => {
 beforeEach(async () => {
   for (const packageName of [...registered]) await router.unregister(packageName)
   calls.length = 0
+  localZips.length = 0
   active = "1.0.0"
   verifyFailure = undefined
   downloadFailure = undefined
@@ -406,6 +415,39 @@ describe("update prompt for a running miniapp", () => {
     expect(prompts).toHaveLength(0)
     expect(active).toBe("1.1.0")
     expect(calls.filter((call) => call.startsWith("start:"))).toEqual([])
+  })
+})
+
+describe("a workspace release from a ZIP its sync verified", () => {
+  const workspaceRelease = (options: Partial<Parameters<typeof installMiniappRelease>[1]> = {}) =>
+    installMiniappRelease(
+      {localZipPath: "file:///cache/notes-1.1.0.zip"},
+      {expectedPackageName: pkg, expectedVersion: "1.1.0", onlyIfStopped: true, askIfRunning: true, ...options},
+    )
+
+  test("installs an idle miniapp from the ZIP without asking", async () => {
+    await workspaceRelease()
+    expect(localZips).toEqual(["file:///cache/notes-1.1.0.zip"])
+    expect(calls).toEqual(["read", "verify", "unpack", "activate"])
+    expect(prompts).toHaveLength(0)
+  })
+
+  test("asks before updating an open one, then closes, installs and reopens it", async () => {
+    await runApp({open: true})
+    await workspaceRelease()
+    expect(calls).toEqual(["read", "verify", "unpack", "prompt", `stop:${pkg}`, "activate", `start:${pkg}@1.1.0`])
+    expect(useAppStatusStore.getState().foregroundedPackage).toBe(pkg)
+  })
+
+  test("Not now keeps it running and reports when it stops", async () => {
+    answer = "not_now"
+    await runApp({open: true})
+    const ready: string[] = []
+    deferredUpdates.onDeferredMiniappUpdateReady((packageName) => ready.push(packageName))
+    await expect(workspaceRelease()).rejects.toBeInstanceOf(MiniappRunningError)
+    expect(active).toBe("1.0.0")
+    await useAppStatusStore.getState().stop(pkg)
+    expect(ready).toEqual([pkg])
   })
 })
 

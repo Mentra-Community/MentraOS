@@ -178,10 +178,48 @@ jest.mock("react-native-zip-archive", () => ({
   },
 }))
 jest.mock("../../../modules/engine/src/utils/storage/zip", () => ({printDirectory: jest.fn()}))
-jest.mock("@mentra/engine-host-internal", () => ({
-  appRegistry: jest.requireActual("../../../modules/engine/src/services/AppRegistry").default,
-  sha256Hex: async () => mockDigest,
-}))
+// The release installer's own suite covers its prompt and deferral. Here it
+// installs like the real one, after asking when the miniapp is open.
+const mockRunning = new Set<string>()
+let mockPromptAnswer: "update" | "not_now" = "update"
+let mockCanPrompt = true
+const mockReleaseInstalls: Array<{archive: unknown; options: Record<string, unknown>}> = []
+const mockDeferred: string[] = []
+jest.mock("@mentra/engine-host-internal", () => {
+  const appRegistry = jest.requireActual("../../../modules/engine/src/services/AppRegistry").default
+  const {MiniappRunningError} = jest.requireActual("../../../modules/engine/src/utils/storeInstallRuntime")
+  return {
+    appRegistry,
+    sha256Hex: async () => mockDigest,
+    MiniappRunningError,
+    MiniappInstallCancelledError: class MiniappInstallCancelledError extends Error {},
+    markMiniappUpdateDeferred: (packageName: string) => mockDeferred.push(packageName),
+    miniappLauncher: {
+      isRunning: (packageName: string) => mockRunning.has(packageName),
+      isProjectedRunning: (packageName: string) => mockRunning.has(packageName),
+    },
+    canShowRunningUpdatePrompt: () => mockCanPrompt,
+    installMiniappRelease: async (
+      archive: {localZipPath: string; adoptIdenticalInstalledVersion?: boolean},
+      {onlyIfStopped, askIfRunning, isCancelled, ...options}: Record<string, unknown>,
+    ) => {
+      mockReleaseInstalls.push({
+        archive,
+        options: {onlyIfStopped, askIfRunning, cancellable: typeof isCancelled === "function"},
+      })
+      const packageName = options.expectedPackageName as string
+      if (mockRunning.has(packageName) && mockPromptAnswer !== "update") {
+        mockDeferred.push(packageName)
+        throw new MiniappRunningError(packageName)
+      }
+      const result = await appRegistry.installFromLocalZip(archive.localZipPath, {
+        ...options,
+        adoptIdenticalInstalledVersion: archive.adoptIdenticalInstalledVersion,
+      })
+      if (result.is_error()) throw result.error
+    },
+  }
+})
 // Archive validation has its own real-ZIP suite. These native-I/O fixtures
 // exercise ownership, byte comparison, the version and signer rules,
 // activation rollback and cancellation.
@@ -261,6 +299,11 @@ beforeEach(async () => {
   mockPublisherFingerprint = undefined
   mockFailNextActiveWrite = false
   mockValidatedArchives.length = 0
+  mockRunning.clear()
+  mockPromptAnswer = "update"
+  mockCanPrompt = true
+  mockReleaseInstalls.length = 0
+  mockDeferred.length = 0
   selectDeployment(workspace)
   expect((await registry.installFromLocalZip("consumer.zip")).is_ok()).toBe(true)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
@@ -907,5 +950,98 @@ describe("release cleanup after Store updates", () => {
     expect(registry.getInstalledVersions(pkg).sort()).toEqual(["2.1.29", "2.1.31", "2.1.32"])
     expect(registry.getReleaseIdentity(pkg, "2.1.30")).toBeNull()
     expect(await registry.getActiveVersion(pkg)).toBe("2.1.32")
+  })
+})
+
+describe("workspace updates while a managed miniapp may be open", () => {
+  const nextVersion = "2.1.30"
+  const withManaged = (managed: WorkspaceDeployment["manifest"]["miniapps"]["managed"]): WorkspaceDeployment => ({
+    ...workspace,
+    manifest: {...workspace.manifest, miniapps: {configuration: {}, managed}},
+  })
+  const updated = withManaged([
+    {
+      packageName: pkg,
+      version: nextVersion,
+      bundleUrl: "https://enterprise.example/miniapps/call-2.1.30.zip",
+      sha256: "a".repeat(64),
+    },
+  ])
+
+  async function ownCurrentRelease() {
+    await deploymentManagedMiniappSync.sync(workspace)
+    expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
+    mockReleaseInstalls.length = 0
+    mockVersion = nextVersion
+    selectDeployment(updated)
+  }
+
+  it("updates an idle miniapp to the workspace's new version through the shared release installer", async () => {
+    await ownCurrentRelease()
+    await deploymentManagedMiniappSync.sync(updated)
+    expect(mockReleaseInstalls).toEqual([
+      {
+        archive: expect.objectContaining({localZipPath: expect.any(String)}),
+        options: {onlyIfStopped: true, askIfRunning: true, cancellable: true},
+      },
+    ])
+    expect(registry.getInstalledVersions(pkg)).toEqual([nextVersion])
+    expect(registry.getReleaseIdentity(pkg, nextVersion)).toMatchObject({source: "deployment_manifest"})
+  })
+
+  it("keeps an open miniapp on its version after Not now, and updates it once it closes", async () => {
+    await ownCurrentRelease()
+    mockRunning.add(pkg)
+    mockPromptAnswer = "not_now"
+    await deploymentManagedMiniappSync.sync(updated)
+    expect(mockDeferred).toEqual([pkg])
+    expect(registry.getInstalledVersions(pkg)).toEqual([version])
+    expect(installedScript()).toBe("verified call")
+
+    // Closing it fires the deferred update, which syncs the workspace again.
+    mockRunning.delete(pkg)
+    await deploymentManagedMiniappSync.sync(updated)
+    expect(registry.getInstalledVersions(pkg)).toEqual([nextVersion])
+  })
+
+  it("does not download an open miniapp's update while it may not ask about it", async () => {
+    await ownCurrentRelease()
+    mockDownload.mockClear()
+    mockRunning.add(pkg)
+    // In the background, or within a day of the last prompt.
+    mockCanPrompt = false
+    await deploymentManagedMiniappSync.sync(updated)
+    await deploymentManagedMiniappSync.sync(updated)
+    expect(mockDownload).not.toHaveBeenCalled()
+    expect(mockReleaseInstalls).toEqual([])
+    expect(mockDeferred).toEqual([pkg, pkg])
+    expect(registry.getInstalledVersions(pkg)).toEqual([version])
+
+    mockCanPrompt = true
+    await deploymentManagedMiniappSync.sync(updated)
+    expect(mockDownload).toHaveBeenCalledTimes(1)
+    expect(registry.getInstalledVersions(pkg)).toEqual([nextVersion])
+  })
+
+  it("removes a miniapp the workspace dropped only once it closes", async () => {
+    await deploymentManagedMiniappSync.sync(workspace)
+    const dropped = withManaged([])
+    selectDeployment(dropped)
+    mockRunning.add(pkg)
+    await deploymentManagedMiniappSync.sync(dropped)
+    expect(mockDeferred).toEqual([pkg])
+    expect(registry.getInstalledVersions(pkg)).toEqual([version])
+
+    mockRunning.delete(pkg)
+    await deploymentManagedMiniappSync.sync(dropped)
+    expect(registry.getInstalledVersions(pkg)).toEqual([])
+  })
+
+  it("installs a first release without the update prompt path", async () => {
+    expect((await registry.uninstall(pkg, version)).is_ok()).toBe(true)
+    expect(registry.getInstalledVersions(pkg)).toEqual([])
+    await deploymentManagedMiniappSync.sync(workspace)
+    expect(mockReleaseInstalls).toEqual([])
+    expect(registry.getReleaseIdentity(pkg, version)).toMatchObject({source: "deployment_manifest"})
   })
 })

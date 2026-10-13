@@ -52,7 +52,7 @@ export type RecordedRerunPlan = z.infer<typeof recordedRerunPlanSchema>;
 export type RecordedRerunMember = RecordedRerunPlan["members"][number];
 export interface RerunAttempt {
   attemptId: string; attemptNumber: number; rerunId?: string; requestId?: string; runId?: string;
-  status: string; publicationComplete: boolean; createdAt?: string; startedAt?: string; finishedAt?: string;
+  status: string; publicationComplete: boolean; evidenceStatus?: 'complete' | 'failed'; publicationFailed?: boolean; createdAt?: string; startedAt?: string; finishedAt?: string;
   preparationDisposition?: 'not-run' | 'not-applicable';
   reason?: string; build?: z.infer<typeof frameworkRequestInputSchema>["build"]; definitionRevision?: string;
   predecessorAttemptId?: string; parent: RerunPlan["parent"]; memberId: string;

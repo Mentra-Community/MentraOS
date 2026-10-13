@@ -6,7 +6,7 @@ import {testWriteConcern} from '../models/test-write-concern';
 import {frameworkIdentitySchema} from '../types/framework-request.types';
 import {routineEnrollmentSchema, type RoutineEnrollment} from '../types/routine-definition.types';
 import {routineDispatchIntentSchema} from '../types/routine-dispatch.types';
-import {completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
+import {routinePreparationStatusSchema, type RoutinePreparationStatus, completeRoutineJobPreparationSchema, portableRequirementsSchema, portableRoutineSelectionSchema, routineJobBindInputSchema,
   routineJobPreparationSchema, routineJobSubmissionSchema, routineJobCompletionReportSchema, routineJobActionsSchema, routineJobTargetSchema, type RoutineJobCompletion, type PortableRequirements, type PortableRoutineSelection,
   type RoutineJobBinding, type RoutineJobPreparation, type RoutinePublicationFailure, type StoredRoutineJob} from '../types/routine-job.types';
 import {requestInputDigest, TestRequestConflict, TestRequestService} from './test-request.service';
@@ -25,6 +25,8 @@ export interface RoutineJobRepository {
   completionRequest?(jobId: string): Promise<StoredRoutineJob | null>;
   insert(row: StoredRoutineJob): Promise<void>;
   prepare(jobId: string, selectionSha256: string, prepared: RoutineJobPreparation, inputSha256: string, now: Date): Promise<StoredRoutineJob | null>;
+  exhaustPreparation?(jobId: string, completedRunIds: string[], now: Date): Promise<StoredRoutineJob | null>;
+  preparationStatus?(jobId: string, value: RoutinePreparationStatus, now: Date): Promise<StoredRoutineJob | null>;
   bind(jobId: string, inputSha256: string, binding: RoutineJobBinding, intent: unknown, now: Date): Promise<StoredRoutineJob | null>;
   pending?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
   supersessionCandidates?(limit: number, now: Date): Promise<StoredRoutineJob[]>;
@@ -46,8 +48,28 @@ export const routineJobRepository: RoutineJobRepository = {
   async prepare(requestId, fleetSelectionSha256, fleetPreparation, fleetInputSha256, now) {
     return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetSelectionSha256, state: 'awaiting-source',
       fleetPreparation: {$exists: false}, fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now}},
-      {$set: {fleetPreparation, fleetInputSha256, state: 'awaiting-runner', updatedAt: now}},
+      {$set: {fleetPreparation, fleetInputSha256, state: 'awaiting-runner', updatedAt: now}, $unset: {fleetPreparationStatus: ''}},
       {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
+  },
+  async preparationStatus(requestId, value, now) {
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetSelectionSha256: value.inputSha256,
+      state: 'awaiting-source', fleetPreparation: {$exists: false}, fleetBinding: {$exists: false},
+      fleetCancellation: {$exists: false}, fleetDeadline: {$gt: now},
+      'fleetActions.actionsRunId': value.actionsRunId,
+      $expr: {$eq: [{$max: {$map: {input: '$fleetActions', as: 'action', in: {$toDecimal: '$$action.actionsRunId'}}}}, {$toDecimal: {$literal: value.actionsRunId}}]}},
+      {$set: {fleetPreparationStatus: value, updatedAt: now,
+        ...(!value.retryable ? {state: 'terminal', terminalStatus: value.code === 'not-applicable' ? 'not-applicable' : 'not-run',
+          fleetCancellation:{requestedAt:now.toISOString(),reason:value.reason}} : {})}},
+      {returnDocument: 'after', writeConcern: testWriteConcern}) as unknown as StoredRoutineJob | null;
+  },
+  async exhaustPreparation(requestId, completedRunIds, now) {
+    return await TestRequestModel.collection.findOneAndUpdate({requestId, state:'awaiting-source',
+      fleetPreparation:{$exists:false}, fleetBinding:{$exists:false}, fleetCancellation:{$exists:false},
+      fleetDeadline:{$gt:now}, 'fleetDispatch.attempts':20,
+      $expr:{$setIsSubset:[{$ifNull:['$fleetActions.actionsRunId',[]]},{$literal:completedRunIds}]}},
+      {$set:{state:'terminal',terminalStatus:'not-run',updatedAt:now,fleetCancellation:{requestedAt:now.toISOString(),
+        reason:'Routine preparation exhausted 20 delivery attempts; inspect preparation diagnostics and submit corrected work.'}}},
+      {returnDocument:'after',writeConcern:testWriteConcern}) as unknown as StoredRoutineJob | null;
   },
   async bind(requestId, fleetInputSha256, fleetBinding, dispatchIntent, now) {
     return await TestRequestModel.collection.findOneAndUpdate({requestId, fleetInputSha256, state: 'awaiting-runner',
@@ -61,7 +83,7 @@ export const routineJobRepository: RoutineJobRepository = {
         {fleetCancellation:{$exists:false},$or: [{fleetDeadline: {$lte: now}, $or: [{state: {$ne: 'terminal'}}, {fleetBinding: {$exists: true}, dispatchCompletion: {$exists: false}, hostRejection: {$exists: false},
           preparationCancellation: {$exists: false}, preparationRejection: {$exists: false}}]},
         {state: {$ne: 'terminal'}, fleetBinding: {$exists: false},
-          $or: [{fleetDispatch: {$exists: false}}, {'fleetDispatch.attempts': {$lt: 20}, 'fleetDispatch.lastAttemptAt': {$lte: new Date(now.getTime() - 30_000).toISOString()},
+          $or: [{fleetDispatch: {$exists: false}}, {'fleetDispatch.attempts': {$lte: 20}, 'fleetDispatch.lastAttemptAt': {$lte: new Date(now.getTime() - 30_000).toISOString()},
             $or:[{'fleetDispatch.checkedAt':{$exists:false}},{'fleetDispatch.checkedAt':{$lte:new Date(now.getTime()-30_000).toISOString()}}]}]}]}]})
       .sort({createdAt: 1, requestId: 1}).limit(limit).read('primary').readConcern('majority').lean() as unknown as StoredRoutineJob[];
   },
@@ -219,6 +241,7 @@ export class RoutineJobService {
     if (deadline.getTime() <= this.now() || deadline.getTime() > this.now() + 3 * 3600_000)
       throw new TestRunError(400, 'Routine job deadline must be within three hours');
     const frozen = await this.freezeSelection(selected);
+    await this.assertKnownPlatform(frozen);
     const {target} = selected;
     const candidate = await this.definitions.getExact(frozen.routineId, frozen.platform, frozen.routineRevision, true);
     if (!candidate && await this.definitions.getExact(frozen.routineId, frozen.platform, frozen.routineRevision, false))
@@ -247,6 +270,7 @@ export class RoutineJobService {
     const frozen = portableRoutineSelectionSchema.parse(selection), date = z.string().datetime({offset: true}).parse(deadline);
     if (Date.parse(date) > this.now() + 3 * 3600_000) throw new TestRunError(400, 'Routine job deadline must be within three hours');
     const validatedTarget = target ? routineJobTargetSchema.parse(target) : undefined;
+    if (!await this.rows.get(frozen.requestId)) await this.assertKnownPlatform(frozen);
     const row: StoredRoutineJob = {requestId: frozen.requestId, state: 'awaiting-source', fleetSelection: frozen,
       fleetSelectionSha256: requestInputDigest(frozen), fleetDeadline: new Date(date), ...(validatedTarget ? {fleetTarget: validatedTarget} : {})};
     try {await this.rows.insert(row);}
@@ -307,6 +331,11 @@ export class RoutineJobService {
       if(previous)await this.rows.dispatch?.(row.requestId,previous,{...previous,checkedAt:new Date(this.now()).toISOString(),error:error instanceof TestRunError?error.message:'Actions run discovery is unavailable'});
       return this.job(row.requestId);
     }
+    if (!row.fleetPreparation && (previous?.attempts ?? 0) >= 20 && runs.every(run => run.status === 'completed') &&
+      this.now() - Date.parse(previous!.lastAttemptAt) >= 120_000) {
+      await this.rows.exhaustPreparation?.(row.requestId, runs.map(run => run.actionsRunId), new Date(this.now()));
+      return this.job(row.requestId);
+    }
     if (!routineActionsRetry(previous,runs,this.now())) {
       if(previous)await this.rows.dispatch?.(row.requestId,previous,{...previous,checkedAt:new Date(this.now()).toISOString()});
       return this.job(row.requestId);
@@ -340,6 +369,25 @@ export class RoutineJobService {
   }
   private async routing(row: StoredRoutineJob) {
     return routineJobRouting(row.fleetPreparation!.requirements, await this.hosts.list?.() ?? [], this.now(), row.fleetTarget);
+  }
+  async preparationStatus(jobId: string, value: unknown) {
+    const input = routinePreparationStatusSchema.parse(value), row = await this.job(jobId);
+    if (input.inputSha256 !== row.fleetSelectionSha256 || !row.fleetActions?.some(run => run.actionsRunId === input.actionsRunId))
+      throw new TestRequestConflict('Preparation status differs from its recorded exact workflow');
+    if (row.fleetPreparation || row.fleetBinding || row.fleetCancellation || row.state === 'terminal') return row;
+    if (row.fleetActions.some(run => BigInt(run.actionsRunId) > BigInt(input.actionsRunId))) return row;
+    if (!this.rows.preparationStatus) throw new TestRunError(503, 'Preparation status storage is unavailable');
+    const reason = input.code === 'not-applicable' ? `Routine ${row.fleetSelection.routineId} does not support ${row.fleetSelection.platform}.`
+      : input.retryable ? `Routine source preparation failed during ${input.phase}; retrying the same request.`
+      : `Routine source preparation failed during ${input.phase}; source validation requires correction.`;
+    return await this.rows.preparationStatus(jobId, {...input, reason, observedAt: new Date(this.now()).toISOString()}, new Date(this.now())) ?? this.job(jobId);
+  }
+  private async assertKnownPlatform(selection: PortableRoutineSelection) {
+    // An exact enrolled declaration is source evidence; absence alone cannot reject new source.
+    const alternate = selection.platform === 'android' ? 'ios-on-mac' : 'android';
+    const known = await this.definitions.getExact(selection.routineId, alternate, selection.routineRevision, true);
+    if (known && !known.definition.platforms.includes(selection.platform))
+      throw new TestRunError(422, `Routine ${selection.routineId} does not support ${selection.platform} at the selected source revision.`);
   }
   async inventory(jobId: string) {const row = await this.job(jobId); return this.sources.inventory(row.fleetSelection.routineRevision);}
   async blob(jobId: string, sha: string) {
@@ -417,7 +465,7 @@ export class RoutineJobService {
   }
   async actions(jobId: string, value: unknown) {
     const input = routineJobActionsSchema.parse(value); let row = await this.job(jobId);
-    if (input.inputSha256 !== row.fleetInputSha256) throw new TestRequestConflict('Actions delivery changed its exact prepared input');
+    if (input.inputSha256 !== (row.fleetInputSha256 ?? row.fleetSelectionSha256)) throw new TestRequestConflict('Actions delivery changed its exact prepared input');
     if (!row.fleetActions?.some(value => value.actionsRunId === input.actionsRunId)) {
       if (!this.rows.actions) throw new TestRunError(503, 'Actions delivery storage is unavailable');
       const saved = await this.rows.actions(jobId, input.inputSha256, {actionsRunId: input.actionsRunId, recordedAt: new Date(this.now()).toISOString()}) ?? await this.job(jobId);
@@ -485,7 +533,7 @@ export class RoutineJobService {
     let result: unknown;
     if (row.fleetBinding) try {result = await this.results.detail(jobId);}
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
-    const reason = (!row.runId && row.publicationFailure ? `Publication failed: ${row.publicationFailure.message}` : undefined) ?? row.fleetCancellation?.reason ?? row.fleetDispatch?.error ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ??
+    const reason = (!row.runId && row.publicationFailure ? `Publication failed: ${row.publicationFailure.message}` : undefined) ?? row.fleetCancellation?.reason ?? row.fleetPreparationStatus?.reason ?? row.fleetDispatch?.error ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ??
       row.hostRejection?.reason ?? row.preparationRejection?.reason ?? row.preparation?.reason;
     return {jobId, kind: 'run' as const, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256,
       deadline: row.fleetDeadline.toISOString(), state: row.fleetCancellation && !row.fleetBinding ? 'terminal' : row.state,

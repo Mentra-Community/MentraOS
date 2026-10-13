@@ -347,3 +347,15 @@ test('Admin gate cancellation requires operator identity and strict retained gen
  expect((await app.request(`/pr-checks/${gateId}/cancel`, {method: 'POST', body: JSON.stringify(body), headers: {'Content-Type': 'application/json'}})).status).toBe(202);
  expect(calls).toEqual([[gateId, body, 'admin:operator-one']]);
 });
+
+test('activity reads and displays bounded fleet preparation failures', async () => {
+ const {TestRequestModel}=await import('../../models/test-request.model');
+ const {portableRoutineSelectionSchema}=await import('../../types/routine-job.types');
+ const source={channel:'dev',buildRunId:1,publicationAttempt:1},selected=portableRoutineSelectionSchema.parse({requestId:'fleet-failure',routineId:'sample',platform:'android',routineRevision:'a'.repeat(40),source,
+  build:{repository:'Mentra-Community/MentraOS',headSha:'b'.repeat(40),channel:'dev',kind:'android-apk',source,archive:{name:'app.apk',url:'https://artifactscdn.mentraglass.com/app.apk',size:100,sha256:'c'.repeat(64)},receipt:{url:'https://artifactscdn.mentraglass.com/receipt',size:10,sha256:'d'.repeat(64)}}});
+ const row={requestId:selected.requestId,state:'awaiting-source',fleetSelection:selected,fleetSelectionSha256:requestInputDigest(selected),fleetPreparationStatus:{reason:'Routine source preparation failed during Git blobs; retrying the same request.'}};
+ let projection:any;
+ const find=spyOn(TestRequestModel,'find').mockReturnValue({sort(){return this},limit(){return this},select(value:any){projection=value;return this},read(){return this},readConcern(){return this},lean:async()=>[{...row,fleetPreparationStatus:projection?.fleetPreparationStatus?row.fleetPreparationStatus:undefined}]} as any);
+ try{const response=await createTestRunAdminApi().request('/activity');expect(response.status).toBe(200);expect(await response.json()).toMatchObject({requests:[{requestId:selected.requestId,reason:row.fleetPreparationStatus.reason}]});expect(projection).toMatchObject({fleetPreparationStatus:1});}
+ finally{find.mockRestore();}
+});

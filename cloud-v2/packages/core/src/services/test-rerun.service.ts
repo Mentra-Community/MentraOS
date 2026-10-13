@@ -1,5 +1,7 @@
 import {z} from 'zod';
 import {routinePreparedBuildSchema, routineDispatchIntentSchema} from '../types/routine-dispatch.types';
+import {TestRequestModel} from "../models/test-request.model";
+import {TestRunModel} from "../models/test-run.model";
 import {TestRerunModel} from "../models/test-rerun.model";
 import {testWriteConcern} from "../models/test-write-concern";
 import {testBuildSourceSchema} from "../types/test-build.types";
@@ -10,7 +12,7 @@ import {TestSuiteService} from "./test-suite.service";
 import {RoutineJobService} from "./routine-job.service";
 import {portableRoutineSelectionSchema, type StoredRoutineJob} from "../types/routine-job.types";
 import {TestRequestService, requestInputDigest, isExecutableRequest} from "./test-request.service";
-import {FrameworkResultService} from "./framework-result.service";
+import {FrameworkResultService, frameworkResultSummaryFields, readFrameworkResultSummary, nativeRunFilter} from "./framework-result.service";
 import {TestRunError} from "./test-result-error";
 
 export interface RerunRecord {rerunId: string; inputDigest: string; previewDigest: string; plan: RecordedRerunPlan;
@@ -20,6 +22,7 @@ export interface RerunRepository {
   insert(row: RerunRecord): Promise<void>;
   accept(id: string, digest: string, claimKeys: string[], acceptedAt: string): Promise<RerunRecord | null>;
   history(rootKey: string, before: number, limit: number): Promise<RerunRecord[]>;
+  latest(rootKeys: string[]): Promise<RerunRecord[]>;
   children(suiteId: string, before: string, limit: number): Promise<RerunRecord[]>;
   byRequest(requestId: string): Promise<RerunRecord | null>;
 }
@@ -37,6 +40,17 @@ export const testRerunRepository: RerunRepository = {
       {$sort: {"historyMember.attemptNumber": -1}}, {$limit: limit}, {$unset: "historyMember"},
     ]).read("primary").readConcern("majority") as RerunRecord[];
   },
+  async latest(rootKeys) {
+    if (!rootKeys.length) return [];
+    return await TestRerunModel.aggregate([
+      {$match: {state: "accepted", "plan.members.rootKey": {$in: rootKeys}}},
+      {$set: {latestRow: "$$ROOT"}}, {$unwind: "$plan.members"},
+      {$match: {"plan.members.rootKey": {$in: rootKeys}}},
+      {$sort: {"plan.members.attemptNumber": -1}},
+      {$group: {_id: "$plan.members.rootKey", row: {$first: "$latestRow"}}},
+      {$group: {_id: "$row.rerunId", row: {$first: "$row"}}}, {$replaceRoot: {newRoot: "$row"}},
+    ]).read("primary").readConcern("majority").option({maxTimeMS: 5000}) as RerunRecord[];
+  },
   async children(suiteId, before, limit) {
     const cursor = before ? decodeChildCursor(before) : undefined;
     return await TestRerunModel.find({state: "accepted", "plan.parent.suiteId": suiteId, ...(cursor ? {$or:[{acceptedAt:{$lt:cursor.acceptedAt}},{acceptedAt:cursor.acceptedAt,rerunId:{$lt:cursor.rerunId}}]} : {})})
@@ -45,7 +59,7 @@ export const testRerunRepository: RerunRepository = {
   async byRequest(requestId) {return await TestRerunModel.findOne({state: "accepted", "plan.members.requestId": requestId})
     .read("primary").readConcern("majority").lean() as RerunRecord | null;},
 };
-type ParentMember = {memberId: string; requestId?: string; routineId: string; platform: string; status: string;
+export type ParentMember = {memberId: string; requestId?: string; routineId: string; platform: string; status: string;
   routineSource?: z.infer<typeof frameworkRequestInputSchema>['routineSource'];
   routineRevision?: string;
   build?: z.infer<typeof frameworkRequestInputSchema>['build']; publicationComplete?: boolean; runId?: string; startedAt?: string; finishedAt?: string};
@@ -59,6 +73,27 @@ const verified = (row: RerunRecord): RerunRecord => {
   return {...row, plan: plan.data};
 };
 
+export interface RerunAttemptBatch {
+  read(requestIds: string[]): Promise<{requests: Map<string, Awaited<ReturnType<TestRequestService['get']>>>;
+    results: Map<string, Awaited<ReturnType<FrameworkResultService['summary']>> | Error>}>
+}
+const rerunAttemptBatch: RerunAttemptBatch = {
+  async read(requestIds) {
+    if (!requestIds.length) return {requests: new Map(), results: new Map()};
+    const [requests, rows] = await Promise.all([
+      TestRequestModel.find({requestId: {$in: requestIds}}).read('primary').readConcern('majority').setOptions({maxTimeMS: 5000}).lean(),
+      TestRunModel.find({...nativeRunFilter, requestId: {$in: requestIds}}).select(frameworkResultSummaryFields)
+        .read('primary').readConcern('majority').setOptions({maxTimeMS: 5000}).lean(),
+    ]);
+    const results = new Map<string, Awaited<ReturnType<FrameworkResultService['summary']>> | Error>();
+    for (const row of rows) {
+      try {results.set(row.requestId, await readFrameworkResultSummary(row));}
+      catch (error) {results.set(row.requestId, error instanceof Error ? error : new Error('Rerun summary unavailable'));}
+    }
+    return {requests: new Map(requests.map(row => [row.requestId, row])), results};
+  },
+};
+
 /** Reruns freeze source preparation once and reuse ordinary queue/result ownership. */
 export class TestRerunService {
   constructor(private readonly store: RerunRepository = testRerunRepository,
@@ -66,11 +101,12 @@ export class TestRerunService {
     private readonly jobs: Pick<RoutineJobService, 'freezeSelection' | 'submitFrozen' | 'cancelFrozen'> = new RoutineJobService(),
     private readonly requests: Pick<TestRequestService, 'get' | 'prepare'> = new TestRequestService(),
     private readonly results: Pick<FrameworkResultService, "summary"> = new FrameworkResultService(),
-    private readonly now: () => number = Date.now) {}
+    private readonly now: () => number = Date.now,
+    private readonly batch: RerunAttemptBatch = rerunAttemptBatch) {}
 
   private async requestAttempt(requestId: string, identity: Pick<RerunAttempt, "parent" | "memberId" | "attemptNumber" | "attemptId">,
-    frozen?: RecordedRerunMember): Promise<RerunAttempt> {
-    const request = await this.requests.get(requestId);
+    frozen?: RecordedRerunMember, observed?: Awaited<ReturnType<RerunAttemptBatch['read']>>): Promise<RerunAttempt> {
+    const request = observed ? observed.requests.get(requestId) ?? null : await this.requests.get(requestId);
     const selection = frozen && 'selection' in frozen ? frozen.selection : undefined;
     let intent = frozen && 'dispatchIntent' in frozen ? frozen.dispatchIntent : undefined;
     const recordedInput = frozen && 'input' in frozen ? frozen.input : undefined;
@@ -115,22 +151,24 @@ export class TestRerunService {
         intent.routineSource && requestInputDigest(input.data.routineSource ?? null) !== requestInputDigest(intent.routineSource) ||
         requestInputDigest(input.data.build) !== requestInputDigest(intent.build)))
       throw new TestRunError(503, "Rerun request differs from its frozen input");
-    let result;
-    try {result = await this.results.summary(requestId);} catch (error) {
+    let result: Awaited<ReturnType<FrameworkResultService["summary"]>> | undefined;
+    try {const read = observed ? observed.results.get(requestId) : await this.results.summary(requestId); if (read instanceof Error) throw read; result = read;} catch (error) {
       if (!(error instanceof TestRunError && error.status === 404)) throw error;
     }
     if (result && (job.fleetSelection && (result.hostId !== request.hostId || result.laneId !== input.data.laneId) || result.routineId !== input.data.routineId || result.platform !== input.data.platform ||
       result.definitionRevision !== input.data.definitionRevision || requestInputDigest(result.routineSource ?? null) !== requestInputDigest(input.data.routineSource ?? null) || requestInputDigest(result.build) !== requestInputDigest(input.data.build)))
       throw new TestRunError(503, "Rerun result differs from its admitted app or definition");
     return {...identity, requestId, status: result?.outcome ?? request.terminalStatus ?? request.state,
-      publicationComplete: result?.uploadsComplete === true && result.evidenceStatus === "complete", build: input.data.build, definitionRevision: input.data.definitionRevision,
+      publicationComplete: result?.uploadsComplete === true && result.evidenceStatus === "complete",
+      ...(result ? {evidenceStatus: result.evidenceStatus} : {}), ...(job.publicationFailure ? {publicationFailed: true} : {}), build: input.data.build, definitionRevision: input.data.definitionRevision,
       ...(result ? {runId: result.runId, startedAt: result.startedAt, finishedAt: result.finishedAt} : {}),
       ...(!result && request.publicationFailure ? {reason: `Publication failed: ${request.publicationFailure.message}`} : request.hostRejection ? {reason: request.hostRejection.reason} : {})};
   }
   private async parentMembers(parent: RerunPlan["parent"]): Promise<ParentMember[]> {
     if (!frameworkIdentitySchema.safeParse("suiteId" in parent ? parent.suiteId : parent.requestId).success)
       throw new TestRunError(400, "Invalid original identity");
-    if ("suiteId" in parent) return (await this.suites.detail(parent.suiteId)).members;
+    if ("suiteId" in parent) return (await this.suites.detail(parent.suiteId)).members.map(member => ({...member,
+      routineRevision: member.definitionRevision}));
     if (await this.suites.originalMember?.(parent.requestId)) throw new TestRunError(409, "Use the original suite member to preserve its history");
     if (await this.store.byRequest(parent.requestId)) throw new TestRunError(409, "Use the rerun's original parent to preserve its history");
     const request = await this.requests.get(parent.requestId);
@@ -142,6 +180,8 @@ export class TestRerunService {
     return [{...attempt, memberId: parent.requestId, routineId: input?.routineId ?? intent!.routineId, platform: input?.platform ?? intent!.platform,
       routineSource: input?.routineSource ?? intent?.routineSource, routineRevision: input?.definitionRevision ?? intent!.routineRevision}];
   }
+  /** Exact original identities/source for supported linked adapters; never today's catalog. */
+  async originalMembers(parent: RerunPlan['parent']) {return this.parentMembers(parent);}
   /** Displayed progress/history needs verdicts and identities, not frozen artifact inputs. */
   private async observedMembers(parent: RerunPlan["parent"]): Promise<ParentMember[]> {
     if ("suiteId" in parent) return (await this.suites.summary(parent.suiteId)).members;
@@ -153,9 +193,9 @@ export class TestRerunService {
     const row = verified(rows[0]!); const member = row.plan.members.find(m => m.rootKey === rootKey)!;
     return {row, member, attempt: await this.attempt(row, member)};
   }
-  private async attempt(row: RerunRecord, member: RecordedRerunMember): Promise<RerunAttempt> {
+  private async attempt(row: RerunRecord, member: RecordedRerunMember, observed?: Awaited<ReturnType<RerunAttemptBatch['read']>>): Promise<RerunAttempt> {
     return {...await this.requestAttempt(member.requestId, {attemptId: member.requestId, attemptNumber: member.attemptNumber,
-      parent: row.plan.parent, memberId: member.memberId}, member), rerunId: row.rerunId,
+      parent: row.plan.parent, memberId: member.memberId}, member, observed), rerunId: row.rerunId,
       predecessorAttemptId: member.predecessorAttemptId, createdAt: row.acceptedAt, reason: row.plan.reason};
   }
   async preview(input: unknown, actor: string): Promise<{rerunId:string;previewDigest:string;plan:RerunPlan;state:"preview"|"accepted"}> {
@@ -311,6 +351,17 @@ export class TestRerunService {
     await this.jobs.cancelFrozen(member.selection, parsed.data.deadline ?? new Date(Date.parse(row.acceptedAt) + 3 * 3600_000).toISOString(), {reason});
     return true;
   }
+  /** Fence this plan's own selected jobs, including a preview whose child checkpoint was lost. */
+  async cancelPlan(rerunId: string, reason: string): Promise<boolean> {
+    if (!frameworkIdentitySchema.safeParse(rerunId).success) throw new TestRunError(400, 'Invalid linked plan identity');
+    const stored = await this.store.get(rerunId);
+    if (!stored) return false;
+    const row = verified(stored), parsed = rerunPlanSchema.safeParse(row.plan);
+    if (!parsed.success) throw new TestRunError(503, 'Linked cancellation provenance is unavailable');
+    const deadline = parsed.data.deadline ?? new Date(Date.parse(row.acceptedAt ?? row.plan.createdAt) + 3 * 3600_000).toISOString();
+    for (const member of parsed.data.members) await this.jobs.cancelFrozen(member.selection, deadline, {reason});
+    return true;
+  }
   async detail(id: string) {
     if (!frameworkIdentitySchema.safeParse(id).success) throw new TestRunError(400, "Invalid rerun identity");
     const stored = await this.store.get(id);
@@ -337,11 +388,31 @@ export class TestRerunService {
   }
   async progress(suiteId: string) {
     const parent = {suiteId}, members = await this.observedMembers(parent);
-    const latest = await Promise.all(members.map(async m => ({memberId: m.memberId, originalStatus: m.status,
-      latest: (await this.latest(rerunRootKey(parent, m.memberId)))?.attempt ?? null})));
+    const attempts = await this.latestAttempts(members.map(m => ({parent, memberId: m.memberId})));
+    const latest = members.map(m => ({memberId: m.memberId, originalStatus: m.status,
+      latest: attempts.get(rerunRootKey(parent, m.memberId)) ?? null}));
     const children = await this.store.children(suiteId, "", 21);
     return {members: latest, children: children.slice(0,20).map(verified).map(r => ({rerunId: r.rerunId, reason: r.plan.reason, createdAt: r.acceptedAt})),
       nextChildrenCursor: children.length > 20 ? encodeChildCursor(children[19]!) : null};
+  }
+  /** One accepted latest attempt per original member, never the most recent passing attempt. */
+  async latestAttempts(identities: {parent: RerunPlan['parent']; memberId: string}[]) {
+    if (identities.length > 10000) throw new TestRunError(400, 'Too many original members');
+    const roots = [...new Set(identities.map(value => rerunRootKey(value.parent, value.memberId)))], requestedRoots = new Set(roots);
+    const rows = (await this.store.latest(roots)).map(verified), selected = new Map<string, {row: RerunRecord; member: RecordedRerunMember}>();
+    for (const row of rows) for (const member of row.plan.members) if (requestedRoots.has(member.rootKey)) {
+      const previous = selected.get(member.rootKey);
+      if (!previous || member.attemptNumber > previous.member.attemptNumber) selected.set(member.rootKey, {row, member});
+      else if (member.attemptNumber === previous.member.attemptNumber && member.requestId !== previous.member.requestId)
+        throw new TestRunError(503, 'Latest rerun lineage is ambiguous');
+    }
+    const observed = await this.batch.read([...selected.values()].map(value => value.member.requestId));
+    return new Map(await Promise.all([...selected].map(async ([root, value]) => {
+      try {return [root, await this.attempt(value.row, value.member, observed)] as const;}
+      catch {return [root, {attemptId: value.member.requestId, requestId: value.member.requestId, attemptNumber: value.member.attemptNumber,
+        rerunId: value.row.rerunId, parent: value.row.plan.parent, memberId: value.member.memberId,
+        status: 'unavailable', publicationComplete: false} satisfies RerunAttempt] as const;}
+    })));
   }
   async children(suiteId: string, before = "") {
     if (!frameworkIdentitySchema.safeParse(suiteId).success || before && before.length > 1000)

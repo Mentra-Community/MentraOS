@@ -165,3 +165,13 @@ test("a suite without a recorded repository does not invent a commit destination
   expect(html).toContain(suite.build.headSha.slice(0, 10));
   expect(html).not.toContain("github.com/Mentra-Community/MentraOS/commit/");
 });
+
+
+test('suite badges and counts use the same original evidence and coverage projection', () => {
+  const html = renderToStaticMarkup(<TestHistoryTable routines={[]} entries={[{...suite, outcome: 'failed',
+    rerunCount: 0, failedCount: 0, comparison: {original: {failed: 1, total: 3, skipped: 0, pending: 1, incomplete: 1}}}]}/>);
+  expect(html).toContain('>Failed</span>');
+  expect(html).not.toContain('>Incomplete</span>');
+  expect(html).toContain('1/3 failed, 1 pending, 1 incomplete');
+  expect(html).not.toContain('to latest');
+});

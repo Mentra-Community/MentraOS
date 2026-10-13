@@ -1,5 +1,6 @@
 import {result as Res, type AsyncResult} from "typesafe-ts"
 
+import {assertMiniappDevelopmentAllowed} from "../runtime/bootstrap"
 import {installMiniappRelease} from "./miniappReleaseInstall"
 
 /**
@@ -10,6 +11,7 @@ export function installMiniappFromJsonUrl(
   baseUrl: string,
 ): AsyncResult<{packageName: string; version: string; name: string}, Error> {
   return Res.try_async(async () => {
+    assertMiniappDevelopmentAllowed()
     const trimmed = baseUrl.replace(/\/$/, "")
     const manifestRes = await fetch(`${trimmed}/miniapp.json`)
     if (!manifestRes.ok) throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)

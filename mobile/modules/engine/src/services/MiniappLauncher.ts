@@ -32,7 +32,6 @@ import {
   isMiniappAvailable,
   type MiniappAvailabilityMode,
 } from "../runtime/bootstrap"
-import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
 import {MiniappRunningError} from "../utils/storeInstallRuntime"
@@ -184,10 +183,7 @@ class MiniappLauncher {
     runtimeOptions?: RuntimeLaunchOptions,
   ): Promise<ResolvedBundle | null> {
     if (!isMiniappAvailable(packageName, availabilityMode(runtimeOptions))) return null
-    const devAllowed = isDevMiniappAllowed(
-      packageName,
-      useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true,
-    )
+    const devAllowed = isDevMiniappAllowed(packageName)
     // Live dev code is unsigned, so it never runs under a package installed with
     // a publisher signature; that package runs its installed bundle instead.
     const liveDevAllowed = devAllowed && !appRegistry.getPublisherKeyFingerprint(packageName)
@@ -412,12 +408,11 @@ class MiniappLauncher {
     // as the active version. Either one is the scanned build; a release fallback is neither.
     const activeVersion = await appRegistry.getActiveVersion(packageName)
     const devBuild = Boolean(resolved.devUrl) || Boolean(activeVersion?.startsWith("dev-"))
-    const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key) === true
     if (
       // Availability may change while the bundle resolves.
       !isMiniappAvailable(packageName, availabilityMode(runtimeOptions)) ||
       (devBuild
-        ? !isDevMiniappAllowed(packageName, superMode)
+        ? !isDevMiniappAllowed(packageName)
         : !isInstalledMiniappAllowed(
             packageName,
             version,

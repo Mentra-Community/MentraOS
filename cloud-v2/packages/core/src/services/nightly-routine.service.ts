@@ -43,7 +43,7 @@ export interface NightlyPlanRepository {
   requestCancellation(suiteId: string, cancellation: NightlyCancellation): Promise<NightlyCancellation>;
 }
 export interface NightlyResult {occurrenceId: string; suiteId: string; startedAt: string; trigger: Occurrence["trigger"];
-  members: (NightlyMember & {input?: RequestInput; inputSha256?: string; status: string; publicationComplete: boolean; runId?: string; runStartedAt?: string; runFinishedAt?: string})[];
+  members: (NightlyMember & {input?: RequestInput; inputSha256?: string; status: string; publicationComplete: boolean; evidenceStatus?: 'complete' | 'failed'; runId?: string; runStartedAt?: string; runFinishedAt?: string})[];
   expectedCount: number; passed: number; status: string; resultUrl?: string; finishedAt?: string; cancellation?: NightlyCancellation}
 export const nightlyPlanRepository: NightlyPlanRepository = {
   async get(suiteId) {
@@ -311,7 +311,7 @@ export class NightlyRoutineService {
           || !run.routineSource || requestInputDigest(run.routineSource) !== requestInputDigest(input.routineSource))
           return {...prepared, status: "incomplete", publicationComplete: false, unavailableReason: "Result identity differs from the frozen request."};
         if (result.uploadsComplete) settledUploads.add(member.requestId);
-        return {...prepared, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete",
+        return {...prepared, status: result.outcome, publicationComplete: result.uploadsComplete && result.evidenceStatus === "complete", evidenceStatus: result.evidenceStatus,
           runId: run.runId, runStartedAt: run.startedAt, runFinishedAt: run.finishedAt};
       } catch (error) {
         if (!(error instanceof TestRunError) || error.status !== 404) return {...this.unavailableEvidence(boundMember, error, "Result"), input, inputSha256: request.inputSha256};

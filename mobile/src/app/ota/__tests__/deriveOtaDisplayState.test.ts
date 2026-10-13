@@ -121,11 +121,41 @@ const legacyShaped = (overrides: Partial<OtaStatus>): OtaStatus => ({
   ...overrides,
 })
 
-const legacyApkDownloadComplete = legacyShaped({stepType: "apk", phase: "download", status: "complete", stepPercent: 100, overallPercent: 100})
-const legacyBesDownloadComplete = legacyShaped({stepType: "bes", phase: "download", status: "complete", stepPercent: 100, overallPercent: 100})
-const legacyBesInstallComplete = legacyShaped({stepType: "bes", phase: "install", status: "complete", stepPercent: 100, overallPercent: 100})
-const legacyApkInstallComplete = legacyShaped({stepType: "apk", phase: "install", status: "complete", stepPercent: 100, overallPercent: 100})
-const legacyApkInstallInProgress = legacyShaped({stepType: "apk", phase: "install", status: "in_progress", stepPercent: 80, overallPercent: 80})
+const legacyApkDownloadComplete = legacyShaped({
+  stepType: "apk",
+  phase: "download",
+  status: "complete",
+  stepPercent: 100,
+  overallPercent: 100,
+})
+const legacyBesDownloadComplete = legacyShaped({
+  stepType: "bes",
+  phase: "download",
+  status: "complete",
+  stepPercent: 100,
+  overallPercent: 100,
+})
+const legacyBesInstallComplete = legacyShaped({
+  stepType: "bes",
+  phase: "install",
+  status: "complete",
+  stepPercent: 100,
+  overallPercent: 100,
+})
+const legacyApkInstallComplete = legacyShaped({
+  stepType: "apk",
+  phase: "install",
+  status: "complete",
+  stepPercent: 100,
+  overallPercent: 100,
+})
+const legacyApkInstallInProgress = legacyShaped({
+  stepType: "apk",
+  phase: "install",
+  status: "in_progress",
+  stepPercent: 80,
+  overallPercent: 80,
+})
 
 describe("deriveDisplayState", () => {
   const cases: Array<[string, Partial<DeriveArgs>, DisplayState]> = [
@@ -162,6 +192,23 @@ describe("deriveDisplayState", () => {
       "legacy BES FINISHED ignores a reconnect edge from an earlier step",
       {otaProgress: besFinishedLegacy, sawReconnectEdge: true},
       "restarting",
+    ],
+    ["BES download complete waits for install", {otaStatus: {...besComplete, phase: "download"}}, "updating"],
+    ["BES download step_complete waits for install", {otaStatus: {...besStepComplete, phase: "download"}}, "updating"],
+    [
+      "BES download complete with missing step counts waits for install",
+      {otaStatus: {...besComplete, phase: "download", currentStep: 0, totalSteps: 0}},
+      "updating",
+    ],
+    [
+      "BES download disconnected is not a restart",
+      {otaStatus: {...besInProgress, phase: "download"}, connected: false},
+      "disconnected",
+    ],
+    [
+      "BES download complete disconnected is not a restart",
+      {otaStatus: {...besComplete, phase: "download"}, connected: false},
+      "disconnected",
     ],
     ["Rule 4: glasses failed -> failed", {otaStatus: apkFailed}, "failed"],
     ["Rule 5: non-BES complete -> complete", {otaStatus: apkComplete}, "complete"],
@@ -208,11 +255,7 @@ describe("deriveDisplayState", () => {
       {otaStatus: legacyBesDownloadComplete},
       "updating",
     ],
-    [
-      "Legacy: bes install FINISHED is BES-terminal -> restarting",
-      {otaStatus: legacyBesInstallComplete},
-      "restarting",
-    ],
+    ["Legacy: bes install FINISHED is BES-terminal -> restarting", {otaStatus: legacyBesInstallComplete}, "restarting"],
     [
       "Legacy: apk download complete + disconnected -> disconnected (matches legacy screen)",
       {otaStatus: legacyApkDownloadComplete, connected: false},
@@ -233,11 +276,7 @@ describe("deriveDisplayState", () => {
       {otaStatus: legacyApkInstallComplete, legacyApkSettleHold: true, connected: false},
       "updating",
     ],
-    [
-      "Legacy: apk install complete without hold -> complete",
-      {otaStatus: legacyApkInstallComplete},
-      "complete",
-    ],
+    ["Legacy: apk install complete without hold -> complete", {otaStatus: legacyApkInstallComplete}, "complete"],
     [
       "Legacy: build-number completion flag -> complete despite stale in-flight status",
       {otaStatus: legacyApkInstallInProgress, apkCompletedViaBuildIncrease: true},
@@ -278,11 +317,7 @@ describe("deriveDisplayState", () => {
       {otaStatus: apkComplete, versionChangeSession: true, versionChangeConverged: false, connected: false},
       "disconnected",
     ],
-    [
-      "Non-version-change complete is unaffected by the guard",
-      {otaStatus: apkComplete},
-      "complete",
-    ],
+    ["Non-version-change complete is unaffected by the guard", {otaStatus: apkComplete}, "complete"],
   ]
 
   it.each(cases)("%s", (_name, overrides, expected) => {

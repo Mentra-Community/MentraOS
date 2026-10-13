@@ -104,7 +104,8 @@ it("rejects overlap without another stop or install and releases the guard after
 
 it("refuses a deployment-disallowed package before installing or stopping", async () => {
   mockAllowed.mockReturnValue(false)
-  await expect(loadAuthoringMiniapp(link())).rejects.toThrow("deployment")
+  await expect(loadAuthoringMiniapp(link())).rejects.toThrow("does not allow miniapp development")
+  expect(mockAllowed).toHaveBeenCalledWith(app.packageName)
   expect(mockInstall).not.toHaveBeenCalled()
   expect(mockStop).not.toHaveBeenCalled()
 })
