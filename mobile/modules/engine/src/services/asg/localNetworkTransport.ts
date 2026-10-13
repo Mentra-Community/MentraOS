@@ -20,6 +20,7 @@ let macHotspotOwner: {caller: symbol; nativeId: string} | null = null
 export type LocalNetworkErrorDetails = {
   code?: string | number
   domain?: string
+  message?: string
   underlying?: {code?: string | number; domain?: string}
   native?: {code: number; domain: string; completed: true; underlying?: {code: number; domain: string}}
 }
@@ -39,6 +40,12 @@ export function localNetworkErrorDetails(error: unknown): LocalNetworkErrorDetai
     }
   }
   const details = facts(error)
+  const hotspotMessage =
+    typeof details.code === "string" &&
+    ["ERR_HOTSPOT_JOIN", "ERR_HOTSPOT_CANCELLED", "ERR_HOTSPOT_NATIVE"].includes(details.code) &&
+    error && typeof error === "object" && "message" in error && typeof error.message === "string"
+      ? error.message.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 512)
+      : undefined
   const userInfo = (error as {userInfo?: unknown} | null | undefined)?.userInfo
   const underlying = facts(
     userInfo && typeof userInfo === "object"
@@ -60,6 +67,7 @@ export function localNetworkErrorDetails(error: unknown): LocalNetworkErrorDetai
   const nativeUnderlying = facts((nativeValue as {underlying?: unknown} | undefined)?.underlying)
   return {
     ...details,
+    ...(hotspotMessage ? {message: hotspotMessage} : {}),
     ...(Object.keys(underlying).length ? {underlying} : {}),
     ...(native
       ? {

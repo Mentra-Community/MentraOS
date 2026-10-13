@@ -142,6 +142,17 @@ describe("Mac hotspot ownership", () => {
 })
 
 describe("localNetworkErrorDetails", () => {
+  it("retains bounded hotspot bridge messages without copying arbitrary native descriptions", () => {
+    const error = Object.assign(new Error("Mac Wi-Fi scan failed (com.apple.wifi, -3905)"), {
+      code: "ERR_HOTSPOT_JOIN", userInfo: {networkName: "fixture confidential network", opaque: "fixture confidential value"},
+    })
+    expect(localNetworkErrorDetails(error)).toEqual({
+      code: "ERR_HOTSPOT_JOIN", message: "Mac Wi-Fi scan failed (com.apple.wifi, -3905)",
+    })
+    expect(localNetworkErrorDetails({code: "ERR_UNEXPECTED", message: "private NSError description"})).toEqual({code: "ERR_UNEXPECTED"})
+    expect(localNetworkErrorDetails({code: "ERR_HOTSPOT_NATIVE", message: "\n\t" + "a".repeat(600)}).message).toBe("a".repeat(512))
+    expect(JSON.stringify(localNetworkErrorDetails(error))).not.toMatch(/fixture confidential|networkName|opaque/)
+  })
   it("preserves bridged domain and underlying code without a native stack or private userInfo", () => {
     const error = Object.assign(new Error("internal error"), {
       code: "unableToConnect",
