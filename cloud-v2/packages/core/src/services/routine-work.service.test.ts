@@ -126,6 +126,13 @@ function fixture(options: {buildHead?: string; noHost?: boolean; notificationFai
       row.acceptance = structuredClone(receipt)
       return structuredClone(row)
     },
+    async updateVerification(value, original, previous) {
+      const row=rows.get(value.event.workId)
+      if(!row||requestInputDigest(row.status)!==requestInputDigest(original)||requestInputDigest(row.verification??null)!==requestInputDigest(previous??null))return null
+      row.verification={identity:structuredClone(value.identity),status:structuredClone(value.event),receipts:[...(previous?.receipts??[]),
+        {eventId:value.event.eventId,sequence:value.event.sequence,sha256:requestInputDigest(value.event)}]}
+      return structuredClone(row)
+    },
     async updateStatus(event, previous) {
       const row = rows.get(event.workId)
       if (
@@ -541,4 +548,38 @@ test('Mongo status compare-and-swap refuses a terminal outcome raced after the s
     expect(f.rows.get(row.workId)?.status?.details.attemptId).toBe(2)
     expect(f.rows.get(row.workId)?.statusReceipts).toHaveLength(1)
   } finally {update.mockRestore(); find.mockRestore()}
+})
+
+
+test('recording verification has separate durable identity and preserves original terminal failure',async()=>{
+ const f=fixture(),row=await f.service.submit(input)
+ const accepted={workId:row.workId,inputSha256:row.inputSha256,hostId:row.hostId,acceptedAt:'2026-10-05T10:00:00.000Z'}
+ await f.service.accept(accepted,row.hostId)
+ const details={reason:'Recording response failed',summary:'Recording response failed',sourceRevision:'c'.repeat(40),requestId:'original-recorded-run',
+  prUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601',review:{sourceRevision:'c'.repeat(40),
+    prUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601',reviewUrl:'https://github.com/Mentra-Community/Mentra-Automated-Testing/pull/601#pullrequestreview-21',verdict:'APPROVED'}}
+ const {acceptedAt:_,...binding}=accepted
+ const original=routineWorkStatusSchema.parse({...binding,eventId:'failed',sequence:4,state:'failed',details:{...accepted,work:row.work,attemptId:2,
+  state:'failed',sequence:4,details,events:[{eventId:'failed',sequence:4,state:'failed',at:'2026-10-05T11:00:00.000Z',details}]}})
+ await f.service.status(original,row.hostId)
+ const identity={decisionId:'recording-retry',inputSha256:'d'.repeat(64),failureEventId:original.eventId,failureSha256:requestInputDigest(original),
+  acceptedAt:'2026-10-05T11:01:00.000Z',deadline:'2026-10-05T11:31:00.000Z',previousFailure:{code:'recording-response',reason:details.reason}}
+ const event=routineWorkStatusSchema.parse({...original,eventId:'recording-retry',sequence:5,state:'verifying',details:{...original.details,state:'verifying',sequence:5,
+  details:{...details,summary:'Verify original recording'},events:[...original.details.events,{eventId:'recording-retry',sequence:5,state:'verifying',at:identity.acceptedAt,details}]}})
+ await expect(f.service.status(event,row.hostId)).rejects.toThrow('Terminal')
+ expect(await f.service.verifyRecording({identity,event},row.hostId)).toEqual(event)
+ expect(await f.service.verifyRecording({identity,event},row.hostId)).toEqual(event)
+ expect(f.rows.get(row.workId)?.status).toEqual(original)
+ expect(f.rows.get(row.workId)?.verification?.status).toEqual(event)
+ for(const change of [{failureSha256:'e'.repeat(64)},{decisionId:'other'},{deadline:'2026-10-05T11:32:00.000Z'}])
+  await expect(f.service.verifyRecording({identity:{...identity,...change},event},row.hostId)).rejects.toThrow()
+ for(const key of ['sourceRevision','requestId','review'] as const){
+  const altered=structuredClone(event);(altered.details.details as any)[key]=key==='review'?{...details.review,sourceRevision:'e'.repeat(40)}:'other'
+  await expect(f.service.verifyRecording({identity,event:altered},row.hostId)).rejects.toThrow()
+ }
+ const final=routineWorkStatusSchema.parse({...event,eventId:'verification-failed',sequence:6,state:'failed',details:{...event.details,state:'failed',sequence:6,
+  events:[...event.details.events,{eventId:'verification-failed',sequence:6,state:'failed',at:'2026-10-05T11:02:00.000Z',details}]}})
+ expect(await f.service.verifyRecording({identity,event:final},row.hostId)).toEqual(final)
+ await expect(f.service.verifyRecording({identity,event:{...event,eventId:'reopen',sequence:7,details:{...event.details,sequence:7}}},row.hostId)).rejects.toThrow('terminal')
+ expect(f.rows.get(row.workId)?.status).toEqual(original)
 })
