@@ -40,7 +40,7 @@ export function createTestRunAdminApi(health = new TestHostHealthService(), hist
   app.get("/", async c => c.json(await results.list(c.req.query())));
   app.get("/pending-queue", async c => c.json(await new TestPendingQueueService().list(c.req.query("cursor"))));
   app.get("/activity", async c => c.json({requests: await TestRequestModel.find({state: {$ne: "terminal"}})
-    .sort({createdAt: 1, requestId: 1}).limit(100).select({requestId: 1, hostId: 1, state: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1, preparation: 1, preparationRejection: 1, preparationCancellation: 1, hostReceipt: 1, hostRejection: 1, hostCancellation: 1, cancellationAcknowledged: 1, createdAt: 1, fleetSelection: 1, fleetSelectionSha256: 1, fleetInputSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1, fleetActions: 1})
+    .sort({createdAt: 1, requestId: 1}).limit(100).select({requestId: 1, hostId: 1, state: 1, input: 1, inputSha256: 1, dispatchIntent: 1, dispatchIntentSha256: 1, preparation: 1, preparationRejection: 1, preparationCancellation: 1, hostReceipt: 1, hostRejection: 1, hostCancellation: 1, cancellationAcknowledged: 1, createdAt: 1, fleetSelection: 1, fleetSelectionSha256: 1, fleetInputSha256: 1, fleetBinding: 1, fleetCancellation: 1, fleetDispatch: 1, fleetActions: 1, fleetPreparationStatus: 1})
     .read("primary").readConcern("majority").lean().then(rows => rows.map(row => displayRequest(row as StoredRequest)))}));
   app.get("/health", async c => c.json(await health.list()));
   app.get("/health/:hostId", async c => c.json(await health.history(c.req.param("hostId"), c.req.query("days"))));

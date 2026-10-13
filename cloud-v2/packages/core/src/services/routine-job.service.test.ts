@@ -555,6 +555,8 @@ test('completed preparation retries end after twenty deliveries rather than wait
   const f=fixture();await f.service.submit(selection);
   await f.rows.dispatch!(selection.requestId,undefined,{attempts:20,lastAttemptAt:'2026-10-07T23:59:00.000Z'});
   (f.service as any).actionsTransport={async dispatch(){throw Error('No twenty-first attempt')},async runs(){return [{actionsRunId:'100',status:'completed',conclusion:'failure'}]},async cancel(){}};
+  expect((await f.service.observation(selection.requestId)).terminal).toBe(false);
+  f.advance(61_000);
   const observed=await f.service.observation(selection.requestId);
   expect(observed).toMatchObject({terminal:true,state:'terminal',terminalStatus:'not-run'});
   expect(observed.waitingReason).toContain('exhausted 20');

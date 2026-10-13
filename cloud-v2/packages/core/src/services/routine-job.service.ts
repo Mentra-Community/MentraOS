@@ -331,7 +331,7 @@ export class RoutineJobService {
       return this.job(row.requestId);
     }
     if (!row.fleetPreparation && (previous?.attempts ?? 0) >= 20 && runs.every(run => run.status === 'completed') &&
-      (runs.length > 0 || this.now() - Date.parse(previous!.lastAttemptAt) >= 120_000)) {
+      this.now() - Date.parse(previous!.lastAttemptAt) >= 120_000) {
       await this.rows.exhaustPreparation?.(row.requestId, runs.map(run => run.actionsRunId), new Date(this.now()));
       return this.job(row.requestId);
     }
