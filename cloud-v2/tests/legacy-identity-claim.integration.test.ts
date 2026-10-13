@@ -573,6 +573,10 @@ describe("hosted Core: Supabase behind Core's sign-in server", () => {
     expect(await countActiveOwners("ws_owners")).toBe(0)
     await seedIdentity("user_01PO", "po@studio.example")
     expect(await countActiveOwners("ws_owners")).toBe(1)
+    // Claimed by an account since deleted: nobody can take it up any more.
+    await UserModel.create({mentraUserId: "mu_PO_DELETED", tenantId: "t_po", tenantUserId: "po", email: "po@studio.example", supportTelemetryDeletedAt: new Date()})
+    await LegacyBrowserIdentityModel.updateOne({workosUserId: "user_01PO"}, {$set: {claimedAt: new Date(), claimedBy: "mu_PO_DELETED"}})
+    expect(await countActiveOwners("ws_owners")).toBe(0)
   })
 
   test("the phone token exchange claims nothing, and its token claims nothing at Core's API", async () => {
