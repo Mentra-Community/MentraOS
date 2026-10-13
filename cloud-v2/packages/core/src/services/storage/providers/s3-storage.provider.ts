@@ -36,9 +36,10 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   private async request(key: string, method: 'GET' | 'PUT', signal: AbortSignal, body?: Uint8Array, contentType?: string) {
+    const requestBody = body === undefined ? undefined : new Uint8Array(body).buffer;
     try {
       return await fetch(this.client.file(key).presign({method, expiresIn: 60, ...(contentType ? {type: contentType} : {})}), {
-        method, body, signal, redirect: 'error', headers: {'Accept-Encoding': 'identity', ...(contentType ? {'Content-Type': contentType} : {})},
+        method, body: requestBody, signal, redirect: 'error', headers: {'Accept-Encoding': 'identity', ...(contentType ? {'Content-Type': contentType} : {})},
       });
     } catch {throw new Error('storage object request failed');}
   }

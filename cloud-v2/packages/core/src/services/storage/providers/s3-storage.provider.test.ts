@@ -112,7 +112,7 @@ test('bounded testing detail requests preserve bytes, signed content type and ca
   }});
   try {
     const provider = new S3StorageProvider({...options, endpoint: `http://127.0.0.1:${server.port}`});
-    const body = Buffer.from('{"status":"failed"}');
+    const body = Buffer.from('before{"status":"failed"}after').subarray(6, -5);
     await provider.putObject({key: 'detail.json', body, contentType: 'application/json', signal: AbortSignal.timeout(1000)});
     expect(requests[0]?.headers.get('content-type')).toBe('application/json');
     expect(await provider.getObject('detail.json', AbortSignal.timeout(1000))).toEqual(new Uint8Array(body));
