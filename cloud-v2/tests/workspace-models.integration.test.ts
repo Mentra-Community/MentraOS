@@ -19,6 +19,7 @@ import type {Model} from "mongoose"
 import {connectMongo, disconnectMongo, withTransaction} from "../packages/core/src/connections/mongo.connection"
 import {runStartupMigrations} from "../packages/core/src/migrations/startup.migrations"
 import {AccessCredentialModel} from "../packages/core/src/models/access-credential.model"
+import {LegacyBrowserIdentityModel} from "../packages/core/src/models/legacy-browser-identity.model"
 import {WorkspaceAuditEventModel} from "../packages/core/src/models/workspace-audit-event.model"
 import {WorkspaceInvitationModel} from "../packages/core/src/models/workspace-invitation.model"
 import {WorkspaceMembershipModel} from "../packages/core/src/models/workspace-membership.model"
@@ -32,6 +33,7 @@ const MODELS: Model<any>[] = [
   WorkspaceInvitationModel,
   AccessCredentialModel,
   WorkspaceAuditEventModel,
+  LegacyBrowserIdentityModel,
 ]
 
 /** Run `fn` and return whatever it throws (fails the test if it does not throw). */
@@ -742,6 +744,22 @@ describe("workspace models (local replica set)", () => {
       expect(err.code).toBe(11000)
       expect(await WorkspaceModel.countDocuments({workspaceId: "ws_side"})).toBe(0)
       expect(await WorkspaceMembershipModel.countDocuments({membershipId: "wm_dup"})).toBe(0)
+    })
+  })
+
+  describe("legacy browser identities", () => {
+    test("one row per WorkOS user, its email lowercased, unclaimed until claimed", async () => {
+      const row = await LegacyBrowserIdentityModel.create({workosUserId: "user_01A", email: " Dev@Studio.Example "})
+      expect(row).toMatchObject({workosUserId: "user_01A", email: "dev@studio.example", claimedAt: null, claimedBy: null})
+      const duplicate = await thrown(() => LegacyBrowserIdentityModel.create({workosUserId: "user_01A", email: "x@studio.example"}))
+      expect(duplicate.code).toBe(11000)
+      // Two WorkOS users may share an address: the claim takes both for the person who verified it.
+      await LegacyBrowserIdentityModel.create({workosUserId: "user_01B", email: "dev@studio.example"})
+      expect(await LegacyBrowserIdentityModel.countDocuments({email: "dev@studio.example"})).toBe(2)
+      const indexes = await LegacyBrowserIdentityModel.collection.indexes()
+      expect(indexes.find(index => JSON.stringify(index.key) === JSON.stringify({workosUserId: 1}))?.unique).toBe(true)
+      expect(indexes.find(index => JSON.stringify(index.key) === JSON.stringify({email: 1}))).toBeDefined()
+      expect(indexes.find(index => JSON.stringify(index.key) === JSON.stringify({claimedBy: 1}))).toBeDefined()
     })
   })
 

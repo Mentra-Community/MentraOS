@@ -32,6 +32,7 @@ import { WorkspaceAuditEventModel } from "../models/workspace-audit-event.model"
 import { WorkspaceInvitationModel } from "../models/workspace-invitation.model";
 import { WorkspaceMembershipModel } from "../models/workspace-membership.model";
 import { WorkspaceModel } from "../models/workspace.model";
+import { LegacyBrowserIdentityModel } from "../models/legacy-browser-identity.model";
 import { convertLegacyAdminKeys } from "../services/workspaces/legacy-admin-keys";
 import { TestHostLatestModel, TestHostSampleModel } from "../models/test-host-health.model";
 
@@ -114,12 +115,21 @@ export async function runStartupMigrations(): Promise<void> {
   // Workspaces rely on unique indexes (one active membership per person, one
   // pending invitation per address, unique ids). Build them, and their
   // collections, before serving: a request in the first moments after boot must
-  // not create a collection inside a transaction. An index the database refuses
-  // (some databases a Private Cloud uses support only part of MongoDB's index
-  // options) is logged and does not stop Core: sign-in, incidents and keys keep
-  // working.
+  // not create a collection inside a transaction. The membership claim's legacy
+  // identities are among them: their collection is created here while it is
+  // empty, so its unique index can be built on Azure Cosmos DB too. An index the
+  // database refuses (some databases a Private Cloud uses support only part of
+  // MongoDB's index options) is logged and does not stop Core: sign-in,
+  // incidents and keys keep working.
   await Promise.all(
-    [WorkspaceModel, WorkspaceMembershipModel, WorkspaceInvitationModel, AccessCredentialModel, WorkspaceAuditEventModel].map(
+    [
+      WorkspaceModel,
+      WorkspaceMembershipModel,
+      WorkspaceInvitationModel,
+      AccessCredentialModel,
+      WorkspaceAuditEventModel,
+      LegacyBrowserIdentityModel,
+    ].map(
       async (model) => {
         try {
           await model.createCollection();

@@ -35,6 +35,8 @@ import {assertSigninConfiguration} from "./services/signin/config"
 import {assertOidcConfiguration} from "./services/oidc/startup"
 import {stopOidcBridge} from "./services/oidc/bridge"
 import {assertOrganizationConfiguration} from "./services/workspaces/organization"
+import {registerAfterSignInHook} from "./services/oidc/interactions"
+import {claimLegacyIdentitiesAfterSignIn} from "./services/workspaces/membership-claim.service"
 
 const logger = createLogger("core")
 
@@ -67,6 +69,8 @@ export async function startCore(opts: StartCoreOptions = {}): Promise<CoreHandle
     await assertSigninConfiguration()
     // Core's sign-in server: its issuer, cookie keys and clients.
     assertOidcConfiguration()
+    // A person's sign-in claims the Store-imported memberships waiting under their verified email.
+    registerAfterSignInHook(claimLegacyIdentitiesAfterSignIn)
   } catch (error) {
     // Disconnect best-effort: a secondary disconnect failure must not mask the
     // original startup error, which is what we rethrow.
