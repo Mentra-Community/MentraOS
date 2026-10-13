@@ -162,7 +162,7 @@ test('artifact override is optional; default reuses original while a new rerun m
  await f.service.submit({rerunId:p.rerunId,previewDigest:p.previewDigest});f.complete(p.plan.members[0]!.requestId);
  const replacement={...input,rerunId:'replacement',source:{...source,buildRunId:456}};
  const next=await f.service.preview(replacement,'admin');expect(next.plan.members[0]!.selection.build.source).toEqual(replacement.source);expect(next.plan.members[0]!.attemptNumber).toBe(2);
- delete (f.members[21] as any).build;f.requests.get('original-21').input={...nativeInput,build:{...nativeInput.build,source:undefined}};f.requests.get('original-21').inputSha256='bad';await expect(f.service.preview({...input,rerunId:'missing',selection:{memberIds:['member-21']}},'admin')).rejects.toThrow('integrity');
+ delete (f.members[21] as any).build;f.requests.get('original-21').input={...nativeInput,build:{...nativeInput.build,source:undefined}};f.requests.get('original-21').inputSha256='bad';await expect(f.service.preview({...input,rerunId:'missing',selection:{memberIds:['member-21']}},'admin')).rejects.toThrow('provenance');
 });
 
 test('child batches use acceptance time with stable pagination rather than arbitrary IDs',async()=>{
