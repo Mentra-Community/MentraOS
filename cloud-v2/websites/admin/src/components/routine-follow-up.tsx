@@ -15,6 +15,9 @@ import {Textarea} from './ui/textarea'
 
 const base = '/api/admin/test-runs/follow-ups'
 const muted = 'text-xs text-[#656d76]'
+const activityFields: Record<string, string> = {classification: 'Cause', diagnosis: 'Diagnosis', evidence: 'Evidence', stage: 'Stage', nextAction: 'Next action', owner: 'Owner', input: 'Requested input', intendedFixes: 'Linked PRs', prObservations: 'PR status', verification: 'Verification', close: 'Closure', occurrences: 'Occurrences', schema: 'Data format', namespace: 'Storage location', 'settled-stopped-unlaunched-claim': 'Stopped agent settled'}
+const activityNames: Record<string, string> = {create: 'Follow-up started', update: 'Follow-up updated', 'intended-fix': 'Fixing PR linked', claim: 'Agent assigned', release: 'Agent released', 'pr-observation': 'PR status refreshed', migration: 'History imported'}
+export const caseActivityActor = (actor: string) => actor.replace(/^operator:/, '').replace(/^agent:/, 'Agent ')
 const stageNames: Record<RoutineCase['stage'], string> = {investigating: 'Investigating', fixing: 'Fixing', 'in-review': 'In review', 'waiting-deployment': 'Waiting for deployment', verifying: 'Verifying', verified: 'Verified', 'needs-input': 'Needs input'}
 type CaseView = FailureFollowUp['case']
 type Evidence = RoutineCase['evidence'][number]
@@ -143,7 +146,7 @@ function FollowUpHistory({row, requestId}: {row: CaseView; requestId: string}) {
     {open && <div className="mt-3 space-y-3">
       {!!row.intendedFixes.length && <div><Tooltip content="Read current GitHub head, review and merge status for the linked PRs. This does not verify that a build includes the fix."><TestingButton busy={reconcile.isPending} disabled={!!reconcile.error} onClick={() => reconcile.mutate({revision: row.revision, mutationId: crypto.randomUUID()})}><RefreshCw className="size-3.5"/>Refresh PR status</TestingButton></Tooltip><MutationError error={reconcile.error} refresh={() => {reconcile.reset(); refresh()}} retry={() => {if (reconcile.variables) reconcile.mutate(reconcile.variables)}}/></div>}
       <div><h4 className="mb-2 font-medium">Original occurrences</h4>{row.occurrences.map(occurrence => <OccurrenceHistory key={occurrence.occurrenceId} row={row} occurrence={occurrence} requestId={requestId}/>)}</div>
-      <div><h4 className="mb-2 font-medium">Activity</h4>{detail.isPending ? <LoadingIndicator inline label="Loading follow-up activity"/> : detail.data?.pages.map(page => page.activity.map(event => <p key={event.revision} className="py-1"><time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time> · {event.actor} · {event.kind.replaceAll('-', ' ')}{event.changed.length ? ` (${event.changed.join(', ')})` : ''}</p>))}
+      <div><h4 className="mb-2 font-medium">Activity</h4>{detail.isPending ? <LoadingIndicator inline label="Loading follow-up activity"/> : detail.data?.pages.map(page => page.activity.map(event => <p key={event.revision} className="py-1"><time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time> · {caseActivityActor(event.actor)} · {activityNames[event.kind]}{event.changed.length ? ` (${event.changed.map(field => activityFields[field] ?? field.replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('-', ' ')).join(', ')})` : ''}</p>))}
         {detail.error && <p role="alert" className="text-[#cf222e]">{detail.error.message}</p>}
         {detail.hasNextPage && <TestingButton className="mt-2" busy={detail.isFetchingNextPage} onClick={() => void detail.fetchNextPage()}>Older activity</TestingButton>}
       </div>
