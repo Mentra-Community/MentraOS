@@ -913,6 +913,101 @@ describe("OtaInstallCoordinator MTK completion", () => {
 })
 
 describe("OtaInstallCoordinator finish()", () => {
+  describe("Android completion ownership", () => {
+    let platform: typeof Platform.OS
+    beforeEach(() => {
+      platform = Platform.OS
+      Platform.OS = "android"
+      const absent = {present: false, capabilities: null}
+      mentraLocalNetworkMock.getNetworkDiagnostics.mockReset().mockReturnValue({
+        sampledAtMs: Date.now(),
+        activeNetwork: absent,
+        processBound: absent,
+        glassesLocal: absent,
+        processBoundMatchesActive: false,
+        processBoundMatchesGlassesLocal: false,
+        activeNetworkMatchesGlassesLocal: false,
+      })
+      useGlassesStore.getState().setGlassesInfo({
+        connection: {state: "connected", fullyBooted: true},
+        hotspotOtaVersion: 1,
+        wifi: {state: "disconnected"},
+      })
+      otaInstallCoordinator.prepare(checkResult())
+    })
+    afterEach(() => {
+      Platform.OS = platform
+      mentraLocalNetworkMock.getNetworkDiagnostics.mockReturnValue(null)
+      stopOtaDeviceSession()
+    })
+
+    it("discards offline immediately after local teardown, without querying Internet", async () => {
+      let release!: () => void
+      mockHotspotTeardown.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)))
+      useGlassesStore.getState().setOtaStatus(inProgressStatus())
+      const done = jest.fn()
+      const discarded = otaInstallCoordinator.discard().then(done)
+      await jest.advanceTimersByTimeAsync(0)
+      expect(done).not.toHaveBeenCalled()
+      release()
+      await discarded
+      expect(done).toHaveBeenCalledTimes(1)
+      expect(useGlassesStore.getState().otaStatus).toBeNull()
+      expect(mentraLocalNetworkMock.getNetworkDiagnostics).not.toHaveBeenCalled()
+      expect(jest.getTimerCount()).toBe(0)
+    })
+
+    it("shares one teardown and one deadline across concurrent finish calls", async () => {
+      const first = otaInstallCoordinator.finish()
+      await jest.advanceTimersByTimeAsync(10_000)
+      const second = otaInstallCoordinator.finish()
+      expect(second).toBe(first)
+      expect(mockHotspotTeardown).toHaveBeenCalledTimes(1)
+      expect(jest.getTimerCount()).toBe(1)
+      const done = jest.fn()
+      void second.then(done)
+      await jest.advanceTimersByTimeAsync(19_999)
+      expect(done).not.toHaveBeenCalled()
+      await jest.advanceTimersByTimeAsync(1)
+      await first
+      expect(done).toHaveBeenCalledTimes(1)
+      expect(jest.getTimerCount()).toBe(0)
+    })
+
+    it("cancels an existing Internet wait when the install is discarded", async () => {
+      const finishing = otaInstallCoordinator.finish()
+      await jest.advanceTimersByTimeAsync(1_000)
+      await otaInstallCoordinator.discard()
+      mentraLocalNetworkMock.getNetworkDiagnostics.mockClear()
+      await jest.advanceTimersByTimeAsync(250)
+      await finishing
+      expect(mentraLocalNetworkMock.getNetworkDiagnostics).not.toHaveBeenCalled()
+      expect(jest.getTimerCount()).toBe(0)
+    })
+
+    it("never reads native network state when the paired device changes during teardown", async () => {
+      const pair = (address: string) => ({id: address, address, model: "Mentra Live", name: address})
+      stopOtaDeviceSession()
+      ;(bluetoothSdkMock.getDefaultDevice as jest.Mock).mockResolvedValue(pair("finish-A"))
+      await startOtaDeviceSession()
+      // Hydration may reset state from a previous device session.
+      useGlassesStore.getState().setGlassesInfo({
+        connection: {state: "connected", fullyBooted: true},
+        hotspotOtaVersion: 1,
+        wifi: {state: "disconnected"},
+      })
+      otaInstallCoordinator.prepare(checkResult())
+      let release!: () => void
+      mockHotspotTeardown.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)))
+      const finishing = otaInstallCoordinator.finish()
+      emitBluetoothSdkEvent("default_device_changed", {device: pair("finish-B")})
+      release()
+      await finishing
+      expect(mentraLocalNetworkMock.getNetworkDiagnostics).not.toHaveBeenCalled()
+      expect(jest.getTimerCount()).toBe(0)
+    })
+  })
+
   it("keeps the real final-check boundary closed after hotspot teardown until Android has Internet", async () => {
     const platform = Platform.OS
     Platform.OS = "android"
