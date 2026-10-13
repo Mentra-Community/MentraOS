@@ -523,17 +523,18 @@ export class RoutineJobService {
       throw new TestRequestConflict('Publication failure changed its original frozen receipt');
     return {...saved.dispatchCompletion!, publicationFailure: saved.publicationFailure};
   }
-  async observation(jobId: string) {
-    let row = await this.deliver(await this.job(jobId));
+  async observation(jobId: string, phase: (value: 'request' | 'delivery' | 'cancellation' | 'result' | 'projection') => void = () => {}) {
+    phase('request'); const saved = await this.job(jobId);
+    phase('delivery'); let row = await this.deliver(saved);
     if (!row.fleetCancellation && this.now() >= row.fleetDeadline.getTime() && (row.state !== 'terminal' ||
       !!row.fleetBinding && !row.dispatchCompletion && !row.hostRejection && !row.preparationCancellation && !row.preparationRejection)) {
-      await this.cancel(jobId, {reason: 'Routine job reached its three-hour deadline'});
+      phase('cancellation'); await this.cancel(jobId, {reason: 'Routine job reached its three-hour deadline'});
       row = await this.job(jobId);
     }
-    let result: unknown;
+    phase('result'); let result: unknown;
     if (row.fleetBinding) try {result = await this.results.detail(jobId);}
     catch (error) {if (!(error instanceof TestRunError) || error.status !== 404) throw error;}
-    const reason = (!row.runId && row.publicationFailure ? `Publication failed: ${row.publicationFailure.message}` : undefined) ?? row.fleetCancellation?.reason ?? row.fleetPreparationStatus?.reason ?? row.fleetDispatch?.error ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ??
+    phase('projection'); const reason = (!row.runId && row.publicationFailure ? `Publication failed: ${row.publicationFailure.message}` : undefined) ?? row.fleetCancellation?.reason ?? row.fleetPreparationStatus?.reason ?? row.fleetDispatch?.error ?? row.hostCancellation?.reason ?? row.preparationCancellation?.reason ??
       row.hostRejection?.reason ?? row.preparationRejection?.reason ?? row.preparation?.reason;
     return {jobId, kind: 'run' as const, inputSha256: row.fleetInputSha256 ?? row.fleetSelectionSha256,
       deadline: row.fleetDeadline.toISOString(), state: row.fleetCancellation && !row.fleetBinding ? 'terminal' : row.state,

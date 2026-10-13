@@ -1,9 +1,29 @@
-import {afterEach, expect, test} from 'bun:test';
+import {afterEach, expect, test, spyOn} from 'bun:test';
 import {Hono} from 'hono';
 import {createRoutineJobBindingApi, createRoutineJobsApi} from './routine-jobs.api';
 import {RoutineJobService} from '../../services/routine-job.service';
 import {RoutineWorkService} from '../../services/routine-work.service';
 import {TestRunError} from '../../services/test-result-error';
+import type {AppEnv} from '../../types/hono.types';
+
+test('normal observations stay quiet and a slow original request retains its phase and existing request context',async()=>{
+  process.env.TEST_RUN_INGEST_TOKEN=observerToken;
+  for(const slow of [false,true]) {
+    let now=0,alarm:(()=>void)|undefined,cleared=false;const warnings:unknown[]=[];
+    const clock=spyOn(Date,'now').mockImplementation(()=>now);
+    const timer=spyOn(globalThis,'setTimeout').mockImplementation(((callback:()=>void,delay:number)=>{expect(delay).toBe(10000);alarm=callback;return 1;})as any);
+    const cancel=spyOn(globalThis,'clearTimeout').mockImplementation((()=>{cleared=true;})as any);
+    const jobs={async observation(_id:string,phase:(value:string)=>void){phase('result');if(slow){now=10000;alarm!();now=12000;}return{jobId:'one',terminal:false};}}as unknown as RoutineJobService;
+    const app=new Hono<AppEnv>();app.use('*',async(c,next)=>{c.set('logger',{warn:(fields:unknown,message:string)=>warnings.push({fields,message,reqId:'original-request'})}as any);await next();});
+    app.route('/',createRoutineJobsApi(jobs));
+    try{
+      const response=await app.request('/one/observation',{headers:{authorization:`Bearer ${observerToken}`}});
+      expect(response.status).toBe(200);expect(await response.json()).toEqual({jobId:'one',terminal:false});expect(cleared).toBe(true);
+      expect(warnings).toEqual(slow?[{fields:{phase:'result',elapsedMs:10000},message:'routine job observation is slow',reqId:'original-request'},
+        {fields:{phase:'result',elapsedMs:12000,status:200},message:'slow routine job observation completed',reqId:'original-request'}]:[]);
+    }finally{clock.mockRestore();timer.mockRestore();cancel.mockRestore();}
+  }
+});
 const previous = process.env.TEST_RUN_INGEST_TOKEN;
 afterEach(() => {if (previous === undefined) delete process.env.TEST_RUN_INGEST_TOKEN; else process.env.TEST_RUN_INGEST_TOKEN=previous});
 const observerToken='observer-token-at-least-thirty-two-characters';
