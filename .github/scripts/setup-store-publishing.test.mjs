@@ -5,6 +5,7 @@ import test from "node:test"
 import {
   CookieJar,
   isBranchPolicy,
+  keyFindings,
   loadMiniapps,
   MENTRAOS,
   MINIAPPS,
@@ -128,6 +129,22 @@ test("reads the Store, repositories and options from the command line", () => {
   assert.throws(() => parseArguments(["dev", "--repo"]), /needs a repository/)
   assert.throws(() => parseArguments(["dev", "--force"]), /unknown option/)
   assert.throws(() => parseArguments(["prod", "--environments-only", "--reissue"]), /issues no keys/)
+})
+
+test("reports a missing key, and any repository-level copy even when the environment has the key", () => {
+  assert.deepEqual(
+    keyFindings({
+      keys: ["A", "B", "C", "D"],
+      environment: "miniapp-store-production",
+      inEnvironment: ["A", "B"],
+      inRepository: ["B", "C"],
+    }),
+    [
+      "B is also a repository secret, readable from every branch; delete that copy.",
+      "C is a repository secret, readable from every branch; move it into miniapp-store-production.",
+      "D is missing; Store staff issue it.",
+    ],
+  )
 })
 
 test("signs in as the QA account's +store-staff plus-address", () => {

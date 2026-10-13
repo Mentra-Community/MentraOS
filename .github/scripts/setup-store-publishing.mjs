@@ -496,6 +496,23 @@ export function parseArguments(argv) {
   return {...options, storeName: positional[0]}
 }
 
+/**
+ * What is wrong with a Store's keys in one repository: a key missing from its environment, or a copy left as
+ * a repository secret, which every branch's workflows can read, even when the environment has its own.
+ */
+export function keyFindings({keys, environment, inEnvironment, inRepository}) {
+  const environmentKeys = new Set(inEnvironment)
+  const repositoryKeys = new Set(inRepository)
+  return keys.flatMap((key) => {
+    if (repositoryKeys.has(key)) {
+      return environmentKeys.has(key)
+        ? [`${key} is also a repository secret, readable from every branch; delete that copy.`]
+        : [`${key} is a repository secret, readable from every branch; move it into ${environment}.`]
+    }
+    return environmentKeys.has(key) ? [] : [`${key} is missing; Store staff issue it.`]
+  })
+}
+
 /** Sets up only the Store's environments, and reports the keys they still need. */
 function setUpEnvironments({store, storeName, repositories, dryRun}) {
   for (const entry of repositories) {
@@ -504,15 +521,13 @@ function setUpEnvironments({store, storeName, repositories, dryRun}) {
     if (!dryRun) ensureEnvironment(entry.repository, store.environment, branch)
     const keys =
       entry.repository === MENTRAOS ? MINIAPPS.map(({key}) => secretName(store, key)) : [secretName(store, "")]
-    const inEnvironment = new Set(environmentSecretNames(entry.repository, store.environment))
-    const inRepository = new Set(repositorySecretNames(entry.repository))
-    for (const key of keys.filter((name) => !inEnvironment.has(name))) {
-      console.log(
-        inRepository.has(key)
-          ? `  ${key} is a repository secret, readable from every branch; move it into ${store.environment}.`
-          : `  ${key} is missing; Store staff issue it.`,
-      )
-    }
+    const findings = keyFindings({
+      keys,
+      environment: store.environment,
+      inEnvironment: environmentSecretNames(entry.repository, store.environment),
+      inRepository: repositorySecretNames(entry.repository),
+    })
+    for (const finding of findings) console.log(`  ${finding}`)
   }
 }
 
