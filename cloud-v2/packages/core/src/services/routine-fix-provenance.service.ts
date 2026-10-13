@@ -13,7 +13,7 @@ import type {CaseOccurrence} from '../types/routine-case.types'
 export class RoutineFixProvenanceService {
  constructor(private readonly reruns:Pick<TestRerunService,'history'>=new TestRerunService(),private readonly results:Pick<FrameworkResultService,'summary'>=new FrameworkResultService()){}
  private async input(requestId:string):Promise<RoutineFixInput> {
-  const row=await TestRequestModel.findOne({requestId}).read('primary').readConcern('majority').setOptions({maxTimeMS:5000}).lean()
+  const row=await TestRequestModel.findOne({requestId}).read('primary').readConcern('majority').setOptions({maxTimeMS:5000,timeoutMS:5000}).lean()
   if(!row)throw new TestRunError(404,'Verification input was not found')
   const accepted=readAcceptedRoutineRequest(row as unknown as StoredRequest), selected=accepted.input
   let observed:Awaited<ReturnType<FrameworkResultService['summary']>>|null=null
@@ -31,6 +31,13 @@ export class RoutineFixProvenanceService {
    framework:binding?{revision:binding.revision,version:binding.version,runtimeSha256:binding.runtimeSha256,apiVersion:binding.routineApiVersion}:null,
    glasses:selected.build.manifestSha256?{manifestSha256:selected.build.manifestSha256}:null,
    execution:observed?{hostId:observed.hostId,laneId:observed.laneId}:null,backend:null}
+ }
+ /** Explicit PR refresh uses at most the ten most recent recorded verification identities. History reads never call GitHub. */
+ async recordedInputs(occurrences:CaseOccurrence[]):Promise<RoutineFixInput[]> {
+  const ids=[...new Set(occurrences.flatMap(value=>[...value.verificationRequestIds,...(value.closure?.requestId?[value.closure.requestId]:[])]))].slice(-10)
+  const inputs=await Promise.all(ids.map(async id=>{try{const input=await this.input(id);return input.observed?input:null}
+   catch{return null /* Unavailable or changed evidence cannot establish inclusion. */}}))
+  return inputs.filter((input):input is RoutineFixInput=>input!==null)
  }
  async history(occurrence:CaseOccurrence,before?:number,fixes:CaseFollowUpSummary['intendedFixes']=[]) {
   const original=occurrence.original

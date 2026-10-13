@@ -27,6 +27,9 @@ export const caseOccurrenceSchema = z.object({occurrenceId: frameworkIdentitySch
 export const casePrObservationSchema = z.object({...casePrSchema.shape, headSha: sha,
   state: z.enum(['open', 'closed', 'merged']), review: z.enum(['approved', 'changes-requested', 'pending']),
   mergedAt: z.string().datetime().nullable(), observedAt: z.string().datetime(),
+  mergeCommitSha: sha.nullable().optional(),
+  inclusions: z.array(z.object({component: z.enum(['app artifact', 'routine bundle', 'framework']), revision: sha, sourceSha: sha,
+    state: z.enum(['included', 'not-included', 'unverified']), observedAt: z.string().datetime()}).strict()).max(20).optional(),
 }).strict()
 export const caseClaimSchema = z.object({owner: z.string().min(1).max(100), tokenSha256: z.string().regex(/^[a-f0-9]{64}$/),
   branchKey: z.string().regex(/^[a-f0-9]{64}$/), anchorRunId: frameworkIdentitySchema, generation: z.number().int().positive().safe(),

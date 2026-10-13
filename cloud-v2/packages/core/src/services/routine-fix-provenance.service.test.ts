@@ -63,3 +63,12 @@ test('changed binding source or executable input fails closed even when the chan
   }finally{f.restore()}
  }
 })
+
+test('recorded verification refresh ignores unavailable/changed inputs and never selects unrecorded latest passes',async()=>{
+ const f=fixture()
+ try{
+  expect(await f.service.recordedInputs([{...occurrence,verificationRequestIds:['attempt','attempt','unavailable']}])).toHaveLength(1)
+  f.requests.get('attempt').inputSha256='0'.repeat(64)
+  expect(await f.service.recordedInputs([{...occurrence,verificationRequestIds:['attempt']}])).toEqual([])
+ }finally{f.restore()}
+})

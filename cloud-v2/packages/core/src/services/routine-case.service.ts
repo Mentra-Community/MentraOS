@@ -6,6 +6,7 @@ import {routineCaseRepository, type RoutineCaseRepository} from './routine-case.
 import {TestRunError} from './test-result-error'
 import {requestInputDigest} from './test-request.service'
 import {RoutineCasePrReader, type CasePrReader} from './routine-case-pr.service'
+import {RoutineFixProvenanceService} from './routine-fix-provenance.service'
 import {createStorageService, type StorageService} from './storage/storage.service'
 
 const tokenDigest = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -49,7 +50,8 @@ export class RoutineCaseService {
     private readonly archive: CaseDetailArchive = caseDetailArchive(),
     private readonly verification?: CaseVerificationReader, private readonly now = Date.now,
     private readonly availability: () => boolean = () => process.env.ROUTINE_CASE_API_ENABLED === 'true',
-    private readonly prs: CasePrReader = new RoutineCasePrReader()) {}
+    private readonly prs: CasePrReader = new RoutineCasePrReader(),
+    private readonly provenance: Pick<RoutineFixProvenanceService, 'recordedInputs'> = new RoutineFixProvenanceService()) {}
   assertAvailable() {if (!this.availability()) throw new TestRunError(503, 'Canonical case API awaits verified old-writer drain and finite conversion')}
   async detail(id: string, before = Number.MAX_SAFE_INTEGER, limit = 20): Promise<FailureFollowUp> {
     this.assertAvailable(); caseIdSchema.parse(id)
@@ -117,7 +119,9 @@ export class RoutineCaseService {
     const who = actorId(actor)
     next.prObservations = next.prObservations.filter(observation => next.intendedFixes.some(pr => pr.repository === observation.repository && pr.number === observation.number))
     for (const pr of next.intendedFixes) if (!previous?.intendedFixes.some(old => old.repository === pr.repository && old.number === pr.number)) {
-      const observation = await this.prs.observe(pr)
+      const inputs = next.occurrences.some(value => value.verificationRequestIds.length || value.closure?.requestId)
+        ? await this.provenance.recordedInputs(next.occurrences) : []
+      const observation = await this.prs.observe(pr, {inputs, deadline: this.now() + 20_000, comparisonBudget: {remaining: 20}})
       next.prObservations = [...next.prObservations.filter(old => old.repository !== pr.repository || old.number !== pr.number), observation]
     }
     next = routineCaseSchema.parse(next)
@@ -143,8 +147,13 @@ export class RoutineCaseService {
     if (!row) throw new TestRunError(404, 'Failure follow-up was not found')
     authorizeCaseMutation(row, actor, this.now())
     if (row.revision !== input.revision) throw new TestRunError(409, 'Case changed; read its current revision')
+    const inputs = await this.provenance.recordedInputs(row.occurrences), deadline = this.now() + 20_000, comparisonBudget = {remaining: 20}
     const prObservations = []
-    for (const pr of row.intendedFixes) prObservations.push(await this.prs.observe(pr))
+    for (const pr of row.intendedFixes) {
+      const previous = row.prObservations.find(old => old.repository === pr.repository && old.number === pr.number)
+      if (this.now() >= deadline && previous) {prObservations.push(previous); continue}
+      prObservations.push(await this.prs.observe(pr, {inputs, deadline, comparisonBudget, previous}))
+    }
     return this.persist(row, {...row, revision: row.revision + 1, updatedAt: new Date(this.now()).toISOString(), prObservations},
       input.mutationId, digest, actor, 'pr-observation', ['prObservations'])
   }
