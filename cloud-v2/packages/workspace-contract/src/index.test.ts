@@ -26,9 +26,10 @@ describe("package entry points", () => {
       principalSignature: "x-mentra-principal-signature",
     })
     expect(root.FORWARDING_SERVICE).toBe("core")
-    expect(root.FLEET_UI_CONTRACT_VERSION).toBe(1)
     expect(Object.keys(root)).not.toContain("signServiceRequest")
     expect(Object.keys(root)).not.toContain("createCoreWorkspaceClient")
+    // The Fleet UI contract names DOM types, so it has its own subpath and server packages never see it.
+    expect(Object.keys(root)).not.toContain("FLEET_UI_CONTRACT_VERSION")
     for (const name of ["signForwardedPrincipal", "verifyForwardedPrincipal", "parseForwardedPrincipal"]) {
       expect(Object.keys(root)).not.toContain(name)
     }
@@ -49,6 +50,10 @@ describe("package entry points", () => {
 
   test("package.json maps the root to the browser-safe entry and ./server to the Node entry", () => {
     const manifest = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"))
-    expect(manifest.exports).toEqual({".": "./src/index.ts", "./server": "./src/server.ts"})
+    expect(manifest.exports).toEqual({
+      ".": "./src/index.ts",
+      "./server": "./src/server.ts",
+      "./fleet-ui": "./src/fleet-ui.ts",
+    })
   })
 })

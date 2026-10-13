@@ -4,6 +4,9 @@
  * (`/api/admin/fleet/ui/entry.js`). The host, an admin portal page, imports the module, checks
  * `contractVersion`, and calls `mount` with a {@link FleetUiContext}. Types and one constant only,
  * so the host and the module can both import it in the browser.
+ *
+ * Import it from `@mentra/workspace-contract/fleet-ui`, not the package root: the contract names DOM
+ * types, which server packages do not have.
  */
 
 /** The version of this contract. A host and a module that disagree on it must not be mounted together. */

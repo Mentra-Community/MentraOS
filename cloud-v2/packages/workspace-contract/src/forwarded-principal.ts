@@ -104,60 +104,45 @@ export function verifyForwardedPrincipal(
 }
 
 /**
- * `value` as a {@link ForwardedPrincipal}, or null when it is not exactly one. The parse is strict
- * per kind: every documented field must be present and well-typed, and a field the kind does not
- * document (another kind's field, or an unknown one) refuses the principal.
+ * `value` as a {@link ForwardedPrincipal}, or null when it is not one. The result holds only the
+ * documented fields of its kind, read from the value's own properties: a field the kind does not
+ * document (another kind's field, or one a newer Core adds) is ignored, so Core and the receiver
+ * need not deploy in step. A missing or unknown `kind`, a missing or wrongly typed documented field,
+ * a missing or unknown `scope.kind`, and a workspace scope without a `workspaceId` refuse the
+ * principal. `organizationCapabilities` must be an array of strings; the entries this build does not
+ * know are dropped.
  */
 export function parseForwardedPrincipal(value: unknown): ForwardedPrincipal | null {
   if (!isRecord(value)) return null
-  switch (value.kind) {
-    case "phone":
-      if (
-        !hasExactlyKeys(value, ["kind", "mentraUserId", "tenantId", "sessionId", "email"]) ||
-        !isId(value.mentraUserId) ||
-        typeof value.tenantId !== "string" ||
-        typeof value.sessionId !== "string" ||
-        !isNullableString(value.email)
-      ) {
+  switch (own(value, "kind")) {
+    case "phone": {
+      const mentraUserId = own(value, "mentraUserId")
+      const tenantId = own(value, "tenantId")
+      const sessionId = own(value, "sessionId")
+      const email = own(value, "email")
+      if (!isId(mentraUserId) || typeof tenantId !== "string" || typeof sessionId !== "string" || !isNullableString(email)) {
         return null
       }
-      return {
-        kind: "phone",
-        mentraUserId: value.mentraUserId,
-        tenantId: value.tenantId,
-        sessionId: value.sessionId,
-        email: value.email,
-      }
+      return {kind: "phone", mentraUserId, tenantId, sessionId, email}
+    }
     case "user": {
+      const mentraUserId = own(value, "mentraUserId")
+      const email = own(value, "email")
+      const emailVerified = own(value, "emailVerified")
+      const isOrganizationAdmin = own(value, "isOrganizationAdmin")
+      const organizationCapabilities = parseOrganizationCapabilities(own(value, "organizationCapabilities"))
+      const scope = parseFleetScope(own(value, "scope"))
       if (
-        !hasExactlyKeys(value, [
-          "kind",
-          "mentraUserId",
-          "email",
-          "emailVerified",
-          "isOrganizationAdmin",
-          "organizationCapabilities",
-          "scope",
-        ]) ||
-        !isId(value.mentraUserId) ||
-        !isNullableString(value.email) ||
-        typeof value.emailVerified !== "boolean" ||
-        typeof value.isOrganizationAdmin !== "boolean" ||
-        !isOrganizationCapabilities(value.organizationCapabilities)
+        !isId(mentraUserId) ||
+        !isNullableString(email) ||
+        typeof emailVerified !== "boolean" ||
+        typeof isOrganizationAdmin !== "boolean" ||
+        !organizationCapabilities ||
+        !scope
       ) {
         return null
       }
-      const scope = parseFleetScope(value.scope)
-      if (!scope) return null
-      return {
-        kind: "user",
-        mentraUserId: value.mentraUserId,
-        email: value.email,
-        emailVerified: value.emailVerified,
-        isOrganizationAdmin: value.isOrganizationAdmin,
-        organizationCapabilities: [...value.organizationCapabilities],
-        scope,
-      }
+      return {kind: "user", mentraUserId, email, emailVerified, isOrganizationAdmin, organizationCapabilities, scope}
     }
     default:
       return null
@@ -166,13 +151,22 @@ export function parseForwardedPrincipal(value: unknown): ForwardedPrincipal | nu
 
 function parseFleetScope(value: unknown): FleetScope | null {
   if (!isRecord(value)) return null
-  if (value.kind === "organization") return hasExactlyKeys(value, ["kind"]) ? {kind: "organization"} : null
-  if (value.kind === "workspace") {
-    return hasExactlyKeys(value, ["kind", "workspaceId"]) && isId(value.workspaceId)
-      ? {kind: "workspace", workspaceId: value.workspaceId}
-      : null
+  switch (own(value, "kind")) {
+    case "organization":
+      return {kind: "organization"}
+    case "workspace": {
+      const workspaceId = own(value, "workspaceId")
+      return isId(workspaceId) ? {kind: "workspace", workspaceId} : null
+    }
+    default:
+      return null
   }
-  return null
+}
+
+/** The entries of `value` that are organization capabilities this build knows, or null unless `value` is an array of strings. */
+function parseOrganizationCapabilities(value: unknown): OrganizationCapability[] | null {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) return null
+  return value.filter((entry): entry is OrganizationCapability => KNOWN_ORGANIZATION_CAPABILITIES.has(entry))
 }
 
 type Json = Record<string, unknown>
@@ -182,12 +176,8 @@ const KNOWN_ORGANIZATION_CAPABILITIES: ReadonlySet<string> = new Set(ORGANIZATIO
 const isRecord = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value)
 const isId = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0
 const isNullableString = (value: unknown): value is string | null => value === null || typeof value === "string"
-const isOrganizationCapabilities = (value: unknown): value is OrganizationCapability[] =>
-  Array.isArray(value) && value.every((entry) => typeof entry === "string" && KNOWN_ORGANIZATION_CAPABILITIES.has(entry))
-const hasExactlyKeys = (value: Json, keys: readonly string[]): boolean => {
-  const own = Object.keys(value)
-  return own.length === keys.length && keys.every((key) => Object.hasOwn(value, key))
-}
+/** `value[key]` when it is an own property, so a field can never come from a prototype. */
+const own = (value: Json, key: string): unknown => (Object.hasOwn(value, key) ? value[key] : undefined)
 
 /** A case-insensitive single-value header lookup; a repeated header counts as missing. */
 function headerReader(headers: ForwardedRequest["headers"]): (name: string) => string | undefined {

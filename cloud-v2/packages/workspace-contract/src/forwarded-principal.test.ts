@@ -205,6 +205,19 @@ describe("verifyForwardedPrincipal", () => {
     }
   })
 
+  test("accepts a correctly signed principal from a newer Core that knows more capabilities and fields", () => {
+    const newer = {
+      ...user,
+      organizationCapabilities: ["organization.fleet.administer", "organization.future.thing"],
+      futureField: true,
+      scope: {kind: "organization", futureDetail: 1},
+    }
+    expect(verify(withSignedPrincipalBody(forwarded(phone), newer))).toEqual({
+      ...user,
+      organizationCapabilities: ["organization.fleet.administer"],
+    })
+  })
+
   test("refuses a correctly signed credential principal", () => {
     const credential = {
       kind: "credential",
@@ -235,11 +248,33 @@ describe("parseForwardedPrincipal", () => {
     expect(parsed?.kind === "user" && parsed.organizationCapabilities).not.toBe(capabilities)
   })
 
-  test("refuses fields the kind does not document", () => {
-    expect(parseForwardedPrincipal({...user, extra: "dropped"})).toBeNull()
-    expect(parseForwardedPrincipal({...phone, extra: "dropped"})).toBeNull()
-    expect(parseForwardedPrincipal({...user, scope: {kind: "organization", workspaceId: "ws_1"}})).toBeNull()
-    expect(parseForwardedPrincipal({...user, scope: {kind: "workspace", workspaceId: "ws_1", extra: 1}})).toBeNull()
+  test("ignores fields the kind does not document and returns only the known ones", () => {
+    const withExtra = parseForwardedPrincipal({...user, extra: "ignored"})
+    expect(withExtra).toEqual(user)
+    expect(Object.keys(withExtra!).sort()).toEqual(Object.keys(user).sort())
+    const phoneWithExtra = parseForwardedPrincipal({...phone, extra: "ignored"})
+    expect(phoneWithExtra).toEqual(phone)
+    expect(Object.keys(phoneWithExtra!).sort()).toEqual(Object.keys(phone).sort())
+    const organizationScope = parseForwardedPrincipal({...user, scope: {kind: "organization", workspaceId: "ws_1"}})
+    expect(organizationScope).toEqual(user)
+    expect(Object.keys((organizationScope as {scope: object}).scope)).toEqual(["kind"])
+    const workspaceScope = parseForwardedPrincipal({...workspaceUser, scope: {kind: "workspace", workspaceId: "ws_1", extra: 1}})
+    expect(workspaceScope).toEqual(workspaceUser)
+    expect(Object.keys((workspaceScope as {scope: object}).scope).sort()).toEqual(["kind", "workspaceId"])
+  })
+
+  test("reads only a value's own properties, so a prototype can neither supply nor pollute a field", () => {
+    const polluted = JSON.parse(
+      '{"kind":"phone","mentraUserId":"mu_1","tenantId":"mentra","sessionId":"sess_1","email":null,"__proto__":{"kind":"user","isOrganizationAdmin":true}}',
+    )
+    const parsed = parseForwardedPrincipal(polluted)
+    expect(parsed).toEqual({...phone, email: null})
+    expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype)
+    expect(Object.keys(parsed!)).not.toContain("isOrganizationAdmin")
+    expect(({} as Record<string, unknown>).isOrganizationAdmin).toBeUndefined()
+    // Fields that exist only on the prototype do not count.
+    expect(parseForwardedPrincipal(Object.create(phone))).toBeNull()
+    expect(parseForwardedPrincipal({...user, scope: Object.create({kind: "organization"})})).toBeNull()
   })
 
   test("refuses fields of the wrong type", () => {
@@ -286,20 +321,37 @@ describe("parseForwardedPrincipal", () => {
     expect(parseForwardedPrincipal({...user, scope: {kind: "workspace", workspaceId: 7}})).toBeNull()
   })
 
-  test("a phone principal that carries organizationCapabilities or a scope is refused", () => {
-    expect(parseForwardedPrincipal({...phone, organizationCapabilities: []})).toBeNull()
-    expect(parseForwardedPrincipal({...phone, organizationCapabilities: ["organization.fleet.administer"]})).toBeNull()
-    expect(parseForwardedPrincipal({...phone, scope: {kind: "organization"}})).toBeNull()
+  test("a phone principal that carries organizationCapabilities or a scope is a phone principal without them", () => {
+    for (const extra of [
+      {organizationCapabilities: []},
+      {organizationCapabilities: ["organization.fleet.administer"]},
+      {scope: {kind: "organization"}},
+    ]) {
+      const parsed = parseForwardedPrincipal({...phone, ...extra})
+      expect(parsed).toEqual(phone)
+      expect(Object.keys(parsed!)).not.toContain("organizationCapabilities")
+      expect(Object.keys(parsed!)).not.toContain("scope")
+    }
   })
 
-  test("a user principal needs organizationCapabilities, each a known organization capability", () => {
+  test("a user principal needs an organizationCapabilities array of strings, and drops the ones it does not know", () => {
     const {organizationCapabilities: _caps, ...withoutCapabilities} = user as Extract<ForwardedPrincipal, {kind: "user"}>
     expect(parseForwardedPrincipal(withoutCapabilities)).toBeNull()
     expect(parseForwardedPrincipal({...user, organizationCapabilities: "organization.fleet.administer"})).toBeNull()
-    expect(parseForwardedPrincipal({...user, organizationCapabilities: ["organization.unknown.thing"]})).toBeNull()
-    expect(parseForwardedPrincipal({...user, organizationCapabilities: ["organization.fleet.administer", "x"]})).toBeNull()
-    expect(parseForwardedPrincipal({...user, organizationCapabilities: ["workspace.read"]})).toBeNull()
+    expect(parseForwardedPrincipal({...user, organizationCapabilities: null})).toBeNull()
     expect(parseForwardedPrincipal({...user, organizationCapabilities: [7]})).toBeNull()
+    expect(parseForwardedPrincipal({...user, organizationCapabilities: ["organization.fleet.administer", null]})).toBeNull()
     expect(parseForwardedPrincipal({...user, organizationCapabilities: []})).toEqual({...user, organizationCapabilities: []})
+    // A capability this build does not know is dropped, not a reason to refuse the person.
+    expect(
+      parseForwardedPrincipal({
+        ...user,
+        organizationCapabilities: ["organization.future.thing", "organization.fleet.administer", "workspace.read"],
+      }),
+    ).toEqual({...user, organizationCapabilities: ["organization.fleet.administer"]})
+    expect(parseForwardedPrincipal({...user, organizationCapabilities: ["organization.future.thing"]})).toEqual({
+      ...user,
+      organizationCapabilities: [],
+    })
   })
 })

@@ -1,4 +1,6 @@
 import {describe, expect, test} from "bun:test"
+import {readFileSync} from "node:fs"
+import {join} from "node:path"
 import {FLEET_UI_CONTRACT_VERSION, type FleetUiContext, type FleetUiMe, type FleetUiModule} from "./fleet-ui"
 import * as root from "./index"
 
@@ -14,8 +16,14 @@ describe("Fleet UI module contract", () => {
     expect(FLEET_UI_CONTRACT_VERSION).toBe(1)
   })
 
-  test("is exported from the browser-safe package root", () => {
-    expect(root.FLEET_UI_CONTRACT_VERSION).toBe(1)
+  test("is reached through the ./fleet-ui subpath, not the package root, and bundles for the browser", async () => {
+    const manifest = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"))
+    expect(manifest.exports["./fleet-ui"]).toBe("./src/fleet-ui.ts")
+    expect(Object.keys(root)).not.toContain("FLEET_UI_CONTRACT_VERSION")
+    const entrypoint = Bun.resolveSync("./fleet-ui", import.meta.dir)
+    const result = await Bun.build({entrypoints: [entrypoint], target: "browser"})
+    expect(result.logs.filter((log) => log.level === "error").map((log) => log.message)).toEqual([])
+    expect(result.success).toBe(true)
   })
 
   test("a module mounts into a host element with the host's context and unmounts", () => {
