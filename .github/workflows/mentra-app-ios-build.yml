@@ -551,6 +551,10 @@ jobs:
           rm -rf node_modules
           bun install --no-frozen-lockfile
 
+      - name: Test packaged PR compilation provenance
+        if: steps.select-ipa.outputs.reused != 'true'
+        run: node --test mobile/scripts/app-config-pr-build.test.mjs
+
       - name: Test native gallery download progress
         if: steps.select-ipa.outputs.reused != 'true'
         run: mobile/scripts/test-gallery-download-progress.sh

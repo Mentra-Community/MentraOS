@@ -36,7 +36,7 @@ function xcodeEnvironmentEntries(env, nodeBinary) {
 
   if (env.MENTRA_PR_MOBILE_FINGERPRINT) {
     entries.push(["MENTRA_PR_MOBILE_FINGERPRINT", String(env.MENTRA_PR_MOBILE_FINGERPRINT)])
-    entries.push(["GITHUB_SHA", String(env.GITHUB_SHA)])
+    entries.push(["MENTRA_PR_BUILD_SHA", String(env.MENTRA_PR_BUILD_SHA)])
   }
   if (env.MENTRAOS_NATIVE_MARKETING_VERSION) {
     entries.push(["MENTRAOS_NATIVE_MARKETING_VERSION", String(env.MENTRAOS_NATIVE_MARKETING_VERSION)])
