@@ -8,6 +8,7 @@ import {
   routineWorkRequestSchema,
   routineWorkAcceptanceSchema,
   routineWorkStatusSchema,
+  routineWorkVerificationSchema, type RoutineWorkVerification,
   routineWorkLocalRegistrationSchema,
   type AuthoringWork,
   type RoutineWorkRequest,
@@ -43,6 +44,7 @@ export interface RoutineWorkDelivery {
   dispatchCompletion?: RoutineJobCompletion
   createdAt?: Date
   acceptance?: z.infer<typeof routineWorkAcceptanceSchema>
+  verification?: {identity: RoutineWorkVerification['identity']; status: RoutineWorkStatus; receipts: Array<{eventId:string;sequence:number;sha256:string}>}
   status?: RoutineWorkStatus
   statusReceipts?: Array<{eventId: string; sequence: number; sha256: string}>
   reporting?: import('./routine-work-reporting').RoutineWorkReporting
@@ -53,6 +55,7 @@ export interface RoutineWorkRepository {
   queued(hostId: string, after: {createdAt: Date; workId: string} | null, limit: number): Promise<RoutineWorkDelivery[]>
   accept(receipt: z.infer<typeof routineWorkAcceptanceSchema>): Promise<RoutineWorkDelivery | null>
   updateStatus(event: RoutineWorkStatus, previous?: RoutineWorkStatus): Promise<RoutineWorkDelivery | null>
+  updateVerification?(event: RoutineWorkVerification, original: RoutineWorkStatus, previous?: RoutineWorkDelivery['verification']): Promise<RoutineWorkDelivery | null>
   bind?(workId: string, inputSha256: string, binding: RoutineJobBinding, work: AuthoringWork, now: Date): Promise<RoutineWorkDelivery | null>
   pending?(limit: number, now: Date): Promise<RoutineWorkDelivery[]>
   dispatchCompletions?(hostId: string, limit: number): Promise<RoutineWorkDelivery[]>
@@ -142,6 +145,13 @@ const repository: RoutineWorkRepository = {
       {$set: {acceptance: receipt}},
       {new: true, writeConcern: testWriteConcern},
     ).lean()) as RoutineWorkDelivery | null
+  },
+  async updateVerification(value, original, previous) {
+    const {identity,event}=value
+    return await RoutineWorkModel.findOneAndUpdate({workId:event.workId,hostId:event.hostId,inputSha256:event.inputSha256,
+      status:original,verification:previous??{$exists:false}},{$set:{verification:{identity,status:event,
+        receipts:[...(previous?.receipts??[]),{eventId:event.eventId,sequence:event.sequence,sha256:requestInputDigest(event)}]}}},
+      {new:true,writeConcern:testWriteConcern}).lean() as unknown as RoutineWorkDelivery|null
   },
   async updateStatus(event, previous) {
     return (await RoutineWorkModel.findOneAndUpdate(
@@ -489,6 +499,43 @@ export class RoutineWorkService {
       throw error
     }
     return assertSame(await this.inspect(work.workId))
+  }
+  async verifyRecording(value: unknown, hostId: string) {
+    const parsed=routineWorkVerificationSchema.safeParse(value)
+    if(!parsed.success||parsed.data.event.hostId!==hostId)throw new TestRunError(400,'Invalid recording verification event')
+    const {identity,event}=parsed.data,row=await this.inspect(event.workId),original=row.status
+    if(!original||original.state!=='failed'||!original.details.attemptId||row.hostId!==hostId||
+      row.inputSha256!==event.inputSha256||!row.acceptance||event.details.acceptedAt!==row.acceptance.acceptedAt||
+      requestInputDigest(event.details.work)!==row.inputSha256||event.details.attemptId!==original.details.attemptId||
+      identity.failureEventId!==original.eventId||identity.failureSha256!==requestInputDigest(original)||
+      identity.previousFailure.reason!==original.details.details.reason||
+      !['verifying','passed','failed'].includes(event.state)||event.sequence<=original.sequence||
+      Date.parse(identity.acceptedAt)<Date.parse(original.details.events.at(-1)?.at??original.details.acceptedAt))
+      throw new TestRequestConflict('Recording verification differs from its original failed attempt')
+    for(const key of ['sourceRevision','requestId','prUrl','review'] as const)
+      if(!original.details.details[key]||requestInputDigest(event.details.details[key])!==requestInputDigest(original.details.details[key]))
+        throw new TestRequestConflict('Recording verification changed its original source, request or review')
+    const decision=event.details.events.find(item=>item.eventId===identity.decisionId)
+    if(!row.verification&&(!decision||decision.state!=='verifying'||decision.sequence!==original.sequence+1||Date.parse(decision.at)<Date.parse(identity.acceptedAt)||Date.parse(decision.at)>Date.parse(identity.deadline)))
+      throw new TestRequestConflict('Recording verification lacks its original ordered retry decision')
+    const previous=row.verification
+    if(previous&&requestInputDigest(previous.identity)!==requestInputDigest(identity))
+      throw new TestRequestConflict('Recording verification changed its original retry identity')
+    const digest=requestInputDigest(event),saved=previous?.receipts.find(receipt=>receipt.eventId===event.eventId)
+    if(saved){if(saved.sequence!==event.sequence||saved.sha256!==digest)throw new TestRequestConflict('Recording verification changed its original event');return event}
+    if((previous?.receipts.length??0)>=100)throw new TestRequestConflict('Recording verification reached its bounded event allowance')
+    if(previous&&(event.sequence<=previous.status.sequence||terminalState(previous.status.state)&&
+      requestInputDigest(terminalOutcome(event))!==requestInputDigest(terminalOutcome(previous.status))))
+      throw new TestRequestConflict('Recording verification cannot replace its terminal result')
+    const lifecycle=event.details.events.find(item=>item.eventId===event.eventId&&item.sequence===event.sequence&&item.state===event.state)
+    if(!lifecycle||Date.parse(lifecycle.at)<Date.parse(identity.acceptedAt)||Date.parse(lifecycle.at)>Date.parse(identity.deadline))
+      throw new TestRequestConflict('Recording verification event is outside its original retry window')
+    // A later delivery may reconcile an already recorded event, never renew the original retry window.
+    if(!this.rows.updateVerification)throw new TestRunError(503,'Recording verification persistence is unavailable')
+    const updated=await this.rows.updateVerification(parsed.data,original,previous)??await this.inspect(event.workId)
+    const receipt=updated.verification?.receipts.find(item=>item.eventId===event.eventId)
+    if(!receipt||receipt.sha256!==digest||receipt.sequence!==event.sequence)throw new TestRequestConflict('Recording verification raced or changed its original event')
+    return event
   }
   async status(value: unknown, hostId: string) {
     const parsed = routineWorkStatusSchema.safeParse(value)

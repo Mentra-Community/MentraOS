@@ -14,6 +14,7 @@ test('worker routes derive host from credential and reject URL/body identity mis
       calls.push({value, host})
       return value
     },
+    async verifyRecording(value:unknown,host:string){calls.push({value,host});return (value as any).event},
     async status(value: unknown, host: string) {
       calls.push({value, host})
       return value
@@ -33,6 +34,9 @@ test('worker routes derive host from credential and reject URL/body identity mis
   expect(calls).toEqual(['mini'])
   await app.request('/one/status', {method: 'POST', headers, body: JSON.stringify({workId: 'one'})})
   expect(calls[1]).toEqual({value: {workId: 'one'}, host: 'mini'})
+  expect((await app.request('/one/recording-verification',{method:'POST',headers,body:JSON.stringify({event:{workId:'two'}})})).status).toBe(400)
+  expect((await app.request('/one/recording-verification',{method:'POST',headers,body:JSON.stringify({event:{workId:'one'}})})).status).toBe(200)
+  expect(calls[2]).toEqual({value:{event:{workId:'one'}},host:'mini'})
 })
 
 test('intake requires the existing capability and bounds a complete JSON request before service calls', async () => {

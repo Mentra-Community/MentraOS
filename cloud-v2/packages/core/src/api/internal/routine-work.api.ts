@@ -24,7 +24,7 @@ const projection = ({
   work,
   createdAt,
   acceptance,
-  status,
+  status, verification,
   reporting, fleetSelection, fleetInputSha256, fleetDeadline, fleetBinding, fleetCancellation,
 }: RoutineWorkDelivery) => ({
   workId,
@@ -35,7 +35,7 @@ const projection = ({
   work,
   createdAt,
   acceptance,
-  status, fleetSelection, fleetInputSha256, fleetDeadline, fleetBinding, fleetCancellation,
+  status, verification, fleetSelection, fleetInputSha256, fleetDeadline, fleetBinding, fleetCancellation,
   ...(reporting
     ? {
         reporting: {
@@ -90,6 +90,11 @@ export function createRoutineWorkDeliveriesApi(
     const value = (await frameworkJson(c)) as {workId?: unknown}
     if (value?.workId !== c.req.param('workId')) return c.json({error: 'invalid_authoring_identity'}, 400)
     return c.json({receipt: await service.accept(value, c.var.testHostId)})
+  })
+  app.post('/:workId/recording-verification', frameworkBodyLimit(1024 * 1024 + 8192), async(c)=>{
+    const value=await frameworkJson(c) as {event?:{workId?:unknown}}
+    if(value?.event?.workId!==c.req.param('workId'))return c.json({error:'invalid_authoring_identity'},400)
+    return c.json({receipt:await service.verifyRecording(value,c.var.testHostId)})
   })
   app.post('/:workId/status', frameworkBodyLimit(1024 * 1024 + 4096), async (c) => {
     const value = (await frameworkJson(c)) as {workId?: unknown}
