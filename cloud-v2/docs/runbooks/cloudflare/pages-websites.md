@@ -49,6 +49,12 @@ Required Pages environment variable:
 `bun run deploy:pages` refreshes `CORE_URL` for the selected Pages project
 before uploading the static bundle.
 
+The workspace portal's sidebar links to its environment's Developer Console.
+`bun run deploy:pages` builds the portal with `DEVELOPER_CONSOLE_URL` from the
+`developerConsoleUrls` map in `scripts/deploy-pages.ts`. Staging has no
+Developer Console of its own yet and links to production's. A portal built
+without `DEVELOPER_CONSOLE_URL`, such as a Private Cloud's, shows no link.
+
 Deploy manually:
 
 ```bash

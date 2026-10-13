@@ -50,8 +50,10 @@ Admin" when an Organization Admin's powers go beyond it), and lists your other w
 page carries its workspace:
 `/w/<workspaceId>/members` (members, with pending invitations under them),
 `/w/<workspaceId>/settings` and `/w/<workspaceId>/audit`; the sidebar offers only what your
-role opens. `/` opens your last-used workspace (remembered in the browser, never an
-authority), else your first, else the first run: your pending invitations if you have any
+role opens. Above your account, the sidebar links to the environment's Developer Console in a
+new tab; a Private Cloud, which has no Developer Console, shows no link. `/` opens your
+last-used workspace (remembered in the browser, never an authority), else your first, else the
+first run: your pending invitations if you have any
 you can accept, otherwise **Create your workspace**. An invitation link lands on
 `/invitation`, which reads the token from the tab's session storage. A link Core reports
 as no longer valid is shown as such once and then forgotten. Pending invitations are the

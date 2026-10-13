@@ -90,10 +90,12 @@ jobs:
 
       - name: Run website sign-in tests
         working-directory: cloud-v2
-        # Mentra's sign-in page, and the portal sites' sign-in, sign-out and
-        # Pages relay. Browserless: React views render to static markup.
+        # Mentra's sign-in page, the portal sites' sign-in, sign-out and Pages
+        # relay, and the Pages deployment's per-environment settings.
+        # Browserless: React views render to static markup.
         run: |
           bun test --max-concurrency=1 \
+            scripts/deploy-pages.test.ts \
             websites/account/src \
             websites/account/functions \
             websites/portal/src \
