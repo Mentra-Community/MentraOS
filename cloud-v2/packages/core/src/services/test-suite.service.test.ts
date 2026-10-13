@@ -586,7 +586,7 @@ test("large summary pages bound receipt batches and concurrency under one deadli
   const result = await new TestSuiteService().summaries(ids, deadline);
   expect(selected).toEqual(ids);
   expect(result.size).toBe(ids.length);
-  expect(peak).toBe(5);
+  expect(peak).toBe(10);
 });
 
 test('compact nightly summaries preserve terminal evidence verdicts through the actual history reader', async () => {

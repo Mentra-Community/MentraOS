@@ -1,5 +1,5 @@
 import {expect,test,spyOn} from 'bun:test';
-import {TestRerunService,type RerunRepository,type RerunRecord} from './test-rerun.service';
+import {TestRerunService,testRerunRepository,rerunAttemptBatch,rerunAttemptRequestFields,type RerunRepository,type RerunRecord} from './test-rerun.service';
 import {requestInputDigest} from './test-request.service';
 import {TestRunError} from './test-result-error';
 import {testRoutineSource} from '../testing/framework-fixtures';
@@ -346,3 +346,46 @@ test('latest attempt retains terminal evidence failure separately from upload pe
  f.complete(preview.plan.members[0]!.requestId,'pass','failed')
  const latest=await f.service.latestAttempts([{parent:{suiteId:'nightly'},memberId:'member-20'}]);expect([...latest.values()][0]).toMatchObject({status:'pass',publicationComplete:false,evidenceStatus:'failed'})
 })
+
+
+test('latest lineage batches database responses, reuses freed slots and deduplicates complete plans', async () => {
+ const {TestRerunModel}=await import('../models/test-rerun.model');
+ const roots=Array.from({length:601},(_,i)=>`root-${i}`), deadline=Date.now()+10000;
+ const started:number[]=[],pending=new Map<number,()=>void>();let active=0,peak=0;
+ const aggregate=spyOn(TestRerunModel,'aggregate').mockImplementation(((pipeline:any[])=>{
+  const keys=pipeline[0].$match['plan.members.rootKey'].$in as string[],index=roots.indexOf(keys[0]!)/100;
+  expect(keys.length).toBeLessThanOrEqual(100);
+  return {read(){return this},readConcern(){return this},option(options:{timeoutMS:number,maxTimeMS:number}){
+   expect(options.timeoutMS).toBeGreaterThan(0);expect(options.timeoutMS).toBeLessThanOrEqual(10000);
+   expect(options.maxTimeMS).toBe(options.timeoutMS);return this},exec(){started.push(index);active++;peak=Math.max(peak,active);
+    return new Promise(resolve=>pending.set(index,()=>{active--;resolve([{rerunId:'same-retained-plan',plan:{members:[{rootKey:keys[0]}]}}])}))}};
+ }) as any);
+ try{
+  const promise=testRerunRepository.latest(roots,deadline);await Promise.resolve();
+  expect(started).toEqual([0,1,2,3,4]);pending.get(1)!();await new Promise(resolve=>setTimeout(resolve,0));
+  expect(started).toContain(5);expect(pending.has(0)).toBe(true);
+  pending.get(5)!();await new Promise(resolve=>setTimeout(resolve,0));pending.get(6)!();
+  for(const index of [0,2,3,4])pending.get(index)!();
+  const rows=await promise;expect(peak).toBe(5);expect(rows).toHaveLength(1);
+ }finally{aggregate.mockRestore()}
+});
+
+test('rerun batch requests only required provenance and refuses ambiguous request identities', async()=>{
+ const {TestRequestModel}=await import('../models/test-request.model'),{TestRunModel}=await import('../models/test-run.model');
+ const ids=Array.from({length:22},(_,index)=>`request-${index}`),queries:string[][]=[];let duplicate=false;
+ const query=(rows:any[])=>({select(fields:unknown){expect(fields).toEqual(rerunAttemptRequestFields);return this},limit(limit:number){expect(limit).toBeLessThanOrEqual(11);return this},read(){return this},readConcern(){return this},setOptions(options:{timeoutMS:number,maxTimeMS:number}){expect(options.timeoutMS).toBeGreaterThan(0);expect(options.timeoutMS).toBe(options.maxTimeMS);return this},async lean(){return rows}});
+ const requests=spyOn(TestRequestModel,'find').mockImplementation(((filter:any)=>{const batch=filter.requestId.$in as string[];queries.push(batch);return query(duplicate?[{requestId:batch[0]},{requestId:batch[0]}]:batch.map(requestId=>({requestId})))}) as any);
+ const runs=spyOn(TestRunModel,'find').mockImplementation((()=>({...query([]),select(){return this}})) as any);
+ try{const observed=await rerunAttemptBatch.read([...ids,ids[0]!],Date.now()+10000);expect(queries.map(ids=>ids.length)).toEqual([10,10,2]);expect(observed.requests.size).toBe(22);
+  duplicate=true;await expect(rerunAttemptBatch.read(['duplicate'],Date.now()+1000)).rejects.toThrow('identity is ambiguous');
+  await expect(rerunAttemptBatch.read(['expired'],Date.now()-1)).rejects.toThrow('timed out');
+ }finally{requests.mockRestore();runs.mockRestore()}
+});
+
+test('latest status shares caller deadline with both retained plans and admitted summaries', async()=>{
+ const f=fixture(),deadline=Date.now()+3210,seen:number[]=[];
+ (f.service as any).store.latest=async(_roots:string[],budget:number)=>{seen.push(budget);return []};
+ (f.service as any).batch={async read(_ids:string[],budget:number){seen.push(budget);return{requests:new Map(),results:new Map()}}};
+ await f.service.latestAttempts([{parent:{suiteId:'nightly'},memberId:'member-20'}],deadline);
+ expect(seen).toEqual([deadline,deadline]);
+});
