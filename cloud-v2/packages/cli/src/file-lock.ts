@@ -57,6 +57,8 @@ export interface InspectedLock {
 const HOLDER_FILE = "holder"
 const POLL_MS = 100
 const DEFAULT_TOMBSTONE_MS = 10 * 60_000
+/** What renaming onto an existing lock fails with, by platform. */
+const LOCK_IN_THE_WAY = new Set(["ENOTEMPTY", "EEXIST", "EPERM", "EACCES", "EBUSY"])
 
 /** Run `work` holding the lock at `path`, waiting for (or taking over) another command's. */
 export async function withFileLock<T>(path: string, options: FileLockOptions, work: () => Promise<T>): Promise<T> {
@@ -155,9 +157,9 @@ function tryAcquire(path: string): string | null {
     return holder
   } catch (error) {
     rmSync(prepared, {recursive: true, force: true})
-    // A lock in the way is the expected failure; anything else (permissions, a missing directory) is not.
-    if (!inspectLock(path)) throw error
-    return null
+    // A lock in the way (Windows says EPERM): try again, even if it has been released meanwhile.
+    if (LOCK_IN_THE_WAY.has((error as {code?: string})?.code ?? "")) return null
+    throw error
   }
 }
 
