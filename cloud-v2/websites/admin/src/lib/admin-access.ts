@@ -2,16 +2,13 @@ import type { OrganizationCapability, PrincipalResponse } from "@mentra/workspac
 
 /** The admin portal's pages, in navigation order. */
 export type AdminPageKey =
-  | "home"
-  | "review"
-  | "preinstalled"
-  | "audit"
   | "incidents"
   | "test-runs"
   | "routine-catalog"
   | "system-health"
   | "workspaces"
-  | "operator-keys";
+  | "operator-keys"
+  | "audit";
 
 /** What `GET /api/admin/me` answers: who is calling and what they may do here. Open to every signed-in person. */
 export interface AdminMe {
@@ -24,20 +21,14 @@ export interface AdminMe {
 
 /** The pages in navigation order. The first one a principal can see is their default page. */
 export const PAGE_ORDER: readonly AdminPageKey[] = [
-  "home",
-  "review",
-  "preinstalled",
-  "audit",
   "incidents",
   "test-runs",
   "routine-catalog",
   "system-health",
   "workspaces",
   "operator-keys",
+  "audit",
 ];
-
-/** Core's built-in Store: administered by Organization Admins in person, with no capability of its own. */
-const BUILT_IN_STORE_PAGES: ReadonlySet<AdminPageKey> = new Set(["home", "review", "preinstalled", "audit"]);
 
 /** The organization capability each other page needs. */
 const PAGE_CAPABILITY: Partial<Record<AdminPageKey, OrganizationCapability>> = {
@@ -51,13 +42,14 @@ const PAGE_CAPABILITY: Partial<Record<AdminPageKey, OrganizationCapability>> = {
 
 /**
  * The pages this principal may open. There is no blanket admin gate: each page needs its own capability,
- * and the built-in Store's pages need an Organization Admin who is a person. Core checks every request
- * anyway; this only keeps the portal from offering what would be refused.
+ * and the audit log needs an Organization Admin who is a person. Core checks every request anyway; this
+ * only keeps the portal from offering what would be refused.
  */
 export function visiblePages(me: Pick<AdminMe, "organization" | "user">): AdminPageKey[] {
   const held = new Set<OrganizationCapability>(me.organization.capabilities);
   return PAGE_ORDER.filter(page => {
-    if (BUILT_IN_STORE_PAGES.has(page)) return me.user?.isOrganizationAdmin === true;
+    // No capability opens the audit log, so no operator key sees it.
+    if (page === "audit") return me.user?.isOrganizationAdmin === true;
     const needed = PAGE_CAPABILITY[page];
     return needed !== undefined && held.has(needed);
   });
