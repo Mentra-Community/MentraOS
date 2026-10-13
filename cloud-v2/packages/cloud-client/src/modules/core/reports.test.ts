@@ -266,3 +266,31 @@ describe("Core reports client", () => {
     ]);
   });
 });
+
+test("threads one caller signal through report creation, artifacts, state and completion", async () => {
+  const signal = new AbortController().signal;
+  const calls: Array<{path: string; signal?: AbortSignal}> = [];
+  const http: HttpClient = {...fakeHttp([]),
+    post: async <T>(path: string, _body?: unknown, options?: {signal?: AbortSignal}): Promise<T> => {
+      calls.push({path, signal: options?.signal});
+      return (path === "/api/client/reports" ? {reportId: "rep_test", status: "collecting"} : {stored: 1}) as T;
+    },
+    postForm: async <T>(path: string, _body: FormData, options?: {signal?: AbortSignal}): Promise<T> => {
+      calls.push({path, signal: options?.signal});
+      return {stored: 1} as T;
+    },
+  };
+  const reports = new Reports({http});
+  await reports.submit(bugReportInput, signal);
+  await reports.addLogs("rep_test", "phone", [], {signal});
+  await reports.updateLogCollection("rep_test", "glasses", {state: "requested"}, signal);
+  await reports.addScreenshots("rep_test", [{blob: new Blob(["image"]), fileName: "failure.jpg"}], signal);
+  await reports.complete("rep_test", signal);
+  expect(calls).toEqual([
+    {path: "/api/client/reports", signal},
+    {path: "/api/client/reports/rep_test/artifacts", signal},
+    {path: "/api/client/reports/rep_test/log-collection/glasses", signal},
+    {path: "/api/client/reports/rep_test/artifacts", signal},
+    {path: "/api/client/reports/rep_test/complete", signal},
+  ]);
+});

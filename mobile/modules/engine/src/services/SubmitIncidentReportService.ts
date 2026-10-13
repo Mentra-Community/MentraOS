@@ -1,7 +1,9 @@
-import {reportAutomationCorrelation} from "@mentra/cloud-protocol/report-automation"
+import {AUTOMATED_INCIDENT_TIMEOUT_MS, reportAutomationCorrelation} from "@mentra/cloud-protocol/report-automation"
 
 import {ReportCollectionError, reports, submitAutomaticReport, type ReportCollectionResult} from "../facades/reports"
 import {useSettingsStore} from "../stores/settings"
+import {assertReportNotAborted} from "../utils/reportAbort"
+import {BgTimer} from "../utils/timers"
 import {
   logAutomaticReportSubmissionStatus,
   toAutomaticReportSubmissionStatus,
@@ -82,55 +84,84 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
 
   const throttleKey = [source, failureCode, scenarioName || "unknown", alertId || "unknown"].join("|")
   let reportId: string | undefined
-
+  const controller = new AbortController()
+  const deadlineAt = Date.now() + AUTOMATED_INCIDENT_TIMEOUT_MS
+  let timer: number | undefined
+  const expired = new Promise<never>((_, reject) => {
+    timer = BgTimer.setTimeout(() => {
+      controller.abort()
+      reject(new ReportCollectionError({reportId: reportId ?? "", state: "timed-out", logCollection: {}}))
+    }, AUTOMATED_INCIDENT_TIMEOUT_MS)
+  })
   try {
-    if (!rawEvent || typeof rawEvent !== "object" || Array.isArray(rawEvent))
-      throw new Error("Incident report request must be an object")
-    const automationCorrelation = source === "mentra_automated_testing"
-      ? reportAutomationCorrelation({alertId, testRunId})
-      : null
-    if (source === "mentra_automated_testing" && !automationCorrelation)
-      throw new Error("Automated incident request requires valid alert_id and test_run_id")
-    const loaded = await useSettingsStore.getState().loadAllSettings()
-    if (loaded.is_error()) throw loaded.error
-    // A paired device remains required if it disconnects while collecting. A
-    // selection that never completed pairing has no glasses logs to collect.
-    const identity = projectPairingIdentity()
-    const sources = requiredDeviceReportLogSources(identity)
-    const actualBehavior = JSON.stringify({failureCode, failureMessage, testRunId, scenarioName, event}, null, 2)
-    const submitResult = await submitAutomaticReport({
-      kind: "automatic",
-      ...(automationCorrelation ? {automationCorrelation} : {}),
-      trigger: {
-        type: "automatic",
-        source,
-        reason: "incident_report_requested",
-      },
-      report: {
-        expectedBehavior,
-        actualBehavior,
-        systemPriority: "medium",
-      },
-      throttleKey,
-    })
+    const prepare = async () => {
+      if (!rawEvent || typeof rawEvent !== "object" || Array.isArray(rawEvent))
+        throw new Error("Incident report request must be an object")
+      const automationCorrelation =
+        source === "mentra_automated_testing" ? reportAutomationCorrelation({alertId, testRunId}) : null
+      if (source === "mentra_automated_testing" && !automationCorrelation)
+        throw new Error("Automated incident request requires valid alert_id and test_run_id")
+      const loaded = await useSettingsStore.getState().loadAllSettings()
+      assertReportNotAborted(controller.signal)
+      if (loaded.is_error()) throw loaded.error
+      // A paired device remains required if it disconnects while collecting. A
+      // selection that never completed pairing has no glasses logs to collect.
+      const identity = projectPairingIdentity()
+      const sources = requiredDeviceReportLogSources(identity)
+      const actualBehavior = JSON.stringify({failureCode, failureMessage, testRunId, scenarioName, event}, null, 2)
+      const submitResult = await submitAutomaticReport(
+        {
+          kind: "automatic",
+          ...(automationCorrelation ? {automationCorrelation} : {}),
+          trigger: {
+            type: "automatic",
+            source,
+            reason: "incident_report_requested",
+          },
+          report: {
+            expectedBehavior,
+            actualBehavior,
+            systemPriority: "medium",
+          },
+          throttleKey,
+        },
+        {
+          signal: controller.signal,
+          onCreated: (createdId) => {
+            reportId = createdId
+          },
+        },
+      )
 
+      return {submitResult, sources}
+    }
+    // Only preparation races the outer deadline. Collection owns its safe
+    // last snapshot and rejects on the same signal, retaining partial receipts.
+    const {submitResult, sources} = await Promise.race([prepare(), expired])
     const result = toAutomaticReportSubmissionStatus(submitResult)
-    if (result.status !== "filed") {
+    if (result.status !== "filed" && !reportId) {
       logAutomaticReportSubmissionStatus(LOG_TAG, result, throttleKey)
       throw new IncidentReportError(logIncidentResult({alertId, testRunId, failureCode, scenarioName, result}))
     }
-    reportId = result.reportId
-    const collection = await reports.waitForCollection(reportId, {sources: [...sources], timeoutMs: 20_000})
+    if (result.status === "filed") reportId = result.reportId
+    assertReportNotAborted(controller.signal)
+    const collection = await reports.waitForCollection(reportId!, {
+      sources: [...sources],
+      timeoutMs: Math.max(1, deadlineAt - Date.now()),
+      signal: controller.signal,
+    })
     logAutomaticReportSubmissionStatus(LOG_TAG, result, throttleKey)
-    return logIncidentResult({alertId, testRunId, failureCode, scenarioName, result, collection})
+    const receipt = logIncidentResult({alertId, testRunId, failureCode, scenarioName, result, reportId, collection})
+    if (result.status !== "filed") throw new IncidentReportError(receipt)
+    return receipt
   } catch (error) {
     if (error instanceof IncidentReportError) throw error
     const collection =
       error instanceof ReportCollectionError
         ? error.collection
         : reportId
-        ? {reportId, state: "unavailable" as const, logCollection: {}}
-        : undefined
+          ? {reportId, state: "unavailable" as const, logCollection: {}}
+          : undefined
     const result: AutomaticReportSubmissionStatus = {
       status: "failed",
       error: reportId ? "Required incident log collection did not complete" : "Incident report submission failed",
@@ -139,5 +170,8 @@ export async function submitIncidentReport(rawEvent: unknown): Promise<IncidentR
     throw new IncidentReportError(
       logIncidentResult({alertId, testRunId, failureCode, scenarioName, result, reportId, collection}),
     )
+  } finally {
+    controller.abort()
+    if (timer !== undefined) BgTimer.clearTimeout(timer)
   }
 }

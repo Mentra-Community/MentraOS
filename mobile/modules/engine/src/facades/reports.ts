@@ -24,6 +24,7 @@ import {requiredDeviceReportLogSources} from "../services/reportLogSources"
 import {DeviceTypes} from "../types"
 import {collectDiagnosticContext} from "../utils/diagnosticContext"
 import {logBuffer} from "../utils/devLogging"
+import {assertReportNotAborted} from "../utils/reportAbort"
 import {BgTimer} from "../utils/timers"
 
 export type {
@@ -51,6 +52,8 @@ export type EngineSubmitAutomaticReportInput = Omit<Extract<SubmitReportInput, {
   throttleKey?: string
   throttleWindowMs?: number
 }
+
+type ReportSubmissionOptions = {signal: AbortSignal; onCreated: (reportId: string) => void}
 
 type InternalSubmitReportInput = EngineSubmitReportInput | EngineSubmitAutomaticReportInput
 
@@ -102,7 +105,8 @@ function pruneAutomaticThrottleRegistry(nowMs: number, windowMs: number): void {
   }
 }
 
-async function notifyGlasses(reportId: string): Promise<ReportLogCollectionUpdate> {
+async function notifyGlasses(reportId: string, signal?: AbortSignal): Promise<ReportLogCollectionUpdate> {
+  assertReportNotAborted(signal)
   if (!requiredDeviceReportLogSources(projectPairingIdentity()).some((source) => source === "glasses")) {
     return {state: "unavailable", reason: "no_paired_mentra_live"}
   }
@@ -112,10 +116,11 @@ async function notifyGlasses(reportId: string): Promise<ReportLogCollectionUpdat
   let expired = false
   let stage: "core_token_sync" | "connection_read" | "incident_dispatch" = "core_token_sync"
   let timer: number | undefined
+  let abortDispatch: (() => void) | undefined
   const dispatch = (async (): Promise<ReportLogCollectionUpdate> => {
     try {
       await cloudClientService.syncCoreTokenToBluetooth()
-      if (expired) return {state: "failed", reason: "incident_dispatch_timeout"}
+      if (expired || signal?.aborted) return {state: "failed", reason: "incident_dispatch_timeout"}
       if (!requiredDeviceReportLogSources(projectPairingIdentity()).some((source) => source === "glasses")) {
         return {state: "unavailable", reason: "no_paired_mentra_live"}
       }
@@ -126,15 +131,17 @@ async function notifyGlasses(reportId: string): Promise<ReportLogCollectionUpdat
       // immediately before dispatch; the native sender checks the link again.
       stage = "connection_read"
       const native = await BluetoothSdk.getGlassesStatus()
-      if (expired) return {state: "failed", reason: "incident_dispatch_timeout"}
+      if (expired || signal?.aborted) return {state: "failed", reason: "incident_dispatch_timeout"}
       if (!isGlassesConnected(native.connection)) {
         return {state: "unavailable", reason: "glasses_disconnected"}
       }
       // Live's deviceModel can be its hardware variant (for example K900).
       // Pairing identity supplies the canonical product; reject Phone Mode's
       // simulated native link without inventing a second hardware-model map.
-      if (native.deviceModel.includes(DeviceTypes.SIMULATED) ||
-        !requiredDeviceReportLogSources(projectPairingIdentity()).some((source) => source === "glasses")) {
+      if (
+        native.deviceModel.includes(DeviceTypes.SIMULATED) ||
+        !requiredDeviceReportLogSources(projectPairingIdentity()).some((source) => source === "glasses")
+      ) {
         return {state: "unavailable", reason: "no_connected_mentra_live"}
       }
       stage = "incident_dispatch"
@@ -149,14 +156,18 @@ async function notifyGlasses(reportId: string): Promise<ReportLogCollectionUpdat
     return await Promise.race([
       dispatch,
       new Promise<ReportLogCollectionUpdate>((resolve) => {
-        timer = BgTimer.setTimeout(() => {
+        abortDispatch = () => {
           expired = true
           resolve({state: "failed", reason: "incident_dispatch_timeout"})
-        }, INCIDENT_DISPATCH_TIMEOUT_MS)
+        }
+        timer = BgTimer.setTimeout(abortDispatch, INCIDENT_DISPATCH_TIMEOUT_MS)
+        signal?.addEventListener("abort", abortDispatch, {once: true})
+        if (signal?.aborted) abortDispatch()
       }),
     ])
   } finally {
     if (timer !== undefined) BgTimer.clearTimeout(timer)
+    if (abortDispatch) signal?.removeEventListener("abort", abortDispatch)
   }
 }
 
@@ -164,9 +175,12 @@ async function updateLogCollection(
   reportId: string,
   source: ReportLogSource,
   update: ReportLogCollectionUpdate,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   try {
-    await cloudClientService.core.reports.updateLogCollection(reportId, source, update)
+    assertReportNotAborted(signal)
+    if (signal) await cloudClientService.core.reports.updateLogCollection(reportId, source, update, signal)
+    else await cloudClientService.core.reports.updateLogCollection(reportId, source, update)
     return true
   } catch {
     logBuffer.append({
@@ -178,7 +192,12 @@ async function updateLogCollection(
   }
 }
 
-async function submitReportInternal(input: InternalSubmitReportInput): Promise<ReportSubmitResult> {
+async function submitReportInternal(
+  input: InternalSubmitReportInput,
+  options?: ReportSubmissionOptions,
+): Promise<ReportSubmitResult> {
+  const signal = options?.signal
+  assertReportNotAborted(signal)
   if (!cloudClientService.hasCore()) {
     return {status: "failed", error: "Reports are unavailable in this deployment"}
   }
@@ -200,32 +219,44 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
   }
 
   const context = await collectDiagnosticContext(input.context)
+  assertReportNotAborted(signal)
   let reportId: string
   let reportStatus: ReportStatus
   let artifactsComplete = true
   try {
     const res =
       input.kind === "feedback"
-        ? await cloudClientService.core.reports.submit({
-            kind: "feedback",
-            feedback: input.feedback,
-            context,
-          })
+        ? await cloudClientService.core.reports.submit(
+            {
+              kind: "feedback",
+              feedback: input.feedback,
+              context,
+            },
+            signal,
+          )
         : input.kind === "bug"
-          ? await cloudClientService.core.reports.submit({
-              kind: "bug",
-              trigger: input.trigger,
-              report: input.report,
-              context,
-            })
-          : await cloudClientService.core.reports.submit({
-              kind: "automatic",
-              ...(input.automationCorrelation ? {automationCorrelation: input.automationCorrelation} : {}),
-              trigger: input.trigger,
-              report: input.report,
-              context,
-            })
+          ? await cloudClientService.core.reports.submit(
+              {
+                kind: "bug",
+                trigger: input.trigger,
+                report: input.report,
+                context,
+              },
+              signal,
+            )
+          : await cloudClientService.core.reports.submit(
+              {
+                kind: "automatic",
+                ...(input.automationCorrelation ? {automationCorrelation: input.automationCorrelation} : {}),
+                trigger: input.trigger,
+                report: input.report,
+                context,
+              },
+              signal,
+            )
     reportId = res.reportId
+    options?.onCreated(reportId)
+    assertReportNotAborted(signal)
     reportStatus = res.status
   } catch (error) {
     return {status: "failed", error: error instanceof Error ? error.message : String(error)}
@@ -234,22 +265,41 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
   if (input.kind !== "feedback") {
     const logs = logBuffer.getRecentLogs()
     const originalLogs = new Set(logs)
-    try {
-      await cloudClientService.core.reports.addLogs(reportId, "phone", logs)
-    } catch {
-      artifactsComplete = false
-      await updateLogCollection(reportId, "phone", {state: "failed", reason: "phone_log_upload_failed"})
-    }
-
-    const dispatch = await notifyGlasses(reportId)
-    for (const source of ["glasses", "glasses_firmware"] as const) {
-      if (!(await updateLogCollection(reportId, source, dispatch))) artifactsComplete = false
-    }
-    logBuffer.append({
-      level: dispatch.state === "failed" ? "warn" : "info",
-      source: "reports",
-      message: `Report ${reportId}: glasses log notification ${dispatch.state} (${dispatch.reason})`,
-    })
+    // Dispatch immediately; slow phone HTTP must not delay the glasses relay.
+    const notification = (async () => {
+      const dispatch = await notifyGlasses(reportId, signal)
+      for (const source of ["glasses", "glasses_firmware"] as const) {
+        if (!(await updateLogCollection(reportId, source, dispatch, signal))) artifactsComplete = false
+      }
+      logBuffer.append({
+        level: dispatch.state === "failed" ? "warn" : "info",
+        source: "reports",
+        message: `Report ${reportId}: glasses log notification ${dispatch.state} (${dispatch.reason})`,
+      })
+    })()
+    const phoneUpload = (async () => {
+      try {
+        if (signal) await cloudClientService.core.reports.addLogs(reportId, "phone", logs, {signal})
+        else await cloudClientService.core.reports.addLogs(reportId, "phone", logs)
+      } catch {
+        artifactsComplete = false
+        await updateLogCollection(reportId, "phone", {state: "failed", reason: "phone_log_upload_failed"}, signal)
+      }
+    })()
+    const screenshotUpload = (async () => {
+      if (!input.screenshots?.length) return
+      try {
+        assertReportNotAborted(signal)
+        await cloudClientService.core.reports.addScreenshots(reportId, input.screenshots, signal)
+      } catch (error) {
+        artifactsComplete = false
+        console.warn("reports.submit: add screenshots failed:", error instanceof Error ? error.message : error)
+      }
+    })()
+    // A failed source never skips another independent upload.
+    const attachments = await Promise.allSettled([notification, phoneUpload, screenshotUpload])
+    assertReportNotAborted(signal)
+    if (attachments.some((result) => result.status === "rejected")) artifactsComplete = false
     let deliveryLogs = logBuffer.getRecentLogs().filter((entry) => !originalLogs.has(entry))
     if (deliveryLogs.length > MAX_PHONE_DELIVERY_LOGS) {
       deliveryLogs = [
@@ -258,28 +308,24 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
           timestamp: Date.now(),
           level: "warn",
           source: "reports",
-          message: `Report ${reportId}: phone delivery logs omitted ${deliveryLogs.length - MAX_PHONE_DELIVERY_LOGS + 1} earlier entries`,
+          message: `Report ${reportId}: phone delivery logs omitted ${
+            deliveryLogs.length - MAX_PHONE_DELIVERY_LOGS + 1
+          } earlier entries`,
         },
       ]
     }
     try {
-      await cloudClientService.core.reports.addLogs(reportId, "phone_delivery", deliveryLogs)
+      assertReportNotAborted(signal)
+      if (signal) await cloudClientService.core.reports.addLogs(reportId, "phone_delivery", deliveryLogs, {signal})
+      else await cloudClientService.core.reports.addLogs(reportId, "phone_delivery", deliveryLogs)
     } catch {
       artifactsComplete = false
       console.warn(`reports.submit: Report ${reportId}: phone delivery diagnostics could not be stored`)
     }
 
-    if (input.screenshots && input.screenshots.length > 0) {
-      try {
-        await cloudClientService.core.reports.addScreenshots(reportId, input.screenshots)
-      } catch (error) {
-        artifactsComplete = false
-        console.warn("reports.submit: add screenshots failed:", error instanceof Error ? error.message : error)
-      }
-    }
-
     try {
-      const completed = await cloudClientService.core.reports.complete(reportId)
+      assertReportNotAborted(signal)
+      const completed = await cloudClientService.core.reports.complete(reportId, signal)
       reportStatus = completed.status
     } catch (error) {
       artifactsComplete = false
@@ -291,6 +337,9 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
     markAutomaticThrottleSuccess(throttle.key, Date.now(), throttle.windowMs)
   }
 
+  assertReportNotAborted(signal)
+  if (options && !artifactsComplete)
+    return {status: "failed", error: "Incident attachment or completion did not finish"}
   return {status: "submitted", reportId, reportStatus}
 }
 
@@ -303,7 +352,7 @@ const collectionTimestamp = (value: unknown): value is string =>
 /** Resolve only when every selected source has a stored artifact; failures reject with partial receipts. */
 async function waitForCollection(
   reportId: string,
-  options: {sources: ReportLogSource[]; timeoutMs?: number},
+  options: {sources: ReportLogSource[]; timeoutMs?: number; signal?: AbortSignal},
 ): Promise<ReportCollectionResult> {
   const result: ReportCollectionResult = {reportId, state: "unavailable", logCollection: {}}
   const timeoutMs = options?.timeoutMs ?? REPORT_COLLECTION_TIMEOUT_MS
@@ -321,16 +370,21 @@ async function waitForCollection(
     throw new ReportCollectionError(result)
   if (sources.length === 0) return {...result, state: "complete"}
 
+  if (options.signal?.aborted) throw new ReportCollectionError({...result, state: "timed-out"})
   const controller = new AbortController()
   const deadlineAt = Date.now() + timeoutMs
   let timeoutTimer: number | undefined
   let pollTimer: number | undefined
+  let abortWait!: () => void
   const expired = new Promise<never>((_, reject) => {
-    timeoutTimer = BgTimer.setTimeout(() => {
-      controller.abort()
+    abortWait = () => {
+      controller.abort(options.signal?.reason)
       reject(new ReportCollectionError({...result, state: "timed-out"}))
-    }, timeoutMs)
+    }
+    timeoutTimer = BgTimer.setTimeout(abortWait, timeoutMs)
   })
+  options.signal?.addEventListener("abort", abortWait, {once: true})
+  if (options.signal?.aborted) abortWait()
   try {
     while (!controller.signal.aborted) {
       const snapshot = await Promise.race([
@@ -380,11 +434,19 @@ async function waitForCollection(
       for (const source of sources) {
         const receipt = logCollection[source]
         if (!receipt) continue
-        if (receipt.state === "failed" || receipt.state === "unavailable" || receipt.state === "timed-out")
-          throw new ReportCollectionError({...result, state: receipt.state})
         if (receipt.state === "received" && receipt.artifactId === undefined) throw new ReportCollectionError(result)
       }
       if (sources.every((source) => logCollection[source]?.state === "received")) return {...result, state: "complete"}
+      if (sources.every((source) => logCollection[source] && logCollection[source]?.state !== "requested")) {
+        const failure = sources
+          .map((source) => logCollection[source])
+          .find(
+            (receipt) =>
+              receipt?.state === "failed" || receipt?.state === "unavailable" || receipt?.state === "timed-out",
+          )
+        if (failure?.state === "failed" || failure?.state === "unavailable" || failure?.state === "timed-out")
+          throw new ReportCollectionError({...result, state: failure.state})
+      }
       await Promise.race([
         new Promise<void>((resolve) => {
           pollTimer = BgTimer.setTimeout(
@@ -403,6 +465,7 @@ async function waitForCollection(
   } finally {
     if (timeoutTimer !== undefined) BgTimer.clearTimeout(timeoutTimer)
     if (pollTimer !== undefined) BgTimer.clearTimeout(pollTimer)
+    options.signal?.removeEventListener("abort", abortWait)
     controller.abort()
   }
 }
@@ -414,6 +477,9 @@ export const reports = {
   waitForCollection,
 }
 
-export function submitAutomaticReport(input: EngineSubmitAutomaticReportInput): Promise<ReportSubmitResult> {
-  return submitReportInternal(input)
+export function submitAutomaticReport(
+  input: EngineSubmitAutomaticReportInput,
+  options?: ReportSubmissionOptions,
+): Promise<ReportSubmitResult> {
+  return submitReportInternal(input, options)
 }

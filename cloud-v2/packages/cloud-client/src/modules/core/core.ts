@@ -74,11 +74,12 @@ export interface CoreDeps {
 export class Core {
   readonly reports: {
     getLogCollection(reportId: string, signal?: AbortSignal): Promise<ReportLogCollectionSnapshot>;
-    submit(input: SubmitReportInput): Promise<SubmitReportResult>;
+    submit(input: SubmitReportInput, signal?: AbortSignal): Promise<SubmitReportResult>;
     updateLogCollection(
       reportId: string,
       source: ReportLogSource,
       update: ReportLogCollectionUpdate,
+      signal?: AbortSignal,
     ): Promise<void>;
     addLogs(
       reportId: string,
@@ -89,13 +90,14 @@ export class Core {
     addScreenshots(
       reportId: string,
       images: ReportAttachmentInput[],
+      signal?: AbortSignal,
     ): Promise<AddReportArtifactsResult>;
     addVideos(
       reportId: string,
       source: string,
       videos: ReportAttachmentInput[],
     ): Promise<AddReportArtifactsResult>;
-    complete(reportId: string): Promise<{ status: ReportStatus }>;
+    complete(reportId: string, signal?: AbortSignal): Promise<{ status: ReportStatus }>;
   };
   readonly supportProfile: {
     update(input: SupportStateInput): Promise<SupportProfileUpdateResult>;
